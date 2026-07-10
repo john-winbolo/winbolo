@@ -1,3 +1,5 @@
+local function __idiv(a,b) return math.floor(a/b) end
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/attack_shield.lua
 --
@@ -179,8 +181,8 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
                           pmx, pmy, pill_wx, pill_wy,
                           aim_offset, return_tiles_set, return_tiles_list,
                           world, no_builder, precomp_out, precomp_flat, return_flat)
-  local target_wx = (pmx << 8) + aim_offset[1]
-  local target_wy = (pmy << 8) + aim_offset[2]
+  local target_wx = (bit.lshift(pmx, 8)) + aim_offset[1]
+  local target_wy = (bit.lshift(pmy, 8)) + aim_offset[2]
 
   -- Outgoing path: walk up to the pill, reject the aim if it crosses
   -- a wall OR any pill (friendly or enemy) other than the target.
@@ -539,8 +541,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- one). Defaults to the standard ATTACK_PILL_STANDOFF.
   local R = radius or C.ATTACK_PILL_STANDOFF
   local pcx, pcy = pmx + 0.5, pmy + 0.5
-  local pill_wx = (pmx << 8) | 128
-  local pill_wy = (pmy << 8) | 128
+  local pill_wx = bit.bor((bit.lshift(pmx, 8)), 128)
+  local pill_wy = bit.bor((bit.lshift(pmy, 8)), 128)
 
   -- Standoff candidate first, then 8 around.
   local sx = standoff_cx or (standoff_mx + 0.5)
@@ -762,7 +764,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       }
       -- Populate slate nudge slot for this (ci, nudge, ai).
       if gh_shield then
-        local ni = nudge_wu // NUDGE_STEP_WU
+        local ni = __idiv(nudge_wu, NUDGE_STEP_WU)
         gh_shield.slate_set(ci, ni, ai - 1, blk and true or false,
           #a_list,
           a_list[1] and a_list[1].mx - pmx or 0, a_list[1] and a_list[1].my - pmy or 0,
@@ -882,7 +884,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
           }
           -- Record which nudge slot to use in the neighbor check.
           if gh_shield then
-            gh_shield.slate_set_nudge_used(ci, ai - 1, found_wu // NUDGE_STEP_WU)
+            gh_shield.slate_set_nudge_used(ci, ai - 1, __idiv(found_wu, NUDGE_STEP_WU))
           end
         else
           -- Pill unreachable even at max nudge — discard this aim.
@@ -1130,7 +1132,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                                              -- always included (degenerate
                                              -- "use full set" behavior for
                                              -- pathological N>3 cases)
-            local mask_max = (1 << n_iter) - 1
+            local mask_max = (bit.lshift(1, n_iter)) - 1
             for mask = 1, mask_max do
               local subset_set      = {}
               local actual_n        = 0
@@ -1139,7 +1141,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
               local subset_potential = {}
               -- Bitmasked entries
               for idx = 1, n_iter do
-                if (mask & (1 << (idx - 1))) ~= 0 then
+                if (bit.band(mask, (bit.lshift(1, (idx - 1))))) ~= 0 then
                   local b = all_blockers[idx]
                   subset_set[b.key] = true
                   if b.actual then
@@ -1367,8 +1369,8 @@ function M.compute_shield_stamps()
   local MAX_TILES = 15   -- matches ShieldShotPath.tiles[15]
   local R         = C.ATTACK_PILL_STANDOFF
   local pmx, pmy  = 128, 128
-  local pill_wx   = (pmx << 8) | 128
-  local pill_wy   = (pmy << 8) | 128
+  local pill_wx   = bit.bor((bit.lshift(pmx, 8)), 128)
+  local pill_wy   = bit.bor((bit.lshift(pmy, 8)), 128)
 
   print("[shield] computing " .. 1440 .. " × " .. (MAX_STEPS + 1) ..
         " × 6 stamp entries …")
@@ -1422,8 +1424,8 @@ function M.compute_shield_stamps()
 
       -- Outgoing aims 1..5: standoff → pill aim point
       for ai, aim in ipairs(AIM_OFFSETS) do
-        local twx = (pmx << 8) + aim[1]
-        local twy = (pmy << 8) + aim[2]
+        local twx = (bit.lshift(pmx, 8)) + aim[1]
+        local twy = (bit.lshift(pmy, 8)) + aim[2]
         entry.aim[ai] = make_path(
           cpf.simulate_shot(spot_wx, spot_wy, twx, twy, cpf.SHOT_TANK, 0),
           spot_wx - pill_wx, spot_wy - pill_wy,
@@ -1747,8 +1749,8 @@ function M.draw_overlay(scan, now_tick)
     -- unreachable). So: a BLACK-only tile = it was on a shot path but REJECTED;
     -- a tile with NO box at all = it was never on any considered path.
     if scan.pill then
-      local p_wx = (scan.pill.mx << 8) | 128
-      local p_wy = (scan.pill.my << 8) | 128
+      local p_wx = bit.bor((bit.lshift(scan.pill.mx, 8)), 128)
+      local p_wy = bit.bor((bit.lshift(scan.pill.my, 8)), 128)
       for _, c in ipairs(cand_list) do
         if c and c.cx then
           local path = cpf.simulate_shot(p_wx, p_wy,

@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/kill_lgm.lua — enemy LGM targeting helpers.
 --
@@ -113,8 +114,8 @@ end
 function M.sim_forward_to_dest(lgm_wx, lgm_wy, dest_wx, dest_wy, T)
   local wx, wy = lgm_wx, lgm_wy
   for _ = 1, T do
-    local cur_mx = math.floor(wx) >> 8
-    local cur_my = math.floor(wy) >> 8
+    local cur_mx = bit.rshift(math.floor(wx), 8)
+    local cur_my = bit.rshift(math.floor(wy), 8)
     local v_max = man_speed_at(cur_mx, cur_my)
     if v_max <= 0 then break end
     local ddx = dest_wx - wx
@@ -125,8 +126,8 @@ function M.sim_forward_to_dest(lgm_wx, lgm_wy, dest_wx, dest_wy, T)
     local svy = (ddy / dist) * v_max
     local nx = wx + svx
     local ny = wy + svy
-    local new_mx = math.floor(nx) >> 8
-    local new_my = math.floor(ny) >> 8
+    local new_mx = bit.rshift(math.floor(nx), 8)
+    local new_my = bit.rshift(math.floor(ny), 8)
     local x_blocked = (new_mx ~= cur_mx) and is_blocked(new_mx, cur_my)
     local y_blocked = (new_my ~= cur_my) and is_blocked(cur_mx, new_my)
     if x_blocked and y_blocked then break end

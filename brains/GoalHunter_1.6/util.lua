@@ -1,3 +1,5 @@
+local function __idiv(a,b) return math.floor(a/b) end
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/util.lua — coordinate conversion, trig, distance helpers
 -- =========================================================================
@@ -13,8 +15,8 @@ local viz     = require("viz")
 
 local M = {}
 
-function M.w2m(w)   return w >> 8          end
-function M.m2w(m)   return (m << 8) | 0x80 end
+function M.w2m(w)   return bit.rshift(w, 8)          end
+function M.m2w(m)   return bit.bor((bit.lshift(m, 8)), 0x80) end
 
 -- Terrain cache: detect changes and notify pathfinder via changes.terrain.
 -- Exposed as M.terrain_prev for consumers that need "what terrain have we
@@ -30,7 +32,7 @@ end
 function M.ttype(mx, my)
   metrics.inc("get_terrain")
   local raw = get_terrain(mx, my)
-  local tt  = raw & TERRAIN_MASK
+  local tt  = bit.band(raw, TERRAIN_MASK)
   local key = my * 256 + mx
   local prev = terrain_prev[key]
   if prev ~= nil and prev ~= tt then
@@ -43,7 +45,7 @@ end
 function M.traw(mx, my)
   metrics.inc("get_terrain")
   local raw = get_terrain(mx, my)
-  local tt  = raw & TERRAIN_MASK
+  local tt  = bit.band(raw, TERRAIN_MASK)
   local key = my * 256 + mx
   local prev = terrain_prev[key]
   if prev ~= nil and prev ~= tt then
@@ -65,7 +67,7 @@ function M.mkey(mx, my)
   return my * C.MAP_W + mx
 end
 function M.mkey_x(k)     return k % C.MAP_W       end
-function M.mkey_y(k)     return k // C.MAP_W      end
+function M.mkey_y(k)     return __idiv(k, C.MAP_W)      end
 
 -- Set a tile-block (retry/no-build) cooldown WITH a debug breadcrumb, so
 -- "why is (x,y) blocked for Nt?" is one grep in print2_bot*.log instead of
@@ -74,7 +76,7 @@ function M.mkey_y(k)     return k // C.MAP_W      end
 function M.set_blocked(state, key, until_tick, src)
   state.blocked = state.blocked or {}
   state.blocked[key] = until_tick
-  print2(string.format("BLOCK set (%d,%d) until=%d (+%dt) src=%s", key % C.MAP_W, key // C.MAP_W, until_tick, until_tick - (state.tick or 0), tostring(src)))
+  print2(string.format("BLOCK set (%d,%d) until=%d (+%dt) src=%s", key % C.MAP_W, __idiv(key, C.MAP_W), until_tick, until_tick - (state.tick or 0), tostring(src)))
 end
 
 function M.mdist(mx1, my1, mx2, my2)
@@ -101,12 +103,12 @@ end
 -- Bolo-angle trig: 0=N, 64=E, 128=S, 192=W (0-255 wrapping)
 -- Returns integer in [-128, +128]
 function M.bsin(a)
-  a = a & 0xFF
+  a = bit.band(a, 0xFF)
   return math.floor(math.sin(a * C.TWO_PI / 256) * 128 + 0.5)
 end
 
 function M.bcos(a)
-  a = a & 0xFF
+  a = bit.band(a, 0xFF)
   return math.floor(math.cos(a * C.TWO_PI / 256) * 128 + 0.5)
 end
 
@@ -135,7 +137,7 @@ end
 
 -- Bolo angle from (sx,sy) toward (tx,ty)
 function M.aim_at(sx, sy, tx, ty)
-  return math.floor(math.atan(tx - sx, -(ty - sy)) * 256 / C.TWO_PI + 0.5) & 0xFF
+  return bit.band(math.floor(math.atan(tx - sx, -(ty - sy)) * 256 / C.TWO_PI + 0.5), 0xFF)
 end
 
 -- Signed angular difference a->b in [-128, +127]
@@ -260,10 +262,10 @@ function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   min_speed = min_speed or 4
 
   -- Turning: 3-tier hold/tap/none
-  if     corr >  10 then keys = keys | KEY_TURNRIGHT
-  elseif corr < -10 then keys = keys | KEY_TURNLEFT
-  elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-  elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+  if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+  elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+  elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+  elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
   end
 
   -- Speed: proportional to aim quality
@@ -275,19 +277,19 @@ function M.nav_turn_speed(corr, speed, max_speed, min_speed)
     -- want a slow creep (e.g. centering on a tile) get the engine's
     -- default ~48 wu/tick instead of their requested cap.
     if speed > max_speed + 1 then
-      keys = keys | KEY_SLOWER
+      keys = bit.bor(keys, KEY_SLOWER)
     elseif speed < max_speed then
-      keys = keys | KEY_FASTER
+      keys = bit.bor(keys, KEY_FASTER)
     end
   elseif abs_corr > 80 then
-    if speed > min_speed then keys = keys | KEY_SLOWER end
+    if speed > min_speed then keys = bit.bor(keys, KEY_SLOWER) end
   else
     local factor = 1.0 - (abs_corr - 16) / 64.0
     local desired = math.max(min_speed, math.floor(factor * max_speed))
     if speed > desired + 4 then
-      keys = keys | KEY_SLOWER
+      keys = bit.bor(keys, KEY_SLOWER)
     elseif speed < desired then
-      keys = keys | KEY_FASTER
+      keys = bit.bor(keys, KEY_FASTER)
     end
   end
 
