@@ -58,9 +58,12 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # into the Mach-O load command so dyld refuses to launch on older macOS.
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
     string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
+    # Marketing/human-facing strings carry the display suffix (e.g. "2.02a")
+    # so Finder and the About panel match the rest of the UI. CFBundleVersion
+    # is the build number macOS treats as monotonic, so keep it numeric.
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_DISPLAY_VERSION}")
     set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
-    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_DISPLAY_VERSION}")
     set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
 
