@@ -2195,7 +2195,7 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/GoalHunter_1.5";
+static char optBrain[512] = "brains/GoalHunter_1.6";
 static char optBotInit[1024] = ""; /* -bot-init spec; per-bot brain paths + [arg] */
 static char optMap[512]   = "";
 static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
@@ -2228,6 +2228,9 @@ static char optRunScript[1024] = "";
  * --profile-log to enable file writes too (which implies --profile). */
 static int  optProfile    = 0;
 static int  optProfileLog = 0;
+/* --instr-profile: arm GoalHunter's Lua instruction-sampling profiler
+ * (per-bot p<N>_profile.tsv). Benchmark diagnostics only — see below. */
+static int  optInstrProfile = 0;
 /* JSONL behavior log (brain_p<N>.jsonl, goal_player%d.log, etc.). Always
  * on in dev mode; opt-in under --opt via --log-json. Independent of the
  * profile flags — behavior trace is about decisions, not perf. */
@@ -2237,8 +2240,12 @@ static int  optLogJson    = 0;
  * brain sandbox removes. --safe-brains opts into the cage to exercise it. */
 static int  optSafeBrains = 0;
 static int  optAutoStart = 0;
+static int  optNoBotKill = 0;   /* --no-bot-kill: uncapped think budget; bots never deadline-killed / throttled */
 static int  g_playbackAutoplay = 0;  /* --playback-autoplay: drive a -loadsession replay from frame 0 and quit at the end (headless verification) */
 static int  optMaxTicks = 0;   /* 0 = run forever */
+/* Tick cadence in ms requested via --speed-ms; snapped to the nearest
+ * SPEED_PRESETS entry at startup. 0 = unset (use DEFAULT_SPEED_INDEX). */
+static int  optSpeedMs = 0;
 /* Brain-dispatch thread count (workers + producer). 0 = use the default
  * (2). Set via -threads; clamped to [1, cores] at init. */
 static int  optThreads = 0;
@@ -2273,12 +2280,18 @@ static void printUsage(const char *prog) {
         "  --profile          (--opt only) In-memory timing → Y panel time bar. No file writes.\n"
         "  --profile-log      (--opt only) Profiling + write optimize.log/performance.ticks.log.\n"
         "                     Implies --profile. In dev mode (no --opt) both are on by default.\n"
+        "  --instr-profile    Write per-bot Lua instruction-sampling profile (p<bot>_profile.tsv);\n"
+        "                     benchmark diagnostics — disables tick-budget kills while sampling.\n"
         "  --log-json         (--opt only) Write brain_p<N>.jsonl + goal_player<N>.log behavior\n"
         "                     traces. On by default in dev mode.\n"
         "  --safe-brains      Run brains in the restricted sandbox (off by default in\n"
         "                     BrainTest, which needs the dev-only debug tooling).\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
+        "  --no-bot-kill      Never budget-kill bots. Each bot runs its full tier every\n"
+        "                     tick (ticks just take longer) instead of being aborted mid-\n"
+        "                     think and throttled to a lower tier. For debugging brains.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
+        "  --speed-ms N       Tick cadence in ms (snapped to nearest preset; 1 = 20x realtime).\n"
         "  -victim_ids IDS  Comma-sep list of bot ids to flag as test victims\n"
         "                   (e.g. -victim_ids 0,2). The brain reads _BT_VICTIM=true\n"
         "                   on each marked bot, which can be wired up to perform\n"
@@ -2386,16 +2399,22 @@ static bool parseArgs(int argc, char **argv) {
              * measurement makes no sense — buffer would be empty). */
             optProfile    = 1;
             optProfileLog = 1;
+        } else if (strcmp(argv[i], "--instr-profile") == 0) {
+            optInstrProfile = 1;
         } else if (strcmp(argv[i], "--log-json") == 0) {
             optLogJson = 1;
         } else if (strcmp(argv[i], "--safe-brains") == 0) {
             optSafeBrains = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
+        } else if (strcmp(argv[i], "--no-bot-kill") == 0) {
+            optNoBotKill = 1;
         } else if (strcmp(argv[i], "--playback-autoplay") == 0) {
             g_playbackAutoplay = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
             optMaxTicks = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--speed-ms") == 0 && i + 1 < argc) {
+            optSpeedMs = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
             strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
         } else if ((strcmp(argv[i], "-victim_ids") == 0
@@ -3280,6 +3299,18 @@ static void recordingCapture(BrainTestApp *app) {
         f->snapPills[i].inTank = gs->pb->item[i].inTank ? 1 : 0;
     }
 
+    /* ── Per-player alliance bitmaps ── the playback pre-render patch
+     * writes f->allie[] over gs->plyrs->item[].allie, so a frame that
+     * never captured them (this was ONLY filled by the .btr loader)
+     * zeroes every alliance during scrubbing and all allied tanks
+     * render red (20260704_071939 t=3501: 2v2 playback showed all 3
+     * other tanks as enemies). Capture live values at record time. */
+    if (gs->plyrs) {
+        for (int i = 0; i < MAX_TANKS; i++) {
+            f->allie[i] = (uint32_t)gs->plyrs->item[i].allie;
+        }
+    }
+
     /* ── Camera + brain perf for HUD ── */
     f->viewCenterX = app->viewCenterX;
     f->viewCenterY = app->viewCenterY;
@@ -3955,7 +3986,7 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
         SDL_SetRenderScale(app->renderer, bs, bs);
         SDL_SetRenderDrawColor(app->renderer, 0, 220, 255, 255);
         SDL_RenderDebugText(app->renderer, (screenW * 0.5f - 230.0f) / bs, 4.0f / bs,
-            "HUD EDIT: drag overlays  |  L = lock & save  |  Shift+L = reset");
+            "HUD EDIT: drag overlays  |  L = lock & save  |  Shift+R = reset");
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 }
@@ -4297,12 +4328,157 @@ static void appTickBrain(BrainTestApp *app) {
         serverSimGetBotGoalInfo(app->sim, app->followBot, &app->goalInfo);
 }
 
+/* [ALLY-AUDIT] Durable sink for the alliance audit. The watchdog lines
+ * (below) and players.c's WB_LOG mutation lines historically went only to
+ * the launch console — a windowed run loses them entirely (braintest never
+ * calls wb_log_init, so SDL logs have no file). Tee both into
+ * <sessionDir>/ally_audit.log so a repro is analyzable after the fact. */
+static FILE *g_allyAuditFile = NULL;
+
+static void allyAuditLine(const char *fmt, ...) {
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    SDL_vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", line);
+    if (g_allyAuditFile) {
+        fprintf(g_allyAuditFile, "%s\n", line);
+        fflush(g_allyAuditFile);
+    }
+}
+
+/* SDL log tee: forward everything to stderr (what the default output did)
+ * and mirror [ALLY-AUDIT] lines from players.c into the audit file. */
+static void allyAuditSdlLogTee(void *userdata, int category,
+                               SDL_LogPriority priority, const char *message) {
+    (void)userdata; (void)category; (void)priority;
+    fprintf(stderr, "%s\n", message);
+    if (g_allyAuditFile && strstr(message, "[ALLY-AUDIT]") != NULL) {
+        fprintf(g_allyAuditFile, "%s\n", message);
+        fflush(g_allyAuditFile);
+    }
+}
+
+static void allyAuditOpen(const char *sessionDir) {
+    char path[FILENAME_MAX + 32];
+    if (sessionDir && sessionDir[0]) {
+        SDL_snprintf(path, sizeof(path), "%s/ally_audit.log", sessionDir);
+    } else {
+        SDL_snprintf(path, sizeof(path), "ally_audit.log");
+    }
+    g_allyAuditFile = fopen(path, "w");
+    SDL_SetLogOutputFunction(allyAuditSdlLogTee, NULL);
+}
+
+/* [ALLY-AUDIT] Debug watchdog for the allies-rendered-as-enemies bug.
+ * The tank sprite colour in the live view comes solely from the SERVER
+ * players object: playersScreenAllience(followBot, i) checks bit i of
+ * item[followBot].allie plus item[i].inUse (not-in-use renders as enemy
+ * too). Diff that state every sim tick and log any change with the tick
+ * number. Correlate a hit here with a [ALLY-AUDIT] mutation line from
+ * players.c — a matrix change with NO matching mutation line means a
+ * stray memory write clobbered the row. */
+static void allianceMatrixAudit(BrainTestApp *app) {
+    static uint32_t prevAllie[MAX_TANKS];
+    static uint16_t prevInUse;
+    static bool     havePrev = false;
+    uint32_t cur[MAX_TANKS];
+    uint16_t inUseBits = 0;
+    GameSim *gs = serverSimGetGameSim(app->sim);
+    if (!gs || !gs->plyrs) return;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        cur[i] = (uint32_t)gs->plyrs->item[i].allie;
+        if (gs->plyrs->item[i].inUse) inUseBits |= (uint16_t)(1u << i);
+    }
+    if (!havePrev) {
+        havePrev = true;
+        memcpy(prevAllie, cur, sizeof(prevAllie));
+        prevInUse = inUseBits;
+        allyAuditLine("[ALLY-AUDIT] baseline tick=%u plrs=%p inUse=0x%04X",
+                      (unsigned)serverSimGetTick(app->sim), (void *)gs->plyrs,
+                      (unsigned)inUseBits);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (cur[i]) allyAuditLine("[ALLY-AUDIT]   row %d allie=0x%04X",
+                                      i, (unsigned)cur[i]);
+        }
+        return;
+    }
+    if (inUseBits != prevInUse) {
+        allyAuditLine("[ALLY-AUDIT] tick=%u inUse 0x%04X -> 0x%04X",
+                      (unsigned)serverSimGetTick(app->sim),
+                      (unsigned)prevInUse, (unsigned)inUseBits);
+        prevInUse = inUseBits;
+    }
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (cur[i] != prevAllie[i]) {
+            allyAuditLine("[ALLY-AUDIT] tick=%u row %d allie 0x%04X -> 0x%04X (followBot=%d)",
+                          (unsigned)serverSimGetTick(app->sim), i,
+                          (unsigned)prevAllie[i], (unsigned)cur[i], (int)app->followBot);
+            prevAllie[i] = cur[i];
+        }
+    }
+
+    /* ── CLIENT-side matrices ────────────────────────────────────────
+     * The tank sprite colour comes from the FOLLOWED BOT'S ClientSim
+     * players object (client_render → screenTanksPrepare →
+     * playersMakeScreenTanks reads item[count].allie of cs->sim.plyrs),
+     * NOT the server matrix audited above. 20260704_005544 proved the
+     * server matrix perfect while allies still rendered red — so the
+     * divergence must be client-side. Baseline + diff every bot's
+     * client matrix; a client row that never receives its alliance
+     * bits (missed CTRL_ALLIANCE_RESET?) shows up as an all-zero
+     * baseline here. */
+    {
+        static uint32_t prevClient[MAX_TANKS][MAX_TANKS];
+        static bool     haveClientPrev = false;
+        for (int b = 0; b < MAX_TANKS; b++) {
+            bool logged_hdr = false;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                uint32_t v = botManagerGetClientAllieRow(app->sim, (BYTE)b, (BYTE)i);
+                if (!haveClientPrev) {
+                    if (v) {
+                        if (!logged_hdr) {
+                            allyAuditLine("[ALLY-AUDIT] client p%d baseline:", b);
+                            logged_hdr = true;
+                        }
+                        allyAuditLine("[ALLY-AUDIT]   client p%d row %d allie=0x%04X",
+                                      b, i, (unsigned)v);
+                    }
+                } else if (v != prevClient[b][i]) {
+                    allyAuditLine("[ALLY-AUDIT] tick=%u client p%d row %d allie 0x%04X -> 0x%04X",
+                                  (unsigned)serverSimGetTick(app->sim), b, i,
+                                  (unsigned)prevClient[b][i], (unsigned)v);
+                }
+                prevClient[b][i] = v;
+            }
+        }
+        if (!haveClientPrev) {
+            /* An entirely-zero client matrix is the smoking gun for the
+             * red-allies bug — call it out explicitly so it can't be
+             * missed among the baselines. */
+            for (int b = 0; b < MAX_TANKS; b++) {
+                bool any = false;
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    if (botManagerGetClientAllieRow(app->sim, (BYTE)b, (BYTE)i)) { any = true; break; }
+                }
+                if (!any && b < app->numBots) {
+                    allyAuditLine("[ALLY-AUDIT] client p%d matrix ALL-ZERO — renderer will draw every tank evil for this follow view", b);
+                }
+            }
+            haveClientPrev = true;
+        }
+    }
+}
+
 static void appTickSim(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
     /* serverSimTick internally runs the keys + game half-steps that
      * make up one 20ms frame. */
     serverSimTick(app->sim);
+
+    allianceMatrixAudit(app);
 
     if (!app->freeCamera && app->followBot < MAX_TANKS) {
         WORLD wx, wy;
@@ -5437,6 +5613,22 @@ int main(int argc, char *argv[]) {
     app.freeCamera = false;
     app.showHUD = false;
     app.speedIndex = DEFAULT_SPEED_INDEX;
+    if (optSpeedMs > 0) {
+        /* Snap the requested cadence to the closest preset. On a tie between
+         * two presets pick the faster one (fewer ms), matching the intent of
+         * a benchmark flag that asks to run as fast as the requested value. */
+        int best = 0;
+        int bestDiff = abs(SPEED_PRESETS[0] - optSpeedMs);
+        for (int s = 1; s < NUM_SPEED_PRESETS; s++) {
+            int diff = abs(SPEED_PRESETS[s] - optSpeedMs);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = s;
+            }
+        }
+        app.speedIndex = best;
+        printf("speed-ms: using %d ms/tick preset\n", SPEED_PRESETS[best]);
+    }
     /* Pre-allocate the recording buffers (delta scratchpads etc.) up
      * front; per-frame storage grows on demand inside recordingCapture. */
     recordingInit(&app.recording);
@@ -5736,6 +5928,10 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         serverSimRequestBotThreads(app.sim, desired_threads);
+        /* --no-bot-kill: hand bots an uncapped think budget so the deadline
+         * count hook never fires — each runs its full tier every tick (the tick
+         * just takes longer) instead of being aborted mid-think and throttled. */
+        if (optNoBotKill) botManagerSetSlowMoDebug(1);
     }
     /* Pre-think hook needs the per-sim BotManager; install it now that
      * app.sim exists. Bots have not been added yet, so no tick can fire
@@ -5763,6 +5959,7 @@ int main(int argc, char *argv[]) {
      * (debug-mode dev runs already force it on inside the handler), so the "P"
      * replay window has pool-breakdown data. */
     luaBrainsSetProfile(effProfile, effProfileLog, /*pool_viz*/ effProfileLog);
+    luaBrainsSetInstrProfile(optInstrProfile);
     luaBrainsSetLogJson(effLogJson);
     /* Dev tool: brains run unsandboxed unless --safe-brains is passed. */
     luaBrainsSetAllowUnsafe(!optSafeBrains);
@@ -5800,6 +5997,13 @@ int main(int argc, char *argv[]) {
     }
     /* Land any later crash trace in the session dir (cwd if none). */
     crashHandlerSetOutputDir(g_sessionDir[0] ? g_sessionDir : NULL);
+    /* [ALLY-AUDIT] durable log — <sessionDir>/ally_audit.log — and the SDL
+     * log tee that mirrors players.c mutation lines into it. */
+    allyAuditOpen(g_sessionDir);
+    if (g_allyAuditFile) {
+        fprintf(stderr, "  Ally audit: %s/ally_audit.log\n",
+                g_sessionDir[0] ? g_sessionDir : ".");
+    }
     /* When --record-panels is on, per-panel JSON snapshots go in a
      * panels/ subfolder of the session dir. */
     if (g_panelRecordEnabled && g_sessionDir[0]) {
@@ -5838,13 +6042,13 @@ int main(int argc, char *argv[]) {
             if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
                 brainName[bl-1] = '\0';
         }
-        /* Strip a trailing version suffix ("GoalHunter_1.5" -> "GoalHunter")
+        /* Strip a trailing version suffix ("GoalHunter_1.6" -> "GoalHunter")
          * so panel-type namespacing ("<brain>:<type>") matches the renderers'
          * fixed "GoalHunter:" prefix across the versioned brain dirs from the
          * 1.0/1.5 split. Only strips when the chars after the last '_' are
          * version-like (start with a digit), so a brain whose real name
          * contains an underscore is left alone. Also keeps the namespaced type
-         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.5:
+         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.6:
          * pool_grid" to "...pool_gri". */
         {
             char *us = NULL;
@@ -6299,10 +6503,23 @@ int main(int argc, char *argv[]) {
                     if (g_showLoadBrowser) scanSessions();
                     break;
                 case SDLK_L:
-                    /* HUD layout edit: L toggles lock/unlock (locking saves);
-                     * Shift+L resets all overrides to the brain defaults. */
+                    /* L: HUD layout edit toggle (locking saves) — edit mode also
+                     *    labels every HUD overlay with its viz id.
+                     * Shift+L: toggle labelling of ALL map-based (non-HUD)
+                     *    overlays (the label_overlays viz layer). */
                     if (ev.key.mod & SDL_KMOD_SHIFT) {
-                        /* Destructive — confirm before wiping all overrides. */
+                        int idx = vizRegistryFind("label_overlays");
+                        if (idx >= 0) { vizFlagFlip(idx); app.overlayDirty = true; }
+                    } else {
+                        g_hudEdit = !g_hudEdit;
+                        if (!g_hudEdit) { hudLayoutSave(); g_hudDrag = -1; }
+                    }
+                    break;
+                case SDLK_R:
+                    /* Shift+R: reset all HUD overlay positions back to the brain
+                     * defaults (destructive — confirm first). Moved off Shift+L,
+                     * which now toggles map-overlay labels. */
+                    if (ev.key.mod & SDL_KMOD_SHIFT) {
                         const SDL_MessageBoxButtonData btns[] = {
                             { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT
                               | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel" },
@@ -6320,9 +6537,6 @@ int main(int argc, char *argv[]) {
                             g_hudDrag = -1;
                             hudLayoutSave();   /* truncates the file to empty */
                         }
-                    } else {
-                        g_hudEdit = !g_hudEdit;
-                        if (!g_hudEdit) { hudLayoutSave(); g_hudDrag = -1; }
                     }
                     break;
                 case SDLK_ESCAPE:

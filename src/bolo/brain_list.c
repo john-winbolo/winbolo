@@ -114,7 +114,7 @@ static const BrainListEntry *g_brainListSortBase = NULL;
 
 /* Split "Name_<ver>" into base ("Name") + numeric version (1.5). No trailing
  * _<digit> suffix → version 0 and the whole name as base. Lets the catalogue
- * list NEWER versions of the same brain first (GoalHunter_1.5 before _1.0). */
+ * list NEWER versions of the same brain first (GoalHunter_1.6 before _1.0). */
 static double brainListSplitVersion(const char *name, char *base, size_t baseSz) {
     const char *us = strrchr(name, '_');
     if (us && us[1] >= '0' && us[1] <= '9') {
