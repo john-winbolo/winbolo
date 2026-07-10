@@ -201,6 +201,7 @@ static const VizMeta kVizMeta[] = {
     /* Threat / coverage */
     {"coverage_grid", VCAT_THREAT, false},   {"pill_threat_overlay", VCAT_THREAT, false},
     {"friendly_pill_shield", VCAT_THREAT, false},
+    {"demine_scan", VCAT_THREAT, false},     {"trepair_scan", VCAT_THREAT, false},
     /* Influence / circles */
     {"circles", VCAT_CIRCLES, false},        {"circles_hud", VCAT_CIRCLES, true},
     {"circle_trend", VCAT_CIRCLES, false},   {"reinforce_link", VCAT_CIRCLES, false},

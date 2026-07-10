@@ -58,9 +58,12 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # into the Mach-O load command so dyld refuses to launch on older macOS.
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
     string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
+    # Marketing/human-facing strings carry the display suffix (e.g. "2.02a")
+    # so Finder and the About panel match the rest of the UI. CFBundleVersion
+    # is the build number macOS treats as monotonic, so keep it numeric.
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_DISPLAY_VERSION}")
     set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
-    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_DISPLAY_VERSION}")
     set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
 
@@ -567,7 +570,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -613,7 +616,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.5"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.6"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -691,6 +694,7 @@ target_compile_definitions(WinBoloIOS PRIVATE
     HAVE_SCREEN_C=1
     __IPHONEOS__=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1195,6 +1199,7 @@ target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1444,17 +1449,17 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.5"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.6"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.5
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.6
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
     COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0"
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
         -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts (GoalHunter_1.5 + _1.0) to output Brains/ directory (excludes *.md)"
+    COMMENT "Copying brain scripts (GoalHunter_1.6 + _1.0) to output Brains/ directory (excludes *.md)"
 )
 
 # Steam Input action manifest + per-controller binding files — Steam reads
@@ -1599,6 +1604,7 @@ target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1753,8 +1759,8 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.5"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.6"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
         "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.0"
@@ -1871,6 +1877,7 @@ add_executable(LogViewer
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1998,6 +2005,7 @@ target_sources(WinBoloHeadless PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloHeadless PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2060,8 +2068,8 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.5"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.6"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
         "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.0"
@@ -2115,6 +2123,7 @@ target_compile_definitions(winbolo_gym PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_GYM_EXPORTS=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2243,6 +2252,7 @@ target_sources(BrainTest PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(BrainTest PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2287,8 +2297,8 @@ add_custom_command(TARGET BrainTest POST_BUILD
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.5"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.6"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
         "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.0"
@@ -2367,6 +2377,7 @@ target_sources(MapEditor PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(MapEditor PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2567,10 +2578,10 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.5"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.6"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.5
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.6
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.6
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
     COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.0"
     COMMAND ${CMAKE_COMMAND}
@@ -3065,6 +3076,7 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3601,6 +3613,7 @@ if(WB_FUZZ)
     target_compile_definitions(fuzz_server_dispatch PRIVATE
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
         WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
         WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
         WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3644,6 +3657,7 @@ if(WB_FUZZ)
     target_compile_definitions(fuzz_client_snapshot PRIVATE
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
         WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
         WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
         WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3686,6 +3700,7 @@ if(WB_FUZZ)
     target_compile_definitions(fuzz_join_accept PRIVATE
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
         WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
         WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
         WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"

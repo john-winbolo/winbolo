@@ -2447,6 +2447,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
          * dodge around it this tick and rejoin the gradient. */
         if (obs_contains(obstacles, n_obstacles, nnx, nny)) {
           float best_eff = COST_INF;
+          float best_d2  = 1e30f;
           for (int d = 0; d < 8; d++) {
             int ax = sx + DX8[d], ay = sy + DY8[d];
             if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
@@ -2455,7 +2456,16 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
             float g  = (gb < gl) ? gb : gl;
             if (g >= COST_INF) continue;
             float eff = g + (obs_contains(obstacles, n_obstacles, ax, ay) ? penalty : 0.0f);
-            if (eff < best_eff) { best_eff = eff; nnx = ax; nny = ay; }
+            /* Goal-directed tie-break: on (near-)equal effective cost prefer the
+             * tile nearer the destination, so a flat field drifts TOWARD the goal
+             * instead of toward whatever compass dir the scan (N,NE,E,SE,S,SW,W,NW)
+             * happens to hit first. Without this, ties silently resolve E-before-SW
+             * etc., sending the tank away from the goal. */
+            float d2 = (float)((ax - dx) * (ax - dx) + (ay - dy) * (ay - dy));
+            if (eff < best_eff - 1e-3f ||
+                (eff < best_eff + 1e-3f && d2 < best_d2)) {
+              best_eff = eff; best_d2 = d2; nnx = ax; nny = ay;
+            }
           }
         }
         if (out_next_x) *out_next_x = nnx;
@@ -2473,6 +2483,7 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     if (my_g >= COST_INF) continue; /* tank position not reached by this slate */
 
     float best_g = my_g;
+    float best_d2 = 1e30f;
     int best_nx = -1, best_ny = -1;
     for (int d = 0; d < 8; d++) {
       int nx = sx + DX8[d];
@@ -2485,8 +2496,14 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       /* Live-obstacle veer (same as the on-path case): treat occupied tiles as
        * far more expensive so the drifted tank routes around them too. */
       float ng_eff = ng + (obs_contains(obstacles, n_obstacles, nx, ny) ? penalty : 0.0f);
-      if (ng_eff < best_g) {
+      /* Goal-directed tie-break (same rationale as the on-path case): among
+       * neighbours cheaper than our own tile, prefer the one nearest the goal so
+       * ties don't resolve by fixed compass order. */
+      float d2 = (float)((nx - dx) * (nx - dx) + (ny - dy) * (ny - dy));
+      if (ng_eff < best_g - 1e-3f ||
+          (best_nx >= 0 && ng_eff < best_g + 1e-3f && d2 < best_d2)) {
         best_g = ng_eff;
+        best_d2 = d2;
         best_nx = nx;
         best_ny = ny;
       }

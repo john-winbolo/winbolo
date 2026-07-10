@@ -118,6 +118,12 @@ void luaBrainsSetProfile(int profile, int profile_log, int pool_viz) {
     s_pool_viz    = pool_viz    ? 1 : 0;
 }
 
+/* Set by --instr-profile. Captured as the BRAIN_INSTR_PROFILE Lua global at
+ * brain init; when set, GoalHunter arms its sampling profiler around think. */
+static int s_instr_profile = 0;
+
+void luaBrainsSetInstrProfile(int enabled) { s_instr_profile = enabled ? 1 : 0; }
+
 /* Set by --log-json (or always-on in dev mode). Captured as
  * BRAIN_LOG_JSON Lua global at brain init. */
 static int s_log_json = 0;
@@ -1075,6 +1081,9 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, s_profile_log);
   lua_setglobal(L, "BRAIN_PROFILE_LOG");
 
+  lua_pushboolean(L, s_instr_profile);
+  lua_setglobal(L, "BRAIN_INSTR_PROFILE");
+
   /* BRAIN_LOG_JSON drives the brain's JSONL behavior log. Force it on
    * whenever debug mode is on — there's no scenario where you'd want
    * debug logging without the structured trace too. _JSONL_LOGGER_ENABLED
@@ -1374,6 +1383,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   }
   brainDataExtractInfo(cs, &inst->bInfo);
 
+  /* Install the per-think allocation counter now that every early-exit
+   * lua_close path is behind us, so a failed create can't leak the
+   * counter context. Deliberately after brain.open — script load and
+   * open-time allocations are not part of the per-think churn we measure. */
+  brainCoreInstallAllocCounter(L);
+
   inst->L = L;
   inst->running = true;
   return true;
@@ -1464,6 +1479,11 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
 
   overlayCmdBufferDestroy(&inst->overlay);
   inst->overlayPtr = NULL;
+
+  /* Restore the original allocator and free the counter context before
+   * tearing down the state, so the wrapper isn't left pointing at freed
+   * memory during lua_close's final sweep. */
+  brainCoreUninstallAllocCounter(inst->L);
 
   lua_close(inst->L);
   inst->L = NULL;

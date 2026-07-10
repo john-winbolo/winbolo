@@ -222,13 +222,13 @@ static bool iconLeadingButton(const char *label, SDL_Texture *tex) {
 
 
 static int formatShortVer(char *buf, size_t buflen) {
-    return SDL_snprintf(buf, buflen, "WinBolo v%s", WINBOLO_VERSION);
+    return SDL_snprintf(buf, buflen, "WinBolo v%s", WINBOLO_DISPLAY_VERSION);
 }
 
 static int formatFullVer(char *buf, size_t buflen) {
     return SDL_snprintf(buf, buflen,
                         "WinBolo v%s \xC2\xB7 %s \xC2\xB7 %s",
-                        WINBOLO_VERSION, WINBOLO_GIT_HASH, WINBOLO_BUILD_DATE);
+                        WINBOLO_DISPLAY_VERSION, WINBOLO_GIT_HASH, WINBOLO_BUILD_DATE);
 }
 
 /* imgui_markdown link callback. Only http/https URLs are passed to the

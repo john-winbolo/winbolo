@@ -294,7 +294,16 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   } else {
     value->base = (ObjectInfo*) malloc(sizeof(ObjectInfo));
     value->base->object = OBJECT_REFBASE;
-    value->base->idnum = closeBase;
+    /* basesGetClosest returns a 1-BASED base number (not-found = 254 works
+     * out of returnValue+1); basesGetBrainBaseItem below expects that and
+     * decrements internally. The idnum handed to the brain, however, must be
+     * 0-based like every other object id in the feed — passing it through
+     * unconverted made the brain stamp "seen first-hand" stock/last_seen
+     * onto base N+1: parked at base #10, bot0 refreshed base #11 across the
+     * map every tick, so capture_base #11 appeared out of nowhere and the
+     * phantom sighting was even KW-broadcast to allies (20260704_092654
+     * t=1665/1710). */
+    value->base->idnum = (BYTE)(closeBase - 1);
     basesGetBrainBaseItem(gs, closeBase, &(value->base->x), &(value->base->y), &(value->base->info), &(value->base_shells), &(value->base_mines), &(value->base_armour));
     value->base->direction = value->base_armour;
   }

@@ -502,6 +502,27 @@ double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
                                        int activeBots);
 
 /*********************************************************
+ *NAME:          botManagerSetSlowMoDebug / botManagerGetSlowMoDebug
+ *PURPOSE:
+ *  BrainTest "slow-motion" debug mode. When enabled, every
+ *  brain.think() is handed an oversized per-tick budget, so it
+ *  runs its full capacity tier and is never truncated by the
+ *  budget hook, and the consecutive-crash kick is suppressed so
+ *  a crashing / over-budget bot stays in the game for
+ *  inspection instead of being removed.
+ *
+ *  Default OFF. The real game / WinBoloDS never enables it, so
+ *  production timing and behaviour are unchanged — this only
+ *  affects a host that explicitly turns it on (BrainTest). The
+ *  matching wall-clock slowdown is paced by the host's tick
+ *  scheduler, not here.
+ *
+ *  Process-global (a debug toggle, not per-sim game state).
+ *********************************************************/
+void botManagerSetSlowMoDebug(int on);
+int  botManagerGetSlowMoDebug(void);
+
+/*********************************************************
  *NAME:          botManagerFlushBrainLogs
  *PURPOSE:
  *  Invokes each active bot brain's _G.__brain_flush_logs()
@@ -566,6 +587,34 @@ bool botManagerHasAnyBot(const struct ServerSim *sim);
  *********************************************************/
 bool botManagerGetBotInfo(const struct ServerSim *sim, BYTE playerNum,
                           BotInfo *out);
+
+/*********************************************************
+ *NAME:          botManagerGetClientAllieRow
+ *PURPOSE:
+ *  [ALLY-AUDIT] support: one row of a bot's CLIENT-side alliance
+ *  matrix (cs->sim.plyrs->item[row].allie) — the matrix the tank
+ *  renderer actually reads (client_render → playersMakeScreenTanks),
+ *  as opposed to the server matrix. Returns 0 when the bot/row
+ *  doesn't exist.
+ *
+ *ARGUMENTS:
+ *  botPlayer - Bot slot whose ClientSim to read
+ *  row       - Player row within that client's matrix
+ *********************************************************/
+uint32_t botManagerGetClientAllieRow(const struct ServerSim *sim,
+                                     BYTE botPlayer, BYTE row);
+
+/*********************************************************
+ *NAME:          botManagerSyncClientAlliances
+ *PURPOSE:
+ *  Copies the SERVER alliance matrix into every in-process bot
+ *  ClientSim's players object. The tank renderer colours sprites
+ *  from the followed bot's CLIENT-side matrix; if that copy misses
+ *  the CTRL_ALLIANCE_RESET at startup, allies render as red enemies.
+ *  Called by serverSimReapplyTeamAlliances after publishing the
+ *  control event (which remains the path for remote clients).
+ *********************************************************/
+void botManagerSyncClientAlliances(struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerGetPoolStats

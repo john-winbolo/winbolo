@@ -281,6 +281,7 @@ target_compile_definitions(winbolo PRIVATE
     USE_64WITH32
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -396,7 +397,7 @@ target_link_options(winbolo PRIVATE
     ${WASM_DATA_PRELOAD}
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
-    "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.5@/Brains/GoalHunter_1.5"
+    "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.6@/Brains/GoalHunter_1.6"
     # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
     # EM_ASYNC_JS fetch transport to hand response bodies back to C.
     "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel']"
