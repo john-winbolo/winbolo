@@ -505,7 +505,7 @@ extern "C" int imguiWelcomeShow(void) {
             /* Mirror the version label's own placement so the icons tuck just
              * to its left and share its vertical centre. */
             char shortVer[32];
-            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
+            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
             float verX = (float)winW - verSize.x - margin;
             float verY = (float)winH - verSize.y - margin;
@@ -552,7 +552,7 @@ extern "C" int imguiWelcomeShow(void) {
          * black drop shadow keeps the text legible over varied terrain. */
         {
             char shortVer[32];
-            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
+            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_DISPLAY_VERSION);
 
             ImVec2 verSize = ImGui::CalcTextSize(shortVer);
             const float margin = 12.0f * s;

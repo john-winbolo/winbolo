@@ -1477,7 +1477,7 @@ int main(int argc, char **argv) {
              "WinBolo Server - v%s\n"
              "Copyright 1998-2026 John Morrison\n"
              "Bolo Copyright 1987-1995 Stuart Cheshire",
-             WINBOLO_VERSION);
+             WINBOLO_DISPLAY_VERSION);
     serverMessageConsoleMessage(serverSim, banner);
   }
   if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
