@@ -75,6 +75,12 @@ void brainCoreRegisterVizDetail(struct lua_State *L);
 bool brainCoreCallThink(struct lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(struct lua_State *L, BrainInfo *info, const char *method);
 
+/* Per-think Lua allocation counter (braincore.c). Install swaps in a
+ * counting allocator after brain.open; Uninstall must run before
+ * lua_close so the counter context is freed. */
+void brainCoreInstallAllocCounter(struct lua_State *L);
+void brainCoreUninstallAllocCounter(struct lua_State *L);
+
 /* ---- ONNX ML brain (ml_brain.c) ----
  *
  * All three functions are no-ops when compiled without
