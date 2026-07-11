@@ -2,18 +2,48 @@
 --
 -- The brains are written in a Lua 5.1 subset (no `&|~<<>>` operators, no `//`)
 -- so they load unmodified on both LuaJIT (Lua 5.1) and PUC-Lua 5.x. Bit ops go
--- through this module:
---   * On LuaJIT (and any Lua with the `bit` library), return the builtin — it
---     JIT-compiles and is as fast as the operators were.
---   * Otherwise (PUC-Lua 5.x), fall back to a pure-arithmetic 32-bit polyfill.
+-- through this module. Resolution order:
 --
--- Both sides use signed 32-bit semantics, matching LuaJIT, so results agree
--- across VMs (the brains' bit usage is small coordinate/index packing, well
--- within 32 bits). No 5.3+ operators appear here, so it parses on every Lua.
+--   1. LuaJIT (or any Lua exposing the `bit` library) -> return the builtin. It
+--      JIT-compiles and is as fast as the operators were. Signed 32-bit.
+--   2. PUC-Lua 5.3+ -> the NATIVE `& | ~ << >>` operators, loaded from a string
+--      so this file still PARSES on 5.1. These are 64-bit-integer semantics —
+--      BIT-EXACT with the operators the brain source used before the down-
+--      conversion, so bot behaviour on PUC-Lua matches the pre-conversion 5.4
+--      brain exactly (and runs at native speed, not the polyfill's per-bit loop).
+--   3. Older PUC-Lua (5.1/5.2, no `bit` lib) -> pure-arithmetic 32-bit polyfill.
+--
+-- No 5.3+ operator tokens appear at file scope, so it parses on every Lua.
 
 local ok, jbit = pcall(require, "bit")
 if ok and jbit then return jbit end
 
+-- PUC-Lua 5.3+: use the native bitwise operators. They can't appear literally in
+-- this file (it must parse under 5.1/LuaJIT), so build them from a string that
+-- is only ever compiled on a VM whose parser accepts them. `>>` is a logical
+-- shift over the 64-bit integer, matching what the brain's `>>` did natively.
+local loader = loadstring or load
+if loader then
+  local chunk = loader([[
+    return {
+      tobit   = function(a)    return a end,
+      band    = function(a, b) return a & b end,
+      bor     = function(a, b) return a | b end,
+      bxor    = function(a, b) return a ~ b end,
+      bnot    = function(a)    return ~a end,
+      lshift  = function(a, n) return a << n end,
+      rshift  = function(a, n) return a >> n end,
+      arshift = function(a, n) return a >> n end,
+    }
+  ]])
+  if chunk then
+    local okc, native = pcall(chunk)
+    if okc and type(native) == "table" then return native end
+  end
+end
+
+-- Fallback: pure-arithmetic 32-bit polyfill (plain 5.1, no bit lib). Signed
+-- 32-bit semantics; only exact for values within 32 bits.
 local floor = math.floor
 local TWO32 = 4294967296
 local TWO31 = 2147483648
