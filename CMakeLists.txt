@@ -98,7 +98,13 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.10
+    # 3.4.12 fixes a use-after-free in the audio-device disconnect path
+    # (libsdl-org/SDL#14856, commits 39aff4c9 + 6a854e03): a queued
+    # main-thread callback held a raw SDL_AudioDevice pointer, and a stale
+    # run could free the device while its audio thread was still converting
+    # stream data -> EXCEPTION_ACCESS_VIOLATION_READ in
+    # SDL_Convert_S16_to_F32_SSE2 (Sentry crash on Windows, WinBolo 2.02).
+    GIT_TAG        release-3.4.12
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
