@@ -27,6 +27,8 @@
 
 /* Includes */
 #include <math.h>
+#include <stdio.h>
+#include <stdarg.h>
 #ifdef _WIN32
 #  include <winsock2.h>
 #else
@@ -59,6 +61,22 @@ static LogViewerState *g_lv = NULL;
 
 void lv_screenSetState(LogViewerState *lv) { g_lv = lv; }
 LogViewerState *lv_screenGetState(void) { return g_lv; }
+
+/* TEMP diagnostic: append a line to lv_debug.txt (truncated on first write of a
+ * run). Used to correlate attribution ticks with real playback times. Remove. */
+void lvDebugLog(const char *fmt, ...) {
+  static FILE *dbg = NULL;
+  va_list ap;
+  if (dbg == NULL) {
+    dbg = fopen("lv_debug.txt", "w");
+    if (dbg == NULL) return;
+  }
+  va_start(ap, fmt);
+  vfprintf(dbg, fmt, ap);
+  va_end(ap);
+  fputc('\n', dbg);
+  fflush(dbg);
+}
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
@@ -888,6 +906,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       lv_basesSetOwner(&g_lv->bs, opt1, opt2, opt3);
+      { base bi; lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(opt1 + 1));
+        lvDebugLog("EVENT ms=%u BASE_OWNER idx=%u p2=%u p3=%u cell=%u,%u",
+                   g_lv->timeRunning, opt1, opt2, opt3, bi.x, bi.y); }
       break;
     case log_BaseSetStock:
       logReadBytes(&opt1, 1);
@@ -938,6 +959,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       lv_pillsSetPillOwner(&g_lv->pb, opt1, opt2, opt3);
+      lvDebugLog("EVENT ms=%u PILL_OWNER idx=%u p2=%u p3=%u",
+                 g_lv->timeRunning, opt1, opt2, opt3);
       break;
     case log_PillSetPlace:
       logReadBytes(&opt1, 1);
@@ -958,6 +981,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
+      lvDebugLog("EVENT ms=%u KILL victim=%u killer=%u",
+                 g_lv->timeRunning, opt1, opt2);
       lv_playersGetPlayerName(opt1, mem);
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
@@ -1044,6 +1069,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_LobbyExit:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_GAME_STARTED, NULL);
+      lvDebugLog("EVENT ms=%u LOBBY_EXIT (game start)", g_lv->timeRunning);
       break;
     case log_PlayerReady:
       logReadBytes(&opt1, 1);
@@ -1786,6 +1812,203 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
   return (uint32_t)(ticks * 20);
 }
 
+/* Playback time (ms) of the log's game-start marker (log_LobbyExit), computed
+ * once at load. 0 when the log has no lobby, so the game runs from tick 0. */
+static uint32_t s_gameStartMs = 0;
+
+/* Like walkSkipEvents, but also reports whether this frame carried the
+ * log_LobbyExit (game-start) marker. */
+static bool walkScanEvents(unsigned short numEvents, bool *sawLobbyExit) {
+  unsigned short i;
+  BYTE code;
+  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+  for (i = 0; i < numEvents; i++) {
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    if (code == log_LobbyExit) *sawLobbyExit = TRUE;
+    if (isV2) {
+      BYTE lenBytes[2];
+      unsigned short evLen;
+      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
+    } else {
+      if (walkSkipEventBody(code) < 0) return FALSE;
+      lv_blocksSetKey(code);
+    }
+  }
+  return TRUE;
+}
+
+/* Walk the log from the current position to the first log_LobbyExit, counting
+ * 20ms ticks, and return that marker's playback time in ms — the lobby length
+ * that clip times are offset by. 0 if the log has no lobby marker. Mirrors
+ * lv_walkComputeTotalTimeMs; must be entered at the event-stream start (as at
+ * load). Saves and restores logPosition + XOR key. */
+static uint32_t lv_walkComputeGameStartMs(void) {
+  size_t   savedPos = lv_logGetCurrentPosition();
+  BYTE     savedKey = lv_blocksGetKey();
+  uint64_t ticks    = 0;
+  bool     done     = FALSE;
+  bool     found    = FALSE;
+  BYTE     code, b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+  uint32_t result = 0;
+
+  while (!done && !found && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        if (!walkScanEvents(numEvents, &found)) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        if (!walkScanEvents(numEvents, &found)) { done = TRUE; break; }
+        ticks++;
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  if (found) result = (uint32_t)(ticks * 20);
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+  return result;
+}
+
+/* Log time (ms) at which the game started (lobby ended); 0 if no lobby. */
+uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
+
+/* Scan one v2 LOG_EVENT frame for base-ownership gains, updating the first-seen
+ * time at cell (xE,yE) and the last-seen time at cell (xL,yL). Base positions
+ * are static (from the snapshot), so the cell is resolved from the base index. */
+static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
+                               uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
+                               uint32_t *msE, bool *haveE,
+                               uint32_t *msL, bool *haveL) {
+  unsigned short i;
+  for (i = 0; i < numEvents; i++) {
+    BYTE code, lenBytes[2];
+    unsigned short evLen;
+    size_t payloadStart;
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+    evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+    payloadStart = lv_logGetCurrentPosition();
+    if (code == log_BaseSetOwner && evLen >= 2) {
+      BYTE idx, owner;
+      if (logReadBytes(&idx, 1) == 1 && logReadBytes(&owner, 1) == 1 &&
+          owner < MAX_TANKS) {
+        base bi;
+        lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(idx + 1));
+        if (!*haveE && bi.x == xE && bi.y == yE) { *msE = frameMs; *haveE = true; }
+        if (bi.x == xL && bi.y == yL) { *msL = frameMs; *haveL = true; }
+      }
+    }
+    lv_logSetPosition(payloadStart + evLen);
+  }
+  return TRUE;
+}
+
+/* Calibration anchors: return the playback ms of the FIRST base-ownership gain
+ * at cell (xE,yE) and the LAST gain at (xL,yL). Pairs the attribution track's
+ * first/last base captures to their real scrubber times so the tick->ms line
+ * can be fitted. v2 logs only (framed events); false otherwise or if either
+ * anchor is missing. Saves/restores position + key; enter at the stream start. */
+bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
+                               uint32_t *outMsE, uint32_t *outMsL) {
+  size_t   savedPos;
+  BYTE     savedKey;
+  uint64_t ticks = 0;
+  bool     done = FALSE, haveE = FALSE, haveL = FALSE;
+  uint32_t msE = 0, msL = 0;
+  BYTE     code, b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+
+  if (g_lv == NULL || g_lv->loadedLogVersion != LOG_VERSION_V2) return FALSE;
+  savedPos = lv_logGetCurrentPosition();
+  savedKey = lv_blocksGetKey();
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        ticks++;
+        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20), xE, yE, xL, yL,
+                                &msE, &haveE, &msL, &haveL)) { done = TRUE; break; }
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        ticks++;
+        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20), xE, yE, xL, yL,
+                                &msE, &haveE, &msL, &haveL)) { done = TRUE; break; }
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+  if (haveE && haveL) { *outMsE = msE; *outMsL = msL; return TRUE; }
+  return FALSE;
+}
+
 // Memory size in MB
 bool lv_logLoad(char *fileName, int memoryBufferSize) {
   char id[LENGTH_ID+1]; /* The map ID Should read "BMAPBOLO" */
@@ -1903,6 +2126,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
      * one-shot walk is the only way to get accurate total/remaining
      * before a player joins. */
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
+    s_gameStartMs = lv_walkComputeGameStartMs();
     /* Set the game information up */
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
@@ -2036,6 +2260,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   if (returnValue == TRUE) {
     lv_logDecompressAll();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
+    s_gameStartMs = lv_walkComputeGameStartMs();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
@@ -2538,6 +2763,36 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
   g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
   lv_screenUpdate(redraw);
+}
+
+/* Centre the game view on a map cell, clamped so the offset stays in range
+ * (xOffset/yOffset are unsigned tile indices). */
+void lv_screenCentreOnCell(int mapX, int mapY) {
+  int cx, cy;
+  if (g_lv->logLoaded == FALSE) {
+    return;
+  }
+  cx = mapX - (g_lv->screenSizeX / 2);
+  cy = mapY - (g_lv->screenSizeY / 2);
+  if (cx < 0) cx = 0;
+  if (cy < 0) cy = 0;
+  if (cx > 255) cx = 255;
+  if (cy > 255) cy = 255;
+  g_lv->xOffset = (BYTE)cx;
+  g_lv->yOffset = (BYTE)cy;
+  lv_screenUpdate(redraw);
+}
+
+/* Seek to an absolute log time in ms, reusing the ratio-based scrubber seek. */
+void lv_screenSeekToTimeMs(uint32_t ms) {
+  uint32_t total = g_lv->totalTimeMs;
+  if (total == 0) {
+    return;
+  }
+  if (ms > total) {
+    ms = total;
+  }
+  lv_screenSeekToPosition((float)ms / (float)total);
 }
 
 void lv_screenMouseInformationClick(int xPos, int yPos) {

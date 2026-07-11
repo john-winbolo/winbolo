@@ -558,6 +558,9 @@ void lv_screenSetSubOffset(int x, int y);
 void lv_screenPanToTotalPixels(int totalPxX, int totalPxY);
 
 void lv_windowAddEvent(int eventType, char *msg);
+/* Add a clickable highlight line: clicking it in the events panel seeks a few
+ * seconds before seekMs and centres the game view on the (mapX,mapY) cell. */
+void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY);
 void lv_windowStop(int corruptLog);
 void lv_finished();
 
@@ -576,6 +579,26 @@ void lv_screenGetMapName(char *dest);
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
 void lv_screenSeekToPosition(float ratio);
+
+/* Log playback time (ms) at which the game started (the lobby ended); 0 when the
+ * log has no lobby. Attribution/highlight ticks are game-relative, so this is the
+ * offset that maps them onto the scrubber's absolute clock. Computed at load. */
+uint32_t lv_screenGameStartMs(void);
+
+/* Calibration anchors for mapping attribution ticks to scrubber ms: the first
+ * base-ownership gain at cell (xE,yE) and the last at (xL,yL). v2 logs only;
+ * false if unavailable. Lets the highlight times/seeks be fitted per log. */
+bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
+                               uint32_t *outMsE, uint32_t *outMsL);
+
+/* TEMP diagnostic sink (lv_debug.txt); remove with the correlation logging. */
+void lvDebugLog(const char *fmt, ...);
+
+/* Seek playback to an absolute log time in ms (clamped to the log length). */
+void lv_screenSeekToTimeMs(uint32_t ms);
+
+/* Centre the game view on a map cell (mapX,mapY). */
+void lv_screenCentreOnCell(int mapX, int mapY);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
  * lv_screenStreamPump only appends the arriving bytes and never auto-advances to

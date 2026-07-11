@@ -148,6 +148,7 @@ int run_highlights_award_anchor(void);
 int run_highlights_selection(void);
 int run_highlights_lead_in(void);
 int run_highlights_empty(void);
+int run_lv_stats_clip_time_format(void);
 int run_attribution_track_schema(void);
 int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);

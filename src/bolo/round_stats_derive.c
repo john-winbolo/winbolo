@@ -361,6 +361,7 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
 #define HL_WIPE_TEAM_BONUS       50    /* added when all the dead share a team */
 #define HL_STEAL_WEIGHT          60
 #define HL_STEAL_ENDGAME_BONUS   60    /* scaled by how late in the round it lands */
+#define HL_STEAL_DEDUP_TICKS     500   /* one steal clip per contested cell in this span */
 #define HL_AWARD_WEIGHT          120   /* award anchors are highest-confidence */
 #define HL_LEADIN_TILE_RADIUS    6
 #define HL_LEADIN_MAX_GAP        60    /* stop the lead-in on a gap this big */
@@ -636,6 +637,20 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
             if (timeline[i].type != NOTABLE_PILL_CAPTURE &&
                 timeline[i].type != NOTABLE_BASE_CAPTURE) continue;
             if (timeline[i].captureClass != ATTR_CAP_ENEMY) continue;
+            /* Collapse a rapidly re-contested objective: skip if a steal was
+             * already emitted for this same cell within the dedup window, so a
+             * base flipping several times in a couple of seconds is one clip. */
+            bool dup = false;
+            for (int k = 0; k < candCount; k++) {
+                if (cands[k].type == HL_OBJECTIVE_STEAL &&
+                    cands[k].mapX == timeline[i].mapX &&
+                    cands[k].mapY == timeline[i].mapY &&
+                    timeline[i].tick - cands[k].startTick < HL_STEAL_DEDUP_TICKS) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) continue;
             uint32_t bonus = (uint32_t)((uint64_t)HL_STEAL_ENDGAME_BONUS *
                                         (timeline[i].tick - firstTick) / span);
             c.anchorIdx = i;

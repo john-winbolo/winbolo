@@ -190,6 +190,10 @@ void lv_windowAddEvent(int eventType, char *msg) {
     lv_imgui_events_add(eventType, msg);
 }
 
+void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
+    lv_imgui_events_add_highlight(msg, seekMs, mapX, mapY);
+}
+
 /* Remove events that are ahead of the given playback time (during rewind/seek). */
 void lv_windowRemoveEventsAfter(uint32_t timeMs) {
     lv_imgui_events_remove_after(timeMs);
@@ -393,7 +397,7 @@ void lv_windowOpenFile(char *cmdLine) {
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
-            lvStatsEmitAwards();
+            lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
     }
@@ -1190,7 +1194,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
-            lvStatsEmitAwards();
+            lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
         s_pendingZipData = NULL;

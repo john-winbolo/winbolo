@@ -16,8 +16,9 @@
  *Name:          Log Viewer Round Stats
  *Filename:      lv_stats.c
  *Purpose:
- *  Rebuild a loaded log's per-round stats from its attribution
- *  track and emit the computed awards as events-panel lines.
+ *  Rebuild a loaded log's per-round stats and notable timeline
+ *  from its attribution track, then emit the computed awards and
+ *  the selected highlights as events-panel lines.
  *********************************************************/
 
 #include "lv_stats.h"
@@ -29,8 +30,11 @@
 #include "attribution_track.h"       /* AttrTrackHeader, AttrSlotIdentity */
 #include "backend.h"                 /* lv_windowAddEvent */
 #include "lv_attribution.h"          /* lvAttributionGetHeader / GetRecords */
-#include "round_stats.h"             /* PlayerRoundStats, AwardResult, AwardId */
-#include "round_stats_derive.h"      /* roundStatsApplyRecord, computeAwards */
+#include "round_stats.h"             /* PlayerRoundStats, AwardResult, HighlightWindow */
+#include "round_stats_derive.h"      /* roundStatsApplyRecord, computeAwards, computeHighlights */
+
+/* Cap on highlight lines shown per loaded log. */
+#define LV_HIGHLIGHTS_SHOWN 12
 
 /* Award id -> display name, indexed by AwardId (1..AWARD_COUNT); slot 0 unused.
  * A local table keeps this self-contained: the standalone viewer does not link
@@ -78,15 +82,27 @@ static void formatSlotName(const AttrTrackHeader *header, int slot, char *out,
   }
 }
 
-void lvStatsEmitAwards(void) {
+void lvStatsFormatClipTime(uint32_t ms, char *out, size_t outSize) {
+  uint32_t secs = ms / 1000u;
+  snprintf(out, outSize, "%u:%02u", secs / 60u, secs % 60u);
+}
+
+void lvStatsEmitRoundSummary(void) {
   const AttrTrackHeader *header;
   const uint8_t *records;
   size_t len;
   uint32_t count;
   PlayerRoundStats stats[MAX_TANKS];
+  NotableEvent timeline[NOTABLE_EVENTS_MAX];
+  int timelineCount;
   bool isBot[MAX_TANKS];
+  uint8_t team[MAX_TANKS];
   AwardResult awards[AWARD_COUNT];
   int awardCount;
+  HighlightWindow hl[HIGHLIGHTS_MAX];
+  int hlCount;
+  uint32_t gameStartMs;
+  double calA, calB;
   size_t off;
   int i;
 
@@ -98,10 +114,11 @@ void lvStatsEmitAwards(void) {
 
   records = lvAttributionGetRecords(&len, &count);
 
-  /* Rebuild the per-round accumulator from the packed record stream. Walk by
-   * offset: read the tag, size it, and stop on an unknown tag or an overrun so
-   * we never read past the stream. */
+  /* Rebuild the per-round accumulator and the notable timeline in one pass over
+   * the packed record stream. Walk by offset: read the tag, size it, and stop on
+   * an unknown tag or an overrun so we never read past the stream. */
   memset(stats, 0, sizeof(stats));
+  timelineCount = 0;
   off = 0;
   while (records != NULL && off < len) {
     uint8_t tag = records[off];
@@ -109,12 +126,14 @@ void lvStatsEmitAwards(void) {
     if (sz == 0 || off + sz > len) {
       break;
     }
-    roundStatsApplyRecord(stats, NULL, NULL, 0, records + off);
+    roundStatsApplyRecord(stats, timeline, &timelineCount, NOTABLE_EVENTS_MAX,
+                          records + off);
     off += sz;
   }
 
   for (i = 0; i < MAX_TANKS; i++) {
     isBot[i] = (i < header->slotCount) ? (header->slots[i].isBot != 0) : false;
+    team[i] = (i < header->slotCount) ? header->slots[i].team : 0;
   }
 
   awardCount = 0;
@@ -144,5 +163,114 @@ void lvStatsEmitAwards(void) {
     }
 
     lv_windowAddEvent(0, line);
+  }
+
+  /* Score the timeline into a ranked, non-overlapping set of clips and emit one
+   * line per selection, prefixed with its m:ss start. Only HL_AWARD,
+   * HL_CLUSTER_WIPE and HL_OBJECTIVE_STEAL are produced today; other types get
+   * a safe generic label until their signals come online. */
+  hlCount = 0;
+  computeHighlights(timeline, timelineCount, stats, team, awards, awardCount, hl,
+                    &hlCount, LV_HIGHLIGHTS_SHOWN);
+
+  gameStartMs = lv_screenGameStartMs();
+  calA = 10.0;
+  calB = (double)gameStartMs;
+
+  /* Map an attribution tick to scrubber ms as a linear clip ms = calA*tick+calB.
+   * The sim tick is game-relative and does not run at a clean ratio to the log
+   * clock, so calibrate it per log: pair the first and last base captures to
+   * their real base-ownership changes in the log and fit the line. Fall back to
+   * the raw game-start offset (tick as 10 ms) when calibration isn't available
+   * (e.g. an old-format log or no base captures). */
+  {
+    int firstBase = -1, lastBase = -1;
+    for (i = 0; i < timelineCount; i++) {
+      if (timeline[i].type == NOTABLE_BASE_CAPTURE) {
+        if (firstBase < 0) firstBase = i;
+        lastBase = i;
+      }
+    }
+    if (firstBase >= 0 && lastBase > firstBase) {
+      uint32_t msE = 0, msL = 0;
+      if (lv_walkFindBaseOwnerTimes(timeline[firstBase].mapX,
+                                    timeline[firstBase].mapY,
+                                    timeline[lastBase].mapX,
+                                    timeline[lastBase].mapY, &msE, &msL)) {
+        uint32_t tE = timeline[firstBase].tick, tL = timeline[lastBase].tick;
+        if (tL > tE && msL > msE) {
+          calA = (double)(msL - msE) / (double)(tL - tE);
+          calB = (double)msE - calA * (double)tE;
+        }
+      }
+    }
+  }
+
+  if (hlCount > 0) {
+    lv_windowAddEvent(0, "Highlights:");
+  }
+
+  for (i = 0; i < hlCount; i++) {
+    const HighlightWindow *h = &hl[i];
+    char when[16];
+    char actorA[PACKET_MAX_PLAYER_NAME + 16];
+    char line[256];
+    uint32_t clipMs = (uint32_t)(calA * (double)h->startTick + calB);
+
+    lvStatsFormatClipTime(clipMs, when, sizeof(when));
+    formatSlotName(header, h->actorA, actorA, sizeof(actorA));
+
+    switch (h->type) {
+    case HL_AWARD: {
+      const char *name = (h->awardId <= AWARD_COUNT) ? kAwardNames[h->awardId]
+                                                     : "Award";
+      if (h->awardId == AWARD_NEMESIS) {
+        char actorB[PACKET_MAX_PLAYER_NAME + 16];
+        formatSlotName(header, h->actorB, actorB, sizeof(actorB));
+        snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 %s (%s vs %s)",
+                 when, name, actorA, actorB);
+      } else {
+        snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 %s (%s)", when,
+                 name, actorA);
+      }
+      break;
+    }
+    case HL_CLUSTER_WIPE:
+      snprintf(line, sizeof(line),
+               "Highlight %s \xe2\x80\x94 Team wipe: %u down (%s)", when,
+               h->value, actorA);
+      break;
+    case HL_OBJECTIVE_STEAL: {
+      char actorB[PACKET_MAX_PLAYER_NAME + 16];
+      formatSlotName(header, h->actorB, actorB, sizeof(actorB));
+      snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 Steal (%s from %s)",
+               when, actorA, actorB);
+      break;
+    }
+    default:
+      snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 Highlight", when);
+      break;
+    }
+
+    /* Emit as a clickable clip: clicking jumps the scrubber a few seconds ahead
+     * of the moment and centres the map on it. */
+    lv_windowAddHighlight(line, clipMs, h->mapX, h->mapY);
+  }
+
+  /* TEMP diagnostic: dump the attribution side (game-start offset, full notable
+   * timeline, and the chosen highlights with their computed absolute ms) so it
+   * can be correlated against the EVENT lines the playback logs. Remove. */
+  lvDebugLog("GAMESTART_MS=%u CAL_A=%f CAL_B=%f HLCOUNT=%d TIMELINE=%d",
+             gameStartMs, calA, calB, hlCount, timelineCount);
+  for (i = 0; i < timelineCount; i++) {
+    lvDebugLog("TRACK tick=%u type=%u a=%u b=%u cell=%u,%u", timeline[i].tick,
+               timeline[i].type, timeline[i].actorA, timeline[i].actorB,
+               timeline[i].mapX, timeline[i].mapY);
+  }
+  for (i = 0; i < hlCount; i++) {
+    lvDebugLog("HL type=%u startTick=%u cell=%u,%u a=%u b=%u val=%u clipMs=%u",
+               hl[i].type, hl[i].startTick, hl[i].mapX, hl[i].mapY, hl[i].actorA,
+               hl[i].actorB, hl[i].value,
+               (uint32_t)(calA * (double)hl[i].startTick + calB));
   }
 }

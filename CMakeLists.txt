@@ -2732,6 +2732,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
     tests/unit/test_round_stats.c
+    tests/unit/test_lv_stats_time.c
     tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_vote_nolobby_disabled.c
@@ -3039,6 +3040,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/screen.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
+    src/logviewer/lv_stats.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
@@ -3234,6 +3236,7 @@ set(_unit_test_names
     highlights_selection
     highlights_lead_in
     highlights_empty
+    lv_stats_clip_time_format
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped

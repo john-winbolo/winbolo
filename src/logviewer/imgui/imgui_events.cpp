@@ -24,12 +24,19 @@
 extern "C" {
     void lv_screenGetTime(char *buffer);
     uint32_t lv_screenGetTimeRunning(void);
+    void lv_screenSeekToTimeMs(uint32_t ms);
+    void lv_screenCentreOnCell(int mapX, int mapY);
 }
 
-/* Event with associated playback timestamp */
+/* Event with associated playback timestamp. Highlight clips also carry a seek
+ * target and a map cell so a click can jump the scrubber and centre the view. */
 struct LogEvent {
     std::string text;
     uint32_t timeMs;
+    bool     seekable = false;
+    uint32_t seekMs = 0;
+    int      mapX = 0;
+    int      mapY = 0;
 };
 
 /* Event list storage */
@@ -62,6 +69,22 @@ void lv_imgui_events_add(int eventType, const char *msg) {
     s_events.push_back({std::string(line), lv_screenGetTimeRunning()});
 
     /* Mark for auto-scroll */
+    if (s_auto_scroll) {
+        s_scroll_to_bottom = true;
+    }
+}
+
+void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
+                                   int mapY) {
+    LogEvent e;
+    e.text = std::string(msg);
+    e.timeMs = 0;   /* load-time summary line: never rewound away on a seek */
+    e.seekable = true;
+    e.seekMs = seekMs;
+    e.mapX = mapX;
+    e.mapY = mapY;
+    s_events.push_back(e);
+
     if (s_auto_scroll) {
         s_scroll_to_bottom = true;
     }
@@ -170,6 +193,15 @@ void lv_imgui_events_window(void) {
                 } else {
                     s_selected_index = i;
                     s_select_all = false;
+                    /* A plain click on a highlight clip jumps the scrubber to a
+                     * few seconds before the moment and centres the map on it. */
+                    if (s_events[i].seekable) {
+                        uint32_t target = s_events[i].seekMs > 5000u
+                                              ? s_events[i].seekMs - 5000u
+                                              : 0u;
+                        lv_screenSeekToTimeMs(target);
+                        lv_screenCentreOnCell(s_events[i].mapX, s_events[i].mapY);
+                    }
                 }
             }
             
