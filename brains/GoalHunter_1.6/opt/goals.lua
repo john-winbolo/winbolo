@@ -1780,43 +1780,59 @@ end
 -- portfolio-aware search in eval_place_pill_strategic. When that finds no
 -- placeable non-surplus spot, the bot keeps carrying — there is no fallback.)
 
--- find_safe_forest: best forest tile to harvest, searched in expanding rings out
--- to SEEK_TREES_MAX_RADIUS (map-wide — late game we travel far). Scoring per tile:
--- distance (ring r) + threat penalty − influence bonus, so it (1) skips enemy
--- territory (threat.at high OR hostile influence), (2) FAVORS our own influence
--- areas, then (3) prefers nearest. Once any acceptable forest is found it scans
--- RING_SLACK more rings so a slightly-farther safer/friendlier one can win, then
--- stops. Returns fx, fy or nil.
+-- find_safe_forest: best forest tile to harvest. Two cheap phases:
+--   1. Ring-scan outward from the tank collecting forest tiles into a list. The
+--      per-tile test is a BARE in-memory array read — get_terrain is a C closure
+--      over (*worldPtr)[y*256+x], so "is this forest?" is one index, no U.ttype
+--      fog-of-war bookkeeping (metrics/terrain_prev/changes appends) that made the
+--      old map-wide scan ~18ms. Once the nearest forest ring is found we expand
+--      RING_SLACK more rings (so a slightly-farther, safer one can still win by
+--      Dijkstra cost below) and stop.
+--   2. Rank the collected tiles by the already-computed, danger-weighted Dijkstra
+--      travel cost (smart_cost_dij_only — an O(1) slate read). That inherently
+--      skips enemy territory (danger inflates the cost) and prefers our own turf,
+--      replacing the old per-tile threat.at + influence_at recompute. Fall back to
+--      the geometric-nearest forest if the slate hasn't expanded to any of them
+--      yet (or Dijkstra-for-goals is off) so we never deadlock while forest exists.
+-- Returns fx, fy or nil.
 local function find_safe_forest(tmx, tmy)
-  local max_r      = C.SEEK_TREES_MAX_RADIUS or 120
-  local max_threat = C.SEEK_TREES_MAX_THREAT or 8
-  local tw         = C.SEEK_TREES_THREAT_WEIGHT or 6
-  local iw         = C.SEEK_TREES_INFLUENCE_WEIGHT or 8
-  local min_infl   = C.SEEK_TREES_MIN_INFLUENCE or 3
-  local best_x, best_y, best_score, found_r = nil, nil, math.huge, nil
-  local function consider(fx, fy, r)
-    if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST then
-      local thr  = threat.at(fx, fy) or 0
-      local infl = cpf.influence_at(fx, fy) or 0
-      -- Skip enemy territory: heavy fire OR clearly-hostile influence.
-      if thr <= max_threat and infl >= -min_infl then
-        local score = r + thr * tw - infl * iw   -- our influence (positive) lowers score
-        if score < best_score then best_score = score; best_x = fx; best_y = fy; found_r = found_r or r end
-      end
+  local get_terrain  = get_terrain      -- C global: raw (*worldPtr)[y*256+x] read
+  local TERRAIN_MASK = TERRAIN_MASK     -- C global
+  local T_FOREST     = C.T_FOREST
+  local max_r        = C.SEEK_TREES_MAX_RADIUS or 120
+  local slack        = C.SEEK_TREES_RING_SLACK or 6
+
+  local fx, fy, nf, found_r = {}, {}, 0, nil
+  local function scan(x, y, r)
+    if x >= 0 and x <= 255 and y >= 0 and y <= 255
+       and (bit.band(get_terrain(x, y), TERRAIN_MASK)) == T_FOREST then
+      nf = nf + 1; fx[nf] = x; fy[nf] = y; found_r = found_r or r
     end
   end
   for r = 1, max_r do
     for i = -r, r do
-      consider(tmx + i, tmy - r, r)   -- top edge
-      consider(tmx + i, tmy + r, r)   -- bottom edge
+      scan(tmx + i, tmy - r, r)   -- top edge
+      scan(tmx + i, tmy + r, r)   -- bottom edge
       if i > -r and i < r then
-        consider(tmx - r, tmy + i, r) -- left edge
-        consider(tmx + r, tmy + i, r) -- right edge
+        scan(tmx - r, tmy + i, r) -- left edge
+        scan(tmx + r, tmy + i, r) -- right edge
       end
     end
-    if found_r and r >= found_r + (C.SEEK_TREES_RING_SLACK or 16) then break end
+    if found_r and r >= found_r + slack then break end
   end
-  return best_x, best_y
+  if nf == 0 then return nil end
+
+  local best_x, best_y, best_cost = nil, nil, math.huge
+  local near_x, near_y, near_d    = nil, nil, math.huge
+  for k = 1, nf do
+    local x, y = fx[k], fy[k]
+    local cost = cpf.smart_cost_dij_only(KIND_NORMAL, x, y, 0)
+    if cost < best_cost then best_cost = cost; best_x = x; best_y = y end
+    local d = U.mdist(tmx, tmy, x, y)
+    if d < near_d then near_d = d; near_x = x; near_y = y end
+  end
+  if best_x then return best_x, best_y end   -- cheapest reachable per the slate
+  return near_x, near_y                      -- slate had none yet: nearest known
 end
 
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo)
@@ -1842,6 +1858,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     if fresh and (ok or not sf.mx) then
       fx, fy = sf.mx, sf.my                       -- reuse (valid forest, or cached "none")
     else
+      -- Arm the cache cooldown BEFORE the scan as a cheap safety net: if
+      -- find_safe_forest (Lua) ever overruns the per-tick budget it's killed
+      -- MID-LOOP, before the post-scan cache write below. Pre-stamping `now`
+      -- bounds re-scans to once per SEEK_TREES_CACHE_TICKS even on overrun, so a
+      -- killed scan can't re-fire every tick (the seek_trees t=525 spiral). The
+      -- scan itself is now near-instant (bare terrain reads + O(1) Dijkstra
+      -- ranking), so this is belt-and-suspenders rather than load-bearing.
+      state._seek_forest = { mx = sf and sf.mx or nil, my = sf and sf.my or nil, tick = now }
       fx, fy = find_safe_forest(tmx, tmy)
       state._seek_forest = { mx = fx, my = fy, tick = now }
     end

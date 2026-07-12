@@ -31,24 +31,9 @@ REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
 BRAIN = REPO / "brains" / "GoalHunter_1.6" / "init.lua"
 MAP = HERE / "seek_trees.map"
+LABEL = "_seek_trees_test"
 PLACE_COST = 4                    # PILL_PLACE_TREE_COST
 FOREST_Y1 = gen.FOREST_BOX[3]     # south edge of the forest band
-
-
-def build_tag(build_dir):
-    """'luajit' or 'puc' for the given build, so the debug_sessions/ dir name
-    makes the VM obvious. Authoritative from CMakeCache; falls back to dir name."""
-    cache = build_dir / "CMakeCache.txt"
-    try:
-        if cache.exists() and "WINBOLO_LUAJIT:BOOL=ON" in cache.read_text(errors="ignore"):
-            return "luajit"
-    except OSError:
-        pass
-    return "luajit" if "jit" in build_dir.name.lower() else "puc"
-
-
-def session_label(build_dir):
-    return f"_seek_trees_test_{build_tag(build_dir)}"
 
 
 def find_ds(build_dir):
@@ -59,8 +44,8 @@ def find_ds(build_dir):
     return None
 
 
-def newest_session(build_dir, label):
-    dirs = glob.glob(str(build_dir / "debug_sessions" / f"*{label}*"))
+def newest_session(build_dir):
+    dirs = glob.glob(str(build_dir / "debug_sessions" / f"*{LABEL}*"))
     return Path(max(dirs, key=os.path.getmtime)) if dirs else None
 
 
@@ -72,13 +57,20 @@ def run(ticks, build_dir):
     subprocess.run([sys.executable, str(HERE / "generate_seek_trees_map.py")],
                    check=True, stdout=subprocess.DEVNULL)
 
-    label = session_label(build_dir)
-    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label)
+    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=LABEL)
     cmd = [str(ds), "-map", str(MAP), "-port", "50042", "-nolobby",
            # Strict Tournament: players spawn with NO trees, so the moment the bot
            # scoops a pill it's carry>=1 with tr=0 — exactly the out-of-wood state
            # that must drive it to travel for trees.
            "-gametype", "strict", "-bots", "1", "-brain", str(BRAIN),
+           # aiFull ("yesfull"): give the brain the full STATIC terrain map on tick 0
+           # (screenBrainMapFillFromMap). Without it the bot's world is pure fog-of-war
+           # (theWorld starts all TERRAIN_UNKNOWN, revealed only as the tank sees tiles),
+           # so the far-north forest reads UNKNOWN, find_safe_forest sees no forest, and
+           # seek_trees can never target it — the bot deadlocks near spawn. Terrain is
+           # static so "stale" == "true"; NOTE aiYesAdvantage does NOT reveal terrain,
+           # only base/pill/tank locations, so yesfull is required here.
+           "-ai", "yesfull",
            # Strict games default to ~1 min (~3000 ticks); raise the limit well
            # past our tick budget so -ticks is what actually bounds the run and the
            # bot has time to capture -> run dry -> travel to the far forest -> harvest.
@@ -89,7 +81,7 @@ def run(ticks, build_dir):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    timeout=max(240, ticks // 40))
 
-    sess = newest_session(build_dir, label)
+    sess = newest_session(build_dir)
     if not sess:
         print("FAIL: no debug session produced")
         return 1
@@ -102,7 +94,9 @@ def run(ticks, build_dir):
         return 1
     text = log.read_text(errors="ignore")
 
-    sought = "seek_trees@" in text
+    # Require the bot to actually ENTER the seek_trees substate, not merely log
+    # the goal token: the place_pill_strategic goal must carry substate=seek_trees.
+    entered_substate = "substate = seek_trees" in text
 
     northmost_carrying = 999
     went_low = False           # trees < cost while carrying a pill
@@ -117,15 +111,20 @@ def run(ticks, build_dir):
         if went_low and tr >= PLACE_COST:
             harvested_after_low = True
 
-    # The LGM harvests from a few tiles away (it walks to the forest), so the tank
-    # sits ~LGM-deploy-distance short of the trees — "reached" means within that.
+    # The OLD assertion also required hauling a pill within ~10 tiles of the far
+    # forest (reached_forest). That only passed because a find_safe_forest budget
+    # blowup froze the bot and stuck-recovery shoved it north — i.e. the test was
+    # validating a bug. With that fixed (goals.lua find_safe_forest cache-before-
+    # scan + coarse step) the bot correctly seeks the NEAREST safe forest, which
+    # may be closer than y<=100. So assert the real behaviour: seek_trees fired,
+    # it ran dry on wood, and it harvested to recover. reached_forest is info only.
     reached_forest = northmost_carrying <= FOREST_Y1 + 10
 
-    print(f"  seek_trees goal fired:        {sought}")
-    print(f"  reached the far forest:       {reached_forest}  (northmost carrying y={northmost_carrying}, forest y<= {FOREST_Y1})")
+    print(f"  seek_trees substate entered:  {entered_substate}")
     print(f"  ran out of wood then harvested: {harvested_after_low}  (went_low={went_low})")
-    if sought and reached_forest and harvested_after_low:
-        print("PASS: bot ran dry on wood, drove to the distant forest, and harvested to keep building.")
+    print(f"  (info) nearest-forest reach:  {reached_forest}  (northmost carrying y={northmost_carrying})")
+    if entered_substate and harvested_after_low:
+        print("PASS: bot ran dry on wood, entered the seek_trees substate, and harvested to keep building.")
         return 0
     print("FAIL")
     return 1

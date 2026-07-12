@@ -24,7 +24,7 @@ import sys
 import struct
 from pathlib import Path
 
-from generate_test_map import MAP_SIZE, GRASS, ROAD, DEEP_SEA
+from generate_test_map import MAP_SIZE, GRASS, ROAD, SWAMP, CRATER, DEEP_SEA
 
 
 def encode_map_runs(terrain):
@@ -85,9 +85,20 @@ def make_map():
     for y in range(y0, y1):
         for x in range(x0, x1):
             t[y][x] = GRASS
-    # Road lane so the victim crosses at a constant, predictable full speed.
+    # Varied-speed lane BAND, a few rows tall so the victim stays on patterned
+    # terrain even after a shell knockback nudges it off the exact spawn row.
+    # Mostly road(16 wu/tick)/grass(12), with ISOLATED single slow tiles —
+    # swamp(3)/crater(3) — kept sparse (~10% of the lane, well-separated) so the
+    # victim briefly stalls at each one and the shooter's lead must FORWARD-
+    # SIMULATE the terrain to connect (a constant-velocity extrapolation sails
+    # wide across a road->swamp edge). Fixed pattern (no RNG) so the test is
+    # reproducible.
+    ZONES = ([ROAD] * 4 + [GRASS] * 4 + [SWAMP] + [GRASS] * 4
+             + [ROAD] * 4 + [CRATER] + [GRASS] * 3)   # 21 tiles, 2 slow (~9.5%)
     for x in range(LANE_X0 + 1, LANE_X1):
-        t[LANE_Y][x] = ROAD
+        zone = ZONES[(x - LANE_X0) % len(ZONES)]
+        for y in range(LANE_Y - 2, LANE_Y + 3):     # 5-row band centred on the lane
+            t[y][x] = zone
     # Single-tile deep-sea spawn pockets (the only water on the map).
     t[VICTIM_START[1]][VICTIM_START[0]] = DEEP_SEA
     t[SHOOTER_START[1]][SHOOTER_START[0]] = DEEP_SEA

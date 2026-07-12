@@ -2510,25 +2510,48 @@ local function tank_combat_steer(state, world, info, goal)
   local shell_speed_per_tick = C.TANK_COMBAT_SHELL_SPEED
   local svx = target.svx or 0
   local svy = target.svy or 0
-  -- Skip lead-prediction when target is essentially stationary. Use
-  -- the actual smoothed velocity magnitude (WU/tick), not target.speed
-  -- which is the engine's SPEEDTYPE in a different scale and isn't
-  -- directly comparable. ≤8 wu/tick = ≤0.03 tile/tick = barely moving.
-  if (svx * svx + svy * svy) <= 64 then svx = 0; svy = 0 end
-  -- Iterated intercept: the shell's flight time depends on the distance to the
-  -- LEAD point, not the target's current position. A crossing target's intercept
-  -- sits FARTHER out than its current range, so a single-step lead (flight time
-  -- from the current range) under-estimates the time and the shells trail behind
-  -- the target. Fixed-point iterate t = |tank -> (target + v*t)| / shell_speed;
-  -- it converges in a few steps because a shell (64 wu/tick) far outruns a tank
-  -- (<=16 wu/tick). Each pass re-measures the range to the freshly-leaded point.
-  local shell_travel_ticks = wdist / shell_speed_per_tick
-  local pred_wx = twx + svx * shell_travel_ticks
-  local pred_wy = twy + svy * shell_travel_ticks
-  for _ = 1, 3 do
-    shell_travel_ticks = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) / shell_speed_per_tick
-    pred_wx = twx + svx * shell_travel_ticks
-    pred_wy = twy + svy * shell_travel_ticks
+  local vmag = math.sqrt(svx * svx + svy * svy)
+  -- Iterated, TERRAIN-AWARE intercept. The shell's flight time depends on the
+  -- range to the LEAD point, not the target's current position, so we fixed-
+  -- point iterate t = |tank -> pred| / shell_speed (converges fast: a shell at
+  -- 32 wu/tick outruns a <=16 wu/tick tank). But instead of extrapolating the
+  -- target in a straight line at CONSTANT velocity — which misses when a shell
+  -- in flight outlasts a road->swamp->grass transition — each pass forward-
+  -- SIMULATES the target tick by tick: it keeps its heading, but every step is
+  -- capped by the MAX SPEED of the terrain it is standing on that tick, scaled
+  -- by the throttle fraction it is currently driving at. On uniform terrain
+  -- this reduces exactly to the old constant-velocity lead.
+  local pred_wx, pred_wy, shell_travel_ticks
+  if vmag < 1 then
+    -- Essentially stationary (4-tick-smoothed velocity ~0): aim at it directly.
+    pred_wx, pred_wy = twx, twy
+    shell_travel_ticks = wdist / shell_speed_per_tick
+  else
+    local hx, hy = svx / vmag, svy / vmag            -- heading unit vector
+    -- Throttle = how hard the target is driving, as a fraction of the terrain
+    -- cap where it stands NOW. A full-throttle tank's speed on any tile IS that
+    -- tile's cap, so projecting at (cap * throttle) reproduces its real motion
+    -- across road/grass/swamp — far steadier than extrapolating the measured
+    -- magnitude, which flickers 16/11 as the target straddles a road edge. Floor
+    -- it near full: tanks in combat almost always drive flat-out, and a low
+    -- estimate (from velocity noise) would under-lead.
+    local cur_cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(twx), 8), bit.rshift(math.floor(twy), 8))]
+    local throttle = (cur_cap and cur_cap > 0) and (vmag / cur_cap) or 1
+    if throttle > 1 then throttle = 1 end
+    shell_travel_ticks = wdist / shell_speed_per_tick
+    for _ = 1, 4 do
+      local ex, ey = twx, twy
+      local n = math.floor(shell_travel_ticks + 0.5)
+      if n > 100 then n = 100 end                    -- shell range backstop
+      for _ = 1, n do
+        local cap = C.MAP_SPEED[U.ttype(bit.rshift(math.floor(ex), 8), bit.rshift(math.floor(ey), 8))] or 0
+        local step = cap * throttle
+        ex = ex + hx * step
+        ey = ey + hy * step
+      end
+      pred_wx, pred_wy = ex, ey
+      shell_travel_ticks = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) / shell_speed_per_tick
+    end
   end
 
   -- Lead visualizer ("tank_combat_viz"): shows the shell-travel intercept the
@@ -2620,6 +2643,38 @@ local function tank_combat_steer(state, world, info, goal)
   -- ~0.3-0.4 tile of lateral slop at 5-7 tiles: on the lead, not on the tank.
   local _aim_ok    = math.abs(aim_corr) < 3
   local _shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
+  -- Heading-stability gate: the lead (even the terrain-aware one) assumes the
+  -- target holds its HEADING over the shell's ~1-2s flight. Two things break
+  -- that and make the shell sail wide: (1) a shell HIT bumps the target sideways
+  -- — knockback in the shell's travel direction, decaying over a few ticks — so
+  -- landing a hit spuriously rotates the measured velocity and spoils the NEXT
+  -- shot; (2) a reversal/dodge swings the heading around. Both rotate the
+  -- heading, so require it to hold steady for a few ticks before trusting the
+  -- lead. Pure SPEED changes (crossing swamp/road) do NOT rotate the heading, so
+  -- the terrain-aware projection still handles those without gating fire.
+  local _steady_ok
+  if vmag >= (C.TANK_COMBAT_STEADY_MIN_SPEED or 4) then
+    local hdg = math.atan(svy, svx)
+    local ph  = goal._aim_hdg
+    if ph then
+      local dh = hdg - ph
+      while dh >  math.pi do dh = dh - 2 * math.pi end
+      while dh < -math.pi do dh = dh + 2 * math.pi end
+      if math.abs(dh) > (C.TANK_COMBAT_STEADY_TURN_RAD or 0.20) then
+        goal._aim_steady = 0
+      else
+        goal._aim_steady = (goal._aim_steady or 0) + 1
+      end
+    end
+    goal._aim_hdg = hdg
+    _steady_ok = (goal._aim_steady or 0) >= (C.TANK_COMBAT_STEADY_TICKS or 3)
+  else
+    -- (near-)stationary: heading is meaningless but a zero-lead point shot is
+    -- fine, so don't gate on it.
+    goal._aim_hdg   = nil
+    goal._aim_steady = 0
+    _steady_ok = true
+  end
   -- Stuck only counts when WE are also pinned in place — if the bot is
   -- still moving around looking for a clean angle it isn't stuck yet,
   -- it's just mid-reposition. Reset whenever our tile changes.
@@ -2627,7 +2682,7 @@ local function tank_combat_steer(state, world, info, goal)
                            and goal._engage_stuck_my == tmy)
   goal._engage_stuck_mx = tmx
   goal._engage_stuck_my = tmy
-  if _aim_ok and _shells_ok then
+  if _aim_ok and _shells_ok and _steady_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
                                    bit.rshift(math.floor(pred_wx), 8),
                                    bit.rshift(math.floor(pred_wy), 8))

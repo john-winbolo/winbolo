@@ -174,17 +174,28 @@ function M.update(state, world, info)
       -- tank's position last tick, p2 its position the tick before (nil when
       -- unavailable). Chained forward from the matched entry each tick, this
       -- looks back up to 2 ticks (3 positions including the current one).
-      local p1x, p1y, p2x, p2y
+      local p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y
       if matched_pt then
-        p1x, p1y = matched_pt.wx, matched_pt.wy
+        p1x, p1y = matched_pt.wx,  matched_pt.wy
         p2x, p2y = matched_pt.p1x, matched_pt.p1y
+        p3x, p3y = matched_pt.p2x, matched_pt.p2y
+        p4x, p4y = matched_pt.p3x, matched_pt.p3y
       end
       -- Velocity from the oldest available position back to current, divided by
-      -- the number of ticks that span covers. Falls back to a single-tick delta
-      -- when only one prior position is known (target just appeared /
-      -- re-acquired).
+      -- the number of ticks that span covers. A SHORT window aliases badly: the
+      -- engine advances a tank's integer WU position in a +16,+16,+16,+0 stutter
+      -- (a real ~12 wu/tick tank), so a 2-tick delta flips between 16 and 8 every
+      -- tick — and the 8 trips steering's "<=8 wu/tick = stationary" cutoff,
+      -- zeroing the lead and loosing a NO-LEAD shot at a moving target (measured:
+      -- that alias was the aim test's whole miss rate). Averaging over 4 ticks
+      -- cancels the stutter to a rock-steady 12. Falls back to shorter spans
+      -- right after (re)acquisition, when the deeper history isn't there yet.
       local ox, oy, n_ticks
-      if p2x then
+      if p4x then
+        ox, oy, n_ticks = p4x, p4y, 4
+      elseif p3x then
+        ox, oy, n_ticks = p3x, p3y, 3
+      elseif p2x then
         ox, oy, n_ticks = p2x, p2y, 2
       elseif p1x then
         ox, oy, n_ticks = p1x, p1y, 1
@@ -207,7 +218,8 @@ function M.update(state, world, info)
                        speed = ob.speed or 0,
                        wx = ob.x, wy = ob.y, vx = vx, vy = vy,
                        svx = svx, svy = svy,
-                       p1x = p1x, p1y = p1y, p2x = p2x, p2y = p2y }
+                       p1x = p1x, p1y = p1y, p2x = p2x, p2y = p2y,
+                       p3x = p3x, p3y = p3y }
       n_et = n_et + 1
       enemy_tanks[n_et] = entry
 
