@@ -31,9 +31,24 @@ REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
 BRAIN = REPO / "brains" / "GoalHunter_1.6" / "init.lua"
 MAP = HERE / "seek_trees.map"
-LABEL = "_seek_trees_test"
 PLACE_COST = 4                    # PILL_PLACE_TREE_COST
 FOREST_Y1 = gen.FOREST_BOX[3]     # south edge of the forest band
+
+
+def build_tag(build_dir):
+    """'luajit' or 'puc' for the given build, so the debug_sessions/ dir name
+    makes the VM obvious. Authoritative from CMakeCache; falls back to dir name."""
+    cache = build_dir / "CMakeCache.txt"
+    try:
+        if cache.exists() and "WINBOLO_LUAJIT:BOOL=ON" in cache.read_text(errors="ignore"):
+            return "luajit"
+    except OSError:
+        pass
+    return "luajit" if "jit" in build_dir.name.lower() else "puc"
+
+
+def session_label(build_dir):
+    return f"_seek_trees_test_{build_tag(build_dir)}"
 
 
 def find_ds(build_dir):
@@ -44,8 +59,8 @@ def find_ds(build_dir):
     return None
 
 
-def newest_session(build_dir):
-    dirs = glob.glob(str(build_dir / "debug_sessions" / f"*{LABEL}*"))
+def newest_session(build_dir, label):
+    dirs = glob.glob(str(build_dir / "debug_sessions" / f"*{label}*"))
     return Path(max(dirs, key=os.path.getmtime)) if dirs else None
 
 
@@ -57,7 +72,8 @@ def run(ticks, build_dir):
     subprocess.run([sys.executable, str(HERE / "generate_seek_trees_map.py")],
                    check=True, stdout=subprocess.DEVNULL)
 
-    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=LABEL)
+    label = session_label(build_dir)
+    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label)
     cmd = [str(ds), "-map", str(MAP), "-port", "50042", "-nolobby",
            # Strict Tournament: players spawn with NO trees, so the moment the bot
            # scoops a pill it's carry>=1 with tr=0 — exactly the out-of-wood state
@@ -73,7 +89,7 @@ def run(ticks, build_dir):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    timeout=max(240, ticks // 40))
 
-    sess = newest_session(build_dir)
+    sess = newest_session(build_dir, label)
     if not sess:
         print("FAIL: no debug session produced")
         return 1

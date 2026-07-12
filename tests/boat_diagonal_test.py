@@ -27,7 +27,22 @@ REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
 BRAIN = REPO / "brains" / "GoalHunter_1.6" / "init.lua"
 MAP = HERE / "boat_diagonal.map"
-LABEL = "_boatdiag_test"
+
+
+def build_tag(build_dir):
+    """'luajit' or 'puc' for the given build, so the debug_sessions/ dir name
+    makes the VM obvious. Authoritative from CMakeCache; falls back to dir name."""
+    cache = build_dir / "CMakeCache.txt"
+    try:
+        if cache.exists() and "WINBOLO_LUAJIT:BOOL=ON" in cache.read_text(errors="ignore"):
+            return "luajit"
+    except OSError:
+        pass
+    return "luajit" if "jit" in build_dir.name.lower() else "puc"
+
+
+def session_label(build_dir):
+    return f"_boatdiag_test_{build_tag(build_dir)}"
 
 
 def find_ds(build_dir):
@@ -38,8 +53,8 @@ def find_ds(build_dir):
     return None
 
 
-def newest_session(build_dir):
-    dirs = glob.glob(str(build_dir / "debug_sessions" / f"*{LABEL}*"))
+def newest_session(build_dir, label):
+    dirs = glob.glob(str(build_dir / "debug_sessions" / f"*{label}*"))
     return Path(max(dirs, key=os.path.getmtime)) if dirs else None
 
 
@@ -52,7 +67,8 @@ def run(ticks, build_dir):
     subprocess.run([sys.executable, str(HERE / "generate_boat_diagonal_map.py")],
                    check=True, stdout=subprocess.DEVNULL)
 
-    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=LABEL)
+    label = session_label(build_dir)
+    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label)
     cmd = [str(ds), "-map", str(MAP), "-port", "50041", "-nolobby",
            "-gametype", "open", "-bots", "1", "-brain", str(BRAIN),
            "-brain-debug", "-seed", "42", "-ticks", str(ticks),
@@ -64,7 +80,7 @@ def run(ticks, build_dir):
     subprocess.run(cmd, cwd=str(build_dir), env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    sess = newest_session(build_dir)
+    sess = newest_session(build_dir, label)
     if not sess:
         print("FAIL: no debug session produced")
         return 1
