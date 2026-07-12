@@ -92,6 +92,25 @@ static inline const char *luaL_tolstring(lua_State *L, int idx, size_t *len) {
   return lua_tolstring(L, -1, len);
 }
 
+/* 5.2/5.3 raw table access keyed by a C pointer (light userdata). LuaJIT (5.1)
+ * has neither. Implemented with lua_pushlightuserdata + lua_rawget/rawset. A
+ * relative (negative) table index must be biased by 1 to account for the key we
+ * push first; pseudo-indices (<= LUA_REGISTRYINDEX) are absolute and untouched.
+ * lua_rawgetp returns the pushed value's type, matching the 5.3+ signature. */
+static inline int lua_rawgetp(lua_State *L, int idx, const void *p) {
+  if (idx < 0 && idx > LUA_REGISTRYINDEX) idx -= 1;
+  lua_pushlightuserdata(L, (void *)p);
+  lua_rawget(L, idx);
+  return lua_type(L, -1);
+}
+
+static inline void lua_rawsetp(lua_State *L, int idx, const void *p) {
+  if (idx < 0 && idx > LUA_REGISTRYINDEX) idx -= 1;
+  lua_pushlightuserdata(L, (void *)p); /* ... value key */
+  lua_insert(L, -2);                   /* ... key value */
+  lua_rawset(L, idx);
+}
+
 /* NB: LuaJIT 2.1 already provides luaL_traceback — do NOT shim it (redefining
  * extern as static is a hard error here). */
 
