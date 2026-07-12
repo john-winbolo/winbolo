@@ -51,6 +51,10 @@ void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
  * NULL pre-game; the toggles tolerate it. */
 void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx);
 
+/* Render the shared Hosting tab (settings for a game hosted from the finder).
+ * Shown in both settings shells; currently renders only the apply-note. */
+void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx);
+
 /* Render the shared General tab (validated player name + WinBolo.net account).
  * On a successful name change it always persists via gameFrontSetPlayerName,
  * and updates the live sim too when ctx->cs is non-NULL. */

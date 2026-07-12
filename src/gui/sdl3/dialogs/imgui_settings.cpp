@@ -668,6 +668,17 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
     { bool nd = (bool)showNetworkDebugMessages;  if (ImGui::Checkbox(langGetText(STR_MENU_NETDEBUG_MSGS),  &nd)) windowMenuNetworkDebug_toggle(cs); }
 }
 
+/* -------------------------------------------------------
+ * Hosting tab — settings for the server the client spins up
+ * when hosting from the game finder.  Shared by the pre-game
+ * dialog and the in-game overlay.  Widgets land in a later
+ * phase; for now only the apply-note is shown.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
+    (void)ctx;
+    ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_HOSTING_APPLYNOTE));
+}
+
 extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -839,13 +850,14 @@ extern "C" void imguiSettingsShow(void) {
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
            tabs, skipping any that aren't present and wrapping at the ends. */
-        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_LAST, STAB_COUNT };
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
         static int s_pgActiveTab = STAB_GENERAL;
         static int s_pgForceTab  = -1;
         bool present[STAB_COUNT];
         present[STAB_GENERAL] = true;
         present[STAB_DISPLAY] = true;
         present[STAB_GAMEHUD] = true;
+        present[STAB_HOSTING] = true;  /* mobile can host too */
 #if !BOLO_MOBILE
         present[STAB_CONTROLS] = !uiModeIsTablet();
         present[STAB_LAST]     = true;
@@ -926,6 +938,14 @@ extern "C" void imguiSettingsShow(void) {
                 s_pgActiveTab = STAB_GAMEHUD;
                 ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderGameHudTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
+                    s_pgForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_HOSTING;
+                ImGui::BeginChild("##hostingPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderHostingTab(&ctx);
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
