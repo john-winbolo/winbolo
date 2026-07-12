@@ -1,4 +1,14 @@
 local bit = require('bitcompat')
+
+-- LuaJIT (Lua 5.1) math.atan takes ONE argument and silently ignores a second,
+-- so the two-arg atan2 form the brain uses for headings returns garbage on
+-- LuaJIT. Restore correct two-arg behaviour from math.atan2 (present on LuaJIT,
+-- absent on PUC-Lua 5.4 where math.atan is already two-arg). No-op on PUC.
+if math.atan2 then
+  local _atan1, _atan2 = math.atan, math.atan2
+  math.atan = function(y, x) if x == nil then return _atan1(y) else return _atan2(y, x) end end
+end
+
 -- =========================================================================
 -- GoalHunter/init.lua — Brain entry point (open/think/close/settings)
 -- =========================================================================
