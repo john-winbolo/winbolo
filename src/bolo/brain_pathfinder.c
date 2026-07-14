@@ -1585,13 +1585,20 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
 
       if (nx < 0 || nx > 255 || ny < 0 || ny > 255) { n_neigh_oob++; continue; }
 
-      /* Block diagonal moves through impassable corners */
+      /* Block diagonal moves through impassable corners — same rule as
+       * brainPathfinderPathTo: on foot, EITHER solid cardinal corner
+       * blocks the diagonal (a full-tile tank can't cut it); boats keep
+       * the both-zero rule. This copy had the old BOTH-corners rule. */
       if (DX8[d] != 0 && DY8[d] != 0) {
         int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
         int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
         float speed_x = pf->terrain_speed_table[adj_x_type];
         float speed_y = pf->terrain_speed_table[adj_y_type];
-        if (speed_x == 0.0f && speed_y == 0.0f) { n_neigh_diag++; continue; }
+        if (!cur_boat) {
+          if (speed_x == 0.0f || speed_y == 0.0f) { n_neigh_diag++; continue; }
+        } else {
+          if (speed_x == 0.0f && speed_y == 0.0f) { n_neigh_diag++; continue; }
+        }
         if (!cur_boat && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) { n_neigh_diag++; continue; }
         if (cur_boat && (!is_water_tile(adj_x_type) && adj_x_type != TT_BOAT)) { n_neigh_diag++; continue; }
         if (cur_boat && (!is_water_tile(adj_y_type) && adj_y_type != TT_BOAT)) { n_neigh_diag++; continue; }
@@ -1717,13 +1724,26 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
             continue;
           }
 
-          /* Diagonal corner blocking */
+          /* Diagonal corner blocking — must match brainPathfinderPathTo's
+           * rule (see the comment there): on foot a full-tile tank cannot
+           * squeeze diagonally past ANY solid corner tile, so block the
+           * diagonal if EITHER cardinal corner is impassable (speed 0 =
+           * building/halfbuild). This copy kept the old BOTH-corners rule
+           * long after the A* was fixed, so the nav Dijkstra planned
+           * diagonals the tank physically cannot drive (it ground a
+           * halfbuilding corner at full throttle for ~110 ticks —
+           * 20260713_233008_1 t=11467). Boats keep the both-zero rule
+           * plus the land-clip checks below. */
           if (DX8[d] != 0 && DY8[d] != 0) {
             int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
             int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
             float speed_x = pf->terrain_speed_table[adj_x_type];
             float speed_y = pf->terrain_speed_table[adj_y_type];
-            if (speed_x == 0.0f && speed_y == 0.0f) { pf->edge_cost[ci * 8 + d] = COST_INF; continue; }
+            if (!boat_layer) {
+              if (speed_x == 0.0f || speed_y == 0.0f) { pf->edge_cost[ci * 8 + d] = COST_INF; continue; }
+            } else {
+              if (speed_x == 0.0f && speed_y == 0.0f) { pf->edge_cost[ci * 8 + d] = COST_INF; continue; }
+            }
             if (!boat_layer && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) {
               pf->edge_cost[ci * 8 + d] = COST_INF; continue;
             }
@@ -2737,13 +2757,21 @@ double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
 
       if (nx < 0 || nx > 255 || ny < 0 || ny > 255) continue;
 
-      /* Block diagonal moves through impassable corners (same as cost_to) */
+      /* Block diagonal moves through impassable corners — same rule as
+       * brainPathfinderPathTo: on foot, EITHER solid cardinal corner
+       * blocks the diagonal (a full-tile tank can't cut it); boats keep
+       * the both-zero rule plus the water/land clip checks. This copy
+       * had drifted back to the old BOTH-corners rule. */
       if (DX8[d] != 0 && DY8[d] != 0) {
         int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
         int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
         float speed_x = pf->terrain_speed_table[adj_x_type];
         float speed_y = pf->terrain_speed_table[adj_y_type];
-        if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        if (!cur_boat) {
+          if (speed_x == 0.0f || speed_y == 0.0f) continue;
+        } else {
+          if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        }
         if (!cur_boat && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) continue;
         if (cur_boat && (!is_water_tile(adj_x_type) && adj_x_type != TT_BOAT)) continue;
         if (cur_boat && (!is_water_tile(adj_y_type) && adj_y_type != TT_BOAT)) continue;
@@ -2885,12 +2913,19 @@ float brainPathfinderCostToIncremental(BrainPathfinder *pf,
 
       if (nx < 0 || nx > 255 || ny < 0 || ny > 255) continue;
 
+      /* Diagonal corner rule — on foot EITHER solid corner blocks (see
+       * brainPathfinderPathTo); boats keep the both-zero rule. This copy
+       * had the old BOTH-corners rule. */
       if (DX8[d] != 0 && DY8[d] != 0) {
         int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
         int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
         float speed_x = pf->terrain_speed_table[adj_x_type];
         float speed_y = pf->terrain_speed_table[adj_y_type];
-        if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        if (!cur_boat) {
+          if (speed_x == 0.0f || speed_y == 0.0f) continue;
+        } else {
+          if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        }
         if (!cur_boat && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) continue;
         if (cur_boat && (!is_water_tile(adj_x_type) && adj_x_type != TT_BOAT)) continue;
         if (cur_boat && (!is_water_tile(adj_y_type) && adj_y_type != TT_BOAT)) continue;
