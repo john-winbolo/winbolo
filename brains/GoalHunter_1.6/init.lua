@@ -3826,6 +3826,55 @@ function Brain.think(info)
         -- immediately — the low-resource condition persists until we refuel.
         if state.pool_cache then state.pool_cache[9] = nil end
       end
+    elseif gk == "kill_lgm" then
+      -- Target LGM gone for good: the evaluator stops producing a
+      -- kill_lgm candidate instantly (it drops off the winners pool) but
+      -- the COMMITTED goal had no exit of its own — the bot kept chasing
+      -- a nonexistent LGM until the next replan (20260714_093243_1 bot1
+      -- t=7010-7044). Track the target's last seen tile on the goal; when
+      -- it vanishes from perception, two terminal cases end the hunt NOW:
+      --   * BOARDED — a visible enemy tank at/next to the last spot: he
+      --     got in.
+      --   * KILLED — a shell landed on him: perception records the death
+      --     as a fresh hostile OBJECT_PARACHUTE sighting near that spot
+      --     (state._enemy_lgm_sightings), whether we or a pill shot him.
+      -- A plain LOS flicker (forest / fog) matches neither and leaves the
+      -- hunt alone.
+      local tid = state.goal.target_id
+      local elm = nil
+      if tid and state.perc and state.perc.enemy_lgms then
+        for _, e in ipairs(state.perc.enemy_lgms) do
+          if e.idnum == tid then elm = e break end
+        end
+      end
+      if elm then
+        state.goal._kl_last_mx = elm.mx
+        state.goal._kl_last_my = elm.my
+      elseif state.goal._kl_last_mx then
+        local lmx, lmy = state.goal._kl_last_mx, state.goal._kl_last_my
+        if state.perc and state.perc.enemy_tanks then
+          for _, et in ipairs(state.perc.enemy_tanks) do
+            if math.max(math.abs(et.mx - lmx), math.abs(et.my - lmy)) <= 1 then
+              goal_valid = false
+              if BRAIN_DEBUG_MODE then print2(string.format("KL_TARGET_BOARDED t=%d lgm#%s last=(%d,%d) tank@(%d,%d) — kill_lgm invalid, replanning", now, tostring(tid), lmx, lmy, et.mx, et.my)) end
+              break
+            end
+          end
+        end
+        if goal_valid and state._enemy_lgm_sightings then
+          -- Fresh-parachute window: the sighting is stamped the tick the
+          -- LGM dies; anything older is a previous life's death marker
+          -- lingering in the ENEMY_LGM_RETURN_TICKS bookkeeping.
+          for _, s in pairs(state._enemy_lgm_sightings) do
+            if now - s.tick <= 30
+               and math.max(math.abs(s.mx - lmx), math.abs(s.my - lmy)) <= 2 then
+              goal_valid = false
+              if BRAIN_DEBUG_MODE then print2(string.format("KL_TARGET_KILLED t=%d lgm#%s last=(%d,%d) parachute@(%d,%d) age=%d — kill_lgm invalid, replanning", now, tostring(tid), lmx, lmy, s.mx, s.my, now - s.tick)) end
+              break
+            end
+          end
+        end
+      end
     elseif gk == "refuel_at_base" or gk == "flee_to_base" then
       local b = W.base_at(world, gmx, gmy)
       if not b or (b.owner ~= "friendly" and b.owner ~= "neutral") then goal_valid = false end
@@ -4330,6 +4379,16 @@ function Brain.think(info)
                             and dead_pill_count > (state.prev_dead_pill_count or 0)
                             and state.goal.kind ~= "capture_pill"
     state.prev_dead_pill_count = dead_pill_count
+    -- Trigger a one-shot urgent replan the tick our carried-pill count
+    -- INCREASES (drove over a dead pill — opportunistically or as a
+    -- capture_pill completing). Several evaluators score differently
+    -- while holding pills (cautious-mode danger multipliers,
+    -- place_pill_strategic carry urgency, the carrying panic range), so
+    -- re-task immediately with carry-aware scores instead of driving up
+    -- to GOAL_REPLAN_INTERVAL on the pre-pickup plan.
+    local carried_now = info.carried_pills or 0
+    local pill_picked_up = carried_now > (state.prev_carried_pills or 0)
+    state.prev_carried_pills = carried_now
     -- Trigger a one-shot urgent replan the first tick a brand-new base
     -- enters world.bases. world.bases is monotonic (entries persist once
     -- seen), so a count bump means we just spotted one we hadn't seen
@@ -4399,7 +4458,7 @@ function Brain.think(info)
                        or new_base_appeared or lgm_appeared
                        or shot_by_tank or atk_pill_interruptible
                        or blitz_call_new or tank_died_seen
-                       or panic_tank_appeared
+                       or panic_tank_appeared or pill_picked_up
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -4410,6 +4469,7 @@ function Brain.think(info)
       elseif new_tank_seen      then reason = "TANK SEEN"
       elseif atk_pill_interruptible then reason = "TANK PREEMPT (pill loose)"
       elseif dead_pill_appeared then reason = "DEAD PILL"
+      elseif pill_picked_up     then reason = "PILL PICKED UP (carrying)"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
       elseif tank_died_seen     then reason = "TANK DIED"
       elseif panic_tank_appeared then reason = "TANK IN PANIC RANGE (carrying pill)"
