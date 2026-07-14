@@ -1,9 +1,11 @@
+local function __idiv(a,b) return math.floor(a/b) end
 local bit = require('bitcompat')
 
 -- LuaJIT (Lua 5.1) math.atan takes ONE argument and silently ignores a second,
--- so the two-arg atan2 form the brain uses for headings returns garbage on
--- LuaJIT. Restore correct two-arg behaviour from math.atan2 (present on LuaJIT,
--- absent on PUC-Lua 5.4 where math.atan is already two-arg). No-op on PUC.
+-- so the two-arg atan2 form the brain uses for headings (aim_at, aim angles)
+-- returns garbage on LuaJIT — the tank can't steer. Restore correct two-arg
+-- behaviour from math.atan2 (present on LuaJIT/5.1, absent on PUC-Lua 5.4 where
+-- math.atan is already two-arg). One-time, no-op on PUC. See docs/luajit-port.md.
 if math.atan2 then
   local _atan1, _atan2 = math.atan, math.atan2
   math.atan = function(y, x) if x == nil then return _atan1(y) else return _atan2(y, x) end end
@@ -3152,6 +3154,105 @@ function Brain.think(info)
       goals.sync_ally_claimed_rejects(state, info)
     end
 
+    -- ── attack_pill steal negotiation (stq/sta/str) ──────────────────────
+    -- Companion to sync_ally_claimed_rejects' pool-6 rules. Three duties:
+    --   1. execute a REAL yield the sync decided (dual-hold loser),
+    --   2. consume replies to our own steal requests (grants / rejects),
+    --   3. answer requests addressed to us: re-evaluate our score for the
+    --      pill and reply sta (accept + yield) or str (reject). A holder
+    --      past "approach" ALWAYS rejects — it's already getting into
+    --      position, nobody can be closer in any way that matters.
+    do
+      local selfpn = info.player_number or 0
+      -- 1. Dual-hold yield: clear the goal FOR REAL (the old reject-only
+      --    yield left the goal driving — the zombie co-attacker bug).
+      local ab = state._steal_abandon
+      state._steal_abandon = nil
+      if ab and state.goal and state.goal.kind == "attack_pill"
+         and ((state.goal.target_id and state.goal.target_id == ab.pid)
+              or (world.pills and world.pills[ab.pid]
+                  and world.pills[ab.pid].mx == state.goal.mx
+                  and world.pills[ab.pid].my == state.goal.my)) then
+        state._steal_yielded = state._steal_yielded or {}
+        state._steal_yielded[ab.pid] = { to = ab.to, tick = now }
+        attack.clear_attack_goal(state, string.format(
+          "steal: yield pill #%d to p%d (%s)", ab.pid, ab.to, ab.why or "?"))
+      end
+      -- 2. Replies to OUR requests.
+      if state._steal_replies_in then
+        for _, rp in ipairs(state._steal_replies_in) do
+          local sent = state._steal_req_sent and state._steal_req_sent[rp.pid]
+          if rp.to == selfpn and sent and sent.to == rp.from then
+            if rp.accept then
+              state._steal_grants = state._steal_grants or {}
+              state._steal_grants[rp.pid] = { by = rp.from, cost = rp.cost, tick = now }
+              -- Grab it promptly: force a replan instead of waiting out the timer.
+              state._force_replan_reason = state._force_replan_reason or "steal_granted"
+            else
+              state._steal_rejects = state._steal_rejects or {}
+              state._steal_rejects[rp.pid] = { by = rp.from, cost = rp.cost, tick = now }
+            end
+          end
+        end
+        state._steal_replies_in = nil
+      end
+      -- 3. Requests addressed to US. Reply from a FRESH re-evaluation: the
+      --    rolling eval queue re-scores pool-6 candidates every ~15-30 ticks;
+      --    if our cached score is older than STEAL_REEVAL_MAX_AGE we defer
+      --    the reply until it refreshes (or STEAL_REPLY_DEADLINE forces one).
+      if state._steal_reqs_in then
+        local keep
+        for _, rq in ipairs(state._steal_reqs_in) do
+          if rq.to == selfpn then
+            local g = state.goal
+            local holds = g and g.kind == "attack_pill"
+              and ((g.target_id and g.target_id == rq.pid)
+                   or (world.pills and world.pills[rq.pid]
+                       and world.pills[rq.pid].mx == g.mx
+                       and world.pills[rq.pid].my == g.my))
+            local our_sub = g and g.substate or ""
+            local pre_commit = (our_sub == "plan_position" or our_sub == "approach")
+            local ce = state.cost_cache and state.cost_cache["6:" .. tostring(rq.pid)]
+            local my_cost = ce and type(ce.cost) == "number" and ce.cost or nil
+            local cost_fresh = my_cost and (now - (ce.tick or 0)) <= (C.STEAL_REEVAL_MAX_AGE or 40)
+            local deadline = (now - rq.tick) >= (C.STEAL_REPLY_DEADLINE or 20)
+            local reply, verdict
+            if not holds then
+              -- Not on it (already left / never had it): grant freely so the
+              -- challenger's pool entry unblocks without waiting for our
+              -- claim broadcast to age out.
+              reply, verdict = "sta", "not_holding"
+            elseif not pre_commit or g._blitz then
+              -- Past approach (already getting into position) or blitz-led:
+              -- NEVER stealable.
+              reply, verdict = "str", (g._blitz and "blitz_led" or "committed_past_approach")
+            elseif not cost_fresh and not deadline then
+              keep = keep or {}; keep[#keep + 1] = rq   -- wait for a fresh re-eval
+            elseif my_cost and rq.cost
+                   and rq.cost < my_cost * (1 - (C.ALLY_CLAIMED_STEAL_FRAC or 0.10)) then
+              -- Challenger meaningfully cheaper than our re-evaluated score:
+              -- accept and yield for real.
+              state._steal_yielded = state._steal_yielded or {}
+              state._steal_yielded[rq.pid] = { to = rq.from, tick = now }
+              attack.clear_attack_goal(state, string.format(
+                "steal: accepted p%d's request for pill #%d (%s < our %.0f)",
+                rq.from, rq.pid, tostring(rq.cost), my_cost))
+              reply, verdict = "sta", "challenger_cheaper"
+            else
+              reply, verdict = "str", "we_re_cheap_enough"
+            end
+            if reply then
+              state._steal_outbox = state._steal_outbox or {}
+              state._steal_outbox[#state._steal_outbox + 1] =
+                string.format("/info %s %d %d %d", reply, rq.pid, rq.from,
+                              math.floor(math.min(my_cost or 9999999, 9999999) + 0.5))
+            end
+          end
+        end
+        state._steal_reqs_in = keep
+      end
+    end
+
     -- Team reposition coordination: track the last tick anyone (self or an
     -- ally) was repositioning a pill. While someone is, reset to now so the
     -- time-based reposition discount (eval_reposition_pill) is 0 and the team
@@ -5364,6 +5465,21 @@ function Brain.think(info)
         end
       end
       state._repo_outbox = kept
+    end
+
+    -- Steal-negotiation verbs (stq/sta/str) queued by the ally-claimed sync
+    -- (requests) and the steal-request processor (replies). Keep any that
+    -- didn't fit the batch — a dropped sta would leave the challenger
+    -- yielding to a holder that already gave the pill up.
+    if state._steal_outbox then
+      local kept
+      for _, m in ipairs(state._steal_outbox) do
+        if try_send(m, 0) then
+        else
+          kept = kept or {}; kept[#kept + 1] = m
+        end
+      end
+      state._steal_outbox = kept
     end
 
     -- Known-world resync query (one-shot, on first think / after respawn):

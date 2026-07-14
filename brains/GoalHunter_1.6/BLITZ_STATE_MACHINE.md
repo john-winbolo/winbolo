@@ -112,6 +112,27 @@ solo-alongside:
   cost-STEAL a joinable blitz either (forced yield) — you join via the squad
   layer, or you're locked out if you can't join.
 
+### Steal negotiation (solo takes, `stq`/`sta`/`str`)
+
+A NON-blitz `attack_pill` claim transfers only by explicit handshake — there is
+no silent cost-steal (that left the loser committed as a zombie co-attacker):
+- **`stq <pid> <to> <cost>`** — challenger asks the holder: "I want to steal
+  this from you, my score is N". Sent only when ≥`ALLY_CLAIMED_STEAL_FRAC`
+  cheaper; rate-limited by `STEAL_REQ_COOLDOWN`.
+- The holder **re-evaluates its own score** (waits for a fresh rolling-eval
+  score up to `STEAL_REPLY_DEADLINE`) and answers:
+  - **`sta <pid> <to> <cost>`** — accept: the challenger really is meaningfully
+    cheaper; the holder clears its goal (a REAL yield) and latches
+    `_steal_yielded` so it can't re-pick the pill during the handover gap.
+  - **`str <pid> <to> <cost>`** — reject, with its refreshed score.
+- **Past `approach` a take is NEVER stealable** — the holder is already getting
+  into position; it auto-rejects (`committed_past_approach`) and its own sync
+  keeps the pill unconditionally. Challengers already yield to engaging holders
+  via `force_engaging_reject`.
+- Dual-hold races (both picked in the same broadcast window, both pre-commit)
+  settle by cost with player-id tiebreak — and the loser actually abandons
+  (`state._steal_abandon` → `clear_attack_goal`), not just marks a reject.
+
 ## Tuning constants
 
 `HARD_TAKE_MIN_HP` 12 · `SQUAD_BLITZ_READY_TIMEOUT` 150 (~3 s) ·

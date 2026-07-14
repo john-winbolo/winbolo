@@ -382,7 +382,10 @@ local function stuck_recovery(state, info, goal)
     end
   end
 
-  if state.wall_clearing or intentionally_stationary(goal, info) then
+  -- state._lgm_paced: the LGM pacing throttle capped the tank last tick —
+  -- the crawl is intentional, so don't count it as "no progress".
+  if state.wall_clearing or state._lgm_paced
+     or intentionally_stationary(goal, info) then
     state.stuck_progress = nil
     return
   end
@@ -2817,6 +2820,11 @@ function M.steer(state, world, info, goal)
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.
   stuck_recovery(state, info, goal)
+  -- _lgm_paced was just consumed by stuck_recovery; clear it so it can only
+  -- be re-armed by a tick that actually reaches the LGM pacing block below.
+  -- Without this, a combat/hold branch that returns early would freeze a
+  -- stale "paced" flag and suppress stuck detection for its whole goal.
+  state._lgm_paced = nil
   local _t_after_stuck = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  steer/stuck_recovery done %.2f ms",
@@ -4022,8 +4030,16 @@ function M.steer(state, world, info, goal)
     local lgm_out = info.man_status == C.LGM_MOVING
     local lgm_is_farming = state.builder.last_action == BUILDMODE_FARM
     local lgm_speed_cap = nil
+    -- capture_pill / capture_base are exempt: captures are races (builder.lua
+    -- already skips new repair/farm dispatches mid base-race for the same
+    -- reason), and the grab itself never needs the LGM — a dead pill or a
+    -- base is collected by driving onto it. Sprint to the objective and let
+    -- the LGM catch up while we sit on it. (Saw a capture_pill crawl at the
+    -- pace cap for 300+ ticks two tiles from a free pill because the builder
+    -- was out on an unrelated road job.)
     if lgm_out and not lgm_is_farming and goal.kind ~= "escape_water"
-       and goal.kind ~= "rescue_lgm" then
+       and goal.kind ~= "rescue_lgm"
+       and goal.kind ~= "capture_pill" and goal.kind ~= "capture_base" then
       -- Estimate LGM speed: use the terrain at the LGM's position
       local man_mx = bit.rshift(info.man_x, 8)
       local man_my = bit.rshift(info.man_y, 8)
@@ -4047,6 +4063,15 @@ function M.steer(state, world, info, goal)
 
     -- Slightly slower than the LGM so he can catch up
     local tank_pace = lgm_speed_cap and math.max(1, math.floor(lgm_speed_cap * 0.7))
+
+    -- Remember that pacing capped the tank this tick. Next tick's
+    -- stuck_recovery treats the paced crawl as intentional rather than
+    -- stuck, so neither the lookahead collapse nor the tile blacklist
+    -- fires against a deliberate slowdown (a paced crawl can't beat the
+    -- progress ratchet, and blacklisting the perfectly good next tile
+    -- just wedges the bot). A REAL wedge while paced simply waits it
+    -- out: the stuck window restarts fresh once the LGM is back in.
+    state._lgm_paced = (lgm_speed_cap ~= nil) or nil
 
     -- Boat shoreline forward-alignment throttle: afloat while threading a
     -- shoreline (a deep-sea AND a land neighbour), only commit speed once the

@@ -712,6 +712,20 @@ M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
 -- bot grabs it, the other re-routes for free. 0.01 = ">=1% cheaper steals".
 -- (The killer-priority window and reposition guards still trump this.)
 M.ALLY_CLAIMED_STEAL_FRAC_CAPTURE = 0.01
+-- ── attack_pill steal NEGOTIATION (stq / sta / str verbs) ──────────────
+-- A cheaper challenger no longer silently takes over an ally's pre-commit
+-- attack_pill (the loser stayed committed as a zombie co-attacker —
+-- 20260713_010904_1 t=5022, three bots soloing pill #5). Instead it ASKS:
+--   stq <pid> <to> <cost>  "I want to steal this from you, my score is N"
+--   sta <pid> <to> <cost>  holder accepts (re-evaluated score Y) + yields
+--   str <pid> <to> <cost>  holder rejects (re-evaluated score Y)
+-- A holder past "approach" is NEVER stealable — it's already moving into
+-- position. Only plan_position/approach holders can be asked.
+M.STEAL_REQ_COOLDOWN   = 150 -- ticks between requests for the same pill (after send or a reject)
+M.STEAL_GRANT_TTL      = 250 -- ticks a received accept stays valid in goal selection
+M.STEAL_REPLY_DEADLINE = 20  -- holder answers with its cached score at latest after this many ticks
+M.STEAL_REEVAL_MAX_AGE = 40  -- cached pool-6 score older than this defers the reply (waits for a fresh re-eval)
+M.STEAL_YIELD_BLOCK    = 300 -- after yielding, don't re-pick that pill for this long (covers the gap until the winner's claim broadcast lands)
 -- DEPRECATED / unused: the refuel ally-claim FCFS reject (and its
 -- far-claimer override) was replaced by the SOFT per-ally cost penalty
 -- (ALLY_CLAIMED_REFUEL_PENALTY). Refuel is no longer in _REJECT_POOLS, so

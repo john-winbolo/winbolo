@@ -6420,34 +6420,103 @@ local function sync_ally_claimed_rejects(state, info)
         local pool_steal_frac = (pool_idx == 4)
           and (C.ALLY_CLAIMED_STEAL_FRAC_CAPTURE or 0.01) or steal_frac
         local we_keep
-        -- "First to claim it, keeps it" rule.  Within the steal band
-        -- (neither side meaningfully cheaper), the current holder
-        -- keeps and the challenger yields — avoids both-bots-keep
-        -- which made two bots converge on the same target.  If
-        -- NEITHER is currently committed (fresh contention), break
-        -- the tie deterministically by player_number so one always
-        -- wins and we don't get the dual-yield "nobody takes it"
-        -- failure mode.
+        local _reason  -- debug label, set at each decision site
         local kind = _REJECT_POOLS[pool_idx]
         local g    = state.goal
         local we_hold = g and g.kind == kind
                        and ((g.target_id and e._id and g.target_id == e._id)
                             or (g.mx == e._mx and g.my == e._my))
-        -- Pool 6 unconditional engaging REJECT.  Once the ally has
-        -- gone past plan/approach the take is in flight — no cost can
-        -- justify peeling them off, and arriving late as a "cheaper"
-        -- co-attacker just wastes our cycles since the ally finishes
-        -- the kill first.  Only exception is we_hold: a true race
-        -- where we ALSO committed to the same target.
-        if force_engaging_reject and not we_hold then
-          we_keep = false
-        elseif pool_idx == 6 and not we_hold and e._id and state.squad_joinable_pills
-               and state.squad_joinable_pills[e._id] then
-          -- Joinable blitz we are NOT part of (a committed participant exempted
-          -- itself above): never cost-STEAL it. Yield, so the squad layer makes
-          -- us JOIN instead of soloing it (or we leave it alone if we can't
-          -- join). Enforces the invariant: an ally's attack_pill is either a
-          -- blitz you join, or an ally_claimed you leave — never a solo alongside.
+        if pool_idx == 6 and e._id then
+          -- ── attack_pill: NEGOTIATED steal (stq/sta/str), no silent takeover ──
+          -- The old silent cost-steal let a cheaper challenger just KEEP the
+          -- pill; the pricier holder stamped REJECT on its own entry but the
+          -- pool-6 mid-take lock kept re-selecting it — a zombie co-attacker
+          -- (3 bots soloing pill #5, 20260713_010904_1 t=5022). Now:
+          --   * a holder past approach is NEVER stealable (it's already
+          --     getting into position),
+          --   * a pre-commit holder yields only via an explicit stq→sta
+          --     handshake (or a dual-hold race resolution), and the yield is
+          --     REAL — state._steal_abandon makes init.lua clear the goal.
+          local our_sub = g and g.substate or ""
+          local we_pre_commit = (our_sub == "plan_position" or our_sub == "approach")
+          if we_hold and not we_pre_commit then
+            -- Committed (aim/charge/in_range/shoot/...): not stealable, and no
+            -- ally cost can peel us off. Keep unconditionally.
+            we_keep = true
+            _reason = "we_hold committed (not stealable past approach)"
+          elseif we_hold and force_engaging_reject then
+            -- Dual-hold race, ally already ENGAGING while we're still
+            -- pre-commit: their take is un-stealable — abandon ours for real.
+            we_keep = false
+            _reason = "dual_hold: ally engaged, we pre-commit -> abandon"
+            state._steal_abandon = { pid = e._id, to = match_pn, tick = now, why = _reason }
+          elseif we_hold then
+            -- Dual-hold race, both pre-commit (picked within the same claim
+            -- broadcast window): settle by cost, player id breaks ties — and
+            -- the loser REALLY abandons instead of zombie-holding.
+            if match_cost == nil then
+              we_keep = (self_pn < match_pn)
+              _reason = we_keep and "dual_hold no_cost: lower_id_keeps"
+                                 or "dual_hold no_cost: higher_id_abandons"
+            elseif our_cost < match_cost * (1 - pool_steal_frac) then
+              we_keep = true
+              _reason = "dual_hold: we_meaningfully_cheaper"
+            elseif match_cost < our_cost * (1 - pool_steal_frac) then
+              we_keep = false
+              _reason = "dual_hold: they_meaningfully_cheaper -> abandon"
+            else
+              we_keep = (self_pn < match_pn)
+              _reason = we_keep and "dual_hold steal_band: lower_id_keeps"
+                                 or "dual_hold steal_band: higher_id_abandons"
+            end
+            if not we_keep then
+              state._steal_abandon = { pid = e._id, to = match_pn, tick = now, why = _reason }
+            end
+          elseif force_engaging_reject then
+            -- Ally past plan/approach: the take is in flight — no cost can
+            -- justify peeling them off; arriving late as a co-attacker wastes
+            -- our cycles since they finish the kill first.
+            we_keep = false
+            _reason = "force_engaging_reject (ally past plan)"
+          elseif state.squad_joinable_pills and state.squad_joinable_pills[e._id] then
+            -- Joinable blitz we are NOT part of: never steal it — the squad
+            -- layer makes us JOIN instead of soloing alongside.
+            we_keep = false
+            _reason = "joinable_blitz: join via squad, never steal"
+          else
+            -- Challenger vs a pre-commit holder: NEVER take it silently.
+            -- If we're meaningfully cheaper, ASK ("I want to steal this from
+            -- you, my score is N") and keep yielding until they accept.
+            local grant = state._steal_grants and state._steal_grants[e._id]
+            if grant and grant.by == match_pn
+               and (now - grant.tick) <= (C.STEAL_GRANT_TTL or 250) then
+              we_keep = true
+              _reason = "steal_granted by p" .. match_pn
+            else
+              we_keep = false
+              if match_cost ~= nil and our_cost < match_cost * (1 - pool_steal_frac) then
+                local sent = state._steal_req_sent and state._steal_req_sent[e._id]
+                local rej  = state._steal_rejects and state._steal_rejects[e._id]
+                local cd   = C.STEAL_REQ_COOLDOWN or 150
+                if (not sent or (now - sent.tick) >= cd)
+                   and (not rej or (now - rej.tick) >= cd) then
+                  state._steal_req_sent = state._steal_req_sent or {}
+                  state._steal_req_sent[e._id] = { to = match_pn, tick = now, cost = our_cost }
+                  state._steal_outbox = state._steal_outbox or {}
+                  state._steal_outbox[#state._steal_outbox + 1] =
+                    string.format("/info stq %d %d %d", e._id, match_pn,
+                                  math.floor(math.min(our_cost, 9999999) + 0.5))
+                  _reason = "steal_requested (we_cheaper, asking p" .. match_pn .. ")"
+                else
+                  _reason = "steal_cooldown (we_cheaper, ask later)"
+                end
+              else
+                _reason = "they_hold (not meaningfully cheaper)"
+              end
+            end
+          end
+        -- ── Non-pool-6 pools keep the legacy silent steal-band rules ──
+        elseif force_engaging_reject and not we_hold then
           we_keep = false
         elseif match_cost == nil then
           -- Ally hasn't broadcast a cost yet (first frame post-pick) — no costs
@@ -6460,35 +6529,17 @@ local function sync_ally_claimed_rejects(state, info)
         else
           -- Steal band (neither meaningfully cheaper): settle the tie by a
           -- CONSISTENT player order — identical on both bots — where the LOWER
-          -- player id keeps and the higher yields. A holder-only rule (we_hold)
-          -- breaks both ways: both-commit→both-keep (TWO tanks on one pill — the
-          -- bug) and both-yield→nobody-takes-it. A genuinely cheaper bot still
-          -- wins above; pn only settles ties. (Engaging takes are protected by
-          -- the force_engaging_reject branch + commitment cost discount, so a
-          -- committed bot rarely lands in this band.)
+          -- player id keeps and the higher yields. A genuinely cheaper bot still
+          -- wins above; pn only settles ties.
           we_keep = (self_pn < match_pn)
         end
         if BRAIN_DEBUG_MODE and pool_idx == 6 and e._id then
-          local reason
-          if force_engaging_reject and not we_hold then
-            reason = "force_engaging_reject (ally past plan)"
-          elseif we_hold and force_engaging_reject then
-            reason = "we_hold (co-attacker exemption overrides engaging)"
-          elseif match_cost == nil then
-            reason = (self_pn < match_pn) and "no_cost: lower_id_keeps" or "no_cost: higher_id_yields"
-          elseif (e.cost or 0) < (match_cost or math.huge) * (1 - pool_steal_frac) then
-            reason = "we_meaningfully_cheaper"
-          elseif (match_cost or 0) < (e.cost or 0) * (1 - pool_steal_frac) then
-            reason = "they_meaningfully_cheaper"
-          else
-            reason = (self_pn < match_pn) and "steal_band: lower_id_keeps" or "steal_band: higher_id_yields"
-          end
           print2(string.format(
             "SYNC_P6 pid=%d DECISION ally=p%d ally_cost=%s our_cost=%.0f frac=%.2f " ..
             "we_hold=%s force_engaging=%s -> %s [%s]",
             e._id, match_pn, tostring(match_cost), e.cost or 0, pool_steal_frac,
             tostring(we_hold or false), tostring(force_engaging_reject),
-            we_keep and "KEEP" or "REJECT(ally_claimed)", reason))
+            we_keep and "KEEP" or "REJECT(ally_claimed)", _reason or "?"))
         end
         if we_keep then
           if e._reject == "ally_claimed" then
@@ -6526,17 +6577,33 @@ local function sync_ally_claimed_rejects(state, info)
           e.formula           = nil  -- re-render with REJECT text
         end
       else
-        -- No ally claiming this target any more — clear any prior reject.
-        if e._reject == "ally_claimed" then
-          e._reject = nil
-          e._reject_remaining = 0
-          e.formula = nil
+        -- No ally claiming this target any more. If WE just yielded it in a
+        -- steal/dual-hold resolution, hold the reject through the gap until
+        -- the winner's own claim broadcast lands — otherwise the next replan
+        -- re-picks the pill we just gave away and the yield ping-pongs.
+        local y = (pool_idx == 6) and e._id
+                  and state._steal_yielded and state._steal_yielded[e._id]
+        if y and (now - y.tick) <= (C.STEAL_YIELD_BLOCK or 300) then
+          if e._reject ~= "ally_claimed" then
+            e._reject = "ally_claimed"
+            e.formula = nil
+          end
+          e._reject_remaining = (C.STEAL_YIELD_BLOCK or 300) - (now - y.tick)
+          e._ally_by = y.to
+        else
+          if y then state._steal_yielded[e._id] = nil end
+          -- Clear any prior reject.
+          if e._reject == "ally_claimed" then
+            e._reject = nil
+            e._reject_remaining = 0
+            e.formula = nil
+          end
+          e._reject_joinable_blitz = nil
+          e._ally_score     = nil
+          e._ally_by        = nil
+          e._ally_heartbeat = nil
+          e._stealing       = nil
         end
-        e._reject_joinable_blitz = nil
-        e._ally_score     = nil
-        e._ally_by        = nil
-        e._ally_heartbeat = nil
-        e._stealing       = nil
       end
     end
     ::continue_entry::
