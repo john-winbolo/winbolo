@@ -8,6 +8,8 @@
 #include <string.h>
 #include <zlib.h>
 
+#include <SDL3/SDL.h>   /* SDL_GetPerformanceCounter for the perf log */
+
 #include "brain_record.h"
 #include "server_sim.h"
 #include "input_packet.h"
@@ -37,6 +39,118 @@ static bool     g_haveSkip = false;
 static BYTE     g_prevMap[BRAINREC_MAP_TILES];
 static bool     g_hasPrevMap = false;
 static uint32_t g_frameCount = 0;
+
+/* Selective recording parts (winbolods -bd-noviz / -bd-nopool /
+ * -bd-pool-full). When off, the per-bot overlay block / pool-breakdown
+ * JSON are written as empty (count 0) so the frame layout is unchanged
+ * and old loaders still work.
+ *
+ * poolMode: the pool-breakdown JSON is a per-bot Lua serialization that
+ * measured 24-36 ms/tick with 12 bots (vs the 20 ms tick budget) — it
+ * alone dragged a -braindebug server from 50 Hz to ~25 Hz. Mode 1
+ * (ROUND-ROBIN, the winbolods default) serializes ONE bot per tick so
+ * the cost is ~1/botCount per tick with no spike ticks; each bot's
+ * panel data is at most botCount frames (~0.25 s at 12 bots) stale,
+ * and BrainTest's playback panel walks back to the latest sample.
+ * Mode 2 (FULL) is the old exact per-tick capture for when panel-perfect
+ * history is worth a slow game. */
+#define BRAINREC_POOL_OFF   0
+#define BRAINREC_POOL_RR    1
+#define BRAINREC_POOL_FULL  2
+static bool g_recViz   = true;
+static int  g_poolMode = BRAINREC_POOL_FULL;
+
+void brainRecordSetParts(bool viz, int poolMode) {
+    g_recViz   = viz;
+    g_poolMode = poolMode;
+}
+
+/* Worker-prefetched pool JSON, one slot per bot. Workers build the JSON in
+ * parallel right after their bot's think (bot_manager runBotThinkJob); the
+ * producer moves each string here in Stage 3; brainRecordTick consumes it
+ * so the serial recorder section only writes bytes. All single-threaded
+ * from the recorder's perspective: stash and consume both happen on the
+ * producer thread. */
+static char *g_poolStash[MAX_TANKS];
+
+/* Shared capture decision — the worker prefetch and brainRecordTick's
+ * writer MUST agree on which bot gets its pool captured each tick, so both
+ * call this. Round-robin keys off the sim tick (stable across the whole
+ * botManagerTick) and the bot's index in ascending-slot iteration order. */
+bool brainRecordPoolCaptureWanted(ServerSim *sim, BYTE slot) {
+    if (!g_enabled || sim == NULL) return false;
+    if (g_poolMode == BRAINREC_POOL_OFF) return false;
+    if (g_poolMode == BRAINREC_POOL_FULL) return true;
+    int botCount = 0, iterIdx = -1;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        if (i == (int)slot) iterIdx = botCount;
+        botCount++;
+    }
+    if (botCount == 0 || iterIdx < 0) return false;
+    return iterIdx == (int)((serverSimGetTick(sim) / 2u) % (uint32_t)botCount);
+}
+
+void brainRecordStashPoolJson(BYTE slot, char *json) {
+    if (slot >= MAX_TANKS) { free(json); return; }
+    free(g_poolStash[slot]);
+    g_poolStash[slot] = json;
+}
+
+static void perf_free_pool_stash(void) {
+    for (int i = 0; i < MAX_TANKS; i++) {
+        free(g_poolStash[i]);
+        g_poolStash[i] = NULL;
+    }
+}
+
+/* ── Perf diagnostics (braindbg_perf.log) ─────────────────────────────
+ * Per-tick phase costs accumulated and dumped every PERF_DUMP_TICKS as one
+ * line, so a slow many-bot debug game can be broken down: which recording
+ * stream (snapshot/map/overlays/pool JSON) eats the tick, how much the
+ * brains themselves think, and the achieved tick rate (wall time per
+ * window — the "is the game keeping up" number). */
+#define PERF_DUMP_TICKS 250
+static FILE    *g_perf = NULL;
+static bool     g_perfTried = false;
+static uint64_t g_perfWallStart = 0;
+static double   g_pfSnapMs = 0, g_pfMapMs = 0, g_pfOvlMs = 0, g_pfPoolMs = 0;
+static double   g_pfThinkMs = 0;   /* sum of per-bot lastThinkMs */
+static uint64_t g_pfOvlCmds = 0, g_pfPoolBytes = 0;
+static uint32_t g_pfTicks = 0;
+
+static double perf_ms(uint64_t t0, uint64_t t1) {
+    return (double)(t1 - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+}
+
+static void perf_dump(uint32_t tick) {
+    if (!g_perf && !g_perfTried && g_sessionDir[0]) {
+        char p[600];
+        snprintf(p, sizeof(p), "%s/braindbg_perf.log", g_sessionDir);
+        g_perf = fopen(p, "a");
+        g_perfTried = true;
+        if (g_perf) {
+            fprintf(g_perf, "# tick window=%d | wall_s + eff_hz measure the whole "
+                    "server loop; think=sum of bot brain ms/tick; rec_* = recorder "
+                    "phase ms/tick; ovl_cmds/pool_B = recorded volume per tick\n",
+                    PERF_DUMP_TICKS);
+        }
+    }
+    if (!g_perf) return;
+    double wallS = perf_ms(g_perfWallStart, SDL_GetPerformanceCounter()) / 1000.0;
+    double n = (double)(g_pfTicks ? g_pfTicks : 1);
+    fprintf(g_perf,
+        "PERF t=%u wall_s=%.2f eff_hz=%.1f think_ms=%.2f rec_snap=%.3f "
+        "rec_map=%.3f rec_ovl=%.3f rec_pool=%.3f ovl_cmds=%.0f pool_B=%.0f\n",
+        tick, wallS, (double)g_pfTicks / (wallS > 0 ? wallS : 1),
+        g_pfThinkMs / n, g_pfSnapMs / n, g_pfMapMs / n, g_pfOvlMs / n,
+        g_pfPoolMs / n, (double)g_pfOvlCmds / n, (double)g_pfPoolBytes / n);
+    fflush(g_perf);
+    g_pfSnapMs = g_pfMapMs = g_pfOvlMs = g_pfPoolMs = g_pfThinkMs = 0;
+    g_pfOvlCmds = g_pfPoolBytes = 0;
+    g_pfTicks = 0;
+    g_perfWallStart = SDL_GetPerformanceCounter();
+}
 
 /* Small write helpers — native byte order (same build both ends), streamed
  * through gzip. */
@@ -273,6 +387,9 @@ void brainRecordTick(ServerSim *sim) {
     if (tick == g_lastTick) return;   /* serverSimTick can run twice per frame */
     g_lastTick = tick;
 
+    if (g_perfWallStart == 0) g_perfWallStart = SDL_GetPerformanceCounter();
+    uint64_t _tp0 = SDL_GetPerformanceCounter();
+
     /* ── God-view world snapshot (no viewport cull) ── */
     SnapshotHeader      hdr;
     TankSnapshot        tanks[MAX_TANKS];
@@ -330,8 +447,13 @@ void brainRecordTick(ServerSim *sim) {
         }
     }
 
+    uint64_t _tp1 = SDL_GetPerformanceCounter();
+    g_pfSnapMs += perf_ms(_tp0, _tp1);
+
     /* ── Map terrain (keyframe / delta) — also carries mines + boats ── */
     writeMap(sim);
+    uint64_t _tp2 = SDL_GetPerformanceCounter();
+    g_pfMapMs += perf_ms(_tp1, _tp2);
 
     /* ── Per-bot: think time, goal info, overlays, pool JSON ── */
     int botCount = 0;
@@ -345,34 +467,63 @@ void brainRecordTick(ServerSim *sim) {
         BYTE slot = (BYTE)i;
 
         wr_u8(slot);
-        wr_f32((float)serverSimGetBotLastThinkMs(sim, slot));
+        double thinkMs = serverSimGetBotLastThinkMs(sim, slot);
+        g_pfThinkMs += thinkMs;
+        wr_f32((float)thinkMs);
 
         writeGoalInfo(sim, slot);
 
         /* Overlay (visualizer) commands the brain emitted this tick, written
          * packed (variable-length), minus the skip-listed categories
-         * (label_overlays etc.) which are dropped from disk entirely. */
-        OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
-        uint32_t ocount = (ovl && ovl->count > 0) ? (uint32_t)ovl->count : 0;
-        uint32_t kept = ocount;
-        if (g_haveSkip && ocount) {
-            kept = 0;
-            for (uint32_t k = 0; k < ocount; k++)
-                if (!g_skipViz[ovl->cmds[k].viz_idx]) kept++;
+         * (label_overlays etc.) which are dropped from disk entirely.
+         * -bd-noviz: write an empty block (the brain also stops emitting,
+         * so ocount is 0 anyway — this keeps the file valid regardless). */
+        uint64_t _tb0 = SDL_GetPerformanceCounter();
+        if (!g_recViz) {
+            wr_u32(0);
+        } else {
+            OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
+            uint32_t ocount = (ovl && ovl->count > 0) ? (uint32_t)ovl->count : 0;
+            uint32_t kept = ocount;
+            if (g_haveSkip && ocount) {
+                kept = 0;
+                for (uint32_t k = 0; k < ocount; k++)
+                    if (!g_skipViz[ovl->cmds[k].viz_idx]) kept++;
+            }
+            wr_u32(kept);
+            for (uint32_t k = 0; k < ocount; k++) {
+                if (g_haveSkip && g_skipViz[ovl->cmds[k].viz_idx]) continue;
+                wr_overlay_packed(&ovl->cmds[k]);
+            }
+            g_pfOvlCmds += kept;
         }
-        wr_u32(kept);
-        for (uint32_t k = 0; k < ocount; k++) {
-            if (g_haveSkip && g_skipViz[ovl->cmds[k].viz_idx]) continue;
-            wr_overlay_packed(&ovl->cmds[k]);
-        }
+        uint64_t _tb1 = SDL_GetPerformanceCounter();
+        g_pfOvlMs += perf_ms(_tb0, _tb1);
 
-        /* Pool-breakdown JSON (what the BrainTest Pool Info panel renders). */
-        char *pj = serverSimBotEvalLuaString(sim, slot,
-                                             "return brain.get_pool_breakdown_json()");
-        uint32_t plen = pj ? (uint32_t)strlen(pj) : 0;
-        wr_u32(plen);
-        if (plen) wr_buf(pj, plen);
-        if (pj) free(pj);
+        /* Pool-breakdown JSON (what the BrainTest Pool Info panel renders).
+         * -bd-nopool: skip the per-bot Lua JSON build entirely — it's the
+         * eval itself (string building + GC) that costs, not the bytes.
+         * Round-robin mode captures ONE bot per frame. The string normally
+         * arrives PREFETCHED from the bot's own worker thread (built in
+         * parallel right after its think — see runBotThinkJob), so this
+         * serial section only writes; the inline eval is the fallback for
+         * a budget-killed think or a bot that skipped its job. */
+        if (!brainRecordPoolCaptureWanted(sim, slot)) {
+            wr_u32(0);
+        } else {
+            char *pj = g_poolStash[slot];
+            g_poolStash[slot] = NULL;
+            if (!pj) {
+                pj = serverSimBotEvalLuaString(sim, slot,
+                         "return brain.get_pool_breakdown_json()");
+            }
+            uint32_t plen = pj ? (uint32_t)strlen(pj) : 0;
+            wr_u32(plen);
+            if (plen) wr_buf(pj, plen);
+            if (pj) free(pj);
+            g_pfPoolBytes += plen;
+        }
+        g_pfPoolMs += perf_ms(_tb1, SDL_GetPerformanceCounter());
     }
 
     /* ── Per-player alliance bitmaps (v5) ── MAX_TANKS uint32s, written every
@@ -394,6 +545,9 @@ void brainRecordTick(ServerSim *sim) {
         gzflush(g_gz, Z_SYNC_FLUSH);
         g_sinceFlush = 0;
     }
+
+    g_pfTicks++;
+    if (g_pfTicks >= PERF_DUMP_TICKS) perf_dump(tick);
 }
 
 void brainRecordEndGame(void) {
@@ -413,6 +567,13 @@ void brainRecordEndGame(void) {
     g_frameCount   = 0;
     g_haveSkip     = false;
     memset(g_skipViz, 0, sizeof g_skipViz);
+    if (g_perf) { fclose(g_perf); g_perf = NULL; }
+    g_perfTried = false;
+    g_perfWallStart = 0;
+    g_pfSnapMs = g_pfMapMs = g_pfOvlMs = g_pfPoolMs = g_pfThinkMs = 0;
+    g_pfOvlCmds = g_pfPoolBytes = 0;
+    g_pfTicks = 0;
+    perf_free_pool_stash();
 }
 
 void brainRecordShutdown(void) {
@@ -427,4 +588,8 @@ void brainRecordShutdown(void) {
     g_frameCount = 0;
     g_haveSkip   = false;
     memset(g_skipViz, 0, sizeof g_skipViz);
+    if (g_perf) { fclose(g_perf); g_perf = NULL; }
+    g_perfTried = false;
+    g_perfWallStart = 0;
+    perf_free_pool_stash();
 }

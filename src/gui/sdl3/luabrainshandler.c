@@ -118,6 +118,28 @@ void luaBrainsSetProfile(int profile, int profile_log, int pool_viz) {
     s_pool_viz    = pool_viz    ? 1 : 0;
 }
 
+/* Selective brain-debug parts (winbolods -bd-noviz / -bd-nopool /
+ * -bd-noprint2 / -bd-nojsonl). -brain-debug implies ALL FOUR on; these
+ * default-on statics let the operator turn individual recording streams
+ * off to keep a many-bot debug game playable. Captured at brain init:
+ *   print2 → _PRINT2_ENABLED
+ *   pool   → BRAIN_POOL_VIZ (the per-tick pool-breakdown JSON build)
+ *   viz    → _BT_VIZ_COLLECT="off" (viz.lua wrappers emit nothing)
+ *   jsonl  → BRAIN_LOG_JSON / _JSONL_LOGGER_ENABLED
+ * BRAIN_DEBUG_MODE itself stays on — the brain still runs its debug
+ * logic; only the corresponding output stream is silenced. */
+static int s_bd_print2 = 1;
+static int s_bd_pool   = 1;
+static int s_bd_viz    = 1;
+static int s_bd_jsonl  = 1;
+
+void luaBrainsSetDebugParts(int print2_on, int pool_on, int viz_on, int jsonl_on) {
+    s_bd_print2 = print2_on ? 1 : 0;
+    s_bd_pool   = pool_on   ? 1 : 0;
+    s_bd_viz    = viz_on    ? 1 : 0;
+    s_bd_jsonl  = jsonl_on  ? 1 : 0;
+}
+
 /* Set by --instr-profile. Captured as the BRAIN_INSTR_PROFILE Lua global at
  * brain init; when set, GoalHunter arms its sampling profiler around think. */
 static int s_instr_profile = 0;
@@ -1072,9 +1094,19 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
   /* print2 mirrors BRAIN_DEBUG_MODE: writes the per-tick log only in
    * debug mode. The Lua side gates every print2 call on this so opt
-   * builds and non-debug runs pay zero I/O cost. */
-  lua_pushboolean(L, debug_mode);
+   * builds and non-debug runs pay zero I/O cost. s_bd_print2 (winbolods
+   * -bd-noprint2) silences the stream without turning debug mode off. */
+  lua_pushboolean(L, debug_mode && s_bd_print2);
   lua_setglobal(L, "_PRINT2_ENABLED");
+
+  /* -bd-noviz: force this bot's viz collect mode OFF so viz.lua's draw
+   * wrappers emit nothing (the overlay Lua→C calls are the cost, not just
+   * the .btr bytes). Same mechanism BrainTest's V-window per-bot radio
+   * uses, so is_on() gates the viz-only precompute too. */
+  if (debug_mode && !s_bd_viz) {
+    lua_pushstring(L, "off");
+    lua_setglobal(L, "_BT_VIZ_COLLECT");
+  }
 
   lua_pushboolean(L, s_profile);
   lua_setglobal(L, "BRAIN_PROFILE");
@@ -1090,7 +1122,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * debug logging without the structured trace too. _JSONL_LOGGER_ENABLED
    * is the parallel player-0 gate inside init.lua's log-open; set it
    * here too so player 0's brain_p0.jsonl actually opens. */
-  bool log_json_eff = s_log_json || debug_mode;
+  bool log_json_eff = (s_log_json || debug_mode) && s_bd_jsonl;
   lua_pushboolean(L, log_json_eff);
   lua_setglobal(L, "BRAIN_LOG_JSON");
   lua_pushboolean(L, log_json_eff);
@@ -1104,7 +1136,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * leaves it off — it wants timings only, not the pool-string GC cost. The
    * pool-viz code is runtime-gated (not stripped from opt), so enabling the
    * global is enough. */
-  lua_pushboolean(L, debug_mode || s_pool_viz);
+  lua_pushboolean(L, (debug_mode && s_bd_pool) || s_pool_viz);
   lua_setglobal(L, "BRAIN_POOL_VIZ");
 
   /* Per-category debug log gates. All require BRAIN_DEBUG_MODE to be on

@@ -755,8 +755,12 @@ end
 -- BrainTest can filter at draw time — including for recorded frames
 -- during playback when V checkboxes change. Brain code that wants to
 -- skip expensive precompute should still call M.is_on(viz_id) first.
+-- Exception: _BT_VIZ_COLLECT == "off" (BrainTest non-followed bots,
+-- winbolods -bd-noviz) means THIS BOT EMITS NOTHING — that's the
+-- documented collect-off contract, and the Lua→C overlay calls are
+-- the cost being avoided, so the wrappers short-circuit here.
 function M.text(viz_id, ...)
-  if not BRAIN_DEBUG_MODE then return end
+  if not BRAIN_DEBUG_MODE or _G._BT_VIZ_COLLECT == "off" then return end
   assert_id(viz_id)
   if not overlay_text then return end
   local idx = vid(viz_id)
@@ -770,7 +774,7 @@ function M.text(viz_id, ...)
 end
 
 function M.rect(viz_id, ...)
-  if not BRAIN_DEBUG_MODE then return end
+  if not BRAIN_DEBUG_MODE or _G._BT_VIZ_COLLECT == "off" then return end
   assert_id(viz_id)
   if not overlay_rect then return end
   local idx = vid(viz_id)
@@ -784,7 +788,7 @@ function M.rect(viz_id, ...)
 end
 
 function M.line(viz_id, ...)
-  if not BRAIN_DEBUG_MODE then return end
+  if not BRAIN_DEBUG_MODE or _G._BT_VIZ_COLLECT == "off" then return end
   assert_id(viz_id)
   if not overlay_line then return end
   local idx = vid(viz_id)
@@ -798,7 +802,7 @@ function M.line(viz_id, ...)
 end
 
 function M.circle(viz_id, ...)
-  if not BRAIN_DEBUG_MODE then return end
+  if not BRAIN_DEBUG_MODE or _G._BT_VIZ_COLLECT == "off" then return end
   assert_id(viz_id)
   if not overlay_circle then return end
   local idx = vid(viz_id)

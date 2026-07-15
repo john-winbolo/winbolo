@@ -2143,6 +2143,16 @@ static char *panelPollCallback(int panel_idx) {
         && panel_idx < PANEL_REG_MAX) {
         const char *rec = g_panelPollRecording->frames[g_panelPollFrame]
                           .recordedPanels[panel_idx];
+        /* Round-robin pool recording (winbolods default) captures each bot's
+         * pool JSON only every botCount-th frame; walk back to the latest
+         * sample so the panel shows near-current data instead of NO DATA on
+         * the in-between frames. Bounded walk: 64 frames covers a 16-bot
+         * round-robin four times over; a truly absent panel still falls
+         * through to the sentinel. */
+        for (int back = 1; !rec && back <= 64 && g_panelPollFrame - back >= 0; back++) {
+            rec = g_panelPollRecording->frames[g_panelPollFrame - back]
+                  .recordedPanels[panel_idx];
+        }
         if (rec) {
             size_t n = strlen(rec);
             char *copy = (char *)malloc(n + 1);
