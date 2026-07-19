@@ -114,6 +114,12 @@ LobbyPlayer     *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
  * concatenate with "/<rel>". */
 const char *serverSimGetMapDirRoot(const ServerSim *sim);
 
+/* Absolute directory backing the virtual "Uploads/" folder for
+ * PERSIST-policy uploads. Pass NULL or "" to leave it unset (uploads then
+ * resolve under "<mapDirRoot>/Uploads"). The enumerate/search/read resolvers
+ * redirect the "Uploads"/"Uploads/<name>" prefix here when set. */
+void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir);
+
 /* Auto-unready on meaningful lobby change. Called after each apply
  * from PACKET_LOBBY_* handlers and client_net.c local-transport
  * branches. */

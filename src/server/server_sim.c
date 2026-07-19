@@ -5084,6 +5084,15 @@ const char *serverSimGetMapDirRoot(const ServerSim *sim) {
     return "data/maps";
 }
 
+void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->uploadPersistDir, dir, sizeof(sim->uploadPersistDir));
+    } else {
+        sim->uploadPersistDir[0] = '\0';
+    }
+}
+
 bool serverSimMapDirPickRandom(ServerSim *sim) {
     int idx;
     char msg[512];
@@ -7483,18 +7492,40 @@ static bool relPathIsSafe(const char *p) {
     return true;
 }
 
+/* Resolve a client-facing map relPath to an absolute filesystem path. The
+ * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
+ * persist directory when the sim has one set; every other path — and the unset
+ * case — resolves under the map-dir root as before. relPath must already have
+ * passed relPathIsSafe. out holds at least FILENAME_MAX bytes. */
+static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                                     char *out, size_t outSize) {
+    const char *persist =
+        (sim && sim->uploadPersistDir[0] != '\0') ? sim->uploadPersistDir : NULL;
+    if (persist != NULL && relPath != NULL) {
+        if (SDL_strcmp(relPath, "Uploads") == 0) {
+            SDL_strlcpy(out, persist, outSize);
+            return;
+        }
+        if (SDL_strncmp(relPath, "Uploads/", 8) == 0) {
+            SDL_snprintf(out, outSize, "%s/%s", persist, relPath + 8);
+            return;
+        }
+    }
+    const char *root = serverSimGetMapDirRoot(sim);
+    if (relPath == NULL || relPath[0] == '\0') {
+        SDL_strlcpy(out, root, outSize);
+    } else {
+        SDL_snprintf(out, outSize, "%s/%s", root, relPath);
+    }
+}
+
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
                               ServerMapEntry *entries, int maxEntries) {
     if (!entries || maxEntries <= 0) return -1;
     if (!relPathIsSafe(relPath)) return -1;
 
-    const char *root = serverSimGetMapDirRoot(sim);
     char fullPath[FILENAME_MAX];
-    if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullPath, root, sizeof(fullPath));
-    } else {
-        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s", root, relPath);
-    }
+    serverSimResolveMapPath(sim, relPath, fullPath, sizeof(fullPath));
 
     int count = 0;
     int globCount = 0;
@@ -7628,13 +7659,8 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
     if (!query || query[0] == '\0') return 0;
     if (!relPathIsSafe(relPath)) return -1;
 
-    const char *root = serverSimGetMapDirRoot(sim);
     char fullRoot[FILENAME_MAX];
-    if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullRoot, root, sizeof(fullRoot));
-    } else {
-        SDL_snprintf(fullRoot, sizeof(fullRoot), "%s/%s", root, relPath);
-    }
+    serverSimResolveMapPath(sim, relPath, fullRoot, sizeof(fullRoot));
 
     char queryLower[128];
     size_t qlen = SDL_strlen(query);
@@ -8225,8 +8251,7 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!relPathIsSafe(relPath)) return false;
 
     char fullPath[FILENAME_MAX];
-    SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
-                 serverSimGetMapDirRoot(sim), relPath);
+    serverSimResolveMapPath(sim, relPath, fullPath, sizeof(fullPath));
     SDL_PathInfo info;
     if (!SDL_GetPathInfo(fullPath, &info)) return false;
     if (info.type != SDL_PATHTYPE_FILE) return false;
