@@ -207,6 +207,15 @@ bool gameFrontTrackerEnabled;
 bool gameFrontUseUpnp         = TRUE;
 bool gameFrontUseNatTraversal = TRUE;
 
+/* Client-hosting settings ([HOSTING] section). Defaults match the historical
+ * hard-coded listen-server behaviour plus the newly-exposed knobs. */
+unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
+bool           gameFrontHostingAllowSpec       = TRUE;
+int            gameFrontHostingMaxSpec         = 16;
+int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
+int            gameFrontHostingUploadMaxFiles  = 64;
+int            gameFrontHostingUploadMaxStorage = 8;
+
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
@@ -1882,6 +1891,50 @@ void gameFrontSetShowTutorialButton(bool show) {
                             TRUEFALSE_TO_STR(show));
 }
 
+/* Client-hosting write-through setters — update the global and persist the
+ * [HOSTING] key immediately so both settings shells save without relying on
+ * the pre-game modal's close-time flush. */
+void gameFrontSetHostingPort(unsigned short port) {
+  gameFrontHostingPort = port;
+  char buf[16];
+  intToStr(port, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Port", buf);
+}
+
+void gameFrontSetHostingAllowSpec(bool allow) {
+  gameFrontHostingAllowSpec = allow;
+  prefsSetString("HOSTING", "Allow Spectators", TRUEFALSE_TO_STR(allow));
+}
+
+void gameFrontSetHostingMaxSpec(int maxSpec) {
+  gameFrontHostingMaxSpec = maxSpec;
+  char buf[16];
+  intToStr(maxSpec, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Max Spectators", buf);
+}
+
+void gameFrontSetHostingUploadPolicy(int policy) {
+  gameFrontHostingUploadPolicy = policy;
+  const char *str = (policy == UPLOAD_POLICY_OFF)     ? "Off"
+                  : (policy == UPLOAD_POLICY_PERSIST) ? "Persist"
+                                                      : "Allow";
+  prefsSetString("HOSTING", "Upload Policy", str);
+}
+
+void gameFrontSetHostingUploadMaxFiles(int maxFiles) {
+  gameFrontHostingUploadMaxFiles = maxFiles;
+  char buf[16];
+  intToStr(maxFiles, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Upload Max Files", buf);
+}
+
+void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
+  gameFrontHostingUploadMaxStorage = maxStorageMb;
+  char buf[16];
+  intToStr(maxStorageMb, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Upload Max Storage", buf);
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2416,7 +2469,20 @@ bool gameFrontSetupServer(void) {
     findBrainPath(brainPath, sizeof(brainPath));
   }
   memset(&cfg, 0, sizeof(cfg));
-  cfg.udpPort             = gameFrontMyUdp;
+  /* Hosting port/spectators/uploads come from the [HOSTING] prefs, re-read
+   * here at host time. gameFrontMyUdp is not trustworthy as the hosting port:
+   * the browser Join path zeroes it (gameFrontSetUdpOptions(..., 0)). */
+  cfg.udpPort             = gameFrontHostingPort;
+  cfg.maxSpectators       = gameFrontHostingAllowSpec
+                              ? (BYTE)(gameFrontHostingMaxSpec < 1 ? 1
+                                       : gameFrontHostingMaxSpec > 32 ? 32
+                                       : gameFrontHostingMaxSpec)
+                              : 0;
+  cfg.specDelaySeconds    = 0;  /* client hosts run live */
+  cfg.uploadPolicy        = (UploadPolicy)gameFrontHostingUploadPolicy;
+  cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
+  cfg.uploadMaxStorageBytes =
+      (uint32_t)gameFrontHostingUploadMaxStorage * 1024u * 1024u;
   cfg.bindAddr            = "";
   cfg.password            = password;
   cfg.maxPlayers          = MAX_TANKS;
@@ -2525,6 +2591,49 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
   prefsGetString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
+
+  /* Hosting settings ([HOSTING] section — the port/spectator/upload knobs
+   * for a game hosted from the finder). Clamp on read to the same ranges the
+   * UI enforces so a hand-edited INI can't inject an out-of-range value. */
+  intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
+  prefsGetString("HOSTING", "Port", def, buff, FILENAME_MAX);
+  {
+    int p = atoi(buff);
+    if (p < 1024) p = 1024;
+    if (p > 65535) p = 65535;
+    gameFrontHostingPort = (unsigned short)p;
+  }
+  prefsGetString("HOSTING", "Allow Spectators", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
+  {
+    int m = atoi(buff);
+    if (m < 1) m = 1;
+    if (m > 32) m = 32;
+    gameFrontHostingMaxSpec = m;
+  }
+  prefsGetString("HOSTING", "Upload Policy", "Allow", buff, FILENAME_MAX);
+  if (strcmp(buff, "Off") == 0) {
+    gameFrontHostingUploadPolicy = UPLOAD_POLICY_OFF;
+  } else if (strcmp(buff, "Persist") == 0) {
+    gameFrontHostingUploadPolicy = UPLOAD_POLICY_PERSIST;
+  } else {
+    gameFrontHostingUploadPolicy = UPLOAD_POLICY_ALLOW;
+  }
+  prefsGetString("HOSTING", "Upload Max Files", "64", buff, FILENAME_MAX);
+  {
+    int f = atoi(buff);
+    if (f < 1) f = 1;
+    if (f > 255) f = 255;
+    gameFrontHostingUploadMaxFiles = f;
+  }
+  prefsGetString("HOSTING", "Upload Max Storage", "8", buff, FILENAME_MAX);
+  {
+    int st = atoi(buff);
+    if (st < 1) st = 1;
+    if (st > 4095) st = 4095;
+    gameFrontHostingUploadMaxStorage = st;
+  }
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -2903,6 +3012,24 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "Target UDP Port", buff);
   intToStr(gameFrontMyUdp, buff, sizeof(buff));
   prefsSetString("SETTINGS", "UDP Port", buff);
+
+  /* Hosting settings ([HOSTING] section). Also written through immediately by
+   * the per-setting setters; mirrored here for parity with the close-time
+   * flush of the other sections. */
+  intToStr(gameFrontHostingPort, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Port", buff);
+  prefsSetString("HOSTING", "Allow Spectators",
+                            TRUEFALSE_TO_STR(gameFrontHostingAllowSpec));
+  intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Max Spectators", buff);
+  prefsSetString("HOSTING", "Upload Policy",
+                 gameFrontHostingUploadPolicy == UPLOAD_POLICY_OFF     ? "Off"
+                 : gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST ? "Persist"
+                                                                         : "Allow");
+  intToStr(gameFrontHostingUploadMaxFiles, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Upload Max Files", buff);
+  intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Upload Max Storage", buff);
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

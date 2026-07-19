@@ -42,6 +42,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
+#include "upload_policy.h"  /* UploadPolicy — map-upload combo */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../../lang.h"
@@ -676,6 +677,76 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     (void)ctx;
+
+    /* ---- Port ---- */
+    {
+        int port = gameFrontHostingPort;
+        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_PORT), &port)) {
+            if (port < 1024)  port = 1024;
+            if (port > 65535) port = 65535;
+            gameFrontSetHostingPort((unsigned short)port);
+        }
+    }
+
+    /* ---- Spectators ---- */
+    {
+        bool allow = gameFrontHostingAllowSpec;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_ALLOWSPEC), &allow)) {
+            gameFrontSetHostingAllowSpec(allow);
+        }
+        /* Max stays visible but greyed when spectators are off; its value is
+         * preserved so toggling back on restores the previous number. */
+        ImGui::BeginDisabled(!allow);
+        int maxSpec = gameFrontHostingMaxSpec;
+        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_MAXSPEC), &maxSpec)) {
+            if (maxSpec < 1)  maxSpec = 1;
+            if (maxSpec > 32) maxSpec = 32;
+            gameFrontSetHostingMaxSpec(maxSpec);
+        }
+        ImGui::EndDisabled();
+    }
+
+    /* ---- Map uploads ---- */
+    {
+        /* Combo display order is Off / Allow / Persist, but the enum values
+         * are not in that order (ALLOW=0, OFF=1, PERSIST=2) — map explicitly. */
+        static const int kPolicyByIndex[3] = {
+            UPLOAD_POLICY_OFF, UPLOAD_POLICY_ALLOW, UPLOAD_POLICY_PERSIST
+        };
+        const char *policyItems[3] = {
+            langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_OFF),
+            langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_ALLOW),
+            langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_PERSIST)
+        };
+        int idx = 1;  /* default Allow */
+        for (int i = 0; i < 3; ++i) {
+            if (kPolicyByIndex[i] == gameFrontHostingUploadPolicy) { idx = i; break; }
+        }
+        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_MAPUPLOADS),
+                         &idx, policyItems, 3)) {
+            gameFrontSetHostingUploadPolicy(kPolicyByIndex[idx]);
+        }
+
+        /* File/storage caps only bite on Persist (Off/Allow never write). */
+        if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
+            int maxFiles = gameFrontHostingUploadMaxFiles;
+            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES),
+                                &maxFiles)) {
+                if (maxFiles < 1)   maxFiles = 1;
+                if (maxFiles > 255) maxFiles = 255;
+                gameFrontSetHostingUploadMaxFiles(maxFiles);
+            }
+            int maxStorage = gameFrontHostingUploadMaxStorage;
+            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE),
+                                &maxStorage)) {
+                if (maxStorage < 1)    maxStorage = 1;
+                if (maxStorage > 4095) maxStorage = 4095;
+                gameFrontSetHostingUploadMaxStorage(maxStorage);
+            }
+        }
+    }
+
+    ImGui::Spacing();
     ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_HOSTING_APPLYNOTE));
 }
 
