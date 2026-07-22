@@ -58,9 +58,12 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # into the Mach-O load command so dyld refuses to launch on older macOS.
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
     string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
-    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
+    # Marketing/human-facing strings carry the display suffix (e.g. "2.02a")
+    # so Finder and the About panel match the rest of the UI. CFBundleVersion
+    # is the build number macOS treats as monotonic, so keep it numeric.
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_DISPLAY_VERSION}")
     set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
-    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_DISPLAY_VERSION}")
     set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
 
@@ -95,7 +98,13 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.10
+    # 3.4.12 fixes a use-after-free in the audio-device disconnect path
+    # (libsdl-org/SDL#14856, commits 39aff4c9 + 6a854e03): a queued
+    # main-thread callback held a raw SDL_AudioDevice pointer, and a stale
+    # run could free the device while its audio thread was still converting
+    # stream data -> EXCEPTION_ACCESS_VIOLATION_READ in
+    # SDL_Convert_S16_to_F32_SSE2 (Sentry crash on Windows, WinBolo 2.02).
+    GIT_TAG        release-3.4.12
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
@@ -721,6 +730,7 @@ target_compile_definitions(WinBoloIOS PRIVATE
     HAVE_SCREEN_C=1
     __IPHONEOS__=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1224,6 +1234,7 @@ target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1628,6 +1639,7 @@ target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -1894,6 +1906,7 @@ add_executable(LogViewer
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2021,6 +2034,7 @@ target_sources(WinBoloHeadless PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloHeadless PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2138,6 +2152,7 @@ target_compile_definitions(winbolo_gym PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_GYM_EXPORTS=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2266,6 +2281,7 @@ target_sources(BrainTest PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(BrainTest PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -2390,6 +2406,7 @@ target_sources(MapEditor PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(MapEditor PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3089,6 +3106,7 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3620,6 +3638,7 @@ if(WB_FUZZ)
     target_compile_definitions(fuzz_server_dispatch PRIVATE
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
         WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
         WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
         WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3663,6 +3682,7 @@ if(WB_FUZZ)
     target_compile_definitions(fuzz_client_snapshot PRIVATE
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
         WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
         WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
         WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
@@ -3705,6 +3725,7 @@ if(WB_FUZZ)
     target_compile_definitions(fuzz_join_accept PRIVATE
         HAVE_SCREEN_C=1
         WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
         WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
         WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
         WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
