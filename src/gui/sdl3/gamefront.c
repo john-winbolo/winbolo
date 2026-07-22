@@ -215,6 +215,9 @@ int            gameFrontHostingMaxSpec         = 16;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
+/* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
+ * (<prefs path>uploads) or the user picks one. */
+char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -1935,6 +1938,12 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
   prefsSetString("HOSTING", "Upload Max Storage", buf);
 }
 
+void gameFrontSetHostingUploadDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingUploadDir, dir ? dir : "",
+              sizeof(gameFrontHostingUploadDir));
+  prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2483,6 +2492,20 @@ bool gameFrontSetupServer(void) {
   cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
   cfg.uploadMaxStorageBytes =
       (uint32_t)gameFrontHostingUploadMaxStorage * 1024u * 1024u;
+  /* Persist saves uploads to disk under the chosen directory. Create it on
+   * use and refuse to host if that fails — no silent fallback. Off/Allow
+   * never touch disk, so leave uploadPersistDir NULL (memset-zero) for them. */
+  if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
+    if (!SDL_CreateDirectory(gameFrontHostingUploadDir)) {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "cannot create upload directory '%s' — refusing to host",
+                  gameFrontHostingUploadDir);
+      serverSimDestroy(spServerSim);
+      spServerSim = NULL;
+      return FALSE;
+    }
+    cfg.uploadPersistDir  = gameFrontHostingUploadDir;
+  }
   cfg.bindAddr            = "";
   cfg.password            = password;
   cfg.maxPlayers          = MAX_TANKS;
@@ -2633,6 +2656,19 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (st < 1) st = 1;
     if (st > 4095) st = 4095;
     gameFrontHostingUploadMaxStorage = st;
+  }
+  /* Upload Dir default lives under the writable prefs path — the app's
+   * default maps dir is inside the read-only bundle. SDL_GetPrefPath
+   * returns a trailing separator, so append "uploads" directly. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%suploads", prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "uploads");
+    }
+    prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
+                   FILENAME_MAX);
   }
 
   /* Driving keys */
@@ -3030,6 +3066,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Upload Max Files", buff);
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
+  prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

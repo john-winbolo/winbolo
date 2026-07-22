@@ -669,11 +669,29 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
     { bool nd = (bool)showNetworkDebugMessages;  if (ImGui::Checkbox(langGetText(STR_MENU_NETDEBUG_MSGS),  &nd)) windowMenuNetworkDebug_toggle(cs); }
 }
 
+/* Folder-picker glue for the Hosting tab's Upload Directory field. The
+ * SDL folder dialog is async — its callback (may fire on another thread)
+ * stashes the chosen path and a flag, and the next render frame applies it
+ * via the write-through setter.  The editable InputText remains the primary
+ * input and the fallback on platforms without a native folder dialog. */
+static char s_hostingPickedDir[FILENAME_MAX];
+static bool s_hostingDirPicked = false;
+
+static void SDLCALL hostingUploadDirDialogCallback(void *userdata,
+                                                   const char *const *filelist,
+                                                   int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingDirPicked = true;
+    }
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
- * dialog and the in-game overlay.  Widgets land in a later
- * phase; for now only the apply-note is shown.
+ * dialog and the in-game overlay.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     (void)ctx;
@@ -729,6 +747,37 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
 
         /* File/storage caps only bite on Persist (Off/Allow never write). */
         if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
+            /* Upload directory — editable text field is the primary input and
+             * the fallback where no native folder dialog exists; Browse fills
+             * it via SDL_ShowOpenFolderDialog. */
+            static char dirBuf[FILENAME_MAX];
+            static bool dirEditing = false;
+            /* Apply a folder chosen on a previous frame. */
+            if (s_hostingDirPicked) {
+                gameFrontSetHostingUploadDir(s_hostingPickedDir);
+                s_hostingDirPicked = false;
+            }
+            /* Re-seed from the global whenever the field isn't being edited,
+             * so Browse results and the persisted value show without
+             * clobbering in-progress typing. */
+            if (!dirEditing) {
+                SDL_strlcpy(dirBuf, gameFrontHostingUploadDir, sizeof(dirBuf));
+            }
+            bool commit = ImGui::InputText(
+                langGetText(STR_DLGSETTINGS_HOSTING_UPLOADDIR),
+                dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            dirEditing = ImGui::IsItemActive();
+            if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
+                gameFrontSetHostingUploadDir(dirBuf);
+            }
+            if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+                SDL_Window *win = sdl3DrawGetWindow();
+                const char *loc = gameFrontHostingUploadDir[0]
+                                      ? gameFrontHostingUploadDir : NULL;
+                SDL_ShowOpenFolderDialog(hostingUploadDirDialogCallback, NULL,
+                                         win, loc, false);
+            }
+
             int maxFiles = gameFrontHostingUploadMaxFiles;
             if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES),
                                 &maxFiles)) {
