@@ -896,6 +896,9 @@ extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
 extern int            gameFrontHostingUploadMaxStorage;/* MB, 1-4095, default 8 */
 extern char           gameFrontHostingUploadDir[FILENAME_MAX];
                               /* Persist target dir; default <prefs path>uploads */
+extern bool           gameFrontHostingLogging;         /* default Yes   */
+extern char           gameFrontHostingLogDir[FILENAME_MAX];
+                              /* Round-log dir; default <prefs path> */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
@@ -904,5 +907,7 @@ void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
+void gameFrontSetHostingLogging(bool logging);
+void gameFrontSetHostingLogDir(const char *dir);
 
 #endif

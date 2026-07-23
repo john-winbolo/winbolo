@@ -1594,8 +1594,6 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
-    src/server/server_dedicated_log.c
-    src/server/server_dedicated_log_path.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -1630,8 +1628,7 @@ bolo_apply_include_rules(WinBoloDS runtime_only)
 bolo_grant_internal_source_access(WinBoloDS
     src/bolo/transport_udp_client.c
     src/server/servermain.c
-    src/server/server_frontend_stubs.c
-    src/server/server_dedicated_log.c)
+    src/server/server_frontend_stubs.c)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE

@@ -82,6 +82,7 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
+#include "../../server/server_dedicated_log.h"
 #include "../../winbolonet/winbolonet_client.h"
 #include "../../winbolonet/winbolonet_core.h"
 #include "../../winbolonet/wbn_prefs_sync.h"
@@ -218,6 +219,10 @@ int            gameFrontHostingUploadMaxStorage = 8;
 /* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
+bool           gameFrontHostingLogging         = TRUE;
+/* Round-log dir. Empty until gameFrontGetPrefs seeds the default
+ * (the prefs path) or the user picks one. */
+char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -1944,6 +1949,17 @@ void gameFrontSetHostingUploadDir(const char *dir) {
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
 }
 
+void gameFrontSetHostingLogging(bool logging) {
+  gameFrontHostingLogging = logging;
+  prefsSetString("HOSTING", "Logging", TRUEFALSE_TO_STR(logging));
+}
+
+void gameFrontSetHostingLogDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
+              sizeof(gameFrontHostingLogDir));
+  prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2506,6 +2522,22 @@ bool gameFrontSetupServer(void) {
     }
     cfg.uploadPersistDir  = gameFrontHostingUploadDir;
   }
+  /* Round logging writes .wbv files into the chosen directory. Create it on
+   * use and refuse to host if that fails — no silent fallback. Done here,
+   * before the server starts, so the failure unwind is the simple pre-start
+   * destroy; the log subscriber itself is installed after startup below. The
+   * directory must exist before then because the log-path composer only
+   * treats its argument as a directory if it already exists on disk. */
+  if (gameFrontHostingLogging) {
+    if (!SDL_CreateDirectory(gameFrontHostingLogDir)) {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "cannot create log directory '%s' — refusing to host",
+                  gameFrontHostingLogDir);
+      serverSimDestroy(spServerSim);
+      spServerSim = NULL;
+      return FALSE;
+    }
+  }
   cfg.bindAddr            = "";
   cfg.password            = password;
   cfg.maxPlayers          = MAX_TANKS;
@@ -2569,6 +2601,15 @@ bool gameFrontSetupServer(void) {
   isServer = TRUE;
   spServerSimActive = TRUE;
   bgGameSetHiddenByForeground(bgGameGetShared(), true);
+  /* Install the round-log writer against the now-running server. Its
+   * sync-replay opens the log immediately using the directory validated
+   * above. Local games pass dontSendLog = true so the module writes the log
+   * but skips the WinBolo.net upload; Internet games upload it. */
+  if (gameFrontHostingLogging) {
+    serverSimSetWantLogging(spServerSim, true);
+    serverSimSetUserLogFileName(spServerSim, gameFrontHostingLogDir);
+    serverDedicatedLogInstall(spServerSim, s_isLanOnly);
+  }
   return TRUE;
 }
 
@@ -2668,6 +2709,21 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       snprintf(def, FILENAME_MAX, "%s", "uploads");
     }
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
+                   FILENAME_MAX);
+  }
+  prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);
+  /* Log Dir default is the writable prefs path itself — same place as
+   * WinBolo.json. SDL_GetPrefPath returns a trailing separator, so pass it
+   * as-is for the directory. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%s", prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", ".");
+    }
+    prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
                    FILENAME_MAX);
   }
 
@@ -3067,6 +3123,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+  prefsSetString("HOSTING", "Logging",
+                            TRUEFALSE_TO_STR(gameFrontHostingLogging));
+  prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

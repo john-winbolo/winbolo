@@ -688,6 +688,23 @@ static void SDLCALL hostingUploadDirDialogCallback(void *userdata,
     }
 }
 
+/* Same async-picker glue for the Log Directory field. Kept on its own
+ * statics so a pending pick can't cross-wire with the Upload Directory
+ * picker above. */
+static char s_hostingLogPickedDir[FILENAME_MAX];
+static bool s_hostingLogDirPicked = false;
+
+static void SDLCALL hostingLogDirDialogCallback(void *userdata,
+                                                const char *const *filelist,
+                                                int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingLogPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingLogDirPicked = true;
+    }
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
@@ -792,6 +809,51 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 if (maxStorage > 4095) maxStorage = 4095;
                 gameFrontSetHostingUploadMaxStorage(maxStorage);
             }
+        }
+    }
+
+    /* ---- Round logging ---- */
+    {
+        bool logging = gameFrontHostingLogging;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_ENABLELOG),
+                            &logging)) {
+            gameFrontSetHostingLogging(logging);
+        }
+        if (gameFrontHostingLogging) {
+            /* Log directory — editable text field is the primary input and
+             * the fallback where no native folder dialog exists; Browse fills
+             * it via SDL_ShowOpenFolderDialog. */
+            static char logDirBuf[FILENAME_MAX];
+            static bool logDirEditing = false;
+            /* Apply a folder chosen on a previous frame. */
+            if (s_hostingLogDirPicked) {
+                gameFrontSetHostingLogDir(s_hostingLogPickedDir);
+                s_hostingLogDirPicked = false;
+            }
+            /* Re-seed from the global whenever the field isn't being edited,
+             * so Browse results and the persisted value show without
+             * clobbering in-progress typing. */
+            if (!logDirEditing) {
+                SDL_strlcpy(logDirBuf, gameFrontHostingLogDir, sizeof(logDirBuf));
+            }
+            bool commit = ImGui::InputText(
+                langGetText(STR_DLGSETTINGS_HOSTING_LOGDIR),
+                logDirBuf, sizeof(logDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            logDirEditing = ImGui::IsItemActive();
+            if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
+                gameFrontSetHostingLogDir(logDirBuf);
+            }
+            /* Distinct ID from the Upload Directory Browse button, which
+             * shares the same label and can be on screen at the same time. */
+            ImGui::PushID("hostinglogdir");
+            if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+                SDL_Window *win = sdl3DrawGetWindow();
+                const char *loc = gameFrontHostingLogDir[0]
+                                      ? gameFrontHostingLogDir : NULL;
+                SDL_ShowOpenFolderDialog(hostingLogDirDialogCallback, NULL,
+                                         win, loc, false);
+            }
+            ImGui::PopID();
         }
     }
 
