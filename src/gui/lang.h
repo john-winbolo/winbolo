@@ -671,6 +671,7 @@
 #define STR_DLGWBN_LOADERR                  750
 #define STR_DLGWBN_DOWNLOAD_FAILED          751
 #define STR_DLGWBN_NOSAVEPATH               752
+#define STR_DLGWBN_SELECTPROMPT             753
 #define STR_DLGWBN_FETCHERR                 754
 #define STR_DLGWBN_UNKNOWN_ERR              755
 #define STR_DLGWBN_FILEFILTER               756

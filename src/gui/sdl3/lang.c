@@ -532,6 +532,7 @@ static const LangEntry langTable[] = {
     {750,  "Failed to load details"},
     {751,  "Download failed"},
     {752,  "Could not determine save path"},
+    {753,  "Select a game to view its details"},
     {754,  "Fetch failed"},
     {755,  "Unknown error"},
     {756,  "WinBolo Log Files"},
