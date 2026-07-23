@@ -28,7 +28,6 @@
 /* Includes */
 #include <math.h>
 #include <stdio.h>
-#include <stdarg.h>
 #ifdef _WIN32
 #  include <winsock2.h>
 #else
@@ -61,22 +60,6 @@ static LogViewerState *g_lv = NULL;
 
 void lv_screenSetState(LogViewerState *lv) { g_lv = lv; }
 LogViewerState *lv_screenGetState(void) { return g_lv; }
-
-/* TEMP diagnostic: append a line to lv_debug.txt (truncated on first write of a
- * run). Used to correlate attribution ticks with real playback times. Remove. */
-void lvDebugLog(const char *fmt, ...) {
-  static FILE *dbg = NULL;
-  va_list ap;
-  if (dbg == NULL) {
-    dbg = fopen("lv_debug.txt", "w");
-    if (dbg == NULL) return;
-  }
-  va_start(ap, fmt);
-  vfprintf(dbg, fmt, ap);
-  va_end(ap);
-  fputc('\n', dbg);
-  fflush(dbg);
-}
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
@@ -906,9 +889,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       lv_basesSetOwner(&g_lv->bs, opt1, opt2, opt3);
-      { base bi; lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(opt1 + 1));
-        lvDebugLog("EVENT ms=%u BASE_OWNER idx=%u p2=%u p3=%u cell=%u,%u",
-                   g_lv->timeRunning, opt1, opt2, opt3, bi.x, bi.y); }
       break;
     case log_BaseSetStock:
       logReadBytes(&opt1, 1);
@@ -959,8 +939,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt2, 1);
       logReadBytes(&opt3, 1);
       lv_pillsSetPillOwner(&g_lv->pb, opt1, opt2, opt3);
-      lvDebugLog("EVENT ms=%u PILL_OWNER idx=%u p2=%u p3=%u",
-                 g_lv->timeRunning, opt1, opt2, opt3);
       break;
     case log_PillSetPlace:
       logReadBytes(&opt1, 1);
@@ -981,8 +959,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lvDebugLog("EVENT ms=%u KILL victim=%u killer=%u",
-                 g_lv->timeRunning, opt1, opt2);
       lv_playersGetPlayerName(opt1, mem);
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
@@ -1069,7 +1045,6 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_LobbyExit:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_GAME_STARTED, NULL);
-      lvDebugLog("EVENT ms=%u LOBBY_EXIT (game start)", g_lv->timeRunning);
       break;
     case log_PlayerReady:
       logReadBytes(&opt1, 1);

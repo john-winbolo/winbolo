@@ -275,21 +275,4 @@ void lvStatsEmitRoundSummary(void) {
      * of the moment and centres the map on it. */
     lv_windowAddHighlight(line, clipMs, h->mapX, h->mapY);
   }
-
-  /* TEMP diagnostic: dump the attribution side (game-start offset, full notable
-   * timeline, and the chosen highlights with their computed absolute ms) so it
-   * can be correlated against the EVENT lines the playback logs. Remove. */
-  lvDebugLog("GAMESTART_MS=%u CAL_A=%f CAL_B=%f HLCOUNT=%d TIMELINE=%d",
-             gameStartMs, calA, calB, hlCount, timelineCount);
-  for (i = 0; i < timelineCount; i++) {
-    lvDebugLog("TRACK tick=%u type=%u a=%u b=%u cell=%u,%u", timeline[i].tick,
-               timeline[i].type, timeline[i].actorA, timeline[i].actorB,
-               timeline[i].mapX, timeline[i].mapY);
-  }
-  for (i = 0; i < hlCount; i++) {
-    lvDebugLog("HL type=%u startTick=%u cell=%u,%u a=%u b=%u val=%u clipMs=%u",
-               hl[i].type, hl[i].startTick, hl[i].mapX, hl[i].mapY, hl[i].actorA,
-               hl[i].actorB, hl[i].value,
-               (uint32_t)(calA * (double)hl[i].startTick + calB));
-  }
 }

@@ -596,9 +596,6 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
                                uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
                                uint32_t *outMsE, uint32_t *outMsL);
 
-/* TEMP diagnostic sink (lv_debug.txt); remove with the correlation logging. */
-void lvDebugLog(const char *fmt, ...);
-
 /* Seek playback to an absolute log time in ms (clamped to the log length). */
 void lv_screenSeekToTimeMs(uint32_t ms);
 
