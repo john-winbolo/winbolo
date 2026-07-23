@@ -2991,6 +2991,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
     tests/unit/test_attribution_reader.c
+    # Calibration anchor walk: synthetic v2 logs prove the highlight
+    # clip-time fit resolves base cells from the log's own snapshots
+    # (test_lv_calibration.c).
+    tests/unit/test_lv_calibration.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -3348,6 +3352,8 @@ set(_unit_test_names
     attribution_reader_roundtrip
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
+    lv_walk_base_anchor_lobby_log
+    lv_walk_base_anchor_opening_snapshot
     blocks_stream
     stream_load
     stream_pump

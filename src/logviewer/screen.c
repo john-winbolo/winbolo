@@ -1704,8 +1704,13 @@ static bool walkSkipEvents(unsigned short numEvents) {
 }
 
 /* Skip a snapshot block. Mirrors lv_processSnapshot's read order without
- * applying any state. */
-static bool walkSkipSnapshot(void) {
+ * applying any state. When baseX/baseY/numBases are non-NULL and the snapshot
+ * carries a base table, the bases' map cells are copied out in blob order —
+ * the same 0-based index a log_BaseSetOwner event carries. A snapshot with no
+ * bases (any lobby-phase snapshot: the game world doesn't exist yet) leaves
+ * the outputs untouched, so a previously extracted table survives. */
+static bool walkSkipSnapshotBases(uint8_t *baseX, uint8_t *baseY,
+                                  int *numBases) {
   BYTE buf[512];
   BYTE dlen;
   int32_t hdr;
@@ -1720,6 +1725,20 @@ static bool walkSkipSnapshot(void) {
   for (i = 0; i < 3; i++) {
     if (logReadBytes(&dlen, 1) != 1) return FALSE;
     if (dlen > 0 && logReadBytes(buf, dlen) != dlen) return FALSE;
+    if (i == 1 && numBases != NULL && dlen > 0 && buf[0] > 0) {
+      /* Bases blob: [numBases] then 10 bytes per base — x, y, owner, armour,
+       * shells, mines, refuelTime, baseTime(2), justStopped (the layout
+       * lv_basesSetBaseNetData consumes). Only the cells are kept. */
+      int n = buf[0] > MAX_BASES ? MAX_BASES : buf[0];
+      int k;
+      for (k = 0; k < n; k++) {
+        int off = 1 + k * 10;
+        if (off + 1 >= (int)dlen) { n = k; break; }
+        baseX[k] = buf[off];
+        baseY[k] = buf[off + 1];
+      }
+      *numBases = n;
+    }
   }
 
   /* Map runs: 4-byte header repeating until terminator
@@ -1749,6 +1768,10 @@ static bool walkSkipSnapshot(void) {
     if (dlen > 0 && logReadBytes(buf, dlen) != dlen) return FALSE;
   }
   return TRUE;
+}
+
+static bool walkSkipSnapshot(void) {
+  return walkSkipSnapshotBases(NULL, NULL, NULL);
 }
 
 /* Walk the log buffer from the current position to LOG_QUIT/EOF, counting
@@ -1815,6 +1838,11 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
 /* Playback time (ms) of the log's game-start marker (log_LobbyExit), computed
  * once at load. 0 when the log has no lobby, so the game runs from tick 0. */
 static uint32_t s_gameStartMs = 0;
+
+/* Event-stream start position (just past the opening snapshot), recorded at
+ * load so later walks (the calibration anchor scan) can re-enter the stream
+ * from a known-good position instead of trusting the caller's current one. */
+static size_t s_walkStartPos = 0;
 
 /* Like walkSkipEvents, but also reports whether this frame carried the
  * log_LobbyExit (game-start) marker. */
@@ -1909,8 +1937,12 @@ uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
 
 /* Scan one v2 LOG_EVENT frame for base-ownership gains, updating the first-seen
  * time at cell (xE,yE) and the last-seen time at cell (xL,yL). Base positions
- * are static (from the snapshot), so the cell is resolved from the base index. */
+ * are static per round, so the cell is resolved from the base index via the
+ * caller-maintained table (parsed from the log's own snapshots — the loaded
+ * lobby snapshot has no bases, so g_lv->bs cannot be used here). */
 static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
+                               const uint8_t *baseX, const uint8_t *baseY,
+                               int numBases,
                                uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
                                uint32_t *msE, bool *haveE,
                                uint32_t *msL, bool *haveL) {
@@ -1926,11 +1958,10 @@ static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
     if (code == log_BaseSetOwner && evLen >= 2) {
       BYTE idx, owner;
       if (logReadBytes(&idx, 1) == 1 && logReadBytes(&owner, 1) == 1 &&
-          owner < MAX_TANKS) {
-        base bi;
-        lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(idx + 1));
-        if (!*haveE && bi.x == xE && bi.y == yE) { *msE = frameMs; *haveE = true; }
-        if (bi.x == xL && bi.y == yL) { *msL = frameMs; *haveL = true; }
+          owner < MAX_TANKS && idx < numBases) {
+        uint8_t bx = baseX[idx], by = baseY[idx];
+        if (!*haveE && bx == xE && by == yE) { *msE = frameMs; *haveE = true; }
+        if (bx == xL && by == yL) { *msL = frameMs; *haveL = true; }
       }
     }
     lv_logSetPosition(payloadStart + evLen);
@@ -1942,7 +1973,15 @@ static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
  * at cell (xE,yE) and the LAST gain at (xL,yL). Pairs the attribution track's
  * first/last base captures to their real scrubber times so the tick->ms line
  * can be fitted. v2 logs only (framed events); false otherwise or if either
- * anchor is missing. Saves/restores position + key; enter at the stream start. */
+ * anchor is missing. Walks from the recorded event-stream start; saves and
+ * restores position + key.
+ *
+ * Base index -> cell resolution comes from the log's own snapshots: the walk
+ * is seeded from g_lv->bs (covers a no-lobby log whose only base table is the
+ * opening snapshot, consumed before the stream start) and updated from every
+ * snapshot it passes. A lobby-started log's opening snapshot has NO bases —
+ * the game world doesn't exist yet — so the table only appears in the first
+ * in-game snapshot, which the walk reaches before any capture event can. */
 bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
                                uint32_t *outMsE, uint32_t *outMsL) {
   size_t   savedPos;
@@ -1953,10 +1992,24 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
   uint16_t us;
+  uint8_t  baseX[MAX_BASES], baseY[MAX_BASES];
+  int      numBases = 0;
+  int      i;
 
   if (g_lv == NULL || g_lv->loadedLogVersion != LOG_VERSION_V2) return FALSE;
   savedPos = lv_logGetCurrentPosition();
   savedKey = lv_blocksGetKey();
+  lv_logSetPosition(s_walkStartPos);
+  lv_blocksSetKey(0);   /* v2 is plaintext (identity de-XOR) */
+
+  /* Seed from the loaded base table (empty on a lobby-started log). */
+  for (i = 0; i < (int)lv_basesGetNumBases(&g_lv->bs) && i < MAX_BASES; i++) {
+    base bi;
+    lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(i + 1));
+    baseX[i] = bi.x;
+    baseY[i] = bi.y;
+    numBases = i + 1;
+  }
 
   while (!done && !lv_blocksIsEOF()) {
     if (logReadBytes(&code, 1) != 1) break;
@@ -1965,7 +2018,7 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
         done = TRUE;
         break;
       case LOG_SNAPSHOT:
-        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        if (!walkSkipSnapshotBases(baseX, baseY, &numBases)) { done = TRUE; break; }
         ticks++;
         break;
       case LOG_NOEVENTS:
@@ -1985,7 +2038,8 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         numEvents = b1;
         ticks++;
-        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20), xE, yE, xL, yL,
+        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
+                                baseX, baseY, numBases, xE, yE, xL, yL,
                                 &msE, &haveE, &msL, &haveL)) { done = TRUE; break; }
         break;
       case LOG_EVENT_LONG:
@@ -1994,7 +2048,8 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
         us = (uint16_t)((b1 << 8) | b2);
         numEvents = ntohs(us);
         ticks++;
-        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20), xE, yE, xL, yL,
+        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
+                                baseX, baseY, numBases, xE, yE, xL, yL,
                                 &msE, &haveE, &msL, &haveL)) { done = TRUE; break; }
         break;
       default:
@@ -2125,6 +2180,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
      * non-linear due to compression and variable event density, so the
      * one-shot walk is the only way to get accurate total/remaining
      * before a player joins. */
+    s_walkStartPos = lv_logGetCurrentPosition();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     s_gameStartMs = lv_walkComputeGameStartMs();
     /* Set the game information up */
@@ -2259,6 +2315,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   returnValue = lv_logLoadFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     lv_logDecompressAll();
+    s_walkStartPos = lv_logGetCurrentPosition();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     s_gameStartMs = lv_walkComputeGameStartMs();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);

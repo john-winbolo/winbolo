@@ -589,6 +589,14 @@ int run_attribution_reader_rejects_bad(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
 
+/* Highlight clip-time calibration anchors (test_lv_calibration.c): builds
+ * synthetic v2 .wbv logs and asserts lv_walkFindBaseOwnerTimes resolves
+ * base cells from the log's own snapshots — a lobby-started log's opening
+ * snapshot carries no bases, so the table must come from the first
+ * in-game snapshot (and from the loaded table on a no-lobby log). */
+int run_lv_walk_base_anchor_lobby_log(void);
+int run_lv_walk_base_anchor_opening_snapshot(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */

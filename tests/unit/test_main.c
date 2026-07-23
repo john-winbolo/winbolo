@@ -330,6 +330,8 @@ static const UnitTestEntry s_tests[] = {
     { "attribution_reader_roundtrip",            run_attribution_reader_roundtrip            },
     { "attribution_reader_rejects_bad",          run_attribution_reader_rejects_bad          },
     { "attribution_reader_old_wbv",              run_attribution_reader_old_wbv              },
+    { "lv_walk_base_anchor_lobby_log",           run_lv_walk_base_anchor_lobby_log           },
+    { "lv_walk_base_anchor_opening_snapshot",    run_lv_walk_base_anchor_opening_snapshot    },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
     { "spectator_seed_capture",                  run_spectator_seed_capture                  },
     { "blocks_stream",                           run_blocks_stream                           },
