@@ -3354,6 +3354,7 @@ set(_unit_test_names
     attribution_reader_old_wbv
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
+    lv_walk_base_anchor_ordinal
     blocks_stream
     stream_load
     stream_pump

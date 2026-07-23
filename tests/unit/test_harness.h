@@ -596,6 +596,7 @@ int run_wbv_v2_capture(void);
  * in-game snapshot (and from the loaded table on a no-lobby log). */
 int run_lv_walk_base_anchor_lobby_log(void);
 int run_lv_walk_base_anchor_opening_snapshot(void);
+int run_lv_walk_base_anchor_ordinal(void);
 
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and

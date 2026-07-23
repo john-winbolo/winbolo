@@ -192,12 +192,31 @@ void lvStatsEmitRoundSummary(void) {
       }
     }
     if (firstBase >= 0 && lastBase > firstBase) {
+      /* Identify each anchor to the walker as the ordinal-th ownership gain
+       * at its cell by its capturer — the capture records and the log's
+       * owner-gain events are 1:1 up to game over (allied captures are
+       * recorded too), so counting occurrences in the timeline pins the
+       * exact log event even when the cell changes hands again later (the
+       * game-over handover re-assigns every base with no capture record). */
+      const NotableEvent *fb = &timeline[firstBase];
+      const NotableEvent *lb = &timeline[lastBase];
+      int ordE = 0, ordL = 0;
       uint32_t msE = 0, msL = 0;
-      if (lv_walkFindBaseOwnerTimes(timeline[firstBase].mapX,
-                                    timeline[firstBase].mapY,
-                                    timeline[lastBase].mapX,
-                                    timeline[lastBase].mapY, &msE, &msL)) {
-        uint32_t tE = timeline[firstBase].tick, tL = timeline[lastBase].tick;
+      for (i = 0; i <= lastBase; i++) {
+        if (timeline[i].type != NOTABLE_BASE_CAPTURE) continue;
+        if (i <= firstBase && timeline[i].mapX == fb->mapX &&
+            timeline[i].mapY == fb->mapY && timeline[i].actorA == fb->actorA) {
+          ordE++;
+        }
+        if (timeline[i].mapX == lb->mapX && timeline[i].mapY == lb->mapY &&
+            timeline[i].actorA == lb->actorA) {
+          ordL++;
+        }
+      }
+      if (lv_walkFindBaseOwnerTimes(fb->mapX, fb->mapY, fb->actorA, ordE,
+                                    lb->mapX, lb->mapY, lb->actorA, ordL,
+                                    &msE, &msL)) {
+        uint32_t tE = fb->tick, tL = lb->tick;
         if (tL > tE && msL > msE) {
           calA = (double)(msL - msE) / (double)(tL - tE);
           calB = (double)msE - calA * (double)tE;

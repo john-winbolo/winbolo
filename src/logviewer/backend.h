@@ -585,10 +585,15 @@ void lv_screenSeekToPosition(float ratio);
  * offset that maps them onto the scrubber's absolute clock. Computed at load. */
 uint32_t lv_screenGameStartMs(void);
 
-/* Calibration anchors for mapping attribution ticks to scrubber ms: the first
- * base-ownership gain at cell (xE,yE) and the last at (xL,yL). v2 logs only;
- * false if unavailable. Lets the highlight times/seeks be fitted per log. */
-bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
+/* Calibration anchors for mapping attribution ticks to scrubber ms: the
+ * playback times of two specific base-ownership gains, each identified as the
+ * ordinal-th gain at cell (x,y) by `owner`. Ordinal matching is what pins the
+ * exact event: the game-over handover re-assigns every base to the winner, so
+ * "the last gain at this cell" can be a later event than the capture the
+ * attribution track recorded. v2 logs only; false if unavailable. Lets the
+ * highlight times/seeks be fitted per log. */
+bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
+                               uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
                                uint32_t *outMsE, uint32_t *outMsL);
 
 /* TEMP diagnostic sink (lv_debug.txt); remove with the correlation logging. */

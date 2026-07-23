@@ -1935,17 +1935,19 @@ static uint32_t lv_walkComputeGameStartMs(void) {
 /* Log time (ms) at which the game started (lobby ended); 0 if no lobby. */
 uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
 
-/* Scan one v2 LOG_EVENT frame for base-ownership gains, updating the first-seen
- * time at cell (xE,yE) and the last-seen time at cell (xL,yL). Base positions
- * are static per round, so the cell is resolved from the base index via the
- * caller-maintained table (parsed from the log's own snapshots — the loaded
- * lobby snapshot has no bases, so g_lv->bs cannot be used here). */
+/* Scan one v2 LOG_EVENT frame for base-ownership gains, counting matches of
+ * (cell, owner) for the two anchors and latching each anchor's time when its
+ * ordinal is reached. Base positions are static per round, so the cell is
+ * resolved from the base index via the caller-maintained table (parsed from
+ * the log's own snapshots — the loaded lobby snapshot has no bases, so
+ * g_lv->bs cannot be used here). */
 static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
                                const uint8_t *baseX, const uint8_t *baseY,
                                int numBases,
-                               uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
-                               uint32_t *msE, bool *haveE,
-                               uint32_t *msL, bool *haveL) {
+                               uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
+                               uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
+                               int *cntE, uint32_t *msE, bool *haveE,
+                               int *cntL, uint32_t *msL, bool *haveL) {
   unsigned short i;
   for (i = 0; i < numEvents; i++) {
     BYTE code, lenBytes[2];
@@ -1960,8 +1962,10 @@ static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
       if (logReadBytes(&idx, 1) == 1 && logReadBytes(&owner, 1) == 1 &&
           owner < MAX_TANKS && idx < numBases) {
         uint8_t bx = baseX[idx], by = baseY[idx];
-        if (!*haveE && bx == xE && by == yE) { *msE = frameMs; *haveE = true; }
-        if (bx == xL && by == yL) { *msL = frameMs; *haveL = true; }
+        if (!*haveE && bx == xE && by == yE && owner == ownerE &&
+            ++(*cntE) == ordE) { *msE = frameMs; *haveE = true; }
+        if (!*haveL && bx == xL && by == yL && owner == ownerL &&
+            ++(*cntL) == ordL) { *msL = frameMs; *haveL = true; }
       }
     }
     lv_logSetPosition(payloadStart + evLen);
@@ -1969,12 +1973,17 @@ static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
   return TRUE;
 }
 
-/* Calibration anchors: return the playback ms of the FIRST base-ownership gain
- * at cell (xE,yE) and the LAST gain at (xL,yL). Pairs the attribution track's
- * first/last base captures to their real scrubber times so the tick->ms line
- * can be fitted. v2 logs only (framed events); false otherwise or if either
- * anchor is missing. Walks from the recorded event-stream start; saves and
- * restores position + key.
+/* Calibration anchors: return the playback ms of two base-ownership gains,
+ * each identified as the ordinal-th gain at cell (x,y) by `owner`. Pairs the
+ * attribution track's first/last base captures to their real scrubber times so
+ * the tick->ms line can be fitted. Ordinal + owner matching pins the exact
+ * event: allied captures are recorded in the track too (ATTR_CAP_ALLY), so
+ * before game over every owner<MAX_TANKS gain has a matching capture record —
+ * but the game-over handover re-assigns every base to the winner with no
+ * record, so "last gain at this cell" can be a later event than the track's
+ * last capture (observed inflating the fitted slope ~10%). v2 logs only
+ * (framed events); false otherwise or if either anchor is missing. Walks from
+ * the recorded event-stream start; saves and restores position + key.
  *
  * Base index -> cell resolution comes from the log's own snapshots: the walk
  * is seeded from g_lv->bs (covers a no-lobby log whose only base table is the
@@ -1982,19 +1991,23 @@ static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
  * snapshot it passes. A lobby-started log's opening snapshot has NO bases —
  * the game world doesn't exist yet — so the table only appears in the first
  * in-game snapshot, which the walk reaches before any capture event can. */
-bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
+bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
+                               uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
                                uint32_t *outMsE, uint32_t *outMsL) {
   size_t   savedPos;
   BYTE     savedKey;
   uint64_t ticks = 0;
   bool     done = FALSE, haveE = FALSE, haveL = FALSE;
   uint32_t msE = 0, msL = 0;
+  int      cntE = 0, cntL = 0;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
   uint16_t us;
   uint8_t  baseX[MAX_BASES], baseY[MAX_BASES];
   int      numBases = 0;
   int      i;
+
+  if (ordE <= 0 || ordL <= 0) return FALSE;
 
   if (g_lv == NULL || g_lv->loadedLogVersion != LOG_VERSION_V2) return FALSE;
   savedPos = lv_logGetCurrentPosition();
@@ -2039,8 +2052,10 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
         numEvents = b1;
         ticks++;
         if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
-                                baseX, baseY, numBases, xE, yE, xL, yL,
-                                &msE, &haveE, &msL, &haveL)) { done = TRUE; break; }
+                                baseX, baseY, numBases,
+                                xE, yE, ownerE, ordE, xL, yL, ownerL, ordL,
+                                &cntE, &msE, &haveE,
+                                &cntL, &msL, &haveL)) { done = TRUE; break; }
         break;
       case LOG_EVENT_LONG:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
@@ -2049,8 +2064,10 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t xL, uint8_t yL,
         numEvents = ntohs(us);
         ticks++;
         if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
-                                baseX, baseY, numBases, xE, yE, xL, yL,
-                                &msE, &haveE, &msL, &haveL)) { done = TRUE; break; }
+                                baseX, baseY, numBases,
+                                xE, yE, ownerE, ordE, xL, yL, ownerL, ordL,
+                                &cntE, &msE, &haveE,
+                                &cntL, &msL, &haveL)) { done = TRUE; break; }
         break;
       default:
         done = TRUE;

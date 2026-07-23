@@ -223,13 +223,13 @@ int run_lv_walk_base_anchor_lobby_log(void) {
 
   /* The load-time base table is the empty lobby snapshot — the walker must
    * pick the cells up from the mid-stream snapshot instead. */
-  found = lv_walkFindBaseOwnerTimes(10, 20, 30, 40, &msE, &msL);
+  found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 3, 1, &msE, &msL);
   UT_ASSERT_MSG(found == TRUE, "anchor walk found nothing on a lobby log");
   UT_ASSERT_MSG(msE == 2080, "first anchor ms = %u (want 2080)", msE);
   UT_ASSERT_MSG(msL == 3120, "last anchor ms = %u (want 3120)", msL);
 
   /* A cell no base occupies must not resolve. */
-  found = lv_walkFindBaseOwnerTimes(99, 99, 30, 40, &msE, &msL);
+  found = lv_walkFindBaseOwnerTimes(99, 99, 2, 1, 30, 40, 3, 1, &msE, &msL);
   UT_ASSERT_MSG(found == FALSE, "walk matched a nonexistent base cell");
 
   lv_decoderDestroy(lv);
@@ -261,10 +261,59 @@ int run_lv_walk_base_anchor_opening_snapshot(void) {
   lv = loadSynthetic(&b, path);
   UT_ASSERT_MSG(lv != NULL, "synthetic no-lobby log failed to build/load");
 
-  found = lv_walkFindBaseOwnerTimes(10, 20, 30, 40, &msE, &msL);
+  found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 3, 1, &msE, &msL);
   UT_ASSERT_MSG(found == TRUE, "anchor walk found nothing on a no-lobby log");
   UT_ASSERT_MSG(msE == 20, "first anchor ms = %u (want 20)", msE);
   UT_ASSERT_MSG(msL == 1060, "last anchor ms = %u (want 1060)", msL);
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/*
+ * Ordinal matching: at game over every base is handed to the winner, and a
+ * base can also be recaptured by the same player later in a round — either
+ * way the log carries a LATER ownership gain at the anchor's cell than the
+ * capture the attribution track recorded, and matching "the last gain at
+ * this cell" stretches the fitted slope (observed +10%, pushing clip times
+ * past the end of the log). The k-th (cell, owner) gain is the exact event.
+ * Stream: idx0/owner2 (ms 20), idx1/owner3 (ms 1060), idx1/owner3 again
+ * (ms 1500 — the handover/recapture).
+ */
+int run_lv_walk_base_anchor_ordinal(void) {
+  const char *path = "lv_calib_synth_ordinal.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  uint32_t msE = 0, msL = 0;
+  bool found;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putBaseSetOwner(&b, 0, 2);   /* tick 1  -> ms 20 */
+  putNoEvents(&b, 50);         /* ticks 2..52 */
+  putBaseSetOwner(&b, 1, 3);   /* tick 53 -> ms 1060: the tracked capture */
+  putNoEvents(&b, 20);         /* ticks 54..74 */
+  putBaseSetOwner(&b, 1, 3);   /* tick 75 -> ms 1500: handover, no record */
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic ordinal log failed to build/load");
+
+  /* Ordinal 1 must latch the tracked capture, not the later gain. */
+  found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 3, 1, &msE, &msL);
+  UT_ASSERT_MSG(found == TRUE, "ordinal-1 walk found nothing");
+  UT_ASSERT_MSG(msL == 1060, "ordinal-1 anchor ms = %u (want 1060)", msL);
+
+  /* Ordinal 2 reaches the later gain. */
+  found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 3, 2, &msE, &msL);
+  UT_ASSERT_MSG(found == TRUE, "ordinal-2 walk found nothing");
+  UT_ASSERT_MSG(msL == 1500, "ordinal-2 anchor ms = %u (want 1500)", msL);
+
+  /* A different owner at the anchor cell never matches. */
+  found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 4, 1, &msE, &msL);
+  UT_ASSERT_MSG(found == FALSE, "walk matched the wrong owner");
 
   lv_decoderDestroy(lv);
   remove(path);
