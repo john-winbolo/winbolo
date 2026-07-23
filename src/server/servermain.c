@@ -98,9 +98,10 @@ DWORD oldTick;     /* Number of ticks passed */
 bool isQuiet = FALSE;
 bool isNoInput = FALSE;
 unsigned int serverTimerGameID = 1;
-char fileName[MAX_PATH]; /* Log file Name */
-bool isLogging = FALSE;
-bool dontSendLog = FALSE;
+/* The dedicated-server replay-log state (former fileName/isLogging/
+ * dontSendLog globals) is now private to server_dedicated_log.c. This TU
+ * drives it via serverDedicatedLogInstall() and reads it back for the
+ * teardown upload via serverDedicatedLogIsActive()/CurrentFile(). */
 
 bool statusFile = FALSE;
 
@@ -834,27 +835,6 @@ bool argExist(int numArgs, char **argv, char *argname) {
 
 
   return returnValue;
-}
-
-/** Generates a log file name based on current time and map name and copies to fileName */
-void makeLogFileName(char *outFileName, const char *mapName) {
-  time_t t;
-  struct tm *tmt;
-  int count = 0;
-  int len;
-
-  time(&t);
-  tmt = localtime(&t);
-
-  sprintf(outFileName, "%04d%02d%02dt%02d%02d%02d_%s", (1900 + tmt->tm_year), (1 + tmt->tm_mon), tmt->tm_mday, tmt->tm_hour, tmt->tm_min, tmt->tm_sec, mapName);
-  len = (int) strlen(outFileName);
-  /* Replace spaces with underscores */
-  while (count < len){
-    if (outFileName[count] == ' ') {
-      outFileName[count] = '_';
-    }
-    count++;
-  }
 }
 
 bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, gameType *game, bool *hiddenMines, aiType *ai, int *srtDelay, int32_t *gmeLen, char *trackerAddr, unsigned short *trackerPort, bool *trackerUse, char *password) {
@@ -1832,7 +1812,7 @@ int main(int argc, char **argv) {
     }
 #endif
   }
-  dontSendLog = argExist(argc, argv, "dontsendlog");
+  bool dontSendLog = argExist(argc, argv, "dontsendlog");
 
   /* Log file recording — configure the sim's wantLogging /
    * userLogFileName state, then register the dedicated-server log
@@ -1848,7 +1828,7 @@ int main(int argc, char **argv) {
     if (userLogFile[0] != '\0') {
       serverSimSetUserLogFileName(serverSim, userLogFile);
     }
-    serverDedicatedLogInstall(serverSim);
+    serverDedicatedLogInstall(serverSim, dontSendLog);
   }
 
   /* Initialize and add bot players */
@@ -2219,7 +2199,7 @@ int main(int argc, char **argv) {
   brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */
   threadsDestroy();
 
-  if (isLogging == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {
+  if (serverDedicatedLogIsActive() == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {
     winboloNetGetServerKey(key);
   } else {
     key[0] = EMPTY_CHAR;
@@ -2227,13 +2207,13 @@ int main(int argc, char **argv) {
 
   serverInstanceShutdown(serverSim);
 
-  if (isLogging == TRUE) {
+  if (serverDedicatedLogIsActive() == TRUE) {
     logStop(); /* Finalize zip — must run regardless of WBN upload */
   }
-  if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
+  if (serverDedicatedLogIsActive() == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
     serverMessageConsoleMessage(serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
-    httpSendLogFile(fileName, key, FALSE);
+    httpSendLogFile(serverDedicatedLogCurrentFile(), key, FALSE);
     httpDestroy();
   }
   geoLookupDestroy();

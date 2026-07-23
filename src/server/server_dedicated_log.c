@@ -21,6 +21,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <time.h>   /* serverDedicatedLogMakeAutoName timestamp */
 
 #include <SDL3/SDL.h>   /* SDL_RenamePath for the end-of-round map rename */
 
@@ -38,9 +39,16 @@
 #include "server_lifecycle.h"
 #include "server_dedicated_log.h"
 
-extern bool isLogging;
-extern bool dontSendLog;
-extern char fileName[];
+/* Module-private log state. Formerly extern globals owned by
+ * servermain.c (fileName/isLogging/dontSendLog); made private in Phase 2a
+ * so the module is self-contained and linkable outside WinBoloDS. The GUI
+ * client defines its own unrelated fileName[], so these must NOT be
+ * externs. servermain reads s_isLogging/s_logFileName back through
+ * serverDedicatedLogIsActive()/serverDedicatedLogCurrentFile() for its
+ * teardown upload; s_dontSendLog arrives via serverDedicatedLogInstall(). */
+static char s_logFileName[512];
+static bool s_isLogging = FALSE;
+static bool s_dontSendLog = FALSE;
 
 /* Single dedicated-server log subscriber per process. The bus forbids
  * subscribers whose ctx == sim, so the deliver callback reaches the sim
@@ -61,22 +69,43 @@ static char s_pendingUploadFile[512];
  * Empty when the log was named from an explicit -log <file> path. */
 static char s_logStamp[16];
 
-void makeLogFileName(char *outFileName, const char *mapName);
-
 static void serverDedicatedLogRenameForMap(ServerSim *sim);
 
+/* Generate a log file name from the current time and map name into
+ * outFileName ("YYYYMMDDtHHMMSS_<map>", spaces → underscores). Moved from
+ * servermain.c in Phase 2a so the module owns its own auto-naming. */
+static void serverDedicatedLogMakeAutoName(char *outFileName, const char *mapName) {
+    time_t t;
+    struct tm *tmt;
+    int count = 0;
+    int len;
+
+    time(&t);
+    tmt = localtime(&t);
+
+    sprintf(outFileName, "%04d%02d%02dt%02d%02d%02d_%s", (1900 + tmt->tm_year), (1 + tmt->tm_mon), tmt->tm_mday, tmt->tm_hour, tmt->tm_min, tmt->tm_sec, mapName);
+    len = (int) strlen(outFileName);
+    /* Replace spaces with underscores */
+    while (count < len){
+        if (outFileName[count] == ' ') {
+            outFileName[count] = '_';
+        }
+        count++;
+    }
+}
+
 void serverDedicatedLogStashCurrentRound(void) {
-    if (!isLogging) {
+    if (!s_isLogging) {
         return;
     }
     logStop();
-    isLogging = FALSE;
+    s_isLogging = FALSE;
     /* File handle is now closed — safe to rename it to the map that was
      * actually played (the lobby-entry name can be stale if the host
      * switched maps before the countdown). */
     serverDedicatedLogRenameForMap(s_logSim);
-    if (!dontSendLog) {
-        strncpy(s_pendingUploadFile, fileName, sizeof(s_pendingUploadFile) - 1);
+    if (!s_dontSendLog) {
+        strncpy(s_pendingUploadFile, s_logFileName, sizeof(s_pendingUploadFile) - 1);
         s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
     } else {
         s_pendingUploadFile[0] = '\0';
@@ -101,24 +130,25 @@ static void handleGameOver(ServerSim *sim) {
     /* No-lobby (-quitonwin): server is about to shut down via
      * servermain.c, which sends server/quit (winbolonetDestroy →
      * winbolonetGoodbye) before its own logStop + httpSendLogFile.
-     * That path already has the correct ordering, so leave isLogging
-     * and fileName intact for it. */
+     * That path already has the correct ordering, so leave s_isLogging
+     * and s_logFileName intact for it — servermain reads them back via
+     * serverDedicatedLogIsActive()/serverDedicatedLogCurrentFile(). */
     if (!sim->lobbyEnabled) {
         return;
     }
     serverDedicatedLogStashCurrentRound();
 }
 
-/* Resolve the on-disk replay path into the global `fileName`, generating the
- * timestamped auto-name from the current map and delegating the directory /
- * file / extension handling to serverDedicatedLogComposePath (defined in
- * server_dedicated_log_path.c). */
+/* Resolve the on-disk replay path into the module's `s_logFileName`,
+ * generating the timestamped auto-name from the current map and delegating
+ * the directory / file / extension handling to serverDedicatedLogComposePath
+ * (defined in server_dedicated_log_path.c). */
 static void serverDedicatedLogResolveFileName(ServerSim *sim) {
     char autoBase[512];
     const char *sep;
-    makeLogFileName(autoBase, sim->mapName);
+    serverDedicatedLogMakeAutoName(autoBase, sim->mapName);
     /* Remember the timestamp prefix so serverDedicatedLogRenameForMap can
-     * rebuild the name later without shifting the time. makeLogFileName emits
+     * rebuild the name later without shifting the time. The auto-name emits
      * "<stamp>_<map>"; the stamp is pure digits + 't', so the first '_' is the
      * separator. */
     sep = strchr(autoBase, '_');
@@ -129,7 +159,7 @@ static void serverDedicatedLogResolveFileName(ServerSim *sim) {
     } else {
         s_logStamp[0] = '\0';
     }
-    serverDedicatedLogComposePath(sim->userLogFileName, autoBase, fileName, 512);
+    serverDedicatedLogComposePath(sim->userLogFileName, autoBase, s_logFileName, 512);
 }
 
 /* Rebuild the closed log's on-disk name from the captured timestamp and the
@@ -154,13 +184,13 @@ static void serverDedicatedLogRenameForMap(ServerSim *sim) {
     }
     serverDedicatedLogComposePath(sim->userLogFileName, autoBase,
                                   newFileName, sizeof(newFileName));
-    if (strcmp(newFileName, fileName) == 0) {
+    if (strcmp(newFileName, s_logFileName) == 0) {
         return;
     }
-    if (SDL_RenamePath(fileName, newFileName)) {
-        strncpy(fileName, newFileName, 512 - 1);
-        fileName[512 - 1] = '\0';
-        fprintf(stderr, "Renamed log to %s (played map)\n", fileName);
+    if (SDL_RenamePath(s_logFileName, newFileName)) {
+        strncpy(s_logFileName, newFileName, 512 - 1);
+        s_logFileName[512 - 1] = '\0';
+        fprintf(stderr, "Renamed log to %s (played map)\n", s_logFileName);
     }
 }
 
@@ -177,9 +207,9 @@ static void handleLobbyEnter(ServerSim *sim) {
      * no tanks). handleGameStart clears the flag and rewrites a
      * snapshot of the real world when the countdown ends. */
     logSetLobbyMode(TRUE);
-    isLogging = logStart(fileName, sim,
-                         0, MAX_TANKS, sim->hasPassword);
-    if (isLogging) {
+    s_isLogging = logStart(s_logFileName, sim,
+                           0, MAX_TANKS, sim->hasPassword);
+    if (s_isLogging) {
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
         for (i = 0; i < MAX_TANKS; i++) {
             if (sim->playerConnected[i]) {
@@ -195,7 +225,7 @@ static void handleLobbyEnter(ServerSim *sim) {
                 }
             }
         }
-        fprintf(stderr, "Logging to %s (lobby)\n", fileName);
+        fprintf(stderr, "Logging to %s (lobby)\n", s_logFileName);
     } else {
         /* logStart failed — drop the flag so a later no-lobby
          * handleGameStart logStart isn't poisoned. */
@@ -261,10 +291,10 @@ static void handleGameStart(ServerSim *sim) {
 
     /* No-lobby case — start the log on the running transition. */
     serverDedicatedLogResolveFileName(sim);
-    isLogging = logStart(fileName, sim,
-                         0, MAX_TANKS, sim->hasPassword);
-    if (isLogging) {
-        fprintf(stderr, "Logging to %s\n", fileName);
+    s_isLogging = logStart(s_logFileName, sim,
+                           0, MAX_TANKS, sim->hasPassword);
+    if (s_isLogging) {
+        fprintf(stderr, "Logging to %s\n", s_logFileName);
     }
 }
 
@@ -292,14 +322,23 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
     }
 }
 
-void serverDedicatedLogInstall(ServerSim *sim) {
+void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     if (sim == NULL) {
         return;
     }
+    s_dontSendLog = dontSendLog;
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
     /* Hand the lifecycle our stash/flush so its lobby/empty-reset
      * cleanup can drive the per-round upload. */
     serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
                                     serverDedicatedLogFlushPendingUpload);
+}
+
+bool serverDedicatedLogIsActive(void) {
+    return s_isLogging;
+}
+
+const char *serverDedicatedLogCurrentFile(void) {
+    return s_logFileName;
 }
