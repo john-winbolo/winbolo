@@ -135,6 +135,8 @@ static const UnitTestEntry s_tests[] = {
     { "highlights_empty",                           run_highlights_empty                           },
     { "territory_shift_basic",                      run_territory_shift_basic                      },
     { "highlights_turning_point",                   run_highlights_turning_point                   },
+    { "territory_recent_damage",                    run_territory_recent_damage                    },
+    { "highlights_front_collapse",                  run_highlights_front_collapse                  },
     { "lv_stats_clip_time_format",                  run_lv_stats_clip_time_format                  },
     { "attribution_track_schema",                   run_attribution_track_schema                   },
     { "vote_toggle_standalone_no_does_nothing",            run_vote_toggle_standalone_no_does_nothing            },

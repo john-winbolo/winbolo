@@ -1477,6 +1477,26 @@ static size_t putPillKill(uint8_t *buf, size_t off, uint32_t tick, uint8_t index
     return off + sizeof r;
 }
 
+/* Append one non-destroying tank-damage record carrying `amount` armour removed;
+ * returns the new offset. */
+static size_t putDamage(uint8_t *buf, size_t off, uint32_t tick, uint8_t mapX,
+                        uint8_t mapY, uint16_t amount) {
+    AttrDamageRecord r;
+    memset(&r, 0, sizeof r);
+    r.type = ATTR_REC_DAMAGE;
+    r.tick = tick;
+    r.source = ATTR_SRC_SHELL;
+    r.target = ATTR_TGT_TANK;
+    r.targetIndex = 0;
+    r.attacker = 0;
+    r.amount = amount;
+    r.destroyed = 0;
+    r.mapX = mapX;
+    r.mapY = mapY;
+    memcpy(buf + off, &r, sizeof r);
+    return off + sizeof r;
+}
+
 /* A territory shift counts only ground taken off a team that already held it.
  * A first claim of unheld ground (the round populating an empty map) emits
  * nothing; a contested recapture and a held pill shot dead both do. An empty
@@ -1561,6 +1581,9 @@ int run_highlights_turning_point(void) {
     memset(team, 0, sizeof team);
     team[3] = team[4] = team[5] = 1;   /* the swing's team, and the wipe's dead */
 
+    /* No prior fire on these shifts, so nothing here qualifies as a collapse and
+     * only the seeded turning point is a breakthrough. */
+    memset(shifts, 0, sizeof shifts);
     shifts[0].tick = 1000; shifts[0].mapX = 30; shifts[0].mapY = 30;
     shifts[0].gainTeam = 1; shifts[0].loseTeam = 2; shifts[0].cellsFlipped = 200;
     shifts[1].tick = 1200; shifts[1].mapX = 31; shifts[1].mapY = 31;
@@ -1603,6 +1626,115 @@ int run_highlights_turning_point(void) {
     UT_ASSERT_MSG(n == 1, "one window without the shifts, got %d", n);
     UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "the wipe, got type %u",
                   out[0].type);
+
+    return 0;
+}
+
+/* A shift's recentDamage sums the hits near its cell in the ticks just before it,
+ * and excludes hits that are too old or too far. */
+int run_territory_recent_damage(void) {
+    AttrSlotIdentity slots[MAX_TANKS];
+    uint8_t buf[512];
+    size_t len = 0;
+    TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+    int n = -1;
+
+    memset(slots, 0, sizeof slots);
+    slots[0].team = 1;
+    slots[1].team = 2;
+    for (int s = 2; s < MAX_TANKS; s++) slots[s].team = 1;
+
+    /* base 0 taken by team 1 off nobody (no shift), a spread of fire around its
+     * cell, then team 2 reclaims it at tick 2000 (the emitted shift). */
+    len = putCapture(buf, len, 100, ATTR_CAP_TGT_BASE, 0, 0, NEUTRAL, 60, 60);
+    len = putDamage(buf, len, 1000, 60, 60, 100);   /* in radius, too old      */
+    len = putDamage(buf, len, 1600, 62, 60, 50);    /* in window and radius     */
+    len = putDamage(buf, len, 1700, 60, 63, 70);    /* in window and radius     */
+    len = putDamage(buf, len, 1800, 60, 80, 100);   /* in window, out of radius */
+    len = putDamage(buf, len, 1900, 60, 60, 30);    /* in window and radius     */
+    len = putCapture(buf, len, 2000, ATTR_CAP_TGT_BASE, 0, 1, 0, 60, 60);
+
+    computeTerritoryShifts(buf, len, slots, MAX_TANKS, shifts, &n,
+                           TERRITORY_SHIFTS_MAX);
+
+    UT_ASSERT_MSG(n == 1, "one reclaim shift, got %d", n);
+    UT_ASSERT_MSG(shifts[0].tick == 2000 && shifts[0].gainTeam == 2,
+                  "reclaim shift at 2000 for team 2, got tick %u team %u",
+                  shifts[0].tick, shifts[0].gainTeam);
+    /* 50 + 70 + 30; the tick-1000 hit is out of window, the (60,80) hit out of
+     * radius. */
+    UT_ASSERT_MSG(shifts[0].recentDamage == 150,
+                  "recent damage sums the near, in-window hits, got %u",
+                  shifts[0].recentDamage);
+
+    return 0;
+}
+
+/* A clustered swing that was shelled first becomes a front-collapse breakthrough
+ * on top of the turning point; the same swing with no prior fire is gated out,
+ * leaving only the seeded turning point. */
+int run_highlights_front_collapse(void) {
+    NotableEvent tl[1];
+    TerritoryShift shifts[4];
+    uint8_t team[MAX_TANKS];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    int turns = 0;
+    const HighlightWindow *collapse = NULL, *point = NULL;
+
+    tl[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+
+    memset(team, 0, sizeof team);
+    team[0] = 1;   /* the gaining team; its lowest slot names the swing */
+
+    /* Cluster A, no prior fire: the bigger swing, so it is the turning point, but
+     * gated out of the collapse pass by zero damage. Cluster B, well shelled: a
+     * smaller but damage-backed collapse, far enough away not to overlap A. */
+    memset(shifts, 0, sizeof shifts);
+    shifts[0].tick = 1000; shifts[0].mapX = 30; shifts[0].mapY = 30;
+    shifts[0].gainTeam = 1; shifts[0].loseTeam = 2; shifts[0].cellsFlipped = 300;
+    shifts[1].tick = 1100; shifts[1].mapX = 31; shifts[1].mapY = 31;
+    shifts[1].gainTeam = 1; shifts[1].loseTeam = 2; shifts[1].cellsFlipped = 300;
+    shifts[2].tick = 5000; shifts[2].mapX = 90; shifts[2].mapY = 90;
+    shifts[2].gainTeam = 1; shifts[2].loseTeam = 2; shifts[2].cellsFlipped = 100;
+    shifts[2].recentDamage = 150;
+    shifts[3].tick = 5100; shifts[3].mapX = 91; shifts[3].mapY = 91;
+    shifts[3].gainTeam = 1; shifts[3].loseTeam = 2; shifts[3].cellsFlipped = 100;
+    shifts[3].recentDamage = 150;
+
+    computeHighlights(tl, 1, NULL, team, NULL, 0, shifts, 4, out, &n,
+                      HIGHLIGHTS_MAX);
+
+    for (int i = 0; i < n; i++) {
+        if (out[i].type != HL_BREAKTHROUGH) continue;
+        turns++;
+        if (out[i].startTick == 5000) collapse = &out[i];
+        else                          point = &out[i];
+    }
+    UT_ASSERT_MSG(turns == 2, "turning point plus one collapse, got %d", turns);
+    UT_ASSERT_MSG(point != NULL && point->startTick == 1000,
+                  "turning point spans cluster A");
+    UT_ASSERT_MSG(collapse != NULL, "the shelled swing is a collapse");
+    UT_ASSERT_MSG(collapse->value == 200, "collapse sums its cluster's cells, got %u",
+                  collapse != NULL ? collapse->value : 0);
+    UT_ASSERT_MSG(collapse->mapX == 91 && collapse->mapY == 91,
+                  "collapse points at the biggest flip, got %u,%u",
+                  collapse->mapX, collapse->mapY);
+    UT_ASSERT_MSG(collapse->actorA == 0, "collapse names the gaining team's slot, got %u",
+                  collapse->actorA);
+
+    /* Strip the prior fire off cluster B: it no longer clears the damage gate, so
+     * only the seeded turning point remains. */
+    shifts[2].recentDamage = 0;
+    shifts[3].recentDamage = 0;
+    n = -1;
+    turns = 0;
+    computeHighlights(tl, 1, NULL, team, NULL, 0, shifts, 4, out, &n,
+                      HIGHLIGHTS_MAX);
+    for (int i = 0; i < n; i++)
+        if (out[i].type == HL_BREAKTHROUGH) turns++;
+    UT_ASSERT_MSG(turns == 1, "without prior fire only the turning point, got %d",
+                  turns);
 
     return 0;
 }

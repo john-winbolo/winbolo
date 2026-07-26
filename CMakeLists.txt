@@ -3242,6 +3242,8 @@ set(_unit_test_names
     highlights_empty
     territory_shift_basic
     highlights_turning_point
+    territory_recent_damage
+    highlights_front_collapse
     lv_stats_clip_time_format
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing

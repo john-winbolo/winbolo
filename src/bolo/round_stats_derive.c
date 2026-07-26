@@ -369,6 +369,14 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
 #define HL_INF_PILL_RADIUS     8
 /* Control map sentinel: the cell is uncontrolled or contested. */
 #define HL_CTRL_NONE           0xFF
+/* How much recent shelling a shift carries: damage records within this many tiles
+ * (Chebyshev) and this many prior ticks of the shift's cell are summed into its
+ * recentDamage. The window bounds the rolling damage buffer's live size too. */
+#define HL_COLLAPSE_DMG_RADIUS 8
+#define HL_COLLAPSE_DMG_WINDOW 500   /* ~10 s of prior fire at 50 ticks/s */
+/* Hard cap on buffered damage events; oldest is dropped if it fills. Pruning by
+ * tick usually keeps it far below this, so the cap is only a runaway backstop. */
+#define HL_DMG_BUF_MAX         4096
 
 /* One tracked objective: who holds it and where it sits. `known` stays 0 until a
  * record tells us its cell, so an objective nobody has touched stamps nothing. */
@@ -377,6 +385,67 @@ typedef struct {
     uint8_t mapX, mapY;
     uint8_t known;
 } TerrObject;
+
+/* One buffered damage event, kept only long enough to attribute recent fire to a
+ * territory shift near it. */
+typedef struct {
+    uint32_t tick;
+    uint8_t  mapX, mapY;
+    uint16_t amount;
+} TerrDamage;
+
+/* Ring buffer of the recent damage events, oldest at `head`, `count` live. */
+typedef struct {
+    TerrDamage *buf;
+    int head;
+    int count;
+} TerrDmgRing;
+
+/* Append one damage event, dropping the oldest if the ring is full. */
+static void terrDmgPush(TerrDmgRing *ring, uint32_t tick, uint8_t x, uint8_t y,
+                        uint16_t amount) {
+    int idx;
+    if (ring->count == HL_DMG_BUF_MAX) {
+        ring->head = (ring->head + 1) % HL_DMG_BUF_MAX;   /* drop oldest */
+        ring->count--;
+    }
+    idx = (ring->head + ring->count) % HL_DMG_BUF_MAX;
+    ring->buf[idx].tick = tick;
+    ring->buf[idx].mapX = x;
+    ring->buf[idx].mapY = y;
+    ring->buf[idx].amount = amount;
+    ring->count++;
+}
+
+/* Drop buffered events older than the damage window ending at `now`. Events are
+ * pushed in tick order, so the stale ones are always at the head. */
+static void terrDmgPrune(TerrDmgRing *ring, uint32_t now) {
+    uint32_t cutoff = (now > HL_COLLAPSE_DMG_WINDOW) ? now - HL_COLLAPSE_DMG_WINDOW : 0;
+    while (ring->count > 0 && ring->buf[ring->head].tick < cutoff) {
+        ring->head = (ring->head + 1) % HL_DMG_BUF_MAX;
+        ring->count--;
+    }
+}
+
+/* Sum buffered damage within HL_COLLAPSE_DMG_RADIUS tiles and the window before
+ * `tick` of the cell (x,y); clamped to uint16. */
+static uint16_t terrDmgSum(const TerrDmgRing *ring, uint32_t tick, uint8_t x,
+                           uint8_t y) {
+    uint32_t lo = (tick > HL_COLLAPSE_DMG_WINDOW) ? tick - HL_COLLAPSE_DMG_WINDOW : 0;
+    uint32_t total = 0;
+    for (int k = 0; k < ring->count; k++) {
+        int idx = (ring->head + k) % HL_DMG_BUF_MAX;
+        uint32_t dt = ring->buf[idx].tick;
+        int ddx, ddy, cheb;
+        if (dt < lo || dt > tick) continue;
+        ddx = (int)ring->buf[idx].mapX - (int)x; if (ddx < 0) ddx = -ddx;
+        ddy = (int)ring->buf[idx].mapY - (int)y; if (ddy < 0) ddy = -ddy;
+        cheb = ddx > ddy ? ddx : ddy;
+        if (cheb > HL_COLLAPSE_DMG_RADIUS) continue;
+        total += ring->buf[idx].amount;
+    }
+    return (uint16_t)(total > 65535u ? 65535u : total);
+}
 
 /* Team of an owner slot; NEUTRAL for unowned or an out-of-range slot. */
 static uint8_t terrTeamOfSlot(const AttrSlotIdentity *slots, int slotCount,
@@ -491,10 +560,15 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
     int teamCount = 0;
     int16_t *grids = NULL;
     uint8_t *control = NULL;
+    TerrDmgRing dmg;
     TerrObject pills[HL_TERR_OBJ_MAX];
     TerrObject bases[HL_TERR_OBJ_MAX];
     size_t off = 0;
     int count = 0;
+
+    dmg.buf = NULL;
+    dmg.head = 0;
+    dmg.count = 0;
 
     if (outCount != NULL) *outCount = 0;
     if (out == NULL || outCount == NULL || maxOut <= 0) return;
@@ -512,9 +586,11 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 
     grids = (int16_t *)calloc((size_t)teamCount * HL_MAP_CELLS, sizeof(int16_t));
     control = (uint8_t *)malloc(HL_MAP_CELLS);
-    if (grids == NULL || control == NULL) {
+    dmg.buf = (TerrDamage *)malloc(sizeof(TerrDamage) * HL_DMG_BUF_MAX);
+    if (grids == NULL || control == NULL || dmg.buf == NULL) {
         free(grids);
         free(control);
+        free(dmg.buf);
         return;
     }
     memset(control, HL_CTRL_NONE, HL_MAP_CELLS);   /* nothing held at round start */
@@ -560,6 +636,10 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
             obj->known = 1;
         } else if (tag == ATTR_REC_DAMAGE) {
             const AttrDamageRecord *r = (const AttrDamageRecord *)(records + off);
+            /* Every hit feeds the recent-fire buffer, whatever it landed on, so a
+             * later nearby shift can tell it was shelled first. */
+            terrDmgPrune(&dmg, r->tick);
+            terrDmgPush(&dmg, r->tick, r->mapX, r->mapY, r->amount);
             if (r->destroyed && r->target == ATTR_TGT_PILL) {
                 /* A pill shot to zero armour holds nothing until it is placed
                  * again; a pill riding in a tank projects no influence either. */
@@ -608,12 +688,14 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
         out[count].gainTeam = gainTeam;
         out[count].loseTeam = loseTeam;
         out[count].cellsFlipped = (uint16_t)(flipped > 65535u ? 65535u : flipped);
+        out[count].recentDamage = terrDmgSum(&dmg, evTick, evX, evY);
         count++;
     }
 
     *outCount = count;
     free(grids);
     free(control);
+    free(dmg.buf);
 }
 
 /* ---- Highlight scorer ---------------------------------------------------- */
@@ -635,11 +717,17 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 #define HL_TURN_WINDOW           500   /* ~10 s span the territory swing is summed over */
 #define HL_TURN_WEIGHT           140   /* ranking magnitude; the pick is seeded, not earned */
 #define HL_TEAM_ID_MAX           256   /* team ids are a byte, so this bounds them */
+#define HL_COLLAPSE_WINDOW       300   /* ~6 s span a front collapse is summed over */
+#define HL_COLLAPSE_TILE_RADIUS  6     /* Chebyshev cluster radius from the first shift */
+#define HL_COLLAPSE_MIN_CELLS    150   /* summed swing a collapse must reach */
+#define HL_COLLAPSE_MIN_DAMAGE   200   /* summed recent fire that gates a collapse */
+#define HL_COLLAPSE_WEIGHT       110   /* below the seeded turning point, above a steal */
 
 /* Upper bound on candidate windows collected before selection. Bounded by the
- * timeline length (one steal / wipe start per event) plus the awards, plus the
- * one turning point. */
-#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 2 + AWARD_COUNT + 1)
+ * timeline length (one steal / wipe start per event) plus the awards, the one
+ * turning point, and up to one collapse per territory shift. */
+#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 2 + AWARD_COUNT + 1 + \
+                                  TERRITORY_SHIFTS_MAX)
 
 /* A scored candidate window before selection. `endTick` is the selection span
  * end (the last clustered event for a wipe, else the anchor tick); lead-in and
@@ -1008,10 +1096,75 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
         }
     }
 
+    /* Front collapses: a team taking a cluster of ground off another over a short
+     * window, gated on sustained fire in that area beforehand — so an assault that
+     * was actually fought for is picked and a quiet handover is not. Greedy on the
+     * shift series like the wipe loop: the next start jumps past the cluster just
+     * emitted, so one assault yields one window. These are scored, not seeded; the
+     * overlap cull drops any that land on the turning point's ticks. */
+    if (shifts != NULL && shiftCount > 0) {
+        uint32_t clusterEnd = 0;
+        bool haveCluster = false;
+        for (int i = 0; i < shiftCount; i++) {
+            uint8_t gTeam = shifts[i].gainTeam;
+            uint32_t winEnd = shifts[i].tick + HL_COLLAPSE_WINDOW;
+            uint32_t sumCells = 0, sumDmg = 0;
+            uint32_t lastTickC = shifts[i].tick;
+            uint16_t domCells = 0;
+            int domIdx = i;
+            HlCand c;
+
+            if (gTeam == NEUTRAL) continue;   /* ground must fall TO a team */
+            if (haveCluster && shifts[i].tick <= clusterEnd) continue;
+
+            for (int j = i; j < shiftCount; j++) {
+                if (shifts[j].tick < shifts[i].tick) continue;   /* out of order */
+                if (shifts[j].tick > winEnd) break;
+                if (shifts[j].gainTeam != gTeam) continue;
+                if (hlTileDist(shifts[i].mapX, shifts[i].mapY,
+                               shifts[j].mapX, shifts[j].mapY) > HL_COLLAPSE_TILE_RADIUS)
+                    continue;
+                sumCells += shifts[j].cellsFlipped;
+                sumDmg += shifts[j].recentDamage;
+                if (shifts[j].tick > lastTickC) lastTickC = shifts[j].tick;
+                if (shifts[j].cellsFlipped >= domCells) {
+                    domCells = shifts[j].cellsFlipped;
+                    domIdx = j;
+                }
+            }
+            if (sumCells < HL_COLLAPSE_MIN_CELLS) continue;
+            if (sumDmg < HL_COLLAPSE_MIN_DAMAGE) continue;   /* the damage gate */
+
+            {
+                uint8_t rep = NEUTRAL;
+                if (team != NULL) {
+                    for (int s = 0; s < MAX_TANKS; s++)
+                        if (team[s] == gTeam) { rep = (uint8_t)s; break; }
+                }
+                c.anchorIdx = -1;
+                c.startTick = shifts[i].tick;
+                c.endTick   = lastTickC;
+                c.mapX = shifts[domIdx].mapX;
+                c.mapY = shifts[domIdx].mapY;
+                c.type = HL_BREAKTHROUGH;
+                c.awardId = 0;
+                c.actorA = rep;
+                c.actorB = NEUTRAL;
+                c.value = sumCells;
+                c.score = HL_COLLAPSE_WEIGHT;
+                hlAppend(cands, &candCount, &c);
+            }
+            clusterEnd = lastTickC;
+            haveCluster = true;
+        }
+    }
+
     /* Selection: strongest first, greedily keeping windows whose tick spans do
      * not overlap an accepted one. This both de-dups and spreads the picks. The
      * turning point is seeded ahead of the loop rather than left to win on score,
-     * so the one window that explains how the round was decided always survives. */
+     * so the one window that explains how the round was decided always survives.
+     * It always outscores a collapse (both HL_BREAKTHROUGH), so it is the first of
+     * that type after the sort and the one the seed grabs. */
     qsort(cands, candCount, sizeof(HlCand), hlCandCmp);
     for (int i = 0; i < candCount; i++)
         if (cands[i].type == HL_BREAKTHROUGH) { turnIdx = i; break; }

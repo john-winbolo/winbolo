@@ -55,13 +55,17 @@ size_t roundStatsRecordSize(uint8_t recordType);
  * (from `loseTeam`; NEUTRAL when a pill was shot dead and the ground fell to no
  * one), centred near (mapX,mapY). Ground taken off an opponent only — a first
  * claim of previously unheld cells is not counted, so the round populating an
- * empty map registers nothing. Consumed by the turning-point highlight signal. */
+ * empty map registers nothing. `recentDamage` is the total armour removed by
+ * damage records within a short radius and time window just before the shift —
+ * how much the ground was shelled before it fell, so a collapse can be told from
+ * a quiet handover. Consumed by the turning-point and front-collapse signals. */
 typedef struct {
     uint32_t tick;
     uint8_t  mapX, mapY;
     uint8_t  gainTeam;
     uint8_t  loseTeam;
     uint16_t cellsFlipped;
+    uint16_t recentDamage;
 } TerritoryShift;
 
 #define TERRITORY_SHIFTS_MAX 512
