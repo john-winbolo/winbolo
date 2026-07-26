@@ -30,6 +30,7 @@
  *  not link the bolo sim. The <MAX_TANKS bounds checks live here
  *  because the viewer may replay a hand-crafted file.
  *********************************************************/
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -351,6 +352,270 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
     *outCount = count;
 }
 
+/* ---- Territory influence pre-pass ---------------------------------------- */
+
+/* Record mapX/mapY are bytes, so the influence grid is 256x256 regardless of the
+ * map the round was played on. Kept local so this module stays free of the sim's
+ * map headers. */
+#define HL_MAP_DIM             256
+#define HL_MAP_CELLS           (HL_MAP_DIM * HL_MAP_DIM)
+/* Pill/base indices are a byte in the record stream. */
+#define HL_TERR_OBJ_MAX        256
+/* Influence a held objective projects, and how far it reaches. A base anchors a
+ * wider, stronger area than a pill. */
+#define HL_INF_BASE_STRENGTH   100
+#define HL_INF_BASE_RADIUS     12
+#define HL_INF_PILL_STRENGTH   60
+#define HL_INF_PILL_RADIUS     8
+/* Control map sentinel: the cell is uncontrolled or contested. */
+#define HL_CTRL_NONE           0xFF
+
+/* One tracked objective: who holds it and where it sits. `known` stays 0 until a
+ * record tells us its cell, so an objective nobody has touched stamps nothing. */
+typedef struct {
+    uint8_t owner;        /* owning slot, NEUTRAL when unowned */
+    uint8_t mapX, mapY;
+    uint8_t known;
+} TerrObject;
+
+/* Team of an owner slot; NEUTRAL for unowned or an out-of-range slot. */
+static uint8_t terrTeamOfSlot(const AttrSlotIdentity *slots, int slotCount,
+                              uint8_t slot) {
+    if ((int)slot >= slotCount || slot >= MAX_TANKS) return NEUTRAL;
+    return slots[slot].team;
+}
+
+/* Position of a team id in the compacted team list, or -1 when absent. */
+static int terrTeamIndex(const uint8_t *teamIds, int teamCount, uint8_t team) {
+    for (int k = 0; k < teamCount; k++)
+        if (teamIds[k] == team) return k;
+    return -1;
+}
+
+/* Stamp a falloff disk of influence centred on (cx,cy) into one team's grid:
+ * full strength at the centre, tapering linearly to the rim, nothing outside the
+ * Euclidean radius. Stamps accumulate, so two nearby objectives reinforce. */
+static void terrStamp(int16_t *grid, int cx, int cy, int radius, int strength) {
+    int r2 = radius * radius;
+
+    for (int dy = -radius; dy <= radius; dy++) {
+        int ny = cy + dy;
+        if (ny < 0 || ny >= HL_MAP_DIM) continue;
+        for (int dx = -radius; dx <= radius; dx++) {
+            int nx = cx + dx;
+            int d2, delta, idx, val;
+            float dist, proximity;
+            if (nx < 0 || nx >= HL_MAP_DIM) continue;
+            d2 = dx * dx + dy * dy;
+            if (d2 > r2) continue;
+            dist = sqrtf((float)d2);
+            proximity = 1.0f - dist / (float)(radius + 1);
+            delta = (int)(strength * proximity);
+            if (delta == 0) continue;
+            idx = ny * HL_MAP_DIM + nx;
+            val = (int)grid[idx] + delta;
+            if (val > 32767) val = 32767;
+            if (val < -32768) val = -32768;
+            grid[idx] = (int16_t)val;
+        }
+    }
+}
+
+/* Restamp every held objective into freshly cleared per-team grids. Cheap enough
+ * to redo per ownership change (at most a few hundred small disks), and it keeps
+ * the grids exactly derivable from the current ownership tables. */
+static void terrRestamp(int16_t *grids, int teamCount, const uint8_t *teamIds,
+                        const TerrObject *pills, const TerrObject *bases,
+                        const AttrSlotIdentity *slots, int slotCount) {
+    memset(grids, 0, (size_t)teamCount * HL_MAP_CELLS * sizeof(int16_t));
+
+    for (int i = 0; i < HL_TERR_OBJ_MAX; i++) {
+        const TerrObject *objs[2];
+        objs[0] = &bases[i];
+        objs[1] = &pills[i];
+        for (int k = 0; k < 2; k++) {
+            const TerrObject *o = objs[k];
+            int ti;
+            if (!o->known || o->owner == NEUTRAL) continue;
+            ti = terrTeamIndex(teamIds, teamCount,
+                               terrTeamOfSlot(slots, slotCount, o->owner));
+            if (ti < 0) continue;
+            terrStamp(grids + (size_t)ti * HL_MAP_CELLS, o->mapX, o->mapY,
+                      k == 0 ? HL_INF_BASE_RADIUS : HL_INF_PILL_RADIUS,
+                      k == 0 ? HL_INF_BASE_STRENGTH : HL_INF_PILL_STRENGTH);
+        }
+    }
+}
+
+/* Re-derive the controlling team of every cell in [x0,x1]x[y0,y1] and return how
+ * many of them were taken from a team that already held them. Only this box is
+ * touched: an ownership change moves influence nowhere else, so control outside
+ * it is still valid from the previous pass. A cell is controlled by the single
+ * team with the most influence there; zero influence, or a tie for the lead,
+ * leaves it uncontrolled. The control map is updated for every change so it stays
+ * accurate, but a first claim of unheld ground (HL_CTRL_NONE -> team) is not
+ * counted: that is the round populating an empty map, not ground being contested. */
+static uint32_t terrDiffControl(const int16_t *grids, int teamCount,
+                                uint8_t *control, int x0, int y0, int x1, int y1) {
+    uint32_t flipped = 0;
+
+    for (int y = y0; y <= y1; y++) {
+        for (int x = x0; x <= x1; x++) {
+            int cell = y * HL_MAP_DIM + x;
+            int bestT = -1;
+            int16_t bestV = 0;
+            bool tie = false;
+            uint8_t now, was;
+            for (int t = 0; t < teamCount; t++) {
+                int16_t v = grids[(size_t)t * HL_MAP_CELLS + cell];
+                if (v <= 0) continue;
+                if (bestT < 0 || v > bestV) { bestT = t; bestV = v; tie = false; }
+                else if (v == bestV)        { tie = true; }
+            }
+            now = (bestT < 0 || tie) ? HL_CTRL_NONE : (uint8_t)bestT;
+            was = control[cell];
+            if (now != was) {
+                control[cell] = now;
+                if (was != HL_CTRL_NONE) flipped++;  /* only ground taken off a team */
+            }
+        }
+    }
+    return flipped;
+}
+
+void computeTerritoryShifts(const uint8_t *records, size_t len,
+                            const AttrSlotIdentity slots[MAX_TANKS],
+                            int slotCount,
+                            TerritoryShift *out, int *outCount, int maxOut) {
+    uint8_t teamIds[MAX_TANKS];
+    int teamCount = 0;
+    int16_t *grids = NULL;
+    uint8_t *control = NULL;
+    TerrObject pills[HL_TERR_OBJ_MAX];
+    TerrObject bases[HL_TERR_OBJ_MAX];
+    size_t off = 0;
+    int count = 0;
+
+    if (outCount != NULL) *outCount = 0;
+    if (out == NULL || outCount == NULL || maxOut <= 0) return;
+    if (records == NULL || len == 0 || slots == NULL) return;
+    if (slotCount > MAX_TANKS) slotCount = MAX_TANKS;
+    if (slotCount <= 0) return;
+
+    /* Only the team ids actually present get a grid — a round is usually two or
+     * three sided, and the ids are not guaranteed to be small or contiguous. */
+    for (int s = 0; s < slotCount; s++) {
+        if (terrTeamIndex(teamIds, teamCount, slots[s].team) < 0)
+            teamIds[teamCount++] = slots[s].team;
+    }
+    if (teamCount <= 0) return;
+
+    grids = (int16_t *)calloc((size_t)teamCount * HL_MAP_CELLS, sizeof(int16_t));
+    control = (uint8_t *)malloc(HL_MAP_CELLS);
+    if (grids == NULL || control == NULL) {
+        free(grids);
+        free(control);
+        return;
+    }
+    memset(control, HL_CTRL_NONE, HL_MAP_CELLS);   /* nothing held at round start */
+
+    for (int i = 0; i < HL_TERR_OBJ_MAX; i++) {
+        pills[i].owner = NEUTRAL; pills[i].mapX = 0; pills[i].mapY = 0; pills[i].known = 0;
+        bases[i].owner = NEUTRAL; bases[i].mapX = 0; bases[i].mapY = 0; bases[i].known = 0;
+    }
+
+    /* Walk by offset: read the tag, size it, and stop on an unknown tag or an
+     * overrun so we never read past the stream. */
+    while (off < len && count < maxOut) {
+        uint8_t tag = records[off];
+        size_t sz = roundStatsRecordSize(tag);
+        TerrObject *obj = NULL;
+        uint8_t oldX = 0, oldY = 0, oldKnown = 0;
+        uint8_t gainTeam = NEUTRAL, loseTeam = NEUTRAL;
+        uint8_t evX = 0, evY = 0;
+        uint32_t evTick = 0;
+        int radius = HL_INF_PILL_RADIUS;
+        uint32_t flipped;
+        int x0, y0, x1, y1;
+
+        if (sz == 0 || off + sz > len) break;
+
+        if (tag == ATTR_REC_CAPTURE) {
+            const AttrCaptureRecord *r = (const AttrCaptureRecord *)(records + off);
+            obj = (r->target == ATTR_CAP_TGT_BASE) ? &bases[r->targetIndex]
+                                                   : &pills[r->targetIndex];
+            radius = (r->target == ATTR_CAP_TGT_BASE) ? HL_INF_BASE_RADIUS
+                                                      : HL_INF_PILL_RADIUS;
+            evTick = r->tick;
+            evX = r->mapX;
+            evY = r->mapY;
+            /* The losing side is whoever we had holding it, not the record's
+             * prevOwner: our tables are what the grids were stamped from. */
+            loseTeam = terrTeamOfSlot(slots, slotCount, obj->owner);
+            gainTeam = terrTeamOfSlot(slots, slotCount, r->newOwner);
+            oldX = obj->mapX; oldY = obj->mapY; oldKnown = obj->known;
+            obj->owner = r->newOwner;
+            obj->mapX = r->mapX;
+            obj->mapY = r->mapY;
+            obj->known = 1;
+        } else if (tag == ATTR_REC_DAMAGE) {
+            const AttrDamageRecord *r = (const AttrDamageRecord *)(records + off);
+            if (r->destroyed && r->target == ATTR_TGT_PILL) {
+                /* A pill shot to zero armour holds nothing until it is placed
+                 * again; a pill riding in a tank projects no influence either. */
+                obj = &pills[r->targetIndex];
+                radius = HL_INF_PILL_RADIUS;
+                evTick = r->tick;
+                evX = r->mapX;
+                evY = r->mapY;
+                loseTeam = terrTeamOfSlot(slots, slotCount, obj->owner);
+                gainTeam = NEUTRAL;
+                oldX = obj->mapX; oldY = obj->mapY; oldKnown = obj->known;
+                obj->owner = NEUTRAL;
+                obj->mapX = r->mapX;
+                obj->mapY = r->mapY;
+                obj->known = 1;
+            }
+        }
+
+        off += sz;
+        if (obj == NULL) continue;
+
+        terrRestamp(grids, teamCount, teamIds, pills, bases, slots, slotCount);
+
+        /* Control can only have moved within the object's reach — around where it
+         * sits now, and around where it sat before if a carried pill was replaced
+         * somewhere else. */
+        x0 = (int)evX - radius; x1 = (int)evX + radius;
+        y0 = (int)evY - radius; y1 = (int)evY + radius;
+        if (oldKnown) {
+            if ((int)oldX - radius < x0) x0 = (int)oldX - radius;
+            if ((int)oldX + radius > x1) x1 = (int)oldX + radius;
+            if ((int)oldY - radius < y0) y0 = (int)oldY - radius;
+            if ((int)oldY + radius > y1) y1 = (int)oldY + radius;
+        }
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 >= HL_MAP_DIM) x1 = HL_MAP_DIM - 1;
+        if (y1 >= HL_MAP_DIM) y1 = HL_MAP_DIM - 1;
+
+        flipped = terrDiffControl(grids, teamCount, control, x0, y0, x1, y1);
+        if (flipped == 0) continue;   /* e.g. a handover inside one team */
+
+        out[count].tick = evTick;
+        out[count].mapX = evX;
+        out[count].mapY = evY;
+        out[count].gainTeam = gainTeam;
+        out[count].loseTeam = loseTeam;
+        out[count].cellsFlipped = (uint16_t)(flipped > 65535u ? 65535u : flipped);
+        count++;
+    }
+
+    *outCount = count;
+    free(grids);
+    free(control);
+}
+
 /* ---- Highlight scorer ---------------------------------------------------- */
 
 /* Tunable weights and window sizes. Ticks are per-round at 50 ticks/s. */
@@ -367,14 +632,21 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
 #define HL_LEADIN_MAX_GAP        60    /* stop the lead-in on a gap this big */
 #define HL_LEADIN_MAX_TICKS      250   /* cap on how far a lead-in reaches back */
 #define HL_CLIP_TICKS            250   /* window duration around a single anchor */
+#define HL_TURN_WINDOW           500   /* ~10 s span the territory swing is summed over */
+#define HL_TURN_WEIGHT           140   /* ranking magnitude; the pick is seeded, not earned */
+#define HL_TEAM_ID_MAX           256   /* team ids are a byte, so this bounds them */
 
 /* Upper bound on candidate windows collected before selection. Bounded by the
- * timeline length (one steal / wipe start per event) plus the awards. */
-#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 2 + AWARD_COUNT)
+ * timeline length (one steal / wipe start per event) plus the awards, plus the
+ * one turning point. */
+#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 2 + AWARD_COUNT + 1)
 
 /* A scored candidate window before selection. `endTick` is the selection span
  * end (the last clustered event for a wipe, else the anchor tick); lead-in and
- * the display duration are derived from `anchorIdx` at finalize time. */
+ * the display duration are derived from `anchorIdx` at finalize time.
+ * `anchorIdx` is -1 for a candidate with no timeline event to point at (the
+ * turning point, which is derived from the territory series): it keeps the span
+ * it was built with and gets no lead-in. */
 typedef struct {
     uint32_t startTick;
     uint32_t endTick;
@@ -516,11 +788,13 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
                        const PlayerRoundStats stats[MAX_TANKS],
                        const uint8_t team[MAX_TANKS],
                        const AwardResult *awards, int awardCount,
+                       const TerritoryShift *shifts, int shiftCount,
                        HighlightWindow *out, int *outCount, int maxOut) {
     HlCand *cands;
     int candCount = 0;
     int accepted[HIGHLIGHTS_MAX];
     int acceptCount = 0;
+    int turnIdx = -1;
     uint32_t firstTick, lastTick;
     HighlightWindow tmp[HIGHLIGHTS_MAX];
 
@@ -668,11 +942,83 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
         }
     }
 
+    /* Turning point: the HL_TURN_WINDOW-tick span over which one team gained the
+     * most map control. One per round — the moment the map stopped being even. */
+    if (shifts != NULL && shiftCount > 0) {
+        uint32_t bestSum = 0;
+        int bestFirst = -1, bestLast = -1, bestDom = -1;
+        uint8_t bestTeam = NEUTRAL;
+
+        for (int i = 0; i < shiftCount; i++) {
+            uint32_t sums[HL_TEAM_ID_MAX];
+            uint32_t winEnd = shifts[i].tick + HL_TURN_WINDOW;
+            memset(sums, 0, sizeof(sums));
+            for (int j = i; j < shiftCount; j++) {
+                if (shifts[j].tick < shifts[i].tick) continue;  /* out of order */
+                if (shifts[j].tick > winEnd) break;
+                if (shifts[j].gainTeam == NEUTRAL) continue;    /* lost to nobody */
+                sums[shifts[j].gainTeam] += shifts[j].cellsFlipped;
+            }
+            for (int t = 0; t < HL_TEAM_ID_MAX; t++) {
+                if (t == NEUTRAL || sums[t] <= bestSum) continue;
+                bestSum = sums[t];
+                bestTeam = (uint8_t)t;
+                bestFirst = i;
+            }
+        }
+
+        if (bestFirst >= 0 && bestSum > 0) {
+            /* Re-walk the winning window for its span and its biggest single
+             * flip, which is the cell worth pointing the clip at. */
+            uint32_t winEnd = shifts[bestFirst].tick + HL_TURN_WINDOW;
+            uint16_t domCells = 0;
+            for (int j = bestFirst; j < shiftCount; j++) {
+                if (shifts[j].tick < shifts[bestFirst].tick) continue;
+                if (shifts[j].tick > winEnd) break;
+                if (shifts[j].gainTeam != bestTeam) continue;
+                bestLast = j;
+                if (bestDom < 0 || shifts[j].cellsFlipped > domCells) {
+                    domCells = shifts[j].cellsFlipped;
+                    bestDom = j;
+                }
+            }
+        }
+
+        if (bestDom >= 0) {
+            HlCand c;
+            uint8_t rep = NEUTRAL;
+            /* Name the swing after the lowest slot on the gaining team; a team
+             * with nobody on it (or no roster at all) stays anonymous. */
+            if (team != NULL) {
+                for (int s = 0; s < MAX_TANKS; s++)
+                    if (team[s] == bestTeam) { rep = (uint8_t)s; break; }
+            }
+            c.anchorIdx = -1;
+            c.startTick = shifts[bestFirst].tick;
+            c.endTick   = shifts[bestLast].tick;
+            c.mapX = shifts[bestDom].mapX;
+            c.mapY = shifts[bestDom].mapY;
+            c.type = HL_BREAKTHROUGH;
+            c.awardId = 0;
+            c.actorA = rep;
+            c.actorB = NEUTRAL;   /* a swing is a team's, not one player's */
+            c.value = bestSum;
+            c.score = HL_TURN_WEIGHT;
+            hlAppend(cands, &candCount, &c);
+        }
+    }
+
     /* Selection: strongest first, greedily keeping windows whose tick spans do
-     * not overlap an accepted one. This both de-dups and spreads the picks. */
+     * not overlap an accepted one. This both de-dups and spreads the picks. The
+     * turning point is seeded ahead of the loop rather than left to win on score,
+     * so the one window that explains how the round was decided always survives. */
     qsort(cands, candCount, sizeof(HlCand), hlCandCmp);
+    for (int i = 0; i < candCount; i++)
+        if (cands[i].type == HL_BREAKTHROUGH) { turnIdx = i; break; }
+    if (turnIdx >= 0) accepted[acceptCount++] = turnIdx;
     for (int i = 0; i < candCount && acceptCount < maxOut; i++) {
         bool overlap = false;
+        if (i == turnIdx) continue;
         for (int k = 0; k < acceptCount; k++) {
             const HlCand *acc = &cands[accepted[k]];
             if (cands[i].startTick <= acc->endTick &&
@@ -685,8 +1031,13 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
     for (int k = 0; k < acceptCount; k++) {
         const HlCand *c = &cands[accepted[k]];
         HighlightWindow *w = &tmp[k];
-        uint32_t s, e;
-        hlLeadIn(timeline, c, &s, &e);
+        uint32_t s = c->startTick, e = c->endTick;
+        if (c->anchorIdx >= 0) {
+            hlLeadIn(timeline, c, &s, &e);
+        } else if (e < s + HL_CLIP_TICKS) {
+            e = s + HL_CLIP_TICKS;   /* anchorless: still play as a clip, not an instant */
+        }
+        if (e < s) e = s;
         w->startTick = s;
         w->durationTicks = e - s;
         w->mapX = c->mapX;

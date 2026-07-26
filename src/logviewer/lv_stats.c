@@ -101,6 +101,8 @@ void lvStatsEmitRoundSummary(void) {
   int awardCount;
   HighlightWindow hl[HIGHLIGHTS_MAX];
   int hlCount;
+  TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+  int shiftCount;
   uint32_t gameStartMs;
   double calA, calB;
   size_t off;
@@ -136,6 +138,12 @@ void lvStatsEmitRoundSummary(void) {
     team[i] = (i < header->slotCount) ? header->slots[i].team : 0;
   }
 
+  /* Second walk over the same records, tracking pill/base ownership as per-team
+   * map influence, so the highlight scorer can see when the map swung. */
+  shiftCount = 0;
+  computeTerritoryShifts(records, len, header->slots, header->slotCount, shifts,
+                         &shiftCount, TERRITORY_SHIFTS_MAX);
+
   awardCount = 0;
   computeAwards(stats, MAX_TANKS, /*includeBots*/ true, isBot, awards,
                 &awardCount);
@@ -167,11 +175,11 @@ void lvStatsEmitRoundSummary(void) {
 
   /* Score the timeline into a ranked, non-overlapping set of clips and emit one
    * line per selection, prefixed with its m:ss start. Only HL_AWARD,
-   * HL_CLUSTER_WIPE and HL_OBJECTIVE_STEAL are produced today; other types get
-   * a safe generic label until their signals come online. */
+   * HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL and HL_BREAKTHROUGH are produced today;
+   * other types get a safe generic label until their signals come online. */
   hlCount = 0;
-  computeHighlights(timeline, timelineCount, stats, team, awards, awardCount, hl,
-                    &hlCount, LV_HIGHLIGHTS_SHOWN);
+  computeHighlights(timeline, timelineCount, stats, team, awards, awardCount,
+                    shifts, shiftCount, hl, &hlCount, LV_HIGHLIGHTS_SHOWN);
 
   gameStartMs = lv_screenGameStartMs();
   calA = 10.0;
@@ -266,6 +274,19 @@ void lvStatsEmitRoundSummary(void) {
                when, actorA, actorB);
       break;
     }
+    case HL_BREAKTHROUGH:
+      /* A swing belongs to a team; actorA only names a slot standing in for it,
+       * and is NEUTRAL when the gaining team has no one to point at. */
+      if (h->actorA < header->slotCount) {
+        snprintf(line, sizeof(line),
+                 "Highlight %s \xe2\x80\x94 Turning point: %u tiles swung (%s)",
+                 when, h->value, actorA);
+      } else {
+        snprintf(line, sizeof(line),
+                 "Highlight %s \xe2\x80\x94 Turning point: %u tiles swung", when,
+                 h->value);
+      }
+      break;
     default:
       snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 Highlight", when);
       break;

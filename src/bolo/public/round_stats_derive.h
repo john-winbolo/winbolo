@@ -50,6 +50,34 @@ void roundStatsApplyRecord(PlayerRoundStats stats[MAX_TANKS],
  * stream; 0 for an unknown tag (so a caller can stop safely). */
 size_t roundStatsRecordSize(uint8_t recordType);
 
+/* One territory-control shift emitted by the influence pre-pass: at `tick`,
+ * `cellsFlipped` map cells that were held by a team changed hands to `gainTeam`
+ * (from `loseTeam`; NEUTRAL when a pill was shot dead and the ground fell to no
+ * one), centred near (mapX,mapY). Ground taken off an opponent only — a first
+ * claim of previously unheld cells is not counted, so the round populating an
+ * empty map registers nothing. Consumed by the turning-point highlight signal. */
+typedef struct {
+    uint32_t tick;
+    uint8_t  mapX, mapY;
+    uint8_t  gainTeam;
+    uint8_t  loseTeam;
+    uint16_t cellsFlipped;
+} TerritoryShift;
+
+#define TERRITORY_SHIFTS_MAX 512
+
+/* Pre-pass over the packed record stream that turns pill/base ownership changes
+ * into per-team map control. Each owned object stamps a falloff disk of
+ * influence into its team's grid; the controlling team of a cell is the team
+ * with the most influence there. Every ownership change re-derives control near
+ * the object and emits one TerritoryShift counting the cells that changed hands.
+ * Writes up to maxOut entries in stream order, sets *outCount. Pure: heap and
+ * locals only, no sim state. A stream with no ownership changes yields none. */
+void computeTerritoryShifts(const uint8_t *records, size_t len,
+                            const AttrSlotIdentity slots[MAX_TANKS],
+                            int slotCount,
+                            TerritoryShift *out, int *outCount, int maxOut);
+
 /* Pure award computation over the finalized accumulator. Ranks slots 0..n-1;
  * includeBots=false skips bot slots. Writes up to AWARD_COUNT results to out[],
  * sets *outCount. No sim state touched. */
@@ -58,12 +86,16 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
 
 /* Score a round's notable timeline into a ranked, non-overlapping top-N set of
  * highlight windows. Pure: no sim, no globals. `team[s]` is slot s's team (for
- * wipe weighting). Writes up to maxOut (<= HIGHLIGHTS_MAX) windows to out[], sets
- * *outCount. Deterministic for a given input. */
+ * wipe weighting). `shifts` is the territory series from computeTerritoryShifts
+ * and backs the turning-point window, which is always kept when the series is
+ * non-empty; pass NULL/0 to score without it. Writes up to maxOut
+ * (<= HIGHLIGHTS_MAX) windows to out[], sets *outCount. Deterministic for a
+ * given input. */
 void computeHighlights(const NotableEvent *timeline, int timelineCount,
                        const PlayerRoundStats stats[MAX_TANKS],
                        const uint8_t team[MAX_TANKS],
                        const AwardResult *awards, int awardCount,
+                       const TerritoryShift *shifts, int shiftCount,
                        HighlightWindow *out, int *outCount, int maxOut);
 
 #endif /* ROUND_STATS_DERIVE_H */
