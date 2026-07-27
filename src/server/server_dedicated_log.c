@@ -126,6 +126,10 @@ void serverDedicatedLogFlushPendingUpload(void) {
     s_pendingUploadFile[0] = '\0';
 }
 
+bool serverDedicatedLogHasPendingUpload(void) {
+    return s_pendingUploadFile[0] != '\0';
+}
+
 static void handleGameOver(ServerSim *sim) {
     /* No-lobby (-quitonwin): server is about to shut down via
      * servermain.c, which sends server/quit (winbolonetDestroy →

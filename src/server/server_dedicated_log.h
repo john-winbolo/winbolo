@@ -54,6 +54,12 @@ void serverDedicatedLogStashCurrentRound(void);
  * URL key the upload needs). Clears the stash either way. */
 void serverDedicatedLogFlushPendingUpload(void);
 
+/* True when a round log has been stashed and is waiting to be uploaded.
+ * Lets a teardown caller decide whether it needs to end the WBN session
+ * for the upload at all — false for non-logging hosts and for hosts that
+ * opted out of uploads (dontSendLog), so those stay untouched. */
+bool serverDedicatedLogHasPendingUpload(void);
+
 /* Compose the final .wbv replay path from the -log argument value.
  * Pure (no globals / time / RNG) and cross-platform (SDL_GetPathInfo) so
  * it is unit-testable. See the definition in server_dedicated_log.c for

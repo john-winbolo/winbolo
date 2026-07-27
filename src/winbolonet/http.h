@@ -164,6 +164,17 @@ int wbn_api_call_bearer(const char *endpoint, struct cJSON *body, const char *be
 bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
 
 /*********************************************************
+*NAME:          httpSetLogUploadTimeout
+*PURPOSE:
+* Overrides the total timeout used by subsequent
+* httpSendLogFile calls.
+*
+*ARGUMENTS:
+* seconds - Total timeout in seconds; 0 restores the default
+*********************************************************/
+void httpSetLogUploadTimeout(long seconds);
+
+/*********************************************************
 *NAME:          wbn_api_get
 *PURPOSE:
 * Low-level GET request to a WinBolo.net API endpoint.

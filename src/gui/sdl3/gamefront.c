@@ -85,6 +85,8 @@
 #include "../../server/server_dedicated_log.h"
 #include "../../winbolonet/winbolonet_client.h"
 #include "../../winbolonet/winbolonet_core.h"
+#include "../../winbolonet/winbolonet_server.h"
+#include "../../winbolonet/http.h"
 #include "../../winbolonet/wbn_prefs_sync.h"
 #include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
@@ -2389,6 +2391,23 @@ void gameFrontShutdownServer(void) {
   spServerSim = NULL;
   spServerSimActive = FALSE;
   threadsReleaseMutex();
+
+  /* Finalize the current round's log and upload it before serverInstanceShutdown
+   * tears WinBolo.net down — otherwise a host that plays a round and then leaves
+   * or quits never uploads that final round (only round transitions flush).
+   * Stash first (closes the file; no-op when not logging and skips the upload
+   * for hosts that opted out); only end the session + upload when something is
+   * actually pending and WBN is up, so non-logging and Local hosts are
+   * untouched. End the session so the server accepts the upload against the
+   * still-valid key; the shorter timeout keeps an unreachable server from
+   * stalling the leave. serverInstanceShutdown's own quit follows harmlessly. */
+  serverDedicatedLogStashCurrentRound();
+  if (serverDedicatedLogHasPendingUpload() && winbolonetIsRunning()) {
+    winbolonetEndSession();
+    httpSetLogUploadTimeout(10);
+    serverDedicatedLogFlushPendingUpload();
+    httpSetLogUploadTimeout(0);
+  }
 
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
