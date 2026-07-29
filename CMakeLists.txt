@@ -254,14 +254,46 @@ if(WINBOLO_LUAJIT)
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
-        set(_lj_lib "${_lj_src}/src/libluajit.a")
-        ExternalProject_Add(luajit_ext
-            SOURCE_DIR        "${_lj_src}"
-            BUILD_IN_SOURCE   TRUE
-            CONFIGURE_COMMAND ""
-            BUILD_COMMAND     make -C "${_lj_src}" -j BUILDMODE=static XCFLAGS=-fPIC
-            INSTALL_COMMAND   ""
-            BUILD_BYPRODUCTS  "${_lj_lib}")
+        set(_lj_make make -C "${_lj_src}" -j BUILDMODE=static XCFLAGS=-fPIC)
+        if(APPLE)
+            # LuaJIT's Makefile aborts on macOS unless MACOSX_DEPLOYMENT_TARGET
+            # is exported (even for `make clean`), and each invocation emits a
+            # single-arch library — so build one slice per entry in
+            # CMAKE_OSX_ARCHITECTURES and lipo them into the fat archive the
+            # universal link expects.
+            set(_lj_env ${CMAKE_COMMAND} -E env
+                "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+            set(_lj_lib "${_lj_src}/src/libluajit-fat.a")
+            set(_lj_slices "")
+            set(_lj_steps "")
+            foreach(_lj_arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+                list(APPEND _lj_steps
+                    COMMAND ${_lj_env} make -C "${_lj_src}" clean
+                    COMMAND ${_lj_env} ${_lj_make} "TARGET_FLAGS=-arch ${_lj_arch}"
+                    COMMAND ${CMAKE_COMMAND} -E copy
+                            "${_lj_src}/src/libluajit.a"
+                            "${_lj_src}/src/libluajit-${_lj_arch}.a")
+                list(APPEND _lj_slices "${_lj_src}/src/libluajit-${_lj_arch}.a")
+            endforeach()
+            list(POP_FRONT _lj_steps)   # drop leading COMMAND keyword; the rest follows BUILD_COMMAND
+            ExternalProject_Add(luajit_ext
+                SOURCE_DIR        "${_lj_src}"
+                BUILD_IN_SOURCE   TRUE
+                CONFIGURE_COMMAND ""
+                BUILD_COMMAND     ${_lj_steps}
+                COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
+                INSTALL_COMMAND   ""
+                BUILD_BYPRODUCTS  "${_lj_lib}")
+        else()
+            set(_lj_lib "${_lj_src}/src/libluajit.a")
+            ExternalProject_Add(luajit_ext
+                SOURCE_DIR        "${_lj_src}"
+                BUILD_IN_SOURCE   TRUE
+                CONFIGURE_COMMAND ""
+                BUILD_COMMAND     ${_lj_make}
+                INSTALL_COMMAND   ""
+                BUILD_BYPRODUCTS  "${_lj_lib}")
+        endif()
     endif()
 
     add_library(luajit_imported STATIC IMPORTED GLOBAL)
