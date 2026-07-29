@@ -195,9 +195,10 @@ FetchContent_MakeAvailable(sdl3)
 
 # Lua backend. Default: PUC-Lua 5.4 (static lib from FetchContent). Experimental:
 # WINBOLO_LUAJIT swaps in a prebuilt LuaJIT (Lua 5.1) for the bot brains so the
-# brain Lua runs JIT-compiled. See docs/luajit-port.md. Native desktop only —
-# LuaJIT has no WASM backend and the brains must be down-transpiled first
-# (tools/lua54to51.py). lua_static / lua_internal are redefined as IMPORTED so
+# brain Lua runs JIT-compiled. Native desktop only — LuaJIT has no WASM
+# backend, so the WASM build keeps PUC-Lua. The brains are already written in
+# the Lua 5.1 subset (bit ops via bitcompat), so they load unchanged on both
+# VMs with no transpile step. lua_static / lua_internal are redefined as IMPORTED so
 # every existing `target_link_libraries(... lua_static ...)` inherits LuaJIT,
 # plus the C-API compat shim is force-included into all Lua-touching TUs.
 option(WINBOLO_LUAJIT "Use LuaJIT (Lua 5.1) for bot brains instead of PUC-Lua 5.4 (experimental)" OFF)
