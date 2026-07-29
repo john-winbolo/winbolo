@@ -3244,6 +3244,8 @@ set(_unit_test_names
     highlights_turning_point
     territory_recent_damage
     highlights_front_collapse
+    highlights_award_anchor_density
+    highlights_time_spread
     lv_stats_clip_time_format
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing

@@ -707,13 +707,17 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 #define HL_WIPE_WEIGHT           100   /* per death in the cluster */
 #define HL_WIPE_TEAM_BONUS       50    /* added when all the dead share a team */
 #define HL_STEAL_WEIGHT          60
-#define HL_STEAL_ENDGAME_BONUS   60    /* scaled by how late in the round it lands */
+#define HL_STEAL_ENDGAME_BONUS   20    /* mild late edge (eyeball-tunable); scaled by
+                                        * how late in the round the steal lands */
 #define HL_STEAL_DEDUP_TICKS     500   /* one steal clip per contested cell in this span */
 #define HL_AWARD_WEIGHT          120   /* award anchors are highest-confidence */
 #define HL_LEADIN_TILE_RADIUS    6
 #define HL_LEADIN_MAX_GAP        60    /* stop the lead-in on a gap this big */
 #define HL_LEADIN_MAX_TICKS      250   /* cap on how far a lead-in reaches back */
 #define HL_CLIP_TICKS            250   /* window duration around a single anchor */
+#define HL_ANCHOR_DENSITY_TICKS  HL_CLIP_TICKS  /* count-award anchor: events this
+                                                 * close would share a clip */
+#define HL_TIME_BUCKETS          4     /* split the round into this many spread buckets */
 #define HL_TURN_WINDOW           500   /* ~10 s span the territory swing is summed over */
 #define HL_TURN_WEIGHT           140   /* ranking magnitude; the pick is seeded, not earned */
 #define HL_TEAM_ID_MAX           256   /* team ids are a byte, so this bounds them */
@@ -759,67 +763,96 @@ static void hlAppend(HlCand *cands, int *n, const HlCand *c) {
     cands[(*n)++] = *c;
 }
 
+/* Of the timeline events in idx[0..m), the one whose tick has the most other
+ * idx ticks within +/-HL_ANCHOR_DENSITY_TICKS — the moment where the winner's
+ * qualifying events pile up, not the last stray one. Ties keep the earliest, so
+ * a late lone event never beats an equally-dense earlier cluster. Returns the
+ * chosen timeline index, or -1 when idx is empty. */
+static int hlDensest(const int *idx, int m, const NotableEvent *tl) {
+    int best = -1, bestDensity = -1;
+    uint32_t bestTick = 0;
+    for (int a = 0; a < m; a++) {
+        uint32_t ta = tl[idx[a]].tick;
+        int density = 0;
+        for (int b = 0; b < m; b++) {
+            uint32_t tb = tl[idx[b]].tick;
+            uint32_t gap = ta > tb ? ta - tb : tb - ta;
+            if (gap <= HL_ANCHOR_DENSITY_TICKS) density++;
+        }
+        if (density > bestDensity || (density == bestDensity && ta < bestTick)) {
+            bestDensity = density;
+            bestTick = ta;
+            best = idx[a];
+        }
+    }
+    return best;
+}
+
 /* Timeline index of the event that best represents an award, or -1 when the
  * award has no moment to anchor (builder/aggregate stats leave no timeline
- * event). Kill-count and capture awards prefer the winner's last such moment. */
+ * event). Count/repeated-event awards anchor on the winner's densest qualifying
+ * moment rather than their last, which is systematically late; the two
+ * single-moment awards keep pointing at their one specific event. */
 static int hlFindAwardAnchor(const NotableEvent *tl, int n, const AwardResult *aw) {
-    int best = -1;
+    int idx[NOTABLE_EVENTS_MAX];
+    int m = 0;
     switch (aw->awardId) {
     case AWARD_NEMESIS:
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_KILL &&
                 tl[i].actorA == aw->winnerSlot && tl[i].actorB == aw->subjectSlot)
-                best = i;   /* last kill of the nemesis victim */
-        break;
+                idx[m++] = i;   /* every kill of the nemesis victim */
+        return hlDensest(idx, m, tl);
     case AWARD_BIGGEST_FUMBLE: {
-        int most = -1;
+        int best = -1, most = -1;
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_KILL && tl[i].actorB == aw->winnerSlot &&
                 (int)tl[i].carriedPills > most) {
                 most = tl[i].carriedPills;   /* the biggest pill dump they died on */
                 best = i;
             }
-        break;
+        return best;
     }
-    case AWARD_FISH_FOOD:
+    case AWARD_FISH_FOOD: {
+        int best = -1;
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_KILL && tl[i].actorB == aw->winnerSlot &&
                 tl[i].deathCause == LAST_DEATH_BY_DEEPSEA)
                 best = i;   /* last drowning */
-        break;
+        return best;
+    }
     case AWARD_MOST_KILLS:
     case AWARD_BEST_KD:
-        /* The winner's last kill of someone else — actorB!=winner skips their
-         * own suicide/drown, which would otherwise mislocate the clip. */
+        /* The winner's kills of someone else — actorB!=winner skips their own
+         * suicide/drown, which would otherwise mislocate the clip. */
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_KILL &&
                 tl[i].actorA == aw->winnerSlot && tl[i].actorB != aw->winnerSlot)
-                best = i;
-        break;
+                idx[m++] = i;
+        return hlDensest(idx, m, tl);
     case AWARD_LGM_HUNTER:
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_LGM_LOST && tl[i].actorA == aw->winnerSlot)
-                best = i;
-        break;
+                idx[m++] = i;
+        return hlDensest(idx, m, tl);
     case AWARD_CANNON_FODDER:
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_LGM_LOST && tl[i].actorB == aw->winnerSlot)
-                best = i;
-        break;
+                idx[m++] = i;
+        return hlDensest(idx, m, tl);
     case AWARD_MOST_BASE_CAPTURES:
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_BASE_CAPTURE && tl[i].actorA == aw->winnerSlot)
-                best = i;
-        break;
+                idx[m++] = i;
+        return hlDensest(idx, m, tl);
     case AWARD_MOST_PILL_CAPTURES:
         for (int i = 0; i < n; i++)
             if (tl[i].type == NOTABLE_PILL_CAPTURE && tl[i].actorA == aw->winnerSlot)
-                best = i;
-        break;
+                idx[m++] = i;
+        return hlDensest(idx, m, tl);
     default:
-        break;   /* builder/aggregate awards: nothing in the timeline to point at */
+        return -1;   /* builder/aggregate awards: nothing in the timeline to point at */
     }
-    return best;
 }
 
 /* Order candidates for greedy selection: strongest score first, then a fixed
@@ -870,6 +903,17 @@ static void hlLeadIn(const NotableEvent *tl, const HlCand *c,
                                                 : anchorTick + HL_CLIP_TICKS;
     if (end < start) end = start;
     *outEnd = end;
+}
+
+/* Which time-bucket a start tick falls in, over [firstTick, firstTick+span].
+ * span must be > 0. Clamped, so a territory-derived tick outside the timeline's
+ * own span still lands in an end bucket rather than out of range. */
+static int hlBucket(uint32_t startTick, uint32_t firstTick, uint32_t span) {
+    int b;
+    if (startTick <= firstTick) return 0;
+    b = (int)((uint64_t)(startTick - firstTick) * HL_TIME_BUCKETS / span);
+    if (b >= HL_TIME_BUCKETS) b = HL_TIME_BUCKETS - 1;
+    return b;
 }
 
 void computeHighlights(const NotableEvent *timeline, int timelineCount,
@@ -1160,24 +1204,48 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
     }
 
     /* Selection: strongest first, greedily keeping windows whose tick spans do
-     * not overlap an accepted one. This both de-dups and spreads the picks. The
+     * not overlap an accepted one, and no more than a few per time-bucket so the
+     * reel spans the round instead of bunching where the scores run hottest. The
      * turning point is seeded ahead of the loop rather than left to win on score,
      * so the one window that explains how the round was decided always survives.
      * It always outscores a collapse (both HL_BREAKTHROUGH), so it is the first of
      * that type after the sort and the one the seed grabs. */
-    qsort(cands, candCount, sizeof(HlCand), hlCandCmp);
-    for (int i = 0; i < candCount; i++)
-        if (cands[i].type == HL_BREAKTHROUGH) { turnIdx = i; break; }
-    if (turnIdx >= 0) accepted[acceptCount++] = turnIdx;
-    for (int i = 0; i < candCount && acceptCount < maxOut; i++) {
-        bool overlap = false;
-        if (i == turnIdx) continue;
-        for (int k = 0; k < acceptCount; k++) {
-            const HlCand *acc = &cands[accepted[k]];
-            if (cands[i].startTick <= acc->endTick &&
-                acc->startTick <= cands[i].endTick) { overlap = true; break; }
+    {
+        uint32_t span = lastTick > firstTick ? (lastTick - firstTick) : 0;
+        bool bucketed = (span > 0);
+        int bucketCount[HL_TIME_BUCKETS];
+        /* Roughly even split of maxOut across the buckets, plus one slot of slack
+         * so a hot bucket is trimmed, not starved. */
+        int bucketCap = (maxOut + HL_TIME_BUCKETS - 1) / HL_TIME_BUCKETS + 1;
+
+        for (int b = 0; b < HL_TIME_BUCKETS; b++) bucketCount[b] = 0;
+
+        qsort(cands, candCount, sizeof(HlCand), hlCandCmp);
+        for (int i = 0; i < candCount; i++)
+            if (cands[i].type == HL_BREAKTHROUGH) { turnIdx = i; break; }
+        if (turnIdx >= 0) {
+            /* The seed is exempt from the cap but still fills its bucket's tally. */
+            accepted[acceptCount++] = turnIdx;
+            if (bucketed)
+                bucketCount[hlBucket(cands[turnIdx].startTick, firstTick, span)]++;
         }
-        if (!overlap) accepted[acceptCount++] = i;
+        for (int i = 0; i < candCount && acceptCount < maxOut; i++) {
+            bool overlap = false;
+            int b;
+            if (i == turnIdx) continue;
+            for (int k = 0; k < acceptCount; k++) {
+                const HlCand *acc = &cands[accepted[k]];
+                if (cands[i].startTick <= acc->endTick &&
+                    acc->startTick <= cands[i].endTick) { overlap = true; break; }
+            }
+            if (overlap) continue;
+            if (bucketed) {
+                b = hlBucket(cands[i].startTick, firstTick, span);
+                if (bucketCount[b] >= bucketCap) continue;   /* bucket full: spread */
+                bucketCount[b]++;
+            }
+            accepted[acceptCount++] = i;
+        }
     }
 
     /* Widen each pick with its lead-in, then order the reel chronologically. */

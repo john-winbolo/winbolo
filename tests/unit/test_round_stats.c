@@ -1284,7 +1284,9 @@ int run_highlights_wipe_team_bonus(void) {
 }
 
 /* An enemy-owned capture is a steal; a neutral land-grab is not; and a steal
- * closer to the final tick scores higher than an earlier identical one. */
+ * closer to the final tick scores a little higher than an earlier identical one
+ * — the endgame bonus is a mild edge (max +HL_STEAL_ENDGAME_BONUS = +20 on a
+ * base of 60), not the doubling it used to be. */
 int run_highlights_objective_steal(void) {
     NotableEvent tl[3];
     tl[0] = mkEvent(100, 10, 10, NOTABLE_PILL_CAPTURE, 2, NEUTRAL, ATTR_CAP_NEUTRAL, 0, 0);
@@ -1303,14 +1305,20 @@ int run_highlights_objective_steal(void) {
                   out[0].startTick, out[1].startTick);
     UT_ASSERT_MSG(out[0].actorA == 2 && out[0].actorB == 5, "steal names new/prev owner");
     UT_ASSERT_MSG(out[0].value == 1 && out[1].value == 1, "steal value is one");
-    UT_ASSERT_MSG(out[1].score > out[0].score,
-                  "later steal scores higher: %u vs %u", out[1].score, out[0].score);
+    /* span 800: bonus = 20*(tick-100)/800. tick 300 -> +5 = 65; tick 900 -> +20
+     * = 80. A late steal edges an early one, but by 15, not by doubling. */
+    UT_ASSERT_MSG(out[0].score == 65, "early steal base plus small bonus, got %u",
+                  out[0].score);
+    UT_ASSERT_MSG(out[1].score == 80, "last-tick steal is base plus the full 20, got %u",
+                  out[1].score);
 
     return 0;
 }
 
-/* A Nemesis award anchors on the winner's last kill of the victim; a builder
- * award (Sapper) has no timeline moment and produces no window. */
+/* A Nemesis award anchors on the winner's densest qualifying kill of the victim,
+ * not their last; when two kills are equally dense the earliest wins, so the clip
+ * does not drift to the end. A builder award (Sapper) has no timeline moment and
+ * produces no window. */
 int run_highlights_award_anchor(void) {
     NotableEvent tl[3];
     tl[0] = mkEvent(100, 5, 5, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
@@ -1331,10 +1339,11 @@ int run_highlights_award_anchor(void) {
     UT_ASSERT_MSG(out[0].type == HL_AWARD, "type award, got %u", out[0].type);
     UT_ASSERT_MSG(out[0].awardId == AWARD_NEMESIS, "award id, got %u", out[0].awardId);
     UT_ASSERT_MSG(out[0].actorA == 0 && out[0].actorB == 1, "winner then victim");
-    /* anchored on the LAST winner->victim kill (tick 300, cell 9,9) */
-    UT_ASSERT_MSG(out[0].startTick == 300, "anchor at the last kill, got %u",
+    /* The two victim kills (ticks 100 and 300) are within one clip of each other,
+     * so equally dense; the earliest wins rather than the last. */
+    UT_ASSERT_MSG(out[0].startTick == 100, "anchor at the earliest dense kill, got %u",
                   out[0].startTick);
-    UT_ASSERT_MSG(out[0].mapX == 9 && out[0].mapY == 9, "anchor cell, got %u,%u",
+    UT_ASSERT_MSG(out[0].mapX == 5 && out[0].mapY == 5, "anchor cell, got %u,%u",
                   out[0].mapX, out[0].mapY);
 
     return 0;
@@ -1735,6 +1744,76 @@ int run_highlights_front_collapse(void) {
         if (out[i].type == HL_BREAKTHROUGH) turns++;
     UT_ASSERT_MSG(turns == 1, "without prior fire only the turning point, got %d",
                   turns);
+
+    return 0;
+}
+
+/* A most-kills award anchors on the winner's dense mid-round cluster of kills,
+ * not on a lone late kill that happens to be their last. */
+int run_highlights_award_anchor_density(void) {
+    NotableEvent tl[4];
+    /* Three kills bunched mid-round, spread across the map so they do not form a
+     * wipe cluster (which would swallow the award window), plus one stray kill
+     * near the end. */
+    tl[0] = mkEvent(1000, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[1] = mkEvent(1050, 40, 40, NOTABLE_KILL, 0, 2, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(1100, 70, 70, NOTABLE_KILL, 0, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[3] = mkEvent(5000, 100, 100, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
+
+    AwardResult aw[1];
+    aw[0].awardId = AWARD_MOST_KILLS; aw[0].winnerSlot = 0; aw[0].subjectSlot = NEUTRAL;
+    aw[0].winnerIsBot = 0; aw[0].value = 4;
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(tl, 4, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(n == 1, "one award window, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_AWARD && out[0].awardId == AWARD_MOST_KILLS,
+                  "most-kills award window");
+    /* The three mid kills are each within one clip of the others, so the densest
+     * (earliest of them) wins; the lone tick-5000 kill is alone and cannot. */
+    UT_ASSERT_MSG(out[0].startTick == 1000,
+                  "anchors in the mid cluster, not the late kill, got %u",
+                  out[0].startTick);
+    UT_ASSERT_MSG(out[0].mapX == 10 && out[0].mapY == 10, "anchor cell, got %u,%u",
+                  out[0].mapX, out[0].mapY);
+
+    return 0;
+}
+
+/* Selection caps how many picks land in one time-bucket, so a mid-round moment
+ * survives even when the final bucket is stuffed with higher-scoring steals that
+ * pure score-greedy would have taken instead. */
+int run_highlights_time_spread(void) {
+    NotableEvent tl[7];
+    /* Two mid-round steals and four late ones, all at distinct cells (so none is
+     * deduped) — the late ones score higher for landing near the final tick. */
+    tl[0] = mkEvent(100,  5,  5,  NOTABLE_PILL_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+    tl[1] = mkEvent(4000, 20, 20, NOTABLE_PILL_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+    tl[2] = mkEvent(4100, 30, 30, NOTABLE_PILL_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+    tl[3] = mkEvent(9000, 40, 40, NOTABLE_BASE_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+    tl[4] = mkEvent(9200, 50, 50, NOTABLE_BASE_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+    tl[5] = mkEvent(9400, 60, 60, NOTABLE_BASE_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+    tl[6] = mkEvent(9600, 70, 70, NOTABLE_BASE_CAPTURE, 1, 2, ATTR_CAP_ENEMY, 0, 0);
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    /* maxOut 4 -> per-bucket cap of 2. Pure greedy would fill all four with the
+     * highest-scoring late steals; the bucket cap holds the final bucket to two
+     * and lets a mid-round steal in. */
+    computeHighlights(tl, 7, NULL, NULL, NULL, 0, NULL, 0, out, &n, 4);
+
+    UT_ASSERT_MSG(n == 4, "four picks, got %d", n);
+
+    /* firstTick 100, lastTick 9600, span 9500; bucket 3 begins at tick 7225. */
+    int mid = 0, late = 0;
+    for (int i = 0; i < n; i++) {
+        if (out[i].startTick >= 7225) late++;
+        else if (out[i].startTick > 100) mid++;
+    }
+    UT_ASSERT_MSG(late == 2, "the final bucket is capped at two, got %d", late);
+    UT_ASSERT_MSG(mid >= 1, "a mid-round pick survives the cap, got %d", mid);
 
     return 0;
 }
