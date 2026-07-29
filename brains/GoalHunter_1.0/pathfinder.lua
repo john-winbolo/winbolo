@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/pathfinder.lua — utility functions (LOS, water escape)
 --
@@ -69,16 +70,16 @@ function M.pill_shots_clear(spot_wx, spot_wy, pill, world,
                             shooter_type, sight_len)
   if not pill or not world then return false, nil end
   local pmx, pmy = pill.mx, pill.my
-  local origin_mx = spot_wx >> 8
-  local origin_my = spot_wy >> 8
+  local origin_mx = bit.rshift(spot_wx, 8)
+  local origin_my = bit.rshift(spot_wy, 8)
 
   -- Aim points in world units: tile center, then the 4 corners.
   -- A tile occupies [pmx<<8, pmx<<8 + 256) on each axis, so the
   -- inclusive-corner endpoints are <<8 and (<<8) + 255.
-  local base_x = pmx << 8
-  local base_y = pmy << 8
+  local base_x = bit.lshift(pmx, 8)
+  local base_y = bit.lshift(pmy, 8)
   local aims = {
-    { base_x | 128,    base_y | 128    },  -- center
+    { bit.bor(base_x, 128),    bit.bor(base_y, 128)    },  -- center
     { base_x,          base_y          },  -- top-left
     { base_x + 255,    base_y          },  -- top-right
     { base_x,          base_y + 255    },  -- bottom-left

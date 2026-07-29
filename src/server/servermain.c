@@ -703,6 +703,19 @@ void printArgs() {
   fprintf(stderr, "                (grep MSG_TX / SYNC_P6 to audit bot comms). Use a base -brain\n");
   fprintf(stderr, "                path (not opt/) so print2 calls aren't stripped. Implies\n");
   fprintf(stderr, "                -allow-unsafe-brains (needs file writes into debug_sessions/).\n");
+  fprintf(stderr, "                Implies ALL debug streams; turn individual ones off with:\n");
+  fprintf(stderr, "  -bd-noviz    - don't emit/record visualizer overlays (brainrec.btr stays\n");
+  fprintf(stderr, "                 loadable, just without viz frames)\n");
+  fprintf(stderr, "  -bd-nopool   - skip the pool-breakdown JSON capture entirely\n");
+  fprintf(stderr, "  -bd-pool-rr  - round-robin pool capture (ONE bot per tick) instead of the\n");
+  fprintf(stderr, "                 default every-bot-every-tick. Same 50 Hz either way (the JSON\n");
+  fprintf(stderr, "                 builds run on the bot workers); rr records ~1/botCount the\n");
+  fprintf(stderr, "                 bytes (~40 KB vs ~0.5 MB per tick at 12 bots) when session\n");
+  fprintf(stderr, "                 size matters more than exact per-tick panel history.\n");
+  fprintf(stderr, "  -bd-noprint2 - no print2_bot<N>.log lines\n");
+  fprintf(stderr, "  -bd-nojsonl  - no brain_p<N>.jsonl / player<N>.jsonl behavior traces\n");
+  fprintf(stderr, "                A braindbg_perf.log (per-250-tick phase costs + achieved Hz)\n");
+  fprintf(stderr, "                is always written to the session dir for diagnosis.\n");
   fprintf(stderr, "-brain-profile-log - Profile the PRODUCTION (opt/) brain: BRAIN_PROFILE on, writes\n");
   fprintf(stderr, "                optimize.log + performance.ticks.log into debug_sessions/<TS>_<N>/\n");
   fprintf(stderr, "                alongside brainrec.btr (loadable in BrainTest). Implies recording\n");
@@ -1967,6 +1980,40 @@ int main(int argc, char **argv) {
                         "brainrec.btr recorded for BrainTest.\n");
       } else if (brainDebug) {
         serverSimSetBotDefaultDebugMode(serverSim, true);
+        /* Selective debug streams: -brain-debug implies ALL of viz recording,
+         * pool-breakdown capture, print2 logs and jsonl traces. Each can be
+         * turned off individually to keep a many-bot debug game playable —
+         * the streams cost real tick time (pool JSON is a per-bot per-tick
+         * Lua serialization; viz is thousands of overlay calls; print2 is
+         * debug.getinfo + string building per line). */
+        {
+          bool bdNoViz    = (argExist(argc, argv, "bd-noviz") == TRUE)
+                         || (argExist(argc, argv, "-bd-noviz") == TRUE);
+          bool bdNoPool   = (argExist(argc, argv, "bd-nopool") == TRUE)
+                         || (argExist(argc, argv, "-bd-nopool") == TRUE);
+          bool bdPoolRR   = (argExist(argc, argv, "bd-pool-rr") == TRUE)
+                         || (argExist(argc, argv, "-bd-pool-rr") == TRUE);
+          bool bdNoPrint2 = (argExist(argc, argv, "bd-noprint2") == TRUE)
+                         || (argExist(argc, argv, "-bd-noprint2") == TRUE);
+          bool bdNoJsonl  = (argExist(argc, argv, "bd-nojsonl") == TRUE)
+                         || (argExist(argc, argv, "-bd-nojsonl") == TRUE);
+          /* Pool default is FULL (every bot every tick — exact panel
+           * history). The JSON builds run in parallel on each bot's own
+           * worker right after its think (see brainRecordPoolCaptureWanted),
+           * so full capture holds 50 Hz even at 12 bots; the serial recorder
+           * section only writes the prefetched bytes. -bd-pool-rr opts into
+           * round-robin (one bot per tick) when session SIZE matters —
+           * ~1/botCount the bytes (~0.5 MB/tick vs ~40 KB/tick at 12 bots),
+           * each bot's panel data at most botCount frames stale. */
+          int poolMode = bdNoPool ? 0 : (bdPoolRR ? 1 : 2);
+          luaBrainsSetDebugParts(!bdNoPrint2, !bdNoPool, !bdNoViz, !bdNoJsonl);
+          brainRecordSetParts(!bdNoViz, poolMode);
+          fprintf(stderr, "-brain-debug streams: viz=%s pool=%s print2=%s jsonl=%s\n",
+                  bdNoViz ? "OFF" : "on",
+                  bdNoPool ? "OFF" : (bdPoolRR ? "round-robin (1 bot/tick)"
+                                               : "full (every bot every tick)"),
+                  bdNoPrint2 ? "OFF" : "on", bdNoJsonl ? "OFF" : "on");
+        }
         /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
          * -brain path under -braindebug yields brainrec.btr but zero
          * print2_botN.log — the exact footgun the usage text warns about.

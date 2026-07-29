@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/builder.lua — LGM / build-action decision layer
 --
@@ -206,8 +207,8 @@ function M.set_mode(state, world, info, goal)
     b.mode       = "gather"
     b.need_trees = (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
   elseif kind == "place_pill_strategic" then
-    local tmx = info.tankx >> 8
-    local tmy = info.tanky >> 8
+    local tmx = bit.rshift(info.tankx, 8)
+    local tmy = bit.rshift(info.tanky, 8)
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
     local close_enough = (goal._place_emergency and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
                          or pdist <= 1
@@ -237,8 +238,8 @@ function M.set_mode(state, world, info, goal)
      and not info.inboat then
     local perc = state.perc
     if perc and perc.enemy_tanks and #perc.enemy_tanks > 0 then
-      local tmx = info.tankx >> 8
-      local tmy = info.tanky >> 8
+      local tmx = bit.rshift(info.tankx, 8)
+      local tmy = bit.rshift(info.tanky, 8)
       local closest_et, closest_dist = nil, math.huge
       for _, et in ipairs(perc.enemy_tanks) do
         if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
@@ -394,8 +395,8 @@ end
 -- Uses the C tick-by-tick LGM walk simulation. Returns true if reachable.
 -- Skips the check for adjacent tiles (distance <= 1) since those are always fine.
 local function lgm_can_reach(info, dmx, dmy)
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   if math.abs(dmx - tmx) + math.abs(dmy - tmy) <= 1 then return true end
   -- Bless the DESTINATION tile so it's always steppable in the sim: the LGM
   -- works on its target square (build spot / pill to repair / pickup), so a
@@ -412,8 +413,8 @@ end
 -- ahead so the LGM farms terrain the tank will traverse, not terrain it just left.
 -- Returns the forest tile closest to the TANK (minimises LGM travel time).
 local function nearest_onpath_forest(state, info, radius)
-  local cx = info.tankx >> 8
-  local cy = info.tanky >> 8
+  local cx = bit.rshift(info.tankx, 8)
+  local cy = bit.rshift(info.tanky, 8)
   local best_d, best_x, best_y = math.huge, nil, nil
 
   local function check(ox, oy)
@@ -452,7 +453,7 @@ function M.road_tree_reserve(state, world, info)
   local reserve = C.TREE_RESERVE or 4
   reserve = reserve + (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
   if world and world.pills then
-    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
     local radius = C.ROAD_RESERVE_REPAIR_RADIUS or 20
     local maxhp  = C.PILLS_MAX_HEALTH or 15
     local worst  = 0
@@ -479,8 +480,8 @@ local function road_ahead(state, info, now, world)
   -- dispatch here is exactly what wasted the approval window in
   -- 20260703_202213 (lgm_busy on every replan until the approval expired).
   if state._repo_approved_pid then return nil end
-  local cur_mx = info.tankx >> 8
-  local cur_my = info.tanky >> 8
+  local cur_mx = bit.rshift(info.tankx, 8)
+  local cur_my = bit.rshift(info.tanky, 8)
   local nmx, nmy = state.pf.next_mx, state.pf.next_my
   if U.mdist(cur_mx, cur_my, nmx, nmy) > 1 then return nil end
   local next_tt  = U.ttype(nmx, nmy)
@@ -515,10 +516,10 @@ function M.decide(state, world, info, now)
 
   -- Compute LGM ETA when out on a mission (for base departure timing)
   if info.man_status == C.LGM_MOVING then
-    local man_mx = info.man_x >> 8
-    local man_my = info.man_y >> 8
-    local tmx = info.tankx >> 8
-    local tmy = info.tanky >> 8
+    local man_mx = bit.rshift(info.man_x, 8)
+    local man_my = bit.rshift(info.man_y, 8)
+    local tmx = bit.rshift(info.tankx, 8)
+    local tmy = bit.rshift(info.tanky, 8)
     local ticks = cpf_lgm_travel_ticks_map(man_mx, man_my, tmx, tmy, 0, 0, 2000, 150)
     b.lgm_eta = ticks > 0 and (now + ticks) or nil
   else
@@ -542,8 +543,8 @@ function M.decide(state, world, info, now)
     end
   end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
 
   -- Priority 0.4: repair_pill dispatch (FORCED mode — no danger gate).
   -- As soon as we're within 5 tiles of the target friendly damaged pill
@@ -707,8 +708,8 @@ function M.decide(state, world, info, now)
     if gk ~= "attack_pill" and gk ~= "pill_place"
        and gk ~= "place_pill_strategic" then
       -- Check no friendly pill within radius
-      local tmx = info.tankx >> 8
-      local tmy = info.tanky >> 8
+      local tmx = bit.rshift(info.tankx, 8)
+      local tmy = bit.rshift(info.tanky, 8)
       local friendly_nearby = false
       for _, p in pairs(world.pills) do
         if p.owner == "friendly" and p.health > 0 then
@@ -720,7 +721,7 @@ function M.decide(state, world, info, now)
       end
       if not friendly_nearby then
         -- Position 2 tiles behind current heading
-        local behind_dir = (info.direction + 128) & 0xFF
+        local behind_dir = bit.band((info.direction + 128), 0xFF)
         local bmx = U.mclamp(tmx + math.floor(U.bsin(behind_dir) * C.TRAIL_DROP_BEHIND_DIST / 128 + 0.5))
         local bmy = U.mclamp(tmy - math.floor(U.bcos(behind_dir) * C.TRAIL_DROP_BEHIND_DIST / 128 + 0.5))
         if (bmx ~= tmx or bmy ~= tmy) and U.is_placeable(bmx, bmy, world)
@@ -916,7 +917,7 @@ function M.decide(state, world, info, now)
     -- retry the next-nearest (a different direction) up to LGM_GATHER_RETRIES
     -- before giving up. reason stays nil when a dispatch succeeds. Diagnostic
     -- print2 (reason-change throttled) explains a stuck gather; stripped from opt.
-    local cx, cy = info.tankx >> 8, info.tanky >> 8
+    local cx, cy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
     local maxd   = C.LGM_GATHER_MAX_DANGER or 20
     -- gather_trees holds the tank still, so the LGM can walk the larger STATIONARY
     -- deploy distance (LGM_DEPLOY_DIST_REFUEL, ~5) rather than the 3-tile moving
@@ -1006,8 +1007,8 @@ function M.decide(state, world, info, now)
     -- LGM has time to walk further without pacing issues.
     local is_refuel_stationary = state.goal and state.goal.kind == "refuel_at_base"
         and info.speed == 0
-        and (info.tankx >> 8) == (state.goal.mx or -1)
-        and (info.tanky >> 8) == (state.goal.my or -1)
+        and (bit.rshift(info.tankx, 8)) == (state.goal.mx or -1)
+        and (bit.rshift(info.tanky, 8)) == (state.goal.my or -1)
     local farm_radius = is_refuel_stationary and C.FARM_REFUEL_RADIUS
                                               or C.FARM_OPPORTUNISTIC_RADIUS
     local deploy_dist = is_refuel_stationary and C.LGM_DEPLOY_DIST_REFUEL

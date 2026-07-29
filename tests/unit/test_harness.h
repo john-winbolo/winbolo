@@ -253,6 +253,18 @@ int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
 int run_bolo_rand_golden_sequence(void);
+
+/* Pathfinder diagonal corner-cut rule (test_pf_corner_cut.c): the nav
+ * Dijkstra edge cache, the A*, and cost_to must all refuse an on-foot
+ * diagonal step past a solid (building/halfbuilding) cardinal corner —
+ * a full-tile tank cannot make that move. Regression for the field
+ * incident where the Dijkstra's stale BOTH-corners rule planned a
+ * diagonal past a halfbuilding and the tank ground the corner for
+ * ~110 ticks (20260713_233008_1 bot1 t=11467). */
+int run_pf_dijkstra_no_solid_corner_cut(void);
+int run_pf_astar_no_solid_corner_cut(void);
+int run_pf_costto_no_solid_corner_cut(void);
+
 int run_net_impair(void);
 
 /* ChannelMux reliability primitive (test_channel_mux.c): the full

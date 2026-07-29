@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/attack.lua — pill attack position planning + substate machines
 -- =========================================================================
@@ -158,8 +159,8 @@ end
 local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
 local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
   local now = state.tick or 0
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   goal.substate    = "swerve"
   goal._swerve_start = now
   if mode == "kill" then
@@ -448,16 +449,16 @@ local function standoff_shot_obstacle(goal, pill, world)
     local w   = goal._shield_scan.best
     local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
                 or shield.AIM_OFFSETS_TILE_FIRE[1]
-    target_wx = (pmx << 8) + math.floor(off[1] * 256)
-    target_wy = (pmy << 8) + math.floor(off[2] * 256)
+    target_wx = (bit.lshift(pmx, 8)) + math.floor(off[1] * 256)
+    target_wy = (bit.lshift(pmy, 8)) + math.floor(off[2] * 256)
   else
-    target_wx = (pmx << 8) | 128
-    target_wy = (pmy << 8) | 128
+    target_wx = bit.bor((bit.lshift(pmx, 8)), 128)
+    target_wy = bit.bor((bit.lshift(pmy, 8)), 128)
   end
   local spot_wx  = math.floor(goal.standoff_fx * 256 + 0.5)
   local spot_wy  = math.floor(goal.standoff_fy * 256 + 0.5)
-  local origin_mx = spot_wx >> 8
-  local origin_my = spot_wy >> 8
+  local origin_mx = bit.rshift(spot_wx, 8)
+  local origin_my = bit.rshift(spot_wy, 8)
   local tiles = cpf.simulate_shot(spot_wx, spot_wy,
                                   target_wx, target_wy,
                                   cpf.SHOT_TANK, 0)
@@ -504,8 +505,8 @@ local function shot_path_obstacle_count(info, goal, world)
                                   target_wx, target_wy,
                                   cpf.SHOT_TANK, 0)
   if not tiles then return 0, "no sim" end
-  local origin_mx = info.tankx >> 8
-  local origin_my = info.tanky >> 8
+  local origin_mx = bit.rshift(info.tankx, 8)
+  local origin_my = bit.rshift(info.tanky, 8)
   local shots = 0
   local reached_pill = false
   local prev_mx, prev_my = nil, nil
@@ -687,8 +688,8 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   -- Use KIND_NORMAL Dijkstra (full danger) — we're navigating to a firing
   -- position, not through the pill, so full danger applies.
   -- Falls back to straight-line estimate if Dijkstra hasn't reached this tile.
-  local tmx    = info.tankx >> 8
-  local tmy    = info.tanky >> 8
+  local tmx    = bit.rshift(info.tankx, 8)
+  local tmy    = bit.rshift(info.tanky, 8)
   local ammo   = (info.shells or 0) + (info.mines or 0)
   local approach = cpf.dijkstra_lookup_by_kind(cpf.KIND_NORMAL, cx, cy, info.inboat and 1 or 0)
   if approach >= 1e29 then
@@ -821,8 +822,8 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local R_MAX = standoff_override or C.ATTACK_PILL_STANDOFF
   local R_MIN = R_MAX   -- stay on the circle edge, don't go closer
   local N     = C.ATTACK_PLAN_DIRS
-  local tmx   = info.tankx >> 8
-  local tmy   = info.tanky >> 8
+  local tmx   = bit.rshift(info.tankx, 8)
+  local tmy   = bit.rshift(info.tanky, 8)
 
   local best_score = math.huge
   local best_mx, best_my = nil, nil
@@ -912,8 +913,8 @@ local function pick_wall_shield(world, info, pill, state)
   -- Don't attempt in a boat
   if info.inboat then return nil end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local pmx, pmy = pill.mx, pill.my
 
   -- Direction from pill to tank (approach angle)
@@ -1617,8 +1618,8 @@ function M.draw_plan_trace(viz, state, info)
   local t = state._plan_trace
   if not t then return end
   if not info or not info.tankx then return end
-  local tx = (info.tankx >> 8) + 0.5
-  local ty = (info.tanky >> 8) + 0.5
+  local tx = (bit.rshift(info.tankx, 8)) + 0.5
+  local ty = (bit.rshift(info.tanky, 8)) + 0.5
 
   local goal = state.goal or {}
   local age = (state.tick or 0) - (t.tick or 0)
@@ -1832,8 +1833,8 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
         if not _blocked then has_los = true; break end
       end
     else
-      local spot_wx = (mx << 8) | 128
-      local spot_wy = (my << 8) | 128
+      local spot_wx = bit.bor((bit.lshift(mx, 8)), 128)
+      local spot_wy = bit.bor((bit.lshift(my, 8)), 128)
       has_los = PF.pill_shots_clear(spot_wx, spot_wy, pill, world,
                                     cpf.SHOT_TANK, 0)
     end
@@ -2588,8 +2589,8 @@ function M.update_attack_substate(goal, state, world, info)
       "center", 0, 255, 255, 255)
   end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
   local pmx, pmy = goal.mx, goal.my
 

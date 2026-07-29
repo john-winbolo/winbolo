@@ -66,6 +66,28 @@ M.TERRAIN_COST_LAND = {
   [M.T_UNKNOWN]   = 3,     -- unexplored: assume passable, cost like forest
 }
 
+-- Per-terrain tank MAX SPEED (WU/tick), mirrored from the engine's
+-- MAP_SPEED_T* table (bolo_map.h). Used by the tank-combat lead calc to
+-- forward-simulate a target's terrain-limited path over the shell's flight
+-- (a shell can outlast a road->swamp transition, so a constant-velocity
+-- extrapolation misses). Unknown/unseen tiles assume grass.
+M.MAP_SPEED = {
+  [M.T_BUILDING]  = 0,
+  [M.T_RIVER]     = 3,
+  [M.T_SWAMP]     = 3,
+  [M.T_CRATER]    = 3,
+  [M.T_ROAD]      = 16,
+  [M.T_FOREST]    = 6,
+  [M.T_RUBBLE]    = 3,
+  [M.T_GRASS]     = 12,
+  [M.T_HALFBUILD] = 0,
+  [M.T_BOAT]      = 16,
+  [M.T_DEEPSEA]   = 3,
+  [M.T_REFBASE]   = 16,
+  [M.T_PILLBOX]   = 0,
+  [M.T_UNKNOWN]   = 12,   -- assume grass for unseen tiles
+}
+
 -- Boat-mode terrain costs.
 -- Land tiles are expensive because touching land destroys the boat permanently.
 -- A* should strongly prefer staying in water and only disembark near the goal.
@@ -690,6 +712,20 @@ M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
 -- bot grabs it, the other re-routes for free. 0.01 = ">=1% cheaper steals".
 -- (The killer-priority window and reposition guards still trump this.)
 M.ALLY_CLAIMED_STEAL_FRAC_CAPTURE = 0.01
+-- ── attack_pill steal NEGOTIATION (stq / sta / str verbs) ──────────────
+-- A cheaper challenger no longer silently takes over an ally's pre-commit
+-- attack_pill (the loser stayed committed as a zombie co-attacker —
+-- 20260713_010904_1 t=5022, three bots soloing pill #5). Instead it ASKS:
+--   stq <pid> <to> <cost>  "I want to steal this from you, my score is N"
+--   sta <pid> <to> <cost>  holder accepts (re-evaluated score Y) + yields
+--   str <pid> <to> <cost>  holder rejects (re-evaluated score Y)
+-- A holder past "approach" is NEVER stealable — it's already moving into
+-- position. Only plan_position/approach holders can be asked.
+M.STEAL_REQ_COOLDOWN   = 150 -- ticks between requests for the same pill (after send or a reject)
+M.STEAL_GRANT_TTL      = 250 -- ticks a received accept stays valid in goal selection
+M.STEAL_REPLY_DEADLINE = 20  -- holder answers with its cached score at latest after this many ticks
+M.STEAL_REEVAL_MAX_AGE = 40  -- cached pool-6 score older than this defers the reply (waits for a fresh re-eval)
+M.STEAL_YIELD_BLOCK    = 300 -- after yielding, don't re-pick that pill for this long (covers the gap until the winner's claim broadcast lands)
 -- DEPRECATED / unused: the refuel ally-claim FCFS reject (and its
 -- far-claimer override) was replaced by the SOFT per-ally cost penalty
 -- (ALLY_CLAIMED_REFUEL_PENALTY). Refuel is no longer in _REJECT_POOLS, so
@@ -1349,6 +1385,14 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11°) aim toleranc
 -- sides of a wall don't sit there forever. Reset whenever a normal
 -- clear shot fires or we leave engage. ~30 ticks ≈ 1s.
 M.TANK_COMBAT_STUCK_FIRE_TICKS  = 30
+
+-- Heading-stability fire gate (see steering.lua tank_combat_steer): only trust
+-- the lead once the target's heading has held steady, so we don't fire during a
+-- knockback bump (a landed hit shoves the target sideways, decaying over a few
+-- ticks) or a reversal. Pure speed changes from terrain don't trip this.
+M.TANK_COMBAT_STEADY_MIN_SPEED  = 4     -- WU/tick below which heading is ignored (treat as point shot)
+M.TANK_COMBAT_STEADY_TURN_RAD   = 0.20  -- max heading change/tick (~11°) to still count as "steady"
+M.TANK_COMBAT_STEADY_TICKS      = 3     -- consecutive steady ticks required before firing
 
 -- Kill-LGM shoot gates.  LGMs are small (1 tile, hitbox even smaller),
 -- move slowly (~3 wu/tick), and die in one hit — so we fire from

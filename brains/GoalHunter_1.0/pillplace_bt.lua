@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/pillplace_bt.lua — pill placement technique as a BT
 --
@@ -144,8 +145,8 @@ local function navigate_tick(ctx)
     goal.substate = "select_pill"
     return "success"
   end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
   -- Navigate to deploy position (outside pill range), not the placement tile
   local nav_mx = goal.deploy_mx or goal.place_mx
@@ -228,8 +229,8 @@ end
 
 local function collect_target_tick(ctx)
   local goal, state, info = ctx.goal, ctx.state, ctx.info
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
   if pdist <= 1 then
     print(string.format(TAG .. " [PP] collect: arrived at target@(%d,%d), chaining to next",

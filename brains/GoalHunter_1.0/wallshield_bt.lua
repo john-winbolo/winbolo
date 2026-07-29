@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/wallshield_bt.lua — wall-shield + normal attack as a BT
 --
@@ -44,8 +45,8 @@ end
 local function approach_tick(ctx)
   local goal, state, world, info = ctx.goal, ctx.state, ctx.world, ctx.info
   if not goal.standoff_mx then return "running" end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
 
   if goal.wall_shield and goal.wall_mx then
@@ -140,8 +141,8 @@ local function ws_prewait_tick(ctx)
     goal.lgm_return_tick = nil
 
     if info.man_status == 2 then  -- LGM_MOVING
-      local tmx = info.tankx >> 8
-      local tmy = info.tanky >> 8
+      local tmx = bit.rshift(info.tankx, 8)
+      local tmy = bit.rshift(info.tanky, 8)
       local tank_ticks = cpf.estimate_tank_travel_ticks(
         tmx, tmy, goal.standoff_mx, goal.standoff_my, info.inboat)
       local lgm_return_ticks = cpf.lgm_travel_ticks(
@@ -171,8 +172,8 @@ end
 
 local function ws_advance_tick(ctx)
   local goal, state, info = ctx.goal, ctx.state, ctx.info
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
 
   -- If early-advancing, clear the flag once LGM is back
@@ -317,8 +318,8 @@ end
 local function engage_tick(ctx)
   local goal, state, world, info = ctx.goal, ctx.state, ctx.world, ctx.info
   if not goal.standoff_mx then return "running" end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
 
   local sdist   = U.mdist(tmx, tmy, goal.standoff_mx, goal.standoff_my)
