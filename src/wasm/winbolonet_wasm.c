@@ -31,7 +31,7 @@ bool httpCreate(void)                                              { return FALS
 void httpDestroy(void)                                             { }
 int  wbn_api_post(const char *ep, const char *jb, char **ro)      { (void)ep; (void)jb; if (ro) *ro = NULL; return -1; }
 int  wbn_api_call(const char *ep, struct cJSON *b, struct cJSON **r) { (void)ep; (void)b; if (r) *r = NULL; return -1; }
-bool httpSendLogFile(char *fn, char *key, bool fb)                 { (void)fn; (void)key; (void)fb; return FALSE; }
+bool httpSendLogFile(const char *fn, char *key, bool fb)          { (void)fn; (void)key; (void)fb; return FALSE; }
 void httpSetAltIpAddress(char *ip)                                 { (void)ip; }
 
 /* -------------------------------------------------------

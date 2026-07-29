@@ -602,7 +602,7 @@ void httpSetLogUploadTimeout(long seconds) {
 * Uploads a log file to WinBolo.net via HTTP(S) multipart
 * POST.  Returns TRUE on success.
 *********************************************************/
-bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
+bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
   (void)wantFeedback;
 
   if (!httpStarted || fileName == NULL || key == NULL) {
