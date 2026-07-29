@@ -129,16 +129,6 @@ static char optFinalJson[512] = "";
 static SDL_AtomicInt g_serverShuttingDown;
 static SDL_Mutex    *g_serverTickLock = NULL;
 
-/* -brain-full-think: when set, the game does NOT budget-kill bot brains — each
- * brain.think() runs to completion (via botManagerSetSlowMoDebug) and the tick
- * loop drops its real-time CATCH-UP, so the whole game simply slows to whatever
- * pace the brains need instead of cramming ticks / truncating thinks. This lets
- * a profiling run capture the real cost of an over-budget think. Set once at
- * startup before the timer thread starts, so a plain int (no atomic) is safe.
- * A non-standard game (bots get unlimited think time) must not be reported as
- * an official winbolo.net match, so this force-disables WBN. */
-static int g_brainFullThink = 0;
-
 /* Tracker settings (set from command-line args, read by timer) */
 static char  sTrackerAddr[FILENAME_MAX] = "";
 static unsigned short sTrackerPort = 0;
@@ -591,22 +581,11 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
     SDL_LockMutex(g_serverTickLock);
     if (!SDL_GetAtomicInt(&g_serverShuttingDown) &&
         (tick - oldTick) > SERVER_TICK_LENGTH) {
-      if (g_brainFullThink) {
-        /* Full-think mode: run exactly ONE tick and discard the accumulated
-         * real-time debt (oldTick = tick). A brain that overran its 20 ms slot
-         * therefore just makes the game run slower rather than triggering the
-         * catch-up loop below — which would cram several more full-length thinks
-         * back-to-back and bury the very cost we're trying to profile. */
+      while ((tick - oldTick) > SERVER_TICK_LENGTH) {
+        if (SDL_GetAtomicInt(&g_serverShuttingDown)) break;
         serverInstanceTick(serverSim);
         ticks++;
-        oldTick = tick;
-      } else {
-        while ((tick - oldTick) > SERVER_TICK_LENGTH) {
-          if (SDL_GetAtomicInt(&g_serverShuttingDown)) break;
-          serverInstanceTick(serverSim);
-          ticks++;
-          oldTick += SERVER_TICK_LENGTH;
-        }
+        oldTick += SERVER_TICK_LENGTH;
       }
     }
     SDL_UnlockMutex(g_serverTickLock);
@@ -744,12 +723,6 @@ void printArgs() {
   fprintf(stderr, "                forces the opt/ brain with debug OFF for representative timings.\n");
   fprintf(stderr, "                Profile data ONLY: no print2 debug logs, no pool-viz capture\n");
   fprintf(stderr, "                (independent of -brain-debug).\n");
-  fprintf(stderr, "-brain-full-think - Never budget-kill a bot: each brain.think() runs to\n");
-  fprintf(stderr, "                completion and the game SLOWS DOWN to their pace instead of\n");
-  fprintf(stderr, "                truncating thinks or cramming catch-up ticks. Pair with\n");
-  fprintf(stderr, "                -brain-profile-log to capture what goes over budget.\n");
-  fprintf(stderr, "                DISABLES winbolo.net: a non-standard game (unlimited think\n");
-  fprintf(stderr, "                time) must not be reported as an official match.\n");
   fprintf(stderr, "-allow-unsafe-brains - Open the full Lua standard library for bot brains.\n");
   fprintf(stderr, "                Default OFF: brains are sandboxed (no shell/process/native code,\n");
   fprintf(stderr, "                file access confined to the brain directory). Only for trusted brains.\n");
@@ -1829,20 +1802,7 @@ int main(int argc, char **argv) {
     instCfg.maxSpectators       = (BYTE)maxSpectators;
     instCfg.specDelaySeconds    = (uint16_t)specDelay;
     instCfg.acceptRemoteClients = TRUE;
-    /* -brain-full-think: never budget-kill a bot; let the game slow down
-     * instead (see g_brainFullThink + serverGameTimer + botManagerSetSlowMoDebug
-     * below). This is a NON-STANDARD game — bots get unlimited think time, so
-     * its results must not be reported to winbolo.net as if they were an
-     * official, fairly-timed match. The mode therefore FORCE-DISABLES WBN. */
-    g_brainFullThink = (argExist(argc, argv, "brain-full-think") == TRUE)
-                    || (argExist(argc, argv, "-brain-full-think") == TRUE);
-    instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE)
-                                  && !g_brainFullThink;
-    if (g_brainFullThink && (argExist(argc, argv, "nowinbolonet") == FALSE)) {
-      fprintf(stderr, "Note: -brain-full-think runs a NON-STANDARD game (bots "
-                      "get unlimited think time), so it can't count as an "
-                      "official match; winbolo.net reporting is DISABLED.\n");
-    }
+    instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
     instCfg.compTanks           = (BYTE)ai;
     instCfg.useTracker          = sTrackerUse;
     instCfg.trackerAddr         = sTrackerAddr;
@@ -1917,17 +1877,6 @@ int main(int argc, char **argv) {
       SDL_Quit();
 #endif
       return 0;
-    }
-    /* -brain-full-think: hand every bot the oversized slow-mo budget so the
-     * count hook never fires tick_budget_exceeded — each think runs to
-     * completion. Paired with the no-catch-up timer above, the game just slows.
-     * Overrun telemetry (overrunCount / slow-tick warnings, and any brain
-     * profiling via -brain-profile-log) still records where the time went. */
-    if (g_brainFullThink) {
-      botManagerSetSlowMoDebug(1);
-      fprintf(stderr, "-brain-full-think ON: bots are never budget-killed; "
-                      "the game slows to their think pace. Pair with "
-                      "-brain-profile-log to capture what goes over budget.\n");
     }
   }
   /* botBrainPath + botAiType were already pushed into the sim via the
