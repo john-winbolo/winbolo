@@ -236,7 +236,11 @@ if(WINBOLO_LUAJIT)
     FetchContent_Declare(luajit_src
         GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
         GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
-        GIT_SHALLOW    TRUE)
+        GIT_SHALLOW    TRUE
+        # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
+        # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
+        PATCH_COMMAND  ${CMAKE_COMMAND} -P
+                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake")
     FetchContent_MakeAvailable(luajit_src)
     set(_lj_src "${luajit_src_SOURCE_DIR}")
 
@@ -254,7 +258,17 @@ if(WINBOLO_LUAJIT)
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
-        set(_lj_make make -C "${_lj_src}" -j BUILDMODE=static XCFLAGS=-fPIC)
+        set(_lj_xcflags "-fPIC")
+        if(APPLE)
+            # Hardened runtime kills any process executing JIT-compiled code
+            # from plain anonymous pages (SIGKILL "Code Signature Invalid").
+            # LUAJIT_ENABLE_OSX_HRT makes LuaJIT allocate mcode with MAP_JIT +
+            # pthread_jit_write_protect_np, which the runtime permits when the
+            # app is signed with the com.apple.security.cs.allow-jit
+            # entitlement (see src/gui/sdl3/platform/winbolo.entitlements).
+            string(APPEND _lj_xcflags " -DLUAJIT_ENABLE_OSX_HRT")
+        endif()
+        set(_lj_make make -C "${_lj_src}" -j BUILDMODE=static "XCFLAGS=${_lj_xcflags}")
         if(APPLE)
             # LuaJIT's Makefile aborts on macOS unless MACOSX_DEPLOYMENT_TARGET
             # is exported (even for `make clean`), and each invocation emits a

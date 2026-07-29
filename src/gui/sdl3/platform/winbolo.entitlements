@@ -12,6 +12,14 @@
          disable-library-validation lets the Valve-signed dylib load despite
          being signed by a different Team ID. Without both, the overlay AND
          rich presence are dead on signed/notarized builds. -->
+    <!-- LuaJIT (bot brains) compiles Lua to machine code at runtime. It is
+         built with LUAJIT_ENABLE_OSX_HRT so mcode areas are mmap'd with
+         MAP_JIT; allow-jit is the entitlement that lets the hardened
+         runtime execute those pages. Without it the process is killed at
+         startup with SIGKILL (Code Signature Invalid) on the first
+         compiled trace. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
     <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
