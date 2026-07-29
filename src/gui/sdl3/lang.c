@@ -1775,7 +1775,6 @@ static const LangEntry langTable[] = {
     {1915, "Max Files"},
     {1916, "Max Storage (MB)"},
     {1917, "Enable Logging"},
-    {1918, "Log to RAM"},
     {1919, "Log Directory"},
     {1920, "Applies to the next hosted / New Internet game."},
     {1847, "Currently: {string1}"},
