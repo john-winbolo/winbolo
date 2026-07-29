@@ -395,6 +395,10 @@ struct ServerSim {
      * built-in "data/maps". Captured in serverSimMapDirBuild from the
      * -mapdir CLI arg with any trailing slash stripped. */
     char        *mapDirPath;
+    /* Absolute directory backing the virtual "Uploads/" folder for
+     * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
+     * ServerInstanceConfig.uploadPersistDir at startup. */
+    char         uploadPersistDir[FILENAME_MAX];
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */

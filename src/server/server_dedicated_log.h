@@ -7,6 +7,7 @@
 #define SERVER_DEDICATED_LOG_H
 
 #include <stddef.h>  /* size_t */
+#include <stdbool.h>  /* bool */
 
 /* Registers the dedicated-server log writer as a bus subscriber
  * against the supplied ServerSim. The subscriber listens for
@@ -18,7 +19,21 @@
 
 struct ServerSim;
 
-void serverDedicatedLogInstall(struct ServerSim *sim);
+/* Registers the subscriber and hands the module its per-process log
+ * state. `dontSendLog` (from WinBoloDS's -dontsendlog arg) is stored
+ * privately and consulted by the per-round stash to skip the WBN
+ * upload — the module owns this flag now that it is no longer a shared
+ * servermain global. */
+void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog);
+
+/* Teardown query API for servermain's final-round upload. Since the
+ * module owns the log state privately, servermain's shutdown reads it
+ * back through these instead of the former shared globals. IsActive
+ * reports whether a log is still open (true only on the no-lobby
+ * teardown path; lobby rounds already stashed + flipped it false);
+ * CurrentFile returns the on-disk .wbv path to upload. */
+bool serverDedicatedLogIsActive(void);
+const char *serverDedicatedLogCurrentFile(void);
 
 /* Finalize the current round's log (logStop, isLogging=false) and
  * stash its filename for a later upload. Called from handleGameOver
@@ -38,6 +53,12 @@ void serverDedicatedLogStashCurrentRound(void);
  * (registration overwrites winboloNetServerKey, invalidating the
  * URL key the upload needs). Clears the stash either way. */
 void serverDedicatedLogFlushPendingUpload(void);
+
+/* True when a round log has been stashed and is waiting to be uploaded.
+ * Lets a teardown caller decide whether it needs to end the WBN session
+ * for the upload at all — false for non-logging hosts and for hosts that
+ * opted out of uploads (dontSendLog), so those stay untouched. */
+bool serverDedicatedLogHasPendingUpload(void);
 
 /* Compose the final .wbv replay path from the -log argument value.
  * Pure (no globals / time / RNG) and cross-platform (SDL_GetPathInfo) so

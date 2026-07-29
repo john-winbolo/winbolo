@@ -30,7 +30,7 @@ static char g_path[FILENAME_MAX];
  * serializer and the sync-dirty trigger consult it. */
 static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE",
                                                     "MAPEDITOR", "LOGVIEWER",
-                                                    "WINDOW" };
+                                                    "WINDOW", "HOSTING" };
 #define PREFS_DEVICE_LOCAL_COUNT \
     (sizeof(kDeviceLocalSections) / sizeof(kDeviceLocalSections[0]))
 

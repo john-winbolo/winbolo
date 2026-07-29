@@ -471,18 +471,14 @@ static struct {
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
 
-    /* Persist-mode staging: bytes of the upload backing the current
-     * preview, held until PREVIEW_COMMIT writes them to disk or
-     * PREVIEW_CANCEL / a replacing preview drops them. */
-    uint8_t      pendingPersistBytes[UPLOAD_MAX_BYTES];
-    uint32_t     pendingPersistLen;
-    char         pendingPersistName[MAP_STR_SIZE];  /* basename, no .map suffix */
-    bool         pendingPersistActive;
-
     /* Operator-controlled upload handling — zero-init = ALLOW + defaults below. */
     UploadPolicy uploadPolicy;
     uint8_t      uploadMaxFiles;
     uint32_t     uploadMaxStorageBytes;
+    /* Absolute directory PERSIST uploads are written to. Empty = unset →
+     * writes fall back to "<mapDirRoot>/Uploads". Kept in lock-step with the
+     * sim's copy (both set from cfg->uploadPersistDir in serverInstanceStartup). */
+    char         uploadPersistDir[FILENAME_MAX];
 
     /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
      * table reads as all-empty (srcAddr 0), so the existing
@@ -3232,13 +3228,48 @@ static void serverFinishUpload(ServerSim *sim, int clientIdx) {
     bool previewed = serverSimReloadCompressedInMemory(
         sim, udpServer.clientUploadBuf[clientIdx], (int)total, displayName);
 
+    /* PERSIST: write the accepted bytes to disk. The configured persist
+     * directory is the concrete home of the virtual "Uploads/" folder; when
+     * unset it falls back to "<mapDirRoot>/Uploads" (WinBoloDS back-compat).
+     * The per-map file/storage caps were already enforced at MAP_UPLOAD_BEGIN.
+     * An I/O failure is logged and swallowed — the in-memory preview stands. */
     if (previewed && udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
-        memcpy(udpServer.pendingPersistBytes,
-               udpServer.clientUploadBuf[clientIdx], total);
-        udpServer.pendingPersistLen = total;
-        SDL_strlcpy(udpServer.pendingPersistName, displayName,
-                    sizeof(udpServer.pendingPersistName));
-        udpServer.pendingPersistActive = true;
+        char persistDir[FILENAME_MAX];
+        if (udpServer.uploadPersistDir[0] != '\0') {
+            SDL_strlcpy(persistDir, udpServer.uploadPersistDir,
+                        sizeof(persistDir));
+        } else {
+            SDL_snprintf(persistDir, sizeof(persistDir), "%s/Uploads",
+                         serverSimGetMapDirRoot(sim));
+        }
+        /* SDL_CreateDirectory creates missing parents; a no-op if it exists. */
+        if (!SDL_CreateDirectory(persistDir)) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "persist upload: cannot create directory '%s': %s",
+                persistDir, SDL_GetError());
+        } else {
+            char persistPath[FILENAME_MAX];
+            SDL_snprintf(persistPath, sizeof(persistPath), "%s/%s.map",
+                         persistDir, displayName);
+            FILE *pf = fopen(persistPath, "wb");
+            if (pf == NULL) {
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "persist upload: cannot open '%s' for write", persistPath);
+            } else {
+                size_t wrote = fwrite(udpServer.clientUploadBuf[clientIdx],
+                                      1, total, pf);
+                fclose(pf);
+                if (wrote != total) {
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "persist upload: short write (%zu/%u) to '%s'",
+                        wrote, total, persistPath);
+                } else {
+                    WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "persist upload: wrote '%s' (%u bytes)",
+                        persistPath, total);
+                }
+            }
+        }
     }
 
     udpServer.clientUploadActive[clientIdx] = false;
@@ -4091,13 +4122,20 @@ bool transportUdpServerCreate(unsigned short port,
 
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
-                                       uint32_t maxStorageBytes) {
+                                       uint32_t maxStorageBytes,
+                                       const char *persistDir) {
     udpServer.uploadPolicy = policy;
     if (maxFiles != 0) {
         udpServer.uploadMaxFiles = maxFiles;
     }
     if (maxStorageBytes != 0) {
         udpServer.uploadMaxStorageBytes = maxStorageBytes;
+    }
+    if (persistDir != NULL) {
+        SDL_strlcpy(udpServer.uploadPersistDir, persistDir,
+                    sizeof(udpServer.uploadPersistDir));
+    } else {
+        udpServer.uploadPersistDir[0] = '\0';
     }
 }
 

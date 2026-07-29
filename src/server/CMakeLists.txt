@@ -45,9 +45,6 @@
 #                                serverLifecycle*, and lobbyClientMayEdit
 #                                symbols those binaries don't pull in
 #                                via server_static
-#   server_dedicated_log.c     — WinBoloDS only (registers the replay-log
-#                                bus subscriber that touches
-#                                servermain.c-owned globals)
 
 if(EMSCRIPTEN)
     add_library(threads_static STATIC threads_wasm.c)
@@ -100,6 +97,8 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     server_lifecycle.c
     transport_udp_server.c
     mdns_advertise.c
+    server_dedicated_log.c
+    server_dedicated_log_path.c
 )
 
 # mdns_advertise.c is the only TU that pulls in the all-static-inline

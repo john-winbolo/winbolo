@@ -2456,7 +2456,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
        ends.  All five in-game tabs are always present. */
-    enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_LAST, STAB_COUNT };
+    enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
     bool present[STAB_COUNT];
@@ -2464,6 +2464,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     present[STAB_DISPLAY]  = true;
     present[STAB_CONTROLS] = true;
     present[STAB_GAMEHUD]  = true;
+    present[STAB_HOSTING]  = true;
     present[STAB_LAST]     = true;
     {
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
@@ -2536,6 +2537,14 @@ static void renderSettingsPanel(ClientSim *cs) {
             s_igActiveTab = STAB_GAMEHUD;
             ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderGameHudTab(&ctx);
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
+                s_igForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_HOSTING;
+            ImGui::BeginChild("##hostingPanelIG", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+            imguiSettingsRenderHostingTab(&ctx);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
