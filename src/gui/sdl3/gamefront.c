@@ -2724,6 +2724,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir) {
       snprintf(def, FILENAME_MAX, "%suploads", prefDir);
+      SDL_free((void *)prefDir);
     } else {
       snprintf(def, FILENAME_MAX, "%s", "uploads");
     }
@@ -2739,6 +2740,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir) {
       snprintf(def, FILENAME_MAX, "%s", prefDir);
+      SDL_free((void *)prefDir);
     } else {
       snprintf(def, FILENAME_MAX, "%s", ".");
     }
