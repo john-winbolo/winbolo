@@ -26,7 +26,7 @@ document is the stable reference for the rules themselves.
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — GoalHunter, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
-| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (the dedicated-server's replay-log subscriber, registered against the ServerSim bus from `servermain.c`). See "Per-file T2 grants" below for the mechanism. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, `server_dedicated_log.c`, `server_dedicated_log_path.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Two more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals) and `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI). The replay-log subscriber `server_dedicated_log.c` (with its `server_dedicated_log_path.c` name helper) is a member of `server_static` above — built under the `sim_owner` profile, so it keeps its T2 access at the target level rather than through a per-file grant. It carries private state instead of reaching servermain globals, and is installed against the ServerSim bus by each host: `servermain.c` for WinBoloDS and `gameFrontSetupServer` for client-hosted games (the SDL3 client links `server_static` to host). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the single-threaded driver (emscripten main loop in place of the SDL timer thread). See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
@@ -196,10 +196,11 @@ or `ServerSim` through the public T1 API. Existing frontends are
 `src/wasm/` (web), `src/headless/` (no UI), `src/braintest/` (dev
 tool), `src/logviewer/` (replay viewer), and the dedicated-server
 binary built from `src/server/`. Note: the dedicated-server binary
-is not a pure T1-only frontend — `servermain.c`,
-`server_frontend_stubs.c`, and `server_dedicated_log.c` are
-per-target sim runtime with T2 access via per-file grant. See the
-`src/server/` table row and "Per-file T2 grants" below.
+is not a pure T1-only frontend — `servermain.c` and
+`server_frontend_stubs.c` are per-target sim runtime with T2 access
+via per-file grant. (`server_dedicated_log.c`, formerly in that set,
+now takes T2 through `server_static`'s `sim_owner` profile instead.)
+See the `src/server/` table row and "Per-file T2 grants" below.
 
 ### Client
 
@@ -1824,14 +1825,6 @@ the target deliberately doesn't link:
 - `src/server/server_frontend_stubs.c` — stubs the T2 callbacks
   bolo's sim TUs expect when there is no UI. Stubbing a T2 function
   requires its signature visible.
-- `src/server/server_dedicated_log.c` — registers a bus subscriber
-  that maintains the WinBoloDS replay log in response to
-  `CTRL_GAME_PHASE_*` events. T2 access is needed because the
-  subscriber reads `sim->wantLogging`, `sim->mapName`,
-  `sim->userLogFileName`, `sim->hasPassword`, `sim->playerConnected[]`,
-  and routes through `playersGetAccountFlags`. Ships only in
-  WinBoloDS; no other binary references the symbol surface, so no
-  companion stub file exists.
 - `src/braintest/braintest_lifecycle_stub.c` — BrainTest deliberately
   omits `server_static`'s transport/WBN/maxmind chain, so the real
   `serverInstanceStartup` body in `server_lifecycle.c` isn't on its
