@@ -66,24 +66,6 @@ static bool playersIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD
 }
 
 
-/* [ALLY-AUDIT] Temporary instrumentation: allies intermittently render as
- * enemies in BrainTest while behaving normally, meaning some alliance row
- * in a players object loses bits mid-game. Every alliance-row mutation in
- * this file logs old -> new plus the owning players object's address, so
- * the per-tick matrix audit in braintest_main.c can attribute a row change
- * to a code path. An audit diff with NO matching mutation line here means
- * a stray memory write clobbered the row. */
-static void allianceAuditRow(const char *op, players *plrs, BYTE playerNum,
-                             allience before, allience after) {
-  if (before == after) {
-    return;
-  }
-  WB_LOG_WARN(WB_LOG_CAT_SIM,
-              "[ALLY-AUDIT] %s plrs=%p player=%u allie 0x%04X -> 0x%04X",
-              op, (void *)*plrs, (unsigned)playerNum,
-              (unsigned)before, (unsigned)after);
-}
-
 /*********************************************************
 *NAME:          playersCreate
 *AUTHOR:        John Morrison
@@ -139,7 +121,6 @@ void playersResetRoundState(players *plrs, BYTE playerNum) {
   }
   p = &(*plrs)->item[playerNum];
 
-  allianceAuditRow("playersResetRoundState", plrs, playerNum, p->allie, 0);
   /* Alliance holds an allocation — tear down and recreate empty. */
   allienceDestroy(&p->allie);
   p->allie = allienceCreate();
@@ -370,8 +351,6 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   char str[512]; /* The player name */
   int iMyPlayerNum;
   int iPlayerNum;
-  bool auditWasInUse = (*plrs)->item[playerNum].inUse;
-  allience auditBefore = (*plrs)->item[playerNum].allie;
 
   iMyPlayerNum = (int)selfPlayer;
   iPlayerNum = (int)playerNum;
@@ -422,11 +401,6 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
       count++;
     }
   }
-
-  allianceAuditRow(auditWasInUse ? "playersSetPlayer:rebuild"
-                                 : "playersSetPlayer:create",
-                   plrs, playerNum, auditBefore,
-                   (*plrs)->item[playerNum].allie);
 
   /* Update front end if we are in a running game (ie not in the joining phase) */
   if (csParam == NULL || clientSimGetNetStatus(csParam) != netFailed) {
@@ -1053,12 +1027,10 @@ BYTE playersMakeNetAlliences(players *plrs, BYTE playerNum, BYTE *value) {
 void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer) {
   BYTE count;
   BYTE total;
-  allience auditBefore;
 
   if (selfPlayer >= MAX_TANKS) return;
   if ((*plrs)->item[selfPlayer].inUse == FALSE) return;
 
-  auditBefore = (*plrs)->item[selfPlayer].allie;
   allienceDestroy(&((*plrs)->item[selfPlayer].allie));
   (*plrs)->item[selfPlayer].allie = allienceCreate();
   for (count = 0; count < MAX_TANKS; count++) {
@@ -1068,8 +1040,6 @@ void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer) {
       allienceAdd(&((*plrs)->item[selfPlayer].allie), count);
     }
   }
-  allianceAuditRow("playersRebuildSelfAlliance", plrs, selfPlayer, auditBefore,
-                   (*plrs)->item[selfPlayer].allie);
 
   total = basesGetNumBases(&sim->bs);
   for (count = 1; count <= total; count++) {
@@ -1128,11 +1098,6 @@ BYTE playersGetFirstNotUsed(players *plrs) {
 *********************************************************/
 void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer, bool announce) {
   BYTE count;                /* Looping variable */
-  allience auditBefore[MAX_TANKS];
-  BYTE auditI;
-  for (auditI = 0; auditI < MAX_TANKS; auditI++) {
-    auditBefore[auditI] = (*plrs)->item[auditI].allie;
-  }
 
 
   if ((*plrs)->item[playerNum].inUse == TRUE) {
@@ -1144,11 +1109,6 @@ void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE self
         allienceRemove(&((*plrs)->item[count].allie), playerNum);
       }
       count++;
-    }
-
-    for (auditI = 0; auditI < MAX_TANKS; auditI++) {
-      allianceAuditRow("playersLeaveGame", plrs, auditI,
-                       auditBefore[auditI], (*plrs)->item[auditI].allie);
     }
 
     {
@@ -1799,11 +1759,6 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
   BYTE count; /* Looping variable */
   BYTE total; /* Amount of items to redraw */
   bool found;
-  allience auditBefore[MAX_TANKS];
-  BYTE auditI;
-  for (auditI = 0; auditI < MAX_TANKS; auditI++) {
-    auditBefore[auditI] = (*plrs)->item[auditI].allie;
-  }
   count = 0;
   found = FALSE;
   while (count < MAX_TANKS && found == FALSE) {
@@ -1828,12 +1783,8 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
     }
     count++;
   }
-
-  for (auditI = 0; auditI < MAX_TANKS; auditI++) {
-    allianceAuditRow("playersLeaveAlliance", plrs, auditI,
-                     auditBefore[auditI], (*plrs)->item[auditI].allie);
-  }
-
+ 
+  
   /* Update the screen */
   if (isServer == FALSE) {
     GameSim *gsim = sim;
@@ -1874,11 +1825,7 @@ void playersAcceptAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE ac
   PlayerBitMap allyB;
   PlayerBitMap test;
   PlayerBitMap test2;
-  allience auditBefore[MAX_TANKS];
-  BYTE auditI;
-  for (auditI = 0; auditI < MAX_TANKS; auditI++) {
-    auditBefore[auditI] = (*plrs)->item[auditI].allie;
-  }
+
 
   allyA = playersGetAlliesBitMap(plrs, acceptedBy);
   allyB = playersGetAlliesBitMap(plrs, newMember);
@@ -1915,12 +1862,9 @@ void playersAcceptAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE ac
     }
     count++;
   }
-
-  for (auditI = 0; auditI < MAX_TANKS; auditI++) {
-    allianceAuditRow("playersAcceptAlliance", plrs, auditI,
-                     auditBefore[auditI], (*plrs)->item[auditI].allie);
-  }
-
+      
+      
+ 
   /* Update the screen */
   if (isServer == FALSE) {
     GameSim *gsim = sim;
