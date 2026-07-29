@@ -412,6 +412,10 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  /* Timeouts must not use signals: these posts also run on the hosted
+   * server's tick thread (round-transition server/quit + register), and
+   * libcurl's SIGALRM timeout path is only safe on the main thread. */
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
   /* Cap the connect phase so an unreachable server fails fast rather than
    * stalling teardown-time posts (e.g. the server/quit on leaving a hosted
    * game); a reachable server connects well within this. */
@@ -663,6 +667,10 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   curl_easy_setopt(curl, CURLOPT_TIMEOUT,
                    s_logUploadTimeoutOverride > 0 ? s_logUploadTimeoutOverride
                                                   : 60L);
+  /* Timeouts must not use signals: a hosted game uploads its round log from
+   * the server's tick thread at round transitions, and libcurl's SIGALRM
+   * timeout path is only safe on the main thread. */
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
   /* Cap the connect phase so an unreachable server fails fast instead of
    * stalling a shutdown-time upload; a reachable server connects well
    * within this. */
