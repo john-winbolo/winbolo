@@ -424,6 +424,7 @@ static const UnitTestEntry s_tests[] = {
     { "wire_corpus",                             run_wire_corpus                             },
     { "wire_corpus_capture",                     run_wire_corpus_capture                     },
     { "packet_type_names",                       run_packet_type_names                       },
+    { "lang_name_table",                         run_lang_name_table                         },
     { "mdns_discovery",                          run_mdns_discovery                          },
     { "client_type_matches_platform",            run_client_type_matches_platform            },
     { "client_type_name_round_trips",            run_client_type_name_round_trips            },
