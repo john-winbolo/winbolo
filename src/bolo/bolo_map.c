@@ -54,7 +54,7 @@ void mapSetChangeCallback(MapChangeCallback cb) {
     mapChangeCb = cb;
 }
 
-int lzwdecoding(unsigned char *src, unsigned char *dest, int len);
+int lzwdecoding(unsigned char *src, unsigned char *dest, int len, int destCap);
 int lzwencoding(unsigned char *src, unsigned char *dest, int len);
 
 /*********************************************************
@@ -1454,78 +1454,6 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 }
 
 /*********************************************************
-*NAME:          mapMakeNetRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/2/99
-*LAST MODIFIED: 24/4/99
-*PURPOSE:
-* Makes a map network run at yPos. A network run is an 
-* compress array of the bytes from 20 to 236 for the next
-* 5 vertical map rows. Returns the size of the compressed
-* data.
-*
-*ARGUMENTS:
-*  value - Pointer to the map structure
-*  buff  - Buffer to hold data
-*  yPos  - Y position of the run
-*********************************************************/
-int mapMakeNetRun(map *value, BYTE *buff, BYTE yPos) {
-  BYTE count; /* Looping variable */
-  BYTE array[6 * (MAP_MINE_EDGE_RIGHT - (MAP_MINE_EDGE_LEFT+1))];
-  BYTE *arrayPtr;
-  BYTE xPos;
-
-  memset(array, 0, sizeof(array));
-  count = 0;
-  arrayPtr = array;
-  /* Prepare it */
-  while (count < 6) {
-    for (xPos=MAP_MINE_EDGE_LEFT+1;xPos < MAP_MINE_EDGE_RIGHT;xPos++) {
-      *arrayPtr = (*value)->mapItem[xPos][yPos+count];
-      arrayPtr++;
-    }
-    count++;
-  }
-  /* Compress it */
-  return lzwencoding(array, buff, 6*(MAP_MINE_EDGE_RIGHT-(MAP_MINE_EDGE_LEFT+1)));
-}
-
-/*********************************************************
-*NAME:          mapSetNetRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/2/99
-*LAST MODIFIED:  7/1/00
-*PURPOSE:
-* Sets the map to the network run at yPos. A network run 
-* is an array of the bytes from 20 to 236
-*
-*ARGUMENTS:
-*  value   - Pointer to the map structure
-*  buff    - Buffer that contains data
-*  yPos    - Y position of the run
-*  dataLen - Length of the data
-*********************************************************/
-void mapSetNetRun(map *value, BYTE *buff, BYTE yPos, int dataLen) {
-  BYTE count; /* Looping variable */
-  BYTE array[6 * (MAP_MINE_EDGE_RIGHT - (MAP_MINE_EDGE_LEFT+1))];
-  BYTE *arrayPtr;
-  BYTE xPos;
-
-  count = 0;
-  arrayPtr = array;
-  /* Compress it */
-  lzwdecoding(buff, array, dataLen);
-  /* Store it */
-  while (count < 6) {
-    for (xPos=MAP_MINE_EDGE_LEFT+1;xPos < MAP_MINE_EDGE_RIGHT;xPos++) {
-      (*value)->mapItem[xPos][yPos+count] = *arrayPtr;
-      arrayPtr++;
-    }
-    count++;
-  }
-}
-
-/*********************************************************
 *NAME:          mapSaveCompressedMap
 *AUTHOR:        John Morrison
 *CREATION DATE: 1/5/99
@@ -1624,8 +1552,8 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   /* Map */
   ptr2 = (BYTE *) (*value)->mapItem;
-  mapSize = lzwdecoding(ptr, ptr2, inputLen);
-  if (mapSize != sizeof((*value)->mapItem)) {
+  mapSize = lzwdecoding(ptr, ptr2, inputLen, (int)sizeof((*value)->mapItem));
+  if (mapSize != (int)sizeof((*value)->mapItem)) {
     returnValue = FALSE;
   }
 
