@@ -1399,6 +1399,11 @@ BYTE startsConvertDir(BYTE dir) {
 
 void startsSetStartCompressData(starts *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_STARTS);
+  /* Clamp the wire-supplied count so a hostile map cannot drive out-of-bounds
+   * reads of item[] past MAX_STARTS. */
+  if ((*value)->numStarts > MAX_STARTS) {
+    (*value)->numStarts = MAX_STARTS;
+  }
 }
 
 /*********************************************************

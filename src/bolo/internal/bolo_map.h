@@ -470,43 +470,6 @@ bool mapWriteRuns(FILE *fp, map *value);
 int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos);
 
 
-
-/*********************************************************
-*NAME:          mapMakeNetRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/2/99
-*LAST MODIFIED: 24/4/99
-*PURPOSE:
-* Makes a map network run at yPos. A network run is an 
-* compress array of the bytes from 20 to 236 for the next
-* 5 vertical map rows. Returns the size of the compressed
-* data.
-*
-*ARGUMENTS:
-*  value - Pointer to the map structure
-*  buff  - Buffer to hold data
-*  yPos  - Y position of the run
-*********************************************************/
-int mapMakeNetRun(map *value, BYTE *buff, BYTE yPos);
-
-/*********************************************************
-*NAME:          mapSetNetRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/2/99
-*LAST MODIFIED:  7/1/00
-*PURPOSE:
-* Sets the map to the network run at yPos. A network run 
-* is an array of the bytes from 20 to 236
-*
-*ARGUMENTS:
-*  value   - Pointer to the map structure
-*  buff    - Buffer that contains data
-*  yPos    - Y position of the run
-*  dataLen - Length of the data
-*********************************************************/
-void mapSetNetRun(map *value, BYTE *buff, BYTE yPos, int dataLen);
-
-
 /*********************************************************
 *NAME:          mapLoadCompressedMap
 *AUTHOR:        John Morrison
