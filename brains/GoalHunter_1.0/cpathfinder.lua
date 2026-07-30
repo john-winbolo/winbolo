@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- cpathfinder.lua -- C-accelerated pathfinding module
 --
@@ -702,7 +703,7 @@ function M.smart_cost_minus_pill_danger_dij_only(kind, dx, dy,
     if pill_contrib then
       local p = pill_contrib[ny * 256 + nx]
       if p then
-        local tt  = get_terrain(nx, ny) & 0x0F
+        local tt  = bit.band(get_terrain(nx, ny), 0x0F)
         local spd = (ts and ts[tt]) or 16
         if spd <= 0 then spd = 16 end
         reduction = reduction + p * (16 / spd)
@@ -734,7 +735,7 @@ function M.smart_cost_minus_pill_danger(kind, sx, sy, dx, dy,
     if pill_contrib then
       local p = pill_contrib[ny * 256 + nx]
       if p then
-        local tt  = get_terrain(nx, ny) & 0x0F
+        local tt  = bit.band(get_terrain(nx, ny), 0x0F)
         local spd = (ts and ts[tt]) or 16
         if spd <= 0 then spd = 16 end
         reduction = reduction + p * (16 / spd)

@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =============================================================================
 -- lgm_registry.lua — per-player LGM state, aggregated from every source
 -- the brain has access to.
@@ -173,7 +174,7 @@ function M.draw_map(viz, now, self_pn, allies_bitmap)
     local s = M.slots[pn]
     if s and pn ~= self_pn and s.mx and s.my and s.status ~= "unknown" then
       local cx, cy = s.mx + 0.5, s.my + 0.5
-      local is_ally = (allies_bitmap and (allies_bitmap & (1 << pn)) ~= 0)
+      local is_ally = (allies_bitmap and (bit.band(allies_bitmap, (bit.lshift(1, pn)))) ~= 0)
       local r, g, b
       if s.status == "dead" then
         r, g, b = 120, 120, 120

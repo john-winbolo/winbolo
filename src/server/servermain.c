@@ -98,9 +98,10 @@ DWORD oldTick;     /* Number of ticks passed */
 bool isQuiet = FALSE;
 bool isNoInput = FALSE;
 unsigned int serverTimerGameID = 1;
-char fileName[MAX_PATH]; /* Log file Name */
-bool isLogging = FALSE;
-bool dontSendLog = FALSE;
+/* The dedicated-server replay-log state (former fileName/isLogging/
+ * dontSendLog globals) is now private to server_dedicated_log.c. This TU
+ * drives it via serverDedicatedLogInstall() and reads it back for the
+ * teardown upload via serverDedicatedLogIsActive()/CurrentFile(). */
 
 bool statusFile = FALSE;
 
@@ -703,6 +704,19 @@ void printArgs() {
   fprintf(stderr, "                (grep MSG_TX / SYNC_P6 to audit bot comms). Use a base -brain\n");
   fprintf(stderr, "                path (not opt/) so print2 calls aren't stripped. Implies\n");
   fprintf(stderr, "                -allow-unsafe-brains (needs file writes into debug_sessions/).\n");
+  fprintf(stderr, "                Implies ALL debug streams; turn individual ones off with:\n");
+  fprintf(stderr, "  -bd-noviz    - don't emit/record visualizer overlays (brainrec.btr stays\n");
+  fprintf(stderr, "                 loadable, just without viz frames)\n");
+  fprintf(stderr, "  -bd-nopool   - skip the pool-breakdown JSON capture entirely\n");
+  fprintf(stderr, "  -bd-pool-rr  - round-robin pool capture (ONE bot per tick) instead of the\n");
+  fprintf(stderr, "                 default every-bot-every-tick. Same 50 Hz either way (the JSON\n");
+  fprintf(stderr, "                 builds run on the bot workers); rr records ~1/botCount the\n");
+  fprintf(stderr, "                 bytes (~40 KB vs ~0.5 MB per tick at 12 bots) when session\n");
+  fprintf(stderr, "                 size matters more than exact per-tick panel history.\n");
+  fprintf(stderr, "  -bd-noprint2 - no print2_bot<N>.log lines\n");
+  fprintf(stderr, "  -bd-nojsonl  - no brain_p<N>.jsonl / player<N>.jsonl behavior traces\n");
+  fprintf(stderr, "                A braindbg_perf.log (per-250-tick phase costs + achieved Hz)\n");
+  fprintf(stderr, "                is always written to the session dir for diagnosis.\n");
   fprintf(stderr, "-brain-profile-log - Profile the PRODUCTION (opt/) brain: BRAIN_PROFILE on, writes\n");
   fprintf(stderr, "                optimize.log + performance.ticks.log into debug_sessions/<TS>_<N>/\n");
   fprintf(stderr, "                alongside brainrec.btr (loadable in BrainTest). Implies recording\n");
@@ -834,27 +848,6 @@ bool argExist(int numArgs, char **argv, char *argname) {
 
 
   return returnValue;
-}
-
-/** Generates a log file name based on current time and map name and copies to fileName */
-void makeLogFileName(char *outFileName, const char *mapName) {
-  time_t t;
-  struct tm *tmt;
-  int count = 0;
-  int len;
-
-  time(&t);
-  tmt = localtime(&t);
-
-  sprintf(outFileName, "%04d%02d%02dt%02d%02d%02d_%s", (1900 + tmt->tm_year), (1 + tmt->tm_mon), tmt->tm_mday, tmt->tm_hour, tmt->tm_min, tmt->tm_sec, mapName);
-  len = (int) strlen(outFileName);
-  /* Replace spaces with underscores */
-  while (count < len){
-    if (outFileName[count] == ' ') {
-      outFileName[count] = '_';
-    }
-    count++;
-  }
 }
 
 bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, gameType *game, bool *hiddenMines, aiType *ai, int *srtDelay, int32_t *gmeLen, char *trackerAddr, unsigned short *trackerPort, bool *trackerUse, char *password) {
@@ -1832,7 +1825,7 @@ int main(int argc, char **argv) {
     }
 #endif
   }
-  dontSendLog = argExist(argc, argv, "dontsendlog");
+  bool dontSendLog = argExist(argc, argv, "dontsendlog");
 
   /* Log file recording — configure the sim's wantLogging /
    * userLogFileName state, then register the dedicated-server log
@@ -1848,7 +1841,7 @@ int main(int argc, char **argv) {
     if (userLogFile[0] != '\0') {
       serverSimSetUserLogFileName(serverSim, userLogFile);
     }
-    serverDedicatedLogInstall(serverSim);
+    serverDedicatedLogInstall(serverSim, dontSendLog);
   }
 
   /* Initialize and add bot players */
@@ -1967,6 +1960,40 @@ int main(int argc, char **argv) {
                         "brainrec.btr recorded for BrainTest.\n");
       } else if (brainDebug) {
         serverSimSetBotDefaultDebugMode(serverSim, true);
+        /* Selective debug streams: -brain-debug implies ALL of viz recording,
+         * pool-breakdown capture, print2 logs and jsonl traces. Each can be
+         * turned off individually to keep a many-bot debug game playable —
+         * the streams cost real tick time (pool JSON is a per-bot per-tick
+         * Lua serialization; viz is thousands of overlay calls; print2 is
+         * debug.getinfo + string building per line). */
+        {
+          bool bdNoViz    = (argExist(argc, argv, "bd-noviz") == TRUE)
+                         || (argExist(argc, argv, "-bd-noviz") == TRUE);
+          bool bdNoPool   = (argExist(argc, argv, "bd-nopool") == TRUE)
+                         || (argExist(argc, argv, "-bd-nopool") == TRUE);
+          bool bdPoolRR   = (argExist(argc, argv, "bd-pool-rr") == TRUE)
+                         || (argExist(argc, argv, "-bd-pool-rr") == TRUE);
+          bool bdNoPrint2 = (argExist(argc, argv, "bd-noprint2") == TRUE)
+                         || (argExist(argc, argv, "-bd-noprint2") == TRUE);
+          bool bdNoJsonl  = (argExist(argc, argv, "bd-nojsonl") == TRUE)
+                         || (argExist(argc, argv, "-bd-nojsonl") == TRUE);
+          /* Pool default is FULL (every bot every tick — exact panel
+           * history). The JSON builds run in parallel on each bot's own
+           * worker right after its think (see brainRecordPoolCaptureWanted),
+           * so full capture holds 50 Hz even at 12 bots; the serial recorder
+           * section only writes the prefetched bytes. -bd-pool-rr opts into
+           * round-robin (one bot per tick) when session SIZE matters —
+           * ~1/botCount the bytes (~0.5 MB/tick vs ~40 KB/tick at 12 bots),
+           * each bot's panel data at most botCount frames stale. */
+          int poolMode = bdNoPool ? 0 : (bdPoolRR ? 1 : 2);
+          luaBrainsSetDebugParts(!bdNoPrint2, !bdNoPool, !bdNoViz, !bdNoJsonl);
+          brainRecordSetParts(!bdNoViz, poolMode);
+          fprintf(stderr, "-brain-debug streams: viz=%s pool=%s print2=%s jsonl=%s\n",
+                  bdNoViz ? "OFF" : "on",
+                  bdNoPool ? "OFF" : (bdPoolRR ? "round-robin (1 bot/tick)"
+                                               : "full (every bot every tick)"),
+                  bdNoPrint2 ? "OFF" : "on", bdNoJsonl ? "OFF" : "on");
+        }
         /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
          * -brain path under -braindebug yields brainrec.btr but zero
          * print2_botN.log — the exact footgun the usage text warns about.
@@ -2219,7 +2246,7 @@ int main(int argc, char **argv) {
   brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */
   threadsDestroy();
 
-  if (isLogging == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {
+  if (serverDedicatedLogIsActive() == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {
     winboloNetGetServerKey(key);
   } else {
     key[0] = EMPTY_CHAR;
@@ -2227,13 +2254,13 @@ int main(int argc, char **argv) {
 
   serverInstanceShutdown(serverSim);
 
-  if (isLogging == TRUE) {
+  if (serverDedicatedLogIsActive() == TRUE) {
     logStop(); /* Finalize zip — must run regardless of WBN upload */
   }
-  if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
+  if (serverDedicatedLogIsActive() == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
     serverMessageConsoleMessage(serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
-    httpSendLogFile(fileName, key, FALSE);
+    httpSendLogFile(serverDedicatedLogCurrentFile(), key, FALSE);
     httpDestroy();
   }
   geoLookupDestroy();

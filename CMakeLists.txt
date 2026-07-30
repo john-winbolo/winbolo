@@ -98,7 +98,13 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.10
+    # 3.4.12 fixes a use-after-free in the audio-device disconnect path
+    # (libsdl-org/SDL#14856, commits 39aff4c9 + 6a854e03): a queued
+    # main-thread callback held a raw SDL_AudioDevice pointer, and a stale
+    # run could free the device while its audio thread was still converting
+    # stream data -> EXCEPTION_ACCESS_VIOLATION_READ in
+    # SDL_Convert_S16_to_F32_SSE2 (Sentry crash on Windows, WinBolo 2.02).
+    GIT_TAG        release-3.4.12
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
@@ -187,15 +193,163 @@ endif()
 # Fetch SDL first (needed by everything)
 FetchContent_MakeAvailable(sdl3)
 
-# Lua — only build the static library, skip interpreter/compiler/tests
-set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
-set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
-set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(lua)
-# lua_static must be built with -fPIC on Linux so it can link into shared libs (winbolo_gym)
-set_target_properties(lua_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    target_compile_definitions(lua_internal INTERFACE LUA_USE_IOS)
+# Lua backend for the bot brains.
+#   Default: LuaJIT (Lua 5.1) on every platform that can build it — LuaJIT source
+#   is fetched (pinned by commit below) and built with its own native build
+#   system (make / msvcbuild.bat) via ExternalProject at build time. The brains
+#   are written in the Lua 5.1 subset (bit ops via bitcompat), so they run
+#   unchanged on LuaJIT and PUC-Lua alike — no transpile step.
+#   Fallback: PUC-Lua 5.4 (static lib from FetchContent) where LuaJIT cannot run
+#   — Emscripten/WASM (no JIT backend) and iOS (OS forbids JIT) — and whenever
+#   -DWINBOLO_LUAJIT=OFF is passed.
+# CAVEAT: LuaJIT's number model and table-iteration order differ from PUC-Lua
+# 5.4, so bot behaviour is NOT guaranteed bit-identical across the two VMs, and
+# cross-VM replay / winbolo.net determinism is not yet validated. Pass
+# -DWINBOLO_LUAJIT=OFF for a PUC-Lua 5.4 build.
+# lua_static / lua_internal are the stable target names the rest of the tree
+# links against; under LuaJIT they wrap the built LuaJIT static lib and force-
+# include the C-API compat shim (src/gui/sdl3/luajit_compat.h) into every
+# Lua-touching TU.
+set(WINBOLO_LUAJIT_LUAJIT_TAG   "faaf663340347a78b22ed94c63c24fe090bd9784"
+    CACHE STRING "Pinned LuaJIT (v2.1 branch) commit to build")
+
+# Default ON everywhere LuaJIT can build; OFF where it cannot.
+if(EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(_wbn_luajit_default OFF)
+else()
+    set(_wbn_luajit_default ON)
+endif()
+option(WINBOLO_LUAJIT "Run bot brains on LuaJIT (Lua 5.1); OFF uses PUC-Lua 5.4" ${_wbn_luajit_default})
+
+# Hard guard: LuaJIT is unusable on WASM (no backend) and iOS (JIT banned), so
+# fall back to PUC-Lua there even if the option was explicitly forced on.
+if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
+    message(WARNING "WINBOLO_LUAJIT is not supported on this platform (WASM/iOS); using PUC-Lua 5.4 instead.")
+    set(WINBOLO_LUAJIT OFF)
+endif()
+
+if(WINBOLO_LUAJIT)
+    include(ExternalProject)
+    message(STATUS "WINBOLO_LUAJIT: building LuaJIT ${WINBOLO_LUAJIT_LUAJIT_TAG} from source (native build system)")
+
+    # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).
+    FetchContent_Declare(luajit_src
+        GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
+        GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
+        GIT_SHALLOW    TRUE
+        # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
+        # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
+        PATCH_COMMAND  ${CMAKE_COMMAND} -P
+                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake")
+    FetchContent_MakeAvailable(luajit_src)
+    set(_lj_src "${luajit_src_SOURCE_DIR}")
+
+    # 2. Build LuaJIT with its OWN build system (make / msvcbuild.bat). The CMake
+    #    wrappers reimplement the DynASM buildvm host-tool bootstrap and mangle
+    #    the arch-detection flags on some toolchains; LuaJIT's native build is the
+    #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
+    if(MSVC)
+        set(_lj_lib "${_lj_src}/src/lua51.lib")
+        ExternalProject_Add(luajit_ext
+            SOURCE_DIR        "${_lj_src}"
+            BUILD_IN_SOURCE   TRUE
+            CONFIGURE_COMMAND ""
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}/src" cmd /c msvcbuild.bat static
+            INSTALL_COMMAND   ""
+            BUILD_BYPRODUCTS  "${_lj_lib}")
+    else()
+        set(_lj_xcflags "-fPIC")
+        if(APPLE)
+            # Hardened runtime kills any process executing JIT-compiled code
+            # from plain anonymous pages (SIGKILL "Code Signature Invalid").
+            # LUAJIT_ENABLE_OSX_HRT makes LuaJIT allocate mcode with MAP_JIT +
+            # pthread_jit_write_protect_np, which the runtime permits when the
+            # app is signed with the com.apple.security.cs.allow-jit
+            # entitlement (see src/gui/sdl3/platform/winbolo.entitlements).
+            string(APPEND _lj_xcflags " -DLUAJIT_ENABLE_OSX_HRT")
+        endif()
+        set(_lj_make make -C "${_lj_src}" -j BUILDMODE=static "XCFLAGS=${_lj_xcflags}")
+        if(APPLE)
+            # LuaJIT's Makefile aborts on macOS unless MACOSX_DEPLOYMENT_TARGET
+            # is exported (even for `make clean`), and each invocation emits a
+            # single-arch library — so build one slice per entry in
+            # CMAKE_OSX_ARCHITECTURES and lipo them into the fat archive the
+            # universal link expects.
+            set(_lj_env ${CMAKE_COMMAND} -E env
+                "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+            set(_lj_lib "${_lj_src}/src/libluajit-fat.a")
+            set(_lj_slices "")
+            set(_lj_steps "")
+            foreach(_lj_arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+                list(APPEND _lj_steps
+                    COMMAND ${_lj_env} make -C "${_lj_src}" clean
+                    COMMAND ${_lj_env} ${_lj_make} "TARGET_FLAGS=-arch ${_lj_arch}"
+                    COMMAND ${CMAKE_COMMAND} -E copy
+                            "${_lj_src}/src/libluajit.a"
+                            "${_lj_src}/src/libluajit-${_lj_arch}.a")
+                list(APPEND _lj_slices "${_lj_src}/src/libluajit-${_lj_arch}.a")
+            endforeach()
+            list(POP_FRONT _lj_steps)   # drop leading COMMAND keyword; the rest follows BUILD_COMMAND
+            ExternalProject_Add(luajit_ext
+                SOURCE_DIR        "${_lj_src}"
+                BUILD_IN_SOURCE   TRUE
+                CONFIGURE_COMMAND ""
+                BUILD_COMMAND     ${_lj_steps}
+                COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
+                INSTALL_COMMAND   ""
+                BUILD_BYPRODUCTS  "${_lj_lib}")
+        else()
+            set(_lj_lib "${_lj_src}/src/libluajit.a")
+            ExternalProject_Add(luajit_ext
+                SOURCE_DIR        "${_lj_src}"
+                BUILD_IN_SOURCE   TRUE
+                CONFIGURE_COMMAND ""
+                BUILD_COMMAND     ${_lj_make}
+                INSTALL_COMMAND   ""
+                BUILD_BYPRODUCTS  "${_lj_lib}")
+        endif()
+    endif()
+
+    add_library(luajit_imported STATIC IMPORTED GLOBAL)
+    set_target_properties(luajit_imported PROPERTIES IMPORTED_LOCATION "${_lj_lib}")
+    add_dependencies(luajit_imported luajit_ext)
+
+    # 3. Force-include the 5.4->5.1 C-API shim into every Lua-touching TU. The
+    #    flag spelling is compiler-specific: MSVC uses /FI, GCC/Clang use -include.
+    set(_wbn_ljshim "${CMAKE_SOURCE_DIR}/src/gui/sdl3/luajit_compat.h")
+    if(MSVC)
+        set(_wbn_ljforce "/FI${_wbn_ljshim}")
+    else()
+        set(_wbn_ljforce "-include" "${_wbn_ljshim}")
+    endif()
+
+    # 4. Present LuaJIT under the stable lua_static / lua_internal names so every
+    #    existing `target_link_libraries(... lua_static ...)` inherits it. LuaJIT
+    #    needs libdl/libm on Unix — pulled via ${CMAKE_DL_LIBS} + the m below.
+    add_library(lua_static INTERFACE)
+    target_link_libraries(lua_static INTERFACE luajit_imported ${CMAKE_DL_LIBS})
+    if(NOT MSVC)
+        target_link_libraries(lua_static INTERFACE m)
+    endif()
+    target_include_directories(lua_static INTERFACE "${_lj_src}/src")
+    target_compile_definitions(lua_static INTERFACE WINBOLO_LUAJIT)
+    target_compile_options(lua_static INTERFACE ${_wbn_ljforce})
+
+    add_library(lua_internal INTERFACE)
+    target_include_directories(lua_internal INTERFACE "${_lj_src}/src")
+    target_compile_definitions(lua_internal INTERFACE WINBOLO_LUAJIT)
+    target_compile_options(lua_internal INTERFACE ${_wbn_ljforce})
+else()
+    # Lua — only build the static library, skip interpreter/compiler/tests
+    set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
+    set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
+    set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(lua)
+    # lua_static must be built with -fPIC on Linux so it can link into shared libs (winbolo_gym)
+    set_target_properties(lua_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_compile_definitions(lua_internal INTERFACE LUA_USE_IOS)
+    endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -1589,8 +1743,6 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
-    src/server/server_dedicated_log.c
-    src/server/server_dedicated_log_path.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -1625,8 +1777,7 @@ bolo_apply_include_rules(WinBoloDS runtime_only)
 bolo_grant_internal_source_access(WinBoloDS
     src/bolo/transport_udp_client.c
     src/server/servermain.c
-    src/server/server_frontend_stubs.c
-    src/server/server_dedicated_log.c)
+    src/server/server_frontend_stubs.c)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -2765,6 +2916,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
+    tests/unit/test_pf_corner_cut.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3303,6 +3455,9 @@ set(_unit_test_names
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
     bolo_rand_golden_sequence
+    pf_dijkstra_no_solid_corner_cut
+    pf_astar_no_solid_corner_cut
+    pf_costto_no_solid_corner_cut
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback

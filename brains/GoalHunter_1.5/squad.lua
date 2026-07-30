@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- NewAutopilot/squad.lua — squad coordination (Phase 1: pill blitz).
 --
@@ -223,7 +224,7 @@ local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy)
   -- path — so the arbiter doesn't reject a spot the soldier validated via a corner
   -- aim that dodges our shield walls. Blocked only if EVERY aim point is obstructed.
   for i = 1, 5 do
-    local tiles = cpf.simulate_shot(ox, oy, (pmx << 8) | _ARB_AIM_X[i], (pmy << 8) | _ARB_AIM_Y[i], cpf.SHOT_TANK, 0)
+    local tiles = cpf.simulate_shot(ox, oy, bit.bor((bit.lshift(pmx, 8)), _ARB_AIM_X[i]), bit.bor((bit.lshift(pmy, 8)), _ARB_AIM_Y[i]), cpf.SHOT_TANK, 0)
     if tiles then
       local blocked, reached = false, false
       for _, t in ipairs(tiles) do
@@ -775,7 +776,7 @@ function M.update(state, info, now, world)
     -- commander's squad iff: it's in a follow-the-call state, the squad isn't
     -- full, and it's not already in that squad. Once joined it STAYS (no
     -- re-decide each tick) while the commander keeps leading.
-    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
     local cap = C.SQUAD_MAX_SIZE or 3
     local dead = state.tank_dead_at
 
@@ -1271,8 +1272,8 @@ function M.blitz_ready_status(state, now, self_pn, info)
   if info and info.objects then
     pos_by_pn = {}
     for _, ob in ipairs(info.objects) do
-      if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
-        pos_by_pn[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+      if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then
+        pos_by_pn[ob.idnum] = { mx = bit.rshift(ob.x, 8), my = bit.rshift(ob.y, 8) }
       end
     end
   end
@@ -1498,7 +1499,7 @@ end
 -- commander) the hard-take trigger. Allies sourced from broadcast role.
 function M.draw_roles_live(state, info, now)
   if not viz.is_on("role_live") or not viz.text then return end
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local role = state.squad_role or "s"
   local reason = ""
   if role == "c" and state.goal and state.goal.kind == "attack_pill" and state.goal.target_id then
@@ -1576,7 +1577,7 @@ function M.blitz_has_joiner(state, info, now)
     for _, ob in ipairs(info.objects) do
       if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
         pos = pos or {}
-        pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+        pos[ob.idnum] = { mx = bit.rshift(ob.x, 8), my = bit.rshift(ob.y, 8) }
       end
     end
   end
@@ -1790,7 +1791,7 @@ end
 function M.draw_blitz_joinable(state, info, world, now)
   if not viz.is_on("blitz_joinable") then return end
   local calls   = state.blitz_calls
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local cap     = C.SQUAD_MAX_SIZE or 3
   local self_pn = info.player_number or -1
   local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
@@ -1876,7 +1877,7 @@ function M.draw_blitz_comm(state, info, world, now)
   local pos = {}
   if info.objects then
     for _, ob in ipairs(info.objects) do
-      if ob.type == 0 and ob.idnum ~= nil and (ob.info & OBJECT_HOSTILE) == 0 then  -- allied OBJECT_TANK
+      if ob.type == 0 and ob.idnum ~= nil and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then  -- allied OBJECT_TANK
         pos[ob.idnum] = { ob.x / 256.0, ob.y / 256.0 }
       end
     end

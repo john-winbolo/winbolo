@@ -245,6 +245,39 @@ function M.process_message(sender, text, tick, state)
     end
   end
 
+  -- ── attack_pill steal negotiation (one-shot events, stashed on state) ────
+  -- stq: challenger asks <to_pn> "I want to steal pill <pid> from you, my
+  --      score is <cost>". Only the addressed holder responds.
+  -- sta: holder ACCEPTS — re-evaluated own score is <cost>; it has already
+  --      yielded the goal. Challenger may now take the pill.
+  -- str: holder REJECTS — re-evaluated own score is <cost> (fresher than its
+  --      periodic broadcast). Challenger backs off for STEAL_REQ_COOLDOWN.
+  -- Addressee filtering happens in init.lua (comms doesn't know our pn).
+  do
+    local pid, topn, cost = text:match("^/info stq (%d+) (%d+) (%-?%d+)$")
+    if pid then
+      if state then
+        state._steal_reqs_in = state._steal_reqs_in or {}
+        state._steal_reqs_in[#state._steal_reqs_in + 1] = {
+          pid = tonumber(pid), to = tonumber(topn), from = sender,
+          cost = tonumber(cost), tick = tick }
+      end
+      return
+    end
+  end
+  do
+    local verb, pid, topn, cost = text:match("^/info (st[ar]) (%d+) (%d+) (%-?%d+)$")
+    if verb then
+      if state then
+        state._steal_replies_in = state._steal_replies_in or {}
+        state._steal_replies_in[#state._steal_replies_in + 1] = {
+          pid = tonumber(pid), to = tonumber(topn), from = sender,
+          cost = tonumber(cost), accept = (verb == "sta"), tick = tick }
+      end
+      return
+    end
+  end
+
   local state_payload = text:match("^/info state(.*)$")
   if state_payload then
     local hash = {}

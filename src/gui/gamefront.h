@@ -883,4 +883,31 @@ extern int gameFrontDialogY;
 extern bool gameFrontUseUpnp;
 extern bool gameFrontUseNatTraversal;
 
+/* Client-hosting settings ([HOSTING] section). Read once at startup by
+ * gameFrontGetPrefs, applied to the server config in gameFrontSetupServer,
+ * and persisted immediately by the per-setting write-through setters below
+ * so both settings shells save identically without a close-time flush.
+ * gameFrontHostingUploadPolicy holds an UploadPolicy value. */
+extern unsigned short gameFrontHostingPort;            /* default 27500 */
+extern bool           gameFrontHostingAllowSpec;       /* default Yes   */
+extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
+extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
+extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
+extern int            gameFrontHostingUploadMaxStorage;/* MB, 1-4095, default 8 */
+extern char           gameFrontHostingUploadDir[FILENAME_MAX];
+                              /* Persist target dir; default <prefs path>uploads */
+extern bool           gameFrontHostingLogging;         /* default Yes   */
+extern char           gameFrontHostingLogDir[FILENAME_MAX];
+                              /* Round-log dir; default <prefs path> */
+
+void gameFrontSetHostingPort(unsigned short port);
+void gameFrontSetHostingAllowSpec(bool allow);
+void gameFrontSetHostingMaxSpec(int maxSpec);
+void gameFrontSetHostingUploadPolicy(int policy);
+void gameFrontSetHostingUploadMaxFiles(int maxFiles);
+void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
+void gameFrontSetHostingUploadDir(const char *dir);
+void gameFrontSetHostingLogging(bool logging);
+void gameFrontSetHostingLogDir(const char *dir);
+
 #endif

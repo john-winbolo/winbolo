@@ -88,6 +88,27 @@ typedef struct {
 void brainRecordSetEnabled(bool enabled);
 bool brainRecordIsEnabled(void);
 
+/* Selective recording parts (winbolods -bd-noviz / -bd-nopool /
+ * -bd-pool-full). When a stream is off, its per-bot block is written as
+ * empty (count 0) so the frame layout — and every existing loader — is
+ * unchanged. poolMode: 0 = off (skips the expensive per-bot
+ * get_pool_breakdown_json() Lua eval entirely), 1 = round-robin (one bot
+ * per frame — the winbolods -braindebug default; ~1/botCount the cost,
+ * no spike ticks), 2 = full per-bot per-tick capture. */
+void brainRecordSetParts(bool viz, int poolMode);
+
+/* Pool-JSON prefetch protocol (parallelizes the capture): a bot's worker
+ * thread asks CaptureWanted right after its think and, when true, builds
+ * the JSON there (each bot owns its own Lua VM, so the builds fan out
+ * across the worker pool instead of running serially in brainRecordTick).
+ * The producer then hands each string to StashPoolJson (ownership moves;
+ * producer thread only), and brainRecordTick consumes the stash — falling
+ * back to an inline eval only when no prefetch arrived (budget-killed
+ * think, skipped job). CaptureWanted is the single decision point both
+ * sides share, keyed off the sim tick, so they can't disagree. */
+bool brainRecordPoolCaptureWanted(ServerSim *sim, BYTE slot);
+void brainRecordStashPoolJson(BYTE slot, char *json);
+
 /* Set the output directory directly (winbolods creates debug_sessions/<TS>/
  * and passes it here). When set, the recorder writes there immediately and
  * does NOT depend on a bot brain exposing DEBUG_SESSION_DIR — so a game with

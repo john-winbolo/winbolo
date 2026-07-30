@@ -82,8 +82,11 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
+#include "../../server/server_dedicated_log.h"
 #include "../../winbolonet/winbolonet_client.h"
 #include "../../winbolonet/winbolonet_core.h"
+#include "../../winbolonet/winbolonet_server.h"
+#include "../../winbolonet/http.h"
 #include "../../winbolonet/wbn_prefs_sync.h"
 #include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
@@ -206,6 +209,22 @@ bool gameFrontTrackerEnabled;
 
 bool gameFrontUseUpnp         = TRUE;
 bool gameFrontUseNatTraversal = TRUE;
+
+/* Client-hosting settings ([HOSTING] section). Defaults match the historical
+ * hard-coded listen-server behaviour plus the newly-exposed knobs. */
+unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
+bool           gameFrontHostingAllowSpec       = TRUE;
+int            gameFrontHostingMaxSpec         = 16;
+int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
+int            gameFrontHostingUploadMaxFiles  = 64;
+int            gameFrontHostingUploadMaxStorage = 8;
+/* Persist upload dir. Empty until gameFrontGetPrefs seeds the default
+ * (<prefs path>uploads) or the user picks one. */
+char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
+bool           gameFrontHostingLogging         = TRUE;
+/* Round-log dir. Empty until gameFrontGetPrefs seeds the default
+ * (the prefs path) or the user picks one. */
+char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -1882,6 +1901,67 @@ void gameFrontSetShowTutorialButton(bool show) {
                             TRUEFALSE_TO_STR(show));
 }
 
+/* Client-hosting write-through setters — update the global and persist the
+ * [HOSTING] key immediately so both settings shells save without relying on
+ * the pre-game modal's close-time flush. */
+void gameFrontSetHostingPort(unsigned short port) {
+  gameFrontHostingPort = port;
+  char buf[16];
+  intToStr(port, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Port", buf);
+}
+
+void gameFrontSetHostingAllowSpec(bool allow) {
+  gameFrontHostingAllowSpec = allow;
+  prefsSetString("HOSTING", "Allow Spectators", TRUEFALSE_TO_STR(allow));
+}
+
+void gameFrontSetHostingMaxSpec(int maxSpec) {
+  gameFrontHostingMaxSpec = maxSpec;
+  char buf[16];
+  intToStr(maxSpec, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Max Spectators", buf);
+}
+
+void gameFrontSetHostingUploadPolicy(int policy) {
+  gameFrontHostingUploadPolicy = policy;
+  const char *str = (policy == UPLOAD_POLICY_OFF)     ? "Off"
+                  : (policy == UPLOAD_POLICY_PERSIST) ? "Persist"
+                                                      : "Allow";
+  prefsSetString("HOSTING", "Upload Policy", str);
+}
+
+void gameFrontSetHostingUploadMaxFiles(int maxFiles) {
+  gameFrontHostingUploadMaxFiles = maxFiles;
+  char buf[16];
+  intToStr(maxFiles, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Upload Max Files", buf);
+}
+
+void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
+  gameFrontHostingUploadMaxStorage = maxStorageMb;
+  char buf[16];
+  intToStr(maxStorageMb, buf, sizeof(buf));
+  prefsSetString("HOSTING", "Upload Max Storage", buf);
+}
+
+void gameFrontSetHostingUploadDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingUploadDir, dir ? dir : "",
+              sizeof(gameFrontHostingUploadDir));
+  prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+}
+
+void gameFrontSetHostingLogging(bool logging) {
+  gameFrontHostingLogging = logging;
+  prefsSetString("HOSTING", "Logging", TRUEFALSE_TO_STR(logging));
+}
+
+void gameFrontSetHostingLogDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
+              sizeof(gameFrontHostingLogDir));
+  prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2312,6 +2392,23 @@ void gameFrontShutdownServer(void) {
   spServerSimActive = FALSE;
   threadsReleaseMutex();
 
+  /* Finalize the current round's log and upload it before serverInstanceShutdown
+   * tears WinBolo.net down — otherwise a host that plays a round and then leaves
+   * or quits never uploads that final round (only round transitions flush).
+   * Stash first (closes the file; no-op when not logging and skips the upload
+   * for hosts that opted out); only end the session + upload when something is
+   * actually pending and WBN is up, so non-logging and Local hosts are
+   * untouched. End the session so the server accepts the upload against the
+   * still-valid key; the shorter timeout keeps an unreachable server from
+   * stalling the leave. serverInstanceShutdown's own quit follows harmlessly. */
+  serverDedicatedLogStashCurrentRound();
+  if (serverDedicatedLogHasPendingUpload() && winbolonetIsRunning()) {
+    winbolonetEndSession();
+    httpSetLogUploadTimeout(10);
+    serverDedicatedLogFlushPendingUpload();
+    httpSetLogUploadTimeout(0);
+  }
+
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
 }
@@ -2416,7 +2513,50 @@ bool gameFrontSetupServer(void) {
     findBrainPath(brainPath, sizeof(brainPath));
   }
   memset(&cfg, 0, sizeof(cfg));
-  cfg.udpPort             = gameFrontMyUdp;
+  /* Hosting port/spectators/uploads come from the [HOSTING] prefs, re-read
+   * here at host time. gameFrontMyUdp is not trustworthy as the hosting port:
+   * the browser Join path zeroes it (gameFrontSetUdpOptions(..., 0)). */
+  cfg.udpPort             = gameFrontHostingPort;
+  cfg.maxSpectators       = gameFrontHostingAllowSpec
+                              ? (BYTE)(gameFrontHostingMaxSpec < 1 ? 1
+                                       : gameFrontHostingMaxSpec > 32 ? 32
+                                       : gameFrontHostingMaxSpec)
+                              : 0;
+  cfg.specDelaySeconds    = 0;  /* client hosts run live */
+  cfg.uploadPolicy        = (UploadPolicy)gameFrontHostingUploadPolicy;
+  cfg.uploadMaxFiles      = (uint8_t)gameFrontHostingUploadMaxFiles;
+  cfg.uploadMaxStorageBytes =
+      (uint32_t)gameFrontHostingUploadMaxStorage * 1024u * 1024u;
+  /* Persist saves uploads to disk under the chosen directory. Create it on
+   * use and refuse to host if that fails — no silent fallback. Off/Allow
+   * never touch disk, so leave uploadPersistDir NULL (memset-zero) for them. */
+  if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
+    if (!SDL_CreateDirectory(gameFrontHostingUploadDir)) {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "cannot create upload directory '%s' — refusing to host",
+                  gameFrontHostingUploadDir);
+      serverSimDestroy(spServerSim);
+      spServerSim = NULL;
+      return FALSE;
+    }
+    cfg.uploadPersistDir  = gameFrontHostingUploadDir;
+  }
+  /* Round logging writes .wbv files into the chosen directory. Create it on
+   * use and refuse to host if that fails — no silent fallback. Done here,
+   * before the server starts, so the failure unwind is the simple pre-start
+   * destroy; the log subscriber itself is installed after startup below. The
+   * directory must exist before then because the log-path composer only
+   * treats its argument as a directory if it already exists on disk. */
+  if (gameFrontHostingLogging) {
+    if (!SDL_CreateDirectory(gameFrontHostingLogDir)) {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "cannot create log directory '%s' — refusing to host",
+                  gameFrontHostingLogDir);
+      serverSimDestroy(spServerSim);
+      spServerSim = NULL;
+      return FALSE;
+    }
+  }
   cfg.bindAddr            = "";
   cfg.password            = password;
   cfg.maxPlayers          = MAX_TANKS;
@@ -2480,6 +2620,15 @@ bool gameFrontSetupServer(void) {
   isServer = TRUE;
   spServerSimActive = TRUE;
   bgGameSetHiddenByForeground(bgGameGetShared(), true);
+  /* Install the round-log writer against the now-running server. Its
+   * sync-replay opens the log immediately using the directory validated
+   * above. Local games pass dontSendLog = true so the module writes the log
+   * but skips the WinBolo.net upload; Internet games upload it. */
+  if (gameFrontHostingLogging) {
+    serverSimSetWantLogging(spServerSim, true);
+    serverSimSetUserLogFileName(spServerSim, gameFrontHostingLogDir);
+    serverDedicatedLogInstall(spServerSim, s_isLanOnly);
+  }
   return TRUE;
 }
 
@@ -2525,6 +2674,79 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
   prefsGetString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
+
+  /* Hosting settings ([HOSTING] section — the port/spectator/upload knobs
+   * for a game hosted from the finder). Clamp on read to the same ranges the
+   * UI enforces so a hand-edited INI can't inject an out-of-range value. */
+  intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
+  prefsGetString("HOSTING", "Port", def, buff, FILENAME_MAX);
+  {
+    int p = atoi(buff);
+    if (p < 1024) p = 1024;
+    if (p > 65535) p = 65535;
+    gameFrontHostingPort = (unsigned short)p;
+  }
+  prefsGetString("HOSTING", "Allow Spectators", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
+  {
+    int m = atoi(buff);
+    if (m < 1) m = 1;
+    if (m > 32) m = 32;
+    gameFrontHostingMaxSpec = m;
+  }
+  prefsGetString("HOSTING", "Upload Policy", "Allow", buff, FILENAME_MAX);
+  if (strcmp(buff, "Off") == 0) {
+    gameFrontHostingUploadPolicy = UPLOAD_POLICY_OFF;
+  } else if (strcmp(buff, "Persist") == 0) {
+    gameFrontHostingUploadPolicy = UPLOAD_POLICY_PERSIST;
+  } else {
+    gameFrontHostingUploadPolicy = UPLOAD_POLICY_ALLOW;
+  }
+  prefsGetString("HOSTING", "Upload Max Files", "64", buff, FILENAME_MAX);
+  {
+    int f = atoi(buff);
+    if (f < 1) f = 1;
+    if (f > 255) f = 255;
+    gameFrontHostingUploadMaxFiles = f;
+  }
+  prefsGetString("HOSTING", "Upload Max Storage", "8", buff, FILENAME_MAX);
+  {
+    int st = atoi(buff);
+    if (st < 1) st = 1;
+    if (st > 4095) st = 4095;
+    gameFrontHostingUploadMaxStorage = st;
+  }
+  /* Upload Dir default lives under the writable prefs path — the app's
+   * default maps dir is inside the read-only bundle. SDL_GetPrefPath
+   * returns a trailing separator, so append "uploads" directly. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%suploads", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "uploads");
+    }
+    prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
+                   FILENAME_MAX);
+  }
+  prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);
+  /* Log Dir default is the writable prefs path itself — same place as
+   * WinBolo.json. SDL_GetPrefPath returns a trailing separator, so pass it
+   * as-is for the directory. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%s", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", ".");
+    }
+    prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
+                   FILENAME_MAX);
+  }
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -2903,6 +3125,28 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "Target UDP Port", buff);
   intToStr(gameFrontMyUdp, buff, sizeof(buff));
   prefsSetString("SETTINGS", "UDP Port", buff);
+
+  /* Hosting settings ([HOSTING] section). Also written through immediately by
+   * the per-setting setters; mirrored here for parity with the close-time
+   * flush of the other sections. */
+  intToStr(gameFrontHostingPort, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Port", buff);
+  prefsSetString("HOSTING", "Allow Spectators",
+                            TRUEFALSE_TO_STR(gameFrontHostingAllowSpec));
+  intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Max Spectators", buff);
+  prefsSetString("HOSTING", "Upload Policy",
+                 gameFrontHostingUploadPolicy == UPLOAD_POLICY_OFF     ? "Off"
+                 : gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST ? "Persist"
+                                                                         : "Allow");
+  intToStr(gameFrontHostingUploadMaxFiles, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Upload Max Files", buff);
+  intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
+  prefsSetString("HOSTING", "Upload Max Storage", buff);
+  prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+  prefsSetString("HOSTING", "Logging",
+                            TRUEFALSE_TO_STR(gameFrontHostingLogging));
+  prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

@@ -1801,7 +1801,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (ImGui::Button(langGetText(STR_DLGBROWSER_NEWGAME), ImVec2(btnW, btnH))) {
                 char playerName[PLAYER_NAME_LEN];
                 gameFrontGetPlayerName(playerName);
-                gameFrontSetUdpOptions(playerName, (char *)"", 27500, 27500);
+                gameFrontSetUdpOptions(playerName, (char *)"",
+                                       gameFrontHostingPort, gameFrontHostingPort);
                 openingStates setupState = useTracker ? openInternetSetup : openLanSetup;
                 gameFrontSetDlgState(setupState);
                 result = (int)setupState;

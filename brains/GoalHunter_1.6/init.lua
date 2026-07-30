@@ -1,3 +1,16 @@
+local function __idiv(a,b) return math.floor(a/b) end
+local bit = require('bitcompat')
+
+-- LuaJIT (Lua 5.1) math.atan takes ONE argument and silently ignores a second,
+-- so the two-arg atan2 form the brain uses for headings (aim_at, aim angles)
+-- returns garbage on LuaJIT — the tank can't steer. Restore correct two-arg
+-- behaviour from math.atan2 (present on LuaJIT/5.1, absent on PUC-Lua 5.4 where
+-- math.atan is already two-arg). One-time, no-op on PUC. See docs/luajit-port.md.
+if math.atan2 then
+  local _atan1, _atan2 = math.atan, math.atan2
+  math.atan = function(y, x) if x == nil then return _atan1(y) else return _atan2(y, x) end end
+end
+
 -- =========================================================================
 -- GoalHunter/init.lua — Brain entry point (open/think/close/settings)
 -- =========================================================================
@@ -333,7 +346,7 @@ function Brain.shotsim_focused_pill_take_wu()
   if not p then return nil end
   -- Pill center in WU. Pills always sit at MAP_SQUARE_MIDDLE within
   -- their tile so this matches the engine's pill firing geometry.
-  return (p.mx << 8) | 128, (p.my << 8) | 128
+  return bit.bor((bit.lshift(p.mx, 8)), 128), bit.bor((bit.lshift(p.my, 8)), 128)
 end
 
 function Brain.shotsim_chosen_standoff_wu()
@@ -733,16 +746,16 @@ local function draw_shell_hitbox_viz(info)
     for i = 1, #info.objects do
       local ob = info.objects[i]
       if ob.type == 2 and (ob.direction or 0) > 0 then
-        local pmx = ob.x >> 8
-        local pmy = ob.y >> 8
+        local pmx = bit.rshift(ob.x, 8)
+        local pmy = bit.rshift(ob.y, 8)
         pill_live[pmy * 256 + pmx] = true
       end
     end
     for i = 1, #info.objects do
       local ob = info.objects[i]
       if ob.type == 1 then   -- OBJECT_SHOT
-        local smx = ob.x >> 8
-        local smy = ob.y >> 8
+        local smx = bit.rshift(ob.x, 8)
+        local smy = bit.rshift(ob.y, 8)
         local on_live_pill = pill_live[smy * 256 + smx] or false
         if v_grid then
           local gr, gg, gb, ga = 80, 80, 200, 180
@@ -772,7 +785,7 @@ local function draw_shell_hitbox_viz(info)
                            1.5, 0.0, 0.0, 0.0,  0.0, 0.0, 0.0, 0.0}
           local kTipRow = {0.0, 0.0, 0.0, 0.0,  1.5, 3.0, 4.0, 4.0,
                            4.0, 4.0, 3.0, 3.0,  1.5, 0.0, 0.0, 0.0}
-          local dir16 = (ob.direction or 0) >> 4
+          local dir16 = bit.rshift((ob.direction or 0), 4)
           local tc = kTipCol[dir16 + 1]
           local tr = kTipRow[dir16 + 1]
           local x_tile = ob.x / 256.0
@@ -901,8 +914,8 @@ function Brain.think(info)
   -- ally's registry.
   local _lgm_self_pn = info.player_number
   if _lgm_self_pn ~= nil then
-    local _lgm_self_mx = (info.man_x or 0) >> 8
-    local _lgm_self_my = (info.man_y or 0) >> 8
+    local _lgm_self_mx = bit.rshift((info.man_x or 0), 8)
+    local _lgm_self_my = bit.rshift((info.man_y or 0), 8)
     local _lgm_prev_slot = lgm_registry.get(_lgm_self_pn)
     local _lgm_prev_status = _lgm_prev_slot and _lgm_prev_slot.status or "unknown"
     local _lgm_transitioned = lgm_registry.update_self(
@@ -925,7 +938,7 @@ function Brain.think(info)
       tostring(info.player_number),
       tostring(info.player_name),
       (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0,
-      (info.tankx or 0) >> 8, (info.tanky or 0) >> 8))
+      bit.rshift((info.tankx or 0), 8), bit.rshift((info.tanky or 0), 8)))
   end
 
   -- Open the optimize.log section timer at the EARLIEST possible point
@@ -1103,8 +1116,8 @@ function Brain.think(info)
       local parts = {}
       for _, ob in ipairs(info.objects) do
         parts[#parts + 1] = string.format("{ty=%d id=%s (%d,%d) host=%s spd=%s}",
-          ob.type or -1, tostring(ob.idnum), (ob.x or 0) >> 8, (ob.y or 0) >> 8,
-          tostring(((ob.info or 0) & OBJECT_HOSTILE) ~= 0), tostring(ob.speed))
+          ob.type or -1, tostring(ob.idnum), bit.rshift((ob.x or 0), 8), bit.rshift((ob.y or 0), 8),
+          tostring((bit.band((ob.info or 0), OBJECT_HOSTILE)) ~= 0), tostring(ob.speed))
       end
       print2(string.format("ENGINE_OBJ t=%d n=%d %s", now, #info.objects, table.concat(parts, " ")))
     end
@@ -1122,7 +1135,7 @@ function Brain.think(info)
       if info.objects then
         for _, ob in ipairs(info.objects) do
           _od[#_od + 1] = string.format("ty%d#%s@(%d,%d)info=0x%X dir=%s spd=%s",
-            ob.type or -1, tostring(ob.idnum), (ob.x or 0) >> 8, (ob.y or 0) >> 8,
+            ob.type or -1, tostring(ob.idnum), bit.rshift((ob.x or 0), 8), bit.rshift((ob.y or 0), 8),
             ob.info or 0, tostring(ob.direction), tostring(ob.speed))
         end
       end
@@ -1148,7 +1161,7 @@ function Brain.think(info)
         or "base=none"
       print2(string.format(
         "ENGINE_DUMP t=%d self=(%d,%d) dir=%s spd=%s arm=%s sh=%s mn=%s tr=%s carry=%s man=%s boat=%s gun=%s pn=%s %s | OBJ=%s | EVT=%s",
-        now, (info.tankx or 0) >> 8, (info.tanky or 0) >> 8,
+        now, bit.rshift((info.tankx or 0), 8), bit.rshift((info.tanky or 0), 8),
         tostring(info.direction), tostring(info.speed), tostring(info.armour),
         tostring(info.shells), tostring(info.mines), tostring(info.trees),
         tostring(info.carried_pills), tostring(info.man_status), tostring(info.inboat),
@@ -1264,8 +1277,8 @@ function Brain.think(info)
     W.update(world, info, now)
     opt(string.format("  [startup] W.update %.2f ms", (clock_us() - _t_su) / 1000))
 
-    local tmx_s     = info.tankx >> 8
-    local tmy_s     = info.tanky >> 8
+    local tmx_s     = bit.rshift(info.tankx, 8)
+    local tmy_s     = bit.rshift(info.tanky, 8)
     local in_boat_s = info.inboat and 1 or 0
 
     -- Pre-warm the threat grid during startup so tick-11 (first normal tick)
@@ -1404,14 +1417,14 @@ function Brain.think(info)
       -- Show what C side is sending (manual_keys set by Brain.set_manual_keys)
       local mk = manual_keys or 0
       local parts = {}
-      if (mk & KEY_FASTER)    ~= 0 then parts[#parts+1] = "FWD" end
-      if (mk & KEY_SLOWER)    ~= 0 then parts[#parts+1] = "BACK" end
-      if (mk & KEY_TURNLEFT)  ~= 0 then parts[#parts+1] = "LEFT" end
-      if (mk & KEY_TURNRIGHT) ~= 0 then parts[#parts+1] = "RIGHT" end
-      if (mk & KEY_SHOOT)     ~= 0 then parts[#parts+1] = "SHOOT" end
-      if (mk & KEY_DROPMINE)  ~= 0 then parts[#parts+1] = "MINE" end
-      if (mk & KEY_MORERANGE) ~= 0 then parts[#parts+1] = "GUN+" end
-      if (mk & KEY_LESSRANGE) ~= 0 then parts[#parts+1] = "GUN-" end
+      if (bit.band(mk, KEY_FASTER))    ~= 0 then parts[#parts+1] = "FWD" end
+      if (bit.band(mk, KEY_SLOWER))    ~= 0 then parts[#parts+1] = "BACK" end
+      if (bit.band(mk, KEY_TURNLEFT))  ~= 0 then parts[#parts+1] = "LEFT" end
+      if (bit.band(mk, KEY_TURNRIGHT)) ~= 0 then parts[#parts+1] = "RIGHT" end
+      if (bit.band(mk, KEY_SHOOT))     ~= 0 then parts[#parts+1] = "SHOOT" end
+      if (bit.band(mk, KEY_DROPMINE))  ~= 0 then parts[#parts+1] = "MINE" end
+      if (bit.band(mk, KEY_MORERANGE)) ~= 0 then parts[#parts+1] = "GUN+" end
+      if (bit.band(mk, KEY_LESSRANGE)) ~= 0 then parts[#parts+1] = "GUN-" end
       local key_str = #parts > 0 and table.concat(parts, " ") or "(none)"
       viz.hud_text("hud_manual", 10, 80, "Keys: " .. key_str, "topleft", 255, 255, 100)
       viz.hud_text("hud_manual", 10, 92, string.format("spd=%d dir=%d arm=%d sh=%d",
@@ -1571,7 +1584,7 @@ function Brain.think(info)
     -- during those phases). Drawn here, after overlay_clear, so it survives the
     -- wipe. Default off; flip it on in the V window.
     if viz.is_on("stop_predict_live") and info.tankx then
-      local _tmx, _tmy = info.tankx >> 8, info.tanky >> 8
+      local _tmx, _tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
       local _tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(_tmx, _tmy)]) or 16
       local _ang = info.tank_angle or info.direction or 0
       local _espeed = (info.speed or 0) / 4  -- info.speed is engine speed ×4; model wants engine units
@@ -1600,10 +1613,10 @@ function Brain.think(info)
         local ob = info.objects[i]
         if ob.type == 1 then
           shell_count = shell_count + 1
-          local smx = ob.x >> 8
-          local smy = ob.y >> 8
-          local px  = ob.x >> 4
-          local py  = ob.y >> 4
+          local smx = bit.rshift(ob.x, 8)
+          local smy = bit.rshift(ob.y, 8)
+          local px  = bit.rshift(ob.x, 4)
+          local py  = bit.rshift(ob.y, 4)
           hb_log:write(string.format(
             "  t=%d SHELL wx=%d wy=%d tile=(%d,%d) px=(%d,%d)\n",
             state.tick, ob.x, ob.y, smx, smy, px, py))
@@ -1688,8 +1701,8 @@ function Brain.think(info)
     -- over the tile, orange filled dot at the exact wu position, and a
     -- small text label showing wu coords.
     if info.man_status == 2 and info.man_x and info.man_y then
-      local lmx = info.man_x >> 8
-      local lmy = info.man_y >> 8
+      local lmx = bit.rshift(info.man_x, 8)
+      local lmy = bit.rshift(info.man_y, 8)
       if viz.is_on("lgm_tile_grid") then
         local gr, gg, gb, ga = 80, 80, 200, 180
         for i = 0, 16 do
@@ -1708,8 +1721,8 @@ function Brain.think(info)
                  (info.man_x - L_HALF) / 256.0, (info.man_y - L_HALF) / 256.0,
                  (info.man_x + L_HALF) / 256.0, (info.man_y + L_HALF) / 256.0,
                  255, 140, 0, 255, true, true)
-        local lxt, lxr = info.man_x >> 8, info.man_x & 0xFF
-        local lyt, lyr = info.man_y >> 8, info.man_y & 0xFF
+        local lxt, lxr = bit.rshift(info.man_x, 8), bit.band(info.man_x, 0xFF)
+        local lyt, lyr = bit.rshift(info.man_y, 8), bit.band(info.man_y, 0xFF)
         viz.text("lgm_hitbox",
           (info.man_x + 8) / 256.0, (info.man_y - 8) / 256.0,
           string.format("LGM wu=(%d,%d) tile=(%d & %d/256, %d & %d/256)",
@@ -2207,13 +2220,13 @@ function Brain.think(info)
     if info.objects and info.player_number then
       local LOOK = C.ALLY_YIELD_LOOKAHEAD or 2
       for _, ob in ipairs(info.objects) do
-        if ob.type == 0 and (ob.info & OBJECT_HOSTILE) == 0   -- OBJECT_TANK, friendly
+        if ob.type == 0 and (bit.band(ob.info, OBJECT_HOSTILE)) == 0   -- OBJECT_TANK, friendly
            and ob.idnum ~= nil and info.player_number > ob.idnum
            and (ob.speed or 0) >= (C.ALLY_YIELD_MIN_SPEED or 6) then
           local asd = U.bsin(ob.direction or 0)
           local acd = U.bcos(ob.direction or 0)
           for i = 0, LOOK do
-            stamp((ob.x + asd * 2 * i) >> 8, (ob.y - acd * 2 * i) >> 8)
+            stamp(bit.rshift((ob.x + asd * 2 * i), 8), bit.rshift((ob.y - acd * 2 * i), 8))
           end
         end
       end
@@ -2240,10 +2253,10 @@ function Brain.think(info)
       for _, ob in ipairs(info.objects) do
         if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
           _ally_tank_pos = _ally_tank_pos or {}
-          _ally_tank_pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+          _ally_tank_pos[ob.idnum] = { mx = bit.rshift(ob.x, 8), my = bit.rshift(ob.y, 8) }
           -- Every visible FRIENDLY tank except ourselves is an avoid-tile.
-          if (ob.info & OBJECT_HOSTILE) == 0 and ob.idnum ~= info.player_number then
-            nav_avoid_tiles[#nav_avoid_tiles + 1] = (ob.y >> 8) * 256 + (ob.x >> 8)
+          if (bit.band(ob.info, OBJECT_HOSTILE)) == 0 and ob.idnum ~= info.player_number then
+            nav_avoid_tiles[#nav_avoid_tiles + 1] = (bit.rshift(ob.y, 8)) * 256 + (bit.rshift(ob.x, 8))
           end
         end
       end
@@ -2398,7 +2411,7 @@ function Brain.think(info)
     -- chokepoint paints that tile bright + logs TAKE_CRAWL (this layer, below).
     if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") and state._ally_take_tiles then
       for _tk in pairs(state._ally_take_tiles) do
-        local _rx, _ry = _tk % 256, _tk // 256
+        local _rx, _ry = _tk % 256, __idiv(_tk, 256)
         viz.rect("cautious_nav_around_ally_take", _rx, _ry, _rx + 1, _ry + 1, 240, 220, 40, 70, true)
       end
     end
@@ -2410,7 +2423,7 @@ function Brain.think(info)
         viz.rect("nav_veer", _ox, _oy, _ox + 1, _oy + 1, 255, 30, 30, 140, true)
       end
       if state.goal and state.goal.mx and state.goal.my then
-        local _px, _py = info.tankx >> 8, info.tanky >> 8
+        local _px, _py = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
         local _gx, _gy = state.goal.mx, state.goal.my
         for _ = 1, 16 do
           local _nx, _ny = cpf.dijkstra_next_step(cpf.KIND_NORMAL, _px, _py, _gx, _gy, nav_avoid_tiles, C.NAV_AVOID_PENALTY)
@@ -2634,8 +2647,8 @@ function Brain.think(info)
       (now + (state.replan_offset or 0)) % C.GOAL_REPLAN_INTERVAL == 0
     local DIJ_RESTART_MAX_DEFER = 4
 
-    local tmx = info.tankx >> 8
-    local tmy = info.tanky >> 8
+    local tmx = bit.rshift(info.tankx, 8)
+    local tmy = bit.rshift(info.tanky, 8)
     local in_boat = info.inboat and 1 or 0
     local d = state.dij
     if not d then
@@ -2837,7 +2850,7 @@ function Brain.think(info)
   if state.send_open_msg then
     send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
-    msg_dest = 1 << state.player_number
+    msg_dest = bit.lshift(1, state.player_number)
     state.send_open_msg = false
   end
 
@@ -2853,7 +2866,7 @@ function Brain.think(info)
       if m.text and m.text ~= "" then
         -- RECEIVING HERE: one line per inbound message (pairs with MSG_TX on the
         -- sender). ally=false means it'll be ignored as enemy traffic below.
-        if BRAIN_DEBUG_MODE then print2(string.format("MSG_RX t=%d from=p%s ally=%s msg=%s", now, tostring(m.sender), tostring((m.sender == state.player_number) or (_allies & (1 << (m.sender or 0))) ~= 0), tostring(m.text))) end
+        if BRAIN_DEBUG_MODE then print2(string.format("MSG_RX t=%d from=p%s ally=%s msg=%s", now, tostring(m.sender), tostring((m.sender == state.player_number) or (bit.band(_allies, (bit.lshift(1, (m.sender or 0))))) ~= 0), tostring(m.text))) end
         -- chat_log ring is debug-only (read only by the chat_log_overlay
         -- HUD); skip the ring writes entirely in production.
         if BRAIN_DEBUG_MODE then
@@ -2865,7 +2878,7 @@ function Brain.think(info)
         -- registry and even draw comm lines / negotiate joins with enemies.
         -- Gate on the alliance bitmask (self always allowed).
         local _from_ally = (m.sender == state.player_number)
-                           or (_allies & (1 << (m.sender or 0))) ~= 0
+                           or (bit.band(_allies, (bit.lshift(1, (m.sender or 0))))) ~= 0
         if _from_ally then
           comms.process_message(m.sender, m.text, now, state)
         end
@@ -2880,7 +2893,7 @@ function Brain.think(info)
           local reply = cmds.execute(cmd, state, world)
           if reply and not send_msg then
             send_msg = reply
-            msg_dest = 1 << state.player_number
+            msg_dest = bit.lshift(1, state.player_number)
           end
         end
       end
@@ -2945,7 +2958,7 @@ function Brain.think(info)
   -- Pick up deferred arrival reply
   if state.command_reply and not send_msg then
     send_msg = state.command_reply
-    msg_dest = 1 << state.player_number
+    msg_dest = bit.lshift(1, state.player_number)
     state.command_reply = nil
   end
 
@@ -2968,8 +2981,8 @@ function Brain.think(info)
   -- the last tick was at the pre-death position, the next tick is at
   -- the spawn point — if those are far apart, we just respawned.
   -- Also catches the very first tick (state._prev_mx is nil).
-  local cur_mx = info.tankx >> 8
-  local cur_my = info.tanky >> 8
+  local cur_mx = bit.rshift(info.tankx, 8)
+  local cur_my = bit.rshift(info.tanky, 8)
   local _just_respawned = false
   if state._prev_mx then
     local jump = U.mdist(cur_mx, cur_my, state._prev_mx, state._prev_my)
@@ -3524,8 +3537,8 @@ function Brain.think(info)
       -- Check for incoming shells nearby — don't send LGM into fire
       local shells_close = false
       for _, ob in ipairs(info.objects) do
-        if ob.type == OBJECT_SHOT and (ob.info & OBJECT_HOSTILE) ~= 0 then
-          local sdist = U.mdist(cur_mx, cur_my, ob.x >> 8, ob.y >> 8)
+        if ob.type == OBJECT_SHOT and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
+          local sdist = U.mdist(cur_mx, cur_my, bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
           if sdist <= C.EMERGENCY_DROP_SHELL_SAFE_DIST then
             shells_close = true
             break
@@ -3799,7 +3812,7 @@ function Brain.think(info)
       -- Pillbox-crossfire disengage (every phase): if we're standing in heavy
       -- enemy pill danger, drop the tank goal so we replan toward safety
       -- instead of trading armour into a pillbox-defended position.
-      if threat.pill_at(info.tankx >> 8, info.tanky >> 8) >= C.TANK_COMBAT_DEFENDED_DANGER then
+      if threat.pill_at(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)) >= C.TANK_COMBAT_DEFENDED_DANGER then
         goal_valid = false
         if state.pool_cache then state.pool_cache[9] = nil end
       end
@@ -3812,6 +3825,55 @@ function Brain.think(info)
         -- Clear the pool cache so pick_goal doesn't re-select attack_tank
         -- immediately — the low-resource condition persists until we refuel.
         if state.pool_cache then state.pool_cache[9] = nil end
+      end
+    elseif gk == "kill_lgm" then
+      -- Target LGM gone for good: the evaluator stops producing a
+      -- kill_lgm candidate instantly (it drops off the winners pool) but
+      -- the COMMITTED goal had no exit of its own — the bot kept chasing
+      -- a nonexistent LGM until the next replan (20260714_093243_1 bot1
+      -- t=7010-7044). Track the target's last seen tile on the goal; when
+      -- it vanishes from perception, two terminal cases end the hunt NOW:
+      --   * BOARDED — a visible enemy tank at/next to the last spot: he
+      --     got in.
+      --   * KILLED — a shell landed on him: perception records the death
+      --     as a fresh hostile OBJECT_PARACHUTE sighting near that spot
+      --     (state._enemy_lgm_sightings), whether we or a pill shot him.
+      -- A plain LOS flicker (forest / fog) matches neither and leaves the
+      -- hunt alone.
+      local tid = state.goal.target_id
+      local elm = nil
+      if tid and state.perc and state.perc.enemy_lgms then
+        for _, e in ipairs(state.perc.enemy_lgms) do
+          if e.idnum == tid then elm = e break end
+        end
+      end
+      if elm then
+        state.goal._kl_last_mx = elm.mx
+        state.goal._kl_last_my = elm.my
+      elseif state.goal._kl_last_mx then
+        local lmx, lmy = state.goal._kl_last_mx, state.goal._kl_last_my
+        if state.perc and state.perc.enemy_tanks then
+          for _, et in ipairs(state.perc.enemy_tanks) do
+            if math.max(math.abs(et.mx - lmx), math.abs(et.my - lmy)) <= 1 then
+              goal_valid = false
+              if BRAIN_DEBUG_MODE then print2(string.format("KL_TARGET_BOARDED t=%d lgm#%s last=(%d,%d) tank@(%d,%d) — kill_lgm invalid, replanning", now, tostring(tid), lmx, lmy, et.mx, et.my)) end
+              break
+            end
+          end
+        end
+        if goal_valid and state._enemy_lgm_sightings then
+          -- Fresh-parachute window: the sighting is stamped the tick the
+          -- LGM dies; anything older is a previous life's death marker
+          -- lingering in the ENEMY_LGM_RETURN_TICKS bookkeeping.
+          for _, s in pairs(state._enemy_lgm_sightings) do
+            if now - s.tick <= 30
+               and math.max(math.abs(s.mx - lmx), math.abs(s.my - lmy)) <= 2 then
+              goal_valid = false
+              if BRAIN_DEBUG_MODE then print2(string.format("KL_TARGET_KILLED t=%d lgm#%s last=(%d,%d) parachute@(%d,%d) age=%d — kill_lgm invalid, replanning", now, tostring(tid), lmx, lmy, s.mx, s.my, now - s.tick)) end
+              break
+            end
+          end
+        end
       end
     elseif gk == "refuel_at_base" or gk == "flee_to_base" then
       local b = W.base_at(world, gmx, gmy)
@@ -3913,6 +3975,109 @@ function Brain.think(info)
     -- _last_info isn't populated outside the panel builder).
     if goals.sync_ally_claimed_rejects then
       goals.sync_ally_claimed_rejects(state, info)
+    end
+
+    -- ── attack_pill steal negotiation (stq/sta/str) ──────────────────────
+    -- Companion to sync_ally_claimed_rejects' pool-6 rules. Three duties:
+    --   1. execute a REAL yield the sync decided (dual-hold loser),
+    --   2. consume replies to our own steal requests (grants / rejects),
+    --   3. answer requests addressed to us: re-evaluate our score for the
+    --      pill and reply sta (accept + yield) or str (reject). A holder
+    --      past "approach" ALWAYS rejects — it's already getting into
+    --      position, nobody can be closer in any way that matters.
+    do
+      local selfpn = info.player_number or 0
+      -- 1. Dual-hold yield: clear the goal FOR REAL (the old reject-only
+      --    yield left the goal driving — the zombie co-attacker bug).
+      local ab = state._steal_abandon
+      state._steal_abandon = nil
+      if ab and state.goal and state.goal.kind == "attack_pill"
+         and ((state.goal.target_id and state.goal.target_id == ab.pid)
+              or (world.pills and world.pills[ab.pid]
+                  and world.pills[ab.pid].mx == state.goal.mx
+                  and world.pills[ab.pid].my == state.goal.my)) then
+        state._steal_yielded = state._steal_yielded or {}
+        state._steal_yielded[ab.pid] = { to = ab.to, tick = now }
+        if BRAIN_DEBUG_MODE then print2(string.format("STEAL_YIELD t=%d pill=#%d to=p%d (%s)", now, ab.pid, ab.to, ab.why or "?")) end
+        attack.clear_attack_goal(state, string.format(
+          "steal: yield pill #%d to p%d (%s)", ab.pid, ab.to, ab.why or "?"))
+      end
+      -- 2. Replies to OUR requests.
+      if state._steal_replies_in then
+        for _, rp in ipairs(state._steal_replies_in) do
+          local sent = state._steal_req_sent and state._steal_req_sent[rp.pid]
+          if rp.to == selfpn and sent and sent.to == rp.from then
+            if rp.accept then
+              state._steal_grants = state._steal_grants or {}
+              state._steal_grants[rp.pid] = { by = rp.from, cost = rp.cost, tick = now }
+              -- Grab it promptly: force a replan instead of waiting out the timer.
+              state._force_replan_reason = state._force_replan_reason or "steal_granted"
+              if BRAIN_DEBUG_MODE then print2(string.format("STEAL_GRANTED t=%d pill=#%d by=p%d their_cost=%s", now, rp.pid, rp.from, tostring(rp.cost))) end
+            else
+              state._steal_rejects = state._steal_rejects or {}
+              state._steal_rejects[rp.pid] = { by = rp.from, cost = rp.cost, tick = now }
+              if BRAIN_DEBUG_MODE then print2(string.format("STEAL_REJECTED t=%d pill=#%d by=p%d their_cost=%s", now, rp.pid, rp.from, tostring(rp.cost))) end
+            end
+          end
+        end
+        state._steal_replies_in = nil
+      end
+      -- 3. Requests addressed to US. Reply from a FRESH re-evaluation: the
+      --    rolling eval queue re-scores pool-6 candidates every ~15-30 ticks;
+      --    if our cached score is older than STEAL_REEVAL_MAX_AGE we defer
+      --    the reply until it refreshes (or STEAL_REPLY_DEADLINE forces one).
+      if state._steal_reqs_in then
+        local keep
+        for _, rq in ipairs(state._steal_reqs_in) do
+          if rq.to == selfpn then
+            local g = state.goal
+            local holds = g and g.kind == "attack_pill"
+              and ((g.target_id and g.target_id == rq.pid)
+                   or (world.pills and world.pills[rq.pid]
+                       and world.pills[rq.pid].mx == g.mx
+                       and world.pills[rq.pid].my == g.my))
+            local our_sub = g and g.substate or ""
+            local pre_commit = (our_sub == "plan_position" or our_sub == "approach")
+            local ce = state.cost_cache and state.cost_cache["6:" .. tostring(rq.pid)]
+            local my_cost = ce and type(ce.cost) == "number" and ce.cost or nil
+            local cost_fresh = my_cost and (now - (ce.tick or 0)) <= (C.STEAL_REEVAL_MAX_AGE or 40)
+            local deadline = (now - rq.tick) >= (C.STEAL_REPLY_DEADLINE or 20)
+            local reply, verdict
+            if not holds then
+              -- Not on it (already left / never had it): grant freely so the
+              -- challenger's pool entry unblocks without waiting for our
+              -- claim broadcast to age out.
+              reply, verdict = "sta", "not_holding"
+            elseif not pre_commit or g._blitz then
+              -- Past approach (already getting into position) or blitz-led:
+              -- NEVER stealable.
+              reply, verdict = "str", (g._blitz and "blitz_led" or "committed_past_approach")
+            elseif not cost_fresh and not deadline then
+              keep = keep or {}; keep[#keep + 1] = rq   -- wait for a fresh re-eval
+            elseif my_cost and rq.cost
+                   and rq.cost < my_cost * (1 - (C.ALLY_CLAIMED_STEAL_FRAC or 0.10)) then
+              -- Challenger meaningfully cheaper than our re-evaluated score:
+              -- accept and yield for real.
+              state._steal_yielded = state._steal_yielded or {}
+              state._steal_yielded[rq.pid] = { to = rq.from, tick = now }
+              attack.clear_attack_goal(state, string.format(
+                "steal: accepted p%d's request for pill #%d (%s < our %.0f)",
+                rq.from, rq.pid, tostring(rq.cost), my_cost))
+              reply, verdict = "sta", "challenger_cheaper"
+            else
+              reply, verdict = "str", "we_re_cheap_enough"
+            end
+            if reply then
+              state._steal_outbox = state._steal_outbox or {}
+              state._steal_outbox[#state._steal_outbox + 1] =
+                string.format("/info %s %d %d %d", reply, rq.pid, rq.from,
+                              math.floor(math.min(my_cost or 9999999, 9999999) + 0.5))
+              if BRAIN_DEBUG_MODE then print2(string.format("STEAL_REPLY t=%d pill=#%d to=p%d %s [%s] our_cost=%s their_cost=%s sub=%s", now, rq.pid, rq.from, reply, verdict, tostring(my_cost), tostring(rq.cost), our_sub)) end
+            end
+          end
+        end
+        state._steal_reqs_in = keep
+      end
     end
 
     -- Team reposition coordination: track the last tick anyone (self or an
@@ -4199,8 +4364,8 @@ function Brain.think(info)
       if info.objects then
         for _, ob in ipairs(info.objects) do
           if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
-            cur[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8,
-                              hostile = (ob.info & OBJECT_HOSTILE) ~= 0 }
+            cur[ob.idnum] = { mx = bit.rshift(ob.x, 8), my = bit.rshift(ob.y, 8),
+                              hostile = (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 }
           end
         end
       end
@@ -4214,6 +4379,16 @@ function Brain.think(info)
                             and dead_pill_count > (state.prev_dead_pill_count or 0)
                             and state.goal.kind ~= "capture_pill"
     state.prev_dead_pill_count = dead_pill_count
+    -- Trigger a one-shot urgent replan the tick our carried-pill count
+    -- INCREASES (drove over a dead pill — opportunistically or as a
+    -- capture_pill completing). Several evaluators score differently
+    -- while holding pills (cautious-mode danger multipliers,
+    -- place_pill_strategic carry urgency, the carrying panic range), so
+    -- re-task immediately with carry-aware scores instead of driving up
+    -- to GOAL_REPLAN_INTERVAL on the pre-pickup plan.
+    local carried_now = info.carried_pills or 0
+    local pill_picked_up = carried_now > (state.prev_carried_pills or 0)
+    state.prev_carried_pills = carried_now
     -- Trigger a one-shot urgent replan the first tick a brand-new base
     -- enters world.bases. world.bases is monotonic (entries persist once
     -- seen), so a count bump means we just spotted one we hadn't seen
@@ -4283,7 +4458,7 @@ function Brain.think(info)
                        or new_base_appeared or lgm_appeared
                        or shot_by_tank or atk_pill_interruptible
                        or blitz_call_new or tank_died_seen
-                       or panic_tank_appeared
+                       or panic_tank_appeared or pill_picked_up
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -4294,6 +4469,7 @@ function Brain.think(info)
       elseif new_tank_seen      then reason = "TANK SEEN"
       elseif atk_pill_interruptible then reason = "TANK PREEMPT (pill loose)"
       elseif dead_pill_appeared then reason = "DEAD PILL"
+      elseif pill_picked_up     then reason = "PILL PICKED UP (carrying)"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
       elseif tank_died_seen     then reason = "TANK DIED"
       elseif panic_tank_appeared then reason = "TANK IN PANIC RANGE (carrying pill)"
@@ -4338,8 +4514,8 @@ function Brain.think(info)
       -- aren't leaving soon — blocklist the base and let goal selection
       -- find us another one.
       if state.goal.mx and state.goal.my then
-        local our_mx = info.tankx >> 8
-        local our_my = info.tanky >> 8
+        local our_mx = bit.rshift(info.tankx, 8)
+        local our_my = bit.rshift(info.tanky, 8)
         local dist_cheb = math.max(math.abs(our_mx - state.goal.mx),
                                    math.abs(our_my - state.goal.my))
         local on_base_ourselves = (dist_cheb == 0)
@@ -4349,9 +4525,9 @@ function Brain.think(info)
         local ally_on_base = false
         for _, ob in ipairs(info.objects) do
           if ob.type == 0   -- OBJECT_TANK
-             and (ob.info & 1) == 0   -- not OBJECT_HOSTILE → ally (excludes self; self isn't in info.objects)
-             and (ob.x >> 8) == state.goal.mx
-             and (ob.y >> 8) == state.goal.my then
+             and (bit.band(ob.info, 1)) == 0   -- not OBJECT_HOSTILE → ally (excludes self; self isn't in info.objects)
+             and (bit.rshift(ob.x, 8)) == state.goal.mx
+             and (bit.rshift(ob.y, 8)) == state.goal.my then
             ally_on_base = true
             break
           end
@@ -4458,7 +4634,7 @@ function Brain.think(info)
       -- goal. Without this gate, parking next to a DIFFERENT (e.g. just-stolen,
       -- empty) base read that base's stock and wrongly blocked our actual target.
       if refuel_needed and info.base
-         and (info.tankx >> 8) == state.goal.mx and (info.tanky >> 8) == state.goal.my then
+         and (bit.rshift(info.tankx, 8)) == state.goal.mx and (bit.rshift(info.tanky, 8)) == state.goal.my then
         local LOW = 4
         local getting_something = false
         if need_armour and (info.base.armour or 0) >= LOW then getting_something = true end
@@ -5036,7 +5212,7 @@ function Brain.think(info)
   state._take_crawl_active = nil
   if state._ally_take_tiles then
     local s = state._ally_take_tiles
-    local cmx, cmy = info.tankx >> 8, info.tanky >> 8
+    local cmx, cmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
     local pf = state.pf
     local nmx, nmy = pf and pf.next_mx, pf and pf.next_my
     local on_cur  = s[cmy * 256 + cmx]
@@ -5075,11 +5251,11 @@ function Brain.think(info)
       -- old "strip everything below the cap, then re-exempt cliff & setpoint" that
       -- kept sailing tanks through their stop point and into deep water.
       if stop_close_fast then
-        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- arriving fast at our OWN stop point: hard brake
+        keys = bit.bor((bit.band(keys, bit.bnot(KEY_FASTER))), KEY_SLOWER)   -- arriving fast at our OWN stop point: hard brake
       elseif (info.speed or 0) > cap then
-        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- above cruise: brake toward the cap
+        keys = bit.bor((bit.band(keys, bit.bnot(KEY_FASTER))), KEY_SLOWER)   -- above cruise: brake toward the cap
       elseif state._cautious_lookahead_held then
-        keys = keys & ~KEY_SLOWER                  -- ONLY the cautious creep: strip it to hold a steady cruise
+        keys = bit.band(keys, bit.bnot(KEY_SLOWER))                  -- ONLY the cautious creep: strip it to hold a steady cruise
       end
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
       if BRAIN_DEBUG_MODE then local _crawl_act = stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or (state._cautious_lookahead_held and "cruise" or "hold-brake")); print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, _crawl_act)) end
@@ -5094,7 +5270,7 @@ function Brain.think(info)
   if BRAIN_DEBUG_MODE and (state.tick or 0) % 50 == 0 and state.pf then
     local pc = state.pf.path_chain
     local parts = {}
-    if pc then for i = 1, #pc // 2 do parts[#parts + 1] = string.format("(%d,%d)", pc[2*i-1], pc[2*i]) end end
+    if pc then for i = 1, __idiv(#pc, 2) do parts[#parts + 1] = string.format("(%d,%d)", pc[2*i-1], pc[2*i]) end end
     print2(string.format("PF_PATH t=%d status=%s dest=(%s,%s) next=(%s,%s) n=%d %s", state.tick or 0, tostring(state.pf.status), tostring(state.pf.dest_mx), tostring(state.pf.dest_my), tostring(state.pf.next_mx), tostring(state.pf.next_my), #parts, (#parts > 0) and table.concat(parts, "->") or "EMPTY"))
   end
 
@@ -5105,7 +5281,7 @@ function Brain.think(info)
   -- playback finally shows the route the bot really chose (not a slate re-trace).
   if BRAIN_DEBUG_MODE and viz.is_on("pf_path_lines") and state.pf and state.pf.path_chain and #state.pf.path_chain >= 4 then
     local pc = state.pf.path_chain
-    for i = 1, (#pc // 2) - 1 do
+    for i = 1, (__idiv(#pc, 2)) - 1 do
       viz.line("pf_path_lines", pc[2*i-1] + 0.5, pc[2*i] + 0.5, pc[2*i+1] + 0.5, pc[2*i+2] + 0.5, 0, 255, 90, 235)
     end
     local nmx, nmy = state.pf.next_mx or 0, state.pf.next_my or 0
@@ -5132,7 +5308,7 @@ function Brain.think(info)
   if BRAIN_DEBUG_MODE and viz.is_on("tank_aim_marker") then
     local ax, ay = U.crosshair_at(info.tankx, info.tanky, info.direction,
                                    (info.gunrange or 14) / 2.0)
-    local shooting = (keys & KEY_SHOOT) ~= 0
+    local shooting = (bit.band(keys, KEY_SHOOT)) ~= 0
     local cg = shooting and 0 or 255
     viz.line("tank_aim_marker", ax - 0.3, ay, ax + 0.3, ay, 255, cg, 0, 150)
     viz.line("tank_aim_marker", ax, ay - 0.3, ax, ay + 0.3, 255, cg, 0, 150)
@@ -5384,7 +5560,7 @@ function Brain.think(info)
   -- Opportunistic tank shot: fire at enemy tanks while doing other things.
   -- Only if not already in tank combat and not shooting at something else.
   if state.goal.kind ~= "attack_tank"
-     and (keys & KEY_SHOOT) == 0 and (taps & KEY_SHOOT) == 0
+     and (bit.band(keys, KEY_SHOOT)) == 0 and (bit.band(taps, KEY_SHOOT)) == 0
      and info.shells > C.SHELL_RESERVE
      and not info.inboat then
     local perc = state.perc
@@ -5397,7 +5573,7 @@ function Brain.think(info)
           local aim_corr = U.adiff(info.direction, aim_dir)
           if math.abs(aim_corr) <= C.TANK_COMBAT_OPPORTUNISTIC_AIM
              and _shot_path_clear_init(info, world, et_wx, et_wy, et.mx, et.my) then
-            taps = taps | KEY_SHOOT
+            taps = bit.bor(taps, KEY_SHOOT)
             log.event("opportunistic_tank_shot",
               string.format("at(%d,%d) dist=%d aim=%.0f",
                             et.mx, et.my, et.dist, aim_corr))
@@ -5431,7 +5607,7 @@ function Brain.think(info)
   state._kill_lgm_eval = state._kill_lgm_eval or {}
   for i = #state._kill_lgm_eval, 1, -1 do state._kill_lgm_eval[i] = nil end
   local _no_shells = info.shells <= C.SHELL_RESERVE
-  local _shoot_busy = (keys & KEY_SHOOT) ~= 0 or (taps & KEY_SHOOT) ~= 0
+  local _shoot_busy = (bit.band(keys, KEY_SHOOT)) ~= 0 or (bit.band(taps, KEY_SHOOT)) ~= 0
   local _already_fired = false
   -- Crosshair driver state: track the closest viable LGM (in range, LOS
   -- clear) so we can drive info.gunrange toward its target sightLen
@@ -5481,8 +5657,8 @@ function Brain.think(info)
         local aim_corr = U.adiff(info.direction, aim_dir)
         _ev.aim_corr = aim_corr
         _ev.ttl = elm.flight_ticks
-        _ev.aim_mx = math.floor(aim_wx + 0.5) >> 8
-        _ev.aim_my = math.floor(aim_wy + 0.5) >> 8
+        _ev.aim_mx = bit.rshift(math.floor(aim_wx + 0.5), 8)
+        _ev.aim_my = bit.rshift(math.floor(aim_wy + 0.5), 8)
         -- Cheap pre-gate: if we're more than ~22° off the lead point
         -- the Euclidean check below would reject anyway, so skip the
         -- LOS raycast for that case. (A tighter ~7° lateral gate was
@@ -5505,7 +5681,7 @@ function Brain.think(info)
                                                 aim_wx, aim_wy,
                                                 cpf.SHOT_TANK or 0, 0)
             if tiles then
-              local origin_mx, origin_my = info.tankx >> 8, info.tanky >> 8
+              local origin_mx, origin_my = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
               for ti = 1, #tiles do
                 local t = tiles[ti]
                 if t.mx == elm.mx and t.my == elm.my then break end
@@ -5560,7 +5736,7 @@ function Brain.think(info)
             _ev.status = "ready_busy"
           else
             _ev.status = "shooting"
-            taps = taps | KEY_SHOOT
+            taps = bit.bor(taps, KEY_SHOOT)
             _already_fired = true
             log.event("kill_lgm_shot",
               string.format("lgm@(%d,%d) dist=%d aim=%.0f sl=%d/%d v=(%.1f,%.1f)",
@@ -5591,7 +5767,7 @@ function Brain.think(info)
      and not _primary_lgm
      and not info.inboat
      and (info.gunrange or 14) < 14 then
-    keys = keys | KEY_MORERANGE
+    keys = bit.bor(keys, KEY_MORERANGE)
   end
 
   -- ── Kill-LGM 27-candidate greedy search ──────────────────────────
@@ -5706,12 +5882,12 @@ function Brain.think(info)
               score = score,
               new_dir = new_dir, new_speed = new_speed, new_gun = new_gun,
               cross_wx = cross_wx, cross_wy = cross_wy,
-              keys = t.k | s.k | g.k,
+              keys = bit.bor(bit.bor(t.k, s.k), g.k),
             }
           end
           if score < best_score then
             best_score = score
-            best_keys  = t.k | s.k | g.k
+            best_keys  = bit.bor(bit.bor(t.k, s.k), g.k)
           end
         end
       end
@@ -5719,9 +5895,8 @@ function Brain.think(info)
     -- Override the action bits: clear the six we manage, set the
     -- winning combination.  Anything else (KEY_SHOOT, KEY_DROPMINE,
     -- etc.) is preserved.
-    local CLEAR = KEY_TURNLEFT | KEY_TURNRIGHT | KEY_FASTER
-                | KEY_SLOWER   | KEY_MORERANGE | KEY_LESSRANGE
-    keys = (keys & ~CLEAR) | best_keys
+    local CLEAR = bit.bor(bit.bor(bit.bor(bit.bor(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT), KEY_FASTER), KEY_SLOWER), KEY_MORERANGE), KEY_LESSRANGE)
+    keys = bit.bor((bit.band(keys, bit.bnot(CLEAR))), best_keys)
     if BRAIN_DEBUG_MODE then
       state._kill_lgm_search = {
         score  = best_score,
@@ -5751,14 +5926,14 @@ function Brain.think(info)
                    and string.format("(%d,%d)", pf.next_mx, pf.next_my)
                    or "nil"
       local kstr = ""
-      if keys & KEY_FASTER    ~= 0 then kstr = kstr .. "FAST " end
-      if keys & KEY_SLOWER    ~= 0 then kstr = kstr .. "SLOW " end
-      if keys & KEY_TURNLEFT  ~= 0 then kstr = kstr .. "LEFT " end
-      if keys & KEY_TURNRIGHT ~= 0 then kstr = kstr .. "RIGHT " end
-      if keys & KEY_SHOOT     ~= 0 then kstr = kstr .. "SHOOT " end
-      if taps & KEY_SHOOT     ~= 0 then kstr = kstr .. "tap-SHOOT " end
-      if taps & KEY_TURNLEFT  ~= 0 then kstr = kstr .. "tap-L " end
-      if taps & KEY_TURNRIGHT ~= 0 then kstr = kstr .. "tap-R " end
+      if bit.band(keys, KEY_FASTER)    ~= 0 then kstr = kstr .. "FAST " end
+      if bit.band(keys, KEY_SLOWER)    ~= 0 then kstr = kstr .. "SLOW " end
+      if bit.band(keys, KEY_TURNLEFT)  ~= 0 then kstr = kstr .. "LEFT " end
+      if bit.band(keys, KEY_TURNRIGHT) ~= 0 then kstr = kstr .. "RIGHT " end
+      if bit.band(keys, KEY_SHOOT)     ~= 0 then kstr = kstr .. "SHOOT " end
+      if bit.band(taps, KEY_SHOOT)     ~= 0 then kstr = kstr .. "tap-SHOOT " end
+      if bit.band(taps, KEY_TURNLEFT)  ~= 0 then kstr = kstr .. "tap-L " end
+      if bit.band(taps, KEY_TURNRIGHT) ~= 0 then kstr = kstr .. "tap-R " end
       if kstr == "" then kstr = "none" end
       print(string.format(
         TAG .. " NAV t=%d  %s #%d  tank=(%d,%d) dest=(%d,%d) dist=%d  pf=%s next=%s  dir=%.0f spd=%.0f  keys=[%s]  stuck=%d  boat=%s",
@@ -5779,11 +5954,11 @@ function Brain.think(info)
                    and string.format("(%d,%d)", pf.next_mx, pf.next_my)
                    or "nil"
       local kstr = ""
-      if keys & KEY_FASTER    ~= 0 then kstr = kstr .. "F" end
-      if keys & KEY_SLOWER    ~= 0 then kstr = kstr .. "S" end
-      if keys & KEY_TURNLEFT  ~= 0 then kstr = kstr .. "L" end
-      if keys & KEY_TURNRIGHT ~= 0 then kstr = kstr .. "R" end
-      if taps & KEY_SHOOT     ~= 0 then kstr = kstr .. "!" end
+      if bit.band(keys, KEY_FASTER)    ~= 0 then kstr = kstr .. "F" end
+      if bit.band(keys, KEY_SLOWER)    ~= 0 then kstr = kstr .. "S" end
+      if bit.band(keys, KEY_TURNLEFT)  ~= 0 then kstr = kstr .. "L" end
+      if bit.band(keys, KEY_TURNRIGHT) ~= 0 then kstr = kstr .. "R" end
+      if bit.band(taps, KEY_SHOOT)     ~= 0 then kstr = kstr .. "!" end
       if kstr == "" then kstr = "-" end
       local co_str = ""
       if state.capture_objective then
@@ -5881,7 +6056,7 @@ function Brain.think(info)
         local cov = gh_threat.cov_grid_at(k)
         if cov > 0 then
           local tx = k % 256
-          local ty = k // 256
+          local ty = __idiv(k, 256)
           local t = math.min((cov - 1) / 4, 1.0)  -- 1=green, 5+=red
           local cr = math.floor(255 * t)
           local cg = math.floor(255 * (1 - t))
@@ -5934,8 +6109,8 @@ function Brain.think(info)
     if info.man_status ~= C.LGM_INTANK then
       local ly = 70
       -- LGM position marker
-      local man_mx = info.man_x >> 8
-      local man_my = info.man_y >> 8
+      local man_mx = bit.rshift(info.man_x, 8)
+      local man_my = bit.rshift(info.man_y, 8)
       viz.circle("lgm_destination", man_mx + 0.5, man_my + 0.5, 0.35, 0, 255, 0, 200)
       -- LGM ETA when out on mission
       local eta = state.builder and state.builder.lgm_eta
@@ -6044,8 +6219,8 @@ function Brain.think(info)
   -- Friendly pill barrier overlay: mark friendly pills used as shields
   if BRAIN_DEBUG_MODE and state.goal and (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill") and viz.is_on("friendly_pill_shield") then
     local gmx, gmy = state.goal.mx, state.goal.my
-    local smx = state.goal.standoff_mx or (info.tankx >> 8)
-    local smy = state.goal.standoff_my or (info.tanky >> 8)
+    local smx = state.goal.standoff_mx or (bit.rshift(info.tankx, 8))
+    local smy = state.goal.standoff_my or (bit.rshift(info.tanky, 8))
     for _, fp in pairs(world.pills) do
       if fp.owner == "friendly" and fp.health > 0 then
         local d_fp_target = U.mdist(fp.mx, fp.my, gmx, gmy)
@@ -6145,7 +6320,7 @@ function Brain.think(info)
           end
           viz.detail_text(did, string.format(
             "  age=%-3d wu=(%5d,%5d) tile=(%3d,%3d)%s",
-            now - s.tick, s.wx, s.wy, s.wx >> 8, s.wy >> 8, delta_str))
+            now - s.tick, s.wx, s.wy, bit.rshift(s.wx, 8), bit.rshift(s.wy, 8), delta_str))
         end
       end
       viz.detail_text(did, "")
@@ -6443,12 +6618,12 @@ function Brain.think(info)
       if s then
         -- Decode the chosen key set into short labels.
         local parts = {}
-        if (s.keys & KEY_TURNLEFT)  ~= 0 then parts[#parts + 1] = "L"     end
-        if (s.keys & KEY_TURNRIGHT) ~= 0 then parts[#parts + 1] = "R"     end
-        if (s.keys & KEY_FASTER)    ~= 0 then parts[#parts + 1] = "FWD"   end
-        if (s.keys & KEY_SLOWER)    ~= 0 then parts[#parts + 1] = "BACK"  end
-        if (s.keys & KEY_MORERANGE) ~= 0 then parts[#parts + 1] = "GUN+"  end
-        if (s.keys & KEY_LESSRANGE) ~= 0 then parts[#parts + 1] = "GUN-"  end
+        if (bit.band(s.keys, KEY_TURNLEFT))  ~= 0 then parts[#parts + 1] = "L"     end
+        if (bit.band(s.keys, KEY_TURNRIGHT)) ~= 0 then parts[#parts + 1] = "R"     end
+        if (bit.band(s.keys, KEY_FASTER))    ~= 0 then parts[#parts + 1] = "FWD"   end
+        if (bit.band(s.keys, KEY_SLOWER))    ~= 0 then parts[#parts + 1] = "BACK"  end
+        if (bit.band(s.keys, KEY_MORERANGE)) ~= 0 then parts[#parts + 1] = "GUN+"  end
+        if (bit.band(s.keys, KEY_LESSRANGE)) ~= 0 then parts[#parts + 1] = "GUN-"  end
         local action = #parts > 0 and table.concat(parts, "+") or "(no action — aligned)"
         viz.hud_text("kill_lgm_status", 8, 112,
           string.format("  search: err=%.0fwu (%.1ft)  pick=[%s]",
@@ -6510,7 +6685,7 @@ function Brain.think(info)
     -- reinforce_link: line from us to our target losing-circle safe tile.
     if viz.is_on("reinforce_link") and state._reinforce_viz and viz.line then
       local rv = state._reinforce_viz
-      local rtx, rty = (info.tankx >> 8) + 0.5, (info.tanky >> 8) + 0.5
+      local rtx, rty = (bit.rshift(info.tankx, 8)) + 0.5, (bit.rshift(info.tanky, 8)) + 0.5
       viz.line("reinforce_link", rtx, rty, rv.mx + 0.5, rv.my + 0.5, 120, 200, 255, 220)
       if viz.text then viz.text("reinforce_link", rtx, rty - 1.0, "REINFORCING #" .. rv.id, "center", 120, 200, 255, 235) end
     end
@@ -6641,17 +6816,17 @@ function Brain.think(info)
     end
     -- Pixel offsets from bottom-right corner. Note bottomright anchor:
     -- (0,0) = bottom-right; positive x goes left, positive y goes up.
-    arrow(40, 80, "^", (keys & KEY_FASTER)    ~= 0, (taps & KEY_FASTER)    ~= 0)
-    arrow(60, 60, "<", (keys & KEY_TURNLEFT)  ~= 0, (taps & KEY_TURNLEFT)  ~= 0)
-    arrow(40, 60, "v", (keys & KEY_SLOWER)    ~= 0, (taps & KEY_SLOWER)    ~= 0)
-    arrow(20, 60, ">", (keys & KEY_TURNRIGHT) ~= 0, (taps & KEY_TURNRIGHT) ~= 0)
+    arrow(40, 80, "^", (bit.band(keys, KEY_FASTER))    ~= 0, (bit.band(taps, KEY_FASTER))    ~= 0)
+    arrow(60, 60, "<", (bit.band(keys, KEY_TURNLEFT))  ~= 0, (bit.band(taps, KEY_TURNLEFT))  ~= 0)
+    arrow(40, 60, "v", (bit.band(keys, KEY_SLOWER))    ~= 0, (bit.band(taps, KEY_SLOWER))    ~= 0)
+    arrow(20, 60, ">", (bit.band(keys, KEY_TURNRIGHT)) ~= 0, (bit.band(taps, KEY_TURNRIGHT)) ~= 0)
     -- Gunrange (crosshair) keys, second row directly below the cross.
     -- "−" = LESSRANGE (retract / pull crosshair in toward tank)
     -- "+" = MORERANGE (expand / push crosshair out toward max)
     -- Same color scheme as the arrow keys: green=held, yellow=tap,
     -- dim grey when not pressed.
-    arrow(50, 40, "-", (keys & KEY_LESSRANGE) ~= 0, (taps & KEY_LESSRANGE) ~= 0)
-    arrow(30, 40, "+", (keys & KEY_MORERANGE) ~= 0, (taps & KEY_MORERANGE) ~= 0)
+    arrow(50, 40, "-", (bit.band(keys, KEY_LESSRANGE)) ~= 0, (bit.band(taps, KEY_LESSRANGE)) ~= 0)
+    arrow(30, 40, "+", (bit.band(keys, KEY_MORERANGE)) ~= 0, (bit.band(taps, KEY_MORERANGE)) ~= 0)
   end end -- BRAIN_DEBUG_MODE (arrow HUD)
 
   -- End-of-decision marker. NOTE: the per-tick print2.flush() is deliberately
@@ -7208,6 +7383,22 @@ function Brain.think(info)
       state._repo_outbox = kept
     end
 
+    -- Steal-negotiation verbs (stq/sta/str) queued by the ally-claimed sync
+    -- (requests) and the steal-request processor (replies). Keep any that
+    -- didn't fit the batch — a dropped sta would leave the challenger
+    -- yielding to a holder that already gave the pill up.
+    if state._steal_outbox then
+      local kept
+      for _, m in ipairs(state._steal_outbox) do
+        if try_send(m, 0) then
+          print2(string.format("STEAL_TX t=%d %s", now, m))
+        else
+          kept = kept or {}; kept[#kept + 1] = m
+        end
+      end
+      state._steal_outbox = kept
+    end
+
     -- Known-world resync query (one-shot, on first think / after respawn):
     -- ask allies to re-broadcast their known base/pill allegiance.
     if state._kw_send_query and try_send("/info kwq", 0) then
@@ -7385,10 +7576,10 @@ function Brain.think(info)
        and state.goal.approach_mx and state.goal.approach_my
        and state.goal.standoff_mx and state.goal.standoff_my then
       bse.p = string.format("%02X%02X%02X%02X",
-                            state.goal.approach_mx & 0xFF,
-                            state.goal.approach_my & 0xFF,
-                            state.goal.standoff_mx & 0xFF,
-                            state.goal.standoff_my & 0xFF)
+                            bit.band(state.goal.approach_mx, 0xFF),
+                            bit.band(state.goal.approach_my, 0xFF),
+                            bit.band(state.goal.standoff_mx, 0xFF),
+                            bit.band(state.goal.standoff_my, 0xFF))
     end
     -- Goal-selection cost (pool_cache winner matching our current goal).
     -- Drifts every tick as we close on the target, so it rides the extra
@@ -7480,7 +7671,7 @@ function Brain.think(info)
     if not send_msg and state.pending_human_goal_msg then
       local allies = info.allies or 0
       local bots   = info.player_bots or 0
-      local human_allies = allies & ~bots
+      local human_allies = bit.band(allies, bit.bnot(bots))
       if human_allies ~= 0 then
         send_msg = state.pending_human_goal_msg
         msg_dest = human_allies
@@ -7541,8 +7732,8 @@ function Brain.think(info)
         anchor_my = state.perc.enemy_tanks[1].my
         anchor_src = "enemy"
       else
-        anchor_mx = info.tankx >> 8
-        anchor_my = info.tanky >> 8
+        anchor_mx = bit.rshift(info.tankx, 8)
+        anchor_my = bit.rshift(info.tanky, 8)
         anchor_src = "self"
       end
       -- Random tile in ±6 box around anchor.  Must be a terrain the
@@ -7644,8 +7835,8 @@ end
 function Brain.debug_info()
   local g = state.goal or {}
   local i = state._last_info or {}
-  local tmx = (i.tankx or 0) >> 8
-  local tmy = (i.tanky or 0) >> 8
+  local tmx = bit.rshift((i.tankx or 0), 8)
+  local tmy = bit.rshift((i.tanky or 0), 8)
   local smx = g.standoff_mx or -1
   local smy = g.standoff_my or -1
   local amx = g.approach_mx or -1
@@ -7683,9 +7874,9 @@ function Brain.manual_key(name, down)
   local bit = map[name]
   if bit then
     if down then
-      manual_keys = manual_keys | bit
+      manual_keys = bit.bor(manual_keys, bit)
     else
-      manual_keys = manual_keys & ~bit
+      manual_keys = bit.band(manual_keys, bit.bnot(bit))
     end
   end
 end

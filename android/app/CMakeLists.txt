@@ -249,7 +249,6 @@ set(ANDROID_SOURCES
     # come from server_sim_static; threads.c comes from threads_static.
     ${PROJ_ROOT}/src/server/geolookup.c
     ${PROJ_ROOT}/src/server/server_stubs.c
-    ${PROJ_ROOT}/src/server/server_dedicated_log_stubs.c
     ${PROJ_ROOT}/src/server/posix_stubs.c
 )
 

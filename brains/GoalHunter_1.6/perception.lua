@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/perception.lua — shared per-tick perception cache
 --
@@ -31,8 +32,8 @@ end
 -- Populates state.perc with the current perception snapshot.
 -- -------------------------------------------------------------------------
 function M.update(state, world, info)
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
 
   local perc = {}
@@ -138,13 +139,13 @@ function M.update(state, world, info)
   local allied_tank_count = 0
 
   for _, ob in ipairs(info.objects) do
-    if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
+    if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then
       allied_tank_count = allied_tank_count + 1
     end
-    if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) ~= 0 then
+    if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
       enemy_tank_count = enemy_tank_count + 1
-      local omx = ob.x >> 8
-      local omy = ob.y >> 8
+      local omx = bit.rshift(ob.x, 8)
+      local omy = bit.rshift(ob.y, 8)
       local d = U.mdist(tmx, tmy, omx, omy)
 
       -- Match to closest previous-frame tank, then compute velocity by
@@ -173,17 +174,28 @@ function M.update(state, world, info)
       -- tank's position last tick, p2 its position the tick before (nil when
       -- unavailable). Chained forward from the matched entry each tick, this
       -- looks back up to 2 ticks (3 positions including the current one).
-      local p1x, p1y, p2x, p2y
+      local p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y
       if matched_pt then
-        p1x, p1y = matched_pt.wx, matched_pt.wy
+        p1x, p1y = matched_pt.wx,  matched_pt.wy
         p2x, p2y = matched_pt.p1x, matched_pt.p1y
+        p3x, p3y = matched_pt.p2x, matched_pt.p2y
+        p4x, p4y = matched_pt.p3x, matched_pt.p3y
       end
       -- Velocity from the oldest available position back to current, divided by
-      -- the number of ticks that span covers. Falls back to a single-tick delta
-      -- when only one prior position is known (target just appeared /
-      -- re-acquired).
+      -- the number of ticks that span covers. A SHORT window aliases badly: the
+      -- engine advances a tank's integer WU position in a +16,+16,+16,+0 stutter
+      -- (a real ~12 wu/tick tank), so a 2-tick delta flips between 16 and 8 every
+      -- tick — and the 8 trips steering's "<=8 wu/tick = stationary" cutoff,
+      -- zeroing the lead and loosing a NO-LEAD shot at a moving target (measured:
+      -- that alias was the aim test's whole miss rate). Averaging over 4 ticks
+      -- cancels the stutter to a rock-steady 12. Falls back to shorter spans
+      -- right after (re)acquisition, when the deeper history isn't there yet.
       local ox, oy, n_ticks
-      if p2x then
+      if p4x then
+        ox, oy, n_ticks = p4x, p4y, 4
+      elseif p3x then
+        ox, oy, n_ticks = p3x, p3y, 3
+      elseif p2x then
         ox, oy, n_ticks = p2x, p2y, 2
       elseif p1x then
         ox, oy, n_ticks = p1x, p1y, 1
@@ -206,7 +218,8 @@ function M.update(state, world, info)
                        speed = ob.speed or 0,
                        wx = ob.x, wy = ob.y, vx = vx, vy = vy,
                        svx = svx, svy = svy,
-                       p1x = p1x, p1y = p1y, p2x = p2x, p2y = p2y }
+                       p1x = p1x, p1y = p1y, p2x = p2x, p2y = p2y,
+                       p3x = p3x, p3y = p3y }
       n_et = n_et + 1
       enemy_tanks[n_et] = entry
 
@@ -352,9 +365,9 @@ function M.update(state, world, info)
   -- (was: redundant `local now = state.tick or 0` — outer `now` from
   -- line 25 is in scope and identical when state.tick is set.)
   for _, ob in ipairs(info.objects) do
-    if ob.type == OBJECT_PARACHUTE and (ob.info & OBJECT_HOSTILE) ~= 0 then
-      local omx = ob.x >> 8
-      local omy = ob.y >> 8
+    if ob.type == OBJECT_PARACHUTE and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
+      local omx = bit.rshift(ob.x, 8)
+      local omy = bit.rshift(ob.y, 8)
       enemy_lgm_sightings[U.mkey(omx, omy)] = {
         tick = now, mx = omx, my = omy,
       }
@@ -430,7 +443,7 @@ function M.update(state, world, info)
     for _, b in pairs(world.bases) do
       local op = b.owner_player
       if op and op ~= NEUTRAL_PLAYER and op ~= self_pn
-         and (allies & (1 << op)) == 0
+         and (bit.band(allies, (bit.lshift(1, op)))) == 0
          and (b.health or 0) > (C.BASE_MIN_ARMOUR_CAPTURE or 0) then
         blocked[#blocked + 1] = { b.mx, b.my }
       end
@@ -447,9 +460,9 @@ function M.update(state, world, info)
   -- window absorbs fast shells skipping a tile between snapshot ticks.
   local fshot_tiles = nil
   for _, ob in ipairs(info.objects) do
-    if ob.type == 1 and (ob.info & OBJECT_HOSTILE) == 0 then  -- 1 = OBJECT_SHOT
+    if ob.type == 1 and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then  -- 1 = OBJECT_SHOT
       fshot_tiles = fshot_tiles or {}
-      fshot_tiles[U.mkey(ob.x >> 8, ob.y >> 8)] = true
+      fshot_tiles[U.mkey(bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))] = true
     end
   end
   if fshot_tiles then
@@ -487,16 +500,16 @@ function M.update(state, world, info)
   local n_lgm = 0
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_BUILDMAN then
-      local lmx = ob.x >> 8
-      local lmy = ob.y >> 8
+      local lmx = bit.rshift(ob.x, 8)
+      local lmy = bit.rshift(ob.y, 8)
       -- Owner classification trace: one line per LGM the brain actually
       -- received this tick. OBJECT_HOSTILE comes straight from the C scan
       -- (players.c playersGetBrainLgmsInRect: hostile unless allied). An LGM
       -- that's our OWN (self-skipped in C), tree-hidden >3 tiles out, or
       -- otherwise not in info.objects will simply never log here — its absence
       -- is the answer to "why didn't the bot see whose LGM that is".
-      if BRAIN_DEBUG_MODE then print2(string.format("LGM_PERCEIVE t=%d idnum=%s tile=(%d,%d) hostile=%s -> %s", now, tostring(ob.idnum), lmx, lmy, tostring((ob.info & OBJECT_HOSTILE) ~= 0), ((ob.info & OBJECT_HOSTILE) == 0) and "ALLY/FRIENDLY" or "ENEMY")) end
-      if (ob.info & OBJECT_HOSTILE) == 0 then
+      if BRAIN_DEBUG_MODE then print2(string.format("LGM_PERCEIVE t=%d idnum=%s tile=(%d,%d) hostile=%s -> %s", now, tostring(ob.idnum), lmx, lmy, tostring((bit.band(ob.info, OBJECT_HOSTILE)) ~= 0), ((bit.band(ob.info, OBJECT_HOSTILE)) == 0) and "ALLY/FRIENDLY" or "ENEMY")) end
+      if (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then
         allied_lgm_positions[#allied_lgm_positions + 1] = { mx = lmx, my = lmy }
       else
         -- Match to last tick's nearest enemy LGM (by wu distance) so
@@ -554,8 +567,8 @@ function M.update(state, world, info)
           info.tankx, info.tanky, _ent, h)
         _ent.predicted_wx     = aim_wx
         _ent.predicted_wy     = aim_wy
-        _ent.predicted_mx     = math.floor(aim_wx) >> 8
-        _ent.predicted_my     = math.floor(aim_wy) >> 8
+        _ent.predicted_mx     = bit.rshift(math.floor(aim_wx), 8)
+        _ent.predicted_my     = bit.rshift(math.floor(aim_wy), 8)
         _ent.target_sightLen  = sl
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu

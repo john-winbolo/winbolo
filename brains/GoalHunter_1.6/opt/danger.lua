@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/danger.lua — shell trajectory prediction + LGM dispatch safety
 -- =========================================================================
@@ -50,12 +51,12 @@ end
 -- Internal: trace all visible hostile shell trajectories
 -- -------------------------------------------------------------------------
 local function predict_shells(info, tick)
-  local tank_mx = info.tankx >> 8
-  local tank_my = info.tanky >> 8
+  local tank_mx = bit.rshift(info.tankx, 8)
+  local tank_my = bit.rshift(info.tanky, 8)
 
   for _, ob in ipairs(info.objects) do
-    if ob.type == OBJECT_SHOT and (ob.info & OBJECT_HOSTILE) ~= 0
-       and math.abs((ob.x >> 8) - tank_mx) + math.abs((ob.y >> 8) - tank_my) <= 10 then
+    if ob.type == OBJECT_SHOT and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0
+       and math.abs((bit.rshift(ob.x, 8)) - tank_mx) + math.abs((bit.rshift(ob.y, 8)) - tank_my) <= 10 then
       -- Use floats so we accumulate sub-tile fractions accurately
       local wx = ob.x + 0.0
       local wy = ob.y + 0.0
@@ -73,15 +74,15 @@ local function predict_shells(info, tick)
           break
         end
 
-        local mx = math.floor(wx) >> 8
-        local my = math.floor(wy) >> 8
+        local mx = bit.rshift(math.floor(wx), 8)
+        local my = bit.rshift(math.floor(wy), 8)
 
         -- Mark this cell as dangerous
         local k = U.mkey(mx, my)
         M.shell_map[k] = tick + C.DANGER_DECAY_TICKS_SHELL
 
         -- Stop at solid terrain (shell impacts here)
-        local tt = U.traw(mx, my) & TERRAIN_MASK
+        local tt = bit.band(U.traw(mx, my), TERRAIN_MASK)
         if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
           break
         end
@@ -120,8 +121,8 @@ end
 --         false = do not dispatch (danger exceeds threshold somewhere)
 -- -------------------------------------------------------------------------
 function M.lgm_path_safe(info, dest_mx, dest_my, threshold, tick, world)
-  local tx = info.tankx >> 8
-  local ty = info.tanky >> 8
+  local tx = bit.rshift(info.tankx, 8)
+  local ty = bit.rshift(info.tanky, 8)
   local dx = math.abs(dest_mx - tx)
   local dy = math.abs(dest_my - ty)
   local steps = math.max(dx, dy)
@@ -177,8 +178,8 @@ function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world
     return false
   end
 
-  local tx = info.tankx >> 8
-  local ty = info.tanky >> 8
+  local tx = bit.rshift(info.tankx, 8)
+  local ty = bit.rshift(info.tanky, 8)
   local ddx = dest_mx - tx
   local ddy = dest_my - ty
   local dist = math.abs(ddx) + math.abs(ddy)
@@ -260,7 +261,7 @@ function M.shells_incoming_near(info, px, py, radius)
     -- Any shell that can damage us counts: hostile AND neutral both hurt our tank
     -- (a neutral pillbox fires on everyone). Our own / friendly shells are safe.
     if ob.type == OBJECT_SHOT
-       and ((ob.info & OBJECT_HOSTILE) ~= 0 or (ob.info & OBJECT_NEUTRAL) ~= 0) then
+       and ((bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 or (bit.band(ob.info, OBJECT_NEUTRAL)) ~= 0) then
       -- RELATIVE velocity (shell − tank), WU per sim step.
       local vx =  U.bsin_f(ob.direction) * C.SHELL_SPEED - tvx
       local vy = -U.bcos_f(ob.direction) * C.SHELL_SPEED - tvy

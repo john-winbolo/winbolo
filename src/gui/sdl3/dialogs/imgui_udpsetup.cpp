@@ -178,7 +178,10 @@ extern "C" int imguiUdpSetupShow(void) {
     char targetPortBuf[16];
     char myPortBuf[16];
     SDL_snprintf(targetPortBuf, sizeof(targetPortBuf), "%u", targetPort);
-    SDL_snprintf(myPortBuf, sizeof(myPortBuf), "%u", myPort);
+    /* My Port shows the authoritative hosting port (HOSTING/Port). On the New
+     * (host) button this value is written back to HOSTING/Port; the Join
+     * buttons keep their existing SETTINGS/"UDP Port" behaviour. */
+    SDL_snprintf(myPortBuf, sizeof(myPortBuf), "%u", gameFrontHostingPort);
 
     bool rememberName = gameFrontGetRemeber();
 
@@ -360,6 +363,9 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             } else if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
                                    rememberName, false)) {
+                /* Host path: the typed My Port becomes the authoritative
+                 * hosting port. saveOptions has already validated it. */
+                gameFrontSetHostingPort((unsigned short)strtoul(myPortBuf, nullptr, 10));
                 gameFrontSetDlgState(openUdpSetup);
                 result = 1;
                 running = false;

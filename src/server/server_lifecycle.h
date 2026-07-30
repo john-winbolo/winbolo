@@ -35,10 +35,13 @@
  * Called once at startup after transportUdpServerCreate. A maxFiles or
  * maxStorageBytes value of 0 leaves that cap at the create-time default
  * (64 files / 8 MiB) — lets the GUI host-and-play path use ServerInstanceConfig
- * zero-init without explicit values. policy is always applied (0 = ALLOW). */
+ * zero-init without explicit values. policy is always applied (0 = ALLOW).
+ * persistDir is the absolute directory PERSIST-policy uploads are written to;
+ * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads"). */
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
-                                       uint32_t maxStorageBytes);
+                                       uint32_t maxStorageBytes,
+                                       const char *persistDir);
 
 typedef struct {
   unsigned short udpPort;
@@ -85,6 +88,11 @@ typedef struct {
   UploadPolicy   uploadPolicy;
   uint8_t        uploadMaxFiles;        /* 0 = leave transport default (64) */
   uint32_t       uploadMaxStorageBytes; /* 0 = leave transport default (8 MiB) */
+
+  /* Absolute directory for PERSIST-policy uploaded maps. NULL = the
+   * built-in "<mapDirRoot>/Uploads". A GUI host points this under the
+   * prefs path since its maps root is a read-only bundle. */
+  const char    *uploadPersistDir;
 
   /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
    * Zero-init means "don't touch what serverSimCreate* set" for the lobby

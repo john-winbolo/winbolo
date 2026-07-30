@@ -42,6 +42,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
+#include "upload_policy.h"  /* UploadPolicy — map-upload combo */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../../lang.h"
@@ -668,6 +669,198 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
     { bool nd = (bool)showNetworkDebugMessages;  if (ImGui::Checkbox(langGetText(STR_MENU_NETDEBUG_MSGS),  &nd)) windowMenuNetworkDebug_toggle(cs); }
 }
 
+/* Folder-picker glue for the Hosting tab's Upload Directory field. The
+ * SDL folder dialog is async — its callback (may fire on another thread)
+ * stashes the chosen path and a flag, and the next render frame applies it
+ * via the write-through setter.  The editable InputText remains the primary
+ * input and the fallback on platforms without a native folder dialog. */
+static char s_hostingPickedDir[FILENAME_MAX];
+static bool s_hostingDirPicked = false;
+
+static void SDLCALL hostingUploadDirDialogCallback(void *userdata,
+                                                   const char *const *filelist,
+                                                   int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingDirPicked = true;
+    }
+}
+
+/* Same async-picker glue for the Log Directory field. Kept on its own
+ * statics so a pending pick can't cross-wire with the Upload Directory
+ * picker above. */
+static char s_hostingLogPickedDir[FILENAME_MAX];
+static bool s_hostingLogDirPicked = false;
+
+static void SDLCALL hostingLogDirDialogCallback(void *userdata,
+                                                const char *const *filelist,
+                                                int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingLogPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingLogDirPicked = true;
+    }
+}
+
+/* -------------------------------------------------------
+ * Hosting tab — settings for the server the client spins up
+ * when hosting from the game finder.  Shared by the pre-game
+ * dialog and the in-game overlay.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
+    (void)ctx;
+
+    /* ---- Port ---- */
+    {
+        int port = gameFrontHostingPort;
+        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_PORT), &port)) {
+            if (port < 1024)  port = 1024;
+            if (port > 65535) port = 65535;
+            gameFrontSetHostingPort((unsigned short)port);
+        }
+    }
+
+    /* ---- Spectators ---- */
+    {
+        bool allow = gameFrontHostingAllowSpec;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_ALLOWSPEC), &allow)) {
+            gameFrontSetHostingAllowSpec(allow);
+        }
+        /* Max stays visible but greyed when spectators are off; its value is
+         * preserved so toggling back on restores the previous number. */
+        ImGui::BeginDisabled(!allow);
+        int maxSpec = gameFrontHostingMaxSpec;
+        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_MAXSPEC), &maxSpec)) {
+            if (maxSpec < 1)  maxSpec = 1;
+            if (maxSpec > 32) maxSpec = 32;
+            gameFrontSetHostingMaxSpec(maxSpec);
+        }
+        ImGui::EndDisabled();
+    }
+
+    /* ---- Map uploads ---- */
+    {
+        /* Combo display order is Off / Allow / Persist, but the enum values
+         * are not in that order (ALLOW=0, OFF=1, PERSIST=2) — map explicitly. */
+        static const int kPolicyByIndex[3] = {
+            UPLOAD_POLICY_OFF, UPLOAD_POLICY_ALLOW, UPLOAD_POLICY_PERSIST
+        };
+        const char *policyItems[3] = {
+            langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_OFF),
+            langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_ALLOW),
+            langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_PERSIST)
+        };
+        int idx = 1;  /* default Allow */
+        for (int i = 0; i < 3; ++i) {
+            if (kPolicyByIndex[i] == gameFrontHostingUploadPolicy) { idx = i; break; }
+        }
+        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_MAPUPLOADS),
+                         &idx, policyItems, 3)) {
+            gameFrontSetHostingUploadPolicy(kPolicyByIndex[idx]);
+        }
+
+        /* File/storage caps only bite on Persist (Off/Allow never write). */
+        if (gameFrontHostingUploadPolicy == UPLOAD_POLICY_PERSIST) {
+            /* Upload directory — editable text field is the primary input and
+             * the fallback where no native folder dialog exists; Browse fills
+             * it via SDL_ShowOpenFolderDialog. */
+            static char dirBuf[FILENAME_MAX];
+            static bool dirEditing = false;
+            /* Apply a folder chosen on a previous frame. */
+            if (s_hostingDirPicked) {
+                gameFrontSetHostingUploadDir(s_hostingPickedDir);
+                s_hostingDirPicked = false;
+            }
+            /* Re-seed from the global whenever the field isn't being edited,
+             * so Browse results and the persisted value show without
+             * clobbering in-progress typing. */
+            if (!dirEditing) {
+                SDL_strlcpy(dirBuf, gameFrontHostingUploadDir, sizeof(dirBuf));
+            }
+            bool commit = ImGui::InputText(
+                langGetText(STR_DLGSETTINGS_HOSTING_UPLOADDIR),
+                dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            dirEditing = ImGui::IsItemActive();
+            if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
+                gameFrontSetHostingUploadDir(dirBuf);
+            }
+            if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+                SDL_Window *win = sdl3DrawGetWindow();
+                const char *loc = gameFrontHostingUploadDir[0]
+                                      ? gameFrontHostingUploadDir : NULL;
+                SDL_ShowOpenFolderDialog(hostingUploadDirDialogCallback, NULL,
+                                         win, loc, false);
+            }
+
+            int maxFiles = gameFrontHostingUploadMaxFiles;
+            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES),
+                                &maxFiles)) {
+                if (maxFiles < 1)   maxFiles = 1;
+                if (maxFiles > 255) maxFiles = 255;
+                gameFrontSetHostingUploadMaxFiles(maxFiles);
+            }
+            int maxStorage = gameFrontHostingUploadMaxStorage;
+            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE),
+                                &maxStorage)) {
+                if (maxStorage < 1)    maxStorage = 1;
+                if (maxStorage > 4095) maxStorage = 4095;
+                gameFrontSetHostingUploadMaxStorage(maxStorage);
+            }
+        }
+    }
+
+    /* ---- Round logging ---- */
+    {
+        bool logging = gameFrontHostingLogging;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_ENABLELOG),
+                            &logging)) {
+            gameFrontSetHostingLogging(logging);
+        }
+        if (gameFrontHostingLogging) {
+            /* Log directory — editable text field is the primary input and
+             * the fallback where no native folder dialog exists; Browse fills
+             * it via SDL_ShowOpenFolderDialog. */
+            static char logDirBuf[FILENAME_MAX];
+            static bool logDirEditing = false;
+            /* Apply a folder chosen on a previous frame. */
+            if (s_hostingLogDirPicked) {
+                gameFrontSetHostingLogDir(s_hostingLogPickedDir);
+                s_hostingLogDirPicked = false;
+            }
+            /* Re-seed from the global whenever the field isn't being edited,
+             * so Browse results and the persisted value show without
+             * clobbering in-progress typing. */
+            if (!logDirEditing) {
+                SDL_strlcpy(logDirBuf, gameFrontHostingLogDir, sizeof(logDirBuf));
+            }
+            bool commit = ImGui::InputText(
+                langGetText(STR_DLGSETTINGS_HOSTING_LOGDIR),
+                logDirBuf, sizeof(logDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            logDirEditing = ImGui::IsItemActive();
+            if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
+                gameFrontSetHostingLogDir(logDirBuf);
+            }
+            /* Distinct ID from the Upload Directory Browse button, which
+             * shares the same label and can be on screen at the same time. */
+            ImGui::PushID("hostinglogdir");
+            if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+                SDL_Window *win = sdl3DrawGetWindow();
+                const char *loc = gameFrontHostingLogDir[0]
+                                      ? gameFrontHostingLogDir : NULL;
+                SDL_ShowOpenFolderDialog(hostingLogDirDialogCallback, NULL,
+                                         win, loc, false);
+            }
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_HOSTING_APPLYNOTE));
+}
+
 extern "C" void imguiSettingsShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -839,13 +1032,14 @@ extern "C" void imguiSettingsShow(void) {
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
            tabs, skipping any that aren't present and wrapping at the ends. */
-        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_LAST, STAB_COUNT };
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
         static int s_pgActiveTab = STAB_GENERAL;
         static int s_pgForceTab  = -1;
         bool present[STAB_COUNT];
         present[STAB_GENERAL] = true;
         present[STAB_DISPLAY] = true;
         present[STAB_GAMEHUD] = true;
+        present[STAB_HOSTING] = true;  /* mobile can host too */
 #if !BOLO_MOBILE
         present[STAB_CONTROLS] = !uiModeIsTablet();
         present[STAB_LAST]     = true;
@@ -926,6 +1120,14 @@ extern "C" void imguiSettingsShow(void) {
                 s_pgActiveTab = STAB_GAMEHUD;
                 ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderGameHudTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
+                    s_pgForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_HOSTING;
+                ImGui::BeginChild("##hostingPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderHostingTab(&ctx);
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }

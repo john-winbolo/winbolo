@@ -149,6 +149,12 @@ typedef struct {
 #define BOT_PENDING_CMD_MAX 4
     ClientCommand       pendingCmds[BOT_PENDING_CMD_MAX];
     int                 pendingCmdCount;
+    /* worker → producer: pool-breakdown JSON prefetched in parallel on the
+     * bot's own worker right after its think (see runBotThinkJob). Producer
+     * hands ownership to brain_record (brainRecordStashPoolJson) in Stage 3
+     * so brainRecordTick's serial section only WRITES the bytes instead of
+     * paying the per-bot Lua serialization single-threaded. */
+    char               *poolJson;
 } BotJobCtx;
 
 typedef struct BotManager {

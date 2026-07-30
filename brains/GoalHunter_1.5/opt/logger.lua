@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/logger.lua — structured tick log + map dump for post-mortem analysis
 -- =========================================================================
@@ -73,7 +74,7 @@ function M.dump_map()
   local x1, y1, x2, y2 = 255, 255, 0, 0
   for my = 0, 255 do
     for mx = 0, 255 do
-      local tt = get_terrain(mx, my) & TERRAIN_MASK
+      local tt = bit.band(get_terrain(mx, my), TERRAIN_MASK)
       if tt ~= C.T_DEEPSEA then
         if mx < x1 then x1 = mx end
         if mx > x2 then x2 = mx end
@@ -337,7 +338,7 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     .. '%s'
     .. '"stuck":%d,"ev":%s,"rsn":%s,"objs":%s}\n',
     state.tick,
-    info.tankx, info.tanky, info.tankx >> 8, info.tanky >> 8,
+    info.tankx, info.tanky, bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
     info.direction, info.speed,
     tostring(info.inboat), info.armour, info.shells, info.mines, info.trees,
     info.carried_pills,

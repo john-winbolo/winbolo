@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/world.lua — base/pill tracking, anger model, spatial index
 --
@@ -20,8 +21,8 @@ local clock_us = clock_us or function() return 0 end
 local M = {}
 
 local function owner_string(obj_info)
-  local hostile = (obj_info & OBJECT_HOSTILE) ~= 0
-  local neutral = (obj_info & OBJECT_NEUTRAL) ~= 0
+  local hostile = (bit.band(obj_info, OBJECT_HOSTILE)) ~= 0
+  local neutral = (bit.band(obj_info, OBJECT_NEUTRAL)) ~= 0
   if neutral then return "neutral" end
   if hostile then return "hostile" end
   return "friendly"
@@ -82,8 +83,8 @@ function M.update(world, info, tick)
   for _, obj in ipairs(info.objects) do
     obj_count = obj_count + 1
     if obj.type == OBJECT_REFBASE then
-      local new_mx     = obj.x >> 8
-      local new_my     = obj.y >> 8
+      local new_mx     = bit.rshift(obj.x, 8)
+      local new_my     = bit.rshift(obj.y, 8)
       local new_health = obj.direction
       local new_owner  = owner_string(obj.info)
       local b = world.bases[obj.idnum]
@@ -113,8 +114,8 @@ function M.update(world, info, tick)
         b.last_seen = tick
       end
     elseif obj.type == OBJECT_PILLBOX then
-      local new_mx     = obj.x >> 8
-      local new_my     = obj.y >> 8
+      local new_mx     = bit.rshift(obj.x, 8)
+      local new_my     = bit.rshift(obj.y, 8)
       local new_health = obj.direction
       local owner_str  = owner_string(obj.info)
       local p = world.pills[obj.idnum]
@@ -385,8 +386,8 @@ end
 -- Note: info.base in BrainInfo is set whenever a base is within ~7 tiles
 -- (BASE_STATUS_RANGE), so it cannot be used for "actually on the base".
 function M.tank_on_friendly_base(world, info)
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local b = M.base_at(world, tmx, tmy)
   if not b then return false end
   return b.owner == "friendly" or b.owner == "neutral"

@@ -70,6 +70,11 @@ static char wbnBaseUrl[FILENAME_MAX];    /* full base URL, e.g. https://wbn.winb
 static char altIpAddress[FILENAME_MAX];
 static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host */
 
+/* Per-call override for the log-upload total timeout, in seconds. 0 selects
+ * the default. Lets a caller that must not block for long (e.g. shutting a
+ * hosted game down) cap the upload without changing it for everyone else. */
+static long s_logUploadTimeoutOverride = 0;
+
 /*********************************************************
 *NAME:          buildBaseUrl
 *PURPOSE:
@@ -407,6 +412,14 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  /* Timeouts must not use signals: these posts also run on the hosted
+   * server's tick thread (round-transition server/quit + register), and
+   * libcurl's SIGALRM timeout path is only safe on the main thread. */
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
+  /* Cap the connect phase so an unreachable server fails fast rather than
+   * stalling teardown-time posts (e.g. the server/quit on leaving a hosted
+   * game); a reachable server connects well within this. */
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (altIpAddress[0] != '\0') {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
@@ -572,12 +585,24 @@ int wbn_api_call_bearer(const char *endpoint, cJSON *body, const char *bearerTok
 }
 
 /*********************************************************
+*NAME:          httpSetLogUploadTimeout
+*PURPOSE:
+* Overrides the total timeout used by the next
+* httpSendLogFile calls. seconds > 0 sets the cap; 0
+* restores the default. Callers set it around their own
+* upload and reset it afterwards.
+*********************************************************/
+void httpSetLogUploadTimeout(long seconds) {
+  s_logUploadTimeoutOverride = seconds;
+}
+
+/*********************************************************
 *NAME:          httpSendLogFile
 *PURPOSE:
 * Uploads a log file to WinBolo.net via HTTP(S) multipart
 * POST.  Returns TRUE on success.
 *********************************************************/
-bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
+bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
   (void)wantFeedback;
 
   if (!httpStarted || fileName == NULL || key == NULL) {
@@ -639,7 +664,17 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   curl_easy_setopt(curl, CURLOPT_MIMEPOST,       mime);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  writeCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &ctx);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        60L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,
+                   s_logUploadTimeoutOverride > 0 ? s_logUploadTimeoutOverride
+                                                  : 60L);
+  /* Timeouts must not use signals: a hosted game uploads its round log from
+   * the server's tick thread at round transitions, and libcurl's SIGALRM
+   * timeout path is only safe on the main thread. */
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL,       1L);
+  /* Cap the connect phase so an unreachable server fails fast instead of
+   * stalling a shutdown-time upload; a reachable server connects well
+   * within this. */
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   if (authHeaders != NULL) {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, authHeaders);

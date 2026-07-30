@@ -387,6 +387,13 @@ void luaBrainsSetRunScript(const char *path);
 *********************************************************/
 void luaBrainsSetProfile(int profile, int profile_log, int pool_viz);
 
+/* Selective brain-debug output streams (winbolods -bd-noviz / -bd-nopool /
+ * -bd-noprint2 / -bd-nojsonl). -brain-debug implies all four ON; call before
+ * bots are created to silence individual streams while BRAIN_DEBUG_MODE
+ * stays on. print2 → _PRINT2_ENABLED, pool → BRAIN_POOL_VIZ,
+ * viz → _BT_VIZ_COLLECT="off", jsonl → BRAIN_LOG_JSON/_JSONL_LOGGER_ENABLED. */
+void luaBrainsSetDebugParts(int print2_on, int pool_on, int viz_on, int jsonl_on);
+
 /* Drives the BRAIN_INSTR_PROFILE Lua global. When set, GoalHunter runs its
  * sampling profiler around each think and writes per-bot p<N>_profile.tsv.
  * Set once at startup before any brain instance is created. */

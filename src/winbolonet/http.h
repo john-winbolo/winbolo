@@ -161,7 +161,18 @@ int wbn_api_call_bearer(const char *endpoint, struct cJSON *body, const char *be
 * key          - Null-terminated session key string
 * wantFeedback - (unused, retained for API compatibility)
 *********************************************************/
-bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
+bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback);
+
+/*********************************************************
+*NAME:          httpSetLogUploadTimeout
+*PURPOSE:
+* Overrides the total timeout used by subsequent
+* httpSendLogFile calls.
+*
+*ARGUMENTS:
+* seconds - Total timeout in seconds; 0 restores the default
+*********************************************************/
+void httpSetLogUploadTimeout(long seconds);
 
 /*********************************************************
 *NAME:          wbn_api_get

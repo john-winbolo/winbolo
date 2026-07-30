@@ -1,3 +1,4 @@
+local function __idiv(a,b) return math.floor(a/b) end
 -- GoalHunter/circles.lua — front-line "circles" (R2, 2026-06-01 brainstorm)
 --
 -- A "circle" is a radius-~12 region centered on a front "3"-overlay tile
@@ -113,7 +114,7 @@ end
 -- coverage of still-uncovered POIs.
 local function build(world, fpts)
   fpts = fpts or cpf.find_front_line()
-  local np = fpts and (#fpts // 2) or 0
+  local np = fpts and (__idiv(#fpts, 2)) or 0
   if np < M.MIN_FRONT_PTS then return {} end
 
   -- POIs: every pill (alive) + every base, any owner, weighted equally.

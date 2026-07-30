@@ -944,6 +944,21 @@ static void runBotThinkJob(int botIndex, void *userData) {
     }
 #endif
 
+    /* Pool-JSON prefetch (parallel): when the recorder will want this
+     * bot's pool breakdown this tick, build it HERE on the worker — the
+     * serialization measured 2-3 ms per bot, which is >1 tick budget in
+     * aggregate when done serially in brainRecordTick, but disappears
+     * into the worker fan-out. Runs after the budget hook is disarmed so
+     * it can neither be budget-killed nor count against lastThinkMs.
+     * Skipped after a budget kill (partial brain state); the recorder
+     * falls back to its inline eval. Producer moves the string to
+     * brain_record in stage 3. */
+    if (j->poolJson) { free(j->poolJson); j->poolJson = NULL; }
+    if (!j->wasKilled && brainRecordPoolCaptureWanted(sim, bot->playerNum)) {
+        j->poolJson = botManagerEvalLuaString(sim, bot->playerNum,
+                          "return brain.get_pool_breakdown_json()");
+    }
+
     if (sim->botMgr.preThinkHook) sim->botMgr.preThinkHook(-1);
 }
 
@@ -1052,6 +1067,16 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     for (int k = 0; k < activeCount; k++) {
         int i = sim->botMgr.jobIndices[k];
         BotJobCtx *j = &sim->botMgr.jobs[i];
+
+        /* Hand the worker-prefetched pool JSON (built in parallel on the
+         * bot's own worker, right after its think) to the recorder BEFORE
+         * any of the skip-continues below — a killed/idle bot may still
+         * carry a stash from this or an earlier tick. Ownership moves to
+         * brain_record. */
+        if (j->poolJson) {
+            brainRecordStashPoolJson((BYTE)i, j->poolJson);
+            j->poolJson = NULL;
+        }
 
         if (j->needRemove) {
             /* Crash-streak kick. Broadcast a server-text message to all

@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- demine.lua — automatic battle-damage handling: mine clearing + terrain
 -- repair (mines take priority when both exist):
@@ -82,7 +83,7 @@ end
 -- reads amortize to noise.
 local function find_target(state, world, info)
   local now = state.tick or 0
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local R      = math.floor((C.GUNSIGHT_MAX or 14) / 2)   -- crosshair reach, tiles
   local min_wu = C.DEMINE_MIN_DIST_WU or 512              -- don't blast our own feet
   local max_wu = R * 256
@@ -101,11 +102,11 @@ local function find_target(state, world, info)
         -- shells; a mine in contested/enemy ground is theirs to live with
         -- (and shelling it advertises our position for nothing).
         if U.in_map(mx2, my2)
-           and (U.traw(mx2, my2) & TERRAIN_MINE_FLAG) ~= 0 then
+           and (bit.band(U.traw(mx2, my2), TERRAIN_MINE_FLAG)) ~= 0 then
           local infl = cpf.influence_at(mx2, my2) or 0
           local k = my2 * 256 + mx2
-          local wx = (mx2 << 8) | 128
-          local wy = (my2 << 8) | 128
+          local wx = bit.bor((bit.lshift(mx2, 8)), 128)
+          local wy = bit.bor((bit.lshift(my2, 8)), 128)
           local ddx, ddy = wx - info.tankx, wy - info.tanky
           local dist = math.sqrt(ddx * ddx + ddy * ddy)
           local rej, cost = nil, nil
@@ -134,8 +135,8 @@ local function find_target(state, world, info)
   -- (Lazy require: steering requires other modules but never demine,
   -- so this cannot cycle.)
   local steer = require("steering")
-  local wx = (best_mx << 8) | 128
-  local wy = (best_my << 8) | 128
+  local wx = bit.bor((bit.lshift(best_mx, 8)), 128)
+  local wy = bit.bor((bit.lshift(best_my, 8)), 128)
   if not steer.shot_path_clear(info, world, wx, wy, best_mx, best_my) then
     -- Blocked line: cool the tile down so the scan doesn't re-pick it
     -- every pass; a later scan from elsewhere may see it clear.
@@ -164,7 +165,7 @@ end
 local function repair_threatened(state, info)
   local perc = state.perc
   if not (perc and perc.enemy_tanks) then return false end
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local r = C.TREPAIR_ENEMY_RANGE or 10
   for _, et in ipairs(perc.enemy_tanks) do
     local dx, dy = et.mx - tmx, et.my - tmy
@@ -178,7 +179,7 @@ local function find_repair_target(state, world, info)
   local now = state.tick or 0
   if info.man_status ~= C.LGM_INTANK then return nil end
   if repair_threatened(state, info) then return nil end
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local R  = C.TREPAIR_RADIUS or 5
   local cd = state._trepair_cooldown
   local rt = repair_tt()
@@ -267,7 +268,7 @@ function M.update(state, world, info)
     local timeout    = (now - (job.start or now)) > (C.TREPAIR_MAX_TICKS or 400)
     local threatened = repair_threatened(state, info)
     local left_behind = info.man_status == C.LGM_INTANK
-      and U.mdist(info.tankx >> 8, info.tanky >> 8, job.mx, job.my)
+      and U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), job.mx, job.my)
           > (C.TREPAIR_ABANDON_DIST or 6)
     if paved or timeout or threatened or left_behind then
       if not paved then
@@ -285,7 +286,7 @@ function M.update(state, world, info)
 
   -- ── Active kill_mine: pop when cleared / stale / dry ──────────────
   if g and g.kind == "kill_mine" then
-    local cleared = (U.traw(g.mx, g.my) & TERRAIN_MINE_FLAG) == 0
+    local cleared = (bit.band(U.traw(g.mx, g.my), TERRAIN_MINE_FLAG)) == 0
     local timeout = (now - (g._push_tick or now)) > (C.DEMINE_MAX_TICKS or 150)
     local dry     = (info.shells or 0) <= 0
     if cleared or timeout or dry then
@@ -320,7 +321,7 @@ function M.update(state, world, info)
     if mx then
       state._demine_saved = state.goal
       state.goal = { kind = "kill_mine", mx = mx, my = my,
-                     wx = (mx << 8) | 128, wy = (my << 8) | 128,
+                     wx = bit.bor((bit.lshift(mx, 8)), 128), wy = bit.bor((bit.lshift(my, 8)), 128),
                      _push_tick = now }
       print2(string.format("DEMINE_PUSH t=%d mine@(%d,%d) cost=%.0f over %s%s shells=%d",
         now, mx, my, cost or -1, state._demine_saved.kind,

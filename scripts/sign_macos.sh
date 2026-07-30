@@ -164,8 +164,26 @@ for APP in "${APPS[@]}"; do
     echo ""
     echo "=== $APP ==="
 
-    echo "  [1/4] codesign (hardened runtime + entitlements + deep)"
-    codesign --force --deep --options runtime --timestamp \
+    echo "  [1/4] codesign (hardened runtime + entitlements, inside-out)"
+    # Sign nested Mach-Os first, then the bundle. NOT --deep: --deep signs
+    # nested code with the outer signature's options but WITHOUT the
+    # entitlements, and the helper executables in Contents/MacOS
+    # (WinBoloHeadless, BrainTest, WinBoloDS) run LuaJIT — without
+    # allow-jit the hardened runtime SIGKILLs them on the first compiled
+    # trace. Dylibs don't need entitlements (they run in the host
+    # executable's context), so they're signed without.
+    MAIN_EXE="$APP/Contents/MacOS/$(defaults read "$(cd "$APP" && pwd)/Contents/Info" CFBundleExecutable)"
+    find "$APP/Contents/MacOS" -type f ! -path "$MAIN_EXE" | while IFS= read -r NESTED; do
+        if [[ "$NESTED" == *.dylib ]]; then
+            codesign --force --options runtime --timestamp \
+                     --sign "$CERT_NAME" "$NESTED"
+        else
+            codesign --force --options runtime --timestamp \
+                     --entitlements "$ENTITLEMENTS" \
+                     --sign "$CERT_NAME" "$NESTED"
+        fi
+    done
+    codesign --force --options runtime --timestamp \
              --entitlements "$ENTITLEMENTS" \
              --sign "$CERT_NAME" \
              "$APP"
