@@ -140,13 +140,13 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
       cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
       if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
-        strcpy(tokenOut, tokenObj->valuestring);
-        strcpy(expiryOut, expiryObj->valuestring);
+        snprintf(tokenOut, 256, "%s", tokenObj->valuestring);
+        snprintf(expiryOut, 256, "%s", expiryObj->valuestring);
         playerNameOut[0] = '\0';
         cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
         if (nameObj && cJSON_IsString(nameObj)) {
@@ -163,7 +163,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       strcpy(errorMsg, "Login failed");
     }
@@ -209,13 +209,13 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
       cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
       if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
-        strcpy(tokenOut, tokenObj->valuestring);
-        strcpy(expiryOut, expiryObj->valuestring);
+        snprintf(tokenOut, 256, "%s", tokenObj->valuestring);
+        snprintf(expiryOut, 256, "%s", expiryObj->valuestring);
         playerNameOut[0] = '\0';
         cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
         if (nameObj && cJSON_IsString(nameObj)) {
@@ -232,7 +232,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       strcpy(errorMsg, "Steam authentication failed");
     }
@@ -288,20 +288,20 @@ bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *usernam
   if (resp && errorCodeOut) {
     cJSON *codeObj = cJSON_GetObjectItem(resp, "code");
     if (codeObj && cJSON_IsString(codeObj)) {
-      strcpy(errorCodeOut, codeObj->valuestring);
+      snprintf(errorCodeOut, 128, "%s", codeObj->valuestring);
     }
   }
 
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
       cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
       if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
-        strcpy(tokenOut, tokenObj->valuestring);
-        strcpy(expiryOut, expiryObj->valuestring);
+        snprintf(tokenOut, 256, "%s", tokenObj->valuestring);
+        snprintf(expiryOut, 256, "%s", expiryObj->valuestring);
         playerNameOut[0] = '\0';
         cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
         if (nameObj && cJSON_IsString(nameObj)) {
@@ -318,7 +318,7 @@ bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *usernam
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       strcpy(errorMsg, "Steam registration failed");
     }
@@ -377,7 +377,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
     } else {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");
       if (errObj && cJSON_IsString(errObj)) {
-        strcpy(errorMsg, errObj->valuestring);
+        snprintf(errorMsg, 512, "%s", errObj->valuestring);
       } else {
         strcpy(errorMsg, "Token is no longer valid");
       }
@@ -385,7 +385,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       strcpy(errorMsg, "Validation failed");
     }
@@ -431,7 +431,7 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       cJSON *keyObj = cJSON_GetObjectItem(resp, "player_key");
       if (keyObj && cJSON_IsString(keyObj)) {
@@ -445,7 +445,7 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net join failed");
     }
@@ -500,7 +500,7 @@ bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serv
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       cJSON *keyObj = cJSON_GetObjectItem(resp, "spectator_key");
       if (keyObj && cJSON_IsString(keyObj)) {
@@ -514,7 +514,7 @@ bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serv
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      snprintf(errorMsg, 512, "%s", errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net spectator join failed");
     }
