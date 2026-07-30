@@ -3085,6 +3085,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
+    # Generated lang-name table: K_LANG_NAME_TABLE_SIZE vs the real array
+    # length, strict bsearch sort order, and name round-trips — pins the
+    # off-by-one that crashed resolveName's bsearch on startup.
+    tests/unit/test_lang_name_table.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
@@ -3606,6 +3610,7 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    lang_name_table
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips

@@ -1845,8 +1845,15 @@ static int langNameCmp(const void *a, const void *b) {
 }
 
 static langid resolveName(const char *name) {
+    /* Derive the element count from the array itself rather than the
+     * generated K_LANG_NAME_TABLE_SIZE macro. When the macro drifted
+     * above the real length (a hand-edit of the generated .inc), bsearch
+     * read one element past the end of the table and faulted in strcmp on
+     * the garbage slot's name pointer. tests/unit/test_lang_name_table.c
+     * pins the macro against the array so the drift can't recur. */
     const LangNameEntry *hit = (const LangNameEntry *)bsearch(
-        name, kLangNameTable, K_LANG_NAME_TABLE_SIZE,
+        name, kLangNameTable,
+        sizeof(kLangNameTable) / sizeof(kLangNameTable[0]),
         sizeof(kLangNameTable[0]), langNameCmp);
     return hit ? hit->id : 0;
 }

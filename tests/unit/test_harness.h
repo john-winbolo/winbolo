@@ -852,6 +852,12 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* Generated lang-name lookup table pin (test_lang_name_table.c): the
+ * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,
+ * the table is strictly sorted for bsearch, and every name round-trips —
+ * guards the off-by-one that walked resolveName()'s bsearch off the end. */
+int run_lang_name_table(void);
+
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
