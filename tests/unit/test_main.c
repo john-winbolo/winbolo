@@ -440,6 +440,9 @@ static const UnitTestEntry s_tests[] = {
     { "addrparse_bad_port",                      run_addrparse_bad_port                      },
     { "addrparse_empty",                         run_addrparse_empty                         },
     { "voice_core_roundtrip",                    run_voice_core_roundtrip                    },
+    { "voice_segment_roundtrip",                 run_voice_segment_roundtrip                 },
+    { "voice_segment_rejects_malformed",         run_voice_segment_rejects_malformed         },
+    { "voice_jitter_ordering_and_plc",           run_voice_jitter_ordering_and_plc           },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

@@ -22,6 +22,11 @@
  *
  *   The Opus types stay inside voice_core.c so no consumer
  *   needs the codec headers on its include path.
+ *
+ *   The receive side of one remote talker - jitter buffer,
+ *   decoder, and loss concealment - is a VoiceSpeaker. It
+ *   knows nothing of the wire framing: the caller hands it
+ *   already-parsed sequence, flags, and payload.
  *********************************************************/
 
 #ifndef VOICE_CORE_H
@@ -57,6 +62,32 @@ void voiceDecoderDestroy(VoiceDecoder *dec);
  * Returns samples decoded, or a negative value on failure. */
 int voiceDecoderDecode(VoiceDecoder *dec, const uint8_t *data, int len,
                        int16_t *pcm);
+
+/* Flags byte carried with each frame. The wire framing in
+ * src/bolo/internal/voice_segment.h defines the same bit; that header is a
+ * sim internal and is not visible to the client frontends, so the value is
+ * stated on both sides of the boundary. tests/unit/test_voice_segment.c
+ * sees both headers and holds the two definitions to the same value. */
+#define VOICE_FLAG_END_OF_UTTERANCE 0x01
+
+#define VOICE_JITTER_SLOTS   8
+#define VOICE_JITTER_TARGET  2   /* frames buffered before playback starts */
+#define VOICE_JITTER_MAX_PLC 5   /* 100 ms of concealment with nothing
+                                  * arriving ends the utterance            */
+
+typedef struct VoiceSpeaker VoiceSpeaker;
+
+VoiceSpeaker *voiceSpeakerCreate(void);
+void voiceSpeakerDestroy(VoiceSpeaker *sp);
+
+/* Queue an arriving frame. Copies the payload. */
+void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
+                      const uint8_t *opus, int opusLen);
+
+/* Produce the next 20 ms. Returns true and fills pcm with
+ * VOICE_FRAME_SAMPLES mono S16 when audio was produced (decoded or
+ * concealed); false when this speaker has nothing to play. */
+bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm);
 
 #ifdef __cplusplus
 }

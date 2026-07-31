@@ -599,6 +599,12 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         }
     }
     {
+        bool tx = voiceTransmitIsEnabled();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_TRANSMIT), &tx)) {
+            voiceTransmitSetEnabled(tx);
+        }
+    }
+    {
         float gain = voiceGetMicGain();
         ImGui::SetNextItemWidth(200.0f);
         if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
@@ -993,8 +999,10 @@ extern "C" void imguiSettingsShow(void) {
         /* This dialog owns the event loop while it is up, so the voice pump
          * the in-game loop normally runs has to happen here too — otherwise
          * the loopback test is silent whenever settings are opened before a
-         * game starts. */
-        voiceTick();
+         * game starts. NULL because this is the pre-game dialog: it has no
+         * client (its own SettingsRenderCtx sets cs to null), so only the
+         * local loopback path runs. */
+        voiceTick(NULL);
 #endif
 
         ImGui_ImplSDLRenderer3_NewFrame();

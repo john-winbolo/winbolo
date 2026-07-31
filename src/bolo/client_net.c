@@ -814,6 +814,20 @@ void clientSimNetSendWbnReauth(ClientSim *cs) {
   threadsReleaseMutex();
 }
 
+/* === Voice === */
+
+void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendVoice(&cs->transport, opus, opusLen);
+}
+
+int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
+                             uint8_t *flags, uint8_t *out, int outCap) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientReceiveVoice(&cs->transport, fromPlayer, seq,
+                                        flags, out, outCap);
+}
+
 /* === Net stats === */
 
 uint16_t clientSimGetNetPing(const ClientSim *cs) {

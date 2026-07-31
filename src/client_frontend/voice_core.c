@@ -147,3 +147,193 @@ int voiceDecoderDecode(VoiceDecoder *dec, const uint8_t *data, int len,
 
     return decoded;
 }
+
+/* One buffered frame.  The payload cap is the encoder's own output ceiling
+ * rather than the wire segment size: the framing header lives in
+ * src/bolo/internal and this file is compiled into the GUI targets, which
+ * do not see it.  The transport rejects anything larger before it gets
+ * here, so this bound is never the one that bites. */
+typedef struct {
+    bool    present;
+    uint8_t seq;
+    uint8_t flags;
+    int     len;
+    uint8_t data[VOICE_MAX_PACKET];
+} VoiceJitterSlot;
+
+struct VoiceSpeaker {
+    VoiceDecoder   *dec;
+    VoiceJitterSlot slots[VOICE_JITTER_SLOTS];
+    bool            primed;         /* playing; nextSeq is meaningful  */
+    uint8_t         nextSeq;        /* sequence number due next        */
+    int             count;          /* frames currently buffered       */
+    int             consecutivePlc; /* concealed frames since the last
+                                     * real one                        */
+};
+
+/* Sequence numbers wrap at 256, so ordering is the signed difference:
+ * true when a comes after b.  Plain > breaks across the wrap. */
+static bool voiceSeqAfter(uint8_t a, uint8_t b) {
+    return (int8_t)(a - b) > 0;
+}
+
+/* Drop everything buffered and stop playing.  The next frames to arrive
+ * re-prime the buffer and set a fresh nextSeq from what they carry. */
+static void voiceSpeakerUnprime(VoiceSpeaker *sp) {
+    int i;
+
+    for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+        sp->slots[i].present = false;
+    }
+    sp->count = 0;
+    sp->primed = false;
+    sp->consecutivePlc = 0;
+}
+
+/* Synthesise a replacement for a frame that is missing or unusable. */
+static void voiceSpeakerConceal(VoiceSpeaker *sp, int16_t *pcm) {
+    if (voiceDecoderDecode(sp->dec, NULL, 0, pcm) != VOICE_FRAME_SAMPLES) {
+        memset(pcm, 0, VOICE_FRAME_SAMPLES * sizeof(int16_t));
+    }
+}
+
+VoiceSpeaker *voiceSpeakerCreate(void) {
+    VoiceSpeaker *sp;
+
+    sp = (VoiceSpeaker *)malloc(sizeof(VoiceSpeaker));
+    if (sp == NULL) {
+        return NULL;
+    }
+    memset(sp, 0, sizeof(VoiceSpeaker));
+
+    sp->dec = voiceDecoderCreate();
+    if (sp->dec == NULL) {
+        voiceSpeakerDestroy(sp);
+        return NULL;
+    }
+
+    return sp;
+}
+
+void voiceSpeakerDestroy(VoiceSpeaker *sp) {
+    if (sp == NULL) {
+        return;
+    }
+    voiceDecoderDestroy(sp->dec);
+    free(sp);
+}
+
+void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
+                      const uint8_t *opus, int opusLen) {
+    int i;
+    int target = -1;
+
+    if (sp == NULL || opus == NULL || opusLen <= 0 ||
+        opusLen > (int)sizeof(sp->slots[0].data)) {
+        return;
+    }
+
+    /* Already played past this one - it arrived too late to be of use. */
+    if (sp->primed && voiceSeqAfter(sp->nextSeq, seq)) {
+        return;
+    }
+
+    for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+        if (sp->slots[i].present) {
+            /* A duplicate replaces the copy already held rather than
+             * occupying a second slot the pop cursor can never reach. */
+            if (sp->slots[i].seq == seq) {
+                target = i;
+                break;
+            }
+        } else if (target < 0) {
+            target = i;
+        }
+    }
+
+    if (target < 0) {
+        /* Full: the oldest frame is the one closest to being played, and
+         * losing it costs one concealed frame. */
+        target = 0;
+        for (i = 1; i < VOICE_JITTER_SLOTS; i++) {
+            if (voiceSeqAfter(sp->slots[target].seq, sp->slots[i].seq)) {
+                target = i;
+            }
+        }
+    } else if (!sp->slots[target].present) {
+        sp->count++;
+    }
+
+    sp->slots[target].present = true;
+    sp->slots[target].seq = seq;
+    sp->slots[target].flags = flags;
+    sp->slots[target].len = opusLen;
+    memcpy(sp->slots[target].data, opus, (size_t)opusLen);
+
+    /* Start playing once enough is banked to ride out ordinary jitter,
+     * beginning at the oldest frame held. */
+    if (!sp->primed && sp->count >= VOICE_JITTER_TARGET) {
+        int lowest = -1;
+        for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+            if (!sp->slots[i].present) {
+                continue;
+            }
+            if (lowest < 0 || voiceSeqAfter(sp->slots[lowest].seq,
+                                            sp->slots[i].seq)) {
+                lowest = i;
+            }
+        }
+        sp->primed = true;
+        sp->nextSeq = sp->slots[lowest].seq;
+        sp->consecutivePlc = 0;
+    }
+}
+
+bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
+    int i;
+    int found = -1;
+    uint8_t flags;
+
+    if (sp == NULL || pcm == NULL || !sp->primed) {
+        return false;
+    }
+
+    for (i = 0; i < VOICE_JITTER_SLOTS; i++) {
+        if (sp->slots[i].present && sp->slots[i].seq == sp->nextSeq) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found < 0) {
+        /* Nothing for this slot in the sequence - conceal it and move on.
+         * A run of these means the talker has gone away, so stop rather
+         * than conceal forever. */
+        voiceSpeakerConceal(sp, pcm);
+        sp->nextSeq++;
+        sp->consecutivePlc++;
+        if (sp->consecutivePlc >= VOICE_JITTER_MAX_PLC) {
+            voiceSpeakerUnprime(sp);
+        }
+        return true;
+    }
+
+    if (voiceDecoderDecode(sp->dec, sp->slots[found].data,
+                           sp->slots[found].len, pcm) != VOICE_FRAME_SAMPLES) {
+        voiceSpeakerConceal(sp, pcm);
+    }
+
+    flags = sp->slots[found].flags;
+    sp->slots[found].present = false;
+    sp->count--;
+    sp->nextSeq++;
+    sp->consecutivePlc = 0;
+
+    /* The talker finished on this frame: drop anything still held so the
+     * next utterance starts cleanly instead of trailing the last one. */
+    if ((flags & VOICE_FLAG_END_OF_UTTERANCE) != 0) {
+        voiceSpeakerUnprime(sp);
+    }
+
+    return true;
+}

@@ -95,6 +95,7 @@ add_library(bolo_static STATIC
     udppackets.c
     util.c
     viewport.c
+    voice_segment.c
     wbn_key_codec.c
 )
 

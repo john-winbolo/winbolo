@@ -895,6 +895,18 @@ int run_addrparse_empty(void);
  * its signal level, and conceals a dropped packet. */
 int run_voice_core_roundtrip(void);
 
+/* Voice segment framing (test_voice_segment.c): fields survive both
+ * directions with the payload left pointing into the caller's buffer, and
+ * every short, oversized, or out-of-range segment is refused. */
+int run_voice_segment_roundtrip(void);
+int run_voice_segment_rejects_malformed(void);
+
+/* Per-speaker jitter buffer (test_voice_jitter.c): frames play in sequence
+ * order however they arrive, gaps are concealed, sequence numbers compare
+ * correctly across the 256 wrap, a talker who stops stops playback, and a
+ * later utterance at an unrelated sequence number resumes it. */
+int run_voice_jitter_ordering_and_plc(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

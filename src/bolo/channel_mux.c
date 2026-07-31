@@ -109,6 +109,16 @@ void channelMuxInit(ChannelMux *m) {
     gameEffect->recvPresent = m->gameEffectRecvPresent;
     gameEffect->recvLen = m->gameEffectRecvLen;
     gameEffect->recvData = &m->gameEffectRecvData[0][0];
+
+    ChannelState *voice = &m->ch[CHANNEL_VOICE];
+    voice->window = CHANNEL_VOICE_WINDOW;
+    voice->segSize = CHANNEL_VOICE_SEG;
+    voice->bestEffort = true;
+    voice->sendLen = m->voiceSendLen;
+    voice->sendData = &m->voiceSendData[0][0];
+    voice->recvPresent = m->voiceRecvPresent;
+    voice->recvLen = m->voiceRecvLen;
+    voice->recvData = &m->voiceRecvData[0][0];
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {

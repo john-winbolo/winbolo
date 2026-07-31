@@ -659,7 +659,7 @@ int main(int argc, char *argv[]) {
 
         /* Voice encode/decode runs here, on the main thread, beside the
          * game tick — the codec state has no lock of its own. */
-        voiceTick();
+        voiceTick(cs);
 
         /* Detect game-over returning to lobby */
         if (cs && clientSimIsInLobby(cs) &&
@@ -726,6 +726,11 @@ int main(int argc, char *argv[]) {
     }
 
     finishedLoop = TRUE;
+
+    /* Release the remote talkers with the game they belong to — player
+     * numbers are handed out afresh next time, so a stale decoder would be
+     * fed someone else's voice. */
+    voiceReset();
 
     /* Kill Timers */
     SDL_RemoveTimer(timerGameID);

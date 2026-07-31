@@ -24,17 +24,22 @@
 *  22.05 kHz effects mixer in sound.c, because 48 kHz mono
 *  is the codec's native format.
 *
-*  Both streams are opened with a NULL callback, so SDL owns
+*  Every stream is opened with a NULL callback, so SDL owns
 *  the cross-thread pull and mix internally and the only two
 *  calls that cross to the audio thread -
 *  SDL_GetAudioStreamData and SDL_PutAudioStreamData - are
 *  themselves thread safe.  Everything here therefore runs on
-*  the main thread with no lock of its own.
+*  the main thread with no lock of its own.  Each remote
+*  talker gets its own playback stream for the same reason:
+*  SDL mixes the bound streams, so nothing here has to.
 *********************************************************/
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
 
+#include "global.h"
+#include "client_net.h"
+#include "client_sim.h"
 #include "voice_core.h"
 #include "../voice.h"
 
@@ -51,8 +56,19 @@ static SDL_AudioStream *playbackStream = NULL;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
 static bool loopbackOn = false;
+static bool transmitOn = false;
 static float micGain = 1.0f;
 static float inputLevel = 0.0f;
+
+/* One remote talker per tank slot, keyed by player number.  Both halves are
+ * opened the first time a frame arrives from that player, so a quiet game
+ * costs nothing. */
+static VoiceSpeaker *speakers[MAX_TANKS];
+static SDL_AudioStream *speakerStreams[MAX_TANKS];
+
+/* An encoder producing frames too large for one voice segment is a
+ * configuration problem, not a per-frame event: say so once. */
+static bool warnedFrameTooLarge = false;
 
 /*********************************************************
 *NAME:          ensureCaptureStream
@@ -95,6 +111,32 @@ static bool ensureCaptureStream(void) {
     }
 
     return true;
+}
+
+/*********************************************************
+*NAME:          stopCaptureIfIdle
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Pauses the microphone once neither the loopback test nor
+*  transmission wants it any more.  The two share one
+*  recording stream, so neither may stop it on its own.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static void stopCaptureIfIdle(void) {
+    if (loopbackOn || transmitOn) {
+        return;
+    }
+    if (captureStream) {
+        SDL_PauseAudioStreamDevice(captureStream);
+        /* Drop what both sides still hold, or re-enabling would open
+         * with a burst of audio recorded before it was switched off. */
+        SDL_ClearAudioStream(captureStream);
+    }
+    inputLevel = 0.0f;
 }
 
 /*********************************************************
@@ -170,6 +212,7 @@ bool voiceInit(void) {
 *  (none)
 *********************************************************/
 void voiceCleanup(void) {
+    voiceReset();
     if (captureStream) {
         SDL_DestroyAudioStream(captureStream);
         captureStream = NULL;
@@ -183,9 +226,38 @@ void voiceCleanup(void) {
     voiceDecoderDestroy(decoder);
     decoder = NULL;
     loopbackOn = false;
+    transmitOn = false;
     micGain = 1.0f;
     inputLevel = 0.0f;
+    warnedFrameTooLarge = false;
     isInitialised = false;
+}
+
+/*********************************************************
+*NAME:          voiceReset
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Forgets every remote talker.  Player numbers are reused
+*  from one game to the next, so the decoders and streams
+*  are released when a connection ends rather than carried
+*  into the next one.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceReset(void) {
+    int i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        voiceSpeakerDestroy(speakers[i]);
+        speakers[i] = NULL;
+        if (speakerStreams[i]) {
+            SDL_DestroyAudioStream(speakerStreams[i]);
+            speakerStreams[i] = NULL;
+        }
+    }
 }
 
 /*********************************************************
@@ -215,15 +287,8 @@ void voiceLoopbackSetEnabled(bool on) {
         SDL_ResumeAudioStreamDevice(captureStream);
     } else {
         loopbackOn = false;
-        if (captureStream) {
-            SDL_PauseAudioStreamDevice(captureStream);
-            /* Drop what both sides still hold, or re-enabling would open
-             * with a burst of audio recorded before the test was switched
-             * off. */
-            SDL_ClearAudioStream(captureStream);
-        }
         SDL_ClearAudioStream(playbackStream);
-        inputLevel = 0.0f;
+        stopCaptureIfIdle();
     }
 }
 
@@ -240,6 +305,52 @@ void voiceLoopbackSetEnabled(bool on) {
 *********************************************************/
 bool voiceLoopbackIsEnabled(void) {
     return loopbackOn;
+}
+
+/*********************************************************
+*NAME:          voiceTransmitSetEnabled
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Starts or stops sending captured audio to the other
+*  players.  Turning it on opens the recording device if
+*  this is the first ask, and stays off if there is no
+*  device to open or the user refuses the microphone.
+*
+*ARGUMENTS:
+*  on - true to start transmitting, false to stop
+*********************************************************/
+void voiceTransmitSetEnabled(bool on) {
+    if (!isInitialised || on == transmitOn) {
+        return;
+    }
+
+    if (on) {
+        if (!ensureCaptureStream()) {
+            return;
+        }
+        transmitOn = true;
+        SDL_ResumeAudioStreamDevice(captureStream);
+    } else {
+        transmitOn = false;
+        stopCaptureIfIdle();
+    }
+}
+
+/*********************************************************
+*NAME:          voiceTransmitIsEnabled
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether captured audio is being transmitted.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceTransmitIsEnabled(void) {
+    return transmitOn;
 }
 
 /*********************************************************
@@ -291,22 +402,116 @@ float voiceGetInputLevel(void) {
 }
 
 /*********************************************************
+*NAME:          ensureSpeaker
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Brings up the decoder and playback stream for one remote
+*  player on the first frame heard from them, and reports
+*  whether that player can be played.
+*
+*ARGUMENTS:
+*  player - the player number the frame came from
+*********************************************************/
+static bool ensureSpeaker(int player) {
+    SDL_AudioSpec spec;
+
+    if (player < 0 || player >= MAX_TANKS) {
+        return false;
+    }
+    if (speakers[player] != NULL && speakerStreams[player] != NULL) {
+        return true;
+    }
+
+    if (speakers[player] == NULL) {
+        speakers[player] = voiceSpeakerCreate();
+        if (speakers[player] == NULL) {
+            return false;
+        }
+    }
+
+    if (speakerStreams[player] == NULL) {
+        SDL_zero(spec);
+        spec.format = SDL_AUDIO_S16;
+        spec.channels = 1;
+        spec.freq = VOICE_SAMPLE_RATE;
+
+        speakerStreams[player] = SDL_OpenAudioDeviceStream(
+            SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+        if (speakerStreams[player] == NULL) {
+            fprintf(stderr, "Voice error: open playback device: %s\n",
+                    SDL_GetError());
+            fflush(stderr);
+            return false;
+        }
+        /* Bound to the device with no callback of our own, so SDL pulls and
+         * mixes this talker against the others on its own thread. */
+        SDL_ResumeAudioStreamDevice(speakerStreams[player]);
+    }
+
+    return true;
+}
+
+/*********************************************************
+*NAME:          voicePlayRemote
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Feeds everything that arrived from other players into
+*  their jitter buffers, then plays one 20 ms frame from
+*  each.  One frame per talker per tick is what holds
+*  playback to the rate the frames were sent at.
+*
+*ARGUMENTS:
+*  cs - the connected client
+*********************************************************/
+static void voicePlayRemote(struct ClientSim *cs) {
+    uint8_t packet[VOICE_MAX_PACKET];
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    uint8_t fromPlayer, seq, flags;
+    int len;
+    int i;
+
+    while ((len = clientSimNetReceiveVoice(cs, &fromPlayer, &seq, &flags,
+                                           packet, (int)sizeof(packet))) > 0) {
+        if (!ensureSpeaker((int)fromPlayer)) {
+            continue;
+        }
+        voiceSpeakerPush(speakers[fromPlayer], seq, flags, packet, len);
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (speakers[i] == NULL || speakerStreams[i] == NULL) {
+            continue;
+        }
+        if (voiceSpeakerPop(speakers[i], pcm)) {
+            SDL_PutAudioStreamData(speakerStreams[i], pcm, VOICE_FRAME_BYTES);
+        }
+    }
+}
+
+/*********************************************************
 *NAME:          voiceTick
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Drains whole captured frames, applies mic gain, and runs
-*  each one through the encoder and decoder back out to the
-*  speakers.  Main thread only.
+*  Drains whole captured frames, applies mic gain, and hands
+*  each encoded frame to the loopback test, the server, or
+*  both.  Then plays whatever the other players sent.  Main
+*  thread only.
 *
 *ARGUMENTS:
-*  (none)
+*  cs - the connected client, or NULL when there is no
+*       network (the loopback test still runs)
 *********************************************************/
-void voiceTick(void) {
+void voiceTick(struct ClientSim *cs) {
     int16_t pcm[VOICE_FRAME_SAMPLES];
     int16_t decodedPcm[VOICE_FRAME_SAMPLES];
     uint8_t packet[VOICE_MAX_PACKET];
+    bool sending;
     int frame;
     int i;
     int got;
@@ -315,9 +520,21 @@ void voiceTick(void) {
     float sample;
     float sumSquares;
 
-    /* Nothing accumulates while the test is off - the recording device is
-     * paused, so there is no backlog to drain here. */
-    if (!isInitialised || !loopbackOn) {
+    if (!isInitialised) {
+        return;
+    }
+
+    if (cs != NULL) {
+        voicePlayRemote(cs);
+    }
+
+    /* A viewer captures for the loopback test like anyone else, but its
+     * voice is not carried to the players, so there is nothing to send. */
+    sending = transmitOn && cs != NULL && !clientSimIsSpectator(cs);
+
+    /* Nothing accumulates while the microphone is unwanted - the recording
+     * device is paused, so there is no backlog to drain here. */
+    if (!loopbackOn && !transmitOn) {
         return;
     }
 
@@ -346,15 +563,37 @@ void voiceTick(void) {
             inputLevel = 1.0f;
         }
 
+        /* One encode feeds both consumers. */
         encodedLen = voiceEncoderEncode(encoder, pcm, packet, (int)sizeof(packet));
         if (encodedLen <= 0) {
             continue;
         }
-        decodedSamples = voiceDecoderDecode(decoder, packet, encodedLen,
-                                            decodedPcm);
-        if (decodedSamples != VOICE_FRAME_SAMPLES) {
-            continue;
+
+        if (sending) {
+            if (encodedLen > CLIENT_VOICE_MAX_FRAME_BYTES) {
+                /* Too big for one segment.  Sending a piece of it would
+                 * decode to noise, so drop the frame. */
+                if (!warnedFrameTooLarge) {
+                    fprintf(stderr,
+                            "Voice error: %d byte frame exceeds the %d byte "
+                            "limit, dropping\n",
+                            encodedLen, CLIENT_VOICE_MAX_FRAME_BYTES);
+                    fflush(stderr);
+                    warnedFrameTooLarge = true;
+                }
+            } else {
+                clientSimNetSendVoice(cs, packet, encodedLen);
+            }
         }
-        SDL_PutAudioStreamData(playbackStream, decodedPcm, VOICE_FRAME_BYTES);
+
+        if (loopbackOn) {
+            decodedSamples = voiceDecoderDecode(decoder, packet, encodedLen,
+                                                decodedPcm);
+            if (decodedSamples != VOICE_FRAME_SAMPLES) {
+                continue;
+            }
+            SDL_PutAudioStreamData(playbackStream, decodedPcm,
+                                   VOICE_FRAME_BYTES);
+        }
     }
 }

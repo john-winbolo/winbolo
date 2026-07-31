@@ -1811,6 +1811,7 @@ static const LangEntry langTable[] = {
     {1922, "Microphone loopback test"},
     {1923, "Mic gain"},
     {1924, "Input level"},
+    {1925, "Transmit voice"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

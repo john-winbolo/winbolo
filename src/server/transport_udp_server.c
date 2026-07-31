@@ -48,6 +48,7 @@
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
 #include "channel_mux.h"
+#include "voice_segment.h"
 #include "bulk_transfer.h"
 #include "spectator_ring.h"
 #include "wbn_key_codec.h"
@@ -6314,11 +6315,111 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     }
 }
 
+/* Most voice frames a client may have accepted from it in one tick: one is
+ * the steady state at the 20 ms wire cadence, and the second absorbs drift
+ * between the capture clock and the server tick. Anything past that is
+ * drained and dropped so a flooding client cannot buy itself extra
+ * bandwidth or leave a backlog behind. */
+#define VOICE_SEGMENTS_PER_TICK 2
+
+/* Carry voice from each client to the clients allowed to hear it. The
+ * payload is opaque: it arrives encoded, is re-framed with the sender's
+ * player number, and goes back out untouched — the server never decodes.
+ *
+ * Runs once per tick from the send path (while running) and from the
+ * timeout sweep (every other state), ahead of the carriers that put the
+ * channel data on the wire, so a frame is forwarded in the tick it landed. */
+static void serverPumpVoice(ServerSim *sim) {
+    bool inGame = (serverSimGetState(sim) == serverStateRunning);
+    int from;
+    int s;
+
+    for (from = 0; from < MAX_TANKS; from++) {
+        uint8_t segBuf[CHANNEL_MAX_SEG];
+        uint16_t segLen;
+        int accepted = 0;
+
+        /* A slot with no live remote client behind it — an empty slot or a
+         * bot — has no voice to forward. */
+        if (!udpServer.clients[from].connected) continue;
+
+        while (channelReceiveBestEffort(&udpServer.channelMux[from],
+                                        CHANNEL_VOICE, segBuf, &segLen)) {
+            uint8_t seq, flags;
+            const uint8_t *opus;
+            int opusLen;
+            uint8_t downBuf[CHANNEL_VOICE_SEG];
+            int downLen;
+            int to;
+
+            if (accepted >= VOICE_SEGMENTS_PER_TICK) continue;
+            /* Not in the game yet: a client still taking the map is not a
+             * talker, and the same rule keeps it off the receiving end. */
+            if (!udpServer.mapDownload[from].downloadComplete) continue;
+            if (!voiceSegmentUnpackUp(segBuf, (int)segLen, &seq, &flags,
+                                      &opus, &opusLen)) continue;
+            accepted++;
+
+            downLen = voiceSegmentPackDown(downBuf, (int)sizeof(downBuf),
+                                           (uint8_t)from, seq, flags,
+                                           opus, opusLen);
+            if (downLen <= 0) continue;
+
+            for (to = 0; to < MAX_TANKS; to++) {
+                if (to == from) continue;
+                if (!udpServer.clients[to].connected) continue;
+                if (!udpServer.mapDownload[to].downloadComplete) continue;
+                /* In game, voice follows the live alliance — so a mid-game
+                 * alliance change takes effect on the next frame. Outside a
+                 * game everyone hears everyone: the lobby is where teams get
+                 * argued out, and scoping voice by team there works against
+                 * the room. */
+                if (inGame &&
+                    !playersIsAllie(&serverSimGetGameSim(sim)->plyrs,
+                                    (BYTE)to, (BYTE)from)) {
+                    continue;
+                }
+                channelSendBestEffort(&udpServer.channelMux[to],
+                                      CHANNEL_VOICE, downBuf,
+                                      (uint16_t)downLen);
+            }
+
+            /* A viewer is allied to nobody, so the alliance rule above would
+             * silence every player for them; they are listeners on the whole
+             * game and get all of it. */
+            for (s = 0; s < MAX_SPECTATORS; s++) {
+                if (!udpServer.spectators[s].connected) continue;
+                channelSendBestEffort(&udpServer.spectators[s].channelMux,
+                                      CHANNEL_VOICE, downBuf,
+                                      (uint16_t)downLen);
+            }
+        }
+    }
+
+    /* A viewer sees the whole map, so anything it says would be coaching.
+     * Its voice is forwarded nowhere; draining it keeps the channel's ring
+     * from filling and stalling behind frames nobody will ever read. */
+    for (s = 0; s < MAX_SPECTATORS; s++) {
+        uint8_t segBuf[CHANNEL_MAX_SEG];
+        uint16_t segLen;
+
+        if (!udpServer.spectators[s].connected) continue;
+        while (channelReceiveBestEffort(&udpServer.spectators[s].channelMux,
+                                        CHANNEL_VOICE, segBuf, &segLen)) {
+            /* discarded */
+        }
+    }
+}
+
 /* Send snapshots and check timeouts */
 void transportUdpServerSend(ServerSim *sim) {
     int i;
 
     if (!udpServer.running) return;
+
+    /* Ahead of the snapshot loop below, so a voice frame received this tick
+     * rides this tick's snapshot trailer rather than waiting for the next. */
+    serverPumpVoice(sim);
 
     /* Broadcast snapshots to connected clients that have finished map download */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -6371,6 +6472,14 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
     int i;
 
     if (!udpServer.running) return;
+
+    /* Outside a running game this is the once-per-tick path, so voice is
+     * carried from here — ahead of the standalone PACKET_CHANNEL frames
+     * built below, which are its only carrier in the lobby. While running,
+     * transportUdpServerSend has already pumped it before the snapshots. */
+    if (serverSimGetState(sim) != serverStateRunning) {
+        serverPumpVoice(sim);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;

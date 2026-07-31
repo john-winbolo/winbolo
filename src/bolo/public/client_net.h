@@ -273,6 +273,30 @@ void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);
 void clientSimNetSendWbnReauth(ClientSim *cs);
 
+/* === Voice ===
+ * Encoded audio frames move as opaque bytes: the caller supplies and
+ * receives whatever the codec produced, and the wire framing stays inside
+ * the transport. Voice does not go through the command queue or the
+ * control-event bus - it is a best-effort payload at the tick rate, and
+ * nothing about it reaches the sim or the event stream. */
+
+/* Largest encoded frame one voice segment can carry. A frame past this is
+ * dropped by the transport rather than split or truncated, so a caller that
+ * wants to notice checks before it sends. Mirrors VOICE_SEG_MAX_OPUS, the
+ * wire-side bound in src/bolo/internal/voice_segment.h, which the client
+ * frontends do not see; transport_udp_client.c sees both and asserts them
+ * equal at compile time, so the two cannot drift apart. */
+#define CLIENT_VOICE_MAX_FRAME_BYTES 125
+
+/* Queue one encoded 20 ms voice frame for the server. No-op for in-process
+ * (local) transports, which never carry voice. */
+void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen);
+
+/* Pop one received voice frame. Returns the payload length written to
+ * out, or 0 when nothing is pending. */
+int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
+                             uint8_t *flags, uint8_t *out, int outCap);
+
 /* === Net stats === */
 uint16_t clientSimGetNetPing(const ClientSim *cs);
 void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,

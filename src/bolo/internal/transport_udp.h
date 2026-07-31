@@ -368,6 +368,21 @@ void udpClientHandleLobbyMapPreviewErr(struct ClientSim *cs,
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
 
+/* ── Voice (CHANNEL_VOICE) ───────────────────────────────────────── */
+
+/* Frame one encoded 20 ms audio frame and queue it on the best-effort
+ * voice channel, stamped with this connection's next voice sequence
+ * number. Dropped silently when the client is not connected or the frame
+ * is too large for one segment. */
+void transportUdpClientSendVoice(Transport *t, const uint8_t *opus,
+                                 int opusLen);
+
+/* Pop the oldest voice frame received from the server, writing its payload
+ * to out. Returns the payload length, or 0 when none is pending. */
+int transportUdpClientReceiveVoice(Transport *t, uint8_t *fromPlayer,
+                                   uint8_t *seq, uint8_t *flags,
+                                   uint8_t *out, int outCap);
+
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);

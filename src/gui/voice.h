@@ -30,6 +30,8 @@
 extern "C" {
 #endif
 
+struct ClientSim;
+
 /*********************************************************
 *NAME:          voiceInit
 *PURPOSE:
@@ -79,6 +81,41 @@ void voiceLoopbackSetEnabled(bool on);
 bool voiceLoopbackIsEnabled(void);
 
 /*********************************************************
+*NAME:          voiceTransmitSetEnabled
+*PURPOSE:
+*  Starts or stops sending captured audio to the other
+*  players. Like the loopback test it opens the microphone
+*  on first use and stays off if there is no device to open.
+*  A viewer captures but never transmits.
+*
+*ARGUMENTS:
+*  on - true to start transmitting, false to stop
+*********************************************************/
+void voiceTransmitSetEnabled(bool on);
+
+/*********************************************************
+*NAME:          voiceTransmitIsEnabled
+*PURPOSE:
+*  Returns whether captured audio is being transmitted.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceTransmitIsEnabled(void);
+
+/*********************************************************
+*NAME:          voiceReset
+*PURPOSE:
+*  Forgets every remote talker, releasing their decoders and
+*  playback streams. Called when a connection ends so the
+*  next one does not inherit them.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceReset(void);
+
+/*********************************************************
 *NAME:          voiceSetMicGain
 *PURPOSE:
 *  Sets the gain applied to captured audio before encoding.
@@ -112,13 +149,16 @@ float voiceGetInputLevel(void);
 /*********************************************************
 *NAME:          voiceTick
 *PURPOSE:
-*  Pumps captured audio through the codec. Called once per
-*  main loop iteration, on the main thread.
+*  Pumps captured audio through the codec and out to the
+*  server, and plays whatever arrived from the other
+*  players. Called once per main loop iteration, on the
+*  main thread.
 *
 *ARGUMENTS:
-*  (none)
+*  cs - the connected client, or NULL when there is no
+*       network yet (the loopback test still runs)
 *********************************************************/
-void voiceTick(void);
+void voiceTick(struct ClientSim *cs);
 
 #ifdef __cplusplus
 }
