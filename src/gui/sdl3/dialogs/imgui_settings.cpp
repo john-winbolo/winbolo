@@ -51,6 +51,9 @@ extern "C" {
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
 #include "imgui_news.h"
+#if defined(WINBOLO_VOICE)
+#include "../../voice.h"
+#endif
 }
 
 /* Frame-rate / zoom constants (mirrors winbolo.h values) */
@@ -585,6 +588,30 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         ImGui::SetNextItemWidth(200.0f);
         if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
     }
+
+#if defined(WINBOLO_VOICE)
+    /* ---- Voice ---- */
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+    {
+        bool on = voiceLoopbackIsEnabled();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK), &on)) {
+            voiceLoopbackSetEnabled(on);
+        }
+    }
+    {
+        float gain = voiceGetMicGain();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
+                               0.0f, 4.0f, "%.2fx")) {
+            voiceSetMicGain(gain);
+        }
+    }
+    {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
+        ImGui::SameLine();
+        ImGui::ProgressBar(voiceGetInputLevel(), ImVec2(200.0f, 0.0f));
+    }
+#endif
 }
 
 /* -------------------------------------------------------
@@ -961,6 +988,14 @@ extern "C" void imguiSettingsShow(void) {
         } else if (hasBg && bg->paused) {
             lastTickTime = SDL_GetTicks();
         }
+
+#if defined(WINBOLO_VOICE)
+        /* This dialog owns the event loop while it is up, so the voice pump
+         * the in-game loop normally runs has to happen here too — otherwise
+         * the loopback test is silent whenever settings are opened before a
+         * game starts. */
+        voiceTick();
+#endif
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();

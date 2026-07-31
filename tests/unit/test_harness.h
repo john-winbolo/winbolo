@@ -889,6 +889,12 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* Voice codec round-trip (test_voice_core.c): a continuous tone encoded and
+ * decoded frame by frame stays inside the per-frame byte budget (the
+ * constrained-VBR guarantee), decodes a full 20 ms frame every time, keeps
+ * its signal level, and conceals a dropped packet. */
+int run_voice_core_roundtrip(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

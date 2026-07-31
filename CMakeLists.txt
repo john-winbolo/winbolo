@@ -157,6 +157,14 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG        v1.5.2
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 # curl is only built from source on Windows (uses Schannel for SSL).
 # On Linux/macOS, the system libcurl is used via find_package().
 if(WIN32)
@@ -425,6 +433,17 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_compile_options(cjson PRIVATE -Wno-error)
     endif()
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE2}" CACHE BOOL "" FORCE)
+
+    # libopus — voice codec, forced static
+    set(BUILD_SHARED_LIBS_SAVE3 "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(opus)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
 
     # minizip library from zlib's contrib/minizip
     add_library(minizip STATIC
@@ -1274,6 +1293,8 @@ set(CLIENT_SOURCES
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/client_frontend/voice_core.c
+    src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1459,6 +1480,12 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static CURL::libcurl
     nanosvg stb_image utf8proc cjson)
+
+# Voice capture/playback (src/gui/sdl3/voice.c + src/client_frontend/voice_core.c).
+# WINBOLO_VOICE gates the settings-dialog controls, which also compile into
+# targets that do not build the voice sources.
+target_link_libraries(WinBolo PRIVATE Opus::opus)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
@@ -3217,7 +3244,9 @@ endif()
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     src/bolo/lobby_bot_pools_json.c
-    tests/unit/test_bot_name_pools.c)
+    tests/unit/test_bot_name_pools.c
+    src/client_frontend/voice_core.c
+    tests/unit/test_voice_core.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -3270,7 +3299,9 @@ target_link_libraries(WinBoloUnitTests PRIVATE
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
     # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
     # so the include dir doesn't propagate transitively).
-    mdns)
+    mdns
+    # voice_core.c is compiled into this target for the codec round-trip test.
+    Opus::opus)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -3641,6 +3672,7 @@ set(_unit_test_names
     await_join_connected_immediate
     await_join_lobby_latch
     await_join_timeout_and_error
+    voice_core_roundtrip
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

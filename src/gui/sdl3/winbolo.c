@@ -70,6 +70,7 @@
 #include "build_cursor.h"
 #include "../lang.h"
 #include "../sound.h"
+#include "../voice.h"
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
@@ -429,6 +430,14 @@ int main(int argc, char *argv[]) {
    * no-ops on the NULL handle and the bg game's "lock" is fictional. */
   threadsCreate(FALSE);
 
+  /* Voice runs for the life of the process. It comes up before
+   * gameFrontStart because the pre-game dialogs the first start shows are
+   * blocking loops that already expect it to exist; it brings up the audio
+   * subsystem itself rather than relying on soundSetup's. A device that
+   * will not open is not fatal — voiceInit leaves the module disabled and
+   * every entry point no-ops. */
+  voiceInit();
+
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
@@ -648,6 +657,10 @@ int main(int argc, char *argv[]) {
           windowRunGameTick(cs);
         }
 
+        /* Voice encode/decode runs here, on the main thread, beside the
+         * game tick — the codec state has no lock of its own. */
+        voiceTick();
+
         /* Detect game-over returning to lobby */
         if (cs && clientSimIsInLobby(cs) &&
             (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
@@ -755,6 +768,7 @@ int main(int argc, char *argv[]) {
    * too), so leaving it live races bgGameDestroy's frees and can crash the
    * audio thread mid-conversion. */
   soundCleanup();
+  voiceCleanup();
   /* Tear down the process-lifetime welcome-screen bg before the renderer
    * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
    * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying

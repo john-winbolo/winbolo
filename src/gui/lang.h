@@ -1541,6 +1541,12 @@
 #define STR_DLGSETTINGS_HOSTING_LOGDIR          1919
 #define STR_DLGSETTINGS_HOSTING_APPLYNOTE       1920
 
+/* Voice section of the Display/Sound settings tab */
+#define STR_DLGSETTINGS_VOICE                   1921
+#define STR_DLGSETTINGS_VOICE_LOOPBACK          1922
+#define STR_DLGSETTINGS_VOICE_MICGAIN           1923
+#define STR_DLGSETTINGS_VOICE_LEVEL             1924
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

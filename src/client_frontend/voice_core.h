@@ -1,0 +1,65 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ * Name:          Voice Core
+ * Filename:      voice_core.h
+ * Purpose:
+ *   Platform-neutral voice codec wrappers. Compiled into
+ *   each client frontend target; the platform capture and
+ *   playback backends (src/gui/sdl3/voice.c) drive it.
+ *
+ *   The Opus types stay inside voice_core.c so no consumer
+ *   needs the codec headers on its include path.
+ *********************************************************/
+
+#ifndef VOICE_CORE_H
+#define VOICE_CORE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define VOICE_SAMPLE_RATE     48000
+#define VOICE_FRAME_SAMPLES     960   /* 20 ms mono @ 48 kHz */
+#define VOICE_MAX_PACKET        400   /* encoder output ceiling */
+#define VOICE_DEFAULT_BITRATE 24000
+#define VOICE_DEFAULT_COMPLEXITY  5
+
+typedef struct VoiceEncoder VoiceEncoder;
+typedef struct VoiceDecoder VoiceDecoder;
+
+VoiceEncoder *voiceEncoderCreate(int bitrate, int complexity);
+void voiceEncoderDestroy(VoiceEncoder *enc);
+/* pcm holds VOICE_FRAME_SAMPLES mono S16 samples.
+ * Returns bytes written to out, or a negative value on failure. */
+int voiceEncoderEncode(VoiceEncoder *enc, const int16_t *pcm,
+                       uint8_t *out, int outCap);
+
+VoiceDecoder *voiceDecoderCreate(void);
+void voiceDecoderDestroy(VoiceDecoder *dec);
+/* data == NULL or len == 0 runs packet-loss concealment.
+ * Writes VOICE_FRAME_SAMPLES mono S16 samples to pcm.
+ * Returns samples decoded, or a negative value on failure. */
+int voiceDecoderDecode(VoiceDecoder *dec, const uint8_t *data, int len,
+                       int16_t *pcm);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* VOICE_CORE_H */
