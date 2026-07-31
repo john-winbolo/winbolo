@@ -425,6 +425,15 @@ void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (targetPlayer >= MAX_TANKS) return;
+  ClientCommand cmd = { .type = CMD_PLAYER_MUTE };
+  cmd.u.playerMute.targetPlayer = targetPlayer;
+  cmd.u.playerMute.muted        = muted ? 1 : 0;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */

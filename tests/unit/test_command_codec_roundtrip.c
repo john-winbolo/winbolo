@@ -389,6 +389,72 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.cmdSeq == 31);
     UT_ASSERT(out.u.lobbyTransferHost.slot == 5);
 
+    /* CMD_PLAYER_MUTE — targetPlayer + muted flag */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_PLAYER_MUTE;
+    in.cmdSeq = 32;
+    in.u.playerMute.targetPlayer = 9;
+    in.u.playerMute.muted        = 1;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_PLAYER_MUTE");
+    UT_ASSERT(out.type == CMD_PLAYER_MUTE);
+    UT_ASSERT(out.cmdSeq == 32);
+    UT_ASSERT(out.u.playerMute.targetPlayer == 9);
+    UT_ASSERT(out.u.playerMute.muted        == 1);
+
+    /* The unmute direction round-trips too. */
+    in.cmdSeq = 33;
+    in.u.playerMute.muted = 0;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_PLAYER_MUTE unmute");
+    UT_ASSERT(out.type == CMD_PLAYER_MUTE);
+    UT_ASSERT(out.cmdSeq == 33);
+    UT_ASSERT(out.u.playerMute.targetPlayer == 9);
+    UT_ASSERT(out.u.playerMute.muted        == 0);
+
+    /* CMD_PLAYER_MUTE decoder rejections — the bytes come off the wire, so
+     * a short body and an out-of-range slot must both be refused. */
+    {
+        const size_t bodyOff = PACKET_HEADER_SIZE + 4;
+        uint8_t wire[COMMAND_MAX_WIRE_BYTES];
+        size_t wireLen = 0;
+        ClientCommand sink;
+
+        memset(&in, 0, sizeof(in));
+        in.type = CMD_PLAYER_MUTE;
+        in.cmdSeq = 34;
+        in.u.playerMute.targetPlayer = 2;
+        in.u.playerMute.muted        = 1;
+        UT_ASSERT(commandCodecEncode(&in, wire, sizeof(wire), &wireLen) == true);
+        UT_ASSERT(wireLen == bodyOff + 2);
+
+        /* One byte short of the two-byte body. */
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT(commandCodecDecode(wire, bodyOff + 1, &sink) == false);
+
+        /* targetPlayer at and past MAX_TANKS. */
+        {
+            uint8_t bad[COMMAND_MAX_WIRE_BYTES];
+            memcpy(bad, wire, wireLen);
+            bad[bodyOff] = (uint8_t)MAX_TANKS;
+            memset(&sink, 0, sizeof(sink));
+            UT_ASSERT(commandCodecDecode(bad, wireLen, &sink) == false);
+            bad[bodyOff] = 0xFF;
+            memset(&sink, 0, sizeof(sink));
+            UT_ASSERT(commandCodecDecode(bad, wireLen, &sink) == false);
+        }
+
+        /* Any non-zero muted byte normalises to 1. */
+        {
+            uint8_t odd[COMMAND_MAX_WIRE_BYTES];
+            memcpy(odd, wire, wireLen);
+            odd[bodyOff + 1] = 0x7F;
+            memset(&sink, 0, sizeof(sink));
+            UT_ASSERT(commandCodecDecode(odd, wireLen, &sink) == true);
+            UT_ASSERT(sink.u.playerMute.muted == 1);
+        }
+    }
+
     return 0;
 }
 

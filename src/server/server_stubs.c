@@ -77,6 +77,14 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
 void transportUdpServerKickPlayer(struct ServerSim *sim, const char *name) {
   (void)sim; (void)name;
 }
+/* server_command_dispatch.c's CMD_PLAYER_MUTE arm records the mute in
+ * the UDP server's per-client table. The non-server binaries have no
+ * such table — and no remote voice or chat to gate — so the stub is a
+ * no-op. */
+void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
+                                    bool muted) {
+  (void)clientSlot; (void)targetPlayer; (void)muted;
+}
 /* server_command_dispatch.c calls these for WBN matchmaking (balance,
  * ranked-gated) and re-authentication (WBN-gated). The non-server
  * binaries never run the server command dispatcher, so these are never

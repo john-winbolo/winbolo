@@ -117,6 +117,9 @@ uint32_t    clientSimGetViewTick(const ClientSim *cs);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
+/* Mute or unmute one player for this client: the server stops forwarding
+ * that player's voice and chat. Session-scoped. */
+void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted);
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName);
 void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer);
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer);

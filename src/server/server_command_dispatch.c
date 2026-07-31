@@ -32,7 +32,8 @@
 #include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
                                          transportUdpServerSetBotName,
-                                         transportUdpServerKickPlayer */
+                                         transportUdpServerKickPlayer,
+                                         transportUdpServerSetVoiceMute */
 #include "../winbolonet/winbolonet_server.h" /* winboloNetIsPlayerParticipant */
 #include "../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning */
 
@@ -261,6 +262,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                             p->destPlayer, 0, 0, 0, pstr);
             }
         }
+        return CMD_OK;
+    }
+    case CMD_PLAYER_MUTE: {
+        const CmdPlayerMute *p = &cmd->u.playerMute;
+        if (p->targetPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        /* Muting yourself is meaningless — you never receive your own
+         * voice or chat. */
+        if ((int)p->targetPlayer == senderSlot) return CMD_REJECT_INVALID;
+        transportUdpServerSetVoiceMute((BYTE)senderSlot, p->targetPlayer,
+                                       p->muted != 0);
+        /* No control event: the mute is private to the muting client.
+         * Broadcasting it would tell the muted player they were muted. */
         return CMD_OK;
     }
     case CMD_ALLIANCE_REQUEST: {

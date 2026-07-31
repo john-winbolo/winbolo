@@ -70,7 +70,8 @@ typedef enum {
     CMD_BALANCE_APPLY,
     CMD_BALANCE_DISMISS,
     CMD_WBN_REAUTH,
-    CMD_LOBBY_CLAIM_START
+    CMD_LOBBY_CLAIM_START,
+    CMD_PLAYER_MUTE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -324,6 +325,15 @@ typedef struct {
     char token[65];
 } CmdWbnReauth;
 
+/* CMD_PLAYER_MUTE — mute or unmute one player for the sending client
+ * only. The server stops forwarding that player's voice and chat to the
+ * sender. Session-scoped: nothing is persisted, and the mask is cleared
+ * when the sender's slot is released. */
+typedef struct {
+    uint8_t targetPlayer;
+    uint8_t muted;        /* 0 = unmute, non-zero = mute */
+} CmdPlayerMute;
+
 /* ClientCommand — variant tag + payload that travels client→server.
  *
  * cmdSeq: per-command sequence number assigned by the client; used
@@ -363,6 +373,7 @@ typedef struct ClientCommand {
         CmdBalanceDismiss      balanceDismiss;
         CmdWbnReauth           wbnReauth;
         CmdLobbyClaimStart     lobbyClaimStart;
+        CmdPlayerMute          playerMute;
     } u;
 } ClientCommand;
 

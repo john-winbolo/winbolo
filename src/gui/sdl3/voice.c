@@ -66,6 +66,11 @@ static float inputLevel = 0.0f;
 static VoiceSpeaker *speakers[MAX_TANKS];
 static SDL_AudioStream *speakerStreams[MAX_TANKS];
 
+/* Players this client will not listen to.  The server is what actually
+ * stops the frames; this drops whatever is already on its way, and holds
+ * while the server is being told. */
+static bool mutedPlayers[MAX_TANKS];
+
 /* An encoder producing frames too large for one voice segment is a
  * configuration problem, not a per-frame event: say so once. */
 static bool warnedFrameTooLarge = false;
@@ -234,6 +239,29 @@ void voiceCleanup(void) {
 }
 
 /*********************************************************
+*NAME:          releaseSpeaker
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Drops one remote talker's decoder and playback stream.
+*  Anything they had buffered goes with it, so playback
+*  stops where it is rather than running to the end of what
+*  had already arrived.
+*
+*ARGUMENTS:
+*  player - the player number to release
+*********************************************************/
+static void releaseSpeaker(int player) {
+    voiceSpeakerDestroy(speakers[player]);
+    speakers[player] = NULL;
+    if (speakerStreams[player]) {
+        SDL_DestroyAudioStream(speakerStreams[player]);
+        speakerStreams[player] = NULL;
+    }
+}
+
+/*********************************************************
 *NAME:          voiceReset
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -251,12 +279,8 @@ void voiceReset(void) {
     int i;
 
     for (i = 0; i < MAX_TANKS; i++) {
-        voiceSpeakerDestroy(speakers[i]);
-        speakers[i] = NULL;
-        if (speakerStreams[i]) {
-            SDL_DestroyAudioStream(speakerStreams[i]);
-            speakerStreams[i] = NULL;
-        }
+        releaseSpeaker(i);
+        mutedPlayers[i] = false;
     }
 }
 
@@ -454,6 +478,50 @@ static bool ensureSpeaker(int player) {
 }
 
 /*********************************************************
+*NAME:          voiceSetPlayerMuted
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Stops or resumes playing one player's voice here.  The
+*  server is what stops the frames being sent at all; this
+*  covers the round trip while it is being told, and drops
+*  what that player already has buffered so a muted talker
+*  does not finish the sentence they were half way through.
+*
+*ARGUMENTS:
+*  player - the player number to mute
+*  muted  - true to mute, false to unmute
+*********************************************************/
+void voiceSetPlayerMuted(int player, bool muted) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return;
+    }
+    mutedPlayers[player] = muted;
+    if (muted) {
+        releaseSpeaker(player);
+    }
+}
+
+/*********************************************************
+*NAME:          voiceIsPlayerMuted
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether one player is muted here.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*********************************************************/
+bool voiceIsPlayerMuted(int player) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return false;
+    }
+    return mutedPlayers[player];
+}
+
+/*********************************************************
 *NAME:          voicePlayRemote
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -476,6 +544,11 @@ static void voicePlayRemote(struct ClientSim *cs) {
 
     while ((len = clientSimNetReceiveVoice(cs, &fromPlayer, &seq, &flags,
                                            packet, (int)sizeof(packet))) > 0) {
+        /* A frame from a muted player is dropped rather than buffered, so
+         * nothing of theirs is waiting to be played if they are unmuted. */
+        if (voiceIsPlayerMuted((int)fromPlayer)) {
+            continue;
+        }
         if (!ensureSpeaker((int)fromPlayer)) {
             continue;
         }

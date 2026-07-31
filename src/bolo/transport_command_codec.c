@@ -864,6 +864,31 @@ static bool commandDecodeWbnReauth(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_PLAYER_MUTE — PACKET_PLAYER_MUTE
+ * Wire: [header 8] [targetPlayer 1] [muted 1] */
+static bool commandEncodePlayerMute(const ClientCommand *cmd,
+                                    uint8_t *buf, size_t bufCap,
+                                    size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_PLAYER_MUTE, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.playerMute.targetPlayer;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.playerMute.muted ? 1 : 0;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodePlayerMute(const uint8_t *buf, size_t len,
+                                    ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    uint8_t targetPlayer = buf[CMD_PACKET_BODY_OFFSET];
+    if (targetPlayer >= MAX_TANKS) return false;
+    cmd->type = CMD_PLAYER_MUTE;
+    cmd->u.playerMute.targetPlayer = targetPlayer;
+    cmd->u.playerMute.muted = buf[CMD_PACKET_BODY_OFFSET + 1] ? 1 : 0;
+    return true;
+}
+
 /* ================================================================
  * Public API — switch dispatch keyed off cmd->type for encode and
  * buf[2] (packet type) for decode. Mirrors transport_control_codec.c
@@ -906,6 +931,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_BALANCE_APPLY:         ok = commandEncodeBalanceApply(cmd, buf, bufCap, outLen); break;
         case CMD_BALANCE_DISMISS:       ok = commandEncodeBalanceDismiss(cmd, buf, bufCap, outLen); break;
         case CMD_WBN_REAUTH:            ok = commandEncodeWbnReauth(cmd, buf, bufCap, outLen); break;
+        case CMD_PLAYER_MUTE:           ok = commandEncodePlayerMute(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
         default:                        return false;
     }
@@ -951,6 +977,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_BALANCE_APPLY:         return commandDecodeBalanceApply(buf, len, cmd);
         case PACKET_BALANCE_DISMISS:       return commandDecodeBalanceDismiss(buf, len, cmd);
         case PACKET_WBN_REAUTH:            return commandDecodeWbnReauth(buf, len, cmd);
+        case PACKET_PLAYER_MUTE:           return commandDecodePlayerMute(buf, len, cmd);
         default:                           return false;
     }
 }

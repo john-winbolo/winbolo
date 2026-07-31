@@ -80,6 +80,7 @@ int run_lobby_claim_start_non_host_occupied_rejected(void);
 int run_lobby_claim_start_non_host_other_slot_rejected(void);
 int run_lobby_claim_start_self_free_and_release(void);
 int run_lobby_claim_start_validation(void);
+int run_player_mute_mask_roundtrip(void);
 int run_command_codec_cmdseq_slot(void);
 int run_command_codec_bounds_checks(void);
 int run_command_rejected_parks_name_codes(void);

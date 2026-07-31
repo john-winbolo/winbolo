@@ -116,6 +116,31 @@ bool voiceTransmitIsEnabled(void);
 void voiceReset(void);
 
 /*********************************************************
+*NAME:          voiceSetPlayerMuted
+*PURPOSE:
+*  Stops or resumes playing one player's voice locally.
+*  The server is the authority — this covers the round trip
+*  while it is being told. Muting releases that player's
+*  decoder and playback stream, so whatever was already
+*  buffered stops rather than finishing.
+*
+*ARGUMENTS:
+*  player - the player number to mute
+*  muted  - true to mute, false to unmute
+*********************************************************/
+void voiceSetPlayerMuted(int player, bool muted);
+
+/*********************************************************
+*NAME:          voiceIsPlayerMuted
+*PURPOSE:
+*  Returns whether one player is muted locally.
+*
+*ARGUMENTS:
+*  player - the player number to ask about
+*********************************************************/
+bool voiceIsPlayerMuted(int player);
+
+/*********************************************************
 *NAME:          voiceSetMicGain
 *PURPOSE:
 *  Sets the gain applied to captured audio before encoding.

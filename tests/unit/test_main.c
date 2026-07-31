@@ -65,6 +65,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_claim_start_self_free_and_release",
                                          run_lobby_claim_start_self_free_and_release },
     { "lobby_claim_start_validation",    run_lobby_claim_start_validation },
+    { "player_mute_mask_roundtrip",      run_player_mute_mask_roundtrip      },
     { "command_codec_cmdseq_slot",       run_command_codec_cmdseq_slot       },
     { "command_codec_bounds_checks",     run_command_codec_bounds_checks     },
     { "command_rejected_parks_name_codes",        run_command_rejected_parks_name_codes        },

@@ -1117,6 +1117,17 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                 return;
             }
         }
+        /* Per-recipient mute, applied after the destination rules so it can
+         * only ever remove a line this client would otherwise have seen.
+         * Guarded on a real player slot: server-source messages arrive with
+         * fromPlayer 0xFF (localized) or 0xFE (raw English) and must stay
+         * unsilenceable — no player may suppress a server announcement. */
+        if (from < MAX_TANKS &&
+            (client->voiceMuteMask & ((PlayerBitMap)1u << from)) != 0) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=CHAT reason=muted from=%d",
+                      idx, (int)from);
+            return;
+        }
     }
     if (evt->type == CTRL_SERVER_TEXT && evt->u.serverText.destTeam != 0) {
         /* Team-scoped server text (e.g. a private surrender-vote notice):
@@ -3730,6 +3741,9 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].claimPending = false;
     udpServer.clients[idx].claimDesiredName[0] = '\0';
     udpServer.clients[idx].inboundCmdSeq = 0;
+    /* Slots are recycled: without this a new occupant would inherit the
+     * previous player's mutes. */
+    udpServer.clients[idx].voiceMuteMask = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
     /* Drop any owed PLAYER_JOIN — the player left before it resolved, so
@@ -4826,6 +4840,30 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) {
         return NULL;
     }
     return udpServer.clients[playerNum].playerName;
+}
+
+void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
+                                    bool muted) {
+    if (clientSlot >= MAX_TANKS || targetPlayer >= MAX_TANKS) {
+        return;
+    }
+    if (!udpServer.clients[clientSlot].connected) {
+        return;
+    }
+    if (muted) {
+        udpServer.clients[clientSlot].voiceMuteMask |=
+            (PlayerBitMap)1u << targetPlayer;
+    } else {
+        udpServer.clients[clientSlot].voiceMuteMask &=
+            ~((PlayerBitMap)1u << targetPlayer);
+    }
+}
+
+PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot) {
+    if (clientSlot >= MAX_TANKS || !udpServer.clients[clientSlot].connected) {
+        return 0;
+    }
+    return udpServer.clients[clientSlot].voiceMuteMask;
 }
 
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) {
@@ -6369,6 +6407,12 @@ static void serverPumpVoice(ServerSim *sim) {
                 if (to == from) continue;
                 if (!udpServer.clients[to].connected) continue;
                 if (!udpServer.mapDownload[to].downloadComplete) continue;
+                /* This recipient has muted the talker. The same bit gates
+                 * their chat, so one toggle covers both. */
+                if ((udpServer.clients[to].voiceMuteMask &
+                     ((PlayerBitMap)1u << from)) != 0) {
+                    continue;
+                }
                 /* In game, voice follows the live alliance — so a mid-game
                  * alliance change takes effect on the next frame. Outside a
                  * game everyone hears everyone: the lobby is where teams get
