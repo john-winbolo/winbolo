@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Microphone with a slash: mic.svg's capsule, cradle and stand plus a
+     diagonal bar, all in one path with fill-rule="evenodd". The bar is
+     solid where it crosses empty canvas and cuts a gap where it crosses
+     the microphone, which is how a slash reads on a single-colour
+     silhouette - two colours are not available to draw it over the top. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z
+                               M5 10v1a7 7 0 0 0 14 0v-1h-2v1a5 5 0 0 1-10 0v-1H5z
+                               M11 18h2v2h3v2H8v-2h3v-2z
+                               M3.87 1.33L22.67 20.13L20.13 22.67L1.33 3.87z"/>
+</svg>

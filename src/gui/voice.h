@@ -26,6 +26,8 @@
 
 #include <stdbool.h>
 
+#include "platform_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -199,6 +201,26 @@ void voiceSetPlayerMuted(int player, bool muted);
 *  player - the player number to ask about
 *********************************************************/
 bool voiceIsPlayerMuted(int player);
+
+/*********************************************************
+*NAME:          voiceGetTalkingMap
+*PURPOSE:
+*  Returns the players whose voice has been heard here in
+*  the last moment, bit N set for player N.
+*
+*  Derived locally from frames arriving rather than read off
+*  a wire flag: it is free, it always agrees with what can
+*  actually be heard, and it says nothing about players
+*  whose voice does not reach this client. A player muted
+*  locally is never in it.
+*
+*  Decays against a real clock, so it is correct however
+*  often - or seldom - it is asked.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+PlayerBitMap voiceGetTalkingMap(void);
 
 /*********************************************************
 *NAME:          voiceSetMicGain

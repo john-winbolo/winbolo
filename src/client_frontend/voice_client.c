@@ -72,6 +72,12 @@
  * ends. */
 #define VOICE_OPEN_MIC_HANGOVER_FRAMES 15
 
+/* How long after a talker's last frame they still count as talking.  Frames
+ * arrive every 20 ms with gaps between words and gaps from the network, so
+ * without this the indicator would strobe at 50 Hz; 250 ms smooths those gaps
+ * over while still dropping within a quarter second of someone stopping. */
+#define VOICE_TALKING_HANGOVER_MS 250
+
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
@@ -103,6 +109,14 @@ static VoiceSpeaker *speakers[MAX_TANKS];
  * stops the frames; this drops whatever is already on its way, and holds
  * while the server is being told. */
 static bool mutedPlayers[MAX_TANKS];
+
+/* When each remote talker stops counting as talking, on the backend's
+ * monotonic clock, and whether they have ever been stamped at all.  The
+ * separate flag is what makes a never-heard player unambiguous: every
+ * uint32_t is a reachable clock value, so no stamp could stand in for "not
+ * talking" without eventually reading as a live one. */
+static uint32_t talkingUntilMs[MAX_TANKS];
+static bool talkingStamped[MAX_TANKS];
 
 /* An encoder producing frames too large for one voice segment is a
  * configuration problem, not a per-frame event: say so once. */
@@ -294,6 +308,8 @@ void voiceReset(void) {
     for (i = 0; i < MAX_TANKS; i++) {
         releaseSpeaker(i);
         mutedPlayers[i] = false;
+        talkingUntilMs[i] = 0;
+        talkingStamped[i] = false;
     }
     /* Forget what the last server was told, so the next connection is sent
      * this client's mic status rather than inheriting a match against a
@@ -390,9 +406,13 @@ void voiceSetEnabled(bool on) {
     stopCaptureIfIdle();
 
     /* Drop every remote talker along with what they had buffered, so the
-     * ones mid-sentence stop where they are rather than finishing. */
+     * ones mid-sentence stop where they are rather than finishing.  The
+     * talking stamps go with them: nothing of theirs is audible any more,
+     * so nothing of theirs may still be shown as talking. */
     for (i = 0; i < MAX_TANKS; i++) {
         releaseSpeaker(i);
+        talkingUntilMs[i] = 0;
+        talkingStamped[i] = false;
     }
 }
 
@@ -675,6 +695,11 @@ void voiceSetPlayerMuted(int player, bool muted) {
     mutedPlayers[player] = muted;
     if (muted) {
         releaseSpeaker(player);
+        /* Their last frames stop being played the moment they are muted, so
+         * the indicator has to stop with them rather than run out whatever
+         * was left of the hangover. */
+        talkingUntilMs[player] = 0;
+        talkingStamped[player] = false;
     }
 }
 
@@ -694,6 +719,48 @@ bool voiceIsPlayerMuted(int player) {
         return false;
     }
     return mutedPlayers[player];
+}
+
+/*********************************************************
+*NAME:          voiceGetTalkingMap
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the players heard from in the last
+*  VOICE_TALKING_HANGOVER_MS, bit N set for player N.
+*
+*  Evaluated against the clock on each call rather than
+*  counted down by one, so it decays properly however often
+*  it is asked - a caller that goes away for a second and
+*  comes back sees a talker who stopped meanwhile as
+*  stopped, not as still going.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+PlayerBitMap voiceGetTalkingMap(void) {
+    PlayerBitMap talking = 0;
+    uint32_t now;
+    int i;
+
+    now = voiceBackendNowMs();
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!talkingStamped[i]) {
+            continue;
+        }
+        /* Signed difference: the clock wraps every 49 days or so, and now <
+         * until would read a wrapped stamp as one far in the future. */
+        if ((int32_t)(now - talkingUntilMs[i]) >= 0) {
+            /* Expired.  Dropped here rather than left to sit, so a stamp
+             * cannot come back round as live a wrap later. */
+            talkingStamped[i] = false;
+            continue;
+        }
+        talking |= (PlayerBitMap)1u << i;
+    }
+
+    return talking;
 }
 
 /*********************************************************
@@ -741,6 +808,11 @@ static void voicePlayRemote(struct ClientSim *cs) {
             continue;
         }
         voiceSpeakerPush(speakers[fromPlayer], seq, flags, packet, len);
+        /* Stamped here, below the mute check, so a muted player's dropped
+         * frames never light them up as talking. */
+        talkingUntilMs[fromPlayer] =
+            voiceBackendNowMs() + VOICE_TALKING_HANGOVER_MS;
+        talkingStamped[fromPlayer] = true;
     }
 
     for (i = 0; i < MAX_TANKS; i++) {

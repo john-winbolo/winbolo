@@ -364,3 +364,21 @@ void voiceBackendLoopbackClear(void) {
         SDL_ClearAudioStream(playbackStream);
     }
 }
+
+/*********************************************************
+*NAME:          voiceBackendNowMs
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Monotonic milliseconds, from SDL's tick source - the
+*  milliseconds since SDL was brought up, which only ever
+*  moves forwards.  Truncated to 32 bits, so callers compare
+*  with a signed difference.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+uint32_t voiceBackendNowMs(void) {
+    return (uint32_t)SDL_GetTicks();
+}

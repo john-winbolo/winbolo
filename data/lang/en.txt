@@ -1488,6 +1488,16 @@ STR_DLGSETTINGS_VOICE_VOLUME=Voice volume
 # Key setup — push to talk binding
 STR_DLGKEYSETUP_PUSHTOTALK=Push to talk
 
+# Players panel — microphone state icon
+STR_PLAYER_TIP_VOICE_TALKING=Talking — click to mute
+STR_PLAYER_TIP_VOICE_IDLE=Has a microphone — click to mute
+STR_PLAYER_TIP_VOICE_SELFMUTED=Their microphone is off — click to mute
+STR_PLAYER_TIP_VOICE_NOMIC=No microphone — click to mute
+STR_PLAYER_TIP_VOICE_MUTEDBYYOU=Muted by you — click to unmute
+STR_PLAYER_TIP_VOICE_SELF=Your microphone
+STR_PLAYER_TIP_VOICE_SELF_NOMIC=You have no microphone
+STR_PLAYER_TIP_VOICE_SELF_MUTED=Your microphone is off
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

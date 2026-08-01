@@ -197,6 +197,26 @@ void voiceBackendLoopbackPlay(const int16_t *pcm);
 *********************************************************/
 void voiceBackendLoopbackClear(void);
 
+/*********************************************************
+*NAME:          voiceBackendNowMs
+*PURPOSE:
+*  Monotonic milliseconds since some fixed point in this
+*  process. Only the difference between two calls means
+*  anything - the origin does not. Never steps backwards, so
+*  it is not the wall clock.
+*
+*  The runtime clocks anything that has to track real time
+*  off this rather than off how often it is called: nothing
+*  guarantees voiceTick runs at the wire cadence.
+*
+*  Wraps roughly every 49 days; compare with a signed
+*  difference rather than <.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+uint32_t voiceBackendNowMs(void);
+
 #ifdef __cplusplus
 }
 #endif

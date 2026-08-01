@@ -1824,6 +1824,16 @@ static const LangEntry langTable[] = {
 
     /* Key setup — push to talk binding */
     {1935, "Push to talk"},
+
+    /* Players panel — microphone state icon */
+    {1936, "Talking — click to mute"},
+    {1937, "Has a microphone — click to mute"},
+    {1938, "Their microphone is off — click to mute"},
+    {1939, "No microphone — click to mute"},
+    {1940, "Muted by you — click to unmute"},
+    {1941, "Your microphone"},
+    {1942, "You have no microphone"},
+    {1943, "Your microphone is off"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

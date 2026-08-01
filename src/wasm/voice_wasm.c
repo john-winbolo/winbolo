@@ -628,3 +628,26 @@ void voiceBackendLoopbackPlay(const int16_t *pcm) {
 void voiceBackendLoopbackClear(void) {
     wb_voice_loopback_clear();
 }
+
+/*********************************************************
+*NAME:          voiceBackendNowMs
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Monotonic milliseconds, from emscripten_get_now, which is
+*  performance.now() - milliseconds since the page loaded,
+*  monotonic by specification.  Date.now() is deliberately
+*  not used: it is the time of day and steps backwards when
+*  the machine's clock is corrected.
+*
+*  Taken through uint64_t so the truncation to 32 bits is a
+*  defined wrap rather than an out-of-range conversion from
+*  double.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+uint32_t voiceBackendNowMs(void) {
+    return (uint32_t)(uint64_t)emscripten_get_now();
+}

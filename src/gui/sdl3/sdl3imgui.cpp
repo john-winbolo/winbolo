@@ -59,6 +59,9 @@ extern "C" {
 #include "../gamefront.h"
 #include "../lang.h"
 #include "../sound.h"  /* soundPlayEffect — lobby game-start jingle (wasm seam) */
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"  /* voiceGetTalkingMap / voiceIsPlayerMuted — mic icons */
+#endif
 }
 
 /* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
@@ -311,6 +314,23 @@ static SDL_Texture *s_iconBrain = nullptr;
  * same SVG at a height that covers the realistic zoom range so the
  * label-side blit is a (sharp) downscale rather than an upscale. */
 static SDL_Texture *s_iconBrainLg = nullptr;
+#if defined(WINBOLO_VOICE)
+/* Microphone state icons for the players panel. Three assets cover four
+ * states — "talking" and "idle" are the same microphone under different
+ * tints, because the difference between them is momentary and a shape
+ * change would read as flicker. */
+static SDL_Texture *s_iconMic      = nullptr;
+static SDL_Texture *s_iconMicMuted = nullptr;
+static SDL_Texture *s_iconMicOff   = nullptr;
+/* Mic icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
+ * further down the file because the players panel is rendered above them.
+ * Talking is the only one that has to catch the eye mid-game; the rest sit
+ * back so a panel full of idle microphones is not a wall of colour. */
+static const ImVec4 MIC_TINT_NORMAL  = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
+static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
+static const ImVec4 MIC_TINT_DIM     = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
+#endif
 static bool s_wbnIconsLoaded = false;
 #define WBN_ICON_SIZE 14
 #define WBN_ICON_TANK_LABEL_SIZE 48
@@ -323,6 +343,11 @@ static void ensureWbnIconsLoaded(void) {
     s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
     s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
                                           WBN_ICON_TANK_LABEL_SIZE);
+#if defined(WINBOLO_VOICE)
+    s_iconMic      = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",       WBN_ICON_SIZE);
+    s_iconMicMuted = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg", WBN_ICON_SIZE);
+    s_iconMicOff   = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",   WBN_ICON_SIZE);
+#endif
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconSteam,
             (void *)s_iconBrain, (void *)s_iconBrainLg,
@@ -1424,6 +1449,14 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
+#if defined(WINBOLO_VOICE)
+    /* Who is producing voice right now. Derived locally from frames
+     * arriving, so it only ever names players this client can actually
+     * hear; read once for the whole panel rather than per row. */
+    PlayerBitMap talkingMap = voiceGetTalkingMap();
+    ensureWbnIconsLoaded();
+#endif
+
     /* Collect enabled player indices */
     int enabledPlayers[MAX_PLAYERS];
     int enabledCount = 0;
@@ -1475,6 +1508,15 @@ static void renderPlayersPanel(ClientSim *cs) {
         float fullWidth = ImGui::GetContentRegionAvail().x;
         float pingWidth = ImGui::CalcTextSize(pingStr).x;
         float spacing = ImGui::GetStyle().ItemSpacing.x;
+#if defined(WINBOLO_VOICE)
+        /* Width the mic icon takes out of the row, icon plus its trailing
+         * spacing, so the name Selectable gives it room the same way it
+         * already does for the checkbox. */
+        float micWidth = (float)WBN_ICON_SIZE;
+        float micColumn = micWidth + spacing;
+#else
+        const float micColumn = 0.0f;
+#endif
 
         /* Checkbox + selectable name */
         if (i != self) {
@@ -1487,11 +1529,96 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::SameLine();
         }
 
+#if defined(WINBOLO_VOICE)
+        /* Microphone state, between the checkbox and the name. Resolved in
+         * precedence order: muting someone is this client's own doing, so it
+         * outranks whatever their microphone is doing — you have to be able
+         * to see that you muted them, and to undo it, whatever their state. */
+        {
+            bool mutedByMe = voiceIsPlayerMuted(i);
+            bool hasMic    = (s_playerFlags[i] & PLAYER_FLAG_HAS_MIC) != 0;
+            bool selfMuted = (s_playerFlags[i] & PLAYER_FLAG_VOICE_MUTED) != 0;
+            bool talking   = (talkingMap & ((PlayerBitMap)1u << i)) != 0;
+            bool isSelf    = (i == self);
+
+            SDL_Texture *micTex;
+            ImVec4       micTint;
+            langid       micTip;
+            if (mutedByMe) {
+                micTex  = s_iconMicMuted;
+                micTint = MIC_TINT_MUTED;
+                micTip  = STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
+            } else if (!hasMic) {
+                micTex  = s_iconMicOff;
+                micTint = MIC_TINT_DIM;
+                micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_NOMIC
+                                 : STR_PLAYER_TIP_VOICE_NOMIC;
+            } else if (talking) {
+                micTex  = s_iconMic;
+                micTint = MIC_TINT_TALKING;
+                micTip  = STR_PLAYER_TIP_VOICE_TALKING;
+            } else if (selfMuted) {
+                /* They have muted their own microphone. Folded into the idle
+                 * icon as a dimmer tint and its own tooltip rather than a
+                 * fourth asset — it is their doing, not ours, and it does not
+                 * warrant a shape of its own. */
+                micTex  = s_iconMic;
+                micTint = MIC_TINT_DIM;
+                micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
+                                 : STR_PLAYER_TIP_VOICE_SELFMUTED;
+            } else {
+                micTex  = s_iconMic;
+                micTint = MIC_TINT_NORMAL;
+                micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
+                                 : STR_PLAYER_TIP_VOICE_IDLE;
+            }
+
+            if (!micTex) {
+                /* An SVG that would not load must still hold the column, or
+                 * the name and ping shift between rows. */
+                ImGui::Dummy(ImVec2(micWidth, micWidth));
+            } else if (isSelf) {
+                /* Never clickable on your own row: self-mute is not a thing
+                 * here and the server rejects it. */
+                ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(micWidth, micWidth),
+                                   ImVec2(0, 0), ImVec2(1, 1),
+                                   ImVec4(0, 0, 0, 0), micTint);
+                imguiHelpTooltip(langGetText(micTip));
+            } else {
+                char micLabel[64];
+                snprintf(micLabel, sizeof(micLabel), "##mic%d", i);
+                /* Zero FramePadding so the button is exactly the icon: the
+                 * default padding would make this cell taller than the
+                 * Selectable beside it and leave a dead strip in the row. */
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.15f));
+                bool micClicked = ImGui::ImageButton(micLabel, (ImTextureID)micTex,
+                                                     ImVec2(micWidth, micWidth),
+                                                     ImVec2(0, 0), ImVec2(1, 1),
+                                                     ImVec4(0, 0, 0, 0), micTint);
+                ImGui::PopStyleColor(3);
+                ImGui::PopStyleVar();
+                imguiHelpTooltip(langGetText(micTip));
+                imguiHandOnHover();
+                if (micClicked) {
+                    /* Both legs, always: the local one covers the round trip
+                     * while the server is being told, and the server is the
+                     * authority — it also stops that player's chat. */
+                    voiceSetPlayerMuted(i, !voiceIsPlayerMuted(i));
+                    clientSimNetSendPlayerMute(cs, (BYTE)i, voiceIsPlayerMuted(i));
+                }
+            }
+            ImGui::SameLine();
+        }
+#endif
+
         char selectLabel[64];
         snprintf(selectLabel, sizeof(selectLabel), "%s##psel%d", label, i);
         if (ImGui::Selectable(selectLabel, s_playerChecked[i],
                               ImGuiSelectableFlags_DontClosePopups,
-                              ImVec2(fullWidth - pingWidth - spacing -
+                              ImVec2(fullWidth - pingWidth - spacing - micColumn -
                                      (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
             if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
@@ -5147,6 +5274,11 @@ void sdl3ImguiCleanup(void) {
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
     if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }
+#if defined(WINBOLO_VOICE)
+    if (s_iconMic) { SDL_DestroyTexture(s_iconMic); s_iconMic = nullptr; }
+    if (s_iconMicMuted) { SDL_DestroyTexture(s_iconMicMuted); s_iconMicMuted = nullptr; }
+    if (s_iconMicOff) { SDL_DestroyTexture(s_iconMicOff); s_iconMicOff = nullptr; }
+#endif
     s_wbnIconsLoaded = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
         /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a

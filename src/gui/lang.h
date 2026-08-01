@@ -1560,6 +1560,16 @@
 /* Key setup — push to talk binding */
 #define STR_DLGKEYSETUP_PUSHTOTALK              1935
 
+/* Players panel — microphone state icon */
+#define STR_PLAYER_TIP_VOICE_TALKING            1936
+#define STR_PLAYER_TIP_VOICE_IDLE               1937
+#define STR_PLAYER_TIP_VOICE_SELFMUTED          1938
+#define STR_PLAYER_TIP_VOICE_NOMIC              1939
+#define STR_PLAYER_TIP_VOICE_MUTEDBYYOU         1940
+#define STR_PLAYER_TIP_VOICE_SELF               1941
+#define STR_PLAYER_TIP_VOICE_SELF_NOMIC         1942
+#define STR_PLAYER_TIP_VOICE_SELF_MUTED         1943
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
