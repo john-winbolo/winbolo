@@ -32,6 +32,16 @@ extern "C" {
 
 struct ClientSim;
 
+/* How captured audio reaches the other players.
+ *  OFF  - never transmits; the microphone runs only for the loopback test.
+ *  PTT  - transmits while the push-to-talk key is held. The default.
+ *  OPEN - transmits while the captured level is above the gate. */
+typedef enum {
+    VOICE_MODE_OFF = 0,
+    VOICE_MODE_PTT = 1,
+    VOICE_MODE_OPEN = 2
+} VoiceMode;
+
 /*********************************************************
 *NAME:          voiceInit
 *PURPOSE:
@@ -81,27 +91,77 @@ void voiceLoopbackSetEnabled(bool on);
 bool voiceLoopbackIsEnabled(void);
 
 /*********************************************************
-*NAME:          voiceTransmitSetEnabled
+*NAME:          voiceSetEnabled
 *PURPOSE:
-*  Starts or stops sending captured audio to the other
-*  players. Like the loopback test it opens the microphone
-*  on first use and stays off if there is no device to open.
-*  A viewer captures but never transmits.
+*  The master switch. With it off nothing is captured, sent
+*  or played, whatever the mode and the loopback test say.
+*  Switching off pauses the microphone but does not close it,
+*  so switching back on does not ask for it a second time.
 *
 *ARGUMENTS:
-*  on - true to start transmitting, false to stop
+*  on - true to allow voice, false to shut it all off
 *********************************************************/
-void voiceTransmitSetEnabled(bool on);
+void voiceSetEnabled(bool on);
 
 /*********************************************************
-*NAME:          voiceTransmitIsEnabled
+*NAME:          voiceIsEnabled
 *PURPOSE:
-*  Returns whether captured audio is being transmitted.
+*  Returns whether the master switch is on.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
-bool voiceTransmitIsEnabled(void);
+bool voiceIsEnabled(void);
+
+/*********************************************************
+*NAME:          voiceSetMode
+*PURPOSE:
+*  Chooses how captured audio reaches the other players.
+*  Opens the microphone if a transmitting mode is chosen and
+*  this is the first ask, and pauses it once no mode and no
+*  loopback test wants it. A mode change never leaves the
+*  microphone latched open.
+*
+*ARGUMENTS:
+*  mode - one of the VoiceMode values
+*********************************************************/
+void voiceSetMode(VoiceMode mode);
+
+/*********************************************************
+*NAME:          voiceGetMode
+*PURPOSE:
+*  Returns how captured audio reaches the other players.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+VoiceMode voiceGetMode(void);
+
+/*********************************************************
+*NAME:          voiceSetPushToTalkHeld
+*PURPOSE:
+*  Tells the runtime whether the push-to-talk key is held
+*  right now. Called once per input poll by the input layer,
+*  which is also what decides that a key held while a dialog
+*  has the keyboard does not count.
+*
+*ARGUMENTS:
+*  held - true while the key is down
+*********************************************************/
+void voiceSetPushToTalkHeld(bool held);
+
+/*********************************************************
+*NAME:          voiceIsTransmitting
+*PURPOSE:
+*  Returns whether captured audio is going out right now -
+*  the master switch, the mode, the push-to-talk key, the
+*  open-mic gate and whether this connection carries our
+*  voice at all, all folded in.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceIsTransmitting(void);
 
 /*********************************************************
 *NAME:          voiceReset
@@ -159,6 +219,27 @@ void voiceSetMicGain(float gain);
 *  (none)
 *********************************************************/
 float voiceGetMicGain(void);
+
+/*********************************************************
+*NAME:          voiceSetOutputVolume
+*PURPOSE:
+*  Sets the gain applied to decoded remote audio before it
+*  is played. Clamped at zero; 1.0f is unity.
+*
+*ARGUMENTS:
+*  gain - 1.0f is unity
+*********************************************************/
+void voiceSetOutputVolume(float gain);
+
+/*********************************************************
+*NAME:          voiceGetOutputVolume
+*PURPOSE:
+*  Returns the gain applied to decoded remote audio.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetOutputVolume(void);
 
 /*********************************************************
 *NAME:          voiceGetInputLevel

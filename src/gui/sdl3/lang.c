@@ -1812,6 +1812,18 @@ static const LangEntry langTable[] = {
     {1923, "Mic gain"},
     {1924, "Input level"},
     {1925, "Transmit voice"},
+    {1926, "Enable voice"},
+    {1927, "Mode"},
+    {1928, "Off"},
+    {1929, "Push to talk"},
+    {1930, "Open mic"},
+    {1931, "Push-to-talk key"},
+    {1932, "Transmitting"},
+    {1933, "Not transmitting"},
+    {1934, "Voice volume"},
+
+    /* Key setup — push to talk binding */
+    {1935, "Push to talk"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

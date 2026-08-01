@@ -105,6 +105,30 @@ bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 #include "dialogs/imgui_onboarding.h"
 #include "dialogs/imgui_lobby.h"
 
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"
+
+/* Voice settings live in the voice module; these apply them with the same
+   clamping the settings dialog uses, and read them back for the save.
+   Declared here rather than in winbolo.h so the voice build option does not
+   leak into the shared frontend header — the mobile targets compile this
+   file with no voice sources at all. */
+void  windowSetVoiceEnabled(bool on);
+bool  windowGetVoiceEnabled(void);
+void  windowSetVoiceMode(int mode);
+int   windowGetVoiceMode(void);
+void  windowSetVoiceMicGain(float gain);
+float windowGetVoiceMicGain(void);
+void  windowSetVoiceVolume(float gain);
+float windowGetVoiceVolume(void);
+
+/* Mode is stored as a name, not a number, so a hand-edited prefs file reads
+   as something. An unrecognised name falls back to the default. */
+#define VOICE_MODE_NAME_OFF  "Off"
+#define VOICE_MODE_NAME_PTT  "Push To Talk"
+#define VOICE_MODE_NAME_OPEN "Open Mic"
+#endif
+
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
 #endif
@@ -2824,6 +2848,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
+  /* Push to talk — unbound by default (scancode 0 / SDL_SCANCODE_UNKNOWN).
+     Guessing a key here would take one away from a player who never turns
+     voice on. */
+  prefsGetString("KEYS", "Push To Talk", "0", buff, FILENAME_MAX);
+  keys->kiPushToTalk = atoi(buff);
+
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
   prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
   {
@@ -3090,6 +3120,35 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
   labelTank = atoi(buff);
 
+#if defined(WINBOLO_VOICE)
+  /* Voice.  Applied straight onto the running voice module, which is already
+     up by the time this runs — winbolo.c brings it up before gameFrontStart. */
+  prefsGetString("VOICE", "Enabled", "Yes", buff, FILENAME_MAX);
+  windowSetVoiceEnabled(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("VOICE", "Mode", VOICE_MODE_NAME_PTT, buff, FILENAME_MAX);
+  if (strcmp(buff, VOICE_MODE_NAME_OFF) == 0) {
+    windowSetVoiceMode(VOICE_MODE_OFF);
+  } else if (strcmp(buff, VOICE_MODE_NAME_OPEN) == 0) {
+    windowSetVoiceMode(VOICE_MODE_OPEN);
+  } else {
+    windowSetVoiceMode(VOICE_MODE_PTT);
+  }
+  /* Clamp on read to the ranges the sliders offer, so a hand-edited file
+     cannot leave the microphone dead or the other players deafening. */
+  prefsGetString("VOICE", "Mic Gain", "1.0", buff, FILENAME_MAX);
+  {
+    float mg = (float)atof(buff);
+    if (!(mg >= 0.0f && mg <= 4.0f)) mg = 1.0f;
+    windowSetVoiceMicGain(mg);
+  }
+  prefsGetString("VOICE", "Voice Volume", "1.0", buff, FILENAME_MAX);
+  {
+    float vv = (float)atof(buff);
+    if (!(vv >= 0.0f && vv <= 2.0f)) vv = 1.0f;
+    windowSetVoiceVolume(vv);
+  }
+#endif
+
   /* Winbolo.net */
   prefsGetString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX);
   prefsGetString("WINBOLO.NET", "TokenExpiry", "", gameFrontWbnTokenExpiry, FILENAME_MAX);
@@ -3206,6 +3265,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
   prefsSetString("KEYS", "Quick Mine", buff);
 
+  /* Push to talk — 0 is unbound, and round-trips as such. */
+  intToStr(keys->kiPushToTalk, buff, sizeof(buff));
+  prefsSetString("KEYS", "Push To Talk", buff);
+
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
   prefsSetString("SETTINGS", "Gamepad Scroll Sens", buff);
@@ -3309,6 +3372,23 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Message Label Size", buff);
   intToStr(labelTank, buff, sizeof(buff));
   prefsSetString("MENU", "Tank Label Size", buff);
+
+#if defined(WINBOLO_VOICE)
+  /* Voice — read back out of the running voice module, which is what holds
+     these while the game is up. */
+  prefsSetString("VOICE", "Enabled", TRUEFALSE_TO_STR(windowGetVoiceEnabled()));
+  {
+    int vm = windowGetVoiceMode();
+    prefsSetString("VOICE", "Mode",
+                   vm == VOICE_MODE_OFF    ? VOICE_MODE_NAME_OFF
+                   : vm == VOICE_MODE_OPEN ? VOICE_MODE_NAME_OPEN
+                                           : VOICE_MODE_NAME_PTT);
+  }
+  snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceMicGain());
+  prefsSetString("VOICE", "Mic Gain", buff);
+  snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceVolume());
+  prefsSetString("VOICE", "Voice Volume", buff);
+#endif
 
   /* Winbolo.net */
   prefsSetString("WINBOLO.NET", "Token", gameFrontWbnToken);

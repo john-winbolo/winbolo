@@ -106,6 +106,13 @@ extern "C" {
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
+#if defined(WINBOLO_VOICE)
+  /* Voice apply/persist helpers — winbolo.c, beside windowSetSoundVolume. */
+  void windowSetVoiceEnabled(bool on);
+  void windowSetVoiceMode(int mode);
+  void windowSetVoiceMicGain(float gain);
+  void windowSetVoiceVolume(float gain);
+#endif
   void windowMenuNewswire_toggle(struct ClientSim *cs);
   void windowMenuAssistant_toggle(struct ClientSim *cs);
   void windowMenuAI_toggle(struct ClientSim *cs);
@@ -592,6 +599,70 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
 #if defined(WINBOLO_VOICE)
     /* ---- Voice ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_VOICE));
+    /* Read the master switch once: the checkbox below writes it, and
+       BeginDisabled / EndDisabled have to be told the same answer. */
+    bool voiceOn = voiceIsEnabled();
+    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ENABLE), &voiceOn)) {
+        windowSetVoiceEnabled(voiceOn);
+    }
+    if (!voiceOn) ImGui::BeginDisabled();
+    {
+        const char *voiceModeLabels[] = {
+            langGetText(STR_DLGSETTINGS_VOICE_MODE_OFF),
+            langGetText(STR_DLGSETTINGS_VOICE_MODE_PTT),
+            langGetText(STR_DLGSETTINGS_VOICE_MODE_OPEN),
+        };
+        int curModeIdx = (int)voiceGetMode();
+        if (curModeIdx < 0 || curModeIdx > 2) curModeIdx = 0;
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_MODE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::BeginCombo("##voicemode", voiceModeLabels[curModeIdx])) {
+            for (int i = 0; i < 3; i++) {
+                if (ImGui::Selectable(voiceModeLabels[i], curModeIdx == i)) {
+                    windowSetVoiceMode(i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    /* The binding itself is set in Key Setup; showing it here is so the
+       player can see which key push to talk is on without leaving. */
+    if (voiceGetMode() == VOICE_MODE_PTT) {
+        keyItems pttKeys;
+        windowGetKeys(&pttKeys);
+        const char *pttName =
+            SDL_GetScancodeName((SDL_Scancode)pttKeys.kiPushToTalk);
+        if (!pttName || pttName[0] == '\0') {
+            pttName = langGetText(STR_DLGKEYSETUP_NONE_VAL);
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_PTTKEY));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(pttName);
+    }
+    {
+        float gain = voiceGetMicGain();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
+                               0.0f, 4.0f, "%.2fx")) {
+            windowSetVoiceMicGain(gain);
+        }
+    }
+    {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
+        ImGui::SameLine();
+        ImGui::ProgressBar(voiceGetInputLevel(), ImVec2(200.0f, 0.0f));
+        ImGui::SameLine();
+        /* Spelt out both ways rather than a colour that only means something
+           to players who can tell the two greens apart. */
+        if (voiceIsTransmitting()) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                               langGetText(STR_DLGSETTINGS_VOICE_TRANSMITTING));
+        } else {
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGSETTINGS_VOICE_NOTTRANSMITTING));
+        }
+    }
     {
         bool on = voiceLoopbackIsEnabled();
         if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK), &on)) {
@@ -599,24 +670,14 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         }
     }
     {
-        bool tx = voiceTransmitIsEnabled();
-        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_TRANSMIT), &tx)) {
-            voiceTransmitSetEnabled(tx);
-        }
-    }
-    {
-        float gain = voiceGetMicGain();
+        float vol = voiceGetOutputVolume();
         ImGui::SetNextItemWidth(200.0f);
-        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_MICGAIN), &gain,
-                               0.0f, 4.0f, "%.2fx")) {
-            voiceSetMicGain(gain);
+        if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_VOLUME), &vol,
+                               0.0f, 2.0f, "%.2fx")) {
+            windowSetVoiceVolume(vol);
         }
     }
-    {
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_VOICE_LEVEL));
-        ImGui::SameLine();
-        ImGui::ProgressBar(voiceGetInputLevel(), ImVec2(200.0f, 0.0f));
-    }
+    if (!voiceOn) ImGui::EndDisabled();
 #endif
 }
 

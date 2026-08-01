@@ -1530,6 +1530,52 @@ void windowSetSoundVolume(int pct) {
   soundSetVolume(pct);
 }
 
+/* -------------------------------------------------------
+ * Voice settings — apply a value to the running voice module
+ * and clamp it to the range the UI offers, in one place, so
+ * the settings dialog and the prefs loader agree.  The voice
+ * module itself holds the value; gameFrontPutPrefs reads it
+ * back out through the getters below at save time.
+ * ------------------------------------------------------- */
+void windowSetVoiceEnabled(bool on) {
+  voiceSetEnabled(on);
+}
+
+bool windowGetVoiceEnabled(void) {
+  return voiceIsEnabled();
+}
+
+void windowSetVoiceMode(int mode) {
+  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
+    mode = VOICE_MODE_PTT;
+  }
+  voiceSetMode((VoiceMode)mode);
+}
+
+int windowGetVoiceMode(void) {
+  return (int)voiceGetMode();
+}
+
+void windowSetVoiceMicGain(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 4.0f) gain = 4.0f;
+  voiceSetMicGain(gain);
+}
+
+float windowGetVoiceMicGain(void) {
+  return voiceGetMicGain();
+}
+
+void windowSetVoiceVolume(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 2.0f) gain = 2.0f;
+  voiceSetOutputVolume(gain);
+}
+
+float windowGetVoiceVolume(void) {
+  return voiceGetOutputVolume();
+}
+
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);

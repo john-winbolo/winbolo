@@ -40,6 +40,9 @@
 #include "sdl3draw.h"
 #include "../ui_mode.h"
 #include "../clientmutex.h"
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"
+#endif
 
 extern bool smoothScrollingEnabled;
 
@@ -116,6 +119,34 @@ static bool keyDown(int sc) {
 }
 
 #define KEY_DOWN(sc) keyDown(sc)
+
+/*********************************************************
+*NAME:          pushToTalkPoll
+*PURPOSE:
+*  Tells the voice runtime whether the push-to-talk key is
+*  held, once per poll of the keyboard.  Both key-reading
+*  entry points call it — inputGetKeys while the player is
+*  driving, inputScroll while a brain is — and both call it
+*  on their early returns too, so a key still down when a
+*  dialog takes the keyboard or the window loses focus
+*  cannot latch the microphone open.
+*
+*  An unbound key is scancode 0, which keyDown never reports
+*  as held, so an unbound push-to-talk simply never
+*  transmits.
+*
+*ARGUMENTS:
+*  setKeys - Structure that holds the key settings
+*  active  - FALSE when this poll is not reading input
+*********************************************************/
+static void pushToTalkPoll(keyItems *setKeys, bool active) {
+#if defined(WINBOLO_VOICE)
+  voiceSetPushToTalkHeld(active && KEY_DOWN(setKeys->kiPushToTalk));
+#else
+  (void)setKeys;
+  (void)active;
+#endif
+}
 
 /*********************************************************
 *NAME:          inputSetup
@@ -456,8 +487,10 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   buildSelect curSelect;
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    pushToTalkPoll(setKeys, FALSE);
     return TNONE;
   }
+  pushToTalkPoll(setKeys, TRUE);
 
   tb = TNONE;
 
@@ -743,8 +776,12 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 *********************************************************/
 void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    pushToTalkPoll(setKeys, FALSE);
     return;
   }
+  /* This is the key-reading path while a brain drives the tank; without it
+     push to talk would stop working the moment the player handed over. */
+  pushToTalkPoll(setKeys, TRUE);
 
   /* Pill view consumes the scroll keys (and the pill-view toggle key) to
    * step between pills; map scrolling is suppressed while it is active. */

@@ -57,6 +57,7 @@ typedef struct {
   int kiQuickWall;
   int kiQuickPillbox;
   int kiQuickMine;
+  int kiPushToTalk;  /* Hold to transmit voice */
 } keyItems;
 
 

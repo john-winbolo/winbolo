@@ -59,13 +59,40 @@
  * arbitrarily deep backlog in one go. */
 #define VOICE_PLAYBACK_MAX_POPS_PER_CALL 4
 
+/* Open mic: the 0..1 frame RMS, measured after mic gain, at which the gate
+ * counts what it hears as speech.  0.02 is around -34 dBFS - clear of room
+ * tone, a fan or a keyboard on a typical desktop microphone, and well under
+ * where someone talking at it sits. */
+#define VOICE_OPEN_MIC_RMS_THRESHOLD 0.02f
+
+/* Open mic: how many captured frames the gate stays open for after the level
+ * falls back under the threshold.  Frames are 20 ms, so 15 is 300 ms - long
+ * enough to carry the quiet tail of a word and the gap between two of them,
+ * short enough that the microphone does not stay live after a sentence
+ * ends. */
+#define VOICE_OPEN_MIC_HANGOVER_FRAMES 15
+
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
 static bool loopbackOn = false;
-static bool transmitOn = false;
+static bool voiceEnabled = true;
+static VoiceMode voiceMode = VOICE_MODE_PTT;
+static bool pushToTalkHeld = false;
 static float micGain = 1.0f;
+static float outputVolume = 1.0f;
 static float inputLevel = 0.0f;
+
+/* Open-mic gate state.  gateOpen is what voiceIsTransmitting reports; the
+ * hangover counts the frames it is held open for after the level drops. */
+static bool gateOpen = false;
+static int gateHangover = 0;
+
+/* Whether the connection we are on carries this client's voice at all - it
+ * has to exist, and a viewer's voice is not passed to the players.  Refreshed
+ * every tick, because voiceIsTransmitting is asked by the settings dialog,
+ * which has no client of its own to ask. */
+static bool connectionCarriesVoice = false;
 
 /* One remote talker per tank slot, keyed by player number.  Both the decoder
  * and the backend's playback are brought up the first time a frame arrives
@@ -89,26 +116,74 @@ static bool reportedHasMic = false;
 static bool reportedSelfMuted = false;
 
 /*********************************************************
+*NAME:          captureIsWanted
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether anything still wants the microphone: the
+*  loopback test, or a mode that can put audio on the wire.
+*  The master switch overrides both.
+*
+*  A mode that can transmit holds the recording device open
+*  even between words, so the level meter keeps reading and
+*  the first syllable after a push-to-talk press is not lost
+*  to the device starting up.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static bool captureIsWanted(void) {
+    if (!voiceEnabled) {
+        return false;
+    }
+    return loopbackOn || voiceMode != VOICE_MODE_OFF;
+}
+
+/*********************************************************
 *NAME:          stopCaptureIfIdle
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Pauses the microphone once neither the loopback test nor
-*  transmission wants it any more.  The two share one
-*  recording stream, so neither may stop it on its own.
+*  a transmitting mode wants it any more.  They share one
+*  recording stream, so none of them may stop it on its own.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 static void stopCaptureIfIdle(void) {
-    if (loopbackOn || transmitOn) {
+    if (captureIsWanted()) {
         return;
     }
     /* Drops what both sides still hold, or re-enabling would open with a
      * burst of audio recorded before it was switched off. */
     voiceBackendCaptureStop();
     inputLevel = 0.0f;
+    gateOpen = false;
+    gateHangover = 0;
+}
+
+/*********************************************************
+*NAME:          startCaptureIfWanted
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Opens the recording device if something now wants it.
+*  The backend call is idempotent and only prompts for the
+*  microphone the first time, so this is safe to call on
+*  every state change.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static void startCaptureIfWanted(void) {
+    if (!isInitialised || !captureIsWanted()) {
+        return;
+    }
+    voiceBackendCaptureStart();
 }
 
 /*********************************************************
@@ -167,8 +242,13 @@ void voiceCleanup(void) {
     voiceDecoderDestroy(decoder);
     decoder = NULL;
     loopbackOn = false;
-    transmitOn = false;
+    voiceEnabled = true;
+    voiceMode = VOICE_MODE_PTT;
+    pushToTalkHeld = false;
+    gateOpen = false;
+    gateHangover = 0;
     micGain = 1.0f;
+    outputVolume = 1.0f;
     inputLevel = 0.0f;
     warnedFrameTooLarge = false;
     isInitialised = false;
@@ -221,6 +301,7 @@ void voiceReset(void) {
     reportedState = false;
     reportedHasMic = false;
     reportedSelfMuted = false;
+    connectionCarriesVoice = false;
 }
 
 /*********************************************************
@@ -243,7 +324,9 @@ void voiceLoopbackSetEnabled(bool on) {
     }
 
     if (on) {
-        if (!voiceBackendCaptureStart()) {
+        /* The master switch outranks the test - it is what decides whether
+         * the microphone runs at all. */
+        if (!voiceEnabled || !voiceBackendCaptureStart()) {
             return;
         }
         loopbackOn = true;
@@ -270,48 +353,158 @@ bool voiceLoopbackIsEnabled(void) {
 }
 
 /*********************************************************
-*NAME:          voiceTransmitSetEnabled
+*NAME:          voiceSetEnabled
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Starts or stops sending captured audio to the other
-*  players.  Turning it on opens the recording device if
-*  this is the first ask, and stays off if there is no
-*  device to open or the user refuses the microphone.
+*  The master switch.  Off means no capture, nothing sent
+*  and nothing played, whatever the mode and the loopback
+*  test are set to.  The recording device is paused rather
+*  than closed, so switching back on does not ask for the
+*  microphone a second time.
 *
 *ARGUMENTS:
-*  on - true to start transmitting, false to stop
+*  on - true to allow voice, false to shut it all off
 *********************************************************/
-void voiceTransmitSetEnabled(bool on) {
-    if (!isInitialised || on == transmitOn) {
+void voiceSetEnabled(bool on) {
+    int i;
+
+    if (on == voiceEnabled) {
+        return;
+    }
+    voiceEnabled = on;
+
+    if (on) {
+        startCaptureIfWanted();
         return;
     }
 
-    if (on) {
-        if (!voiceBackendCaptureStart()) {
-            return;
-        }
-        transmitOn = true;
-    } else {
-        transmitOn = false;
-        stopCaptureIfIdle();
+    /* Nothing may be latched across the off state: a key still held, or a
+     * gate still open, would put audio on the wire the moment voice came
+     * back on. */
+    pushToTalkHeld = false;
+    gateOpen = false;
+    gateHangover = 0;
+    voiceBackendLoopbackClear();
+    stopCaptureIfIdle();
+
+    /* Drop every remote talker along with what they had buffered, so the
+     * ones mid-sentence stop where they are rather than finishing. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        releaseSpeaker(i);
     }
 }
 
 /*********************************************************
-*NAME:          voiceTransmitIsEnabled
+*NAME:          voiceIsEnabled
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Returns whether captured audio is being transmitted.
+*  Returns whether the master switch is on.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
-bool voiceTransmitIsEnabled(void) {
-    return transmitOn;
+bool voiceIsEnabled(void) {
+    return voiceEnabled;
+}
+
+/*********************************************************
+*NAME:          voiceSetMode
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Chooses how captured audio reaches the other players.
+*  Opens the recording device if the new mode can transmit
+*  and this is the first ask, and pauses it once nothing
+*  wants it any more.
+*
+*ARGUMENTS:
+*  mode - one of the VoiceMode values
+*********************************************************/
+void voiceSetMode(VoiceMode mode) {
+    if (mode != VOICE_MODE_OFF && mode != VOICE_MODE_PTT &&
+        mode != VOICE_MODE_OPEN) {
+        return;
+    }
+    if (mode == voiceMode) {
+        return;
+    }
+    voiceMode = mode;
+
+    /* Whatever the old mode had latched belongs to the old mode - a key held
+     * through the change, or a gate still inside its hangover, must not carry
+     * into the new one. */
+    pushToTalkHeld = false;
+    gateOpen = false;
+    gateHangover = 0;
+
+    startCaptureIfWanted();
+    stopCaptureIfIdle();
+}
+
+/*********************************************************
+*NAME:          voiceGetMode
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns how captured audio reaches the other players.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+VoiceMode voiceGetMode(void) {
+    return voiceMode;
+}
+
+/*********************************************************
+*NAME:          voiceSetPushToTalkHeld
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Records whether the push-to-talk key is held.  The input
+*  layer says so once per poll; it is also what decides that
+*  a key held while a dialog owns the keyboard, or while the
+*  window has no focus, does not count as held.
+*
+*ARGUMENTS:
+*  held - true while the key is down
+*********************************************************/
+void voiceSetPushToTalkHeld(bool held) {
+    pushToTalkHeld = held;
+}
+
+/*********************************************************
+*NAME:          voiceIsTransmitting
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether captured audio is going out right now.
+*  The settings dialog lights its indicator from this, and
+*  voiceTick uses it to decide whether to send the frame it
+*  just encoded, so the light and the wire cannot disagree.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceIsTransmitting(void) {
+    if (!isInitialised || !voiceEnabled || !connectionCarriesVoice) {
+        return false;
+    }
+    switch (voiceMode) {
+    case VOICE_MODE_PTT:
+        return pushToTalkHeld;
+    case VOICE_MODE_OPEN:
+        return gateOpen;
+    default:
+        return false;
+    }
 }
 
 /*********************************************************
@@ -345,6 +538,75 @@ void voiceSetMicGain(float gain) {
 *********************************************************/
 float voiceGetMicGain(void) {
     return micGain;
+}
+
+/*********************************************************
+*NAME:          voiceSetOutputVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Sets the gain applied to decoded remote audio before it
+*  is handed to the playback device.
+*
+*ARGUMENTS:
+*  gain - 1.0f is unity
+*********************************************************/
+void voiceSetOutputVolume(float gain) {
+    if (gain < 0.0f) {
+        gain = 0.0f;
+    }
+    outputVolume = gain;
+}
+
+/*********************************************************
+*NAME:          voiceGetOutputVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the gain applied to decoded remote audio.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceGetOutputVolume(void) {
+    return outputVolume;
+}
+
+/*********************************************************
+*NAME:          applyOutputVolume
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Scales one decoded frame by the voice output volume, in
+*  place.  Done here rather than in the backend so the
+*  device contract stays the same on every platform.
+*
+*ARGUMENTS:
+*  pcm - VOICE_FRAME_SAMPLES mono S16 samples, scaled in
+*        place
+*********************************************************/
+static void applyOutputVolume(int16_t *pcm) {
+    int i;
+    float sample;
+
+    /* Unity is the common case and every sample would survive it
+     * unchanged. */
+    if (outputVolume == 1.0f) {
+        return;
+    }
+
+    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
+        sample = (float)pcm[i] * outputVolume;
+        if (sample > 32767.0f) {
+            sample = 32767.0f;
+        } else if (sample < -32768.0f) {
+            sample = -32768.0f;
+        }
+        pcm[i] = (int16_t)sample;
+    }
 }
 
 /*********************************************************
@@ -465,6 +727,11 @@ static void voicePlayRemote(struct ClientSim *cs) {
 
     while ((len = clientSimNetReceiveVoice(cs, &fromPlayer, &seq, &flags,
                                            packet, (int)sizeof(packet))) > 0) {
+        /* Voice switched off locally still has to be drained off the
+         * transport - it just goes nowhere. */
+        if (!voiceEnabled) {
+            continue;
+        }
         /* A frame from a muted player is dropped rather than buffered, so
          * nothing of theirs is waiting to be played if they are unmuted. */
         if (voiceIsPlayerMuted((int)fromPlayer)) {
@@ -493,6 +760,7 @@ static void voicePlayRemote(struct ClientSim *cs) {
             if (!voiceSpeakerPop(speakers[i], pcm)) {
                 break;
             }
+            applyOutputVolume(pcm);
             voiceBackendSpeakerPlay(i, pcm);
         }
     }
@@ -508,8 +776,8 @@ static void voicePlayRemote(struct ClientSim *cs) {
 *  changes.  A microphone is had once voice is up and a
 *  recording device has actually opened - asking for one that
 *  never came up is not having one.  Muted is having a
-*  microphone and not sending from it, so the two never both
-*  read true.
+*  microphone that cannot reach the wire, so the two never
+*  both read true.
 *
 *ARGUMENTS:
 *  cs - the connected client
@@ -523,7 +791,10 @@ void voiceReportState(struct ClientSim *cs) {
     }
 
     hasMic = isInitialised && voiceBackendCaptureIsOpen();
-    selfMuted = hasMic && !transmitOn;
+    /* Self muted is having a microphone that cannot reach the wire: voice
+     * switched off, or the mode set to Off.  A push-to-talk player between
+     * presses is not muted - they can talk whenever they choose to. */
+    selfMuted = hasMic && !(voiceEnabled && voiceMode != VOICE_MODE_OFF);
 
     if (reportedState && hasMic == reportedHasMic &&
         selfMuted == reportedSelfMuted) {
@@ -574,12 +845,14 @@ void voiceTick(struct ClientSim *cs) {
     }
 
     /* A viewer captures for the loopback test like anyone else, but its
-     * voice is not carried to the players, so there is nothing to send. */
-    sending = transmitOn && cs != NULL && !clientSimIsSpectator(cs);
+     * voice is not carried to the players, so there is nothing to send.
+     * Kept here rather than asked for inside voiceIsTransmitting, which the
+     * settings dialog calls with no client of its own. */
+    connectionCarriesVoice = (cs != NULL) && !clientSimIsSpectator(cs);
 
     /* Nothing accumulates while the microphone is unwanted - the recording
      * device is paused, so there is no backlog to drain here. */
-    if (!loopbackOn && !transmitOn) {
+    if (!captureIsWanted()) {
         return;
     }
 
@@ -603,6 +876,32 @@ void voiceTick(struct ClientSim *cs) {
         inputLevel = sqrtf(sumSquares / (float)VOICE_FRAME_SAMPLES) / 32768.0f;
         if (inputLevel > 1.0f) {
             inputLevel = 1.0f;
+        }
+
+        /* Open mic runs off the level the meter already has: over the
+         * threshold opens the gate and re-arms the hangover, under it counts
+         * the hangover down so the tail of a word is not cut off. */
+        if (voiceMode == VOICE_MODE_OPEN) {
+            if (inputLevel >= VOICE_OPEN_MIC_RMS_THRESHOLD) {
+                gateOpen = true;
+                gateHangover = VOICE_OPEN_MIC_HANGOVER_FRAMES;
+            } else if (gateHangover > 0) {
+                gateHangover--;
+                if (gateHangover == 0) {
+                    gateOpen = false;
+                }
+            } else {
+                gateOpen = false;
+            }
+        }
+
+        sending = voiceIsTransmitting();
+
+        /* Between words in push-to-talk, and with the loopback test off,
+         * the frame is only worth its level reading - which is already
+         * taken.  Encoding it would be work nobody consumes. */
+        if (!sending && !loopbackOn) {
+            continue;
         }
 
         /* One encode feeds both consumers. */
