@@ -48,6 +48,18 @@
  * rather than working through an arbitrarily deep backlog in one call. */
 #define VOICE_FRAMES_PER_TICK 4
 
+/* How much audio each remote talker's output stream is kept topped up to.
+ * The audio device drains it at real time, so this is the depth playback is
+ * refilled to whenever it is looked at - deep enough that a late call still
+ * finds audio to play, shallow enough not to add audible delay of its own. */
+#define VOICE_PLAYBACK_TARGET_FRAMES 2
+
+/* Frames queued per talker per call.  A caller that has been stalled long
+ * enough for a talker to bank more than this leaves the excess in the jitter
+ * buffer for the calls that follow, rather than working through an
+ * arbitrarily deep backlog in one go. */
+#define VOICE_PLAYBACK_MAX_POPS_PER_CALL 4
+
 #define VOICE_FRAME_BYTES ((int)(VOICE_FRAME_SAMPLES * sizeof(int16_t)))
 
 static bool isInitialised = false;
@@ -541,9 +553,16 @@ bool voiceIsPlayerMuted(int player) {
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Feeds everything that arrived from other players into
-*  their jitter buffers, then plays one 20 ms frame from
-*  each.  One frame per talker per tick is what holds
-*  playback to the rate the frames were sent at.
+*  their jitter buffers, then tops each talker's output
+*  stream back up to a small target depth.
+*
+*  Nothing guarantees this runs at the rate the frames were
+*  sent at - it is driven from the render loop, and from the
+*  settings dialog's own loop at a different rate again.  So
+*  playback is paced by the audio device rather than by the
+*  call: a talker whose stream still holds enough audio is
+*  popped zero times, however often we are asked, and pops
+*  only resume once the device has drained it.
 *
 *ARGUMENTS:
 *  cs - the connected client
@@ -554,6 +573,7 @@ static void voicePlayRemote(struct ClientSim *cs) {
     uint8_t fromPlayer, seq, flags;
     int len;
     int i;
+    int pops;
 
     while ((len = clientSimNetReceiveVoice(cs, &fromPlayer, &seq, &flags,
                                            packet, (int)sizeof(packet))) > 0) {
@@ -572,7 +592,20 @@ static void voicePlayRemote(struct ClientSim *cs) {
         if (speakers[i] == NULL || speakerStreams[i] == NULL) {
             continue;
         }
-        if (voiceSpeakerPop(speakers[i], pcm)) {
+        /* SDL_GetAudioStreamQueued counts the bytes as they were put in, and
+         * nothing here ever changes a stream's input format, so this is
+         * whole 20 ms frames of S16 mono at the codec's rate. */
+        for (pops = 0; pops < VOICE_PLAYBACK_MAX_POPS_PER_CALL; pops++) {
+            if (SDL_GetAudioStreamQueued(speakerStreams[i]) >=
+                VOICE_PLAYBACK_TARGET_FRAMES * VOICE_FRAME_BYTES) {
+                break;
+            }
+            /* Nothing left to play - the jitter buffer is waiting on a frame
+             * that has not arrived yet, and asking again will not change
+             * that until the next call. */
+            if (!voiceSpeakerPop(speakers[i], pcm)) {
+                break;
+            }
             SDL_PutAudioStreamData(speakerStreams[i], pcm, VOICE_FRAME_BYTES);
         }
     }
