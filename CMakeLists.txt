@@ -3254,7 +3254,9 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     tests/unit/test_voice_jitter_loss.c
     tests/unit/test_voice_flood_cap.c
     src/bolo/voice_segment.c
-    tests/unit/test_voice_segment.c)
+    tests/unit/test_voice_segment.c
+    src/bolo/voice_talker_select.c
+    tests/unit/test_voice_talker_select.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -3688,6 +3690,8 @@ set(_unit_test_names
     voice_jitter_ordering_and_plc
     voice_jitter_under_loss
     voice_flood_cap_enforced
+    voice_talker_select_ranks_recent
+    voice_talker_select_bounds
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

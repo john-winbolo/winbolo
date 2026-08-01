@@ -670,12 +670,20 @@ PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot);
  * this forwards voice. */
 void transportUdpServerSetVoiceEnabled(bool enabled);
 
-/* Read the cumulative voice segment counts: forwarded, and dropped by the
- * per-tick per-client cap. Either out-param may be NULL. Both are totals
- * over every slot, for measurement and for an operator diagnosing a client
- * flooding the voice channel. */
+/* Read the cumulative voice segment counts: forwarded, dropped by the
+ * per-tick per-client flood cap, and withheld from a recipient by the
+ * concurrent-talker cap. Any out-param may be NULL. All are totals over every
+ * slot, for measurement and for an operator diagnosing a client flooding the
+ * voice channel.
+ *
+ * The last two count different events and are deliberately separate: a
+ * dropped segment was refused on arrival and reached nobody, while a
+ * talker-capped one was accepted and forwarded — just not to the recipients
+ * already hearing their limit of simultaneous voices. It is therefore counted
+ * once per recipient it was withheld from, not once per segment. */
 void transportUdpServerGetVoiceStats(uint32_t *outAccepted,
-                                     uint32_t *outDropped);
+                                     uint32_t *outDropped,
+                                     uint32_t *outTalkerCapped);
 
 /* Get a connected client's 2-char ISO country code (NULL if slot invalid
  * or disconnected). The pointer is into the transport's per-slot storage

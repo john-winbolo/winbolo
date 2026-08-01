@@ -447,6 +447,8 @@ static const UnitTestEntry s_tests[] = {
     { "voice_jitter_ordering_and_plc",           run_voice_jitter_ordering_and_plc           },
     { "voice_jitter_under_loss",                 run_voice_jitter_under_loss                 },
     { "voice_flood_cap_enforced",                run_voice_flood_cap_enforced                },
+    { "voice_talker_select_ranks_recent",        run_voice_talker_select_ranks_recent        },
+    { "voice_talker_select_bounds",              run_voice_talker_select_bounds              },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

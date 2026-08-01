@@ -96,6 +96,7 @@ add_library(bolo_static STATIC
     util.c
     viewport.c
     voice_segment.c
+    voice_talker_select.c
     wbn_key_codec.c
 )
 

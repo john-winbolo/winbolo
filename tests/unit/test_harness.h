@@ -925,8 +925,17 @@ int run_voice_jitter_under_loss(void);
 /* Per-client voice flood cap (test_voice_flood_cap.c): over the loopback
  * transport, a burst queued inside one client tick is forwarded only up to
  * VOICE_SEGMENTS_PER_TICK with the remainder drained and counted as dropped,
- * while a steady one-frame-per-tick talker loses nothing. */
+ * while a steady one-frame-per-tick talker loses nothing and the separate
+ * concurrent-talker cap never fires on them. */
 int run_voice_flood_cap_enforced(void);
+
+/* Concurrent-talker selection (test_voice_talker_select.c): the per-recipient
+ * cap keeps the most recently started talkers rather than the lowest-numbered
+ * slots, breaks an onset tie on the newer sequence number across the 256 wrap,
+ * is stable for inputs tied on both, and holds its bounds at and below the
+ * cap and on degenerate input. */
+int run_voice_talker_select_ranks_recent(void);
+int run_voice_talker_select_bounds(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

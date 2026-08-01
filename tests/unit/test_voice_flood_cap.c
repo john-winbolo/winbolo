@@ -14,6 +14,8 @@
  *      the remainder.
  *   2. A steady one-frame-per-tick stream is never dropped — the cap must
  *      cost a well-behaved talker nothing.
+ *   3. The separate concurrent-talker cap stays out of the way throughout:
+ *      one talker is far below it, so its suppression counter must not move.
  *
  * Real Opus frames are encoded up front (as test_voice_jitter.c does): the
  * server's parse rejects a segment with no payload, so crafted bytes would
@@ -21,6 +23,9 @@
  *
  * The harness is single-client, which is all this needs: the cap is per
  * talker, and a talker with no listeners is still pumped and still counted.
+ * That is also why case 3 only pins that the talker cap does not misfire —
+ * making it fire needs five simultaneous senders. Its ranking is covered
+ * directly in test_voice_talker_select.c.
  */
 
 #include <math.h>
@@ -95,8 +100,8 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
 int run_voice_flood_cap_enforced(void) {
     EncodedFrame frames[TEST_FRAMES];
     LoopbackHarness h;
-    uint32_t baseAccepted, baseDropped;
-    uint32_t accepted, dropped;
+    uint32_t baseAccepted, baseDropped, baseCapped;
+    uint32_t accepted, dropped, capped;
     int connectedAt;
     int i;
 
@@ -116,7 +121,7 @@ int run_voice_flood_cap_enforced(void) {
     /* 1. The burst. Every send queues a segment on the client's best-effort
      * voice ring; nothing leaves until the next client tick, so one frame
      * carries all of them and one server pump sees the lot. */
-    transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped);
+    transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
     for (i = 0; i < BURST_FRAMES; i++) {
         clientSimNetSendVoice(h.cs, frames[i].data, frames[i].len);
     }
@@ -126,16 +131,17 @@ int run_voice_flood_cap_enforced(void) {
      * mid-flight. */
     for (i = 1; i <= SETTLE_MAX; i++) {
         loopbackHarnessPump(&h);
-        transportUdpServerGetVoiceStats(&accepted, &dropped);
+        transportUdpServerGetVoiceStats(&accepted, &dropped, &capped);
         if ((accepted - baseAccepted) + (dropped - baseDropped) >=
             BURST_FRAMES) {
             break;
         }
     }
 
-    transportUdpServerGetVoiceStats(&accepted, &dropped);
+    transportUdpServerGetVoiceStats(&accepted, &dropped, &capped);
     accepted -= baseAccepted;
     dropped -= baseDropped;
+    capped -= baseCapped;
 
     if (accepted + dropped != BURST_FRAMES) {
         loopbackHarnessStop(&h);
@@ -154,13 +160,18 @@ int run_voice_flood_cap_enforced(void) {
         UT_FAIL("burst: %u dropped, expected the %d not forwarded",
                 (unsigned)dropped, BURST_FRAMES - EXPECT_CAP);
     }
+    if (capped != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("talker cap suppressed %u forwards with a single talker",
+                (unsigned)capped);
+    }
     fprintf(stderr, "  voice flood cap: burst of %d -> %u forwarded, %u "
             "dropped\n", BURST_FRAMES, (unsigned)accepted, (unsigned)dropped);
 
     /* 2. The steady stream: one frame per tick, the rate a real capture
      * produces. Nothing may be dropped. The cap's second slot absorbs a tick
      * of bunching, so a segment that lands a tick late still gets forwarded. */
-    transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped);
+    transportUdpServerGetVoiceStats(&baseAccepted, &baseDropped, &baseCapped);
     for (i = 0; i < STEADY_FRAMES; i++) {
         clientSimNetSendVoice(h.cs, frames[BURST_FRAMES + i].data,
                               frames[BURST_FRAMES + i].len);
@@ -169,15 +180,16 @@ int run_voice_flood_cap_enforced(void) {
     /* Drain the last frames still in flight. */
     for (i = 1; i <= SETTLE_MAX; i++) {
         loopbackHarnessPump(&h);
-        transportUdpServerGetVoiceStats(&accepted, &dropped);
+        transportUdpServerGetVoiceStats(&accepted, &dropped, &capped);
         if (accepted - baseAccepted >= STEADY_FRAMES) {
             break;
         }
     }
 
-    transportUdpServerGetVoiceStats(&accepted, &dropped);
+    transportUdpServerGetVoiceStats(&accepted, &dropped, &capped);
     accepted -= baseAccepted;
     dropped -= baseDropped;
+    capped -= baseCapped;
 
     if (dropped != 0) {
         loopbackHarnessStop(&h);
@@ -188,6 +200,15 @@ int run_voice_flood_cap_enforced(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("steady stream: %u of %d segments forwarded", (unsigned)accepted,
                 STEADY_FRAMES);
+    }
+    /* 3. The concurrent-talker cap must not fire on a channel that never
+     * reaches it. One talker is nowhere near VOICE_MAX_FORWARDED_TALKERS, so
+     * any suppression here is an off-by-one in the selection that would
+     * silence an ordinary conversation. */
+    if (capped != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("talker cap suppressed %u forwards on a steady single-talker "
+                "stream", (unsigned)capped);
     }
 
     if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
