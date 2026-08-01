@@ -223,6 +223,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     /* Same source (cfg->uploadPersistDir) as the transport copy above, so the
      * write target and the "Uploads/" resolver redirect never diverge. */
     serverSimSetUploadPersistDir(sim, cfg->uploadPersistDir);
+    transportUdpServerSetVoiceEnabled(!cfg->disableVoice);
     if (cfg->mdnsAdvertise) {
       transportUdpServerStartMdnsAdvertiser(cfg->udpPort);
     }

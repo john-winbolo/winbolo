@@ -922,6 +922,12 @@ int run_voice_jitter_ordering_and_plc(void);
  * concealment and latency table the jitter constants are tuned from. */
 int run_voice_jitter_under_loss(void);
 
+/* Per-client voice flood cap (test_voice_flood_cap.c): over the loopback
+ * transport, a burst queued inside one client tick is forwarded only up to
+ * VOICE_SEGMENTS_PER_TICK with the remainder drained and counted as dropped,
+ * while a steady one-frame-per-tick talker loses nothing. */
+int run_voice_flood_cap_enforced(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

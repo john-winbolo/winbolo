@@ -485,6 +485,19 @@ static struct {
      * table reads as all-empty (srcAddr 0), so the existing
      * memset(&udpServer, 0, …) is the only reset needed. */
     JoinRateEntry joinRate[JOIN_RL_MAX_SOURCES];
+
+    /* Voice forwarding switched off for this server (the dedicated server's
+     * -no-voice).  Stored negated so a zeroed server forwards voice — every
+     * host that never touches the setter keeps the default. */
+    bool     voiceDisabled;
+
+    /* Cumulative voice segments this server forwarded, and segments a client
+     * sent past VOICE_SEGMENTS_PER_TICK that were drained and dropped.  Both
+     * count every slot together: they exist to measure the cap and to give an
+     * operator diagnosing a flooding client a number to look at, not to carry
+     * per-slot state. */
+    uint32_t voiceSegsAccepted;
+    uint32_t voiceSegsDropped;
 } udpServer;
 
 /* Runtime network impairment (delay/jitter/loss/burst) on the server's
@@ -4878,6 +4891,16 @@ PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot) {
     return udpServer.clients[clientSlot].voiceMuteMask;
 }
 
+void transportUdpServerSetVoiceEnabled(bool enabled) {
+    udpServer.voiceDisabled = !enabled;
+}
+
+void transportUdpServerGetVoiceStats(uint32_t *outAccepted,
+                                     uint32_t *outDropped) {
+    if (outAccepted != NULL) *outAccepted = udpServer.voiceSegsAccepted;
+    if (outDropped != NULL) *outDropped = udpServer.voiceSegsDropped;
+}
+
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) {
         return NULL;
@@ -6381,6 +6404,7 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
  * channel data on the wire, so a frame is forwarded in the tick it landed. */
 static void serverPumpVoice(ServerSim *sim) {
     bool inGame = (serverSimGetState(sim) == serverStateRunning);
+    bool voiceOn = !udpServer.voiceDisabled;
     int from;
     int s;
 
@@ -6402,13 +6426,23 @@ static void serverPumpVoice(ServerSim *sim) {
             int downLen;
             int to;
 
-            if (accepted >= VOICE_SEGMENTS_PER_TICK) continue;
+            /* Voice off for this server: the loop still drains the ring, so
+             * a client that sends anyway cannot fill it and stall behind
+             * frames nobody will read, but nothing is forwarded and nothing
+             * counts as accepted. */
+            if (!voiceOn) continue;
+
+            if (accepted >= VOICE_SEGMENTS_PER_TICK) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
             /* Not in the game yet: a client still taking the map is not a
              * talker, and the same rule keeps it off the receiving end. */
             if (!udpServer.mapDownload[from].downloadComplete) continue;
             if (!voiceSegmentUnpackUp(segBuf, (int)segLen, &seq, &flags,
                                       &opus, &opusLen)) continue;
             accepted++;
+            udpServer.voiceSegsAccepted++;
 
             downLen = voiceSegmentPackDown(downBuf, (int)sizeof(downBuf),
                                            (uint8_t)from, seq, flags,

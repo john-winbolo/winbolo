@@ -663,6 +663,20 @@ void transportUdpServerSetVoiceMute(BYTE clientSlot, BYTE targetPlayer,
  * directly. */
 PlayerBitMap transportUdpServerGetVoiceMuteMask(BYTE clientSlot);
 
+/* Turn voice forwarding on or off for the whole server. Off still drains
+ * every client's voice ring — a client that sends anyway must not fill its
+ * ring and stall — but forwards nothing and accepts nothing. Set once at
+ * startup from ServerInstanceConfig.disableVoice; a server that never calls
+ * this forwards voice. */
+void transportUdpServerSetVoiceEnabled(bool enabled);
+
+/* Read the cumulative voice segment counts: forwarded, and dropped by the
+ * per-tick per-client cap. Either out-param may be NULL. Both are totals
+ * over every slot, for measurement and for an operator diagnosing a client
+ * flooding the voice channel. */
+void transportUdpServerGetVoiceStats(uint32_t *outAccepted,
+                                     uint32_t *outDropped);
+
 /* Get a connected client's 2-char ISO country code (NULL if slot invalid
  * or disconnected). The pointer is into the transport's per-slot storage
  * — durable across serverSimResetGameWorld, which destroys the sim's

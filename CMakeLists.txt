@@ -3251,6 +3251,7 @@ target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
     tests/unit/test_voice_core.c
     tests/unit/test_voice_jitter.c
     tests/unit/test_voice_jitter_loss.c
+    tests/unit/test_voice_flood_cap.c
     src/bolo/voice_segment.c
     tests/unit/test_voice_segment.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
@@ -3685,6 +3686,7 @@ set(_unit_test_names
     voice_segment_rejects_malformed
     voice_jitter_ordering_and_plc
     voice_jitter_under_loss
+    voice_flood_cap_enforced
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -3743,6 +3745,22 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_channel_frame> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/channel_frame ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.channel_frame PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the voice segment parsers (voiceSegmentUnpackUp / UnpackDown),
+    # the parse sites for everything carried on the best-effort CHANNEL_VOICE:
+    # nothing upstream validates a voice segment, and the opus slice each parse
+    # returns points into the caller's buffer. bolo_static only, like the wire
+    # codecs.
+    add_executable(fuzz_voice_segment tests/fuzz/fuzz_voice_segment.c)
+    bolo_apply_include_rules(fuzz_voice_segment unittests)
+    target_link_libraries(fuzz_voice_segment PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    target_compile_options(fuzz_voice_segment PRIVATE -fcommon)
+    target_link_options(fuzz_voice_segment PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_voice_segment "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.voice_segment
+             COMMAND $<TARGET_FILE:fuzz_voice_segment> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/voice_segment ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.voice_segment PROPERTIES TIMEOUT 120)
 
     # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
     # bulkReceiverFeed), reassembling map download / resync / upload / preview
