@@ -1294,6 +1294,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/client_frontend/voice_core.c
+    src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
