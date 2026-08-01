@@ -1355,6 +1355,19 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     "if not table.move then table.move=function(a1,f,e,t,a2) a2=a2 or a1 for i=0,e-f do a2[t+i]=a1[f+i] end return a2 end end\n"
     "math.maxinteger=math.maxinteger or 9223372036854775807\n"
     "math.mininteger=math.mininteger or -9223372036854775808\n");
+
+  /* Larger JIT mcode areas than LuaJIT's defaults (sizemcode: KB per
+   * area, maxmcode: KB total per state). Every time an area fills, the
+   * allocator probes for a new one within arm64's +/-128MB branch range
+   * of the interpreter — a window every brain's lua_State competes for.
+   * Small default areas mean frequent allocations, fragmentation, and
+   * eventually probe exhaustion, which aborts the trace being compiled
+   * (silently costing brains JIT coverage in long sessions) and is the
+   * path where the macOS hardened-runtime W^X leak lived (2.02 Sentry
+   * 24dae975; see cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake).
+   * Fewer, larger areas make that path rare on every platform. */
+  (void)luaL_dostring(L,
+    "if jit and jit.opt then jit.opt.start('sizemcode=256','maxmcode=4096') end\n");
 #endif
 
   /* Load and execute the brain script.
