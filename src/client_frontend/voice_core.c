@@ -169,6 +169,7 @@ struct VoiceSpeaker {
     int             count;          /* frames currently buffered       */
     int             consecutivePlc; /* concealed frames since the last
                                      * real one                        */
+    VoiceSpeakerStats stats;        /* cumulative; survives un-priming */
 };
 
 /* Sequence numbers wrap at 256, so ordering is the signed difference:
@@ -192,6 +193,7 @@ static void voiceSpeakerUnprime(VoiceSpeaker *sp) {
 
 /* Synthesise a replacement for a frame that is missing or unusable. */
 static void voiceSpeakerConceal(VoiceSpeaker *sp, int16_t *pcm) {
+    sp->stats.concealed++;
     if (voiceDecoderDecode(sp->dec, NULL, 0, pcm) != VOICE_FRAME_SAMPLES) {
         memset(pcm, 0, VOICE_FRAME_SAMPLES * sizeof(int16_t));
     }
@@ -223,6 +225,17 @@ void voiceSpeakerDestroy(VoiceSpeaker *sp) {
     free(sp);
 }
 
+void voiceSpeakerGetStats(const VoiceSpeaker *sp, VoiceSpeakerStats *out) {
+    if (out == NULL) {
+        return;
+    }
+    if (sp == NULL) {
+        memset(out, 0, sizeof(*out));
+        return;
+    }
+    *out = sp->stats;
+}
+
 void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
                       const uint8_t *opus, int opusLen) {
     int i;
@@ -235,6 +248,7 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
 
     /* Already played past this one - it arrived too late to be of use. */
     if (sp->primed && voiceSeqAfter(sp->nextSeq, seq)) {
+        sp->stats.lateDropped++;
         return;
     }
 
@@ -260,6 +274,7 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
                 target = i;
             }
         }
+        sp->stats.evicted++;
     } else if (!sp->slots[target].present) {
         sp->count++;
     }
@@ -321,6 +336,8 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
     if (voiceDecoderDecode(sp->dec, sp->slots[found].data,
                            sp->slots[found].len, pcm) != VOICE_FRAME_SAMPLES) {
         voiceSpeakerConceal(sp, pcm);
+    } else {
+        sp->stats.played++;
     }
 
     flags = sp->slots[found].flags;

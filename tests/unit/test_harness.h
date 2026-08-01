@@ -914,6 +914,14 @@ int run_voice_segment_rejects_malformed(void);
  * later utterance at an unrelated sequence number resumes it. */
 int run_voice_jitter_ordering_and_plc(void);
 
+/* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
+ * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
+ * per-speaker counters are used to check that concealment matches what was
+ * lost, that no frame is played twice or vanishes, that added latency stays
+ * bounded, and that playback recovers from an outage. Also prints the
+ * concealment and latency table the jitter constants are tuned from. */
+int run_voice_jitter_under_loss(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

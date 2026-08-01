@@ -89,6 +89,20 @@ void voiceSpeakerPush(VoiceSpeaker *sp, uint8_t seq, uint8_t flags,
  * concealed); false when this speaker has nothing to play. */
 bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm);
 
+/* Cumulative counters, for measuring what an arrival pattern costs. Playback
+ * does not read them: they exist so a caller can tell a decoded frame from a
+ * concealed one, which voiceSpeakerPop's bool alone cannot. Counted from
+ * create and never reset — un-priming does not clear them — so the totals
+ * cover a whole session rather than the current utterance. */
+typedef struct {
+    uint32_t played;      /* frames decoded from a real packet      */
+    uint32_t concealed;   /* frames synthesised by loss concealment */
+    uint32_t lateDropped; /* arrived after their slot had played    */
+    uint32_t evicted;     /* dropped from a full buffer unplayed    */
+} VoiceSpeakerStats;
+
+void voiceSpeakerGetStats(const VoiceSpeaker *sp, VoiceSpeakerStats *out);
+
 #ifdef __cplusplus
 }
 #endif

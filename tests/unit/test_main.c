@@ -445,6 +445,7 @@ static const UnitTestEntry s_tests[] = {
     { "voice_segment_roundtrip",                 run_voice_segment_roundtrip                 },
     { "voice_segment_rejects_malformed",         run_voice_segment_rejects_malformed         },
     { "voice_jitter_ordering_and_plc",           run_voice_jitter_ordering_and_plc           },
+    { "voice_jitter_under_loss",                 run_voice_jitter_under_loss                 },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },
