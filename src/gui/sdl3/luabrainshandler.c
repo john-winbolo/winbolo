@@ -68,6 +68,10 @@
 
 #include <stdio.h>   /* fopen, fprintf — for brain_error.log writes */
 
+#if defined(WINBOLO_LUAJIT) && defined(__APPLE__) && defined(__aarch64__)
+#include <pthread.h>  /* pthread_jit_write_protect_np — see luaBrainInstanceTick */
+#endif
+
 #ifndef _WIN32
 #  include <dirent.h>
 #  include <sys/stat.h>
@@ -1449,6 +1453,18 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   if (!inst->running) {
     return false;
   }
+
+#if defined(WINBOLO_LUAJIT) && defined(__APPLE__) && defined(__aarch64__)
+  /* LuaJIT's hardened-runtime path toggles per-thread JIT write
+   * protection; a longjmp out of mcode allocation can leave this thread
+   * in write mode, which SIGBUSes the next trace entry (2.02 Sentry
+   * 24dae975). Re-arm execute mode at the tick boundary so a stray
+   * write-mode thread self-heals — a per-thread register write, so
+   * effectively free. Root cause is patched in
+   * cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake; this is the
+   * belt-and-braces layer. */
+  pthread_jit_write_protect_np(1);
+#endif
 
   /* Reset key state before brain runs (matches bot_manager) */
   *clientSimGetBrainHoldKeys(inst->cs) = 0;
