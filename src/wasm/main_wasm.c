@@ -38,6 +38,7 @@
 #include "../gui/lang.h"
 #include "../gui/sound.h"
 #include "../gui/ui_mode.h"
+#include "../gui/voice.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
@@ -310,6 +311,11 @@ static void main_loop_iteration(void) {
     /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
+  /* Voice encode/decode runs here, beside the game tick and outside the
+   * catch-up gate — once per rendered frame, whatever the sim owes. cs is
+   * NULL until there is a connection, which the runtime expects. */
+  voiceTick(cs);
+
   /* Render (always — even while frozen, so the error dialog draws over the
    * last frame instead of a blank screen). */
   tick = SDL_GetTicks();
@@ -416,6 +422,12 @@ int main(int argc, char *argv[]) {
    * not the browser filesystem. */
   prefsInit("/WinBolo.json");
 
+  /* Voice runs for the life of the process. It comes up before
+   * gameFrontStart, as on desktop. This platform has no capture or playback
+   * device yet (voice_wasm.c), so this only brings the codec up — every
+   * device-facing entry point declines. */
+  voiceInit();
+
   printf("[WASM] Starting gameFrontStart...\n");
   bool started = (gameFrontStart(cmdLine, &keys, FALSE, NULL) != FALSE);
   if (!started && !s_connFailed) {
@@ -514,6 +526,7 @@ int main(int argc, char *argv[]) {
   gameFrontEnd(&keys, TRUE, TRUE);
   clientMutexDestroy();
   sdl3ImguiCleanup();
+  voiceCleanup();
   sdl3DrawCleanup();
   SDL_Quit();
   return 0;
