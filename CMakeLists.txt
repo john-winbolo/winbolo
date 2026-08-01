@@ -2968,6 +2968,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
+    tests/unit/test_voice_flags.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
@@ -3556,6 +3557,7 @@ set(_unit_test_names
     base_stock_visibility
     base_armour_fog_of_war
     two_clients_full_sync_independent
+    voice_flags_snapshot_masking
     fx_viewport_cull
     stall_advances_processed_tick
     stall_mine_late_lays_once

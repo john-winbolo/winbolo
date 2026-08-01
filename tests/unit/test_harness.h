@@ -680,6 +680,12 @@ int run_edge_send_predicate(void);
  * closest-base selection (enemy exclusion, in-range, post-flip inclusion) and
  * the per-recipient full-sync stock cull in serverSimBuildSnapshot (real stock
  * only for the recipient's own closest base; other bases zeroed, owner kept). */
+/* Mic-status visibility (test_voice_flags.c): serverSimBuildSnapshot shows
+ * PLAYER_FLAG_HAS_MIC / PLAYER_FLAG_VOICE_MUTED only to the recipients that
+ * player's voice could reach — everyone outside a running game, allies
+ * inside one — and masks nothing but PLAYER_VOICE_FLAG_MASK. */
+int run_voice_flags_snapshot_masking(void);
+
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);

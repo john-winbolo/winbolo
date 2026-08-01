@@ -71,7 +71,8 @@ typedef enum {
     CMD_BALANCE_DISMISS,
     CMD_WBN_REAUTH,
     CMD_LOBBY_CLAIM_START,
-    CMD_PLAYER_MUTE
+    CMD_PLAYER_MUTE,
+    CMD_VOICE_STATE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -334,6 +335,14 @@ typedef struct {
     uint8_t muted;        /* 0 = unmute, non-zero = mute */
 } CmdPlayerMute;
 
+/* CMD_VOICE_STATE — the sender's own mic status. Sent when it changes,
+ * not per tick. Self-reported and untrusted, like the client hint bits:
+ * a client lying about its own mic costs nothing. */
+typedef struct {
+    uint8_t hasMic;      /* 0/1 — voice enabled and an input device opened */
+    uint8_t selfMuted;   /* 0/1 — has a mic but is not transmitting */
+} CmdVoiceState;
+
 /* ClientCommand — variant tag + payload that travels client→server.
  *
  * cmdSeq: per-command sequence number assigned by the client; used
@@ -374,6 +383,7 @@ typedef struct ClientCommand {
         CmdWbnReauth           wbnReauth;
         CmdLobbyClaimStart     lobbyClaimStart;
         CmdPlayerMute          playerMute;
+        CmdVoiceState          voiceState;
     } u;
 } ClientCommand;
 

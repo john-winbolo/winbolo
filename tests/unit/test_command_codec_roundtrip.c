@@ -455,6 +455,72 @@ int run_command_codec_roundtrip_variants(void) {
         }
     }
 
+    /* CMD_VOICE_STATE — hasMic + selfMuted */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_VOICE_STATE;
+    in.cmdSeq = 35;
+    in.u.voiceState.hasMic    = 1;
+    in.u.voiceState.selfMuted = 1;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VOICE_STATE");
+    UT_ASSERT(out.type == CMD_VOICE_STATE);
+    UT_ASSERT(out.cmdSeq == 35);
+    UT_ASSERT(out.u.voiceState.hasMic    == 1);
+    UT_ASSERT(out.u.voiceState.selfMuted == 1);
+
+    /* Both fields carry their own value — mic open and transmitting. */
+    in.cmdSeq = 36;
+    in.u.voiceState.hasMic    = 1;
+    in.u.voiceState.selfMuted = 0;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VOICE_STATE unmuted");
+    UT_ASSERT(out.type == CMD_VOICE_STATE);
+    UT_ASSERT(out.cmdSeq == 36);
+    UT_ASSERT(out.u.voiceState.hasMic    == 1);
+    UT_ASSERT(out.u.voiceState.selfMuted == 0);
+
+    in.cmdSeq = 37;
+    in.u.voiceState.hasMic    = 0;
+    in.u.voiceState.selfMuted = 0;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VOICE_STATE no mic");
+    UT_ASSERT(out.type == CMD_VOICE_STATE);
+    UT_ASSERT(out.cmdSeq == 37);
+    UT_ASSERT(out.u.voiceState.hasMic    == 0);
+    UT_ASSERT(out.u.voiceState.selfMuted == 0);
+
+    /* CMD_VOICE_STATE decoder: a short body is refused, and either byte
+     * arriving as some other non-zero value normalises to 1. */
+    {
+        const size_t bodyOff = PACKET_HEADER_SIZE + 4;
+        uint8_t wire[COMMAND_MAX_WIRE_BYTES];
+        size_t wireLen = 0;
+        ClientCommand sink;
+
+        memset(&in, 0, sizeof(in));
+        in.type = CMD_VOICE_STATE;
+        in.cmdSeq = 38;
+        in.u.voiceState.hasMic    = 1;
+        in.u.voiceState.selfMuted = 1;
+        UT_ASSERT(commandCodecEncode(&in, wire, sizeof(wire), &wireLen) == true);
+        UT_ASSERT(wireLen == bodyOff + 2);
+
+        /* One byte short of the two-byte body. */
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT(commandCodecDecode(wire, bodyOff + 1, &sink) == false);
+
+        {
+            uint8_t odd[COMMAND_MAX_WIRE_BYTES];
+            memcpy(odd, wire, wireLen);
+            odd[bodyOff]     = 0x7F;
+            odd[bodyOff + 1] = 0x20;
+            memset(&sink, 0, sizeof(sink));
+            UT_ASSERT(commandCodecDecode(odd, wireLen, &sink) == true);
+            UT_ASSERT(sink.u.voiceState.hasMic    == 1);
+            UT_ASSERT(sink.u.voiceState.selfMuted == 1);
+        }
+    }
+
     return 0;
 }
 

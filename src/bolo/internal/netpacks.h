@@ -509,6 +509,14 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               chat to the sender. Not
                                               echoed to anyone else. */
 
+#define PACKET_VOICE_STATE             211  /* client → server
+                                              { hasMic 1, selfMuted 1 }
+                                              the sender's own mic status,
+                                              sent when it changes. Lands
+                                              in the sender's clientFlags
+                                              and rides the snapshot and
+                                              lobby slot from there. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

@@ -276,6 +276,23 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
          * Broadcasting it would tell the muted player they were muted. */
         return CMD_OK;
     }
+    case CMD_VOICE_STATE: {
+        const CmdVoiceState *p = &cmd->u.voiceState;
+        GameSim *gs = serverSimGetGameSim(sim);
+        uint8_t flags = playersGetClientFlags(&gs->plyrs, (BYTE)senderSlot);
+        flags &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
+        if (p->hasMic) {
+            flags |= PLAYER_FLAG_HAS_MIC;
+            /* Muted only means anything with a mic. Never setting the two
+             * together leaves the receiving end a clean three states — no
+             * mic, muted, live — rather than four with a nonsense one. */
+            if (p->selfMuted) flags |= PLAYER_FLAG_VOICE_MUTED;
+        }
+        playersSetClientFlags(&gs->plyrs, (BYTE)senderSlot, flags);
+        /* No control event: the bits ride the snapshot and the lobby slot,
+         * both of which already carry clientFlags. */
+        return CMD_OK;
+    }
     case CMD_ALLIANCE_REQUEST: {
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;

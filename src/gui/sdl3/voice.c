@@ -75,6 +75,13 @@ static bool mutedPlayers[MAX_TANKS];
  * configuration problem, not a per-frame event: say so once. */
 static bool warnedFrameTooLarge = false;
 
+/* Last mic status put on the wire, so the report only goes out on a change.
+ * reportedState is cleared with the rest of the per-connection state, which
+ * makes the first tick of the next connection re-report. */
+static bool reportedState = false;
+static bool reportedHasMic = false;
+static bool reportedSelfMuted = false;
+
 /*********************************************************
 *NAME:          ensureCaptureStream
 *AUTHOR:        John Morrison
@@ -282,6 +289,12 @@ void voiceReset(void) {
         releaseSpeaker(i);
         mutedPlayers[i] = false;
     }
+    /* Forget what the last server was told, so the next connection is sent
+     * this client's mic status rather than inheriting a match against a
+     * server that never heard it. */
+    reportedState = false;
+    reportedHasMic = false;
+    reportedSelfMuted = false;
 }
 
 /*********************************************************
@@ -566,6 +579,44 @@ static void voicePlayRemote(struct ClientSim *cs) {
 }
 
 /*********************************************************
+*NAME:          voiceReportState
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Tells the server this client's mic status, on the tick it
+*  changes.  A microphone is had once voice is up and a
+*  recording device has actually opened - asking for one that
+*  never came up is not having one.  Muted is having a
+*  microphone and not sending from it, so the two never both
+*  read true.
+*
+*ARGUMENTS:
+*  cs - the connected client
+*********************************************************/
+void voiceReportState(struct ClientSim *cs) {
+    bool hasMic;
+    bool selfMuted;
+
+    if (cs == NULL) {
+        return;
+    }
+
+    hasMic = isInitialised && captureStream != NULL;
+    selfMuted = hasMic && !transmitOn;
+
+    if (reportedState && hasMic == reportedHasMic &&
+        selfMuted == reportedSelfMuted) {
+        return;
+    }
+
+    clientSimNetSendVoiceState(cs, hasMic, selfMuted);
+    reportedState = true;
+    reportedHasMic = hasMic;
+    reportedSelfMuted = selfMuted;
+}
+
+/*********************************************************
 *NAME:          voiceTick
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -599,6 +650,7 @@ void voiceTick(struct ClientSim *cs) {
 
     if (cs != NULL) {
         voicePlayRemote(cs);
+        voiceReportState(cs);
     }
 
     /* A viewer captures for the loopback test like anyone else, but its

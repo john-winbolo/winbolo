@@ -434,6 +434,14 @@ void clientSimNetSendPlayerMute(ClientSim *cs, BYTE targetPlayer, bool muted) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendVoiceState(ClientSim *cs, bool hasMic, bool selfMuted) {
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_VOICE_STATE };
+  cmd.u.voiceState.hasMic    = hasMic ? 1 : 0;
+  cmd.u.voiceState.selfMuted = selfMuted ? 1 : 0;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */

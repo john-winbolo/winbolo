@@ -4643,6 +4643,11 @@ static bool udpServerResolveWebIdentity(BYTE slot, const char *joinCode,
 static void udpServerApplyWebIdentity(ServerSim *sim, BYTE slot) {
     uint8_t flags = udpServer.clients[slot].clientHints & PLAYER_CLIENT_HINT_MASK;
     flags |= PLAYER_FLAG_WBN_VERIFIED;  /* WEB joiners carry no Steam/supporter */
+    /* Carry the mic bits across the rebuild. The client sends them once when
+     * they change, so anything dropped here is gone for the rest of the
+     * connection rather than re-reported on the next tick. */
+    flags |= (uint8_t)(playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
+                                             slot) & PLAYER_VOICE_FLAG_MASK);
     playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
     udpServer.clients[slot].wbnWasVerified = true;
     playersSetClientType(&serverSimGetGameSim(sim)->plyrs, slot,
@@ -4718,6 +4723,13 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
             flags |= PLAYER_FLAG_WBN_VERIFIED;
             if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
             if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+            /* Carry the mic bits across the rebuild. The client sends them
+             * once when they change, so anything dropped here is gone for
+             * the rest of the connection rather than re-reported on the
+             * next tick. */
+            flags |= (uint8_t)(playersGetClientFlags(
+                                   &serverSimGetGameSim(sim)->plyrs, slot)
+                               & PLAYER_VOICE_FLAG_MASK);
             playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
             /* Keep the durable rekey-gate bit in step with the session flag. */
             udpServer.clients[slot].wbnWasVerified = true;

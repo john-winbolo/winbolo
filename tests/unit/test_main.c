@@ -370,6 +370,7 @@ static const UnitTestEntry s_tests[] = {
     { "base_stock_visibility",                   run_base_stock_visibility                   },
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
+    { "voice_flags_snapshot_masking",            run_voice_flags_snapshot_masking            },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },

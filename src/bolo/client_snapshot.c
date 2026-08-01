@@ -685,7 +685,11 @@ void clientApplySnapshot(ClientSim *csPtr,
        * must NOT go in this mask for that reason. */
       const uint8_t snapshotMask = PLAYER_FLAG_WBN_VERIFIED
                                  | PLAYER_FLAG_WBN_STEAM_LINKED
-                                 | PLAYER_FLAG_SUPPORTER;
+                                 | PLAYER_FLAG_SUPPORTER
+                                 /* Mic status: server-broadcast per-player
+                                  * state, and only for the players whose
+                                  * voice reaches us. */
+                                 | PLAYER_VOICE_FLAG_MASK;
       uint8_t cur = playersGetClientFlags(&csPtr->sim.plyrs, pn);
       uint8_t next = (uint8_t)((cur & ~snapshotMask) | (tanks[i].clientFlags & snapshotMask));
       playersSetClientFlags(&csPtr->sim.plyrs, pn, next);

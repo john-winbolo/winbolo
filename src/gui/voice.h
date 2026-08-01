@@ -185,6 +185,18 @@ float voiceGetInputLevel(void);
 *********************************************************/
 void voiceTick(struct ClientSim *cs);
 
+/*********************************************************
+*NAME:          voiceReportState
+*PURPOSE:
+*  Report this client's mic status to the server when it
+*  changes. Cheap to call every tick; it only sends on a
+*  transition.
+*
+*ARGUMENTS:
+*  cs - the connected client
+*********************************************************/
+void voiceReportState(struct ClientSim *cs);
+
 #ifdef __cplusplus
 }
 #endif
