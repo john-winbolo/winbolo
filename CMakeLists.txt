@@ -236,7 +236,15 @@ if(WINBOLO_LUAJIT)
     FetchContent_Declare(luajit_src
         GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
         GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
-        GIT_SHALLOW    TRUE
+        # Deliberately NOT GIT_SHALLOW. Unlike every other dependency here,
+        # LuaJIT is pinned to a raw commit SHA rather than a release tag.
+        # GIT_SHALLOW makes FetchContent run `git clone --depth 1
+        # --no-single-branch`, which fetches only each branch's TIP — so
+        # checking out a pinned SHA works only while that SHA happens to be
+        # the tip of v2.1. Upstream moving v2.1 forward then breaks every
+        # clean build with "unable to read tree", while incremental builds
+        # keep working off the cached _deps checkout and hide it. A full
+        # clone is ~11MB and always contains the pin.
         # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
         # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
         PATCH_COMMAND  ${CMAKE_COMMAND} -P
