@@ -240,7 +240,11 @@ if(WINBOLO_LUAJIT)
         # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
         # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
         PATCH_COMMAND  ${CMAKE_COMMAND} -P
-                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake")
+                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake"
+        # Fixes a per-thread W^X leak in the same HRT path that SIGBUSes
+        # bot worker threads (2.02 Sentry 24dae975) — see the patch header.
+        COMMAND        ${CMAKE_COMMAND} -P
+                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake")
     FetchContent_MakeAvailable(luajit_src)
     set(_lj_src "${luajit_src_SOURCE_DIR}")
 
