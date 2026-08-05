@@ -1727,7 +1727,16 @@ static void simRunHalfStep(ServerSim *sim) {
         }
 
         /* Update world systems */
-        tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);
+        /* tanksArray, NOT &sim->sim.tanks[0]: lgmPtrs is compacted over the
+         * connected players, so the tank array must be compacted the same way
+         * or the two index spaces diverge as soon as the occupied slots are
+         * non-contiguous (anyone leaving mid-game). tkExplosionUpdate pairs
+         * lgms[i] with tanks[i] to tell a killed lgm which tank to walk back
+         * to, so a mismatch sent the man to another player's tank — or, when
+         * the raw slot was empty, to a NULL tank and thus back to where he
+         * died. shellsUpdate and minesExpUpdate below already take the
+         * compacted array. */
+        tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, tanksArray, &sim->sim.ss);
         shellsUpdate(&sim->sim, tanksArray, numTanks, lgmPtrs, &sim->sim.ss);
         {
             shells q = sim->sim.shs;

@@ -886,6 +886,11 @@ int run_control_overflow_defers_disconnect(void);
 int run_shells_survive_cleared_lgm_slot(void);
 int run_ping_kick_defers_teardown(void);
 
+/* tkExplosionUpdate pairs lgms[i] with tanks[i] over the COMPACTED per-player
+ * arrays, and its small-explosion sweep must cover every index
+ * (test_tkexp_lgm_pairing.c). */
+int run_tkexp_lgm_pairing(void);
+
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused

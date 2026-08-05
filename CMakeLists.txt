@@ -3107,6 +3107,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Mid-sim-frame player removal vs the arrays simRunHalfStep snapshots for
     # its world update — the high-ping kick crash (shellsUpdate NULL lgm slot).
     tests/unit/test_ping_kick_teardown.c
+    # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
+    # arrays, plus the small-explosion sweep's off-by-one.
+    tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
     tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
@@ -3561,6 +3564,7 @@ set(_unit_test_names
     error_smoothing
     shells_survive_cleared_lgm_slot
     ping_kick_defers_teardown
+    tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
