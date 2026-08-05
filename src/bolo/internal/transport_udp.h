@@ -530,6 +530,14 @@ int transportUdpServerGetSpectatorCount(void);
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
 
+/* Test seam: overwrite a connected slot's measured ping so the high-ping
+ * enforcement path (transportUdpServerEnforcePing) can be driven
+ * deterministically. Real RTT over the unit tests' loopback socket is ~0ms and
+ * would need seconds of wall-clock impairment to cross
+ * PING_KICK_THRESHOLD_MS. No production caller — the measurement itself is
+ * written by the PONG handler. No-op for an out-of-range or unconnected slot. */
+void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs);
+
 /* Writes "ip:port" for a connected player into out; returns false (and an
  * empty string) for an out-of-range slot or one with no UDP client (bots,
  * the in-process host). out must be non-NULL with outLen > 0. */

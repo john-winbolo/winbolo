@@ -1691,16 +1691,6 @@ static void simRunHalfStep(ServerSim *sim) {
             }
         }
 
-        /* Build arrays for multi-tank subsystem updates */
-        numTanks = 0;
-        for (count = 0; count < MAX_TANKS; count++) {
-            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
-                tanksArray[numTanks] = sim->sim.tanks[count];
-                lgmPtrs[numTanks] = &sim->sim.lgmen[count];
-                numTanks++;
-            }
-        }
-
         /* Precompute per-player compensation ticks for pill shell rewind */
         {
             BYTE c;
@@ -1715,6 +1705,26 @@ static void simRunHalfStep(ServerSim *sim) {
 
         /* Enforce high-ping limits */
         transportUdpServerEnforcePing(sim);
+
+        /* Build arrays for multi-tank subsystem updates.
+         *
+         * Snapshotted here — as late as possible, immediately before the
+         * world-update stage that consumes them — and NOT earlier in the
+         * half-step. tanksArray holds tank pointers by value and lgmPtrs holds
+         * addresses of sim->sim.lgmen[] slots, so anything that removes a
+         * player between this loop and the last consumer below leaves the
+         * arrays pointing at freed objects (dangling tanks) or NULLed slots
+         * (lgmen), with numTanks still counting the departed slot. That is
+         * exactly what a mid-half-step ping kick used to do. Keep any code
+         * that can call serverSimRemovePlayer above this point. */
+        numTanks = 0;
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
+                tanksArray[numTanks] = sim->sim.tanks[count];
+                lgmPtrs[numTanks] = &sim->sim.lgmen[count];
+                numTanks++;
+            }
+        }
 
         /* Update world systems */
         tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);

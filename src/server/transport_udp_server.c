@@ -3778,6 +3778,9 @@ void transportUdpServerDrainPendingRemovals(ServerSim *sim) {
          * disconnected it (and cleared this flag before any reuse), so there is
          * nothing to tear down. */
         if (!udpServer.clients[i].connected) continue;
+        /* Same teardown order every other disconnect path uses — the download
+         * buffer is caller-owned, serverDisconnectClient does not free it. */
+        serverCleanupMapDownload(i);
         serverDisconnectClient(sim, i, false);
         serverSimRemovePlayer(sim, (BYTE)i);
     }
@@ -3983,6 +3986,11 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
         uint16_t ping;
         if (!client->connected) continue;
 
+        /* Already queued for teardown by an earlier strike — the slot stays
+         * connected until the drain runs, so skip it rather than re-striking
+         * (and re-broadcasting) it on the intervening half-steps. */
+        if (udpServer.pendingSimRemove[i]) continue;
+
         ping = client->pingMs;
         if (ping == 0) continue;  /* No measurement yet */
         if (ping == client->lastEnforcedPingMs) continue;  /* Same measurement, already checked */
@@ -4004,9 +4012,18 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
                 fprintf(stderr, "[UDP SERVER] %s\n", msg);
                 serverSimConsoleMessage(msg);
                 serverSendServerEnglishBroadcast(sim, msg);
-                serverCleanupMapDownload(i);
-                serverDisconnectClient(sim, i, FALSE);
-                serverSimRemovePlayer(sim, (BYTE)i);
+                /* Teardown is DEFERRED, not run here. This function is called
+                 * from simRunHalfStep, mid-sim-frame; serverSimRemovePlayer
+                 * frees the slot's tank and lgm objects, and the half-step's
+                 * world-update stage holds pointers into both. Freeing here
+                 * left shellsUpdate dereferencing a NULLed lgm slot (fault at
+                 * lgmObj::playerNum, offset 0x18) and walking freed tank
+                 * pointers. Flag the slot instead and let
+                 * transportUdpServerDrainPendingRemovals do the teardown at
+                 * the top of the next tick — the same safe point the
+                 * control-queue-overflow disconnect uses. The kick is
+                 * announced now; only the free is delayed by one tick. */
+                udpServer.pendingSimRemove[i] = true;
                 continue;
             }
         } else {
@@ -6482,6 +6499,12 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0;
     if (!udpServer.clients[playerNum].connected) return 0;
     return udpServer.clients[playerNum].pingMs;
+}
+
+void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs) {
+    if (playerNum >= MAX_TANKS) return;
+    if (!udpServer.clients[playerNum].connected) return;
+    udpServer.clients[playerNum].pingMs = pingMs;
 }
 
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {

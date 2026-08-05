@@ -3104,6 +3104,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
+    # Mid-sim-frame player removal vs the arrays simRunHalfStep snapshots for
+    # its world update — the high-ping kick crash (shellsUpdate NULL lgm slot).
+    tests/unit/test_ping_kick_teardown.c
     tests/unit/test_input_gate.c
     tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
@@ -3556,6 +3559,8 @@ set(_unit_test_names
     snapshot_compaction
     edge_send_predicate
     error_smoothing
+    shells_survive_cleared_lgm_slot
+    ping_kick_defers_teardown
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
