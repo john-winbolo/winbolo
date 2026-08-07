@@ -617,6 +617,17 @@ bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
                           ClientGameVoteSnapshot *out);
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible);
 
+/* Whether the local player is part of a vote's electorate — i.e. whether
+ * this vote should be visible to them at all. Surrender votes belong to
+ * the surrendering team (teamId) and are private to it: non-members get
+ * neither the widget nor the newswire lines, and the server declines to
+ * send them the state in the first place (see udpClientDeliverControl).
+ * Every other kind is open to all connected players. Mirrors the server's
+ * eligibility rule in gameVoteEligibleMask(). teamId comes from the vote
+ * snapshot; kind is GAME_VOTE_KIND_*. */
+bool clientSimMayAnswerGameVote(const ClientSim *cs, uint8_t kind,
+                                uint8_t teamId);
+
 /* Per-frame tick that emits "Returning to lobby in N" newswire lines
  * for a vote-driven back-to-lobby transition. Server just enters
  * gameOver and lets countdownTicks drain; the client times its own

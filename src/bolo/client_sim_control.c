@@ -594,7 +594,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             gv->concludedAtMs = SDL_GetTicks();
         }
         /* Newswire notifications on state transitions so players who
-         * have the widget closed still see what happened. */
+         * have the widget closed still see what happened.
+         *
+         * Surrender votes are private to the surrendering team, so the
+         * announcements are too: the opposing team learns of a surrender
+         * only from the public "*** Team X has surrendered. ***" outcome,
+         * and a failed surrender vote stays invisible to them. The server
+         * already withholds the state event from non-members; this gate
+         * covers the in-process bus (host's own ClientSim, which the
+         * per-client wire filter never sees). The mirror above stays
+         * unconditional — only the display is gated — so nothing depends
+         * on the local team being known at sync-replay time. */
+        if (!clientSimMayAnswerGameVote(cs, k, gv->teamId)) {
+            break;
+        }
         const char *kindLabel = (k == GAME_VOTE_KIND_BACK_TO_LOBBY)
                                 ? "Return-to-lobby vote" : "Surrender vote";
         if (!wasRunning && gv->active == GAME_VOTE_ACTIVE_RUNNING) {

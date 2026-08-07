@@ -2887,6 +2887,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
+    # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
+    # from non-members on the wire, its newswire lines are suppressed on the
+    # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
+    # stays public through both.
+    tests/unit/test_vote_surrender_privacy.c
     tests/unit/test_round_stats.c
     tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
@@ -3364,6 +3369,11 @@ set(_unit_test_names
     vote_surrender_rejects_unassigned_caller
     vote_surrender_starts_for_real_team_caller
     vote_surrender_rejects_three_active_teams
+    vote_surrender_state_withheld_from_other_team
+    vote_surrender_newswire_hidden_from_other_team
+    vote_surrender_newswire_shown_to_own_team
+    vote_back_to_lobby_newswire_stays_public
+    vote_surrender_may_answer_rule
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide
