@@ -878,6 +878,19 @@ int run_control_oob_player_dropped(void);
  * (test_control_overflow_disconnect.c). */
 int run_control_overflow_defers_disconnect(void);
 
+/* A player removed mid-sim-frame must not invalidate the arrays simRunHalfStep
+ * snapshotted for its world update (test_ping_kick_teardown.c): shellsUpdate
+ * survives a slot whose lgm was cleared behind the snapshot, and the high-ping
+ * kick defers its teardown to transportUdpServerDrainPendingRemovals instead
+ * of freeing the tank/lgm inline. */
+int run_shells_survive_cleared_lgm_slot(void);
+int run_ping_kick_defers_teardown(void);
+
+/* tkExplosionUpdate pairs lgms[i] with tanks[i] over the COMPACTED per-player
+ * arrays, and its small-explosion sweep must cover every index
+ * (test_tkexp_lgm_pairing.c). */
+int run_tkexp_lgm_pairing(void);
+
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused

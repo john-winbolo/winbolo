@@ -310,9 +310,15 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
             if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
         }
         if (sim->isServer) {
+          /* count <= numLgm, matching every other lgm sweep (the four in
+           * tkExplosionBigExplosion below and minesExpCheckFill): the arrays
+           * are walked 1-based as lgms[count-1]. This loop used `<`, so the
+           * highest-indexed player's man was never checked against a small
+           * tank explosion. */
           count = 1;
-          while (count < numLgm) {
-            lgmDeathCheck(sim, lgms[count-1], position->x, position->y, NEUTRAL, &tank[count-1]);
+          while (count <= numLgm) {
+            lgmDeathCheck(sim, lgms[count-1], position->x, position->y, NEUTRAL,
+                          tank ? &tank[count-1] : NULL);
             count++;
           }
         }
