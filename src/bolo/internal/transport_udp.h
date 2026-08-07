@@ -809,6 +809,13 @@ void transportUdpServerTestSpectatorAckBulk(int s);
  * an invalid slot. */
 uint32_t transportUdpServerGetSpectatorControlSeq(int s);
 
+/* Player-slot peer of the above: read a connected client's CHANNEL_CONTROL
+ * send sequence (nextSeq). udpClientDeliverControl is the only writer, so a
+ * test can publish one control event and check whether this advanced (the
+ * per-recipient filters passed it) or held (filtered). Returns 0 for an
+ * invalid slot. */
+uint32_t transportUdpServerGetClientControlSeq(int slot);
+
 /* True when spectator slot s is a live control-bus subscriber (lobby/countdown),
  * false when it is a delayed-ring reader or the slot is out of range. Lets a
  * test observe the live↔delayed cutover. */

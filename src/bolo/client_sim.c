@@ -1604,6 +1604,20 @@ bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
   return true;
 }
 
+bool clientSimMayAnswerGameVote(const ClientSim *cs, uint8_t kind,
+                                uint8_t teamId) {
+  if (!cs) return false;
+  if (kind != GAME_VOTE_KIND_SURRENDER) return true;
+  /* A spectator has no slot and no team, so it is never part of a
+   * surrender electorate. Guard explicitly — myPlayerNum is a stale
+   * player index for a spectator, not an empty one. */
+  if (cs->isSpectator) return false;
+  BYTE me = cs->myPlayerNum;
+  if (me >= MAX_TANKS) return false;
+  BYTE myTeam = cs->lobbySlots[me].teamNumber;
+  return myTeam != 0 && myTeam == teamId;
+}
+
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible) {
   if (!cs) return;
   int idx = clientGameVoteIdx(kind);

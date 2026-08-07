@@ -1129,6 +1129,33 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             return;
         }
     }
+    if (evt->type == CTRL_GAME_VOTE_STATE &&
+        evt->u.gameVoteState.kind == GAME_VOTE_KIND_SURRENDER &&
+        evt->u.gameVoteState.teamId != 0) {
+        /* A surrender vote belongs to the surrendering team: only its
+         * members see that one is running, the live tally, and how it
+         * ended. Withholding the event here (rather than hiding it in the
+         * UI) keeps the tally off the wire entirely, so a modified client
+         * can't watch the other side deliberate.
+         *
+         * This covers every emission path — vote start, the 1Hz heartbeat,
+         * the conclusion, and the mid-game join replay — because they all
+         * funnel through this deliver callback.
+         *
+         * The kind check matters: the base-monopoly auto-vote sets a
+         * non-zero teamId on a BACK_TO_LOBBY vote, which is public and
+         * must not be filtered. teamId==0 is the idle/never-run snapshot
+         * emitted during sync replay; it carries no vote to hide. */
+        const LobbyPlayer *lp =
+            serverSimGetLobbyPlayer(serverSimGetActive(), client->playerNum);
+        if (!lp || lp->teamNumber != evt->u.gameVoteState.teamId) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=GAME_VOTE_STATE "
+                      "reason=not-on-team teamId=%d clientPlayerNum=%d",
+                      idx, (int)evt->u.gameVoteState.teamId,
+                      (int)client->playerNum);
+            return;
+        }
+    }
     if (evt->type == CTRL_COMMAND_REJECTED &&
         evt->u.commandRejected.origSlot != client->playerNum) {
         mpDiagLog("[srv] deliver FILTER slot=%d type=COMMAND_REJECTED "
@@ -1402,11 +1429,18 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_PLAYER_JOIN:
     case CTRL_BALANCE_PROPOSAL:
     case CTRL_MAP_SKIP_STATE:
-    case CTRL_GAME_VOTE_STATE:
     case CTRL_SPECTATOR_SLOT:
     case CTRL_SPECTATOR_CHAT:
     case CTRL_LOBBY_SYNC_COMPLETE:
         allow = true;
+        break;
+    case CTRL_GAME_VOTE_STATE:
+        /* Back-to-lobby votes are public. Surrender votes are private to
+         * the surrendering team, and a spectator belongs to no team, so
+         * it never qualifies (mirrors the per-client filter in
+         * udpClientDeliverControl). teamId==0 is the idle snapshot. */
+        allow = (evt->u.gameVoteState.kind != GAME_VOTE_KIND_SURRENDER ||
+                 evt->u.gameVoteState.teamId == 0);
         break;
     case CTRL_CHAT:
         /* Broadcast chat only; team (0x81..0x90) and unicast are player-private.
@@ -6591,6 +6625,11 @@ void transportUdpServerTestSpectatorAckBulk(int s) {
 uint32_t transportUdpServerGetSpectatorControlSeq(int s) {
     if (s < 0 || s >= MAX_SPECTATORS) return 0;
     return udpServer.spectators[s].channelMux.ch[CHANNEL_CONTROL].nextSeq;
+}
+
+uint32_t transportUdpServerGetClientControlSeq(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    return udpServer.channelMux[slot].ch[CHANNEL_CONTROL].nextSeq;
 }
 
 bool transportUdpServerGetSpectatorLive(int s) {

@@ -1348,16 +1348,14 @@ static void renderCtrlSendMsg(ClientSim *cs) {
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
-   answerable only by members of the surrendering team (teamId); everyone
-   else can watch the tally but has no Yes/No to cast. Other vote kinds are
-   open to all connected players. Mirrors the server's eligibility rule in
-   gameVoteEligibleMask(). */
+   answerable only by members of the surrendering team (teamId); other vote
+   kinds are open to all connected players. Thin wrapper over the shared
+   rule in client_sim.c, which the newswire gate uses too — a non-member no
+   longer even receives the state event, so this is now belt-and-braces for
+   anything already mirrored. */
 static bool localCanAnswerGameVote(ClientSim *cs,
                                    const ClientGameVoteSnapshot *snap) {
-    if (snap->kind != GAME_VOTE_KIND_SURRENDER) return true;
-    const ClientLobbySlot *ls =
-        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
-    return ls && ls->teamNumber != 0 && ls->teamNumber == snap->teamId;
+    return clientSimMayAnswerGameVote(cs, snap->kind, snap->teamId);
 }
 
 /* -------------------------------------------------------
