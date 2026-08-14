@@ -3789,30 +3789,15 @@ static BYTE serverSimWinningOwner(ServerSim *sim) {
 }
 
 bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
-    bool allOwned;
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
+    BYTE first = serverSimWinningOwner(sim);
     char name[256];
 
-    allOwned = TRUE;
-    max = basesGetNumBases(&sim->sim.bs);
-
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
+    if (first == NEUTRAL) {
+        return FALSE;
     }
 
-    if (allOwned && max > 0 && printWinners) {
+    if (printWinners) {
         fprintf(stdout, "Game Won!\nWinners:\n");
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
@@ -3823,7 +3808,7 @@ bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
         }
     }
 
-    return allOwned && max > 0;
+    return TRUE;
 }
 
 bool serverSimCheckAutoClose(ServerSim *sim) {
@@ -4836,28 +4821,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
 void serverSimSendWbnWinEvents(ServerSim *sim) {
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
-    bool allOwned = TRUE;
+    BYTE first = serverSimWinningOwner(sim);
 
-    max = basesGetNumBases(&sim->sim.bs);
-
-    /* Find the winning alliance — same logic as serverSimBuildWinMessage */
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
-    }
-
-    if (!allOwned || max == 0) {
+    if (first == NEUTRAL) {
         return;
     }
 
@@ -4884,30 +4850,11 @@ static size_t winMsgAdvance(size_t pos, size_t bufSize, int written) {
 
 bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
-    bool allOwned = TRUE;
+    BYTE first = serverSimWinningOwner(sim);
     char name[256];
     size_t pos;
 
-    max = basesGetNumBases(&sim->sim.bs);
-
-    /* Check if all bases are owned by the same alliance */
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
-    }
-
-    if (!allOwned || max == 0) {
+    if (first == NEUTRAL) {
         snprintf(buf, bufSize, "Game over!");
         return FALSE;
     }
