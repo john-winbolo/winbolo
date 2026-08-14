@@ -136,6 +136,15 @@ static void publishMapSkipState(ServerSim *sim);
  * the startup settings snapshot, and unlocks the lobby. Defined below. */
 static void serverSimResetLobbyToDefaults(ServerSim *sim);
 
+/* The player slot every base owner is allied to when one side has swept
+ * the map, or NEUTRAL when no side has. Same predicate as
+ * serverSimCheckGameWin: a base at or below MIN_ARMOUR_CAPTURE is dead
+ * and recapturable, so it does not count toward a sweep. */
+static BYTE serverSimWinningOwner(ServerSim *sim);
+
+/* Server-originated English broadcast; defined further down the file. */
+static void publishServerMessage(ServerSim *sim, const char *message);
+
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
 static THREAD_LOCAL ServerSim *activeSim = NULL;
@@ -1811,14 +1820,44 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->prevBaseCount = (uint8_t)nb;
     }
 
-    /* Check game-win condition. Fires when one alliance owns every
-     * base above the capture-armour threshold. Lobby-enabled rounds
-     * always check — winning ends the round and returns to lobby via
-     * the existing serverSimEnterGameOver path. quitOnWin is the
-     * legacy dedicated-server flag that also shuts the process down
-     * when no lobby is configured. */
-    if ((sim->quitOnWin || sim->lobbyEnabled) &&
-        serverSimCheckGameWin(sim, TRUE)) {
+    /* All-bases win. A lobby round announces it and runs an abortable
+     * countdown: a base shelled below the capture threshold, a recapture,
+     * or a winning owner disconnecting can put the sweep back in doubt,
+     * and the round resumes if it does. A no-lobby round has nowhere to
+     * count down to — quitOnWin ends it immediately and the process
+     * shuts down. */
+    if (sim->lobbyEnabled) {
+        bool sweptNow = serverSimCheckGameWin(sim, FALSE);
+
+        if (sim->baseWinRearmTicks > 0) {
+            sim->baseWinRearmTicks--;
+        }
+
+        if (sim->baseWinCountdown) {
+            if (!sweptNow) {
+                sim->returnToLobbyTicks = 0;
+                sim->baseWinCountdown = false;
+                sim->baseWinRearmTicks = BASE_WIN_REARM_TICKS;
+                publishServerMessage(sim, "*** The round continues. ***");
+                serverSimConsoleMessage("Base control broken. Round continues.");
+            }
+        } else if (sweptNow && sim->returnToLobbyTicks == 0 &&
+                   sim->baseWinRearmTicks == 0) {
+            char buf[256];
+            char name[256];
+            BYTE winner = serverSimWinningOwner(sim);
+            playersGetPlayerName(&sim->sim.plyrs, winner, name, TRUE);
+            snprintf(buf, sizeof(buf),
+                     "*** %s and their allies control every base. "
+                     "Returning to lobby in 7 seconds. ***", name);
+            publishServerMessage(sim, buf);
+            serverSimConsoleMessage(buf);
+            /* 7 seconds at 100 Hz; the snapshot header ships the remaining
+             * ticks so clients render their own 3/2/1. */
+            sim->returnToLobbyTicks = 700;
+            sim->baseWinCountdown = true;
+        }
+    } else if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
         serverSimConsoleMessage("Game won!");
         serverSimEnterGameOver(sim);
@@ -3720,6 +3759,34 @@ bool serverSimSaveMap(ServerSim *sim, char *fileName) {
     return mapWrite(fileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss);
 }
 
+static BYTE serverSimWinningOwner(ServerSim *sim) {
+    BYTE count;
+    BYTE max;
+    BYTE first = NEUTRAL;
+    BYTE current;
+
+    max = basesGetNumBases(&sim->sim.bs);
+    if (max == 0) {
+        return NEUTRAL;
+    }
+
+    for (count = 1; count <= max; count++) {
+        BYTE shellsAmt, minesAmt, armourAmt;
+        current = basesGetBaseOwner(&sim->sim.bs, count);
+        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
+        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+            return NEUTRAL;
+        }
+        if (count == 1) {
+            first = current;
+        } else if (!playersIsAllie(&sim->sim.plyrs, current, first)) {
+            return NEUTRAL;
+        }
+    }
+
+    return first;
+}
+
 bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
     bool allOwned;
     BYTE count;
@@ -5483,6 +5550,8 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     sim->returnToLobbyTicks = 0;
     sim->surrenderTeamId = 0;
     sim->returnToLobbyByVote = false;
+    sim->baseWinRearmTicks = 0;
+    sim->baseWinCountdown = false;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
