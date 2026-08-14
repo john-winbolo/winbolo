@@ -98,7 +98,6 @@ void serverSimSetAllowNewPlayers(ServerSim *sim, bool v);
 void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed);
 void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight);
 void serverSimSetBalanceIncludeBots(ServerSim *sim, bool includeBots);
-void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v);
 
 /* Mutable lobby accessors. Callers: UDP PACKET_LOBBY_* handlers and
  * client_net.c's local-transport branches. */

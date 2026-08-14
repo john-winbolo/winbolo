@@ -199,7 +199,7 @@ int run_maprotate_vote_return_is_not_terminal(void) {
 
     /* Mimic a passed manual back-to-lobby vote: countdown armed, then let the
      * tick run it down to game-over. */
-    sim->returnToLobbyByVote = true;
+    sim->returnToLobbyReason = RETURN_REASON_MANUAL_VOTE;
     sim->returnToLobbyTicks = 4;
     int guard = 0;
     while (serverSimGetState(sim) == serverStateRunning && guard++ < 50) {
