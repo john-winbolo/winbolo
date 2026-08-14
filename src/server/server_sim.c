@@ -1426,7 +1426,7 @@ static void simRunHalfStep(ServerSim *sim) {
             sim->roundHadHuman = true;
         } else if (sim->roundHadHuman) {
             mapSetChangeCallback(NULL);
-            serverSimSetSuppressNextWinMessage(sim, true);
+            sim->returnToLobbyReason = RETURN_REASON_ABANDONED;
             serverSimConsoleMessage("No human players remaining. Returning to lobby.");
             serverSimEnterGameOver(sim);
             sim->tick++;
@@ -1833,10 +1833,10 @@ static void simRunHalfStep(ServerSim *sim) {
             sim->baseWinRearmTicks--;
         }
 
-        if (sim->baseWinCountdown) {
+        if (sim->returnToLobbyReason == RETURN_REASON_BASE_WIN) {
             if (!sweptNow) {
                 sim->returnToLobbyTicks = 0;
-                sim->baseWinCountdown = false;
+                sim->returnToLobbyReason = RETURN_REASON_NONE;
                 sim->baseWinRearmTicks = BASE_WIN_REARM_TICKS;
                 publishServerMessage(sim, "*** The round continues. ***");
                 serverSimConsoleMessage("Base control broken. Round continues.");
@@ -1855,7 +1855,7 @@ static void simRunHalfStep(ServerSim *sim) {
             /* 7 seconds at 100 Hz; the snapshot header ships the remaining
              * ticks so clients render their own 3/2/1. */
             sim->returnToLobbyTicks = 700;
-            sim->baseWinCountdown = true;
+            sim->returnToLobbyReason = RETURN_REASON_BASE_WIN;
         }
     } else if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
@@ -1873,7 +1873,8 @@ static void simRunHalfStep(ServerSim *sim) {
     if (sim->returnToLobbyTicks > 0) {
         sim->returnToLobbyTicks--;
         if (sim->returnToLobbyTicks == 0) {
-            serverSimSetSuppressNextWinMessage(sim, true);
+            /* returnToLobbyReason, set when the countdown was armed, tells
+             * serverSimResolveGameOver what the returning lobby is told. */
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -4996,38 +4997,44 @@ void serverSimResolveGameOver(ServerSim *sim) {
      * to return a message to. */
     if (!sim->lobbyEnabled) return;
 
-    if (sim->surrenderTeamId != 0) {
-        /* A surrender vote ended the round — the opposing team wins.
-         * The returnToLobbyTicks countdown set suppressNextWinMessage
-         * (shared with a plain back-to-lobby vote); consume and ignore
-         * it so the winner line still reaches the lobby. The base sweep
-         * never fires on a surrender, so credit the win by team. */
-        serverSimConsumeSuppressNextWinMessage(sim);
-        serverSimBuildSurrenderWinMessage(sim, sim->surrenderTeamId,
+    switch (sim->returnToLobbyReason) {
+    case RETURN_REASON_SURRENDER:
+        /* A surrender vote ended the round — the opposing team wins. The
+         * base sweep never fires on a surrender, so credit the win by
+         * team instead. */
+        serverSimBuildSurrenderWinMessage(sim, sim->returnToLobbyTeamId,
                                           sim->pendingWinMessage,
                                           sizeof(sim->pendingWinMessage));
-        serverSimSendWbnSurrenderWinEvents(sim, sim->surrenderTeamId);
-    } else if (sim->returnToLobbyByVote) {
+        serverSimSendWbnSurrenderWinEvents(sim, sim->returnToLobbyTeamId);
+        break;
+
+    case RETURN_REASON_MANUAL_VOTE:
         /* A manual back-to-lobby vote ended the round — no winner, but
          * leave a line in the returning lobby explaining why (the
-         * in-game announcement only reached the newswire). Consume and
-         * ignore the suppress flag the countdown set. */
-        serverSimConsumeSuppressNextWinMessage(sim);
+         * in-game countdown only reached the players still in the game). */
         SDL_strlcpy(sim->pendingWinMessage,
                     "*** Players voted to return to the lobby. ***",
                     sizeof(sim->pendingWinMessage));
-    } else {
-        if (serverSimConsumeSuppressNextWinMessage(sim)) {
-            /* Vote-driven game end already announced itself. */
-            sim->pendingWinMessage[0] = '\0';
-        } else {
-            /* Capture win message now while game state is intact;
-             * it will be sent after players return to the lobby. */
-            serverSimBuildWinMessage(sim,
-                                     sim->pendingWinMessage,
-                                     sizeof(sim->pendingWinMessage));
-        }
+        break;
+
+    case RETURN_REASON_ABANDONED:
+        /* Everyone left — nobody won, so no lobby line and no WBN
+         * crediting. */
+        sim->pendingWinMessage[0] = '\0';
+        break;
+
+    case RETURN_REASON_BASE_WIN:
+    case RETURN_REASON_NONE:
+    default:
+        /* An all-bases sweep, or a game-over with no countdown behind it
+         * (game-time / tick limits): both report whatever the sweep says.
+         * Capture the win message now while game state is intact; it is
+         * sent once the players are back in the lobby. */
+        serverSimBuildWinMessage(sim,
+                                 sim->pendingWinMessage,
+                                 sizeof(sim->pendingWinMessage));
         serverSimSendWbnWinEvents(sim);
+        break;
     }
 }
 
@@ -5499,17 +5506,6 @@ bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind) {
     return gv && gv->active == GAME_VOTE_ACTIVE_RUNNING;
 }
 
-bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim) {
-    if (!sim) return false;
-    bool v = sim->suppressNextWinMessage;
-    sim->suppressNextWinMessage = false;
-    return v;
-}
-
-void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v) {
-    if (sim) sim->suppressNextWinMessage = v;
-}
-
 bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
                                   ServerGameVoteSnapshot *out) {
     const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
@@ -5548,10 +5544,11 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
     sim->returnToLobbyTicks = 0;
-    sim->surrenderTeamId = 0;
-    sim->returnToLobbyByVote = false;
+    sim->returnToLobbyReason = RETURN_REASON_NONE;
+    sim->returnToLobbyTeamId = 0;
+    /* A stale re-arm cooldown carried into a new round would swallow that
+     * round's first all-bases announcement. */
     sim->baseWinRearmTicks = 0;
-    sim->baseWinCountdown = false;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
@@ -5595,14 +5592,11 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * so clients can render their own 3/2/1 countdown.
          *
          * Budget: 7 seconds at 100Hz (each serverSimTick call). */
-        /* A player-initiated vote leaves a line in the returning lobby
-         * explaining why the round ended (no in-game newswire line —
-         * clients already render the 3/2/1 countdown). Base-monopoly
-         * auto-votes keep their existing winner reporting and don't add
-         * this line. */
-        if (gv->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) {
-            sim->returnToLobbyByVote = true;
-        }
+        /* The vote leaves a line in the returning lobby explaining why the
+         * round ended (no in-game newswire line — clients already render
+         * the 3/2/1 countdown). Every back-to-lobby vote is player-started
+         * since the base-monopoly auto-vote was removed. */
+        sim->returnToLobbyReason = RETURN_REASON_MANUAL_VOTE;
         sim->returnToLobbyTicks = 700;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
@@ -5617,7 +5611,8 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * game-over handler credits the opposing team with the win
          * (WBN events + lobby winner line), then return to the lobby on
          * the same countdown a back-to-lobby vote uses. */
-        sim->surrenderTeamId = gv->teamId;
+        sim->returnToLobbyReason = RETURN_REASON_SURRENDER;
+        sim->returnToLobbyTeamId = gv->teamId;
         sim->returnToLobbyTicks = 700;
     }
 }

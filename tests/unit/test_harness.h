@@ -116,6 +116,15 @@ int run_vote_surrender_newswire_hidden_from_other_team(void);
 int run_vote_surrender_newswire_shown_to_own_team(void);
 int run_vote_back_to_lobby_newswire_stays_public(void);
 int run_vote_surrender_may_answer_rule(void);
+/* All-bases win countdown (test_base_win_countdown.c). The sweep announces
+ * and arms an abortable return-to-lobby countdown without faking a vote; a
+ * broken sweep resumes the round under a re-announce cooldown; a no-lobby
+ * -quitonwin round still ends instantly. */
+int run_base_win_announces_and_publishes_no_vote_state(void);
+int run_base_win_countdown_aborts_when_sweep_breaks(void);
+int run_base_win_rearm_cooldown_limits_announcements(void);
+int run_base_win_quitonwin_with_lobby_counts_down(void);
+int run_base_win_nolobby_quitonwin_is_instant(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);

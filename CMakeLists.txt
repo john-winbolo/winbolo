@@ -2887,6 +2887,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
+    # All-bases win: the sweep announces and arms an abortable return-to-lobby
+    # countdown without starting a vote; a broken sweep resumes the round and
+    # a cooldown blocks re-announce flapping; a no-lobby -quitonwin win is
+    # still instant.
+    tests/unit/test_base_win_countdown.c
     # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
     # from non-members on the wire, its newswire lines are suppressed on the
     # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
@@ -3374,6 +3379,11 @@ set(_unit_test_names
     vote_surrender_newswire_shown_to_own_team
     vote_back_to_lobby_newswire_stays_public
     vote_surrender_may_answer_rule
+    base_win_announces_and_publishes_no_vote_state
+    base_win_countdown_aborts_when_sweep_breaks
+    base_win_rearm_cooldown_limits_announcements
+    base_win_quitonwin_with_lobby_counts_down
+    base_win_nolobby_quitonwin_is_instant
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide
