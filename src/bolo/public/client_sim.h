@@ -38,6 +38,7 @@
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -443,6 +444,13 @@ gameType clientSimGetGameType(const ClientSim *cs);
 
 /* Per-player accessors that forward to the embedded players struct. */
 uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
+/* Colour band for that ping, tracked with hysteresis so a player parked on a
+ * threshold doesn't strobe between colours. Player rows should use this
+ * rather than re-deriving a band from the number. */
+PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum);
+/* Drop a slot's ping smoothing state — call when the slot empties so an
+ * arriving player doesn't inherit the previous occupant's average. */
+void     clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
 void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);

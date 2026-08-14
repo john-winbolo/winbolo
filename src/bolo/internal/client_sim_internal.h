@@ -35,6 +35,7 @@
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
 #include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
+#include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
 
@@ -150,6 +151,12 @@ struct ClientSim {
     /* Min-over-window RTT the transport stamps in each PONG; the snapshot
      * path anchors forward-projection to it rather than the display ping. */
     uint16_t    projectionPingMs;
+
+    /* Per-slot conditioning for the ping the player rows render — smoothing,
+     * repaint deadband and colour-band hysteresis over the raw RTT each
+     * snapshot carries. Display only; projectionPingMs above is what the
+     * sim-affecting paths read. */
+    PingDisplay displayPing[MAX_TANKS];
 
     /* Reconciliation stats — current 1s window + last completed window */
     uint16_t reconCountThisWindow;

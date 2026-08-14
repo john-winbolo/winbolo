@@ -669,13 +669,26 @@ void clientApplySnapshot(ClientSim *csPtr,
       continue;
     }
 
-    /* Update ping and client flags for all players from snapshot */
-    playersSetPing(&csPtr->sim.plyrs, pn, tanks[i].pingMs);
-    /* Push the fresh ping into the frontend's per-slot cache too —
-     * the HUD player rows read from that cache, not from the players
-     * struct, and it would otherwise stay frozen at the value set by
-     * the join-time frontEndSetPlayer call. */
-    frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, tanks[i].pingMs);
+    /* Update ping and client flags for all players from snapshot.
+     *
+     * The wire value is a raw RTT sample the server re-stamps every tick but
+     * only re-measures every ~0.4s, so it is fed through the display
+     * conditioner (smoothing + repaint deadband) before it reaches anything
+     * player-facing — rendered raw it jitters by tens of ms. Only the
+     * readout is affected: lag comp and shell projection read the raw and
+     * min-over-window values on their own paths. */
+    {
+      uint16_t shownPing = (pn < MAX_TANKS)
+                               ? pingDisplayPush(&csPtr->displayPing[pn],
+                                                 tanks[i].pingMs)
+                               : tanks[i].pingMs;
+      playersSetPing(&csPtr->sim.plyrs, pn, shownPing);
+      /* Push the fresh ping into the frontend's per-slot cache too —
+       * the HUD player rows read from that cache, not from the players
+       * struct, and it would otherwise stay frozen at the value set by
+       * the join-time frontEndSetPlayer call. */
+      frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, shownPing);
+    }
     {
       /* Snapshot is authoritative only for these bits — preserve any others
        * (e.g. STEAM_BUILD set once from JOIN_REQUEST, PLAYER_FLAG_BOT set at

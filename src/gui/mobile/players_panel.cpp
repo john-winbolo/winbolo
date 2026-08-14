@@ -142,10 +142,8 @@ extern "C" void playersPanelRender(void) {
                 float pingW = ImGui::CalcTextSize(pingStr).x;
                 ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - pingW);
 
-                ImVec4 pingColor;
-                if (ping < 50)       pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                else if (ping < 150) pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                else                 pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                ImVec4 pingColor = imguiPingBandColor(
+                    clientSimGetPlayerPingBand(humanSim, (BYTE)i));
                 ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();

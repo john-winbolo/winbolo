@@ -1497,11 +1497,9 @@ static void renderPlayersPanel(ClientSim *cs) {
 
         /* Right-aligned ping */
         ImGui::SameLine(fullWidth - pingWidth);
-        ImVec4 pingColor;
-        if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-        else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-        else if (s_playerPing[i] < 150)  pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-        else                              pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+        ImVec4 pingColor = imguiPingBandColor(
+            cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
+               : pingBandClassify(s_playerPing[i]));
         ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
@@ -2940,11 +2938,9 @@ static void renderMenuBar(ClientSim *cs) {
 
                 /* Ping with color coding — anchored just left of the checkmark slot. */
                 ImGui::SameLine(pingLocalX);
-                ImVec4 pingColor;
-                if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-                else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                else if (s_playerPing[i] < 150)  pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                else                              pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                ImVec4 pingColor = imguiPingBandColor(
+                    cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
+                       : pingBandClassify(s_playerPing[i]));
                 ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();
