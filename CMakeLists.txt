@@ -2892,6 +2892,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # a cooldown blocks re-announce flapping; a no-lobby -quitonwin win is
     # still instant.
     tests/unit/test_base_win_countdown.c
+    # Game-over resolution: serverSimResolveGameOver maps returnToLobbyReason
+    # to the returning lobby's message and the WinBolo.net win crediting — a
+    # swept round names its winner, a passed vote credits nobody, a surrender
+    # credits the opposing team, an abandoned round reports nothing.
+    tests/unit/test_base_win_resolve.c
     # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
     # from non-members on the wire, its newswire lines are suppressed on the
     # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
@@ -3384,6 +3389,11 @@ set(_unit_test_names
     base_win_rearm_cooldown_limits_announcements
     base_win_quitonwin_with_lobby_counts_down
     base_win_nolobby_quitonwin_is_instant
+    base_win_expiry_reports_the_winner
+    manual_vote_countdown_survives_lost_base
+    surrender_credits_the_opposing_team
+    win_during_manual_countdown_resolves_as_vote
+    abandoned_round_reports_nothing
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide

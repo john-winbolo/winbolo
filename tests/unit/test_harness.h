@@ -125,6 +125,16 @@ int run_base_win_countdown_aborts_when_sweep_breaks(void);
 int run_base_win_rearm_cooldown_limits_announcements(void);
 int run_base_win_quitonwin_with_lobby_counts_down(void);
 int run_base_win_nolobby_quitonwin_is_instant(void);
+/* Game-over resolution (test_base_win_resolve.c). serverSimResolveGameOver
+ * turns returnToLobbyReason into the returning lobby's message and the
+ * WinBolo.net win crediting: a swept round reports its winner, a passed
+ * vote is irrevocable and credits nobody, a surrender credits the opposing
+ * team, and an abandoned round reports nothing. */
+int run_base_win_expiry_reports_the_winner(void);
+int run_manual_vote_countdown_survives_lost_base(void);
+int run_surrender_credits_the_opposing_team(void);
+int run_win_during_manual_countdown_resolves_as_vote(void);
+int run_abandoned_round_reports_nothing(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);
