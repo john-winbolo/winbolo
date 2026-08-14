@@ -5480,7 +5480,6 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     memset(sim->gameVotes, 0, sizeof(sim->gameVotes));
     sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
-    sim->baseMonopolyTriggeredThisRound = false;
     sim->returnToLobbyTicks = 0;
     sim->surrenderTeamId = 0;
     sim->returnToLobbyByVote = false;
@@ -5723,71 +5722,13 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     }
 }
 
-/* Detect "one team owns every base" and auto-start a back-to-lobby vote. */
-static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
-    if (sim->state != serverStateRunning) return;
-    if (sim->baseMonopolyTriggeredThisRound) return;
-
-    /* Count bases per team-via-owner-player. */
-    int nBases = basesGetNumBases(&sim->sim.bs);
-    if (nBases <= 0) return;
-
-    uint8_t teamCount[MAX_TANKS] = {0};
-    uint8_t neutral = 0;
-    int i;
-    for (i = 0; i < nBases; i++) {
-        BYTE owner = basesGetBaseOwner(&sim->sim.bs, (BYTE)(i + 1));
-        if (owner >= MAX_TANKS) { neutral++; continue; }
-        if (!sim->playerConnected[owner]) { neutral++; continue; }
-        uint8_t t = sim->lobbyPlayers[owner].teamNumber;
-        if (t == 0 || t >= MAX_TANKS) { neutral++; continue; }
-        teamCount[t]++;
-    }
-    if (neutral > 0) return;
-
-    int teamsWithBases = 0;
-    uint8_t monoTeam = 0;
-    int t;
-    for (t = 1; t < MAX_TANKS; t++) {
-        if (teamCount[t] > 0) { teamsWithBases++; monoTeam = (uint8_t)t; }
-    }
-    if (teamsWithBases != 1) return;
-
-    /* Require >1 active team in play to make "monopoly" meaningful. */
-    if (serverSimCountActiveTeams(sim) < 2) return;
-
-    struct ServerGameVote *gv = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-    if (!gv) return;
-    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) return;
-
-    char buf[128];
-    const char *tname = sim->teams[monoTeam].name[0]
-                        ? sim->teams[monoTeam].name : "?";
-    snprintf(buf, sizeof(buf),
-             "Team %s controls every base. Returning to lobby on unanimous vote.",
-             tname);
-    publishServerMessage(sim, buf);
-
-    gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
-    /* Pre-cast YES for every eligible voter. */
-    gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
-    gv->answeredMask = gv->votesMask;
-    publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-
-    sim->baseMonopolyTriggeredThisRound = true;
-}
-
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
     /* Voting only exists on lobby-enabled servers (see
-     * serverSimGameVoteToggle). Skip the whole vote machinery — including
-     * the base-monopoly auto-vote — when there is no lobby. */
+     * serverSimGameVoteToggle). Skip the whole vote machinery when there
+     * is no lobby. */
     if (!sim->lobbyEnabled) return;
 
     sim->gameVoteWallMs = nowMs;
-
-    /* Auto-trigger checks before per-slot servicing. */
-    gameVoteCheckBaseMonopoly(sim, nowMs);
 
     int k;
     for (k = 0; k < 2; k++) {

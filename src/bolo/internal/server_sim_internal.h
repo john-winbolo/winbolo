@@ -362,7 +362,6 @@ struct ServerSim {
         uint64_t pendingPassUntilMs;
     } gameVotes[2];
     uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
-    bool     baseMonopolyTriggeredThisRound;
 
     /* Forced return-to-lobby countdown (e.g. from a vote-pass). When
      * > 0, the running-state tick decrements this each call; at 0
