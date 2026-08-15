@@ -289,6 +289,10 @@ static bool s_closeMenuPopups = false;
 
 /* Player slot state — updated by frontEndSetPlayer / frontEndClearPlayer */
 #define MAX_PLAYERS 16
+/* These rows index ClientSim state sized by MAX_TANKS (the ping band, for
+ * one). A local define drifting past it would silently render every extra
+ * slot grey rather than fail. */
+static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
 static char     s_playerName[MAX_PLAYERS][33] = {};        /* PLAYER_NAME_LEN = 33 */
 static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country code + NUL */
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
@@ -1497,11 +1501,9 @@ static void renderPlayersPanel(ClientSim *cs) {
 
         /* Right-aligned ping */
         ImGui::SameLine(fullWidth - pingWidth);
-        ImVec4 pingColor;
-        if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-        else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-        else if (s_playerPing[i] < 150)  pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-        else                              pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+        ImVec4 pingColor = imguiPingBandColor(
+            cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
+               : pingBandClassify(s_playerPing[i]));
         ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
@@ -2940,11 +2942,9 @@ static void renderMenuBar(ClientSim *cs) {
 
                 /* Ping with color coding — anchored just left of the checkmark slot. */
                 ImGui::SameLine(pingLocalX);
-                ImVec4 pingColor;
-                if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-                else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                else if (s_playerPing[i] < 150)  pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                else                              pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                ImVec4 pingColor = imguiPingBandColor(
+                    cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
+                       : pingBandClassify(s_playerPing[i]));
                 ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();
@@ -4140,12 +4140,17 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
             p->pflags = (int)s_playerFlags[i];
             p->ptype  = (int)s_playerClientType[i];
             p->ping   = cs ? (int)clientSimGetPlayerPing(cs, (BYTE)i) : 0;
+            /* Band travels with the number so the native row doesn't
+             * re-derive thresholds and lose the hysteresis. */
+            p->pingBand = cs ? (int)clientSimGetPlayerPingBand(cs, (BYTE)i)
+                             : PING_BAND_NONE;
         } else {
             p->name[0]    = '\0';
             p->country[0] = '\0';
             p->pflags     = 0;
             p->ptype      = 0;
             p->ping       = 0;
+            p->pingBand   = PING_BAND_NONE;
         }
     }
 
