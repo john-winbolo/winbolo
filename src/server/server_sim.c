@@ -136,6 +136,15 @@ static void publishMapSkipState(ServerSim *sim);
  * the startup settings snapshot, and unlocks the lobby. Defined below. */
 static void serverSimResetLobbyToDefaults(ServerSim *sim);
 
+/* The player slot every base owner is allied to when one side has swept
+ * the map, or NEUTRAL when no side has. Same predicate as
+ * serverSimCheckGameWin: a base at or below MIN_ARMOUR_CAPTURE is dead
+ * and recapturable, so it does not count toward a sweep. */
+static BYTE serverSimWinningOwner(ServerSim *sim);
+
+/* Server-originated English broadcast; defined further down the file. */
+static void publishServerMessage(ServerSim *sim, const char *message);
+
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
 static THREAD_LOCAL ServerSim *activeSim = NULL;
@@ -1417,7 +1426,7 @@ static void simRunHalfStep(ServerSim *sim) {
             sim->roundHadHuman = true;
         } else if (sim->roundHadHuman) {
             mapSetChangeCallback(NULL);
-            serverSimSetSuppressNextWinMessage(sim, true);
+            sim->returnToLobbyReason = RETURN_REASON_ABANDONED;
             serverSimConsoleMessage("No human players remaining. Returning to lobby.");
             serverSimEnterGameOver(sim);
             sim->tick++;
@@ -1811,14 +1820,44 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->prevBaseCount = (uint8_t)nb;
     }
 
-    /* Check game-win condition. Fires when one alliance owns every
-     * base above the capture-armour threshold. Lobby-enabled rounds
-     * always check — winning ends the round and returns to lobby via
-     * the existing serverSimEnterGameOver path. quitOnWin is the
-     * legacy dedicated-server flag that also shuts the process down
-     * when no lobby is configured. */
-    if ((sim->quitOnWin || sim->lobbyEnabled) &&
-        serverSimCheckGameWin(sim, TRUE)) {
+    /* All-bases win. A lobby round announces it and runs an abortable
+     * countdown: a base shelled below the capture threshold, a recapture,
+     * or a winning owner disconnecting can put the sweep back in doubt,
+     * and the round resumes if it does. A no-lobby round has nowhere to
+     * count down to — quitOnWin ends it immediately and the process
+     * shuts down. */
+    if (sim->lobbyEnabled) {
+        bool sweptNow = serverSimCheckGameWin(sim, FALSE);
+
+        if (sim->baseWinRearmTicks > 0) {
+            sim->baseWinRearmTicks--;
+        }
+
+        if (sim->returnToLobbyReason == RETURN_REASON_BASE_WIN) {
+            if (!sweptNow) {
+                sim->returnToLobbyTicks = 0;
+                sim->returnToLobbyReason = RETURN_REASON_NONE;
+                sim->baseWinRearmTicks = BASE_WIN_REARM_TICKS;
+                publishServerMessage(sim, "*** The round continues. ***");
+                serverSimConsoleMessage("Base control broken. Round continues.");
+            }
+        } else if (sweptNow && sim->returnToLobbyTicks == 0 &&
+                   sim->baseWinRearmTicks == 0) {
+            char buf[256];
+            char name[256];
+            BYTE winner = serverSimWinningOwner(sim);
+            playersGetPlayerName(&sim->sim.plyrs, winner, name, TRUE);
+            snprintf(buf, sizeof(buf),
+                     "*** %s and their allies control every base. "
+                     "Returning to lobby in 7 seconds. ***", name);
+            publishServerMessage(sim, buf);
+            serverSimConsoleMessage(buf);
+            /* 7 seconds at 100 Hz; the snapshot header ships the remaining
+             * ticks so clients render their own 3/2/1. */
+            sim->returnToLobbyTicks = 700;
+            sim->returnToLobbyReason = RETURN_REASON_BASE_WIN;
+        }
+    } else if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
         serverSimConsoleMessage("Game won!");
         serverSimEnterGameOver(sim);
@@ -1834,7 +1873,8 @@ static void simRunHalfStep(ServerSim *sim) {
     if (sim->returnToLobbyTicks > 0) {
         sim->returnToLobbyTicks--;
         if (sim->returnToLobbyTicks == 0) {
-            serverSimSetSuppressNextWinMessage(sim, true);
+            /* returnToLobbyReason, set when the countdown was armed, tells
+             * serverSimResolveGameOver what the returning lobby is told. */
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -3720,31 +3760,44 @@ bool serverSimSaveMap(ServerSim *sim, char *fileName) {
     return mapWrite(fileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss);
 }
 
-bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
-    bool allOwned;
+static BYTE serverSimWinningOwner(ServerSim *sim) {
     BYTE count;
     BYTE max;
     BYTE first = NEUTRAL;
     BYTE current;
-    char name[256];
 
-    allOwned = TRUE;
     max = basesGetNumBases(&sim->sim.bs);
+    if (max == 0) {
+        return NEUTRAL;
+    }
 
-    for (count = 1; count <= max && allOwned; count++) {
+    for (count = 1; count <= max; count++) {
         BYTE shellsAmt, minesAmt, armourAmt;
         current = basesGetBaseOwner(&sim->sim.bs, count);
         basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
         if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
+            return NEUTRAL;
+        }
+        if (count == 1) {
             first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        } else if (!playersIsAllie(&sim->sim.plyrs, current, first)) {
+            return NEUTRAL;
         }
     }
 
-    if (allOwned && max > 0 && printWinners) {
+    return first;
+}
+
+bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
+    BYTE count;
+    BYTE first = serverSimWinningOwner(sim);
+    char name[256];
+
+    if (first == NEUTRAL) {
+        return FALSE;
+    }
+
+    if (printWinners) {
         fprintf(stdout, "Game Won!\nWinners:\n");
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
@@ -3755,7 +3808,7 @@ bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
         }
     }
 
-    return allOwned && max > 0;
+    return TRUE;
 }
 
 bool serverSimCheckAutoClose(ServerSim *sim) {
@@ -4768,28 +4821,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
 void serverSimSendWbnWinEvents(ServerSim *sim) {
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
-    bool allOwned = TRUE;
+    BYTE first = serverSimWinningOwner(sim);
 
-    max = basesGetNumBases(&sim->sim.bs);
-
-    /* Find the winning alliance — same logic as serverSimBuildWinMessage */
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
-    }
-
-    if (!allOwned || max == 0) {
+    if (first == NEUTRAL) {
         return;
     }
 
@@ -4816,30 +4850,11 @@ static size_t winMsgAdvance(size_t pos, size_t bufSize, int written) {
 
 bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
-    bool allOwned = TRUE;
+    BYTE first = serverSimWinningOwner(sim);
     char name[256];
     size_t pos;
 
-    max = basesGetNumBases(&sim->sim.bs);
-
-    /* Check if all bases are owned by the same alliance */
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
-    }
-
-    if (!allOwned || max == 0) {
+    if (first == NEUTRAL) {
         snprintf(buf, bufSize, "Game over!");
         return FALSE;
     }
@@ -4929,38 +4944,44 @@ void serverSimResolveGameOver(ServerSim *sim) {
      * to return a message to. */
     if (!sim->lobbyEnabled) return;
 
-    if (sim->surrenderTeamId != 0) {
-        /* A surrender vote ended the round — the opposing team wins.
-         * The returnToLobbyTicks countdown set suppressNextWinMessage
-         * (shared with a plain back-to-lobby vote); consume and ignore
-         * it so the winner line still reaches the lobby. The base sweep
-         * never fires on a surrender, so credit the win by team. */
-        serverSimConsumeSuppressNextWinMessage(sim);
-        serverSimBuildSurrenderWinMessage(sim, sim->surrenderTeamId,
+    switch (sim->returnToLobbyReason) {
+    case RETURN_REASON_SURRENDER:
+        /* A surrender vote ended the round — the opposing team wins. The
+         * base sweep never fires on a surrender, so credit the win by
+         * team instead. */
+        serverSimBuildSurrenderWinMessage(sim, sim->returnToLobbyTeamId,
                                           sim->pendingWinMessage,
                                           sizeof(sim->pendingWinMessage));
-        serverSimSendWbnSurrenderWinEvents(sim, sim->surrenderTeamId);
-    } else if (sim->returnToLobbyByVote) {
+        serverSimSendWbnSurrenderWinEvents(sim, sim->returnToLobbyTeamId);
+        break;
+
+    case RETURN_REASON_MANUAL_VOTE:
         /* A manual back-to-lobby vote ended the round — no winner, but
          * leave a line in the returning lobby explaining why (the
-         * in-game announcement only reached the newswire). Consume and
-         * ignore the suppress flag the countdown set. */
-        serverSimConsumeSuppressNextWinMessage(sim);
+         * in-game countdown only reached the players still in the game). */
         SDL_strlcpy(sim->pendingWinMessage,
                     "*** Players voted to return to the lobby. ***",
                     sizeof(sim->pendingWinMessage));
-    } else {
-        if (serverSimConsumeSuppressNextWinMessage(sim)) {
-            /* Vote-driven game end already announced itself. */
-            sim->pendingWinMessage[0] = '\0';
-        } else {
-            /* Capture win message now while game state is intact;
-             * it will be sent after players return to the lobby. */
-            serverSimBuildWinMessage(sim,
-                                     sim->pendingWinMessage,
-                                     sizeof(sim->pendingWinMessage));
-        }
+        break;
+
+    case RETURN_REASON_ABANDONED:
+        /* Everyone left — nobody won, so no lobby line and no WBN
+         * crediting. */
+        sim->pendingWinMessage[0] = '\0';
+        break;
+
+    case RETURN_REASON_BASE_WIN:
+    case RETURN_REASON_NONE:
+    default:
+        /* An all-bases sweep, or a game-over with no countdown behind it
+         * (game-time / tick limits): both report whatever the sweep says.
+         * Capture the win message now while game state is intact; it is
+         * sent once the players are back in the lobby. */
+        serverSimBuildWinMessage(sim,
+                                 sim->pendingWinMessage,
+                                 sizeof(sim->pendingWinMessage));
         serverSimSendWbnWinEvents(sim);
+        break;
     }
 }
 
@@ -5432,17 +5453,6 @@ bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind) {
     return gv && gv->active == GAME_VOTE_ACTIVE_RUNNING;
 }
 
-bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim) {
-    if (!sim) return false;
-    bool v = sim->suppressNextWinMessage;
-    sim->suppressNextWinMessage = false;
-    return v;
-}
-
-void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v) {
-    if (sim) sim->suppressNextWinMessage = v;
-}
-
 bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
                                   ServerGameVoteSnapshot *out) {
     const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
@@ -5480,10 +5490,12 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     memset(sim->gameVotes, 0, sizeof(sim->gameVotes));
     sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
-    sim->baseMonopolyTriggeredThisRound = false;
     sim->returnToLobbyTicks = 0;
-    sim->surrenderTeamId = 0;
-    sim->returnToLobbyByVote = false;
+    sim->returnToLobbyReason = RETURN_REASON_NONE;
+    sim->returnToLobbyTeamId = 0;
+    /* A stale re-arm cooldown carried into a new round would swallow that
+     * round's first all-bases announcement. */
+    sim->baseWinRearmTicks = 0;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
@@ -5527,14 +5539,11 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * so clients can render their own 3/2/1 countdown.
          *
          * Budget: 7 seconds at 100Hz (each serverSimTick call). */
-        /* A player-initiated vote leaves a line in the returning lobby
-         * explaining why the round ended (no in-game newswire line —
-         * clients already render the 3/2/1 countdown). Base-monopoly
-         * auto-votes keep their existing winner reporting and don't add
-         * this line. */
-        if (gv->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) {
-            sim->returnToLobbyByVote = true;
-        }
+        /* The vote leaves a line in the returning lobby explaining why the
+         * round ended (no in-game newswire line — clients already render
+         * the 3/2/1 countdown). Every back-to-lobby vote is player-started
+         * since the base-monopoly auto-vote was removed. */
+        sim->returnToLobbyReason = RETURN_REASON_MANUAL_VOTE;
         sim->returnToLobbyTicks = 700;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
@@ -5549,7 +5558,8 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * game-over handler credits the opposing team with the win
          * (WBN events + lobby winner line), then return to the lobby on
          * the same countdown a back-to-lobby vote uses. */
-        sim->surrenderTeamId = gv->teamId;
+        sim->returnToLobbyReason = RETURN_REASON_SURRENDER;
+        sim->returnToLobbyTeamId = gv->teamId;
         sim->returnToLobbyTicks = 700;
     }
 }
@@ -5723,71 +5733,13 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     }
 }
 
-/* Detect "one team owns every base" and auto-start a back-to-lobby vote. */
-static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
-    if (sim->state != serverStateRunning) return;
-    if (sim->baseMonopolyTriggeredThisRound) return;
-
-    /* Count bases per team-via-owner-player. */
-    int nBases = basesGetNumBases(&sim->sim.bs);
-    if (nBases <= 0) return;
-
-    uint8_t teamCount[MAX_TANKS] = {0};
-    uint8_t neutral = 0;
-    int i;
-    for (i = 0; i < nBases; i++) {
-        BYTE owner = basesGetBaseOwner(&sim->sim.bs, (BYTE)(i + 1));
-        if (owner >= MAX_TANKS) { neutral++; continue; }
-        if (!sim->playerConnected[owner]) { neutral++; continue; }
-        uint8_t t = sim->lobbyPlayers[owner].teamNumber;
-        if (t == 0 || t >= MAX_TANKS) { neutral++; continue; }
-        teamCount[t]++;
-    }
-    if (neutral > 0) return;
-
-    int teamsWithBases = 0;
-    uint8_t monoTeam = 0;
-    int t;
-    for (t = 1; t < MAX_TANKS; t++) {
-        if (teamCount[t] > 0) { teamsWithBases++; monoTeam = (uint8_t)t; }
-    }
-    if (teamsWithBases != 1) return;
-
-    /* Require >1 active team in play to make "monopoly" meaningful. */
-    if (serverSimCountActiveTeams(sim) < 2) return;
-
-    struct ServerGameVote *gv = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-    if (!gv) return;
-    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) return;
-
-    char buf[128];
-    const char *tname = sim->teams[monoTeam].name[0]
-                        ? sim->teams[monoTeam].name : "?";
-    snprintf(buf, sizeof(buf),
-             "Team %s controls every base. Returning to lobby on unanimous vote.",
-             tname);
-    publishServerMessage(sim, buf);
-
-    gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
-    /* Pre-cast YES for every eligible voter. */
-    gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
-    gv->answeredMask = gv->votesMask;
-    publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-
-    sim->baseMonopolyTriggeredThisRound = true;
-}
-
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
     /* Voting only exists on lobby-enabled servers (see
-     * serverSimGameVoteToggle). Skip the whole vote machinery — including
-     * the base-monopoly auto-vote — when there is no lobby. */
+     * serverSimGameVoteToggle). Skip the whole vote machinery when there
+     * is no lobby. */
     if (!sim->lobbyEnabled) return;
 
     sim->gameVoteWallMs = nowMs;
-
-    /* Auto-trigger checks before per-slot servicing. */
-    gameVoteCheckBaseMonopoly(sim, nowMs);
 
     int k;
     for (k = 0; k < 2; k++) {

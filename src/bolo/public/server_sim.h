@@ -1055,8 +1055,7 @@ void serverSimMapSkipVotesReset(ServerSim *sim);
  * In-game vote system (back-to-lobby + surrender).
  *  - serverSimGameVoteTick is called every server frame from the
  *    transport layer. It handles per-second heartbeats, the 60s
- *    timeout, the post-pass 3/2/1 chat countdown, and the
- *    base-monopoly auto-trigger.
+ *    timeout, and the post-pass 3/2/1 chat countdown.
  *  - serverSimGameVoteToggle (declared in server_sim_internal.h)
  *    handles incoming PACKET_GAME_VOTE_TOGGLE. Callers are the wire
  *    handler in transport_udp_server.c and the in-process handler in
@@ -1089,12 +1088,6 @@ typedef struct {
 
 bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
                                   ServerGameVoteSnapshot *out);
-
-/* When set, the next running→gameOver transition should skip the
- * automatic "Game over!" / win-message broadcast (because the
- * transition was driven by a vote-pass which already announced its
- * own context). The flag self-clears once lifecycle reads it. */
-bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimSendWbnWinEvents
@@ -1141,8 +1134,8 @@ bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
  *  Resolves game-outcome policy at the running->gameOver
  *  transition: builds the win/exit message into the sim's
  *  pendingWinMessage and sends the matching WBN win events,
- *  branching on surrender vs manual back-to-lobby vote vs a
- *  normal base-ownership win. No-op when the sim has no lobby.
+ *  branching on the sim's RETURN_REASON_* for the round that just
+ *  ended. No-op when the sim has no lobby.
  *  Called once from the host's game-over transition so every
  *  host (dedicated + in-process) runs identical crediting.
  *********************************************************/
