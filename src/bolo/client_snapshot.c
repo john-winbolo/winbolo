@@ -680,7 +680,7 @@ void clientApplySnapshot(ClientSim *csPtr,
     {
       uint16_t shownPing = (pn < MAX_TANKS)
                                ? pingDisplayPush(&csPtr->displayPing[pn],
-                                                 tanks[i].pingMs)
+                                                 tanks[i].pingMs, arrivalMs)
                                : tanks[i].pingMs;
       playersSetPing(&csPtr->sim.plyrs, pn, shownPing);
       /* Push the fresh ping into the frontend's per-slot cache too —

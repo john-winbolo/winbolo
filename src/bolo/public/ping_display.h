@@ -27,10 +27,25 @@
  *  strobes the colour bands for anyone parked near a threshold,
  *  so the player-facing rows run it through here first:
  *
- *    1. EWMA folded once per *changed* sample. Folding at the
- *       50Hz repeat rate would converge onto each sample within a
- *       few ticks and smooth nothing; at the ~0.4s measurement
- *       cadence, alpha=1/4 settles in ~1.5-2s.
+ *    1. EWMA folded on a time budget — at most once per
+ *       PING_DISPLAY_FOLD_INTERVAL_MS, however many snapshots
+ *       arrive in between. Folding every arrival would converge
+ *       onto each sample within a few ticks and smooth nothing.
+ *
+ *       At one fold per measurement, alpha=1/4 covers ~63% of a
+ *       change in ~1.4s and ~95% in ~4s. A large step therefore
+ *       reads low for a second or two before it lands: 40ms->240ms
+ *       shows ~180ms at 2s and ~230ms at 4s. That lag is the price
+ *       of not reacting to single spikes, and is deliberate — a
+ *       snap-on-large-delta shortcut would track route changes
+ *       faster but would also chase one-off outliers, which is
+ *       exactly what this exists to suppress.
+ *
+ *       Folding on *changed* samples instead looks equivalent and
+ *       is not: a link stable to the millisecond then repeats its
+ *       sample forever, so the average freezes partway through a
+ *       step and the row shows a permanently wrong number. The
+ *       clock makes convergence independent of the value varying.
  *    2. A repaint deadband: the shown value only moves when the
  *       smoothed value has drifted PING_DISPLAY_STEP_MS away from
  *       it, then snaps to the nearest step. Small wobble around a
@@ -73,12 +88,20 @@ typedef enum {
  * sentinel that the omit-zero wire encoding already uses. */
 #define PING_DISPLAY_STEP_MS    5
 
+/* How often a sample is folded, regardless of arrival rate. Deliberately
+ * just under the ~0.4s server measurement cadence (PING_INTERVAL_TICKS at
+ * the 50Hz tick clock, netpacks.h — internal, so the coupling lives in
+ * this comment rather than in an include): close enough that no
+ * measurement is systematically skipped by phase misalignment, without
+ * assuming the two clocks stay locked. */
+#define PING_DISPLAY_FOLD_INTERVAL_MS 350u
+
 /* Per-player display state. Zero-initialised state is valid (equivalent
  * to pingDisplayReset), so an enclosing struct cleared by memset needs no
  * explicit init. */
 typedef struct {
     uint32_t ewmaQ8;      /* smoothed RTT, Q8 fixed point */
-    uint16_t lastRawMs;   /* last wire sample, for change detection */
+    uint32_t lastFoldMs;  /* arrival stamp of the last fold */
     uint16_t shownMs;     /* what the rows actually render */
     uint8_t  band;        /* PingBand, tracked with hysteresis */
     bool     init;        /* has the EWMA been seeded */
@@ -86,11 +109,15 @@ typedef struct {
 
 void pingDisplayReset(PingDisplay *d);
 
-/* Fold one wire sample in and return the value to display. Repeats of the
- * previous sample are ignored (see the EWMA note above); a zero sample
- * means "no measurement" and resets the state, so a slot reused by a new
- * player can't inherit the previous occupant's average. */
-uint16_t pingDisplayPush(PingDisplay *d, uint16_t rawMs);
+/* Offer one wire sample and return the value to display. `nowMs` is the
+ * snapshot's arrival stamp; samples arriving inside the fold interval are
+ * returned as-is without folding. A zero sample means "no measurement" and
+ * resets the state, so a slot reused by a new player can't inherit the
+ * previous occupant's average.
+ *
+ * The caller supplies the clock rather than this reading it: keeps the
+ * module free of SDL, and lets the tests drive exact cadences. */
+uint16_t pingDisplayPush(PingDisplay *d, uint16_t rawMs, uint32_t nowMs);
 
 /* Current display value / band without folding a new sample. */
 uint16_t pingDisplayValue(const PingDisplay *d);

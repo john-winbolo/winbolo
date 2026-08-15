@@ -2222,10 +2222,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->pingMs = pingMinWindowPush(&c->pingMinWin, sample);
                 c->pingDisplayMs = pingEwmaUpdate(&c->pingEwma, sample);
                 clientTimingOnRtt(&c->timing, sample);
-                /* Display consumers (scoreboard, HUD) read the EWMA; shell
-                 * projection reads the min-over-window value below. */
-                playersSetPing(&c->clientSim->sim.plyrs, c->playerNum,
-                               c->pingDisplayMs);
+                /* Deliberately NOT written into the players struct: the
+                 * snapshot path owns the displayed ping for every slot,
+                 * ours included, so all rows read one measurement basis
+                 * conditioned one way (ping_display.h). Writing here too
+                 * put an unquantised value in front of the menubar and
+                 * mobile rows for the tick before the next snapshot
+                 * overwrote it. pingDisplayMs stays as the transport's own
+                 * RTT estimate; shell projection reads the min-over-window
+                 * value below. */
                 clientSimSetProjectionPing(c->clientSim, c->pingMs);
             }
             /* Immediately echo the server timestamp back so the server can

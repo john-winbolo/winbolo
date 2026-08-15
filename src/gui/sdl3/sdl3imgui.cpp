@@ -289,6 +289,10 @@ static bool s_closeMenuPopups = false;
 
 /* Player slot state — updated by frontEndSetPlayer / frontEndClearPlayer */
 #define MAX_PLAYERS 16
+/* These rows index ClientSim state sized by MAX_TANKS (the ping band, for
+ * one). A local define drifting past it would silently render every extra
+ * slot grey rather than fail. */
+static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
 static char     s_playerName[MAX_PLAYERS][33] = {};        /* PLAYER_NAME_LEN = 33 */
 static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country code + NUL */
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};

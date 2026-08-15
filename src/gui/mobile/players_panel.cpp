@@ -27,6 +27,8 @@ extern "C" {
 
 #define MAX_PLAYERS 16
 #define PLAYER_NAME_LEN 33
+/* See sdl3imgui.cpp — these rows index ClientSim state sized by MAX_TANKS. */
+static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
 
 static bool sOpen = false;
 

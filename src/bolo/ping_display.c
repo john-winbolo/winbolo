@@ -27,7 +27,7 @@
 
 /* Same shape as the transport's PingEwma (alpha 1/4 in Q8) — kept separate
  * because that one lives behind the transport internals and folds at the
- * PONG rate, while this folds off the snapshot stream. */
+ * PONG rate, while this folds off the snapshot stream on its own clock. */
 static uint16_t pingDisplayFold(PingDisplay *d, uint16_t sample) {
     if (!d->init) {
         d->ewmaQ8 = (uint32_t)sample << 8;
@@ -92,7 +92,7 @@ void pingDisplayReset(PingDisplay *d) {
     }
 }
 
-uint16_t pingDisplayPush(PingDisplay *d, uint16_t rawMs) {
+uint16_t pingDisplayPush(PingDisplay *d, uint16_t rawMs, uint32_t nowMs) {
     uint16_t smoothed;
     int32_t drift;
 
@@ -107,12 +107,13 @@ uint16_t pingDisplayPush(PingDisplay *d, uint16_t rawMs) {
         return 0;
     }
 
-    /* Same sample as last time — the server has not re-measured since, so
-     * folding it again would just walk the EWMA onto it. */
-    if (d->init && rawMs == d->lastRawMs) {
+    /* Rate-limit the fold. The same measurement is re-stamped into every
+     * snapshot, so folding each arrival would walk the average onto it
+     * within a few ticks. Unsigned arithmetic wraps correctly. */
+    if (d->init && (nowMs - d->lastFoldMs) < PING_DISPLAY_FOLD_INTERVAL_MS) {
         return d->shownMs;
     }
-    d->lastRawMs = rawMs;
+    d->lastFoldMs = nowMs;
 
     smoothed = pingDisplayFold(d, rawMs);
 
