@@ -81,13 +81,7 @@ static inline float dialogDeckFontMul(void) {
  * ladder). PING_BAND_NONE is the "---" grey; in-game rows get their band
  * from clientSimGetPlayerPingBand (hysteresis-tracked), the lobby from
  * pingBandClassify. */
-#ifdef __cplusplus
-extern "C" {
-#endif
 #include "ping_display.h"
-#ifdef __cplusplus
-}
-#endif
 
 static inline ImVec4 imguiPingBandColor(PingBand band) {
     switch (band) {

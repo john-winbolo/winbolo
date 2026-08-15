@@ -699,4 +699,11 @@ void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby);
 /* Free the seed and every queued record, returning the feed to empty. */
 void clientSimSpectatorFeedClear(ClientSim *cs);
 
+/* Drop a slot's ping smoothing state so an arriving player doesn't inherit
+ * the previous occupant's average. T2: called by players.c when the slot
+ * empties, never by a frontend — the readout is something frontends only
+ * read (clientSimGetPlayerPing / clientSimGetPlayerPingBand in client_sim.h),
+ * so the reset has no business on the public API. */
+void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
+
 #endif /* CLIENT_SIM_INTERNAL_H */

@@ -448,9 +448,6 @@ uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
  * threshold doesn't strobe between colours. Player rows should use this
  * rather than re-deriving a band from the number. */
 PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum);
-/* Drop a slot's ping smoothing state — call when the slot empties so an
- * arriving player doesn't inherit the previous occupant's average. */
-void     clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
 void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);

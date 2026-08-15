@@ -67,6 +67,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* C linkage is declared here rather than left to each includer to wrap.
+ * Two of the three C++ call sites had grown their own `extern "C"` around
+ * the include, which also drags <stdbool.h>/<stdint.h> inside the block and
+ * only holds while every TU happens to include this before something gives
+ * it C++ linkage. Owning the guard makes the header safe to include from
+ * C++ directly, in any order. Nesting inside an includer's own extern "C"
+ * (client_sim.h reaches this from inside one) is legal and a no-op. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Colour bands for the player-row ping text. Ordered best-to-worst so
  * the hysteresis logic can compare two bands for direction of travel. */
 typedef enum {
@@ -127,5 +138,9 @@ PingBand pingDisplayBand(const PingDisplay *d);
  * no per-player state to carry it, such as the lobby's slot mirror, whose
  * ~5s refresh is far too slow to strobe. */
 PingBand pingBandClassify(uint16_t pingMs);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* PING_DISPLAY_H */

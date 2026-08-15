@@ -10,10 +10,8 @@
  * headers out of this TU), the band names are the point: the whole reason
  * the band is plumbed through MacPlayerSlot is so this row stops deriving
  * its own thresholds and keeps the hysteresis. ping_display.h is a leaf —
- * stdbool/stdint and nothing else. */
-extern "C" {
+ * stdbool/stdint and nothing else — and declares its own C linkage. */
 #include "ping_display.h"
-}
 
 /* Declared in sdl3imgui.cpp. Avoid pulling that header in here so this
  * compilation unit stays narrow. */
