@@ -25,6 +25,8 @@ extern "C" {
 }
 
 #define MAX_PLAYERS 16
+/* See sdl3imgui.cpp — these rows index ClientSim state sized by MAX_TANKS. */
+static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
 
 static bool sOpen = false;
 
@@ -143,10 +145,8 @@ extern "C" void playersPanelRender(ClientSim *cs) {
                 float avail = ImGui::GetContentRegionAvail().x;
                 ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - pingW);
 
-                ImVec4 pingColor;
-                if (ping < 50)       pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                else if (ping < 150) pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                else                 pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                ImVec4 pingColor = imguiPingBandColor(
+                    clientSimGetPlayerPingBand(cs, (BYTE)i));
                 ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();

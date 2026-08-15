@@ -6,6 +6,15 @@
 #include "mac_menubar.h"
 #include "../../lang.h"
 
+/* PingBand only. Unlike ptype (matched numerically below to keep engine
+ * headers out of this TU), the band names are the point: the whole reason
+ * the band is plumbed through MacPlayerSlot is so this row stops deriving
+ * its own thresholds and keeps the hysteresis. ping_display.h is a leaf —
+ * stdbool/stdint and nothing else. */
+extern "C" {
+#include "ping_display.h"
+}
+
 /* Declared in sdl3imgui.cpp. Avoid pulling that header in here so this
  * compilation unit stays narrow. */
 extern "C" void windowSetQuitting(void);
@@ -511,9 +520,24 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
         _pingColor = [NSColor colorWithCalibratedWhite:0.5 alpha:1.0];
     } else {
         _pingText = [NSString stringWithFormat:@"%d", ping];
-        if (ping < 50)       _pingColor = [NSColor colorWithCalibratedRed:0.0 green:0.9 blue:0.0 alpha:1.0];
-        else if (ping < 150) _pingColor = [NSColor colorWithCalibratedRed:0.9 green:0.9 blue:0.0 alpha:1.0];
-        else                 _pingColor = [NSColor colorWithCalibratedRed:0.9 green:0.0 blue:0.0 alpha:1.0];
+        /* Band is decided upstream (clientSimGetPlayerPingBand) and rides
+         * in the slot: re-deriving it from the number here would drop the
+         * hysteresis and strobe this row while the ImGui ones held. */
+        switch ((PingBand)slot->pingBand) {
+            case PING_BAND_GOOD:
+                _pingColor = [NSColor colorWithCalibratedRed:0.0 green:0.9 blue:0.0 alpha:1.0];
+                break;
+            case PING_BAND_FAIR:
+                _pingColor = [NSColor colorWithCalibratedRed:0.9 green:0.9 blue:0.0 alpha:1.0];
+                break;
+            case PING_BAND_POOR:
+                _pingColor = [NSColor colorWithCalibratedRed:0.9 green:0.0 blue:0.0 alpha:1.0];
+                break;
+            case PING_BAND_NONE:
+            default:
+                _pingColor = [NSColor colorWithCalibratedWhite:0.5 alpha:1.0];
+                break;
+        }
     }
     _checked = slot->checked ? YES : NO;
     [self setNeedsDisplay:YES];

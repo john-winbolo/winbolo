@@ -4140,12 +4140,17 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
             p->pflags = (int)s_playerFlags[i];
             p->ptype  = (int)s_playerClientType[i];
             p->ping   = cs ? (int)clientSimGetPlayerPing(cs, (BYTE)i) : 0;
+            /* Band travels with the number so the native row doesn't
+             * re-derive thresholds and lose the hysteresis. */
+            p->pingBand = cs ? (int)clientSimGetPlayerPingBand(cs, (BYTE)i)
+                             : PING_BAND_NONE;
         } else {
             p->name[0]    = '\0';
             p->country[0] = '\0';
             p->pflags     = 0;
             p->ptype      = 0;
             p->ping       = 0;
+            p->pingBand   = PING_BAND_NONE;
         }
     }
 
