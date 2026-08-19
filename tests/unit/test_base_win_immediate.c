@@ -1,31 +1,34 @@
 /*
- * All-bases win countdown in the running tick (simRunHalfStep).
+ * All-bases win in the running tick (simRunHalfStep).
  *
- * When one side holds every base on a lobby-enabled server the round does
- * not end on the spot: the server announces the sweep and arms a 7-second
- * return-to-lobby countdown (returnToLobbyTicks, reason
- * RETURN_REASON_BASE_WIN). The countdown is abortable on purpose — a base
- * at or below MIN_ARMOUR_CAPTURE is dead and recapturable, so shelling one
- * base down (or losing it outright) puts the sweep back in doubt. When that
- * happens the countdown is cancelled, "*** The round continues. ***" goes
- * out and a BASE_WIN_REARM_TICKS cooldown blocks a re-announce, so an owner
- * oscillating around the capture threshold cannot flap the newswire and the
- * clients' 3/2/1.
+ * One alliance holding every base, with none of those bases dead, IS the win
+ * condition — so the round ends on the spot. "Dead" is armour <=
+ * MIN_ARMOUR_CAPTURE, the same test basesGetStatusNum uses to draw the X on
+ * the status pane, and a dead base is recapturable.
+ *
+ * There is deliberately no grace period on top of that. The grace period is
+ * the condition itself: a base shelled to 0 keeps the sweep false for the
+ * whole time it takes to regenerate past MIN_ARMOUR_CAPTURE, and that is the
+ * losing side's window to retake it. An earlier version armed a further
+ * 7-second abortable countdown here, which only bought the server the right
+ * to announce a win and then retract it.
  *
  * Pinned here:
- *   1. The announce arms the countdown and starts NO vote. This is the
- *      regression guard for the whole change — the previous implementation
- *      faked a unanimous back-to-lobby vote at this point, which is why the
- *      test asserts both zero CTRL_GAME_VOTE_STATE events and no running
- *      back-to-lobby vote.
- *   2. Breaking the sweep aborts the countdown mid-flight and resumes the
- *      round rather than ending it.
- *   3. The re-arm cooldown suppresses a second announcement until it expires.
- *   4. -quitonwin does NOT bypass the countdown when a lobby is configured:
- *      the two flags are independent and the lobby branch is tested first.
- *   5. Without a lobby, -quitonwin still ends the round instantly, with no
- *      countdown and no announcement, and serverSimResolveGameOver leaves no
- *      pending lobby message (winners reach stdout only).
+ *   1. The sweep announces once and ends the round immediately, with no
+ *      countdown armed and no vote fabricated. The vote assertions are the
+ *      regression guard for the older implementation, which faked a unanimous
+ *      back-to-lobby vote at this point.
+ *   2. A single dead base blocks the win, however the rest of the map is
+ *      owned — this is the comeback window, so it must hold the round open.
+ *   3. The threshold is exact: MIN_ARMOUR_CAPTURE is still dead, one point
+ *      above it wins. This pins the `<=` in serverSimWinningOwner against the
+ *      `<=` in basesGetStatusNum, which is what makes the win condition and
+ *      the X the player sees the same rule.
+ *   4. -quitonwin with a lobby ends the round the same way, but as a lobby
+ *      return that names the winner rather than the silent no-lobby path.
+ *   5. Without a lobby, -quitonwin ends the round with no announcement, and
+ *      serverSimResolveGameOver leaves no pending lobby message (winners
+ *      reach stdout only). This pins existing behaviour.
  *
  * Everything is observed off a bare ServerSim plus one counting subscriber;
  * publishServerMessage delivers CTRL_SERVER_TEXT straight to subscribers, so
@@ -39,7 +42,7 @@
 
 #include "global.h"
 #include "server_sim.h"
-#include "server_sim_internal.h"   /* returnToLobbyTicks / Reason, baseWinRearmTicks */
+#include "server_sim_internal.h"   /* returnToLobbyTicks / Reason */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled / serverSimSetTeam */
 #include "control_event.h"
 #include "client_sim.h"            /* GAME_VOTE_KIND_BACK_TO_LOBBY */
@@ -55,8 +58,13 @@
 
 /* Armour comfortably above MIN_ARMOUR_CAPTURE (9) — a held base. */
 #define BW_ARMOUR_HELD 50
-/* Armour at or below MIN_ARMOUR_CAPTURE — a dead, recapturable base. */
+/* Armour below MIN_ARMOUR_CAPTURE — a dead, recapturable base. */
 #define BW_ARMOUR_DEAD 5
+
+/* Long enough for a lingering countdown to have expired into game-over, short
+ * enough to stay well clear of BASE_TICKS_BETWEEN_REFUEL (1000, drained once
+ * per half-step) so a base cannot regenerate out from under a test. */
+#define BW_HOLD_FRAMES 60
 
 /* ----------------------------------------------------------------
  * Counting subscriber.
@@ -126,9 +134,9 @@ static SubscriberHandle bw_subscribe(ServerSim *sim, BwCounter *c) {
 }
 
 /* ================================================================
- * 1. The announce arms the countdown and starts no vote.
+ * 1. The sweep announces and ends the round on the spot.
  * ================================================================ */
-int run_base_win_announces_and_publishes_no_vote_state(void) {
+int run_base_win_ends_round_immediately(void) {
     ServerSim *sim = bw_make_running_sim(/*lobbyEnabled*/ true,
                                          /*quitOnWin*/ false);
     BwCounter c;
@@ -141,6 +149,18 @@ int run_base_win_announces_and_publishes_no_vote_state(void) {
     bw_set_all_bases(sim, BW_WINNER_SLOT, BW_ARMOUR_HELD);
     serverSimTick(sim);
 
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "the sweep must end the round on the tick it happens — "
+                  "state %d after one tick", (int)serverSimGetState(sim));
+    UT_ASSERT_MSG(sim->returnToLobbyTicks == 0,
+                  "REGRESSION: the sweep armed a %d-tick countdown — a win is "
+                  "immediate, the regen of a dead base is the only grace "
+                  "period", (int)sim->returnToLobbyTicks);
+    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
+                  "the round must end as a base win (%d) so the returning "
+                  "lobby names the winner, got %u",
+                  RETURN_REASON_BASE_WIN, (unsigned)sim->returnToLobbyReason);
+
     UT_ASSERT_MSG(c.serverTextCount == 1,
                   "the sweep must publish exactly one announcement, got %d",
                   c.serverTextCount);
@@ -151,38 +171,31 @@ int run_base_win_announces_and_publishes_no_vote_state(void) {
                   "announcement must say the side controls every base, got "
                   "\"%s\"", c.lastText);
 
-    /* serverSimTick runs two half-steps while running: the first arms the
-     * countdown at 700, the later drain in that same half-step and the
-     * second half-step take it down — so this is 698 here, not 700. The
-     * contract is "armed", not an exact tick value. */
-    UT_ASSERT_MSG(sim->returnToLobbyTicks > 0 && sim->returnToLobbyTicks <= 700,
-                  "sweep must arm the return-to-lobby countdown, got %d",
-                  (int)sim->returnToLobbyTicks);
-    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
-                  "countdown reason must be RETURN_REASON_BASE_WIN (%d), got %u",
-                  RETURN_REASON_BASE_WIN, (unsigned)sim->returnToLobbyReason);
-
-    /* Regression guard for this change: the all-bases win announces and
-     * counts down on its own. It must NOT fabricate a vote — the old code
-     * faked a unanimous back-to-lobby vote here, which showed players a
-     * vote they never cast and could not answer. */
+    /* Regression guard: the all-bases win announces on its own. It must NOT
+     * fabricate a vote — the old code faked a unanimous back-to-lobby vote
+     * here, which showed players a vote they never cast and could not
+     * answer. */
     UT_ASSERT_MSG(c.voteStateCount == 0,
                   "REGRESSION: the all-bases win published %d "
-                  "CTRL_GAME_VOTE_STATE event(s) — it must announce and count "
-                  "down without faking a vote", c.voteStateCount);
+                  "CTRL_GAME_VOTE_STATE event(s) — it must end the round "
+                  "without faking a vote", c.voteStateCount);
     UT_ASSERT_MSG(serverSimGameVoteIsRunning(sim, GAME_VOTE_KIND_BACK_TO_LOBBY)
                       == false,
-                  "REGRESSION: the all-bases win started a back-to-lobby vote "
-                  "— the countdown replaced the auto-vote entirely");
+                  "REGRESSION: the all-bases win started a back-to-lobby vote");
 
     serverSimDestroy(sim);
     return 0;
 }
 
 /* ================================================================
- * 2. Breaking the sweep aborts the countdown and resumes the round.
+ * 2. One dead base blocks the win.
+ *
+ * This is the comeback window. A base shelled to or below
+ * MIN_ARMOUR_CAPTURE shows the X and is recapturable, so the round must stay
+ * open for however long that base takes to regenerate — no announcement, no
+ * game over.
  * ================================================================ */
-int run_base_win_countdown_aborts_when_sweep_breaks(void) {
+int run_base_win_dead_base_blocks_the_win(void) {
     ServerSim *sim = bw_make_running_sim(/*lobbyEnabled*/ true,
                                          /*quitOnWin*/ false);
     GameSim *gs;
@@ -192,125 +205,89 @@ int run_base_win_countdown_aborts_when_sweep_breaks(void) {
     UT_ASSERT(sim != NULL);
     UT_ASSERT(bw_subscribe(sim, &c) != SUBSCRIBER_HANDLE_INVALID);
 
+    /* Whole map owned by one side, but one base is dead. */
     bw_set_all_bases(sim, BW_WINNER_SLOT, BW_ARMOUR_HELD);
-    serverSimTick(sim);
-    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
-                  "setup: the sweep did not arm the countdown");
-
-    /* Countdown is long (7 seconds); a few frames in it is still running. */
-    for (i = 0; i < 3; i++) {
-        serverSimTick(sim);
-    }
-    UT_ASSERT_MSG(sim->returnToLobbyTicks > 0,
-                  "setup: countdown expired far too early (%d left)",
-                  (int)sim->returnToLobbyTicks);
-    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
-                  "setup: countdown reason changed while it was running");
-
-    /* Shell one base at or below MIN_ARMOUR_CAPTURE — it is dead and
-     * recapturable, so the sweep no longer holds. */
     gs = serverSimGetGameSim(sim);
     UT_ASSERT(gs != NULL);
     (*gs->bs).item[0].armour = BW_ARMOUR_DEAD;
 
-    memset(&c, 0, sizeof(c));
-    serverSimTick(sim);
+    for (i = 0; i < BW_HOLD_FRAMES; i++) {
+        serverSimTick(sim);
+    }
 
-    UT_ASSERT_MSG(sim->returnToLobbyTicks == 0,
-                  "a broken sweep must cancel the countdown, %d ticks left",
-                  (int)sim->returnToLobbyTicks);
-    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_NONE,
-                  "cancelled countdown must clear the reason, got %u",
-                  (unsigned)sim->returnToLobbyReason);
-    UT_ASSERT_MSG(c.serverTextCount == 1,
-                  "the abort must publish exactly one announcement, got %d",
-                  c.serverTextCount);
-    UT_ASSERT_MSG(strcmp(c.lastText, "*** The round continues. ***") == 0,
-                  "abort announcement text changed, got \"%s\"", c.lastText);
-    UT_ASSERT_MSG(sim->baseWinRearmTicks > 0,
-                  "the abort must arm the re-announce cooldown, got %d",
-                  (int)sim->baseWinRearmTicks);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
-                  "an aborted countdown resumes the round — it must not end it");
+                  "a dead base is recapturable — the round must stay open, "
+                  "state %d after %d ticks",
+                  (int)serverSimGetState(sim), BW_HOLD_FRAMES);
+    UT_ASSERT_MSG(c.serverTextCount == 0,
+                  "no win may be announced while a base is dead, got %d "
+                  "announcement(s) (\"%s\")", c.serverTextCount, c.lastText);
+    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_NONE,
+                  "no return-to-lobby reason may be set, got %u",
+                  (unsigned)sim->returnToLobbyReason);
 
     serverSimDestroy(sim);
     return 0;
 }
 
 /* ================================================================
- * 3. The re-arm cooldown stops announcement flapping.
+ * 3. The dead/held boundary is exactly MIN_ARMOUR_CAPTURE.
+ *
+ * serverSimWinningOwner treats armour <= MIN_ARMOUR_CAPTURE as no winner and
+ * basesGetStatusNum draws the X on the same comparison. Pinning both sides of
+ * the boundary here is what keeps the win condition and the status the player
+ * is looking at from drifting apart.
  * ================================================================ */
-int run_base_win_rearm_cooldown_limits_announcements(void) {
+int run_base_win_fires_when_dead_base_regenerates(void) {
     ServerSim *sim = bw_make_running_sim(/*lobbyEnabled*/ true,
                                          /*quitOnWin*/ false);
     GameSim *gs;
     BwCounter c;
-    int i;
 
     UT_ASSERT(sim != NULL);
     UT_ASSERT(bw_subscribe(sim, &c) != SUBSCRIBER_HANDLE_INVALID);
 
-    /* Arm, then break the sweep — the abort starts the cooldown. */
+    /* Exactly at the threshold: still dead, still no win. */
     bw_set_all_bases(sim, BW_WINNER_SLOT, BW_ARMOUR_HELD);
-    serverSimTick(sim);
-    UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
-                  "setup: the sweep did not arm the countdown");
     gs = serverSimGetGameSim(sim);
     UT_ASSERT(gs != NULL);
-    (*gs->bs).item[0].armour = BW_ARMOUR_DEAD;
+    (*gs->bs).item[0].armour = MIN_ARMOUR_CAPTURE;
     serverSimTick(sim);
-    UT_ASSERT_MSG(sim->baseWinRearmTicks > 0,
-                  "setup: the abort did not arm the cooldown");
 
-    /* The owner immediately holds every base again — the flapping case. */
-    bw_set_all_bases(sim, BW_WINNER_SLOT, BW_ARMOUR_HELD);
-    memset(&c, 0, sizeof(c));
-
-    /* Well inside the cooldown: the cooldown drains once per half-step, i.e.
-     * twice per serverSimTick, so 100 frames burn 200 of BASE_WIN_REARM_TICKS. */
-    for (i = 0; i < 100; i++) {
-        serverSimTick(sim);
-    }
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "armour == MIN_ARMOUR_CAPTURE (%d) is still dead — the round "
+                  "must not end", MIN_ARMOUR_CAPTURE);
     UT_ASSERT_MSG(c.serverTextCount == 0,
-                  "the cooldown must suppress a re-announce, got %d "
-                  "announcement(s) with %d cooldown ticks left",
-                  c.serverTextCount, (int)sim->baseWinRearmTicks);
-    UT_ASSERT_MSG(sim->returnToLobbyTicks == 0,
-                  "no countdown may re-arm during the cooldown, got %d",
-                  (int)sim->returnToLobbyTicks);
+                  "armour == MIN_ARMOUR_CAPTURE must not announce a win, got "
+                  "%d announcement(s)", c.serverTextCount);
 
-    /* Past the cooldown the sweep announces again — exactly once. Bounded by
-     * BASE_WIN_REARM_TICKS frames, which is more than the cooldown can need
-     * (it drains two per frame) and stops well short of the 7-second
-     * countdown expiring into game-over. */
-    for (i = 0; i < BASE_WIN_REARM_TICKS && c.serverTextCount == 0; i++) {
-        serverSimTick(sim);
-    }
+    /* One point of regen past it and the sweep holds. */
+    (*gs->bs).item[0].armour = MIN_ARMOUR_CAPTURE + 1;
+    serverSimTick(sim);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "armour == MIN_ARMOUR_CAPTURE + 1 completes the sweep — the "
+                  "round must end, state %d", (int)serverSimGetState(sim));
     UT_ASSERT_MSG(c.serverTextCount == 1,
-                  "the sweep must re-announce exactly once after the cooldown, "
-                  "got %d", c.serverTextCount);
-    UT_ASSERT_MSG(strstr(c.lastText, "control every base") != NULL,
-                  "re-announcement must be the all-bases line, got \"%s\"",
-                  c.lastText);
-    UT_ASSERT_MSG(sim->returnToLobbyTicks > 0,
-                  "the countdown must re-arm once the cooldown expires");
+                  "the completed sweep must announce exactly once, got %d",
+                  c.serverTextCount);
     UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
-                  "re-armed countdown reason must be RETURN_REASON_BASE_WIN, "
-                  "got %u", (unsigned)sim->returnToLobbyReason);
+                  "the round must end as a base win (%d), got %u",
+                  RETURN_REASON_BASE_WIN, (unsigned)sim->returnToLobbyReason);
 
     serverSimDestroy(sim);
     return 0;
 }
 
 /* ================================================================
- * 4. -quitonwin with a lobby still counts down.
+ * 4. -quitonwin with a lobby still returns to the lobby.
  *
  * lobbyEnabled and quitOnWin are independent flags — -quitonwin does not
- * clear the lobby — so the real configuration reaches the tick with both
- * set. Testing quitOnWin first would end the round instantly here; the
- * lobby branch has to win.
+ * clear the lobby — so the real configuration reaches the tick with both set.
+ * The lobby branch has to win: the round ends either way, but only the lobby
+ * branch announces the sweep and sets the reason that names the winner.
  * ================================================================ */
-int run_base_win_quitonwin_with_lobby_counts_down(void) {
+int run_base_win_quitonwin_with_lobby_returns_to_lobby(void) {
     ServerSim *sim = bw_make_running_sim(/*lobbyEnabled*/ true,
                                          /*quitOnWin*/ true);
     BwCounter c;
@@ -321,30 +298,28 @@ int run_base_win_quitonwin_with_lobby_counts_down(void) {
     bw_set_all_bases(sim, BW_WINNER_SLOT, BW_ARMOUR_HELD);
     serverSimTick(sim);
 
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "-quitonwin with a lobby must still end the round at once, "
+                  "state %d", (int)serverSimGetState(sim));
     UT_ASSERT_MSG(c.serverTextCount == 1,
                   "-quitonwin with a lobby must still announce the sweep, "
                   "got %d announcement(s)", c.serverTextCount);
-    UT_ASSERT_MSG(sim->returnToLobbyTicks > 0,
-                  "-quitonwin with a lobby must arm the countdown, got %d",
-                  (int)sim->returnToLobbyTicks);
     UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_BASE_WIN,
-                  "countdown reason must be RETURN_REASON_BASE_WIN, got %u",
-                  (unsigned)sim->returnToLobbyReason);
-    UT_ASSERT_MSG(serverSimGetState(sim) != serverStateGameOver,
-                  "-quitonwin must not end a lobby round on the spot — the "
-                  "lobby countdown owns the win");
+                  "the lobby branch owns the win — reason must be "
+                  "RETURN_REASON_BASE_WIN (%d), got %u",
+                  RETURN_REASON_BASE_WIN, (unsigned)sim->returnToLobbyReason);
 
     serverSimDestroy(sim);
     return 0;
 }
 
 /* ================================================================
- * 5. -quitonwin without a lobby is instant.
+ * 5. -quitonwin without a lobby is instant and silent.
  *
- * A no-lobby round has nowhere to count down to, so the win ends it
- * immediately with no announcement. serverSimResolveGameOver is a no-op
- * without a lobby, so no pending message is left behind either — winners
- * reach stdout only. This pins existing behaviour.
+ * A no-lobby round has nowhere to return to, so the win ends it with no
+ * announcement. serverSimResolveGameOver is a no-op without a lobby, so no
+ * pending message is left behind either — winners reach stdout only. This
+ * pins existing behaviour.
  * ================================================================ */
 int run_base_win_nolobby_quitonwin_is_instant(void) {
     ServerSim *sim = bw_make_running_sim(/*lobbyEnabled*/ false,

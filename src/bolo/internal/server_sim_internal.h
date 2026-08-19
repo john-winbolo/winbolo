@@ -379,15 +379,6 @@ struct ServerSim {
      * header so clients can render their own "Returning to lobby in
      * N" indicator off the value. */
     int32_t  returnToLobbyTicks;
-    /* Re-arm cooldown after an aborted all-bases countdown, in sim ticks
-     * (100 Hz) — 3 seconds. */
-#define BASE_WIN_REARM_TICKS 300
-    /* Ticks left on the re-arm cooldown after an all-bases countdown was
-     * aborted. Bases regenerate armour, so an owner oscillating around
-     * MIN_ARMOUR_CAPTURE would otherwise replay the announcement and the
-     * client's 3/2/1 on every crossing. Newswire spam control only — it
-     * does not change which side wins. */
-    int32_t  baseWinRearmTicks;
     /* Why the current countdown is running, or why the round just ended —
      * see RETURN_REASON_*. Decides the message the returning lobby gets and
      * whether WinBolo.net win events are credited. Reset by

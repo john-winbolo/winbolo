@@ -2887,11 +2887,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
-    # All-bases win: the sweep announces and arms an abortable return-to-lobby
-    # countdown without starting a vote; a broken sweep resumes the round and
-    # a cooldown blocks re-announce flapping; a no-lobby -quitonwin win is
-    # still instant.
-    tests/unit/test_base_win_countdown.c
+    # All-bases win: one alliance holding every non-dead base ends the round on
+    # the spot, announced and without starting a vote; a single dead base
+    # (armour <= MIN_ARMOUR_CAPTURE, the X on the status pane) holds the round
+    # open, which is the only comeback window there is.
+    tests/unit/test_base_win_immediate.c
     # Game-over resolution: serverSimResolveGameOver maps returnToLobbyReason
     # to the returning lobby's message and the WinBolo.net win crediting — a
     # swept round names its winner, a passed vote credits nobody, a surrender

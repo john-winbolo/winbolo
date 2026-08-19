@@ -1820,42 +1820,42 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->prevBaseCount = (uint8_t)nb;
     }
 
-    /* All-bases win. A lobby round announces it and runs an abortable
-     * countdown: a base shelled below the capture threshold, a recapture,
-     * or a winning owner disconnecting can put the sweep back in doubt,
-     * and the round resumes if it does. A no-lobby round has nowhere to
-     * count down to — quitOnWin ends it immediately and the process
-     * shuts down. */
+    /* All-bases win. Every base held by one alliance with none of them dead
+     * (armour > MIN_ARMOUR_CAPTURE — the same test basesGetStatusNum uses to
+     * draw the X) IS the win condition, so it ends the round on the spot.
+     *
+     * There is deliberately no grace period layered on top. The grace period
+     * is already built into the condition: a base shelled to 0 stays dead,
+     * and therefore keeps the sweep false, for the whole time it takes to
+     * regenerate past MIN_ARMOUR_CAPTURE. That is the losing side's window to
+     * retake it. A second countdown on top only bought the right to announce
+     * a win and then retract it.
+     *
+     * A no-lobby round has nowhere to return to — quitOnWin ends it the same
+     * way and the process shuts down.
+     *
+     * A return-to-lobby countdown already running (a passed vote, a
+     * surrender) is left alone: those are irrevocable decisions and own the
+     * reason the returning lobby is given. The sweep must not relabel a
+     * surrender's win credit on its way out. */
     if (sim->lobbyEnabled) {
-        bool sweptNow = serverSimCheckGameWin(sim, FALSE);
-
-        if (sim->baseWinRearmTicks > 0) {
-            sim->baseWinRearmTicks--;
-        }
-
-        if (sim->returnToLobbyReason == RETURN_REASON_BASE_WIN) {
-            if (!sweptNow) {
-                sim->returnToLobbyTicks = 0;
-                sim->returnToLobbyReason = RETURN_REASON_NONE;
-                sim->baseWinRearmTicks = BASE_WIN_REARM_TICKS;
-                publishServerMessage(sim, "*** The round continues. ***");
-                serverSimConsoleMessage("Base control broken. Round continues.");
-            }
-        } else if (sweptNow && sim->returnToLobbyTicks == 0 &&
-                   sim->baseWinRearmTicks == 0) {
+        if (sim->returnToLobbyTicks == 0 && serverSimCheckGameWin(sim, FALSE)) {
             char buf[256];
             char name[256];
             BYTE winner = serverSimWinningOwner(sim);
             playersGetPlayerName(&sim->sim.plyrs, winner, name, TRUE);
             snprintf(buf, sizeof(buf),
-                     "*** %s and their allies control every base. "
-                     "Returning to lobby in 7 seconds. ***", name);
+                     "*** %s and their allies control every base. ***", name);
             publishServerMessage(sim, buf);
             serverSimConsoleMessage(buf);
-            /* 7 seconds at 100 Hz; the snapshot header ships the remaining
-             * ticks so clients render their own 3/2/1. */
-            sim->returnToLobbyTicks = 700;
+            /* Set before entering game over: serverSimResolveGameOver
+             * switches on it to name the winner in the returning lobby and
+             * credit the WinBolo.net win events. */
             sim->returnToLobbyReason = RETURN_REASON_BASE_WIN;
+            mapSetChangeCallback(NULL);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
         }
     } else if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
@@ -5493,9 +5493,6 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     sim->returnToLobbyTicks = 0;
     sim->returnToLobbyReason = RETURN_REASON_NONE;
     sim->returnToLobbyTeamId = 0;
-    /* A stale re-arm cooldown carried into a new round would swallow that
-     * round's first all-bases announcement. */
-    sim->baseWinRearmTicks = 0;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,

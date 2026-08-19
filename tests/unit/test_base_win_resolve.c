@@ -149,12 +149,12 @@ static void rg_reset_win_spy(void) {
 }
 
 /* ================================================================
- * 1. A base-win countdown that expires reports the winner.
+ * 1. A round ended by an all-bases sweep reports the winner.
  *
  * The direct regression guard: RETURN_REASON_BASE_WIN must resolve through
  * the base-sweep message and crediting, not fall out with an empty line.
  * ================================================================ */
-int run_base_win_expiry_reports_the_winner(void) {
+int run_base_win_reports_the_winner(void) {
     ServerSim *sim = rg_make_running_sim();
 
     UT_ASSERT(sim != NULL);
