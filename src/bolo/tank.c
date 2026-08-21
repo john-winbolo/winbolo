@@ -61,16 +61,26 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
                             tankButton tb, bool inBrain);
 
 /* Blend between arcade stored-momentum and true velocity when a wall blocks
- * the tank. Each movement tick, stored speed is pulled toward
- * speed * (achieved distance / attempted distance) by this fraction:
- * 0 = classic behaviour (a wall never drains stored speed, so a pinned tank
+ * the tank. Stored speed is pulled by this fraction toward
+ * the velocity it actually held against the wall, applied ONCE at the moment
+ * wall contact ends (normal acceleration resumes immediately after):
+ * 0 = classic behaviour (a wall never touches stored speed, so a pinned tank
  * still launches at full speed when it turns away), 1 = physically true
- * (pinned against a wall the achieved velocity is ~0, so speed drops to ~0
- * and turning away re-accelerates from rest). Sliding along a wall achieves
- * near-full distance either way and is unaffected. Live-tuned from the SDL3
- * GUI debug slider; affects prediction only against a remote server that
- * doesn't share the same value. */
+ * (pinned head-on you held ~0, so you restart from rest; grinding NNE into
+ * a north wall at glide 0 you held the surviving east component, so you
+ * drive off at that speed and build back up). See the momentum-collapse
+ * block in tankMoveUnified. Live-tuned from the SDL3 GUI debug slider;
+ * affects prediction only against a remote server without the value. */
 float g_tankWallMomentumSap = 1.0f;
+
+/* How much of the movement a wall blocks is given back along the wall
+ * tangent. 1 = slippery walls (hit a wall going NNE and you glide due east
+ * at FULL speed until you clear it), 0 = Bolo 1.17 feel (movement is just
+ * the projection onto the wall, so NNE against a north wall crawls east at
+ * ~38% speed; stored speed is untouched while grinding — what you keep when
+ * you clear the block is g_tankWallMomentumSap's call). Live-tuned from the
+ * SDL3 GUI debug slider. */
+float g_tankWallGlide = 0.0f;
 
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
 /* The direction-dependent bounding boxes are only consulted by the legacy
@@ -412,6 +422,8 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
   (*value)->residualSpeed = 0;
+  (*value)->wallSlideVel = 0.0f;
+  (*value)->wallContact = FALSE;
 
   /* Get the start position */
   sim->inStartFind = TRUE;
@@ -1419,6 +1431,8 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
     (*value)->residualSpeed = 0;
+    (*value)->wallSlideVel = 0.0f;
+    (*value)->wallContact = FALSE;
     (*value)->waterCount = 0;
     /* Get the start position */
     if (!isServer) {
@@ -1452,6 +1466,8 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
     (*value)->residualSpeed = 0;
+    (*value)->wallSlideVel = 0.0f;
+    (*value)->wallContact = FALSE;
     (*value)->waterCount = 0;
     if (sim->isTutorial && sim->tutorialStartIdx == 1) {
       sim->tutorialRespawn1Pending = TRUE;
@@ -1585,6 +1601,14 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     }
   }
 
+  /* A pending wall-momentum collapse only applies to the speed held while
+   * grinding the wall. If the tank comes to rest first, there is no stored
+   * momentum left to collapse — cancel it so fresh acceleration away from
+   * the wall isn't clamped to the old against-the-wall velocity. */
+  if ((*value)->wallContact && (*value)->speed <= 0.01f) {
+    (*value)->wallContact = FALSE;
+  }
+
   ang = utilGet16Dir((*value)->angle);
 
   /* Step 1 — Tank-to-tank nudge */
@@ -1633,7 +1657,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
     int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
     if ((pushX || pushY) && (xAmount || yAmount)) {
-      const float SLIP = 1.0f;          /* 0 = plain slide, 1 = frictionless */
+      const float SLIP = g_tankWallGlide; /* 0 = plain slide, 1 = frictionless */
       float nlen = sqrtf((float)(pushX * pushX + pushY * pushY));
       float nx = pushX / nlen, ny = pushY / nlen;            /* outward normal  */
       float mdotn = (float)xAmount * nx + (float)yAmount * ny;
@@ -1658,31 +1682,62 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
      * a wall moves to a new grid cell and is NOT obstructed. Circle mode does
      * not apply the legacy collision slowdown; this only sets the flag. */
     if (movedThisTick) {
+      /* Momentum truth ("sap"): the wall may take velocity instantly, but
+       * never GIVE it. On a first contact tick the movement collapses to
+       * whatever survives the wall (glide 0: [6,-14] into a north wall
+       * becomes a steady [6,0] slide). On CONTINUED contact the along-wall
+       * movement may only build from the velocity truly held last contact
+       * tick (wallSlideVel), at the normal acceleration rate — the
+       * glide/projection result is a cap, not a grant. Without that ramp,
+       * turning away from a head-on pin sweeps through oblique headings
+       * whose projection instantly "grants" near-full speed along the wall,
+       * teleporting velocity the tank never earned (and leaving the release
+       * collapse nothing to do — the "Sap does nothing" report). When
+       * contact ends (turned away or cleared the block), stored speed
+       * collapses once toward wallSlideVel and normal acceleration resumes.
+       * Slider: 0 = classic (instant full-speed slides, stored speed
+       * untouched), 1 = fully honest velocity. */
+      if (bumptype & BumpInfo_SolidWall) {
+        float attempted = sqrtf((float)(xAmount * xAmount + yAmount * yAmount));
+        if (attempted > 0.5f && (*value)->speed > 0.5f) {
+          float dxA = (float)((int)(*value)->x - moveStartX - bumpDx);
+          float dyA = (float)((int)(*value)->y - moveStartY - bumpDy);
+          float amag = sqrtf(dxA * dxA + dyA * dyA);
+          /* One moved tick can represent several game ticks at low speed:
+           * attempted distance == accumulated residual == speed * ticks. */
+          float ticks = attempted / (float)(*value)->speed;
+          if ((*value)->wallContact && g_tankWallMomentumSap > 0.0f) {
+            float allowed = ((*value)->wallSlideVel +
+                             (float)TANK_ACCELERATE_RATE * ticks) * ticks;
+            if (amag > allowed) {
+              /* Blend toward "no cap" as the slider approaches classic. */
+              allowed += (amag - allowed) * (1.0f - g_tankWallMomentumSap);
+              float scale = allowed / amag;
+              (*value)->x = (WORLD)(moveStartX + bumpDx + (int)(dxA * scale));
+              (*value)->y = (WORLD)(moveStartY + bumpDy + (int)(dyA * scale));
+              amag = allowed;
+            }
+          }
+          float heldVel = amag / ticks;
+          if (heldVel > (*value)->speed) {
+            heldVel = (*value)->speed;
+          }
+          (*value)->wallSlideVel = heldVel;
+          (*value)->wallContact = TRUE;
+        }
+      } else if ((*value)->wallContact) {
+        (*value)->wallContact = FALSE;
+        if (g_tankWallMomentumSap > 0.0f &&
+            (*value)->speed > (*value)->wallSlideVel) {
+          (*value)->speed += ((*value)->wallSlideVel - (*value)->speed) *
+                             g_tankWallMomentumSap;
+        }
+      }
+      /* After the ramp clamp — it can pull the tank back into its start
+       * cell, which should read as obstructed. */
       (*value)->obstructed = (bumptype & BumpInfo_SolidWall) &&
           (((*value)->x & TANK_GRID_MASK) == oldX) &&
           (((*value)->y & TANK_GRID_MASK) == oldY);
-      /* Momentum sap: pull stored speed toward the velocity the tank ACTUALLY
-       * achieved this tick after collision resolution. Pinned head-on the
-       * achieved distance is ~0, so holding accelerate against a wall banks
-       * no momentum — turning away re-accelerates from rest. Sliding along a
-       * wall achieves (near) full distance via the tangent glide and is
-       * unaffected. The slider blends: 0 = keep stored momentum (classic),
-       * 1 = speed equals achieved velocity. */
-      if (g_tankWallMomentumSap > 0.0f && (bumptype & BumpInfo_SolidWall)) {
-        float attempted = sqrtf((float)(xAmount * xAmount + yAmount * yAmount));
-        if (attempted > 0.5f) {
-          float dxA = (float)((int)(*value)->x - moveStartX - bumpDx);
-          float dyA = (float)((int)(*value)->y - moveStartY - bumpDy);
-          float ratio = sqrtf(dxA * dxA + dyA * dyA) / attempted;
-          if (ratio < 1.0f) {
-            (*value)->speed += (*value)->speed * (ratio - 1.0f) *
-                               g_tankWallMomentumSap;
-            if ((*value)->speed < 0) {
-              (*value)->speed = 0;
-            }
-          }
-        }
-      }
     }
   }
 #else

@@ -198,6 +198,8 @@ struct tankObj {
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
   BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */
+  float wallSlideVel;       /* Velocity (speed units) actually held against a solid wall on the last contact tick */
+  bool wallContact;         /* Solid-wall contact pending a momentum collapse when contact ends */
 };
 
 #pragma pack(pop)
