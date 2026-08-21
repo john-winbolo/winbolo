@@ -232,6 +232,7 @@ extern "C" bool showAssistantMessages;
 extern "C" bool showAIMessages;
 extern "C" bool showNetworkStatusMessages;
 extern "C" bool showNetworkDebugMessages;
+extern "C" float g_tankWallMomentumSap;  /* tank.c wall-hit speed bleed (0..1) */
 
 /* Device presets are defined in imgui_dialog_utils.h (shared with dialogs) */
 #include "dialogs/imgui_dialog_utils.h"
@@ -1067,6 +1068,26 @@ static void renderGameInfoPanel(ClientSim *cs) {
         return;
     }
     renderGameInfoContent(cs);
+    ImGui::End();
+}
+
+/* -------------------------------------------------------
+ * Wall momentum sap tuning window (experiment build).
+ * Always visible in-game: drives g_tankWallMomentumSap in
+ * tank.c — the fraction of stored speed bled off each tick
+ * the tank is pinned against a wall.
+ * ------------------------------------------------------- */
+static void renderMomentumSapWindow(void) {
+    ImGui::SetNextWindowPos(ImVec2(10 * s_uiScale, 120 * s_uiScale),
+                            ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Wall momentum###momentumsap", nullptr,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing)) {
+        ImGui::SetNextItemWidth(180 * s_uiScale);
+        ImGui::SliderFloat("Sap", &g_tankWallMomentumSap, 0.0f, 1.0f, "%.2f");
+        ImGui::TextDisabled("0 = classic (keep momentum)");
+        ImGui::TextDisabled("1 = true velocity (pinned = restart from 0)");
+    }
     ImGui::End();
 }
 
@@ -4540,6 +4561,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
     renderBrainSettingsWindow();
+    renderMomentumSapWindow();
     renderSettingsPanel(cs);
 
     /* Info panels — standard ImGui windows in the main context */

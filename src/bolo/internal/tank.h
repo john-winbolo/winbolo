@@ -193,6 +193,14 @@ based on my testing.
 /* Tank slows down a speed unit if it hits a wall */
 #define TANK_WALL_SLOW_DOWN 1
 
+/* Circle-collision momentum sap: blend between arcade stored-momentum and
+ * true velocity when a wall blocks movement. Per moved tick, stored speed is
+ * pulled toward speed * (achieved distance / attempted distance) by this
+ * fraction (0 = walls never drain stored speed, 1 = speed tracks the
+ * actually-achieved velocity, so a pinned tank restarts from rest).
+ * Defined in tank.c; tunable at runtime via the GUI debug slider. */
+extern float g_tankWallMomentumSap;
+
 /* Amount to move for checking */
 #define TANK_MOVE_BOAT_SUB 64
 #define TANK_MOVE_LAND_SUB 128 /* 96 */

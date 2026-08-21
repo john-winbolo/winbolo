@@ -60,6 +60,18 @@ typedef struct ClientSim ClientSim;
 static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
                             tankButton tb, bool inBrain);
 
+/* Blend between arcade stored-momentum and true velocity when a wall blocks
+ * the tank. Each movement tick, stored speed is pulled toward
+ * speed * (achieved distance / attempted distance) by this fraction:
+ * 0 = classic behaviour (a wall never drains stored speed, so a pinned tank
+ * still launches at full speed when it turns away), 1 = physically true
+ * (pinned against a wall the achieved velocity is ~0, so speed drops to ~0
+ * and turning away re-accelerates from rest). Sliding along a wall achieves
+ * near-full distance either way and is unaffected. Live-tuned from the SDL3
+ * GUI debug slider; affects prediction only against a remote server that
+ * doesn't share the same value. */
+float g_tankWallMomentumSap = 1.0f;
+
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
 /* The direction-dependent bounding boxes are only consulted by the legacy
  * grid-snap nudge; the default circle resolver uses a fixed TANK_HIT_RADIUS. */
@@ -1586,6 +1598,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 
   /* Step 2 — Velocity movement with residual speed accumulation */
+  int moveStartX = (int)(*value)->x;   /* pre-move position, for the momentum */
+  int moveStartY = (int)(*value)->y;   /* sap's achieved-distance measurement */
   (*value)->residualSpeed += (BYTE)(*value)->speed;
   if ((*value)->residualSpeed >= TANK_MIN_MOVE_SPEED) {
     utilCalcDistance(&xAmount, &yAmount, (TURNTYPE)ang, (int)(*value)->residualSpeed);
@@ -1596,8 +1610,10 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 
   /* Step 3 — Apply bump effect (shell knockback with decay) */
-  (*value)->x += (*value)->bumpX >> 9;
-  (*value)->y += (*value)->bumpY >> 9;
+  int bumpDx = (*value)->bumpX >> 9;   /* excluded from the sap's achieved */
+  int bumpDy = (*value)->bumpY >> 9;   /* distance — knockback isn't drive */
+  (*value)->x += bumpDx;
+  (*value)->y += bumpDy;
   if ((*value)->armour <= TANK_FULL_ARMOUR) {
     (*value)->bumpX -= ((*value)->bumpX >> TANK_BUMP_DECAY_SHIFT) + ((*value)->bumpX > 0 ? 1 : 0);
     (*value)->bumpY -= ((*value)->bumpY >> TANK_BUMP_DECAY_SHIFT) + ((*value)->bumpY > 0 ? 1 : 0);
@@ -1645,6 +1661,28 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
       (*value)->obstructed = (bumptype & BumpInfo_SolidWall) &&
           (((*value)->x & TANK_GRID_MASK) == oldX) &&
           (((*value)->y & TANK_GRID_MASK) == oldY);
+      /* Momentum sap: pull stored speed toward the velocity the tank ACTUALLY
+       * achieved this tick after collision resolution. Pinned head-on the
+       * achieved distance is ~0, so holding accelerate against a wall banks
+       * no momentum — turning away re-accelerates from rest. Sliding along a
+       * wall achieves (near) full distance via the tangent glide and is
+       * unaffected. The slider blends: 0 = keep stored momentum (classic),
+       * 1 = speed equals achieved velocity. */
+      if (g_tankWallMomentumSap > 0.0f && (bumptype & BumpInfo_SolidWall)) {
+        float attempted = sqrtf((float)(xAmount * xAmount + yAmount * yAmount));
+        if (attempted > 0.5f) {
+          float dxA = (float)((int)(*value)->x - moveStartX - bumpDx);
+          float dyA = (float)((int)(*value)->y - moveStartY - bumpDy);
+          float ratio = sqrtf(dxA * dxA + dyA * dyA) / attempted;
+          if (ratio < 1.0f) {
+            (*value)->speed += (*value)->speed * (ratio - 1.0f) *
+                               g_tankWallMomentumSap;
+            if ((*value)->speed < 0) {
+              (*value)->speed = 0;
+            }
+          }
+        }
+      }
     }
   }
 #else
