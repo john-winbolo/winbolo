@@ -1605,7 +1605,7 @@ M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense t
                                      -- adds on top, threat multipliers scale the sum DOWN
 
 -- Defend formula (eval_defend_pill): cost = (base+travel) * threat_mult
--- * lateness [+ quiet penalty when no threat]. Threat evidence only ever
+-- * lateness (quiet pills bid nothing at all). Threat evidence only ever
 -- LOWERS the cost (multiplier < 1, strongest live tier wins); lateness
 -- only ever RAISES it. Multiplicative on a ~250 base so common threatened
 -- cases land naturally around 100-300 instead of clipping the MIN floor —
@@ -1622,8 +1622,9 @@ M.DEFEND_SIEGE_MULT          = 0.30  -- fresh damage on a FULL-health pill; scal
                                      -- capture/rebuild territory)
 M.DEFEND_SIGHT_MULT          = 0.50  -- hostile tank seen near the pill (prevention tier)
 M.DEFEND_COVERAGE_MULT       = 0.95  -- per covering friendly pill (heat-up potential); threat-gated
-M.DEFEND_QUIET_PENALTY       = 450   -- added when NO threat evidence exists: quiet pills list and
-                                     -- score but effectively never win (0-ish = garrison behavior)
+-- Quiet pills (no threat evidence) place NO bid at all: explore is the
+-- fallback that fires only when nothing bids, so any finite quiet cost
+-- would glue idle bots to garrison duty. Rows stay listed for visibility.
 M.DEFEND_ASSUMED_TICKS_PER_HP = 80   -- assumed siege damage rate: 15 HP ~ 60 s (TTL = hp x this)
 M.DEFEND_ETA_PER_COST        = 6     -- rough ticks of travel per dij cost unit (ETA estimate)
 M.DEFEND_FUTILITY_MAX        = 3.0   -- cap on the late-arrival cost multiplier during a siege
@@ -1632,6 +1633,21 @@ M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the mult
                                      -- attack_pill locks (10-50), so on arrival the fight
                                      -- takes over from the drive; below explore (500) and
                                      -- most fresh attacks, so defense still wins the pool.
+
+-- Arrival handoff: within this Euclidean tile radius of the pill, the
+-- "travel closer" phase is COMPLETE — the travel formula stops bidding
+-- entirely (it must not beat real close-range goals like attack_tank or
+-- repair_pill) and the pill's bid becomes the heat-up action alone.
+M.DEFEND_ARRIVE_RADIUS       = 10
+M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill to anger it".
+                                     -- Loses to attack_tank (~11) and close repair (<100);
+                                     -- beats explore (500) when nothing else is pressing.
+M.HEAT_PILL_SHOTS            = 3     -- shells per heat sequence
+M.HEAT_PILL_MIN_HP           = 6     -- don't shave a pill that can't spare the HP
+M.HEAT_PILL_MAX_ANGER        = 0.4   -- already hot -> more shells add nothing (3 hits saturate)
+M.HEAT_SELF_STAMP_TICKS      = 150   -- world.lua skips the under_attack stamp this long after our
+                                     -- own heat shot (covers shell flight) — self-tickling must
+                                     -- not read as an enemy siege
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase

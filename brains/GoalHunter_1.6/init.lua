@@ -125,6 +125,12 @@ local PP_STATIONARY_SUBS = {
 local TANK_COMBAT_STATIONARY_SUBS = {
   engage=true, close=true, disengage=true,
 }
+-- Defend heat (ARRIVED-phase win): parked in firing range, deliberately
+-- putting HEAT_PILL_SHOTS shells into our own pill to anger it. Aiming /
+-- firing / the post-sequence hold are all intentional stillness.
+local DEFEND_HEAT_STATIONARY_SUBS = {
+  heat_pill_aim=true, heat_pill_shoot=true, heat_done=true,
+}
 -- Substates during which a goal-change should preserve standoff/wall
 -- state (so a re-target doesn't drop in-progress geometry).
 local ACTIVE_SUBS = {
@@ -3185,6 +3191,8 @@ function Brain.think(info)
     -- Reposition: parked next to our own pill, deliberately shooting it down.
     or (state.goal.kind == "capture_pill" and state.goal.reposition
         and state.goal.substate == "reposition_shoot")
+    -- Defend heat: parked in range, deliberately tickling our own pill.
+    or (state.goal.kind == "defend_pill" and DEFEND_HEAT_STATIONARY_SUBS[state.goal.substate or ""])
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
@@ -6802,6 +6810,35 @@ function Brain.think(info)
       viz.text("pill_id_label", b.mx + 0.5, b.my + 0.5, tostring(id), "center", 0, 255, 255, 255, 2.4)
     end
     opt(string.format("  pill+base id labels done %.2f ms", (clock_us() - t_label0) / 1000))
+  end
+
+  -- Defend-pill tier overlay: ring + "tier cost" label per team pill from
+  -- the last replan's defend breakdown (state.defend_breakdown rows carry
+  -- the tier that priced each pill), plus the Euclidean
+  -- DEFEND_ARRIVE_RADIUS circle on the ACTIVE defend goal's pill — the
+  -- exact boundary where eval_defend_pill hands the travel phase to the
+  -- heat gate. Colors mirror the tier ladder.
+  if BRAIN_DEBUG_MODE and viz.is_on("defend_pill_viz") and state.defend_breakdown then
+    local DEFEND_TIER_COLS = {
+      siege   = { 255,  60,  60 },  setup = { 255, 150,   0 },
+      sight   = { 255, 230,   0 },  worn  = {  90, 140, 255 },
+      quiet   = { 150, 150, 150 },  heat  = {   0, 230,  80 },
+      no_heat = {  90,  90,  90 },  dead  = {  60,  60,  60 },
+    }
+    for _, r in ipairs(state.defend_breakdown.rows or {}) do
+      local cc = DEFEND_TIER_COLS[r.tier or "quiet"] or DEFEND_TIER_COLS.quiet
+      viz.circle("defend_pill_viz", r.mx + 0.5, r.my + 0.5, 0.65,
+                 cc[1], cc[2], cc[3], 200)
+      local lbl = (r.cost and r.cost < 1e29)
+        and string.format("%s %.0f", r.tier or "?", r.cost)
+        or (r.tier or "?")
+      viz.text("defend_pill_viz", r.mx + 0.5, r.my - 0.35, lbl,
+               "center", cc[1], cc[2], cc[3], 255)
+    end
+    if state.goal and state.goal.kind == "defend_pill" and state.goal.mx then
+      viz.circle("defend_pill_viz", state.goal.mx + 0.5, state.goal.my + 0.5,
+                 (C.DEFEND_ARRIVE_RADIUS or 10), 0, 200, 255, 120)
+    end
   end
 
   -- Debugger: end trace capture

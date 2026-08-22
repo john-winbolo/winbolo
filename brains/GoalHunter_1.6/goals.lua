@@ -2972,7 +2972,8 @@ end
 
 -- defend_pill_score — the defend formula for one built team pill.
 --
---   cost = max(MIN, (base + travel) * feas - urgency [+ quiet_pen])
+--   cost = max(MIN, (base + travel) * threat_mult * lateness)
+--   quiet pills (no threat evidence) place NO bid at all
 --
 -- Design invariant: threat evidence only ever LOWERS the cost, and
 -- infeasibility only ever RAISES it — degraded information degrades
@@ -2993,15 +2994,32 @@ end
 --   cover : other alive team pills whose fire reaches this pill make the
 --           defense cheaper (arrive into friendly cover; heat-up fodder).
 --           Threat-gated: coverage alone is no reason to drive anywhere.
---   quiet : no evidence at all -> +DEFEND_QUIET_PENALTY. Quiet pills
---           still list and score (no reject!) but effectively never win;
---           tune to 0 for garrison behavior.
+--   quiet : no evidence at all -> NO BID. Explore is not a competitor —
+--           it's the fallback that fires only when nothing bids — so any
+--           finite quiet cost would garrison idle bots at their pills.
+--           Quiet rows still list in the panel for visibility.
 -- Feasibility (siege only): assumed constant damage rate — TTL =
 -- hp x DEFEND_ASSUMED_TICKS_PER_HP vs ETA = travel x DEFEND_ETA_PER_COST.
 -- Arriving late scales cost up toward DEFEND_FUTILITY_MAX (never INF —
 -- a late arrival still degrades into rebuild/capture recovery).
+--
+-- ARRIVAL HANDOFF: within DEFEND_ARRIVE_RADIUS (Euclidean tiles) the
+-- travel phase is COMPLETE — the formula above must not keep bidding
+-- ~100 and beat real close-range goals (attack_tank ~11, close repair).
+-- Inside the radius the pill's bid becomes the HEAT action alone: a flat
+-- DEFEND_HEAT_COST when every heat condition holds, or NO bid at all
+-- (cost=huge, chip explains which condition blocked). Heat conditions:
+--   taking_damage — enemy shells are heating it for free, no need
+--   already_hot   — anger >= HEAT_PILL_MAX_ANGER (3 hits saturate)
+--   low_hp        — hp < HEAT_PILL_MIN_HP (each shell costs ~1 HP)
+--   low_shells    — shells < HEAT_PILL_SHOTS + SHELL_RESERVE
+--   no_evidence   — nobody seen/felt near the pill within the sight
+--                   window (recent hostile damage counts as evidence)
+--   lgm_out       — our LGM is walking (possibly repairing this pill);
+--                   never shell over our own man
+--   ally_repair   — a teammate advertises repair_pill on this pill
 -- Returns (cost, bd) — bd carries the per-term breakdown for the panel.
-local function defend_pill_score(world, p, travel, now)
+local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   local bd = { travel = travel }
   local hp  = p.health or 0
   local dmg = p.attack_damage or 0
@@ -3010,6 +3028,48 @@ local function defend_pill_score(world, p, travel, now)
                     and (now - p.last_hit_tick) or math.huge
   local sight_age = p._enemy_near_tick and (now - p._enemy_near_tick) or math.huge
   local setup_age = p._lgm_near_tick and (now - p._lgm_near_tick) or math.huge
+
+  -- ── Arrival handoff ────────────────────────────────────────────────
+  local ddx, ddy = (tmx or 0) - p.mx, (tmy or 0) - p.my
+  if math.sqrt(ddx * ddx + ddy * ddy) <= (C.DEFEND_ARRIVE_RADIUS or 10) then
+    bd.arrived = true
+    local block
+    if hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400) then
+      block = "taking_damage"
+    elseif (p.anger or 0) >= (C.HEAT_PILL_MAX_ANGER or 0.4) then
+      block = "already_hot"
+    elseif hp < (C.HEAT_PILL_MIN_HP or 6) then
+      block = "low_hp"
+    elseif (info.shells or 0) < (C.HEAT_PILL_SHOTS or 3) + (C.SHELL_RESERVE or 0) then
+      block = "low_shells"
+    elseif math.min(hit_age, sight_age, setup_age)
+           >= (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
+      block = "no_evidence"
+    elseif info.man_status ~= C.LGM_INTANK then
+      block = "lgm_out"
+    else
+      -- Ally repair claim on this pill (fresh heartbeat) -> their LGM is
+      -- inbound; our heat shells would land around it.
+      for ally_pn, slot in ally_state.iter_active(now, 1750) do
+        if ally_pn ~= info.player_number then
+          local h = slot.info
+          if h and h.goal == "repair_pill"
+             and tonumber(h.mx) == p.mx and tonumber(h.my) == p.my then
+            block = "ally_repair"
+            break
+          end
+        end
+      end
+    end
+    if block then
+      bd.heat_block = block
+      bd.cost = math.huge
+      return math.huge, bd
+    end
+    bd.heat = true
+    bd.cost = C.DEFEND_HEAT_COST or 200
+    return bd.cost, bd
+  end
 
   local siege       = hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400)
   local sight_fresh = C.DEFEND_SIGHT_FRESH_TICKS or 600
@@ -3030,19 +3090,43 @@ local function defend_pill_score(world, p, travel, now)
     -- shorter TTL below.
     bd.siege_m = 1 - (1 - (C.DEFEND_SIEGE_MULT or 0.30))
                      * (hp / (C.PILLS_MAX_HEALTH or 15))
-    if bd.siege_m < mult then mult = bd.siege_m end
+    if bd.siege_m < mult then mult = bd.siege_m; bd.tier = "siege" end
   end
   if setup_f > 0 then
     -- Wall/pill-plant tell: the MOST savable moment (nothing lost yet,
     -- build interruptible) -> strongest tier. Decays toward 1 with age.
     local m = C.DEFEND_SETUP_MULT or 0.25
     bd.setup_m = m + (1 - m) * (1 - setup_f)
-    if bd.setup_m < mult then mult = bd.setup_m end
+    if bd.setup_m < mult then mult = bd.setup_m; bd.tier = "setup" end
   end
   if sight_f > 0 then
     local m = C.DEFEND_SIGHT_MULT or 0.50
     bd.sight_m = m + (1 - m) * (1 - sight_f)
-    if bd.sight_m < mult then mult = bd.sight_m end
+    if bd.sight_m < mult then mult = bd.sight_m; bd.tier = "sight" end
+  end
+
+  -- Quiet (no fresh threat evidence):
+  --   damaged -> WORN bid: an attack happened here at some point, and a
+  --     wounded pill is worth more than wandering. Plain base+travel (no
+  --     threat discount, no lateness) — beats nothing-better, loses to
+  --     every real discounted goal; repair (when LGM+trees allow)
+  --     usually underbids it and does the actual fixing.
+  --   healthy -> NO bid. Explore is not a pool competitor — it's the
+  --     fallback that fires only when nothing bids — so any finite
+  --     quiet cost would glue idle bots to garrison duty. Rows stay
+  --     listed in the panel for visibility.
+  if mult >= 1.0 then
+    bd.mult = 1.0
+    if hp < (C.PILLS_MAX_HEALTH or 15) then
+      bd.worn = true
+      bd.feas = 1.0
+      local cost = (C.DEFEND_PILL_BASE_COST or 250) + travel
+      bd.cost = cost
+      return cost, bd
+    end
+    bd.quiet = true
+    bd.cost = math.huge
+    return math.huge, bd
   end
 
   if mult < 1.0 then
@@ -3075,10 +3159,6 @@ local function defend_pill_score(world, p, travel, now)
   bd.feas = feas
 
   local cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas
-  if mult >= 1.0 then
-    bd.quiet_pen = C.DEFEND_QUIET_PENALTY or 450
-    cost = cost + bd.quiet_pen
-  end
   local floor_c = C.DEFEND_MIN_COST or 100
   if cost < floor_c then cost = floor_c end
   bd.cost = cost
@@ -3129,7 +3209,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
       local travel = travel_cost_to_pill(p.mx, p.my, boat)
       local cost, bd
       if not reject then
-        cost, bd = defend_pill_score(world, p, travel, now)
+        cost, bd = defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
         if cost < best_cost then
           best, best_id, best_cost, best_travel, best_dmg = p, id, cost, travel, dmg
           best_bd = bd
@@ -3149,17 +3229,31 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
           (info.man_status == C.LGM_INTANK) and "in_tank" or "out", info.trees or 0)
         local formula
         if not reject then
-          if cost >= 1e29 or travel >= math.huge then
+          if bd and bd.arrived then
+            if bd.heat then
+              formula = string.format(
+                "ARRIVED heat{%.0f}||within %d tiles: travel phase done; bidding the heat-up action only (%d shells to anger the pill); %s",
+                cost, C.DEFEND_ARRIVE_RADIUS or 10, C.HEAT_PILL_SHOTS or 3, detail)
+            else
+              formula = string.format(
+                "ARRIVED no-bid (%s)||within %d tiles: travel phase done; heat blocked by %s -> defend yields to attack_tank / repair_pill / whatever else bids; %s",
+                bd.heat_block, C.DEFEND_ARRIVE_RADIUS or 10, bd.heat_block, detail)
+            end
+          elseif bd and bd.quiet then
+            formula = string.format(
+              "QUIET no-bid||no threat evidence (no fresh damage / sighting / setup tell): defend leaves the pool alone so idle bots explore instead of garrisoning; %s",
+              detail)
+          elseif cost >= 1e29 or travel >= math.huge then
             formula = string.format("base{%.0f}+dij{unreachable} = INF||%s",
               C.DEFEND_PILL_BASE_COST, detail)
           else
             -- Threat-tier chips, only the live ones (strongest wins).
             local u = ""
+            if bd.worn then u = " WORN(damaged, quiet: plain base+travel)" end
             if bd.siege_m then u = u .. string.format(" siege{%.2f}", bd.siege_m) end
             if bd.setup_m then u = u .. string.format(" setup{%.2f}", bd.setup_m) end
             if bd.sight_m then u = u .. string.format(" sight{%.2f}", bd.sight_m) end
             if bd.cover_m then u = u .. string.format(" cover{%.2fx%d}", bd.cover_m, bd.cover_n) end
-            if bd.quiet_pen then u = u .. string.format(" +quiet{%.0f}", bd.quiet_pen) end
             local f = (bd.feas ~= 1.0)
               and string.format("*late{%.2f eta=%.0f ttl=%.0f}", bd.feas, bd.eta or 0, bd.ttl or 0)
               or ""
@@ -3185,6 +3279,12 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
           stale = 0,  -- overwritten with rows' age at panel-read time
           reject = reject,
           reject_remaining = 0,
+          -- Tier tag for the defend_pill_viz overlay (init.lua draws from
+          -- these rows every tick).
+          tier = reject and "dead"
+                 or (bd.heat and "heat") or (bd.heat_block and "no_heat")
+                 or (bd.quiet and "quiet") or (bd.worn and "worn")
+                 or bd.tier or "quiet",
         }
       end
     end
@@ -3195,16 +3295,23 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
   state.defend_breakdown = rows and { tick = now, rows = rows } or nil
 
   if not best then return nil end
+  local is_heat = best_bd and best_bd.heat or nil
   return {
     cost = best_cost,
     goal = { kind = "defend_pill", mx = best.mx, my = best.my,
              wx = U.m2w(best.mx), wy = U.m2w(best.my),
-             target_id = best_id },
-    desc = BRAIN_POOL_VIZ and string.format(
-           "defend#%d@(%d,%d) (base{%.0f}+dij{%.0f})*m{%.2f}*feas{%.2f} = %.0f dmg=%d",
-           best_id, best.mx, best.my, C.DEFEND_PILL_BASE_COST, best_travel,
-           best_bd and best_bd.mult or 1.0, best_bd and best_bd.feas or 1.0,
-           best_cost, best_dmg) or "",
+             target_id = best_id,
+             -- Arrival-phase win: the bid is the heat-up action, not a
+             -- drive. Phase-3 heat substates key off this flag.
+             heat = is_heat },
+    desc = BRAIN_POOL_VIZ and (is_heat
+           and string.format("defend#%d@(%d,%d) ARRIVED heat{%.0f}",
+               best_id, best.mx, best.my, best_cost)
+           or string.format(
+               "defend#%d@(%d,%d) (base{%.0f}+dij{%.0f})*m{%.2f}*feas{%.2f} = %.0f dmg=%d",
+               best_id, best.mx, best.my, C.DEFEND_PILL_BASE_COST, best_travel,
+               best_bd and best_bd.mult or 1.0, best_bd and best_bd.feas or 1.0,
+               best_cost, best_dmg)) or "",
     cands = rows,
   }
 end

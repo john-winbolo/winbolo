@@ -273,9 +273,15 @@ function M.update(world, info, tick)
 
         -- Under-attack tracking for friendly AND allied pills (defend_pill
         -- lists the whole team's built pills, so allied rows need real
-        -- damage info too).
+        -- damage info too). Suppressed within HEAT_SELF_STAMP_TICKS of our
+        -- own heat shots (defend_pill_steer stamps _heat_shot_tick while
+        -- firing) — deliberately tickling our own pill must not read as an
+        -- enemy siege. last_hit_tick/anger still stamp above, which is what
+        -- blocks immediate re-heat (taking_damage / already_hot gates).
         if (owner_str == "friendly" or owner_str == "allied")
-           and new_health < old_health and new_health > 0 then
+           and new_health < old_health and new_health > 0
+           and not (p._heat_shot_tick
+                    and (tick - p._heat_shot_tick) < (C.HEAT_SELF_STAMP_TICKS or 150)) then
           local damage = old_health - new_health
           p.attack_damage = p.attack_damage + damage
           p.under_attack  = true
@@ -418,7 +424,9 @@ function M.process_events(world, info, state)
           end
 
           if (owner_str == "friendly" or owner_str == "allied")
-             and new_health < old_health and new_health > 0 then
+             and new_health < old_health and new_health > 0
+             and not (p._heat_shot_tick
+                      and (tick - p._heat_shot_tick) < (C.HEAT_SELF_STAMP_TICKS or 150)) then
             local damage = old_health - new_health
             p.attack_damage = p.attack_damage + damage
             p.under_attack  = true

@@ -125,6 +125,12 @@ local PP_STATIONARY_SUBS = {
 local TANK_COMBAT_STATIONARY_SUBS = {
   engage=true, close=true, disengage=true,
 }
+-- Defend heat (ARRIVED-phase win): parked in firing range, deliberately
+-- putting HEAT_PILL_SHOTS shells into our own pill to anger it. Aiming /
+-- firing / the post-sequence hold are all intentional stillness.
+local DEFEND_HEAT_STATIONARY_SUBS = {
+  heat_pill_aim=true, heat_pill_shoot=true, heat_done=true,
+}
 -- Substates during which a goal-change should preserve standoff/wall
 -- state (so a re-target doesn't drop in-progress geometry).
 local ACTIVE_SUBS = {
@@ -2474,6 +2480,8 @@ function Brain.think(info)
     -- Reposition: parked next to our own pill, deliberately shooting it down.
     or (state.goal.kind == "capture_pill" and state.goal.reposition
         and state.goal.substate == "reposition_shoot")
+    -- Defend heat: parked in range, deliberately tickling our own pill.
+    or (state.goal.kind == "defend_pill" and DEFEND_HEAT_STATIONARY_SUBS[state.goal.substate or ""])
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
@@ -5071,6 +5079,13 @@ function Brain.think(info)
 
 
   -- Label all pills and bases with their IDs (centered on tile)
+
+  -- Defend-pill tier overlay: ring + "tier cost" label per team pill from
+  -- the last replan's defend breakdown (state.defend_breakdown rows carry
+  -- the tier that priced each pill), plus the Euclidean
+  -- DEFEND_ARRIVE_RADIUS circle on the ACTIVE defend goal's pill — the
+  -- exact boundary where eval_defend_pill hands the travel phase to the
+  -- heat gate. Colors mirror the tier ladder.
 
   -- Debugger: end trace capture
   if dbg.is_tracing() then

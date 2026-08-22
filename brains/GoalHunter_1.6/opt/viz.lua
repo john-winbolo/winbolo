@@ -165,6 +165,10 @@ M.IDS = {
                         long  = "Red max-range + green standoff circles around target pill" },
   pill_id_label     = { short = "Pill/base IDs",
                         long  = "Numeric ID labels overlaid on every pill/base tile" },
+  defend_pill_viz   = { short = "Defend pill tiers",
+                        long  = "Per team pill: ring + label colored by the defend threat tier that priced it (red=siege, orange=setup tell, yellow=sighting, blue=worn/damaged-quiet, grey=quiet no-bid, green=HEAT bid, dark=arrived no-bid) with the pool cost. On the ACTIVE defend goal's pill: the Euclidean DEFEND_ARRIVE_RADIUS circle where the travel phase hands off to the heat gate. Mirrors eval_defend_pill's actual tiers/radius." },
+  heat_pill_viz     = { short = "Heat pill action",
+                        long  = "While executing a heat win: line tank->pill, circle on the pill, and fired-count label (heat_pill_position/aim/shoot -> heat_done). Matches defend_pill_steer's sequence." },
 
   -- Pathfinder / nav.
   pf_destination    = { short = "Pathfinder destination",
