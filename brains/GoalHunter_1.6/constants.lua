@@ -1601,10 +1601,7 @@ M.TRAIL_DROP_MIN_SPEED          = 4     -- tank must be moving at this speed
 
 -- Defend pill response
 M.PILL_ATTACK_COOLDOWN       = 200   -- ticks before clearing under_attack flag (~4 sec)
-M.DEFEND_PILL_MIN_DAMAGE     = 3     -- minimum HP lost before triggering defense
 M.DEFEND_PILL_BASE_COST      = 30    -- base cost for defend goal
-M.DEFEND_PILL_URGENCY_WEIGHT = 5     -- cost reduction per damage point above threshold
-M.DEFEND_PILL_MAX_TRAVEL     = 150   -- don't defend pills too far away (would arrive too late)
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase

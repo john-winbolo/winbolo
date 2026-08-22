@@ -3788,10 +3788,12 @@ function Brain.think(info)
       local p = W.pill_at(world, gmx, gmy)
       if not p or p.owner == "friendly" or p.health == 0 then goal_valid = false end
     elseif gk == "defend_pill" then
+      -- Only definitional invalidation: pill gone, no longer the team's
+      -- (own or allied), or dead. Attack state plays no part — the pool
+      -- scores every built team pill and replans re-compete naturally.
       local p = W.pill_at(world, gmx, gmy)
-      if not p or p.owner ~= "friendly" or p.health == 0 then goal_valid = false end
-      -- Also invalidate if attack has stopped
-      if p and not p.under_attack then goal_valid = false end
+      if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
+         or p.health == 0 then goal_valid = false end
     elseif gk == "repair_pill" then
       local p = W.pill_at(world, gmx, gmy)
       -- Abort if our LGM is dead — no one to do the repair (the eval already

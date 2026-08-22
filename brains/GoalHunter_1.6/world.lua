@@ -271,8 +271,11 @@ function M.update(world, info, tick)
           p.anger_tick = tick
         end
 
-        -- Under-attack tracking for friendly pills.
-        if owner_str == "friendly" and new_health < old_health and new_health > 0 then
+        -- Under-attack tracking for friendly AND allied pills (defend_pill
+        -- lists the whole team's built pills, so allied rows need real
+        -- damage info too).
+        if (owner_str == "friendly" or owner_str == "allied")
+           and new_health < old_health and new_health > 0 then
           local damage = old_health - new_health
           p.attack_damage = p.attack_damage + damage
           p.under_attack  = true
@@ -414,7 +417,8 @@ function M.process_events(world, info, state)
             p.last_hit_tick = tick   -- only on REAL damage (never on decay)
           end
 
-          if owner_str == "friendly" and new_health < old_health and new_health > 0 then
+          if (owner_str == "friendly" or owner_str == "allied")
+             and new_health < old_health and new_health > 0 then
             local damage = old_health - new_health
             p.attack_damage = p.attack_damage + damage
             p.under_attack  = true

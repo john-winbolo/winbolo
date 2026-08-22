@@ -2970,60 +2970,112 @@ local function travel_cost_to_pill(pmx, pmy, boat)
   return best
 end
 
+-- eval_defend_pill — internal scoring pool over ALL BUILT team pills
+-- (own "friendly" pills AND teammates' "allied" pills).
+-- The legacy implementation (single perc.pill_under_attack target, silent
+-- whole-pool nil gates — armour/busy/repos/min-damage/max-travel/under-
+-- attack — and the travel+base-urgency formula) is fully gutted. Every
+-- deployed friendly pill gets a row with the raw ingredients (dij travel,
+-- hp, attack damage, last-hit age, repair readiness); carried pills
+-- (in_tank) aren't on the map and get no row. The only reject left is
+-- "dead" (hp=0 — nothing to defend). Attack state gates NOTHING — it's
+-- information for the formula.
+--
+-- FORMULA (interim): DEFEND_PILL_BASE_COST + dij travel. Deliberately
+-- minimal — a real shape is being designed to replace this. Unreachable
+-- pills score math.huge and lose naturally (no travel gate). Cheapest
+-- eligible pill is the pool's winner (pc[2]); if it wins the WINNERS
+-- competition it becomes the main goal and the tank travels to the pill.
+--
+-- Rows persist in state.defend_breakdown even on replans where NOTHING is
+-- defendable, so the panel never goes blank. Runs at finalize cadence;
+-- travel is O(1) dij-slate lookups per pill (travel_cost_to_pill).
 local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
-  local target = state.perc and state.perc.pill_under_attack
-  if not target then return nil end
+  local now = state.tick or 0
+  local rows = BRAIN_POOL_VIZ and {} or nil
 
-  -- Reposition-target guard: the "attacker" is a teammate (or ourselves)
-  -- shooting our own pill down for an approved reposition — don't drive
-  -- over to defend it. Same tile-keyed TTL map filter_repair_pill uses,
-  -- maintained by reposition_vote.update from votes + repos broadcasts.
-  if state._repos_guard then
-    local gu = state._repos_guard[target.my * 256 + target.mx]
-    if gu and (state.tick or 0) < gu then return nil end
-  end
+  -- Repair-readiness (row detail only): could we patch the pill up on
+  -- arrival? Actual dispatch stays repair_pill/builder territory.
+  local repair_ready = (info.man_status == C.LGM_INTANK) and (info.trees or 0) > 0
 
-  -- Don't defend if we're critically low on health ourselves
-  if info.armour < C.ARMOUR_CRITICAL then return nil end
-
-  -- Only respond to sustained attacks (>= threshold damage)
-  if target.damage < C.DEFEND_PILL_MIN_DAMAGE then return nil end
-
-  -- Don't defend if already attacking near this pill
-  local gk = state.goal and state.goal.kind or "none"
-  if gk == "attack_pill" or gk == "attack_tank" or gk == "pill_place" then
-    if state.goal.mx and U.mdist(state.goal.mx, state.goal.my, target.mx, target.my) <= 5 then
-      return nil
+  local best, best_id, best_cost, best_travel, best_dmg =
+        nil, nil, math.huge, 0, 0
+  -- BUILT team pills only (own "friendly" + teammates' "allied"): a pill
+  -- riding in a tank isn't on the map and can't be defended — no row.
+  for id, p in pairs(world.pills) do
+    if (p.owner == "friendly" or p.owner == "allied")
+       and not (p.in_tank or p.carrier or p._synth_carry) then
+      local dmg = p.attack_damage or 0
+      local hp  = p.health or 0
+      local reject = (hp == 0) and "dead" or nil
+      -- Score everything on the map (O(1) dij lookups) — dead rows too, so
+      -- their would-be cost shows in the panel. An unreachable pill scores
+      -- math.huge and simply never wins; no gate needed. Attack state does
+      -- NOT gate anything — it's row information for the formula to use.
+      local travel = travel_cost_to_pill(p.mx, p.my, boat)
+      local cost
+      if not reject then
+        cost = C.DEFEND_PILL_BASE_COST + travel
+        if cost < best_cost then
+          best, best_id, best_cost, best_travel, best_dmg = p, id, cost, travel, dmg
+        end
+      end
+      if rows then
+        local atk_age = (p.attack_tick and p.attack_tick > 0) and (now - p.attack_tick) or -1
+        local detail = string.format(
+          "hp=%d/%d dmg=%d%s; repair-ready=%s (lgm=%s trees=%d)",
+          hp, C.PILLS_MAX_HEALTH, dmg,
+          atk_age >= 0 and string.format(" last_hit=%dt ago", atk_age) or "",
+          tostring(repair_ready),
+          (info.man_status == C.LGM_INTANK) and "in_tank" or "out", info.trees or 0)
+        local formula
+        if not reject then
+          if cost >= math.huge then
+            formula = string.format("base{%.0f}+dij{unreachable} = INF||%s",
+              C.DEFEND_PILL_BASE_COST, detail)
+          else
+            formula = string.format(
+              "base{%.0f}+dij{%.0f} = %.0f||%s",
+              C.DEFEND_PILL_BASE_COST, travel, cost, detail)
+          end
+        else
+          local why = "hp=0 — rebuild/capture territory, not defend"
+          -- Would-be score for quiet/low-damage rows keeps the list readable.
+          local wb = ""
+          if travel and travel ~= math.huge then
+            wb = string.format("; would-be base{%.0f}+dij{%.0f}=%.0f",
+                 C.DEFEND_PILL_BASE_COST, travel, C.DEFEND_PILL_BASE_COST + travel)
+          end
+          formula = string.format("REJECT %s||reject:%s%s; %s", reject, why, wb, detail)
+        end
+        rows[#rows + 1] = {
+          id = id, mx = p.mx, my = p.my,
+          -- 1e30 = renderer INF: rejects AND unreachable (dij=math.huge,
+          -- which json.lua would otherwise encode as a real-looking 9999).
+          cost = (reject or cost >= math.huge) and 1e30 or cost,
+          formula = formula,
+          stale = 0,  -- overwritten with rows' age at panel-read time
+          reject = reject,
+          reject_remaining = 0,
+        }
+      end
     end
   end
 
-  -- Cheap straight-line pre-gate: Manhattan tile distance is a lower bound
-  -- on the real path cost, so if even that exceeds the travel budget the
-  -- pill is unreachable in time — reject before paying for any cost lookup.
-  if U.mdist(tmx, tmy, target.mx, target.my) > C.DEFEND_PILL_MAX_TRAVEL then
-    return nil
-  end
+  -- Stash rows for the pool grid BEFORE any nil return — the cell lists
+  -- every owned pill regardless of whether the pool produced a winner.
+  state.defend_breakdown = rows and { tick = now, rows = rows } or nil
 
-  -- Dijkstra-slate cost to the cheapest passable neighbour of the pill
-  -- (the pill tile itself is an impassable live pillbox). O(1) lookup
-  -- against the per-tick slate — no A* detour. math.huge if unreachable.
-  local travel = travel_cost_to_pill(target.mx, target.my, boat)
-
-  -- Don't go if it's too far / unreachable (pill will be dead before we arrive)
-  if travel > C.DEFEND_PILL_MAX_TRAVEL then return nil end
-
-  -- Urgency bonus: more damage = lower cost (more urgent)
-  local urgency = math.max(0, target.damage - C.DEFEND_PILL_MIN_DAMAGE) * C.DEFEND_PILL_URGENCY_WEIGHT
-
-  local cost = travel + C.DEFEND_PILL_BASE_COST - urgency
-
+  if not best then return nil end
   return {
-    cost = cost,
-    goal = { kind = "defend_pill", mx = target.mx, my = target.my,
-             wx = U.m2w(target.mx), wy = U.m2w(target.my),
-             pill_id = target.id },
-    desc = BRAIN_POOL_VIZ and string.format("dij{%.0f}+base{%.0f}-urgency{%.0f} dmg=%d",
-           travel, C.DEFEND_PILL_BASE_COST, urgency, target.damage) or "",
+    cost = best_cost,
+    goal = { kind = "defend_pill", mx = best.mx, my = best.my,
+             wx = U.m2w(best.mx), wy = U.m2w(best.my),
+             target_id = best_id },
+    desc = BRAIN_POOL_VIZ and string.format("defend#%d@(%d,%d) base{%.0f}+dij{%.0f} = %.0f dmg=%d",
+           best_id, best.mx, best.my, C.DEFEND_PILL_BASE_COST, best_travel,
+           best_cost, best_dmg) or "",
+    cands = rows,
   }
 end
 
@@ -9739,6 +9791,7 @@ function M.get_queue_status(state)
       formula = entry.desc or "", flags = "",
     }
   end
+  append_finalize(2)  -- defend_pill
   append_finalize(8)  -- place_strategic
   append_finalize(9)  -- attack_tank
 
@@ -10117,6 +10170,20 @@ function M.get_pool_breakdown_json(state)
       reject = reason,
       reject_remaining = 0,
     }}
+  end
+
+  -- Inject defend_pill (pool 2) rows. eval_defend_pill is a finalize pool —
+  -- it never enqueues eval_queue items — and scores ALL owned pills itself,
+  -- leaving the full candidate list in state.defend_breakdown every replan
+  -- (including replans where nothing is defendable), so the cell always
+  -- lists every owned pill with its score or reject reason.
+  do
+    local db = state.defend_breakdown
+    if db and db.rows and #db.rows > 0 then
+      local age = now - (db.tick or now)
+      for _, r in ipairs(db.rows) do r.stale = age end
+      by_pool[2] = db.rows
+    end
   end
 
   -- Build a normal pool section. Used for indexes 1..9 and the
