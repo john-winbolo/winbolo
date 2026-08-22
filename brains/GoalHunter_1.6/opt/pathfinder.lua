@@ -122,18 +122,26 @@ end
 -- Solid-for-driving test for the escape beeline: walls and pill tiles
 -- stop a tank dead. T_PILLBOX is conservative (a dead pill is passable)
 -- but a live one is another permanent pin, so route around both.
+-- T_DEEPSEA blocks too: escape steering beelines at full throttle with
+-- the cliff brake exempted, so a line crossing deep sea is a drowning,
+-- not a pin. Safe because beeline_clear excludes endpoints — a tank
+-- standing IN water never blocks its own escape line, and river
+-- intermediates stay passable (that's how you drive out of a channel).
 local function escape_solid(tx, ty)
   if not U.in_map(tx, ty) then return true end
   local tt = U.ttype(tx, ty)
   return tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX
+         or tt == C.T_DEEPSEA
 end
 
 -- True when the straight tile-line from (x0,y0) to (x1,y1) crosses no
 -- solid tile. Endpoints excluded (the tank stands on x0,y0; the caller
--- already vetted the destination). Diagonal steps also require one of
--- the two orthogonal neighbours open — the tank's collision circle
--- can't squeeze through a solid corner even when the diagonal tile
--- itself is clear (same rule as the C pathfinder's corner-cut check).
+-- already vetted the destination). Diagonal steps are blocked when
+-- EITHER orthogonal neighbour is solid — the on-foot rule from the C
+-- pathfinder (brain_pathfinder.c corner-cut check): a full-tile tank
+-- cannot squeeze diagonally past ANY solid corner. (Requiring BOTH
+-- corners solid is the boat rule; using it here let the beeline clip
+-- corners at channel bends and re-create the very pin this fixes.)
 local function beeline_clear(x0, y0, x1, y1)
   local dx, dy = math.abs(x1 - x0), math.abs(y1 - y0)
   local sx = x0 < x1 and 1 or -1
@@ -145,7 +153,7 @@ local function beeline_clear(x0, y0, x1, y1)
     local step_x = e2 > -dy
     local step_y = e2 < dx
     if step_x and step_y
-       and escape_solid(cx + sx, cy) and escape_solid(cx, cy + sy) then
+       and (escape_solid(cx + sx, cy) or escape_solid(cx, cy + sy)) then
       return false
     end
     if step_x then err = err - dy; cx = cx + sx end
