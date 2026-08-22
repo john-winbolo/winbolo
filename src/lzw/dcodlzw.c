@@ -41,6 +41,8 @@ unsigned char *compressSrc, *compressDest;
 int compressLen; /* Length of the compressed array */
 int uncompressLen; /* Length of the data to compress */
 int compressUpto; /* Where we are up to in the compression */
+int compressDestCap; /* Capacity of compressDest in bytes (decode bound) */
+int compressOverflow; /* Set TRUE if a write past compressDestCap was attempted */
 
 /* Pseudo procedures */
 static __inline int decend_of_data() {
@@ -53,12 +55,25 @@ static __inline int decend_of_data() {
 
 
 static __inline unsigned char decread_byte() {
-  compressUpto++;
-  return compressSrc[compressUpto-1];
+  /* Refuse to read past the source buffer. A truncated or hostile blob can
+   * otherwise drive reads beyond src (compressed maps arrive over the
+   * network). Legitimate input never hits this because the outer loop stops
+   * at end-of-data first. */
+  if (compressUpto >= uncompressLen) {
+    return 0;
+  }
+  return compressSrc[compressUpto++];
 }
 
 
 static __inline void decwrite_byte(unsigned char c) {
+  /* Bound every write to the destination capacity. Without this a crafted
+   * blob whose RLE runs expand past the fixed dest buffer overflows the
+   * heap/stack (remotely reachable via network map download). */
+  if (compressLen >= compressDestCap) {
+    compressOverflow = TRUE;
+    return;
+  }
   compressDest[compressLen] = c;
   compressLen++;
 }
@@ -66,6 +81,10 @@ static __inline void decwrite_byte(unsigned char c) {
 void decwrite_array(unsigned char *c, int numBytes) {
   int count = 0;
   while (count < numBytes) {
+    if (compressLen >= compressDestCap) {
+      compressOverflow = TRUE;
+      return;
+    }
     compressDest[compressLen] = c[count];
     compressLen++;
     count++;
@@ -80,8 +99,9 @@ void decwrite_array(unsigned char *c, int numBytes) {
                                    }
 
 
-int lzwdecoding(unsigned char *src, unsigned char *dest, int len)
-/* Returned parameters: None
+int lzwdecoding(unsigned char *src, unsigned char *dest, int len, int destCap)
+/* Returned parameters: decoded byte count, or -1 if the input tried to
+   expand past destCap (a truncated or hostile blob).
    Action: Decompresses with RLE type 1 method all bytes read by the function read_byte
    Erreurs: An input/output error could disturb the running of the program
 */
@@ -93,15 +113,20 @@ int lzwdecoding(unsigned char *src, unsigned char *dest, int len)
   compressLen = 0;
   compressUpto = 0;
   uncompressLen = len;
-  while (!decend_of_data())
+  compressDestCap = destCap;
+  compressOverflow = FALSE;
+  while (!decend_of_data() && !compressOverflow)
         { header=decread_byte();
           switch (header & 128)
-          { case 0:for (i=0;i<=header;i++)
+          { case 0:for (i=0;i<=header && !compressOverflow;i++)
                        decwrite_byte(decread_byte());
                    break;
             case 128:decwrite_block(decread_byte(),(header & 127)+2);
           }
         }
+  if (compressOverflow) {
+    return -1;
+  }
   return compressLen;
 }
 

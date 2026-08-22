@@ -1122,6 +1122,9 @@ void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE self
       (*plrs)->item[playerNum].isChecked = FALSE;
       (*plrs)->playerBrainNames[playerNum][0] = '\0';
       if (isServer == FALSE) {
+        /* Drop the ping smoothing state with the slot — otherwise whoever
+         * fills it next starts from this player's average. */
+        clientSimResetPlayerDisplayPing(csParam, playerNum);
         frontEndClearPlayer(csParam, (playerNumbers) playerNum);
         frontEndStatusTank(csParam, (BYTE) (playerNum + 1), tankNone);
         frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, FALSE);

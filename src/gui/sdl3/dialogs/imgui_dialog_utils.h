@@ -76,6 +76,23 @@ static inline float dialogDeckFontMul(void) {
   #define IMGUI_PRIMARY_KEY_DOWN()  (ImGui::GetIO().KeyCtrl)
 #endif
 
+/* Ping readout colours, keyed off the band rather than re-deriving
+ * thresholds per call site (they had drifted into six copies of the same
+ * ladder). PING_BAND_NONE is the "---" grey; in-game rows get their band
+ * from clientSimGetPlayerPingBand (hysteresis-tracked), the lobby from
+ * pingBandClassify. */
+#include "ping_display.h"
+
+static inline ImVec4 imguiPingBandColor(PingBand band) {
+    switch (band) {
+        case PING_BAND_GOOD: return ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
+        case PING_BAND_FAIR: return ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
+        case PING_BAND_POOR: return ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+        case PING_BAND_NONE:
+        default:             return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+    }
+}
+
 /* Prevent iOS from shifting the entire SDL view when the soft keyboard appears.
  * SDL3's iOS view controller monitors the textInputRect set via
  * SDL_SetTextInputArea() and scrolls the view so the text field stays visible.

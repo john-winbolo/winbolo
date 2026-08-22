@@ -367,7 +367,12 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
-					if (lgms && lgms[count] != NULL) {
+					/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
+					 * NULL — what can go away is the slot's CONTENTS, when a player is
+					 * removed after the caller snapshotted this array. lgmDeathCheck
+					 * guards *lgman itself, but the lag-comp lookup below reads
+					 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
+					if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
 						BYTE lgmOwner = (*lgms[count])->playerNum;
 						uint8_t rewindTicks;
 						WORLD lgmHitX = 0, lgmHitY = 0;
@@ -446,7 +451,12 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			minesExpAddItem(&sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {
-				if (lgms && lgms[count] != NULL) {
+				/* lgms[count] is the ADDRESS of an lgmen[] slot, so it is never
+				 * NULL — what can go away is the slot's CONTENTS, when a player is
+				 * removed after the caller snapshotted this array. lgmDeathCheck
+				 * guards *lgman itself, but the lag-comp lookup below reads
+				 * playerNum first and lgmDeathCheckAtPosition has no guard at all. */
+				if (lgms && lgms[count] != NULL && *lgms[count] != NULL) {
 					BYTE lgmOwner = (*lgms[count])->playerNum;
 					uint8_t rewindTicks;
 					WORLD lgmHitX = 0, lgmHitY = 0;

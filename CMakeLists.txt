@@ -236,11 +236,23 @@ if(WINBOLO_LUAJIT)
     FetchContent_Declare(luajit_src
         GIT_REPOSITORY https://github.com/LuaJIT/LuaJIT.git
         GIT_TAG        ${WINBOLO_LUAJIT_LUAJIT_TAG}
-        GIT_SHALLOW    TRUE
+        # Deliberately NOT GIT_SHALLOW. Unlike every other dependency here,
+        # LuaJIT is pinned to a raw commit SHA rather than a release tag.
+        # GIT_SHALLOW makes FetchContent run `git clone --depth 1
+        # --no-single-branch`, which fetches only each branch's TIP — so
+        # checking out a pinned SHA works only while that SHA happens to be
+        # the tip of v2.1. Upstream moving v2.1 forward then breaks every
+        # clean build with "unable to read tree", while incremental builds
+        # keep working off the cached _deps checkout and hide it. A full
+        # clone is ~11MB and always contains the pin.
         # Fixes a void-function `return 0;` that breaks macOS hardened-runtime
         # (LUAJIT_ENABLE_OSX_HRT) builds — see the patch header for details.
         PATCH_COMMAND  ${CMAKE_COMMAND} -P
-                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake")
+                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_return.cmake"
+        # Fixes a per-thread W^X leak in the same HRT path that SIGBUSes
+        # bot worker threads (2.02 Sentry 24dae975) — see the patch header.
+        COMMAND        ${CMAKE_COMMAND} -P
+                       "${CMAKE_SOURCE_DIR}/cmake/patches/luajit_fix_osx_hrt_thread_leak.cmake")
     FetchContent_MakeAvailable(luajit_src)
     set(_lj_src "${luajit_src_SOURCE_DIR}")
 
@@ -2882,6 +2894,21 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
+    # All-bases win: one alliance holding every non-dead base ends the round on
+    # the spot, announced and without starting a vote; a single dead base
+    # (armour <= MIN_ARMOUR_CAPTURE, the X on the status pane) holds the round
+    # open, which is the only comeback window there is.
+    tests/unit/test_base_win_immediate.c
+    # Game-over resolution: serverSimResolveGameOver maps returnToLobbyReason
+    # to the returning lobby's message and the WinBolo.net win crediting — a
+    # swept round names its winner, a passed vote credits nobody, a surrender
+    # credits the opposing team, an abandoned round reports nothing.
+    tests/unit/test_base_win_resolve.c
+    # Surrender-vote privacy: the team-scoped CTRL_GAME_VOTE_STATE is withheld
+    # from non-members on the wire, its newswire lines are suppressed on the
+    # in-process bus, and a team-scoped (base-monopoly) back-to-lobby vote
+    # stays public through both.
+    tests/unit/test_vote_surrender_privacy.c
     tests/unit/test_round_stats.c
     tests/unit/test_lv_stats_time.c
     tests/unit/test_attribution_track.c
@@ -3093,9 +3120,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
+    # Generated lang-name table: K_LANG_NAME_TABLE_SIZE vs the real array
+    # length, strict bsearch sort order, and name round-trips — pins the
+    # off-by-one that crashed resolveName's bsearch on startup.
+    tests/unit/test_lang_name_table.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
+    # Mid-sim-frame player removal vs the arrays simRunHalfStep snapshots for
+    # its world update — the high-ping kick crash (shellsUpdate NULL lgm slot).
+    tests/unit/test_ping_kick_teardown.c
+    # tkExplosionUpdate's lgm/tank index pairing over the compacted per-player
+    # arrays, plus the small-explosion sweep's off-by-one.
+    tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
     tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
@@ -3355,6 +3392,21 @@ set(_unit_test_names
     vote_surrender_rejects_unassigned_caller
     vote_surrender_starts_for_real_team_caller
     vote_surrender_rejects_three_active_teams
+    vote_surrender_state_withheld_from_other_team
+    vote_surrender_newswire_hidden_from_other_team
+    vote_surrender_newswire_shown_to_own_team
+    vote_back_to_lobby_newswire_stays_public
+    vote_surrender_may_answer_rule
+    base_win_announces_and_publishes_no_vote_state
+    base_win_countdown_aborts_when_sweep_breaks
+    base_win_rearm_cooldown_limits_announcements
+    base_win_quitonwin_with_lobby_counts_down
+    base_win_nolobby_quitonwin_is_instant
+    base_win_expiry_reports_the_winner
+    manual_vote_countdown_survives_lost_base
+    surrender_credits_the_opposing_team
+    win_during_manual_countdown_resolves_as_vote
+    abandoned_round_reports_nothing
     round_stats_zeroed_on_fresh_sim
     round_stats_kill_basic
     round_stats_drown_not_suicide
@@ -3571,6 +3623,9 @@ set(_unit_test_names
     snapshot_compaction
     edge_send_predicate
     error_smoothing
+    shells_survive_cleared_lgm_slot
+    ping_kick_defers_teardown
+    tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
@@ -3637,6 +3692,7 @@ set(_unit_test_names
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names
+    lang_name_table
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips

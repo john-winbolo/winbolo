@@ -44,6 +44,16 @@
 /* Cap on the current-session lobby-chat catch-up buffer (oldest dropped). */
 #define LOBBY_CHAT_BUFFER_MAX 200
 
+/* Why a return-to-lobby countdown is running, which decides what the
+ * returning lobby is told and who gets credited with the win. NONE also
+ * covers a game-over that arrives with no countdown at all — a game-time
+ * or tick limit expiring — which reports whatever the base sweep says. */
+#define RETURN_REASON_NONE        0
+#define RETURN_REASON_MANUAL_VOTE 1
+#define RETURN_REASON_SURRENDER   2
+#define RETURN_REASON_BASE_WIN    3
+#define RETURN_REASON_ABANDONED   4
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -335,7 +345,6 @@ struct ServerSim {
         uint64_t pendingPassUntilMs;
     } gameVotes[2];
     uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
-    bool     baseMonopolyTriggeredThisRound;
 
     /* Forced return-to-lobby countdown (e.g. from a vote-pass). When
      * > 0, the running-state tick decrements this each call; at 0
@@ -343,22 +352,15 @@ struct ServerSim {
      * header so clients can render their own "Returning to lobby in
      * N" indicator off the value. */
     int32_t  returnToLobbyTicks;
-    /* When a vote-pass triggers the game-over transition, lifecycle should
-     * skip buildWinMessage so the players don't get the generic
-     * "Game over!" line on top of the 3/2/1 countdown. Cleared once
-     * consumed. */
-    bool     suppressNextWinMessage;
-    /* Non-zero when a surrender vote ended the round: the team that gave
-     * up. The game-over handler credits the opposing team with the win
-     * (WBN events + lobby winner line) instead of the base-ownership
-     * sweep, which never fires on a surrender. Reset by
+    /* Why the current countdown is running, or why the round just ended —
+     * see RETURN_REASON_*. Decides the message the returning lobby gets and
+     * whether WinBolo.net win events are credited. Reset by
      * serverSimGameVoteResetAll. */
-    uint8_t  surrenderTeamId;
-    /* True when a manual back-to-lobby vote ended the round. The
-     * game-over handler leaves a lobby line explaining why the round
-     * ended (the in-game announcement only reaches the newswire, which
-     * the returning lobby never sees). Reset by serverSimGameVoteResetAll. */
-    bool     returnToLobbyByVote;
+    uint8_t  returnToLobbyReason;
+    /* The team that gave up, when returnToLobbyReason is SURRENDER. The
+     * opposing side is credited with the win; the base sweep never fires on
+     * a surrender. Reset by serverSimGameVoteResetAll. */
+    uint8_t  returnToLobbyTeamId;
 
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */

@@ -63,8 +63,8 @@ typedef struct {
 *ARGUMENTS:
 * username      - WinBolo.net username
 * password      - WinBolo.net password
-* tokenOut      - Buffer for token (must be >= 65 bytes)
-* expiryOut     - Buffer for expiry string (must be >= 64 bytes)
+* tokenOut      - Buffer for token (must be >= 256 bytes)
+* expiryOut     - Buffer for expiry string (must be >= 256 bytes)
 * playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN)
 * rankOut       - 1v1 ladder position; -1 when unranked. May be NULL.
 * rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
@@ -82,8 +82,8 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 *
 *ARGUMENTS:
 * steamTicketHex  - Hex-encoded Steam auth ticket
-* tokenOut        - Buffer for token (must be >= 65 bytes)
-* expiryOut       - Buffer for expiry string (must be >= 64 bytes)
+* tokenOut        - Buffer for token (must be >= 256 bytes)
+* expiryOut       - Buffer for expiry string (must be >= 256 bytes)
 * playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
 * rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
 * rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
@@ -104,8 +104,8 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 * steamTicketHex  - Hex-encoded Steam auth ticket
 * username        - Chosen WinBolo.net username
 * email           - Optional email; omitted when NULL or empty
-* tokenOut        - Buffer for token (must be >= 65 bytes)
-* expiryOut       - Buffer for expiry string (must be >= 64 bytes)
+* tokenOut        - Buffer for token (must be >= 256 bytes)
+* expiryOut       - Buffer for expiry string (must be >= 256 bytes)
 * playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
 * rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
 * rankTotalOut    - Total ranked players; 0 when absent. May be NULL.

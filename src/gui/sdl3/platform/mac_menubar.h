@@ -25,6 +25,7 @@ struct MacPlayerSlot {
     int  pflags;           /* PLAYER_FLAG_* bits */
     int  ptype;            /* ClientType enum value */
     int  ping;             /* fresh ping in ms (0 = unknown) */
+    int  pingBand;         /* PingBand enum value (0 = PING_BAND_NONE) */
     char name[33];         /* player name (null-terminated) */
     char country[3];       /* ISO 3166-1 alpha-2 (null-terminated) */
 };

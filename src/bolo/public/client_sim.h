@@ -38,6 +38,7 @@
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -443,6 +444,10 @@ gameType clientSimGetGameType(const ClientSim *cs);
 
 /* Per-player accessors that forward to the embedded players struct. */
 uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
+/* Colour band for that ping, tracked with hysteresis so a player parked on a
+ * threshold doesn't strobe between colours. Player rows should use this
+ * rather than re-deriving a band from the number. */
+PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
 void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);
@@ -616,6 +621,17 @@ typedef struct {
 bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
                           ClientGameVoteSnapshot *out);
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible);
+
+/* Whether the local player is part of a vote's electorate — i.e. whether
+ * this vote should be visible to them at all. Surrender votes belong to
+ * the surrendering team (teamId) and are private to it: non-members get
+ * neither the widget nor the newswire lines, and the server declines to
+ * send them the state in the first place (see udpClientDeliverControl).
+ * Every other kind is open to all connected players. Mirrors the server's
+ * eligibility rule in gameVoteEligibleMask(). teamId comes from the vote
+ * snapshot; kind is GAME_VOTE_KIND_*. */
+bool clientSimMayAnswerGameVote(const ClientSim *cs, uint8_t kind,
+                                uint8_t teamId);
 
 /* Per-frame tick that emits "Returning to lobby in N" newswire lines
  * for a vote-driven back-to-lobby transition. Server just enters

@@ -1406,6 +1406,11 @@ BYTE pillsGetNumNeutral(pillboxes *value) {
 
 void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_PILLS);
+  /* Clamp the wire-supplied count so a hostile map cannot drive out-of-bounds
+   * reads of item[] past MAX_PILLS. */
+  if ((*value)->numPills > MAX_PILLS) {
+    (*value)->numPills = MAX_PILLS;
+  }
 }
 
 /*********************************************************

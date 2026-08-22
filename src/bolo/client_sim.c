@@ -283,6 +283,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  memset(cs->displayPing, 0, sizeof(cs->displayPing));
   explosionsCreate(&cs->sim.expl);
   rubbleCreate(&cs->sim.rbl);
   buildingCreate(&cs->sim.blds);
@@ -1321,6 +1322,19 @@ uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum) {
   return playersGetPing(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
 
+PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum) {
+  if (cs == NULL || playerNum >= MAX_TANKS) {
+    return PING_BAND_NONE;
+  }
+  return pingDisplayBand(&cs->displayPing[playerNum]);
+}
+
+void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum) {
+  if (cs != NULL && playerNum < MAX_TANKS) {
+    pingDisplayReset(&cs->displayPing[playerNum]);
+  }
+}
+
 uint8_t clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum) {
   return playersGetClientFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
@@ -1604,6 +1618,20 @@ bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
   return true;
 }
 
+bool clientSimMayAnswerGameVote(const ClientSim *cs, uint8_t kind,
+                                uint8_t teamId) {
+  if (!cs) return false;
+  if (kind != GAME_VOTE_KIND_SURRENDER) return true;
+  /* A spectator has no slot and no team, so it is never part of a
+   * surrender electorate. Guard explicitly — myPlayerNum is a stale
+   * player index for a spectator, not an empty one. */
+  if (cs->isSpectator) return false;
+  BYTE me = cs->myPlayerNum;
+  if (me >= MAX_TANKS) return false;
+  BYTE myTeam = cs->lobbySlots[me].teamNumber;
+  return myTeam != 0 && myTeam == teamId;
+}
+
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible) {
   if (!cs) return;
   int idx = clientGameVoteIdx(kind);
@@ -1828,6 +1856,9 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->predictedShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  /* Rows render "---" until the first snapshot of the new round lands,
+   * rather than a smoothed value carried over from the last one. */
+  memset(cs->displayPing, 0, sizeof(cs->displayPing));
 
   /* Reconciliation stats are predict-scoped — start each game fresh. */
   cs->reconCountThisWindow = 0;

@@ -1239,6 +1239,12 @@ void basesSetBaseNetData(bases *value, BYTE *buff, int len)  {
 
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_BASES);
+  /* The wire blob carries numBases in its trailing byte; a hostile map can
+   * set it past MAX_BASES, driving out-of-bounds reads of item[] for the
+   * life of the game. Clamp it here so the corrupt count never propagates. */
+  if ((*value)->numBases > MAX_BASES) {
+    (*value)->numBases = MAX_BASES;
+  }
 }
 
 /*********************************************************

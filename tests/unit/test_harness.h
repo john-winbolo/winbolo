@@ -111,6 +111,30 @@ int run_game_vote_state_decoder_rejects_short(void);
 int run_vote_surrender_rejects_unassigned_caller(void);
 int run_vote_surrender_starts_for_real_team_caller(void);
 int run_vote_surrender_rejects_three_active_teams(void);
+int run_vote_surrender_state_withheld_from_other_team(void);
+int run_vote_surrender_newswire_hidden_from_other_team(void);
+int run_vote_surrender_newswire_shown_to_own_team(void);
+int run_vote_back_to_lobby_newswire_stays_public(void);
+int run_vote_surrender_may_answer_rule(void);
+/* All-bases win (test_base_win_immediate.c). One alliance holding every base
+ * with none of them dead ends the round on the spot, announced and without
+ * faking a vote; one dead base (armour <= MIN_ARMOUR_CAPTURE) holds the round
+ * open until it regenerates, which is the whole comeback window. */
+int run_base_win_ends_round_immediately(void);
+int run_base_win_dead_base_blocks_the_win(void);
+int run_base_win_fires_when_dead_base_regenerates(void);
+int run_base_win_quitonwin_with_lobby_returns_to_lobby(void);
+int run_base_win_nolobby_quitonwin_is_instant(void);
+/* Game-over resolution (test_base_win_resolve.c). serverSimResolveGameOver
+ * turns returnToLobbyReason into the returning lobby's message and the
+ * WinBolo.net win crediting: a swept round reports its winner, a passed
+ * vote is irrevocable and credits nobody, a surrender credits the opposing
+ * team, and an abandoned round reports nothing. */
+int run_base_win_reports_the_winner(void);
+int run_manual_vote_countdown_survives_lost_base(void);
+int run_surrender_credits_the_opposing_team(void);
+int run_win_during_manual_countdown_resolves_as_vote(void);
+int run_abandoned_round_reports_nothing(void);
 int run_round_stats_zeroed_on_fresh_sim(void);
 int run_round_stats_kill_basic(void);
 int run_round_stats_drown_not_suicide(void);
@@ -876,6 +900,12 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* Generated lang-name lookup table pin (test_lang_name_table.c): the
+ * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,
+ * the table is strictly sorted for bsearch, and every name round-trips —
+ * guards the off-by-one that walked resolveName()'s bsearch off the end. */
+int run_lang_name_table(void);
+
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
@@ -895,6 +925,19 @@ int run_control_oob_player_dropped(void);
  * it synchronously and re-enter serverSimPublishControl
  * (test_control_overflow_disconnect.c). */
 int run_control_overflow_defers_disconnect(void);
+
+/* A player removed mid-sim-frame must not invalidate the arrays simRunHalfStep
+ * snapshotted for its world update (test_ping_kick_teardown.c): shellsUpdate
+ * survives a slot whose lgm was cleared behind the snapshot, and the high-ping
+ * kick defers its teardown to transportUdpServerDrainPendingRemovals instead
+ * of freeing the tank/lgm inline. */
+int run_shells_survive_cleared_lgm_slot(void);
+int run_ping_kick_defers_teardown(void);
+
+/* tkExplosionUpdate pairs lgms[i] with tanks[i] over the COMPACTED per-player
+ * arrays, and its small-explosion sweep must cover every index
+ * (test_tkexp_lgm_pairing.c). */
+int run_tkexp_lgm_pairing(void);
 
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text

@@ -6,6 +6,7 @@
  * serialise on a recursive SDL mutex.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
@@ -14,6 +15,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../../src/winbolonet/winbolonet_server.h"
+#include "../../src/winbolonet/winbolonet_core.h"  /* WINBOLO_NET_EVENT_* */
 #include "luabrainshandler.h"
 #include "lang_message.h"
 #include "nat_portmap.h"
@@ -271,10 +273,23 @@ int  wbnStubLobbyUpdateCalls = 0;
 int  wbnStubSendLockCalls = 0;
 bool wbnStubLastLockReported = FALSE;
 
+/* winbolonetAddEvent WIN spy: the game-over resolve tests watch these to
+ * prove which side a finished round credited with the win (and that a
+ * round nobody won credits nobody). Only WINBOLO_NET_EVENT_WIN is
+ * recorded; every other event type stays unobserved as before. */
+int      wbnStubWinEventCalls = 0;
+uint16_t wbnStubWinEventMask  = 0;   /* bit i = a win credited to slot i */
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
+  (void)isServer; (void)playerB; (void)aIsBot; (void)bIsBot;
+  if (eventType == WINBOLO_NET_EVENT_WIN) {
+    wbnStubWinEventCalls++;
+    if (playerA < MAX_TANKS) {
+      wbnStubWinEventMask |= (uint16_t)(1u << playerA);
+    }
+  }
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {

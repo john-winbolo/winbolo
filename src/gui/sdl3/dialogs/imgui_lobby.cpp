@@ -5082,9 +5082,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs > 0) {
                         cyTextAbs();
                         ImVec4 pingColor;
-                        if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs < 50)        pingColor = wbThemeColor(g_theme->statusOnline);
-                        else if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs < 150)  pingColor = wbThemeColor(g_theme->statusHighPing);
-                        else                                       pingColor = wbThemeColor(g_theme->statusDisconnected);
+                        switch (pingBandClassify(clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs)) {
+                            case PING_BAND_GOOD: pingColor = wbThemeColor(g_theme->statusOnline); break;
+                            case PING_BAND_FAIR: pingColor = wbThemeColor(g_theme->statusHighPing); break;
+                            default:             pingColor = wbThemeColor(g_theme->statusDisconnected); break;
+                        }
                         ImGui::TextColored(pingColor, "%dms", (int)clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs);
                     }
                 }
@@ -7389,10 +7391,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                 /* Ping */
                                 ImGui::TableSetColumnIndex(1);
                                 if (slot->pingMs > 0) {
-                                    ImVec4 pingColor;
-                                    if (slot->pingMs < 50)        pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                                    else if (slot->pingMs < 150)   pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                                    else                                        pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                                    ImVec4 pingColor =
+                                        imguiPingBandColor(pingBandClassify(slot->pingMs));
                                     ImGui::TextColored(pingColor, "%dms", (int)slot->pingMs);
                                 } else {
                                     ImGui::TextDisabled("-");
@@ -8021,10 +8021,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         /* Ping */
                         ImGui::TableSetColumnIndex(2);
                         if (slot->pingMs > 0) {
-                            ImVec4 pingColor;
-                            if (slot->pingMs < 50)        pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                            else if (slot->pingMs < 150)   pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                            else                                        pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                            ImVec4 pingColor =
+                                imguiPingBandColor(pingBandClassify(slot->pingMs));
                             ImGui::TextColored(pingColor, "%dms", (int)slot->pingMs);
                         } else {
                             ImGui::TextDisabled("-");
