@@ -146,9 +146,14 @@ int run_empty_return_to_lobby_removes_bots_and_unlocks(void) {
     serverSimTick(sim);
 
     /* Inject a bot into the running game. A real bot needs a brain file, so
-     * mark the slot active directly, as run_host_reassign_skips_bots does. */
+     * mark the slot active directly, as run_host_reassign_skips_bots does.
+     * numBots must move with the flag: botManagerAddBot/RemoveBot keep the
+     * counter and the per-slot active flags in step, and serverSimGetNumBots
+     * reports the counter, so setting active alone would leave the removal
+     * path decrementing a counter that was never incremented. */
     sim->playerConnected[2] = TRUE;
     sim->botMgr.bots[2].active = true;
+    sim->botMgr.numBots++;
     sim->lobbyPlayers[2].isBot = true;
     UT_ASSERT(serverSimIsBot(sim, 2) == true);
 
