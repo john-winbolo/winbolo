@@ -3697,10 +3697,48 @@ set(_unit_test_names
     await_join_connected_immediate
     await_join_lobby_latch
     await_join_timeout_and_error
+    md5_rfc1321_vectors
+    md5_block_boundaries
+    md5_streaming_matches_oneshot
+    net_impair
+    lobby_time_minutes_valid
+    control_overflow_defers_disconnect
+    join_collision_verified_rejects_will_auth
+    join_collision_verified_flag_irrelevant
+    join_collision_unverified_will_auth_admits
+    join_collision_unverified_no_auth_rejects
+    claim_resolve_free_promotes
+    claim_resolve_free_ignores_holder_flag
+    claim_resolve_unverified_preempts
+    claim_resolve_verified_keeps_temp
+    autolock_locks_on_start_inplace
+    autolock_locks_on_start_wire
+    autolock_join_blocked_after_start
+    autolock_lobby_stays_open
+    autolock_released_on_return_to_lobby
+    no_autolock_stays_open_on_start
+    maprotate_restarts_round_and_rearms
+    maprotate_boot_does_not_rotate_while_empty
+    maprotate_gameover_is_not_terminal
+    maprotate_vote_return_is_not_terminal
+    maprotate_defers_wbn_update_until_key_rotated
+    game_vote_state_codec_surrender_passed
+    game_vote_state_codec_back_to_lobby
+    game_vote_state_decoder_rejects_short
+    server_text_codec_via_chat_wire
+    vote_surrender_blocked_without_lobby
+    vote_back_to_lobby_blocked_without_lobby
+    lobby_add_bot_rejects_when_at_maxbots
+    lobby_bot_count_counts_only_connected_bots
+    lobby_maxbots_cap_boundary
+    empty_return_to_lobby_removes_bots_and_unlocks
+    bot_pool_wire_chunk_transport
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
 # `WinBoloUnitTests --test wire_corpus_capture`, not under CTest.
+# spectator_seed_capture is omitted for the same reason: it regenerates the
+# committed spectator_seed.bin fixture on demand.
 # wbv_v2_capture is omitted for the same reason: it (re)writes the committed
 # spectator_v2.wbv fixture and is invoked on demand via
 # `WinBoloUnitTests --test wbv_v2_capture`; CTest only runs wbv_reader_v1/v2.
