@@ -121,6 +121,31 @@ void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPo
     }
   }
 }
+/* Combined brain view rects: [0] is the tank-centered 29x29 window, then
+ * one 15x15 (+/-7 — Bolo's pill-view size) per DEPLOYED team pillbox (own
+ * or allied). Brains at EVERY ai level get the pill rects, as if watching
+ * all their pill views simultaneously. Consumed by the brain event filter,
+ * the pill-view object sweep, and the bot shell mirror in
+ * brainDataMakeInfo. Terrain viewdata stays tank-centered. */
+typedef struct {
+  BYTE left;
+  BYTE right;
+  BYTE top;
+  BYTE bottom;
+} BrainViewRect;
+#define BRAIN_VIEW_MAX_RECTS (MAX_PILLS + 1)
+
+static bool brainViewRectsContain(const BrainViewRect *rects, int numRects, BYTE mx, BYTE my) {
+  int i;
+  for (i = 0; i < numRects; i++) {
+    if (mx >= rects[i].left && mx <= rects[i].right
+        && my >= rects[i].top && my <= rects[i].bottom) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 /*********************************************************
 *NAME:          brainDataMakeInfo
 *AUTHOR:        John Morrison
@@ -139,6 +164,8 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   BYTE ty;
   BYTE closeBase; /* The closest base to our current position */
   GameSim *gs = clientSimGetGameSim(csPtr);
+  BrainViewRect viewRects[BRAIN_VIEW_MAX_RECTS];
+  int numViewRects;
 
 
   if (MY_TANK(csPtr) == NULL) {
@@ -147,6 +174,34 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
 
   tx = tankGetMX(&MY_TANK(csPtr));
   ty = tankGetMY(&MY_TANK(csPtr));
+
+  /* Build the view-rect list: tank window first, then every deployed team
+   * pill's view. Clamped at map edges (BYTE wrap would invert the rect). */
+  numViewRects = 0;
+  viewRects[numViewRects].left   = (BYTE)((tx >= 14) ? tx - 14 : 0);
+  viewRects[numViewRects].right  = (BYTE)((tx <= 241) ? tx + 14 : 255);
+  viewRects[numViewRects].top    = (BYTE)((ty >= 14) ? ty - 14 : 0);
+  viewRects[numViewRects].bottom = (BYTE)((ty <= 241) ? ty + 14 : 255);
+  numViewRects++;
+  {
+    BYTE myPN  = clientSimGetMyPlayerNum(csPtr);
+    BYTE numPb = pillsGetNumPills(&gs->pb);
+    BYTE pi;
+    for (pi = 0; pi < numPb && numViewRects < BRAIN_VIEW_MAX_RECTS; pi++) {
+      if ((*gs->pb).item[pi].inTank == FALSE
+          && (*gs->pb).item[pi].owner < MAX_TANKS
+          && ((*gs->pb).item[pi].owner == myPN
+              || playersIsAllie(&gs->plyrs, myPN, (*gs->pb).item[pi].owner) == TRUE)) {
+        BYTE px = (*gs->pb).item[pi].x;
+        BYTE py = (*gs->pb).item[pi].y;
+        viewRects[numViewRects].left   = (BYTE)((px >= 7) ? px - 7 : 0);
+        viewRects[numViewRects].right  = (BYTE)((px <= 248) ? px + 7 : 255);
+        viewRects[numViewRects].top    = (BYTE)((py >= 7) ? py - 7 : 0);
+        viewRects[numViewRects].bottom = (BYTE)((py <= 248) ? py + 7 : 255);
+        numViewRects++;
+      }
+    }
+  }
 
   /* Dead-tick hook: TRUE while the tank is waiting to respawn. The think is
    * still invoked (so the brain can reset its own state for a clean respawn)
@@ -253,10 +308,11 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         if (aiMode == aiYesAdvantage || aiMode == aiFull) {
           buf[filtered++] = *e;
         } else {
-          /* Only include if pill is within view rect */
+          /* Only include if pill is within the tank view rect OR any team
+           * pill's view rect. (A team pill trivially contains itself, so
+           * "our pill is being hurt" events always reach the brain.) */
           BYTE px = e->data[1], py = e->data[2];
-          if (px >= value->view_left && px <= value->view_left + value->view_width &&
-              py >= value->view_top && py <= value->view_top + value->view_height) {
+          if (brainViewRectsContain(viewRects, numViewRects, px, py)) {
             buf[filtered++] = *e;
           }
         }
@@ -266,13 +322,12 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         if (aiMode == aiYesAdvantage || aiMode == aiFull) {
           buf[filtered++] = *e;
         } else {
-          /* Look up base position and check view rect */
+          /* Look up base position and check the tank + team pill rects */
           BYTE idx = e->data[0];
           if (idx < MAX_BASES && gs->bs != NULL) {
             BYTE bx = (*gs->bs).item[idx].x;
             BYTE by = (*gs->bs).item[idx].y;
-            if (bx >= value->view_left && bx <= value->view_left + value->view_width &&
-                by >= value->view_top && by <= value->view_top + value->view_height) {
+            if (brainViewRectsContain(viewRects, numViewRects, bx, by)) {
               buf[filtered++] = *e;
             }
           }
@@ -362,6 +417,30 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     playersGetBrainTanksInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
     playersGetBrainLgmsInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
   }
+
+  /* Team pill view sweep: pull objects from every deployed team pill's
+   * 15x15 view rect, at EVERY ai level — brains effectively watch all
+   * their pill views simultaneously. brainDataAddObject dedups by
+   * type+id, so an entity inside the tank rect AND a pill rect (or two
+   * overlapping pill rects) is added exactly once. Bases/pills are
+   * already delivered map-wide in advantage/full mode, so only aiYes
+   * needs them per pill rect. Shells for bots come from the snapshot
+   * mirror below, which tests the whole rect union in one pass. */
+  {
+    int ri;
+    for (ri = 1; ri < numViewRects; ri++) {
+      BYTE pl  = viewRects[ri].left;
+      BYTE pr  = viewRects[ri].right;
+      BYTE pt  = viewRects[ri].top;
+      BYTE pbt = viewRects[ri].bottom;
+      if (aiMode == aiYes) {
+        basesGetBrainBaseInRect(csPtr, gs, pl, pr, pt, pbt);
+        pillsGetBrainPillsInRect(csPtr, gs, &gs->pb, pl, pr, pt, pbt);
+      }
+      playersGetBrainTanksInRect(csPtr, &gs->plyrs, pl, pr, pt, pbt, value->tankx, value->tanky);
+      playersGetBrainLgmsInRect(csPtr, &gs->plyrs, pl, pr, pt, pbt);
+    }
+  }
   /* Bots have no client-side prediction layer that fills sim.shs, so
    * shellsGetBrainShellsInRect above adds nothing for bot players.
    * Mirror the snapshot shells (now retained for bots — see
@@ -369,10 +448,6 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
    * info.objects actually contains type=OBJECT_SHOT entries the
    * brain (and BrainTest's shell-hitbox overlay) can render. */
   if (clientSimIsBot(csPtr)) {
-    BYTE leftPos   = value->view_left;
-    BYTE rightPos  = (BYTE)(value->view_left  + value->view_width);
-    BYTE topPos    = value->view_top;
-    BYTE bottomPos = (BYTE)(value->view_top   + value->view_height);
     BYTE myPN      = clientSimGetMyPlayerNum(csPtr);
     int shellCount = clientSimGetServerShellCount(csPtr);
     const ShellSnapshot *shellSnaps = clientSimGetServerShellSnaps(csPtr);
@@ -380,7 +455,8 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
       const ShellSnapshot *s = &shellSnaps[i];
       BYTE smx = (BYTE)(s->worldX >> TANK_SHIFT_MAPSIZE);
       BYTE smy = (BYTE)(s->worldY >> TANK_SHIFT_MAPSIZE);
-      if (smx < leftPos || smx > rightPos || smy < topPos || smy > bottomPos)
+      /* Union of the tank view rect + every team pill's view rect */
+      if (!brainViewRectsContain(viewRects, numViewRects, smx, smy))
         continue;
       BYTE owner;
       if (s->owner == NEUTRAL) owner = SHELLS_BRAIN_NEUTRAL;
@@ -612,6 +688,24 @@ void brainDataAddObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy
 
   numObjects = clientSimGetBrainsNumObjects(cs);
   objects = clientSimGetBrainObjects(cs);
+  /* Capacity guard — brainObjects is a fixed 1024-slot array
+   * (client_sim_internal.h) that historically had no overflow check. */
+  if (*numObjects >= 1024) {
+    return;
+  }
+  /* Dedup identifiable objects (tanks / LGMs / pills / bases): with the
+   * team-pill-view sweep the same entity can sit inside the tank view
+   * rect AND one or more pill view rects — add it exactly once. Shells
+   * are exempt: their idnum is always 0 (not an identity) and each shell
+   * source runs a single pass per tick. */
+  if (object != SHELLS_BRAIN_OBJECT_TYPE) {
+    unsigned short i;
+    for (i = 0; i < *numObjects; i++) {
+      if (objects[i].object == object && objects[i].idnum == idNum) {
+        return;
+      }
+    }
+  }
   objects[*numObjects].object = object;
   objects[*numObjects].x = wx;
   objects[*numObjects].y = wy;
