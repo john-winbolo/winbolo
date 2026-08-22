@@ -294,6 +294,31 @@ void lv_windowPause(void) {
     lv_clientMutexRelease();
 }
 
+/* Jump the scrubber to a highlight moment and centre the view on its cell.
+ * The seek walks the log and rebuilds the world, the same state lv_windowTimer
+ * ticks on the SDL timer thread under lv_clientMutex, so playback is stopped
+ * and the lock held across it exactly as the scrubber and keyboard step do.
+ * Without that, a click during playback lands lv_shellsAddItem and
+ * lv_shellsDestroy on the same list from two threads and corrupts the heap. */
+void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    unsigned char wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_screenCentreOnCell(mapX, mapY);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_imgui_game_view_init_camera(g_lv);
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 void lv_windowStop(int corruptLog) {
     /* Spectator: the panel's Stop button freezes the feed rather than closing the
        live log out from under the foreground host loop. */

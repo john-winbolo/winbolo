@@ -24,8 +24,7 @@
 extern "C" {
     void lv_screenGetTime(char *buffer);
     uint32_t lv_screenGetTimeRunning(void);
-    void lv_screenSeekToTimeMs(uint32_t ms);
-    void lv_screenCentreOnCell(int mapX, int mapY);
+    void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
 }
 
 /* Event with associated playback timestamp. Highlight clips also carry a seek
@@ -199,8 +198,8 @@ void lv_imgui_events_window(void) {
                         uint32_t target = s_events[i].seekMs > 5000u
                                               ? s_events[i].seekMs - 5000u
                                               : 0u;
-                        lv_screenSeekToTimeMs(target);
-                        lv_screenCentreOnCell(s_events[i].mapX, s_events[i].mapY);
+                        lv_windowSeekToHighlight(target, s_events[i].mapX,
+                                                 s_events[i].mapY);
                     }
                 }
             }
