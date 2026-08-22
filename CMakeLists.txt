@@ -3384,12 +3384,12 @@ set(_unit_test_names
     vote_surrender_newswire_shown_to_own_team
     vote_back_to_lobby_newswire_stays_public
     vote_surrender_may_answer_rule
-    base_win_announces_and_publishes_no_vote_state
-    base_win_countdown_aborts_when_sweep_breaks
-    base_win_rearm_cooldown_limits_announcements
-    base_win_quitonwin_with_lobby_counts_down
+    base_win_ends_round_immediately
+    base_win_dead_base_blocks_the_win
+    base_win_fires_when_dead_base_regenerates
+    base_win_quitonwin_with_lobby_returns_to_lobby
     base_win_nolobby_quitonwin_is_instant
-    base_win_expiry_reports_the_winner
+    base_win_reports_the_winner
     manual_vote_countdown_survives_lost_base
     surrender_credits_the_opposing_team
     win_during_manual_countdown_resolves_as_vote
