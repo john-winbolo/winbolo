@@ -2970,6 +2970,121 @@ local function travel_cost_to_pill(pmx, pmy, boat)
   return best
 end
 
+-- defend_pill_score — the defend formula for one built team pill.
+--
+--   cost = max(MIN, (base + travel) * feas - urgency [+ quiet_pen])
+--
+-- Design invariant: threat evidence only ever LOWERS the cost, and
+-- infeasibility only ever RAISES it — degraded information degrades
+-- gracefully instead of flipping behavior. The urgency ladder (tiers
+-- stack; each traces to a live signal):
+--   siege : last_hit_tick fresh (DEFEND_DMG_FRESH_TICKS) — someone is
+--           shelling the pill NOW. Flat SIEGE_URGENCY plus cumulative
+--           attack_damage x DMG_URGENCY (depth of the bite, NOT a
+--           damage-rate estimate — attacks are bursty: line up, volley,
+--           swerve — so no rate math anywhere).
+--   setup : hostile LGM seen within DEFEND_LGM_NEAR_RADIUS recently
+--           (perception stamp _lgm_near_tick) — wall-shield / pill-plant
+--           prep. Fires BEFORE damage exists; interrupting setup is the
+--           cheapest defense, hence a siege-sized discount. Linear decay
+--           over DEFEND_SIGHT_FRESH_TICKS.
+--   sight : hostile tank seen within DEFEND_ENEMY_NEAR_RADIUS recently
+--           (_enemy_near_tick) — prevention tier, same linear decay.
+--   cover : other alive team pills whose fire reaches this pill make the
+--           defense cheaper (arrive into friendly cover; heat-up fodder).
+--           Threat-gated: coverage alone is no reason to drive anywhere.
+--   quiet : no evidence at all -> +DEFEND_QUIET_PENALTY. Quiet pills
+--           still list and score (no reject!) but effectively never win;
+--           tune to 0 for garrison behavior.
+-- Feasibility (siege only): assumed constant damage rate — TTL =
+-- hp x DEFEND_ASSUMED_TICKS_PER_HP vs ETA = travel x DEFEND_ETA_PER_COST.
+-- Arriving late scales cost up toward DEFEND_FUTILITY_MAX (never INF —
+-- a late arrival still degrades into rebuild/capture recovery).
+-- Returns (cost, bd) — bd carries the per-term breakdown for the panel.
+local function defend_pill_score(world, p, travel, now)
+  local bd = { travel = travel }
+  local hp  = p.health or 0
+  local dmg = p.attack_damage or 0
+
+  local hit_age   = (p.last_hit_tick and p.last_hit_tick > 0)
+                    and (now - p.last_hit_tick) or math.huge
+  local sight_age = p._enemy_near_tick and (now - p._enemy_near_tick) or math.huge
+  local setup_age = p._lgm_near_tick and (now - p._lgm_near_tick) or math.huge
+
+  local siege       = hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400)
+  local sight_fresh = C.DEFEND_SIGHT_FRESH_TICKS or 600
+  local sight_f     = (sight_age < sight_fresh) and (1 - sight_age / sight_fresh) or 0
+  local setup_f     = (setup_age < sight_fresh) and (1 - setup_age / sight_fresh) or 0
+
+  -- Threat tiers as MULTIPLIERS on (base + travel); the strongest live
+  -- tier wins (min). Multiplicative keeps bids proportional — severity
+  -- and distance stay ordered instead of everything slamming into the
+  -- MIN_COST floor — and with base ~250 the common threatened cases land
+  -- naturally around 100-300.
+  local mult = 1.0
+  if siege then
+    -- Savability-scaled: a healthy pill under fresh attack pulls hardest
+    -- (SIEGE_MULT_MIN); an almost-dead one is mostly lost (recovery is
+    -- capture/rebuild territory) so its multiplier decays toward 1.
+    -- Damage depth thus works AGAINST the bid — weaker pull here,
+    -- shorter TTL below.
+    bd.siege_m = 1 - (1 - (C.DEFEND_SIEGE_MULT or 0.30))
+                     * (hp / (C.PILLS_MAX_HEALTH or 15))
+    if bd.siege_m < mult then mult = bd.siege_m end
+  end
+  if setup_f > 0 then
+    -- Wall/pill-plant tell: the MOST savable moment (nothing lost yet,
+    -- build interruptible) -> strongest tier. Decays toward 1 with age.
+    local m = C.DEFEND_SETUP_MULT or 0.25
+    bd.setup_m = m + (1 - m) * (1 - setup_f)
+    if bd.setup_m < mult then mult = bd.setup_m end
+  end
+  if sight_f > 0 then
+    local m = C.DEFEND_SIGHT_MULT or 0.50
+    bd.sight_m = m + (1 - m) * (1 - sight_f)
+    if bd.sight_m < mult then mult = bd.sight_m end
+  end
+
+  if mult < 1.0 then
+    -- Coverage, only while some threat tier is live: each other alive
+    -- team pill whose fire reaches this one shaves a little more off.
+    local cover = 0
+    for _, q in pairs(world.pills) do
+      if q ~= p and q.owner == "friendly" and (q.health or 0) > 0
+         and not (q.in_tank or q.carrier or q._synth_carry)
+         and U.mdist(q.mx, q.my, p.mx, p.my) <= (C.PILL_FIRE_RANGE or 8) then
+        cover = cover + 1
+      end
+    end
+    if cover > 0 then
+      bd.cover_n = cover
+      bd.cover_m = (C.DEFEND_COVERAGE_MULT or 0.95) ^ cover
+      mult = mult * bd.cover_m
+    end
+  end
+  bd.mult = mult
+
+  local feas = 1.0
+  if siege and travel < math.huge then
+    bd.ttl = hp * (C.DEFEND_ASSUMED_TICKS_PER_HP or 80)
+    bd.eta = travel * (C.DEFEND_ETA_PER_COST or 6)
+    if bd.ttl > 0 and bd.eta > bd.ttl then
+      feas = math.min(bd.eta / bd.ttl, C.DEFEND_FUTILITY_MAX or 3.0)
+    end
+  end
+  bd.feas = feas
+
+  local cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas
+  if mult >= 1.0 then
+    bd.quiet_pen = C.DEFEND_QUIET_PENALTY or 450
+    cost = cost + bd.quiet_pen
+  end
+  local floor_c = C.DEFEND_MIN_COST or 100
+  if cost < floor_c then cost = floor_c end
+  bd.cost = cost
+  return cost, bd
+end
+
 -- eval_defend_pill — internal scoring pool over ALL BUILT team pills
 -- (own "friendly" pills AND teammates' "allied" pills).
 -- The legacy implementation (single perc.pill_under_attack target, silent
@@ -2978,13 +3093,11 @@ end
 -- deployed friendly pill gets a row with the raw ingredients (dij travel,
 -- hp, attack damage, last-hit age, repair readiness); carried pills
 -- (in_tank) aren't on the map and get no row. The only reject left is
--- "dead" (hp=0 — nothing to defend). Attack state gates NOTHING — it's
--- information for the formula.
+-- "dead" (hp=0 — nothing to defend). Attack state gates NOTHING — it
+-- feeds defend_pill_score above.
 --
--- FORMULA (interim): DEFEND_PILL_BASE_COST + dij travel. Deliberately
--- minimal — a real shape is being designed to replace this. Unreachable
--- pills score math.huge and lose naturally (no travel gate). Cheapest
--- eligible pill is the pool's winner (pc[2]); if it wins the WINNERS
+-- Unreachable pills score math.huge and lose naturally (no travel gate).
+-- Cheapest pill is the pool's winner (pc[2]); if it wins the WINNERS
 -- competition it becomes the main goal and the tank travels to the pill.
 --
 -- Rows persist in state.defend_breakdown even on replans where NOTHING is
@@ -3000,6 +3113,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
 
   local best, best_id, best_cost, best_travel, best_dmg =
         nil, nil, math.huge, 0, 0
+  local best_bd = nil
   -- BUILT team pills only (own "friendly" + teammates' "allied"): a pill
   -- riding in a tank isn't on the map and can't be defended — no row.
   for id, p in pairs(world.pills) do
@@ -3011,40 +3125,54 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
       -- Score everything on the map (O(1) dij lookups) — dead rows too, so
       -- their would-be cost shows in the panel. An unreachable pill scores
       -- math.huge and simply never wins; no gate needed. Attack state does
-      -- NOT gate anything — it's row information for the formula to use.
+      -- NOT gate anything — it feeds defend_pill_score.
       local travel = travel_cost_to_pill(p.mx, p.my, boat)
-      local cost
+      local cost, bd
       if not reject then
-        cost = C.DEFEND_PILL_BASE_COST + travel
+        cost, bd = defend_pill_score(world, p, travel, now)
         if cost < best_cost then
           best, best_id, best_cost, best_travel, best_dmg = p, id, cost, travel, dmg
+          best_bd = bd
         end
       end
       if rows then
-        local atk_age = (p.attack_tick and p.attack_tick > 0) and (now - p.attack_tick) or -1
+        local hit_age   = (p.last_hit_tick and p.last_hit_tick > 0) and (now - p.last_hit_tick) or -1
+        local sight_age = p._enemy_near_tick and (now - p._enemy_near_tick) or -1
+        local setup_age = p._lgm_near_tick and (now - p._lgm_near_tick) or -1
         local detail = string.format(
-          "hp=%d/%d dmg=%d%s; repair-ready=%s (lgm=%s trees=%d)",
+          "hp=%d/%d dmg=%d%s%s%s; repair-ready=%s (lgm=%s trees=%d)",
           hp, C.PILLS_MAX_HEALTH, dmg,
-          atk_age >= 0 and string.format(" last_hit=%dt ago", atk_age) or "",
+          hit_age >= 0 and string.format(" last_hit=%dt", hit_age) or "",
+          sight_age >= 0 and string.format(" enemy_seen=%dt", sight_age) or "",
+          setup_age >= 0 and string.format(" lgm_seen=%dt", setup_age) or "",
           tostring(repair_ready),
           (info.man_status == C.LGM_INTANK) and "in_tank" or "out", info.trees or 0)
         local formula
         if not reject then
-          if cost >= math.huge then
+          if cost >= 1e29 or travel >= math.huge then
             formula = string.format("base{%.0f}+dij{unreachable} = INF||%s",
               C.DEFEND_PILL_BASE_COST, detail)
           else
+            -- Threat-tier chips, only the live ones (strongest wins).
+            local u = ""
+            if bd.siege_m then u = u .. string.format(" siege{%.2f}", bd.siege_m) end
+            if bd.setup_m then u = u .. string.format(" setup{%.2f}", bd.setup_m) end
+            if bd.sight_m then u = u .. string.format(" sight{%.2f}", bd.sight_m) end
+            if bd.cover_m then u = u .. string.format(" cover{%.2fx%d}", bd.cover_m, bd.cover_n) end
+            if bd.quiet_pen then u = u .. string.format(" +quiet{%.0f}", bd.quiet_pen) end
+            local f = (bd.feas ~= 1.0)
+              and string.format("*late{%.2f eta=%.0f ttl=%.0f}", bd.feas, bd.eta or 0, bd.ttl or 0)
+              or ""
             formula = string.format(
-              "base{%.0f}+dij{%.0f} = %.0f||%s",
-              C.DEFEND_PILL_BASE_COST, travel, cost, detail)
+              "(base{%.0f}+dij{%.0f})*m{%.2f}%s%s = %.0f||%s",
+              C.DEFEND_PILL_BASE_COST, travel, bd.mult, f, u, cost, detail)
           end
         else
           local why = "hp=0 — rebuild/capture territory, not defend"
-          -- Would-be score for quiet/low-damage rows keeps the list readable.
           local wb = ""
           if travel and travel ~= math.huge then
-            wb = string.format("; would-be base{%.0f}+dij{%.0f}=%.0f",
-                 C.DEFEND_PILL_BASE_COST, travel, C.DEFEND_PILL_BASE_COST + travel)
+            wb = string.format("; would-be base{%.0f}+dij{%.0f}",
+                 C.DEFEND_PILL_BASE_COST, travel)
           end
           formula = string.format("REJECT %s||reject:%s%s; %s", reject, why, wb, detail)
         end
@@ -3072,8 +3200,10 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
     goal = { kind = "defend_pill", mx = best.mx, my = best.my,
              wx = U.m2w(best.mx), wy = U.m2w(best.my),
              target_id = best_id },
-    desc = BRAIN_POOL_VIZ and string.format("defend#%d@(%d,%d) base{%.0f}+dij{%.0f} = %.0f dmg=%d",
+    desc = BRAIN_POOL_VIZ and string.format(
+           "defend#%d@(%d,%d) (base{%.0f}+dij{%.0f})*m{%.2f}*feas{%.2f} = %.0f dmg=%d",
            best_id, best.mx, best.my, C.DEFEND_PILL_BASE_COST, best_travel,
+           best_bd and best_bd.mult or 1.0, best_bd and best_bd.feas or 1.0,
            best_cost, best_dmg) or "",
     cands = rows,
   }

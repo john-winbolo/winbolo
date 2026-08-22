@@ -586,6 +586,47 @@ function M.update(state, world, info)
   perc.enemy_lgms = enemy_lgms
   kill_lgm.purge_stale(state, now, enemy_lgms)
 
+  -- ----- Defend-signal stamps: enemy presence near team pills -----
+  -- Stamped onto the pill records (world.pills) so goal evaluators read
+  -- them as plain tick comparisons:
+  --   _enemy_near_tick — hostile TANK seen within DEFEND_ENEMY_NEAR_RADIUS
+  --   _lgm_near_tick   — hostile LGM  seen within DEFEND_LGM_NEAR_RADIUS
+  --                      (attack setup: wall-shield building / pill plant)
+  -- Deployed team pills only (a carried pill has no meaningful tile;
+  -- deployed allied pills classify "friendly"). With team pill view these
+  -- sightings arrive even when the pill is far from every teammate's tank.
+  -- Chebyshev radius; cost is |enemies| x |pills| with early rejects.
+  do
+    local et = enemy_tanks
+    local tank_r = C.DEFEND_ENEMY_NEAR_RADIUS or 10
+    local lgm_r  = C.DEFEND_LGM_NEAR_RADIUS or 6
+    if (et and #et > 0) or n_lgm > 0 then
+      for _, p in pairs(world.pills) do
+        if p.owner == "friendly"
+           and not (p.in_tank or p.carrier or p._synth_carry) then
+          if et then
+            for i = 1, #et do
+              local e = et[i]
+              if math.abs(e.mx - p.mx) <= tank_r
+                 and math.abs(e.my - p.my) <= tank_r then
+                p._enemy_near_tick = now
+                break
+              end
+            end
+          end
+          for i = 1, n_lgm do
+            local e = enemy_lgms[i]
+            if math.abs(e.mx - p.mx) <= lgm_r
+               and math.abs(e.my - p.my) <= lgm_r then
+              p._lgm_near_tick = now
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+
   -- ----- Under fire: shell danger or angry pill in range -----
   local threat_at_tank = danger.danger_at(tmx, tmy, now, world)
   perc.threat_at_tank = threat_at_tank

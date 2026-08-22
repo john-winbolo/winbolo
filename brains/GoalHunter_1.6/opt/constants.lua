@@ -1601,7 +1601,37 @@ M.TRAIL_DROP_MIN_SPEED          = 4     -- tank must be moving at this speed
 
 -- Defend pill response
 M.PILL_ATTACK_COOLDOWN       = 200   -- ticks before clearing under_attack flag (~4 sec)
-M.DEFEND_PILL_BASE_COST      = 30    -- base cost for defend goal
+M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense trip; distance
+                                     -- adds on top, threat multipliers scale the sum DOWN
+
+-- Defend formula (eval_defend_pill): cost = (base+travel) * threat_mult
+-- * lateness [+ quiet penalty when no threat]. Threat evidence only ever
+-- LOWERS the cost (multiplier < 1, strongest live tier wins); lateness
+-- only ever RAISES it. Multiplicative on a ~250 base so common threatened
+-- cases land naturally around 100-300 instead of clipping the MIN floor —
+-- severity and distance stay ordered. Hand-tunable; expect these to move
+-- after Heat Lab runs.
+M.DEFEND_ENEMY_NEAR_RADIUS   = 10    -- hostile tank within this of a team pill -> sighting stamp
+M.DEFEND_LGM_NEAR_RADIUS     = 6     -- hostile LGM within this -> setup-tell stamp
+M.DEFEND_DMG_FRESH_TICKS     = 400   -- last_hit_tick age for "active siege" (~8 s)
+M.DEFEND_SIGHT_FRESH_TICKS   = 600   -- sighting/setup stamp age still counted (~12 s), linear decay
+M.DEFEND_SETUP_MULT          = 0.25  -- LGM building/planting nearby: the MOST savable moment
+                                     -- (nothing lost yet, build interruptible) -> strongest tier
+M.DEFEND_SIEGE_MULT          = 0.30  -- fresh damage on a FULL-health pill; scales toward 1 as hp
+                                     -- drops (almost-dead = mostly lost = weak pull; recovery is
+                                     -- capture/rebuild territory)
+M.DEFEND_SIGHT_MULT          = 0.50  -- hostile tank seen near the pill (prevention tier)
+M.DEFEND_COVERAGE_MULT       = 0.95  -- per covering friendly pill (heat-up potential); threat-gated
+M.DEFEND_QUIET_PENALTY       = 450   -- added when NO threat evidence exists: quiet pills list and
+                                     -- score but effectively never win (0-ish = garrison behavior)
+M.DEFEND_ASSUMED_TICKS_PER_HP = 80   -- assumed siege damage rate: 15 HP ~ 60 s (TTL = hp x this)
+M.DEFEND_ETA_PER_COST        = 6     -- rough ticks of travel per dij cost unit (ETA estimate)
+M.DEFEND_FUTILITY_MAX        = 3.0   -- cap on the late-arrival cost multiplier during a siege
+M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the multipliers above.
+                                     -- Sits ABOVE attack_tank engage (~11) and mid-take
+                                     -- attack_pill locks (10-50), so on arrival the fight
+                                     -- takes over from the drive; below explore (500) and
+                                     -- most fresh attacks, so defense still wins the pool.
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase
