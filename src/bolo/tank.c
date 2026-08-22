@@ -69,8 +69,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
  * (pinned head-on you held ~0, so you restart from rest; grinding NNE into
  * a north wall at glide 0 you held the surviving east component, so you
  * drive off at that speed and build back up). See the momentum-collapse
- * block in tankMoveUnified. Live-tuned from the SDL3 GUI debug slider;
- * affects prediction only against a remote server without the value.
+ * block in tankMoveUnified.
  * Default 0 (classic) per community consensus — the sap is opt-in. */
 float g_tankWallMomentumSap = 0.0f;
 
@@ -79,8 +78,8 @@ float g_tankWallMomentumSap = 0.0f;
  * at FULL speed until you clear it), 0 = Bolo 1.17 feel (movement is just
  * the projection onto the wall, so NNE against a north wall crawls east at
  * ~38% speed; stored speed is untouched while grinding — what you keep when
- * you clear the block is g_tankWallMomentumSap's call). Live-tuned from the
- * SDL3 GUI debug slider. Default 0 (1.17 projection) per community consensus. */
+ * you clear the block is g_tankWallMomentumSap's call).
+ * Default 0 (1.17 projection) per community consensus. */
 float g_tankWallGlide = 0.0f;
 
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
@@ -1696,7 +1695,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
        * collapse nothing to do — the "Sap does nothing" report). When
        * contact ends (turned away or cleared the block), stored speed
        * collapses once toward wallSlideVel and normal acceleration resumes.
-       * Slider: 0 = classic (instant full-speed slides, stored speed
+       * Sap value: 0 = classic (instant full-speed slides, stored speed
        * untouched), 1 = fully honest velocity. */
       if (bumptype & BumpInfo_SolidWall) {
         float attempted = sqrtf((float)(xAmount * xAmount + yAmount * yAmount));
@@ -1711,7 +1710,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
             float allowed = ((*value)->wallSlideVel +
                              (float)TANK_ACCELERATE_RATE * ticks) * ticks;
             if (amag > allowed) {
-              /* Blend toward "no cap" as the slider approaches classic. */
+              /* Blend toward "no cap" as the sap value approaches classic. */
               allowed += (amag - allowed) * (1.0f - g_tankWallMomentumSap);
               float scale = allowed / amag;
               (*value)->x = (WORLD)(moveStartX + bumpDx + (int)(dxA * scale));

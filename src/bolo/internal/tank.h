@@ -199,7 +199,7 @@ based on my testing.
  * the tank actually held against the wall (0 = walls never touch stored
  * speed, 1 = full collapse: a pinned tank restarts from rest, an oblique
  * grinder drives off at its surviving along-wall component and accelerates
- * back up). Defined in tank.c; tunable at runtime via the GUI slider. */
+ * back up). Defined in tank.c; default 0 (classic). */
 extern float g_tankWallMomentumSap;
 
 /* Circle-collision wall glide: how much of the movement a wall blocks is
@@ -207,7 +207,7 @@ extern float g_tankWallMomentumSap;
  * redirect to full speed along the wall), 0 = Bolo 1.17 projection (an
  * oblique hit keeps only the along-wall component of your movement, so you
  * slow down until you clear the block; stored speed is untouched).
- * Defined in tank.c; tunable at runtime via the GUI debug slider. */
+ * Defined in tank.c; default 0 (1.17 projection). */
 extern float g_tankWallGlide;
 
 /* Amount to move for checking */
