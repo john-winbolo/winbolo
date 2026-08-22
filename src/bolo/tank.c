@@ -70,8 +70,9 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
  * a north wall at glide 0 you held the surviving east component, so you
  * drive off at that speed and build back up). See the momentum-collapse
  * block in tankMoveUnified. Live-tuned from the SDL3 GUI debug slider;
- * affects prediction only against a remote server without the value. */
-float g_tankWallMomentumSap = 1.0f;
+ * affects prediction only against a remote server without the value.
+ * Default 0 (classic) per community consensus — the sap is opt-in. */
+float g_tankWallMomentumSap = 0.0f;
 
 /* How much of the movement a wall blocks is given back along the wall
  * tangent. 1 = slippery walls (hit a wall going NNE and you glide due east
@@ -79,7 +80,7 @@ float g_tankWallMomentumSap = 1.0f;
  * the projection onto the wall, so NNE against a north wall crawls east at
  * ~38% speed; stored speed is untouched while grinding — what you keep when
  * you clear the block is g_tankWallMomentumSap's call). Live-tuned from the
- * SDL3 GUI debug slider. */
+ * SDL3 GUI debug slider. Default 0 (1.17 projection) per community consensus. */
 float g_tankWallGlide = 0.0f;
 
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
