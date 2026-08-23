@@ -1612,7 +1612,10 @@ M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense t
 -- severity and distance stay ordered. Hand-tunable; expect these to move
 -- after Heat Lab runs.
 M.DEFEND_ENEMY_NEAR_RADIUS   = 10    -- hostile tank within this of a team pill -> sighting stamp
-M.DEFEND_LGM_NEAR_RADIUS     = 6     -- hostile LGM within this -> setup-tell stamp
+M.DEFEND_LGM_NEAR_RADIUS     = 6     -- setup-tell stamp radius: hostile LGM seen within this of a
+                                     -- team pill, a wall/halfwall APPEARING (non-friendly builder;
+                                     -- threat.lua terrain diff), or a hostile pill freshly planted
+                                     -- (world.lua) — all stamp _lgm_near_tick
 M.DEFEND_DMG_FRESH_TICKS     = 400   -- last_hit_tick age for "active siege" (~8 s)
 M.DEFEND_SIGHT_FRESH_TICKS   = 600   -- sighting/setup stamp age still counted (~12 s), linear decay
 M.DEFEND_SETUP_MULT          = 0.25  -- LGM building/planting nearby: the MOST savable moment
@@ -1646,8 +1649,15 @@ M.HEAT_PILL_SHOTS            = 3     -- shells per heat sequence
 M.HEAT_PILL_MIN_HP           = 6     -- don't shave a pill that can't spare the HP
 M.HEAT_PILL_MAX_ANGER        = 0.4   -- already hot -> more shells add nothing (3 hits saturate)
 M.HEAT_SELF_STAMP_TICKS      = 150   -- world.lua skips the under_attack stamp this long after our
-                                     -- own heat shot (covers shell flight) — self-tickling must
-                                     -- not read as an enemy siege
+                                     -- own heat shot / an all-friendly shell watch stamp (covers
+                                     -- shell flight) — tickling must not read as an enemy siege
+M.HEAT_ALLY_SHELL_RADIUS     = 2     -- perception's shell watch: shells within this of a team pill
+                                     -- count as "about to hit it"; ALL friendly-labeled -> ally
+                                     -- heating (suppress alarm), ANY hostile/neutral -> real attack
+M.HEAT_SEQUENCE_TICKS        = 150   -- estimated heat volley length: aim + 3 reload cycles + flight
+M.HEAT_REPAIR_OVERLAP_MARGIN = 100   -- safety margin on the timed ally-repair overlap check: block
+                                     -- heating only when their repair ETA lands within
+                                     -- HEAT_SEQUENCE_TICKS + this of now
 M.REPAIR_HOLD_ENEMY_NEAR_TICKS = 400 -- hold the repair LGM dispatch while a hostile tank was seen
                                      -- near the pill this recently (~8 s) — don't walk the little
                                      -- guy into a live fight; the pool's contested x3 already

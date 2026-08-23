@@ -3054,28 +3054,52 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
     elseif info.man_status ~= C.LGM_INTANK then
       block = "lgm_out"
     else
-      -- Ally repair claim on this pill (fresh heartbeat) -> their LGM is
-      -- inbound; our heat shells would land around it. Two sources:
-      --   * goal advert: ally broadcasts repair_pill targeting this tile
-      --   * lgmd advert (/info extra): ally's LGM is DISPATCHED to this
-      --     tile right now — dest x/y (2 hex chars each) + ETA. "-" =
-      --     no dispatch. Stronger than the goal (covers wall builds and
-      --     dispatches that outlive the goal).
+      -- Ally repair overlap — TIMED: block heating only when the ally's
+      -- repair would actually land inside our shoot window (aim + 3
+      -- reload cycles + shell flight = HEAT_SEQUENCE_TICKS, plus
+      -- HEAT_REPAIR_OVERLAP_MARGIN). An ally whose repair arrives well
+      -- AFTER our volley finishes is no reason to hold fire. Sources:
+      --   * lgmd advert (/info extra): ally LGM DISPATCHED to this tile,
+      --     hex XXYY EEEE — real walk-sim ETA at send time, aged by the
+      --     heartbeat gap. "-" = no dispatch.
+      --   * goal advert: ally repair_pill CLAIM on this tile; arrival
+      --     estimated from their broadcast pool cost (cost x
+      --     DEFEND_ETA_PER_COST). No cost seen yet -> assume imminent.
+      local our_window = (C.HEAT_SEQUENCE_TICKS or 150)
+                         + (C.HEAT_REPAIR_OVERLAP_MARGIN or 100)
       for ally_pn, slot in ally_state.iter_active(now, 1750) do
         if ally_pn ~= info.player_number then
           local h = slot.info
-          if h and h.goal == "repair_pill"
-             and tonumber(h.mx) == p.mx and tonumber(h.my) == p.my then
-            block = "ally_repair"
-            break
-          end
+          local their_eta, src = nil, nil
           local ld = h and h.lgmd
           if ld and ld ~= "-" and #ld >= 8 then
             local lx = tonumber(string.sub(ld, 1, 2), 16)
             local ly = tonumber(string.sub(ld, 3, 4), 16)
             if lx == p.mx and ly == p.my then
+              local eta = tonumber(string.sub(ld, 5, 8), 16) or 0
+              local age = now - (slot.last_tick or now)
+              their_eta = eta - age
+              if their_eta < 0 then their_eta = 0 end
+              src = "lgmd"
+            end
+          end
+          if their_eta == nil and h and h.goal == "repair_pill"
+             and tonumber(h.mx) == p.mx and tonumber(h.my) == p.my then
+            local hc = tonumber(h.cost)
+            their_eta = hc and (hc * (C.DEFEND_ETA_PER_COST or 6)) or 0
+            src = hc and "goal_cost" or "goal_nocost"
+          end
+          if their_eta ~= nil then
+            if their_eta < our_window then
               block = "ally_repair"
+              print2(string.format(
+                "HEAT_GATE t=%d pill@(%d,%d) BLOCK ally_repair: p%d %s eta=%dt < window=%dt",
+                now, p.mx, p.my, ally_pn, src, their_eta, our_window))
               break
+            else
+              print2(string.format(
+                "HEAT_GATE t=%d pill@(%d,%d) ally p%d repair intent (%s eta=%dt) OUTSIDE window=%dt -> heat still allowed",
+                now, p.mx, p.my, ally_pn, src, their_eta, our_window))
             end
           end
         end
@@ -3084,10 +3108,22 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
     if block then
       bd.heat_block = block
       bd.cost = math.huge
+      print2(string.format(
+        "HEAT_GATE t=%d pill@(%d,%d) NO-BID (%s) hp=%d anger=%.2f shells=%d hit_age=%s sight_age=%s setup_age=%s",
+        now, p.mx, p.my, block, hp, p.anger or 0, info.shells or 0,
+        hit_age < math.huge and tostring(hit_age) or "-",
+        sight_age < math.huge and tostring(sight_age) or "-",
+        setup_age < math.huge and tostring(setup_age) or "-"))
       return math.huge, bd
     end
     bd.heat = true
     bd.cost = C.DEFEND_HEAT_COST or 200
+    print2(string.format(
+      "HEAT_GATE t=%d pill@(%d,%d) HEAT BID %.0f hp=%d anger=%.2f shells=%d evidence(hit=%s sight=%s setup=%s)",
+      now, p.mx, p.my, bd.cost, hp, p.anger or 0, info.shells or 0,
+      hit_age < math.huge and tostring(hit_age) or "-",
+      sight_age < math.huge and tostring(sight_age) or "-",
+      setup_age < math.huge and tostring(setup_age) or "-"))
     return bd.cost, bd
   end
 
@@ -3244,7 +3280,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
           hp, C.PILLS_MAX_HEALTH, dmg,
           hit_age >= 0 and string.format(" last_hit=%dt", hit_age) or "",
           sight_age >= 0 and string.format(" enemy_seen=%dt", sight_age) or "",
-          setup_age >= 0 and string.format(" lgm_seen=%dt", setup_age) or "",
+          setup_age >= 0 and string.format(" setup_seen=%dt", setup_age) or "",
           tostring(repair_ready),
           (info.man_status == C.LGM_INTANK) and "in_tank" or "out", info.trees or 0)
         local formula

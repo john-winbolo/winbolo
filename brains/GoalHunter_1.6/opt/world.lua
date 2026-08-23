@@ -54,6 +54,25 @@ end
 
 local function mkey(mx, my) return my * 256 + mx end
 
+-- Hostile-pill setup tell: a hostile pill NEWLY APPEARING at (or moving
+-- to) a tile within DEFEND_LGM_NEAR_RADIUS of a deployed team pill is an
+-- offensive plant — the same attack-setup signature as seeing the enemy
+-- LGM building. Stamp the nearby team pills' _lgm_near_tick so defend's
+-- setup tier fires. (First-sighting false positives are rare: team pill
+-- view keeps our pills' surroundings continuously observed, so a hostile
+-- pill near one genuinely IS new.)
+local function stamp_hostile_plant_tell(world, mx, my, owner_str, tick)
+  if owner_str ~= "hostile" then return end
+  local r = C.DEFEND_LGM_NEAR_RADIUS or 6
+  for _, tp in pairs(world.pills) do
+    if tp.owner == "friendly" and (tp.health or 0) > 0
+       and not (tp.in_tank or tp.carrier or tp._synth_carry)
+       and math.abs(tp.mx - mx) <= r and math.abs(tp.my - my) <= r then
+      tp._lgm_near_tick = tick
+    end
+  end
+end
+
 -- Incremental pill_at maintenance. Multiple pills can share a tile (pickup /
 -- replace transients), so pill_at[k] is a list. Invariant: a pill is indexed at
 -- EXACTLY its current (mx,my) iff DEPLOYED (not in_tank) — a carried pill holds
@@ -249,6 +268,7 @@ function M.update(world, info, tick)
           attack_damage = 0,
         }
         world.pills[obj.idnum] = p
+        stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
       else
         -- Read old state BEFORE writing new — damage detection, anger bump,
         -- and the index move all need the previous tick's values.
@@ -278,10 +298,16 @@ function M.update(world, info, tick)
         -- firing) — deliberately tickling our own pill must not read as an
         -- enemy siege. last_hit_tick/anger still stamp above, which is what
         -- blocks immediate re-heat (taking_damage / already_hot gates).
+        local _hs_win = C.HEAT_SELF_STAMP_TICKS or 150
+        local _hs_self = p._heat_shot_tick and (tick - p._heat_shot_tick) < _hs_win
+        local _hs_ally = p._ally_heat_tick and (tick - p._ally_heat_tick) < _hs_win
         if (owner_str == "friendly" or owner_str == "allied")
            and new_health < old_health and new_health > 0
-           and not (p._heat_shot_tick
-                    and (tick - p._heat_shot_tick) < (C.HEAT_SELF_STAMP_TICKS or 150)) then
+           and (_hs_self or _hs_ally) then
+        end
+        if (owner_str == "friendly" or owner_str == "allied")
+           and new_health < old_health and new_health > 0
+           and not _hs_self and not _hs_ally then
           local damage = old_health - new_health
           p.attack_damage = p.attack_damage + damage
           p.under_attack  = true
@@ -297,6 +323,7 @@ function M.update(world, info, tick)
         if old_mx ~= new_mx or old_my ~= new_my then
           p.mx = new_mx
           p.my = new_my
+          stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
         end
         p.health    = new_health
         p.owner     = owner_str
@@ -408,6 +435,9 @@ function M.process_events(world, info, state)
             attack_damage = 0,
           }
           world.pills[idx] = p
+          if not in_tank then
+            stamp_hostile_plant_tell(world, p.mx, p.my, owner_str, tick)
+          end
         else
           -- Read old state BEFORE writing new — index move and damage
           -- detection both need the previous tick's values.
@@ -423,10 +453,16 @@ function M.process_events(world, info, state)
             p.last_hit_tick = tick   -- only on REAL damage (never on decay)
           end
 
+          local _hs_win = C.HEAT_SELF_STAMP_TICKS or 150
+          local _hs_self = p._heat_shot_tick and (tick - p._heat_shot_tick) < _hs_win
+          local _hs_ally = p._ally_heat_tick and (tick - p._ally_heat_tick) < _hs_win
           if (owner_str == "friendly" or owner_str == "allied")
              and new_health < old_health and new_health > 0
-             and not (p._heat_shot_tick
-                      and (tick - p._heat_shot_tick) < (C.HEAT_SELF_STAMP_TICKS or 150)) then
+             and (_hs_self or _hs_ally) then
+          end
+          if (owner_str == "friendly" or owner_str == "allied")
+             and new_health < old_health and new_health > 0
+             and not _hs_self and not _hs_ally then
             local damage = old_health - new_health
             p.attack_damage = p.attack_damage + damage
             p.under_attack  = true
@@ -442,6 +478,9 @@ function M.process_events(world, info, state)
           if old_mx ~= new_mx or old_my ~= new_my then
             p.mx = new_mx
             p.my = new_my
+            if not in_tank then
+              stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
+            end
           end
           p.health       = new_health
           p.owner        = owner_str
