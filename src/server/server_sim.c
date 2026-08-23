@@ -2228,6 +2228,21 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         serverSimPublishControl(sim, &leaveEvt);
     }
 
+    /* Freeze this slot's identity before the roster entry is torn down: the
+     * attribution track's identity table is otherwise only filled at game over,
+     * which would leave a mid-round leaver nameless in the finished log. */
+    {
+        AttrSlotIdentity *id = &sim->trackIdentity[playerNum];
+        /* playersGetPlayerName copies unbounded, so it needs a full
+         * PLAYER_NAME_LEN buffer; id->name is the shorter wire-sized field. */
+        char nameBuf[PLAYER_NAME_LEN];
+        memset(id, 0, sizeof(*id));
+        id->isBot = wasBot ? 1 : 0;
+        id->team  = sim->lobbyPlayers[playerNum].teamNumber;
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, nameBuf, TRUE);
+        snprintf(id->name, sizeof(id->name), "%s", nameBuf);
+    }
+
     sim->playerConnected[playerNum] = FALSE;
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
@@ -3944,12 +3959,19 @@ void serverSimEnterGameOver(ServerSim *sim) {
      * read back offline without a live server. */
     for (int slot = 0; slot < MAX_TANKS; slot++) {
         AttrSlotIdentity *id = &sim->trackIdentity[slot];
-        memset(id, 0, sizeof(*id));
+        /* A slot that is already gone keeps whatever serverSimRemovePlayer
+         * stamped on the way out — the roster has no name for it any more.
+         * serverSimResetGameWorld zeroes the whole table at round start, so
+         * an entry surviving to here belongs to the round just played. */
         if (!sim->playerConnected[slot]) continue;
+        /* playersGetPlayerName copies unbounded, so it needs a full
+         * PLAYER_NAME_LEN buffer; id->name is the shorter wire-sized field. */
+        char nameBuf[PLAYER_NAME_LEN];
+        memset(id, 0, sizeof(*id));
         id->isBot = botManagerIsBot(sim, (BYTE)slot) ? 1 : 0;
         id->team  = sim->lobbyPlayers[slot].teamNumber;
-        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, id->name, TRUE);
-        id->name[sizeof(id->name) - 1] = '\0';
+        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, nameBuf, TRUE);
+        snprintf(id->name, sizeof(id->name), "%s", nameBuf);
     }
 
     if (!sim->lobbyEnabled) {

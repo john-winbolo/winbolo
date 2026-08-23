@@ -487,3 +487,74 @@ int run_lv_hide_lobby_no_lobby_fallback(void) {
   remove(path);
   return 0;
 }
+
+/* One log_PlayerJoined event: slot, 2-char country, account flags, reserved,
+ * then the name as a pascal string (the layout screen.c's decode reads). */
+static void putPlayerJoined(LogBuf *b, uint8_t slot, const char *name) {
+  uint8_t payload[5 + 1 + 255];
+  size_t nameLen = strlen(name);
+  payload[0] = slot;
+  payload[1] = 'G';
+  payload[2] = 'B';
+  payload[3] = 0;
+  payload[4] = 0;
+  payload[5] = (uint8_t)nameLen;
+  memcpy(payload + 6, name, nameLen);
+  putEventFrame(b, log_PlayerJoined, payload, (uint16_t)(6 + nameLen));
+}
+
+/*
+ * A player who joins after the log_LobbyExit marker is not in the live roster
+ * while the playhead is parked at game start, which is where the round summary
+ * is emitted from. The load-time name walk reads the join event out of the log
+ * itself, so the name is available regardless of the playhead.
+ *
+ *   LobbyExit frame  -> tick   1  (gameStartMs 20, where the load parks)
+ *   NOEVENTS 100     -> tick 102
+ *   PlayerJoined     -> tick 103
+ */
+int run_lv_logged_name_from_join_event(void) {
+  const char *path = "lv_logged_name_join.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  char logged[PLAYER_NAME_LEN];
+  char live[PLAYER_NAME_LEN];
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, false);   /* lobby: every slot not in use */
+  putEventFrame(&b, log_LobbyExit, NULL, 0);
+  putNoEvents(&b, 100);
+  putPlayerJoined(&b, 3, "Chapu");
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic join log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 20,
+                "parked at %u (want 20, the game start)",
+                lv_screenGetTimeRunning());
+
+  /* The playhead has not reached the join, so the live roster is empty here. */
+  lv_screenGetPlayerName(live, 3);
+  UT_ASSERT_MSG(strcmp(live, NO_TANK) == 0,
+                "live roster named slot 3 '%s' at game start (want %s)", live,
+                NO_TANK);
+
+  UT_ASSERT_MSG(lv_screenGetLoggedPlayerName(3, logged, sizeof(logged)) == TRUE,
+                "the log's own join event did not name slot 3");
+  UT_ASSERT_MSG(strcmp(logged, "Chapu") == 0,
+                "logged name = '%s' (want 'Chapu')", logged);
+
+  /* A slot the log never named has nothing to report. */
+  UT_ASSERT_MSG(lv_screenGetLoggedPlayerName(5, logged, sizeof(logged)) == FALSE,
+                "slot 5 reported a name '%s' from a log that never joined it",
+                logged);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}

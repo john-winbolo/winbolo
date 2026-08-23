@@ -651,6 +651,12 @@ int run_lv_walk_base_anchor_ordinal(void);
 int run_lv_hide_lobby_window_mapping(void);
 int run_lv_hide_lobby_no_lobby_fallback(void);
 
+/* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
+ * the lobby marker is absent from the live roster at game start, where the
+ * round summary is built, so lv_screenGetLoggedPlayerName reads the name from
+ * the log's own join event instead. */
+int run_lv_logged_name_from_join_event(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */

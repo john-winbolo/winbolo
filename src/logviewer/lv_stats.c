@@ -70,16 +70,27 @@ static bool awardValueIsRatio(uint8_t awardId) {
 
 /* Write a display name for a slot into out (always NUL-terminated). Slot names
  * from the track are bounded by PACKET_MAX_PLAYER_NAME and may not be
- * NUL-terminated, so print length-bounded; an empty name falls back to "Slot N". */
+ * NUL-terminated, so print length-bounded; an empty name falls back to the
+ * name the log itself recorded for the slot, then to "Slot N". */
 static void formatSlotName(const AttrTrackHeader *header, int slot, char *out,
                            size_t outSize) {
+  char fromLog[PLAYER_NAME_LEN];
   if (slot >= 0 && slot < header->slotCount &&
       header->slots[slot].name[0] != '\0') {
     snprintf(out, outSize, "%.*s", (int)PACKET_MAX_PLAYER_NAME,
              header->slots[slot].name);
-  } else {
-    snprintf(out, outSize, "Slot %d", slot);
+    return;
   }
+  /* The track's identity table is a game-over snapshot, so a player who left
+   * mid-round has no entry in it. The log's own join events still name them.
+   * This reports the last name the log recorded for that slot, so a slot
+   * reused by a second player names the later one. */
+  if (slot >= 0 && slot < MAX_TANKS &&
+      lv_screenGetLoggedPlayerName((BYTE)slot, fromLog, sizeof(fromLog))) {
+    snprintf(out, outSize, "%s", fromLog);
+    return;
+  }
+  snprintf(out, outSize, "Slot %d", slot);
 }
 
 void lvStatsFormatClipTime(uint32_t ms, char *out, size_t outSize) {

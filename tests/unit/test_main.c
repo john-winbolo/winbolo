@@ -363,6 +363,7 @@ static const UnitTestEntry s_tests[] = {
     { "lv_walk_base_anchor_ordinal",             run_lv_walk_base_anchor_ordinal             },
     { "lv_hide_lobby_window_mapping",            run_lv_hide_lobby_window_mapping            },
     { "lv_hide_lobby_no_lobby_fallback",         run_lv_hide_lobby_no_lobby_fallback         },
+    { "lv_logged_name_from_join_event",          run_lv_logged_name_from_join_event          },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
     { "spectator_seed_capture",                  run_spectator_seed_capture                  },
     { "blocks_stream",                           run_blocks_stream                           },

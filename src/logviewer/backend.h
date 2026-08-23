@@ -596,6 +596,11 @@ void lv_screenMouseClick(int xPos, int yPos);
 
 void lv_screenCentreOnSelectedItem();
 void lv_screenGetPlayerName(char *name, BYTE playerNum);
+
+/* Name the log recorded for a slot, from a one-shot scan of its join events at
+ * load. Returns FALSE when the log never named that slot. Independent of the
+ * playhead, unlike lv_screenGetPlayerName. */
+bool lv_screenGetLoggedPlayerName(BYTE slot, char *dest, size_t destSize);
 void lv_screenGetMapName(char *dest);
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);

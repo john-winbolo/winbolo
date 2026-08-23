@@ -1814,6 +1814,11 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
  * once at load. 0 when the log has no lobby, so the game runs from tick 0. */
 static uint32_t s_gameStartMs = 0;
 
+/* Every name each slot carried this round, collected once at load from the
+ * log's own join events. Unlike the live roster this never forgets a player
+ * who joined mid-round or quit before the end. */
+static char s_slotNames[MAX_TANKS][PLAYER_NAME_LEN];
+
 /* Presentation window: while set, the viewer reports times and seeks against
  * [gameStart, totalTime) instead of the whole file, so a log that sat hours in
  * the lobby reads on the round's own clock. Absolute ms is still what the
@@ -1911,6 +1916,115 @@ static uint32_t lv_walkComputeGameStartMs(void) {
   lv_logSetPosition(savedPos);
   lv_blocksSetKey(savedKey);
   return result;
+}
+
+/* Read the slot and name out of a log_PlayerJoined (5 opt bytes) or
+ * log_ChangeName (1 opt byte) payload and record it in s_slotNames. Entered
+ * with the reader just past the event's code byte — and, on v2, past the
+ * framed length — and consumes exactly the bytes the matching
+ * walkSkipEventBody case would. Last name wins, so a rename replaces the
+ * earlier one and a reused slot ends up holding its most recent occupant.
+ * Returns FALSE on a short read. */
+static bool walkReadSlotName(BYTE code) {
+  BYTE opt[5];
+  int  optCount = (code == log_PlayerJoined) ? 5 : 1;
+  char pstr[256];   /* [len][chars]; `pascal` is an MSVC keyword */
+  char name[256];
+  int  len;
+
+  if (logReadBytes(opt, optCount) != optCount) return FALSE;
+  if (logReadBytes((BYTE *)pstr, 1) != 1) return FALSE;
+  len = (unsigned char)pstr[0];
+  if (len > 0 && logReadBytes((BYTE *)pstr + 1, len) != len) return FALSE;
+  lv_utilPtoCString(pstr, name);
+  if (opt[0] < MAX_TANKS && name[0] != '\0') {
+    snprintf(s_slotNames[opt[0]], sizeof(s_slotNames[opt[0]]), "%s", name);
+  }
+  return TRUE;
+}
+
+/* Like walkSkipEvents, but decodes the two events that carry a slot name;
+ * every other event is skipped by the shared helper. */
+static bool walkScanNames(unsigned short numEvents) {
+  unsigned short i;
+  BYTE code;
+  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+  for (i = 0; i < numEvents; i++) {
+    bool named;
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    named = (code == log_PlayerJoined || code == log_ChangeName);
+    if (isV2) {
+      /* v2: [type][u16 BE payload-length][payload]. Read what we need, then
+         land on the framed end regardless; blockKey stays 0 so no key roll. */
+      BYTE lenBytes[2];
+      unsigned short evLen;
+      size_t payloadPos;
+      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      payloadPos = lv_logGetCurrentPosition();
+      if (named && !walkReadSlotName(code)) return FALSE;
+      lv_logSetPosition(payloadPos + evLen);
+    } else {
+      if (named) {
+        if (!walkReadSlotName(code)) return FALSE;
+      } else if (walkSkipEventBody(code) < 0) {
+        return FALSE;
+      }
+      lv_blocksSetKey(code);
+    }
+  }
+  return TRUE;
+}
+
+/* Walk the log from the event-stream start to LOG_QUIT/EOF, recording the name
+ * each join or rename event gives a slot. Mirrors lv_walkComputeGameStartMs;
+ * must be entered at load, while the reader's XOR key still matches the stream
+ * start. Saves and restores logPosition + XOR key. */
+static void lv_walkCollectSlotNames(void) {
+  size_t savedPos = lv_logGetCurrentPosition();
+  BYTE   savedKey = lv_blocksGetKey();
+  bool   done     = FALSE;
+  BYTE   code, b1, b2;
+  unsigned short numEvents;
+  uint16_t us;
+
+  lv_logSetPosition(s_walkStartPos);
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) done = TRUE;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) done = TRUE;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1 || logReadBytes(&b2, 1) != 1) done = TRUE;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        if (!walkScanNames(numEvents)) done = TRUE;
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        if (!walkScanNames(numEvents)) done = TRUE;
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
 }
 
 /* Log time (ms) at which the game started (lobby ended); 0 if no lobby. */
@@ -2199,6 +2313,8 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
+  /* Drop the previous log's names before anything can read them back. */
+  memset(s_slotNames, 0, sizeof(s_slotNames));
   returnValue = lv_logLoad(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
     /* Decompress entire log so we know total size for the seek slider */
@@ -2210,6 +2326,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
     s_walkStartPos = lv_logGetCurrentPosition();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     s_gameStartMs = lv_walkComputeGameStartMs();
+    lv_walkCollectSlotNames();
     /* Set the game information up */
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
@@ -2340,12 +2457,15 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
+  /* Drop the previous log's names before anything can read them back. */
+  memset(s_slotNames, 0, sizeof(s_slotNames));
   returnValue = lv_logLoadFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     lv_logDecompressAll();
     s_walkStartPos = lv_logGetCurrentPosition();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     s_gameStartMs = lv_walkComputeGameStartMs();
+    lv_walkCollectSlotNames();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
@@ -3125,8 +3245,10 @@ void lv_screenSpecSetLiveMode(bool on) {
   s_specPaceAccumMs = 0;
   s_specPaceLastMs  = 0;
   /* A stream is not a round with a lobby in front of it; drop any game-start
-     offset left behind by a file loaded earlier in this session. */
+     offset left behind by a file loaded earlier in this session, and the
+     slot names that came with it — a feed has no file to scan for its own. */
   s_gameStartMs     = 0;
+  memset(s_slotNames, 0, sizeof(s_slotNames));
   if (on) {
     /* The seed left the decoder at the head; play by default. The first
        follow-live frame re-anchors head time once a record tick is known. */
@@ -3249,6 +3371,14 @@ BYTE lv_screenGetNumPlayers() {
 
 void lv_screenGetPlayerName(char *name, BYTE playerNum) {
   lv_playersGetPlayerName(playerNum, name);
+}
+
+bool lv_screenGetLoggedPlayerName(BYTE slot, char *dest, size_t destSize) {
+  if (dest == NULL || destSize == 0) return FALSE;
+  dest[0] = '\0';
+  if (slot >= MAX_TANKS || s_slotNames[slot][0] == '\0') return FALSE;
+  snprintf(dest, destSize, "%s", s_slotNames[slot]);
+  return TRUE;
 }
 
 void lv_screenGetMapName(char *dest) {
