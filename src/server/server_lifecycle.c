@@ -42,6 +42,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "threads.h"
 #include "server_sim_internal.h"
+#include "scenario.h"
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "spectator_ring.h"
@@ -211,6 +212,15 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
 
   if (cfg->acceptRemoteClients) {
     sim->maxPlayers = (cfg->maxPlayers > 0) ? cfg->maxPlayers : (BYTE)MAX_TANKS;
+    /* A scripted scenario may declare its own hard player cap
+     * (scenario.max_players — e.g. a wave-defense map that needs 10
+     * slots free for wave bots). The stricter limit wins. */
+    {
+      int smp = scenarioGetMaxPlayers(sim);
+      if (smp > 0 && sim->maxPlayers > (BYTE)smp) {
+        sim->maxPlayers = (BYTE)smp;
+      }
+    }
     if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
                                  password) == FALSE) {
       return FALSE;

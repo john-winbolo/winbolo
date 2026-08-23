@@ -68,6 +68,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 #include "server_sim_internal.h"
+#include "scenario.h"
 #include "attribution_track.h"
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
@@ -720,6 +721,12 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         }
     }
 
+    /* Scripted scenario: a "<map>.scenario.lua" sidecar next to the map
+     * file boots a server-side Lua VM (on_start now, on_tick every game
+     * tick). File-based creation only — a network-transferred compressed
+     * map has no local sidecar. */
+    scenarioLoad(sim, mapFileName, game, hiddenMines);
+
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;
 }
@@ -923,6 +930,9 @@ void serverSimDestroy(ServerSim *sim) {
     }
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER, "serverSim destroy: state=%d", (int)sim->state);
+
+    /* Scripted scenario VM first — nothing below calls back into it. */
+    scenarioShutdown(sim);
 
     /* Signal the balance thread to stop and wait for it to finish */
     SDL_SetAtomicInt(&sim->balanceProposal.shutdownFlag, 1);
@@ -1934,6 +1944,13 @@ void serverSimTick(ServerSim *sim) {
         sim->mapEventCount = 0;
         simRunHalfStep(sim);
         simRunHalfStep(sim);
+        /* Scripted scenario hook — every game tick while the round runs.
+         * After the half-steps so the script observes settled state; a
+         * game.end_round() from inside flips sim->state, which the next
+         * tick's branch picks up naturally. */
+        if (sim->state == serverStateRunning) {
+            scenarioTick(sim);
+        }
     } else {
         simRunHalfStep(sim);
     }
@@ -4970,6 +4987,19 @@ void serverSimResolveGameOver(ServerSim *sim) {
         sim->pendingWinMessage[0] = '\0';
         break;
 
+    case RETURN_REASON_SCENARIO:
+        /* A scripted scenario declared the round over (game.end_round).
+         * The script's own message is the lobby line; scripted rounds
+         * are not ranked results, so no WBN win crediting. */
+        SDL_strlcpy(sim->pendingWinMessage, scenarioGetWinMessage(sim),
+                    sizeof(sim->pendingWinMessage));
+        if (sim->pendingWinMessage[0] == '\0') {
+            SDL_strlcpy(sim->pendingWinMessage,
+                        "*** Scenario complete. ***",
+                        sizeof(sim->pendingWinMessage));
+        }
+        break;
+
     case RETURN_REASON_BASE_WIN:
     case RETURN_REASON_NONE:
     default:
@@ -5266,6 +5296,28 @@ static void publishServerMessage(ServerSim *sim, const char *message) {
      * receive the codec-encoded PACKET_CHAT_BROADCAST(fromPlayer=0xFE)
      * via the encoder table. */
     serverSimPublishControl(sim, &evt);
+}
+
+/* ── Scripted-scenario shims (declared in scenario.h) ───────────────
+ * Kept here because they touch file-static internals: the control-event
+ * broadcast above and the game-over path the all-bases sweep uses. */
+void serverSimScenarioPublish(ServerSim *sim, const char *message) {
+    if (!sim || !message) return;
+    publishServerMessage(sim, message);
+    serverSimConsoleMessage((char *)message);
+}
+
+void serverSimScenarioEndRound(ServerSim *sim) {
+    if (!sim || sim->state != serverStateRunning) return;
+    /* Mirror the all-bases-win exit, minus its winner sweep: a running
+     * return-to-lobby countdown (vote / surrender) is irrevocable and
+     * keeps its own reason. Lobby-less sims end the round outright. */
+    if (sim->lobbyEnabled) {
+        if (sim->returnToLobbyTicks != 0) return;
+        sim->returnToLobbyReason = RETURN_REASON_SCENARIO;
+    }
+    mapSetChangeCallback(NULL);
+    serverSimEnterGameOver(sim);
 }
 
 /* Like publishServerMessage but delivered ONLY to members of teamId (1-16).

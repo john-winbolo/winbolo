@@ -1094,6 +1094,24 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
                 SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
                 e->name[dlen - 4] = '\0';
             }
+            /* Scripted-scenario maps: a "<map>.scenario.lua" sidecar next
+             * to the file marks the map as scripted (server-side Lua
+             * scenario — waves, custom win conditions, player caps).
+             * Surface it in the picker: highlight tint + a name tag. */
+            {
+                char sidecar[FILENAME_MAX];
+                size_t flen = SDL_strlen(full);
+                if (flen > 4) {
+                    SDL_snprintf(sidecar, sizeof(sidecar), "%.*s.scenario.lua",
+                                 (int)(flen - 4), full);
+                    SDL_PathInfo spi;
+                    if (SDL_GetPathInfo(sidecar, &spi)
+                        && spi.type == SDL_PATHTYPE_FILE) {
+                        e->highlighted = true;
+                        SDL_strlcat(e->name, " [scripted]", sizeof(e->name));
+                    }
+                }
+            }
         }
         SDL_free(list);
     }

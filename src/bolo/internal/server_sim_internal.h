@@ -80,6 +80,10 @@ typedef struct {
 #define RETURN_REASON_SURRENDER   2
 #define RETURN_REASON_BASE_WIN    3
 #define RETURN_REASON_ABANDONED   4
+/* A scripted scenario called game.end_round(): the script's own message
+ * becomes the lobby win line and NO WinBolo.net win crediting happens —
+ * scripted rounds aren't ranked results. */
+#define RETURN_REASON_SCENARIO    5
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -233,6 +237,10 @@ struct ServerSim {
     char         mapName[MAP_STR_SIZE];
     uint32_t     timeCreated;
     unsigned short serverPort;
+
+    /* Scripted-scenario runtime (src/server/scenario.c). NULL for plain
+     * maps; owned by the sim (scenarioShutdown in serverSimDestroy). */
+    void        *scenario;
 
     /* Per-player input queues — allows 2 inputs per server timer callback */
 #define SERVER_INPUT_QUEUE_SIZE 16  /* Must be power of 2 */
