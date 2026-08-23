@@ -22,7 +22,11 @@ int  serverSimFindFreeSlot(const ServerSim *sim);
 /* Four step-internals. None of these publish CTRL_PLAYER_JOIN by themselves —
  * a single publish lives in fillAndPublishPlayerJoin once all four fields
  * (name, country, clientType, clientFlags) are populated. */
-void addPlayerInternal(ServerSim *sim, BYTE slot, const char *name, bool wantRejoin);
+/* country is applied to the slot before the log_PlayerJoined event is written,
+ * so the recorded event carries it. NULL (bots, and callers with nothing to
+ * supply) or a malformed code leaves the slot on the "XX" unknown placeholder. */
+void addPlayerInternal(ServerSim *sim, BYTE slot, const char *name,
+                       const char *country, bool wantRejoin);
 void setPlayerCountryInternal(ServerSim *sim, BYTE slot, const char *country);
 void setClientTypeFlagsInternal(ServerSim *sim, BYTE slot,
                                 uint8_t clientType, uint8_t clientFlags);

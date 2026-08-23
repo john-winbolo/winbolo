@@ -225,7 +225,18 @@ static void handleLobbyEnter(ServerSim *sim) {
                     if (nameLen > 255) nameLen = 255;
                     pstr[0] = (char)nameLen;
                     memcpy(pstr + 1, name, nameLen);
-                    logAddEvent(log_PlayerJoined, i, '?', '?', accountFlags, 0, pstr);
+                    /* The country comes from the client table, not the sim:
+                     * this loop re-announces players who joined in an earlier
+                     * round, whose original join event is in a previous log
+                     * file. XX stands in when the table has nothing (the
+                     * non-UDP build, or a slot the sim thinks is connected
+                     * and the transport does not). */
+                    const char *cc = transportUdpServerGetClientCountryCode(i);
+                    bool haveCC = (cc != NULL && cc[0] != '\0' && cc[1] != '\0');
+                    logAddEvent(log_PlayerJoined, i,
+                                haveCC ? (BYTE)cc[0] : (BYTE)'X',
+                                haveCC ? (BYTE)cc[1] : (BYTE)'X',
+                                accountFlags, 0, pstr);
                 }
             }
         }

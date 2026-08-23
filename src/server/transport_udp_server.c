@@ -3099,9 +3099,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         udpServer.clients[slot].wbnWebUserId = -1;
         addPlayerInternal(sim, (BYTE)slot,
                           udpServer.clients[slot].playerName,
+                          udpServer.clients[slot].countryCode,
                           udpServer.clients[slot].wantRejoin);
-        setPlayerCountryInternal(sim, (BYTE)slot,
-                                 udpServer.clients[slot].countryCode);
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
     }

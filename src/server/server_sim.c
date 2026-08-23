@@ -1963,7 +1963,8 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     sim->playerPing[p] = transportUdpServerGetClientPing(p);
 }
 
-void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
+void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
+                       const char *country, bool wantRejoin) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "addPlayer slot=%u name='%s' wantRejoin=%d state=%d",
         (unsigned)playerNum,
@@ -2066,6 +2067,10 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     if (playerName != NULL) {
         playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "XX",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        /* Apply the country before the log event below reads it back out —
+         * the recorded join otherwise carries the "XX" placeholder for the
+         * whole round. No-ops on NULL or a malformed code, leaving "XX". */
+        setPlayerCountryInternal(sim, playerNum, country);
         {
             char pstr[256];
             int nameLen = (int)strlen(playerName);
@@ -2073,7 +2078,10 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
             if (nameLen > 255) nameLen = 255;
             pstr[0] = (char)nameLen;
             memcpy(pstr + 1, playerName, nameLen);
-            logAddEvent(log_PlayerJoined, playerNum, '?', '?', accountFlags, 0, pstr);
+            logAddEvent(log_PlayerJoined, playerNum,
+                        sim->sim.plyrs->item[playerNum].location[0],
+                        sim->sim.plyrs->item[playerNum].location[1],
+                        accountFlags, 0, pstr);
         }
     }
 
@@ -2124,7 +2132,7 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
-    addPlayerInternal(sim, playerNum, playerName, wantRejoin);
+    addPlayerInternal(sim, playerNum, playerName, NULL, wantRejoin);
     fillAndPublishPlayerJoin(sim, playerNum);
 }
 
@@ -2178,8 +2186,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 
     country = (fallbackCountry != NULL) ? fallbackCountry : "";
 
-    addPlayerInternal(sim, (BYTE)slot, validatedName, false);
-    setPlayerCountryInternal(sim, (BYTE)slot, country);
+    addPlayerInternal(sim, (BYTE)slot, validatedName, country, false);
     setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
     fillAndPublishPlayerJoin(sim, (BYTE)slot);
 
@@ -2580,7 +2587,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
      * fans out, both carry the bot identity. A bot slot inherits no human
      * identity bits — set rather than OR. */
     playersSetClientFlags(&sim->sim.plyrs, playerNum, PLAYER_FLAG_BOT);
-    addPlayerInternal(sim, playerNum, cfg->brainName, false);
+    addPlayerInternal(sim, playerNum, cfg->brainName, NULL, false);
     fillAndPublishPlayerJoin(sim, playerNum);
 
     sim->lobbyPlayers[playerNum].isBot      = true;
