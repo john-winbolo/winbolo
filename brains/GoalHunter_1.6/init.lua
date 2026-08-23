@@ -6123,6 +6123,21 @@ function Brain.think(info)
   -- decide whether to pace the tank while the LGM is moving.
   if build_cmd and info.man_status == C.LGM_INTANK then
     state.builder.last_action = build_cmd.action
+    -- LGM-dispatch record for the lgmd advert (/info extra): destination
+    -- + terrain-based ETA, broadcast so allies can predict repair/build
+    -- overlap (heat gate, dedup) without per-shell chatter. The repair
+    -- branch stashes its precise walk-sim ETA; other dispatches estimate
+    -- from tile distance x walk rate.
+    if build_cmd.x and build_cmd.y then
+      local dtx = bit.rshift(info.tankx, 8)
+      local dty = bit.rshift(info.tanky, 8)
+      local eta = state._repair_dispatch_eta
+        or (U.mdist(dtx, dty, build_cmd.x, build_cmd.y)
+            * (C.REPAIR_DEAD_GRASS_TICKS_PER_TILE or 16))
+      state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
+                              eta_tick = now + eta, tick = now }
+      state._repair_dispatch_eta = nil
+    end
   end
 
   local t_pbh_start = t_build1
@@ -7631,6 +7646,26 @@ function Brain.think(info)
                             bit.band(state.goal.approach_my, 0xFF),
                             bit.band(state.goal.standoff_mx, 0xFF),
                             bit.band(state.goal.standoff_my, 0xFF))
+    end
+    -- LGM dispatch advert: dest x, dest y (2 hex chars each) + remaining
+    -- ETA ticks (4 hex chars) while our LGM is OUT on a dispatch; "-"
+    -- once it's back. Explicit "-" (not absence) because /info extra is
+    -- MERGED into receiver slots — a dropped key would linger stale.
+    -- Consumers: allied heat gates (don't shell a pill an ally's LGM is
+    -- walking to), future repair dedup.
+    if state._lgm_dispatch and info.man_status ~= C.LGM_INTANK then
+      local ld = state._lgm_dispatch
+      local left = (ld.eta_tick or now) - now
+      if left < 0 then left = 0 elseif left > 65535 then left = 65535 end
+      bse.lgmd = string.format("%02X%02X%04X",
+                               bit.band(ld.x or 0, 0xFF),
+                               bit.band(ld.y or 0, 0xFF), left)
+    else
+      if state._lgm_dispatch and info.man_status == C.LGM_INTANK
+         and (now - (state._lgm_dispatch.tick or 0)) > 2 then
+        state._lgm_dispatch = nil  -- LGM home again; advert the clear
+      end
+      bse.lgmd = "-"
     end
     -- Goal-selection cost (pool_cache winner matching our current goal).
     -- Drifts every tick as we close on the target, so it rides the extra

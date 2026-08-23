@@ -926,6 +926,12 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
         if U.mdist(e.mx, e.my, pill.mx, pill.my) < our_d then contested = true; break end
       end
     end
+    -- Also contested on a fresh enemy sighting stamped AT the pill
+    -- (perception's _enemy_near_tick) — mirrors the live pool-5 copy.
+    if not contested and pill._enemy_near_tick
+       and ((state.tick or 0) - pill._enemy_near_tick) < (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
+      contested = true
+    end
     if contested then adj_cost = adj_cost * (C.REPAIR_CONTESTED_MULT or 3.0) end
   end
   -- Pool-viz: surface friendly damaged pills we DIDN'T repair because they're a
@@ -2937,7 +2943,12 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
       block = "lgm_out"
     else
       -- Ally repair claim on this pill (fresh heartbeat) -> their LGM is
-      -- inbound; our heat shells would land around it.
+      -- inbound; our heat shells would land around it. Two sources:
+      --   * goal advert: ally broadcasts repair_pill targeting this tile
+      --   * lgmd advert (/info extra): ally's LGM is DISPATCHED to this
+      --     tile right now — dest x/y (2 hex chars each) + ETA. "-" =
+      --     no dispatch. Stronger than the goal (covers wall builds and
+      --     dispatches that outlive the goal).
       for ally_pn, slot in ally_state.iter_active(now, 1750) do
         if ally_pn ~= info.player_number then
           local h = slot.info
@@ -2945,6 +2956,15 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
              and tonumber(h.mx) == p.mx and tonumber(h.my) == p.my then
             block = "ally_repair"
             break
+          end
+          local ld = h and h.lgmd
+          if ld and ld ~= "-" and #ld >= 8 then
+            local lx = tonumber(string.sub(ld, 1, 2), 16)
+            local ly = tonumber(string.sub(ld, 3, 4), 16)
+            if lx == p.mx and ly == p.my then
+              block = "ally_repair"
+              break
+            end
           end
         end
       end
@@ -5974,6 +5994,41 @@ function M.step_eval_queue(state, world, info)
         raw_cost = _cpill_dist_raw
       end
 
+      -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
+      -- Historically the damage discount lived only in the finalize step
+      -- (applied to the raw-path winner, so the pool picked by DISTANCE,
+      -- not repair merit) and the base-cost + contested x3 terms only in
+      -- the fallback evaluator — two drifting copies. One copy now, here;
+      -- finalize passes best_cost straight through. Dead (0-HP) pills
+      -- keep raw_cost: it is already the full rebuild-in-place model.
+      local _rp_dmg, _rp_contested = 0, false
+      if pool_idx == 5 and (obj.health or 0) > 0 then
+        _rp_dmg = (C.PILLS_MAX_HEALTH or 15) - obj.health
+        c = (C.REPAIR_BASE_COST or 30)
+            + math.max(0, raw_cost - _rp_dmg * (C.REPAIR_DAMAGE_BONUS or 10))
+            + stale_cost
+        -- Contested: an enemy tank closer to the pill than we are, OR a
+        -- fresh enemy sighting stamped at the pill (perception's
+        -- _enemy_near_tick — the same evidence defend runs on, and via
+        -- team pill view it works at any range). A contested repair sends
+        -- the LGM into likely fire: price it x3, don't ban it.
+        local _ets5 = state.perc and state.perc.enemy_tanks
+        if _ets5 then
+          local _our_d5 = U.mdist(tmx, tmy, obj.mx, obj.my)
+          for _, _e5 in ipairs(_ets5) do
+            if U.mdist(_e5.mx, _e5.my, obj.mx, obj.my) < _our_d5 then
+              _rp_contested = true
+              break
+            end
+          end
+        end
+        if not _rp_contested and obj._enemy_near_tick
+           and (now - obj._enemy_near_tick) < (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
+          _rp_contested = true
+        end
+        if _rp_contested then c = c * (C.REPAIR_CONTESTED_MULT or 3.0) end
+      end
+
       -- Ally-claimed handling for generic pools (2,3,4,5,6,7,8).
       --
       -- Pools 9 (attack_tank) and 13 (kill_lgm) are EXEMPT — time-
@@ -6103,6 +6158,10 @@ function M.step_eval_queue(state, world, info)
         entry._lgm_mult=_cpill_lgm_mult
         entry._dist_method=_cpill_dist_method
         entry._free=_cpill_free_disc
+      elseif pool_idx == 5 then
+        entry._stale=stale_cost; entry._age=_gen_age
+        entry._dmg=_rp_dmg
+        entry._contested=_rp_contested or nil
       else
         entry._stale=stale_cost; entry._age=_gen_age
       end
@@ -7212,30 +7271,35 @@ function M.finalize_pools(state, world, info)
     pc[4] = nil
   end
 
-  -- Pool 5: repair_pill
+  -- Pool 5: repair_pill. best_cost is ALREADY the unified per-candidate
+  -- repair score (base + max(0, path - dmg x bonus), contested x3; dead
+  -- pills carry the rebuild-in-place model) computed in step_eval_queue —
+  -- the pool now picks its winner by repair MERIT, not raw distance, and
+  -- there is exactly one copy of the formula. Pass it straight through.
   local pr5 = partial[5]
   if pr5 and pr5.best_obj then
     local pill = pr5.best_obj
     local pid = pr5.best_id
     local pcost = pr5.best_cost
-    local damage = C.PILLS_MAX_HEALTH - pill.health
-    -- Dead (0-HP) pills: pcost is ALREADY the full rebuild-in-place cost from
-    -- compute_repair_dead_cost — no damage discount (that's the alive model).
-    local adj_cost
-    if pill.health == 0 and C.REPAIR_FIX_ENABLED then
-      adj_cost = pcost
-    else
-      adj_cost = math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    local desc5 = ""
+    if BRAIN_POOL_VIZ then
+      if pill.health == 0 then
+        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)",
+                              pid, pill.mx, pill.my, pcost)
+      else
+        local ce5 = state.cost_cache and state.cost_cache["5:" .. pid]
+        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f (base+path-dam=%d×%d)%s",
+                pid, pill.mx, pill.my, pcost,
+                ce5 and ce5._dmg or (C.PILLS_MAX_HEALTH - pill.health),
+                C.REPAIR_DAMAGE_BONUS,
+                (ce5 and ce5._contested) and " ×3 CONTESTED" or "")
+      end
     end
     pc[5] = {
-      cost = adj_cost,
+      cost = pcost,
       goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
                wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid },
-      desc = BRAIN_POOL_VIZ and (pill.health == 0
-        and string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)",
-              pid, pill.mx, pill.my, adj_cost)
-        or string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
-              pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS)) or "",
+      desc = desc5,
       cands = pr5.candidates,
     }
   else

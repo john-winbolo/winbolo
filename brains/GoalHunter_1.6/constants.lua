@@ -1648,6 +1648,10 @@ M.HEAT_PILL_MAX_ANGER        = 0.4   -- already hot -> more shells add nothing (
 M.HEAT_SELF_STAMP_TICKS      = 150   -- world.lua skips the under_attack stamp this long after our
                                      -- own heat shot (covers shell flight) — self-tickling must
                                      -- not read as an enemy siege
+M.REPAIR_HOLD_ENEMY_NEAR_TICKS = 400 -- hold the repair LGM dispatch while a hostile tank was seen
+                                     -- near the pill this recently (~8 s) — don't walk the little
+                                     -- guy into a live fight; the pool's contested x3 already
+                                     -- de-prioritizes the trip itself
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase
