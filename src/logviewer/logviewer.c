@@ -1085,6 +1085,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
         lvms.gameViewActive   = g_lv->gameView ? true : false;
         lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
+        lvms.hideLobby        = lv_screenGetHideLobby() ? true : false;
         lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
         lvms.soundVolume      = g_lv->soundVolume;
         lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;

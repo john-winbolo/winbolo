@@ -631,6 +631,7 @@ STR_DLGWBN_NETERR=Network error
 STR_DLGWBN_LOADERR=Failed to load details
 STR_DLGWBN_DOWNLOAD_FAILED=Download failed
 STR_DLGWBN_NOSAVEPATH=Could not determine save path
+STR_DLGWBN_SELECTPROMPT=Select a game to view its details
 STR_DLGWBN_FETCHERR=Fetch failed
 STR_DLGWBN_UNKNOWN_ERR=Unknown error
 STR_DLGWBN_FILEFILTER=WinBolo Log Files
@@ -1468,6 +1469,9 @@ STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE=Max Storage (MB)
 STR_DLGSETTINGS_HOSTING_ENABLELOG=Enable Logging
 STR_DLGSETTINGS_HOSTING_LOGDIR=Log Directory
 STR_DLGSETTINGS_HOSTING_APPLYNOTE=Applies to the next hosted / New Internet game.
+
+# Log viewer Options menu
+STR_LV_HIDE_LOBBY=Hide Lobby
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

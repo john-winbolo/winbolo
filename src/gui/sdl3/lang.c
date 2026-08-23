@@ -1806,6 +1806,9 @@ static const LangEntry langTable[] = {
     {1871, "Could not reach the server to get a join code."},
     {1872, "Could not connect to the server."},
     {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
+
+    /* Log viewer Options item: present the round on a game-relative clock. */
+    {1921, "Hide Lobby"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

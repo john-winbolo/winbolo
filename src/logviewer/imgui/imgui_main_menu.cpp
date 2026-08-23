@@ -113,7 +113,11 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
     
     lv_platform_config_get_string("LOGVIEWER", "Tank Centred", "No", val, sizeof(val));
     s_tank_centred = (val[0] == 'Y' || val[0] == 'y');
-    
+
+    /* screen.c owns the flag; the menu only pushes the stored value in. */
+    lv_platform_config_get_string("LOGVIEWER", "Hide Lobby", "Yes", val, sizeof(val));
+    lv_screenSetHideLobby((val[0] == 'Y' || val[0] == 'y') ? 1 : 0);
+
     lv_platform_config_get_string("LOGVIEWER", "DNS Lookups", "No", val, sizeof(val));
     s_dns_lookups = (val[0] == 'Y' || val[0] == 'y');
     
@@ -138,6 +142,8 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
 void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Tank Centred", s_tank_centred ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Hide Lobby",
+                                  lv_screenGetHideLobby() ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "DNS Lookups", s_dns_lookups ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Mode", s_mode_information ? "Information" : "Select Teams");
     lv_platform_config_set_string("LOGVIEWER", "Window.Controls.Visible", lv_g_show_controls_window ? "Yes" : "No");
@@ -164,6 +170,14 @@ int lv_imgui_get_tank_centred(void) { return s_tank_centred ? 1 : 0; }
 void lv_imgui_toggle_tank_centred(void) {
     s_tank_centred = !s_tank_centred;
     lv_screenTankCentred(s_tank_centred ? 1 : 0);
+}
+
+/* No cached copy: screen.c holds the flag, and enabling it can move the
+ * playhead, so the menu always reads the live value back. */
+int lv_imgui_get_hide_lobby(void) { return lv_screenGetHideLobby(); }
+
+void lv_imgui_toggle_hide_lobby(void) {
+    lv_screenSetHideLobby(lv_screenGetHideLobby() ? 0 : 1);
 }
 
 int lv_imgui_get_dns_lookups(void) { return s_dns_lookups ? 1 : 0; }
@@ -372,6 +386,11 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_LV_TANK_CENTRED), "Ctrl+T", s_tank_centred)) {
                 s_tank_centred = !s_tank_centred;
                 lv_screenTankCentred(s_tank_centred ? 1 : 0);
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_LV_HIDE_LOBBY), NULL,
+                                lv_screenGetHideLobby() != 0)) {
+                lv_imgui_toggle_hide_lobby();
                 clicked = 1;
             }
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {

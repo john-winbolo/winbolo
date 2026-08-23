@@ -1542,6 +1542,9 @@
 #define STR_DLGSETTINGS_HOSTING_LOGDIR          1919
 #define STR_DLGSETTINGS_HOSTING_APPLYNOTE       1920
 
+/* Log viewer Options menu */
+#define STR_LV_HIDE_LOBBY                   1921
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

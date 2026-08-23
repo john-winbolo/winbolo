@@ -138,6 +138,10 @@ void lv_windowAddEvent(int eventType, char *msg) {
     lv_imgui_events_add(eventType, msg);
 }
 
+void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
+    lv_imgui_events_add_highlight(msg, seekMs, mapX, mapY);
+}
+
 void lv_windowAddSummary(char *msg) {
     lv_imgui_events_add_summary(msg);
 }
