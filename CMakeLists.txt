@@ -3568,6 +3568,8 @@ set(_unit_test_names
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
     lv_walk_base_anchor_ordinal
+    lv_hide_lobby_window_mapping
+    lv_hide_lobby_no_lobby_fallback
     blocks_stream
     stream_load
     stream_pump

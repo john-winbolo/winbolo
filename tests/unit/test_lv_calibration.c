@@ -319,3 +319,171 @@ int run_lv_walk_base_anchor_ordinal(void) {
   remove(path);
   return 0;
 }
+
+/*
+ * Presentation window (Hide Lobby): a two-minute lobby in front of a
+ * one-minute game, so the minutes field is non-zero on both sides of the
+ * window. Playback ticks, per the walker (a snapshot or event frame counts
+ * +1, NOEVENTS n counts 1 + n, 20 ms a tick; the opening snapshot is consumed
+ * at load and counts 0):
+ *
+ *   24 x NOEVENTS 249  -> tick 6000
+ *   LobbyExit frame    -> tick 6001  (gameStartMs 120020)
+ *   NOEVENTS 99        -> tick 6101
+ *   snapshot           -> tick 6102  (ms 122040)
+ *   12 x NOEVENTS 249  -> tick 9102
+ *   LOG_QUIT           -> tick 9103  (totalTimeMs 182060)
+ *
+ * The two walkers differ on that last frame: lv_walkComputeTotalTimeMs counts
+ * LOG_QUIT as a tick and lv_walkComputeGameStartMs does not. That matches the
+ * decoder, which advances timeRunning before reading the byte, so the tick
+ * that consumes LOG_QUIT is the one that ends playback and the end of the log
+ * is 182060, not the 182040 of the last wait.
+ *
+ * Window [120020, 182060), length 62040. While it is on, progress, both seeks
+ * and the clock run on the game's own 0..62040; the decoder's timeRunning and
+ * the times the seeks are handed stay absolute throughout.
+ */
+int run_lv_hide_lobby_window_mapping(void) {
+  const char *path = "lv_hide_lobby_window.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  size_t curPos, totSize;
+  uint32_t curTime, totTime;
+  char buf[16];
+  int savedHide = lv_screenGetHideLobby();
+  int i;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, false);          /* lobby: empty world, empty base table */
+  for (i = 0; i < 24; i++) {
+    putNoEvents(&b, 249);          /* waitLen is a uint8_t, so loop the wait */
+  }
+  putEventFrame(&b, log_LobbyExit, NULL, 0);
+  putNoEvents(&b, 99);
+  putSnapshot(&b, true);
+  for (i = 0; i < 12; i++) {
+    putNoEvents(&b, 249);
+  }
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic hide-lobby log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenGameStartMs() == 120020,
+                "gameStartMs = %u (want 120020)", lv_screenGameStartMs());
+
+  /* Straight after load the park has landed on game start, so 00:00 and the
+   * first rendered frame agree. */
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(totTime == 62040, "window length = %u (want 62040)", totTime);
+  UT_ASSERT_MSG(curTime == 0, "position after load = %u (want 0)", curTime);
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 120020,
+                "parked at %u absolute (want 120020)",
+                lv_screenGetTimeRunning());
+
+  lv_screenSeekToPosition(1.0f);
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(curTime == 62040, "seek to 1.0 = %u (want 62040)", curTime);
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 182060,
+                "seek to 1.0 = %u absolute (want 182060)",
+                lv_screenGetTimeRunning());
+
+  lv_screenSeekToPosition(0.0f);
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(curTime == 0, "seek to 0.0 = %u (want 0)", curTime);
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 120020,
+                "seek to 0.0 = %u absolute (want 120020)",
+                lv_screenGetTimeRunning());
+
+  /* Highlight clip times are absolute; the seek maps them into the window. */
+  lv_screenSeekToTimeMs(122040);
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(curTime == 2020, "absolute seek = %u (want 2020)", curTime);
+
+  /* An absolute time inside the lobby clamps forward to game start. */
+  lv_screenSeekToTimeMs(1000);
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(curTime == 0, "lobby-time seek = %u (want 0)", curTime);
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 120020,
+                "lobby-time seek = %u absolute (want 120020)",
+                lv_screenGetTimeRunning());
+
+  lv_screenFormatTime(182060, buf, sizeof buf);
+  UT_ASSERT_MSG(strcmp(buf, "01:02") == 0,
+                "end of window formats \"%s\" (want 01:02)", buf);
+  lv_screenFormatTime(122040, buf, sizeof buf);
+  UT_ASSERT_MSG(strcmp(buf, "00:02") == 0,
+                "mid-game formats \"%s\" (want 00:02)", buf);
+  lv_screenFormatTime(1000, buf, sizeof buf);
+  UT_ASSERT_MSG(strcmp(buf, "00:00") == 0,
+                "lobby time formats \"%s\" (want 00:00)", buf);
+
+  /* Un-tick: the whole-file numbers are back, the same instant reads three
+   * minutes later (the window start), and the playhead has not moved. */
+  lv_screenSetHideLobby(0);
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(totTime == 182060, "whole-file length = %u (want 182060)",
+                totTime);
+  UT_ASSERT_MSG(curTime == lv_screenGetTimeRunning(),
+                "whole-file position = %u (want %u)", curTime,
+                lv_screenGetTimeRunning());
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 120020,
+                "un-tick moved the playhead to %u (want 120020)",
+                lv_screenGetTimeRunning());
+  lv_screenFormatTime(182060, buf, sizeof buf);
+  UT_ASSERT_MSG(strcmp(buf, "03:02") == 0,
+                "whole-file end formats \"%s\" (want 03:02)", buf);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * No log_LobbyExit (a pre-lobby log, or a server that never sat in one): the
+ * window is the whole file, so the toggle is inert — the same progress numbers
+ * either way, and no park at load.
+ */
+int run_lv_hide_lobby_no_lobby_fallback(void) {
+  const char *path = "lv_hide_lobby_nolobby.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  size_t onPos, onSize, offPos, offSize;
+  uint32_t onTime, onTotal, offTime, offTotal;
+  int savedHide = lv_screenGetHideLobby();
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putBaseSetOwner(&b, 0, 2);
+  putNoEvents(&b, 50);
+  putBaseSetOwner(&b, 1, 3);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic no-lobby log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenGameStartMs() == 0,
+                "gameStartMs = %u (want 0)", lv_screenGameStartMs());
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 0,
+                "a no-lobby log parked at %u (want 0)",
+                lv_screenGetTimeRunning());
+
+  lv_screenGetLogProgress(&onPos, &onSize, &onTime, &onTotal);
+  lv_screenSetHideLobby(0);
+  lv_screenGetLogProgress(&offPos, &offSize, &offTime, &offTotal);
+  UT_ASSERT_MSG(onPos == offPos && onSize == offSize && onTime == offTime &&
+                    onTotal == offTotal,
+                "the toggle moved a no-lobby log: %u/%u on, %u/%u off",
+                onTime, onTotal, offTime, offTotal);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}

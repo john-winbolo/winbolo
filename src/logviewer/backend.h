@@ -568,7 +568,21 @@ bool lv_screenCloseLog();
 void lv_screenFastForward();
 void lv_screenRewind();
 void lv_screenGetTime(char *dest);
+/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);
+/* Playback position in absolute log ms (the decoder's own clock, not the
+ * presented window). */
+uint32_t lv_screenGetTimeRunning(void);
 void lv_screenTankCentred(int enabled);
+
+/* Presentation window ("Hide Lobby"). While enabled and the loaded log carries a
+ * log_LobbyExit marker, displayed times and every seek run against
+ * [gameStart, totalTime) rather than the whole file; the decoder, the snapshot
+ * index and the highlight clip times stay absolute. Enabling it while the
+ * playhead sits in the lobby seeks to game start; disabling it moves nothing.
+ * Inert on a log with no lobby and on a live spectator feed. */
+void lv_screenSetHideLobby(int enabled);
+int  lv_screenGetHideLobby(void);
 
 void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);

@@ -357,6 +357,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_walk_base_anchor_lobby_log",           run_lv_walk_base_anchor_lobby_log           },
     { "lv_walk_base_anchor_opening_snapshot",    run_lv_walk_base_anchor_opening_snapshot    },
     { "lv_walk_base_anchor_ordinal",             run_lv_walk_base_anchor_ordinal             },
+    { "lv_hide_lobby_window_mapping",            run_lv_hide_lobby_window_mapping            },
+    { "lv_hide_lobby_no_lobby_fallback",         run_lv_hide_lobby_no_lobby_fallback         },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
     { "spectator_seed_capture",                  run_spectator_seed_capture                  },
     { "blocks_stream",                           run_blocks_stream                           },

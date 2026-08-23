@@ -1814,6 +1814,12 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
  * once at load. 0 when the log has no lobby, so the game runs from tick 0. */
 static uint32_t s_gameStartMs = 0;
 
+/* Presentation window: while set, the viewer reports times and seeks against
+ * [gameStart, totalTime) instead of the whole file, so a log that sat hours in
+ * the lobby reads on the round's own clock. Absolute ms is still what the
+ * decoder, the snapshot index and the highlight clips use. */
+static bool s_hideLobby = TRUE;
+
 /* Event-stream start position (just past the opening snapshot), recorded at
  * load so later walks (the calibration anchor scan) can re-enter the stream
  * from a known-good position instead of trusting the caller's current one. */
@@ -1909,6 +1915,35 @@ static uint32_t lv_walkComputeGameStartMs(void) {
 
 /* Log time (ms) at which the game started (lobby ended); 0 if no lobby. */
 uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
+
+static void lv_screenSeekToAbsoluteMs(uint32_t targetTime);
+
+/* Start of the presented window in absolute log ms; 0 when the window is the
+ * whole file (feature off, no lobby marker, degenerate log, or a live feed). */
+static uint32_t lv_windowStartMs(void) {
+  if (s_hideLobby == FALSE) return 0;
+  if (lv_screenSpecIsLiveMode()) return 0;
+  if (g_lv == NULL) return 0;
+  if (s_gameStartMs == 0 || s_gameStartMs >= g_lv->totalTimeMs) return 0;
+  return s_gameStartMs;
+}
+
+/* Length of the presented window in ms; 0 when nothing is loaded. */
+static uint32_t lv_windowLenMs(void) {
+  uint32_t start = lv_windowStartMs();
+  if (g_lv == NULL || g_lv->totalTimeMs <= start) return 0;
+  return g_lv->totalTimeMs - start;
+}
+
+/* With the lobby hidden, a freshly loaded log opens at game start so 00:00, the
+ * first rendered frame and Play all agree. No-op when the window is the whole
+ * file. */
+static void lv_screenParkAtWindowStart(void) {
+  uint32_t start = lv_windowStartMs();
+  if (start > 0) {
+    lv_screenSeekToAbsoluteMs(start);
+  }
+}
 
 /* Scan one v2 LOG_EVENT frame for base-ownership gains, counting matches of
  * (cell, owner) for the two anchors and latching each anchor's time when its
@@ -2180,6 +2215,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lv_screenParkAtWindowStart();
   }
   return returnValue;
 }
@@ -2314,6 +2350,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lv_screenParkAtWindowStart();
   }
   return returnValue;
 }
@@ -2780,20 +2817,15 @@ void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
   }
 }
 
+/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize) {
+  uint32_t start = lv_windowStartMs();
+  uint32_t secs  = ((absMs > start) ? (absMs - start) : 0) / 1000u;
+  snprintf(dest, destSize, "%02u:%02u", secs / 60u, secs % 60u);
+}
+
 void lv_screenGetTime(char *dest) {
-  double mins;
-  double secs;
-
-  secs = g_lv->timeRunning / 1000.00;
-  mins = secs / 60.0;
-  mins = floor(mins);
-  secs = secs - (mins * 60.0);
-  secs = floor(secs);
-
-  snprintf(dest, 6, "%02d:%02d", (int) mins, (int) secs);
-  if (strcmp(dest, "02:09") == FALSE) {
-    mins = 0;
-  }
+  lv_screenFormatTime(g_lv->timeRunning, dest, 6);
 }
 
 
@@ -2832,16 +2864,15 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   lv_screenUpdate(redraw);
 }
 
-/* Seek to an absolute log time in ms, reusing the ratio-based scrubber seek. */
+/* Takes an absolute log time (highlight clip times are absolute) and clamps it
+ * into the presented window. */
 void lv_screenSeekToTimeMs(uint32_t ms) {
-  uint32_t total = g_lv->totalTimeMs;
-  if (total == 0) {
-    return;
-  }
-  if (ms > total) {
-    ms = total;
-  }
-  lv_screenSeekToPosition((float)ms / (float)total);
+  uint32_t start = lv_windowStartMs();
+  uint32_t len   = lv_windowLenMs();
+  if (len == 0) return;
+  if (ms < start) ms = start;
+  if (ms > start + len) ms = start + len;
+  lv_screenSeekToAbsoluteMs(ms);
 }
 
 void lv_screenMouseInformationClick(int xPos, int yPos) {
@@ -2923,6 +2954,23 @@ void lv_screenTankCentred(int enabled) {
   g_lv->centredTank = enabled;
 }
 
+void lv_screenSetHideLobby(int enabled) {
+  bool want = enabled ? TRUE : FALSE;
+  uint32_t start;
+  if (want == s_hideLobby) return;
+  s_hideLobby = want;
+  /* Ticking it while the playhead sits in the lobby jumps to game start;
+   * anywhere else, and on un-tick, nothing moves — only the scale relabels. */
+  if (want == FALSE) return;
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) return;
+  start = lv_windowStartMs();
+  if (start > 0 && g_lv->timeRunning < start) {
+    lv_screenSeekToAbsoluteMs(start);
+  }
+}
+
+int lv_screenGetHideLobby(void) { return s_hideLobby ? 1 : 0; }
+
 void lv_screenRewind() {
   uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;
@@ -2939,6 +2987,11 @@ void lv_screenRewind() {
       if (lv_snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
         currentTime = firstTime;
       }
+    }
+    /* A rewind never steps back into the hidden lobby; it parks at game start. */
+    if (currentTime < lv_windowStartMs()) {
+      lv_screenSeekToAbsoluteMs(lv_windowStartMs());
+      return;
     }
     g_lv->timeRunning = currentTime;
     lv_logSetPosition(wantedPos);
@@ -2957,25 +3010,33 @@ void lv_screenRewind() {
 }
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime) {
+  uint32_t start = lv_windowStartMs();
+  uint32_t len   = lv_windowLenMs();
+  uint32_t cur   = g_lv->timeRunning;
   *currentPos = lv_logGetCurrentPosition();
-  *totalSize = lv_logGetTotalSize();
-  *currentTime = g_lv->timeRunning;
-  *totalTime = g_lv->totalTimeMs;
+  *totalSize  = lv_logGetTotalSize();
+  cur = (cur > start) ? (cur - start) : 0;
+  if (cur > len) cur = len;
+  *currentTime = cur;
+  *totalTime   = len;
 }
 
 void lv_screenSeekToPosition(float ratio) {
-  uint32_t totalTime = g_lv->totalTimeMs;
-  uint32_t targetTime;
+  uint32_t start = lv_windowStartMs();
+  uint32_t len   = lv_windowLenMs();
+  if (len == 0) return;
+  if (ratio < 0.0f) ratio = 0.0f;
+  if (ratio > 1.0f) ratio = 1.0f;
+  lv_screenSeekToAbsoluteMs(start + (uint32_t)(ratio * (float)len));
+}
+
+/* Seek playback to an absolute log time: restore the newest snapshot at or
+ * before it, then fast-forward the decoder to the target. */
+static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   size_t snapPos;
   uint32_t snapTime;
   BYTE key;
   BYTE *pTeams = NULL;
-
-  if (totalTime == 0) return;
-  if (ratio < 0.0f) ratio = 0.0f;
-  if (ratio > 1.0f) ratio = 1.0f;
-
-  targetTime = (uint32_t)(ratio * (float)totalTime);
 
   if (lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams)) {
     g_lv->timeRunning = snapTime;
@@ -3061,6 +3122,9 @@ void lv_screenSpecSetLiveMode(bool on) {
   s_specHaveAnchor  = false;
   s_specPaceAccumMs = 0;
   s_specPaceLastMs  = 0;
+  /* A stream is not a round with a lobby in front of it; drop any game-start
+     offset left behind by a file loaded earlier in this session. */
+  s_gameStartMs     = 0;
   if (on) {
     /* The seed left the decoder at the head; play by default. The first
        follow-live frame re-anchors head time once a record tick is known. */

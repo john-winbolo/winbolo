@@ -640,6 +640,13 @@ int run_lv_walk_base_anchor_lobby_log(void);
 int run_lv_walk_base_anchor_opening_snapshot(void);
 int run_lv_walk_base_anchor_ordinal(void);
 
+/* Hide Lobby presentation window (test_lv_calibration.c): with the lobby
+ * hidden the viewer's progress, seeks and clock run against
+ * [gameStart, totalTime) while the decoder stays on absolute log ms; a log
+ * with no log_LobbyExit falls back to the whole file. */
+int run_lv_hide_lobby_window_mapping(void);
+int run_lv_hide_lobby_no_lobby_fallback(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
