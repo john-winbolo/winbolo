@@ -727,10 +727,24 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 #define HL_COLLAPSE_MIN_DAMAGE   200   /* summed recent fire that gates a collapse */
 #define HL_COLLAPSE_WEIGHT       110   /* below the seeded turning point, above a steal */
 
-/* Upper bound on candidate windows collected before selection. Bounded by the
- * timeline length (one steal / wipe start per event) plus the awards, the one
- * turning point, and up to one collapse per territory shift. */
-#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 2 + AWARD_COUNT + 1 + \
+/* The death-flavoured signals. Starting values chosen by eye, not derived from
+ * anything — expect them to move once real logs have been watched. */
+#define HL_LGM_MIN_KILLS         2     /* LGM kills that make a sweep */
+#define HL_LGM_TICK_WINDOW       250   /* ~5 s span for one sweep */
+#define HL_LGM_TILE_RADIUS       8     /* Chebyshev radius from the first kill */
+#define HL_LGM_WEIGHT            45    /* per LGM killed in the sweep */
+#define HL_FUMBLE_MIN_PILLS      3     /* pills a death must dump to count */
+#define HL_FUMBLE_WEIGHT         55
+#define HL_FUMBLE_PILL_BONUS     15    /* per pill above HL_FUMBLE_MIN_PILLS */
+#define HL_DROWN_WEIGHT          50
+#define HL_DROWN_PILL_BONUS      15    /* per pill carried into the sea */
+#define HL_AWARD_DEDUP_TICKS     HL_CLIP_TICKS  /* same moment as the award clip */
+
+/* Upper bound on candidate windows collected before selection. Five passes can
+ * each emit at most one window per timeline event (steals, wipes, LGM sweeps,
+ * fumbles, drownings), plus the awards, the one turning point, and up to one
+ * collapse per territory shift. */
+#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 5 + AWARD_COUNT + 1 + \
                                   TERRITORY_SHIFTS_MAX)
 
 /* A scored candidate window before selection. `endTick` is the selection span
@@ -761,6 +775,22 @@ static int hlTileDist(uint8_t ax, uint8_t ay, uint8_t bx, uint8_t by) {
 static void hlAppend(HlCand *cands, int *n, const HlCand *c) {
     if (*n >= HL_CAND_MAX) return;   /* full: drop silently */
     cands[(*n)++] = *c;
+}
+
+/* True when an award anchor for `awardId` has already been appended at almost
+ * this tick. The award pass runs first, so a signal pass that re-proposes the
+ * moment an award already points at (the biggest fumble, the last drowning, the
+ * LGM Hunter's densest cluster) skips it and lets the award clip stand for both.
+ * The candidate may fall either side of the anchor, so the gap is absolute. */
+static bool hlNearAwardAnchor(const HlCand *cands, int n, uint8_t awardId,
+                              uint32_t tick) {
+    for (int k = 0; k < n; k++) {
+        uint32_t at;
+        if (cands[k].type != HL_AWARD || cands[k].awardId != awardId) continue;
+        at = cands[k].startTick;
+        if ((tick > at ? tick - at : at - tick) < HL_AWARD_DEDUP_TICKS) return true;
+    }
+    return false;
 }
 
 /* Of the timeline events in idx[0..m), the one whose tick has the most other
@@ -881,7 +911,10 @@ static int hlWindowCmpByStart(const void *pa, const void *pb) {
 
 /* Walk earlier events contiguous to the anchor — same locale, small tick gaps —
  * to widen the window's start, bounded by the max lead-in. Also settles the end
- * tick: a wipe keeps its last clustered death, a point anchor gets a fixed clip. */
+ * tick, which holds one invariant: every anchored clip runs at least one clip
+ * length, and longer when the cluster it was built from ran longer. A signal
+ * anchored on a single moment has no cluster to outrun the floor, so it gets
+ * exactly one clip length. */
 static void hlLeadIn(const NotableEvent *tl, const HlCand *c,
                      uint32_t *outStart, uint32_t *outEnd) {
     uint32_t anchorTick = tl[c->anchorIdx].tick;
@@ -899,8 +932,8 @@ static void hlLeadIn(const NotableEvent *tl, const HlCand *c,
     }
 
     *outStart = start;
-    uint32_t end = (c->type == HL_CLUSTER_WIPE) ? c->endTick
-                                                : anchorTick + HL_CLIP_TICKS;
+    uint32_t end = anchorTick + HL_CLIP_TICKS;
+    if (c->endTick > end) end = c->endTick;
     if (end < start) end = start;
     *outEnd = end;
 }
@@ -1074,6 +1107,107 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
         }
     }
 
+    /* Multi-LGM sweeps: one player cutting down several men in a single short
+     * push. Greedy like the wipe loop — the next start jumps past the sweep just
+     * emitted, so a rampage yields one window, not one per man. NOTABLE_LGM_LOST
+     * names the killer in actorA and the man's owner in actorB. */
+    {
+        uint32_t clusterEnd = 0;
+        bool haveCluster = false;
+        for (int i = 0; i < timelineCount; i++) {
+            if (timeline[i].type != NOTABLE_LGM_LOST) continue;
+            if (haveCluster && timeline[i].tick <= clusterEnd) continue;
+
+            uint32_t winEnd = timeline[i].tick + HL_LGM_TICK_WINDOW;
+            uint32_t lastEvTick = timeline[i].tick;
+            int count = 0;
+            HlCand c;
+
+            for (int j = i; j < timelineCount; j++) {
+                if (timeline[j].type != NOTABLE_LGM_LOST) continue;
+                if (timeline[j].actorA != timeline[i].actorA) continue;
+                if (timeline[j].tick < timeline[i].tick ||
+                    timeline[j].tick > winEnd) continue;
+                if (hlTileDist(timeline[i].mapX, timeline[i].mapY,
+                               timeline[j].mapX, timeline[j].mapY) > HL_LGM_TILE_RADIUS)
+                    continue;
+                count++;
+                if (timeline[j].tick > lastEvTick) lastEvTick = timeline[j].tick;
+            }
+            if (count < HL_LGM_MIN_KILLS) continue;
+            if (hlNearAwardAnchor(cands, candCount, AWARD_LGM_HUNTER,
+                                  timeline[i].tick)) continue;
+
+            c.anchorIdx = i;
+            c.startTick = timeline[i].tick;
+            c.endTick   = lastEvTick;
+            c.mapX = timeline[i].mapX;
+            c.mapY = timeline[i].mapY;
+            c.type = HL_MULTI_LGM;
+            c.awardId = 0;
+            c.actorA = timeline[i].actorA;
+            c.actorB = NEUTRAL;
+            c.value = (uint32_t)count;
+            c.score = (uint32_t)(HL_LGM_WEIGHT * count);
+            hlAppend(cands, &candCount, &c);
+            clusterEnd = lastEvTick;
+            haveCluster = true;
+        }
+    }
+
+    /* Fumbles: a death that dumped a big load of carried pills. The clip is about
+     * the player who lost them, so they are actorA and their killer is actorB.
+     * Drownings are left to the pass below, which pays its own pill bonus. */
+    for (int i = 0; i < timelineCount; i++) {
+        HlCand c;
+        uint32_t pills;
+        if (timeline[i].type != NOTABLE_KILL) continue;
+        if (timeline[i].carriedPills < HL_FUMBLE_MIN_PILLS) continue;
+        if (timeline[i].deathCause == LAST_DEATH_BY_DEEPSEA) continue;
+        if (hlNearAwardAnchor(cands, candCount, AWARD_BIGGEST_FUMBLE,
+                              timeline[i].tick)) continue;
+        pills = timeline[i].carriedPills;
+        c.anchorIdx = i;
+        c.startTick = timeline[i].tick;
+        c.endTick   = timeline[i].tick;
+        c.mapX = timeline[i].mapX;
+        c.mapY = timeline[i].mapY;
+        c.type = HL_FUMBLE;
+        c.awardId = 0;
+        c.actorA = timeline[i].actorB;   /* the one who died and dropped them */
+        c.actorB = timeline[i].actorA;   /* the killer */
+        c.value = pills;
+        c.score = (uint32_t)(HL_FUMBLE_WEIGHT +
+                             HL_FUMBLE_PILL_BONUS * (pills - HL_FUMBLE_MIN_PILLS));
+        hlAppend(cands, &candCount, &c);
+    }
+
+    /* Drownings, worth more the more pills went into the sea with the tank. The
+     * type check is load-bearing: deathCause is 0 on every non-kill event and
+     * LAST_DEATH_BY_MINES is also 0, so an unset field and a mine death are the
+     * same byte and only NOTABLE_KILL entries may be read for a cause. */
+    for (int i = 0; i < timelineCount; i++) {
+        HlCand c;
+        uint32_t pills;
+        if (timeline[i].type != NOTABLE_KILL) continue;
+        if (timeline[i].deathCause != LAST_DEATH_BY_DEEPSEA) continue;
+        if (hlNearAwardAnchor(cands, candCount, AWARD_FISH_FOOD,
+                              timeline[i].tick)) continue;
+        pills = timeline[i].carriedPills;
+        c.anchorIdx = i;
+        c.startTick = timeline[i].tick;
+        c.endTick   = timeline[i].tick;
+        c.mapX = timeline[i].mapX;
+        c.mapY = timeline[i].mapY;
+        c.type = HL_RARE_DEATH;
+        c.awardId = 0;
+        c.actorA = timeline[i].actorB;   /* the one who drowned */
+        c.actorB = NEUTRAL;              /* the sea is not a killer */
+        c.value = pills;
+        c.score = (uint32_t)(HL_DROWN_WEIGHT + HL_DROWN_PILL_BONUS * pills);
+        hlAppend(cands, &candCount, &c);
+    }
+
     /* Turning point: the HL_TURN_WINDOW-tick span over which one team gained the
      * most map control. One per round — the moment the map stopped being even. */
     if (shifts != NULL && shiftCount > 0) {
@@ -1130,7 +1264,7 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
             c.endTick   = shifts[bestLast].tick;
             c.mapX = shifts[bestDom].mapX;
             c.mapY = shifts[bestDom].mapY;
-            c.type = HL_BREAKTHROUGH;
+            c.type = HL_TURNING_POINT;
             c.awardId = 0;
             c.actorA = rep;
             c.actorB = NEUTRAL;   /* a swing is a team's, not one player's */
@@ -1208,8 +1342,8 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
      * reel spans the round instead of bunching where the scores run hottest. The
      * turning point is seeded ahead of the loop rather than left to win on score,
      * so the one window that explains how the round was decided always survives.
-     * It always outscores a collapse (both HL_BREAKTHROUGH), so it is the first of
-     * that type after the sort and the one the seed grabs. */
+     * It carries its own type and at most one is ever produced, so the seed finds
+     * it by type; the sort order it lands in does not matter. */
     {
         uint32_t span = lastTick > firstTick ? (lastTick - firstTick) : 0;
         bool bucketed = (span > 0);
@@ -1222,7 +1356,7 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
 
         qsort(cands, candCount, sizeof(HlCand), hlCandCmp);
         for (int i = 0; i < candCount; i++)
-            if (cands[i].type == HL_BREAKTHROUGH) { turnIdx = i; break; }
+            if (cands[i].type == HL_TURNING_POINT) { turnIdx = i; break; }
         if (turnIdx >= 0) {
             /* The seed is exempt from the cap but still fills its bucket's tally. */
             accepted[acceptCount++] = turnIdx;

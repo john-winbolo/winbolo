@@ -1591,7 +1591,7 @@ int run_highlights_turning_point(void) {
     team[3] = team[4] = team[5] = 1;   /* the swing's team, and the wipe's dead */
 
     /* No prior fire on these shifts, so nothing here qualifies as a collapse and
-     * only the seeded turning point is a breakthrough. */
+     * the seeded turning point is the only territory-derived window. */
     memset(shifts, 0, sizeof shifts);
     shifts[0].tick = 1000; shifts[0].mapX = 30; shifts[0].mapY = 30;
     shifts[0].gainTeam = 1; shifts[0].loseTeam = 2; shifts[0].cellsFlipped = 200;
@@ -1607,7 +1607,7 @@ int run_highlights_turning_point(void) {
                       HIGHLIGHTS_MAX);
 
     for (int i = 0; i < n; i++) {
-        if (out[i].type == HL_BREAKTHROUGH) { turns++; turn = &out[i]; }
+        if (out[i].type == HL_TURNING_POINT) { turns++; turn = &out[i]; }
         if (out[i].type == HL_CLUSTER_WIPE)   wipes++;
     }
     UT_ASSERT_MSG(turns == 1, "exactly one turning point, got %d", turns);
@@ -1688,7 +1688,7 @@ int run_highlights_front_collapse(void) {
     uint8_t team[MAX_TANKS];
     HighlightWindow out[HIGHLIGHTS_MAX];
     int n = -1;
-    int turns = 0;
+    int turns = 0, collapses = 0;
     const HighlightWindow *collapse = NULL, *point = NULL;
 
     tl[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
@@ -1714,16 +1714,18 @@ int run_highlights_front_collapse(void) {
     computeHighlights(tl, 1, NULL, team, NULL, 0, shifts, 4, out, &n,
                       HIGHLIGHTS_MAX);
 
+    /* The two are told apart by type, not by where they land. */
     for (int i = 0; i < n; i++) {
-        if (out[i].type != HL_BREAKTHROUGH) continue;
-        turns++;
-        if (out[i].startTick == 5000) collapse = &out[i];
-        else                          point = &out[i];
+        if (out[i].type == HL_TURNING_POINT)     { turns++;     point = &out[i]; }
+        else if (out[i].type == HL_BREAKTHROUGH) { collapses++; collapse = &out[i]; }
     }
-    UT_ASSERT_MSG(turns == 2, "turning point plus one collapse, got %d", turns);
+    UT_ASSERT_MSG(turns == 1 && collapses == 1,
+                  "one turning point plus one collapse, got %d and %d",
+                  turns, collapses);
     UT_ASSERT_MSG(point != NULL && point->startTick == 1000,
                   "turning point spans cluster A");
-    UT_ASSERT_MSG(collapse != NULL, "the shelled swing is a collapse");
+    UT_ASSERT_MSG(collapse != NULL && collapse->startTick == 5000,
+                  "the shelled swing is a collapse");
     UT_ASSERT_MSG(collapse->value == 200, "collapse sums its cluster's cells, got %u",
                   collapse != NULL ? collapse->value : 0);
     UT_ASSERT_MSG(collapse->mapX == 91 && collapse->mapY == 91,
@@ -1738,12 +1740,16 @@ int run_highlights_front_collapse(void) {
     shifts[3].recentDamage = 0;
     n = -1;
     turns = 0;
+    collapses = 0;
     computeHighlights(tl, 1, NULL, team, NULL, 0, shifts, 4, out, &n,
                       HIGHLIGHTS_MAX);
-    for (int i = 0; i < n; i++)
-        if (out[i].type == HL_BREAKTHROUGH) turns++;
-    UT_ASSERT_MSG(turns == 1, "without prior fire only the turning point, got %d",
-                  turns);
+    for (int i = 0; i < n; i++) {
+        if (out[i].type == HL_TURNING_POINT)     turns++;
+        else if (out[i].type == HL_BREAKTHROUGH) collapses++;
+    }
+    UT_ASSERT_MSG(turns == 1 && collapses == 0,
+                  "without prior fire only the turning point, got %d and %d",
+                  turns, collapses);
 
     return 0;
 }
@@ -1814,6 +1820,175 @@ int run_highlights_time_spread(void) {
     }
     UT_ASSERT_MSG(late == 2, "the final bucket is capped at two, got %d", late);
     UT_ASSERT_MSG(mid >= 1, "a mid-round pick survives the cap, got %d", mid);
+
+    return 0;
+}
+
+/* Men cut down by one player close in tick and space collapse to a single sweep
+ * whose value is the body count; a kill by the same player well outside the
+ * radius stays out of it, and one man alone is no sweep. */
+int run_highlights_multi_lgm(void) {
+    NotableEvent tl[3];
+    NotableEvent lone[1];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    int sweeps = 0;
+    const HighlightWindow *sweep = NULL;
+
+    /* Two of slot 5's men taken by slot 2 in one push, then a third of slot 6's
+     * inside the tick window but right across the map. */
+    tl[0] = mkEvent(100, 10, 10, NOTABLE_LGM_LOST, 2, 5, 0, 0, 0);
+    tl[1] = mkEvent(150, 12, 11, NOTABLE_LGM_LOST, 2, 5, 0, 0, 0);
+    tl[2] = mkEvent(300, 60, 60, NOTABLE_LGM_LOST, 2, 6, 0, 0, 0);
+
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    for (int i = 0; i < n; i++)
+        if (out[i].type == HL_MULTI_LGM) { sweeps++; sweep = &out[i]; }
+    UT_ASSERT_MSG(n == 1, "one window in all, got %d", n);
+    UT_ASSERT_MSG(sweeps == 1, "one sweep, got %d", sweeps);
+    UT_ASSERT_MSG(sweep->value == 2, "the far kill stays out of the sweep, got %u",
+                  sweep->value);
+    UT_ASSERT_MSG(sweep->actorA == 2, "the sweep names the killer, got %u",
+                  sweep->actorA);
+    UT_ASSERT_MSG(sweep->startTick == 100, "sweep starts at the first man, got %u",
+                  sweep->startTick);
+    UT_ASSERT_MSG(sweep->startTick + sweep->durationTicks == 350,
+                  "sweep runs a full clip length, got %u",
+                  sweep->startTick + sweep->durationTicks);
+    UT_ASSERT_MSG(sweep->mapX == 10 && sweep->mapY == 10,
+                  "sweep sits at the first kill's cell, got %u,%u",
+                  sweep->mapX, sweep->mapY);
+
+    lone[0] = mkEvent(100, 10, 10, NOTABLE_LGM_LOST, 2, 5, 0, 0, 0);
+    n = -1;
+    computeHighlights(lone, 1, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "one man alone is no sweep, got %d", n);
+
+    return 0;
+}
+
+/* A death that dumps enough pills is a fumble told from the loser's side; a
+ * small dump is not one, and a drowning belongs to the rare-death signal even
+ * when it takes pills down with it. */
+int run_highlights_fumble(void) {
+    NotableEvent tl[2];
+    NotableEvent drown[1];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+
+    /* Two lone deaths, far enough apart in tick and cell to form no wipe. */
+    tl[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 3, 7, 0, LAST_DEATH_BY_SHELL, 4);
+    tl[1] = mkEvent(2000, 60, 60, NOTABLE_KILL, 3, 8, 0, LAST_DEATH_BY_SHELL, 2);
+
+    computeHighlights(tl, 2, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(n == 1, "only the big dump is a fumble, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_FUMBLE, "type fumble, got %u", out[0].type);
+    UT_ASSERT_MSG(out[0].value == 4, "fumble counts the pills dropped, got %u",
+                  out[0].value);
+    UT_ASSERT_MSG(out[0].actorA == 7, "the clip is about the player who lost them, got %u",
+                  out[0].actorA);
+    UT_ASSERT_MSG(out[0].actorB == 3, "with the killer second, got %u", out[0].actorB);
+
+    /* A drowning carrying pills is a rare death, never a fumble. */
+    drown[0] = mkEvent(500, 20, 20, NOTABLE_KILL, 7, 7, 0, LAST_DEATH_BY_DEEPSEA, 5);
+    n = -1;
+    computeHighlights(drown, 1, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 1, "one window for the drowning, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_RARE_DEATH,
+                  "a drowning is not a fumble, got %u", out[0].type);
+
+    return 0;
+}
+
+/* A drowning is its own signal, worth more with pills aboard; an ordinary shell
+ * death is not one, and deathCause is only read off a kill — on any other event
+ * that byte is padding. */
+int run_highlights_rare_death(void) {
+    NotableEvent tl[4];
+    NotableEvent laden[1], empty[1];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    HighlightWindow ladenOut[HIGHLIGHTS_MAX], emptyOut[HIGHLIGHTS_MAX];
+    int n = -1, nl = -1, ne = -1;
+    int drowns = 0;
+    const HighlightWindow *drowned = NULL;
+
+    /* A drowning, a shell death, and two pickups — one with the 0 byte the field
+     * carries off a kill (which is also LAST_DEATH_BY_MINES), one with a deepsea
+     * byte it has no business having. Neither is a death, so neither may be read
+     * for a cause. */
+    tl[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 4, 4, 0, LAST_DEATH_BY_DEEPSEA, 0);
+    tl[1] = mkEvent(2000, 60, 60, NOTABLE_KILL, 5, 6, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(4000, 80, 80, NOTABLE_PICKUP, 7, NEUTRAL, 0, 0, 0);
+    tl[3] = mkEvent(6000, 90, 90, NOTABLE_PICKUP, 7, NEUTRAL, 0,
+                    LAST_DEATH_BY_DEEPSEA, 0);
+
+    computeHighlights(tl, 4, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    for (int i = 0; i < n; i++)
+        if (out[i].type == HL_RARE_DEATH) { drowns++; drowned = &out[i]; }
+    UT_ASSERT_MSG(n == 1, "the shell death and the pickups yield nothing, got %d", n);
+    UT_ASSERT_MSG(drowns == 1, "one drowning, got %d", drowns);
+    UT_ASSERT_MSG(drowned->actorA == 4, "names the player who drowned, got %u",
+                  drowned->actorA);
+    UT_ASSERT_MSG(drowned->actorB == NEUTRAL, "a drowning has no killer, got %u",
+                  drowned->actorB);
+    UT_ASSERT_MSG(drowned->value == 0, "nothing went down with it, got %u",
+                  drowned->value);
+
+    /* Same drowning with a full load: same signal, a higher score. */
+    laden[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 4, 4, 0, LAST_DEATH_BY_DEEPSEA, 3);
+    empty[0] = mkEvent(100, 10, 10, NOTABLE_KILL, 4, 4, 0, LAST_DEATH_BY_DEEPSEA, 0);
+    computeHighlights(laden, 1, NULL, NULL, NULL, 0, NULL, 0, ladenOut, &nl,
+                      HIGHLIGHTS_MAX);
+    computeHighlights(empty, 1, NULL, NULL, NULL, 0, NULL, 0, emptyOut, &ne,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(nl == 1 && ne == 1, "one drowning each, got %d and %d", nl, ne);
+    UT_ASSERT_MSG(ladenOut[0].type == HL_RARE_DEATH && emptyOut[0].type == HL_RARE_DEATH,
+                  "both are rare deaths, got %u and %u",
+                  ladenOut[0].type, emptyOut[0].type);
+    UT_ASSERT_MSG(ladenOut[0].value == 3, "the pills that went down, got %u",
+                  ladenOut[0].value);
+    UT_ASSERT_MSG(ladenOut[0].score > emptyOut[0].score,
+                  "a laden drowning scores higher: %u vs %u",
+                  ladenOut[0].score, emptyOut[0].score);
+
+    return 0;
+}
+
+/* When a signal re-proposes the exact moment an award already anchors on, the
+ * award clip stands for both — even though this fumble outscores an award anchor
+ * and would otherwise have taken the slot. */
+int run_highlights_award_dedup(void) {
+    NotableEvent tl[1];
+    AwardResult aw[1];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+
+    /* Eight pills: HL_FUMBLE_WEIGHT + 5 * HL_FUMBLE_PILL_BONUS = 130, above the
+     * award anchor's 120, so score alone would pick the fumble. */
+    tl[0] = mkEvent(1000, 30, 30, NOTABLE_KILL, 2, 6, 0, LAST_DEATH_BY_SHELL, 8);
+
+    aw[0].awardId = AWARD_BIGGEST_FUMBLE; aw[0].winnerSlot = 6;
+    aw[0].subjectSlot = NEUTRAL; aw[0].winnerIsBot = 0; aw[0].value = 8;
+
+    computeHighlights(tl, 1, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(n == 1, "one window for the moment, not two, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_AWARD, "the award clip survives, got type %u",
+                  out[0].type);
+    UT_ASSERT_MSG(out[0].awardId == AWARD_BIGGEST_FUMBLE, "biggest fumble, got %u",
+                  out[0].awardId);
+
+    /* Without that award the same death is a fumble in its own right. */
+    n = -1;
+    computeHighlights(tl, 1, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 1, "one fumble window, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_FUMBLE, "type fumble, got %u", out[0].type);
+    UT_ASSERT_MSG(out[0].value == 8, "eight pills dropped, got %u", out[0].value);
 
     return 0;
 }

@@ -3450,6 +3450,10 @@ set(_unit_test_names
     highlights_front_collapse
     highlights_award_anchor_density
     highlights_time_spread
+    highlights_multi_lgm
+    highlights_fumble
+    highlights_rare_death
+    highlights_award_dedup
     lv_stats_clip_time_format
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing

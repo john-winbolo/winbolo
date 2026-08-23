@@ -175,9 +175,9 @@ void lvStatsEmitRoundSummary(void) {
 
   /* Score the timeline into a ranked, non-overlapping set of clips and emit one
    * line per selection; the panel prefixes each with its own clip time. Only
-   * HL_AWARD, HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL and HL_BREAKTHROUGH are
-   * produced today; other types get a safe generic label until their signals
-   * come online. */
+   * HL_AWARD, HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL, HL_MULTI_LGM, HL_FUMBLE,
+   * HL_RARE_DEATH, HL_BREAKTHROUGH and HL_TURNING_POINT are produced today;
+   * other types get a safe generic label until their signals come online. */
   hlCount = 0;
   computeHighlights(timeline, timelineCount, stats, team, awards, awardCount,
                     shifts, shiftCount, hl, &hlCount, LV_HIGHLIGHTS_SHOWN);
@@ -268,7 +268,33 @@ void lvStatsEmitRoundSummary(void) {
       snprintf(line, sizeof(line), "Steal (%s from %s)", actorA, actorB);
       break;
     }
+    case HL_MULTI_LGM:
+      snprintf(line, sizeof(line), "LGM sweep: %u down (%s)", h->value, actorA);
+      break;
+    case HL_FUMBLE:
+      snprintf(line, sizeof(line), "Fumble: %u pills dropped (%s)", h->value,
+               actorA);
+      break;
+    case HL_RARE_DEATH:
+      if (h->value > 0) {
+        snprintf(line, sizeof(line), "Drowned with %u pills (%s)", h->value,
+                 actorA);
+      } else {
+        snprintf(line, sizeof(line), "Drowned (%s)", actorA);
+      }
+      break;
     case HL_BREAKTHROUGH:
+      /* Ground taken off a team belongs to the team that took it; actorA only
+       * names a slot standing in for it, and is NEUTRAL when the gaining team
+       * has no one to point at. */
+      if (h->actorA < header->slotCount) {
+        snprintf(line, sizeof(line), "Front collapse: %u tiles taken (%s)",
+                 h->value, actorA);
+      } else {
+        snprintf(line, sizeof(line), "Front collapse: %u tiles taken", h->value);
+      }
+      break;
+    case HL_TURNING_POINT:
       /* A swing belongs to a team; actorA only names a slot standing in for it,
        * and is NEUTRAL when the gaining team has no one to point at. */
       if (h->actorA < header->slotCount) {
