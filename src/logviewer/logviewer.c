@@ -194,6 +194,10 @@ void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
     lv_imgui_events_add_highlight(msg, seekMs, mapX, mapY);
 }
 
+void lv_windowAddSummary(char *msg) {
+    lv_imgui_events_add_summary(msg);
+}
+
 /* Remove events that are ahead of the given playback time (during rewind/seek). */
 void lv_windowRemoveEventsAfter(uint32_t timeMs) {
     lv_imgui_events_remove_after(timeMs);

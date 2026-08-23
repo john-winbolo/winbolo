@@ -561,6 +561,9 @@ void lv_windowAddEvent(int eventType, char *msg);
 /* Add a clickable highlight line: clicking it in the events panel seeks a few
  * seconds before seekMs and centres the game view on the (mapX,mapY) cell. */
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY);
+/* Add a load-time round-summary line: no stamp of its own, pinned above the
+ * timeline feed so the presentation window never hides it. */
+void lv_windowAddSummary(char *msg);
 void lv_windowStop(int corruptLog);
 void lv_finished();
 
@@ -583,6 +586,10 @@ void lv_screenTankCentred(int enabled);
  * Inert on a log with no lobby and on a live spectator feed. */
 void lv_screenSetHideLobby(int enabled);
 int  lv_screenGetHideLobby(void);
+
+/* Start of the presented window in absolute log ms; 0 when the window is the
+ * whole file. Event lines below it belong to the hidden lobby. */
+uint32_t lv_screenWindowStartMs(void);
 
 void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);

@@ -2971,6 +2971,8 @@ void lv_screenSetHideLobby(int enabled) {
 
 int lv_screenGetHideLobby(void) { return s_hideLobby ? 1 : 0; }
 
+uint32_t lv_screenWindowStartMs(void) { return lv_windowStartMs(); }
+
 void lv_screenRewind() {
   uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;

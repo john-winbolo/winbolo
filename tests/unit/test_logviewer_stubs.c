@@ -84,6 +84,7 @@ void lv_windowAddEvent(int eventType, char *msg) { (void)eventType; (void)msg; }
 void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
   (void)msg; (void)seekMs; (void)mapX; (void)mapY;
 }
+void lv_windowAddSummary(char *msg) { (void)msg; }
 void lv_windowStop(int corruptLog) { (void)corruptLog; }
 
 /* Defined in draw.c. */

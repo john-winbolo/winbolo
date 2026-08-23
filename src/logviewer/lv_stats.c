@@ -28,7 +28,7 @@
 #include <string.h>
 
 #include "attribution_track.h"       /* AttrTrackHeader, AttrSlotIdentity */
-#include "backend.h"                 /* lv_windowAddEvent */
+#include "backend.h"                 /* lv_windowAddSummary, lv_windowAddHighlight */
 #include "lv_attribution.h"          /* lvAttributionGetHeader / GetRecords */
 #include "round_stats.h"             /* PlayerRoundStats, AwardResult, HighlightWindow */
 #include "round_stats_derive.h"      /* roundStatsApplyRecord, computeAwards, computeHighlights */
@@ -170,13 +170,14 @@ void lvStatsEmitRoundSummary(void) {
                a->winnerIsBot ? " (bot)" : "", a->value);
     }
 
-    lv_windowAddEvent(0, line);
+    lv_windowAddSummary(line);
   }
 
   /* Score the timeline into a ranked, non-overlapping set of clips and emit one
-   * line per selection, prefixed with its m:ss start. Only HL_AWARD,
-   * HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL and HL_BREAKTHROUGH are produced today;
-   * other types get a safe generic label until their signals come online. */
+   * line per selection; the panel prefixes each with its own clip time. Only
+   * HL_AWARD, HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL and HL_BREAKTHROUGH are
+   * produced today; other types get a safe generic label until their signals
+   * come online. */
   hlCount = 0;
   computeHighlights(timeline, timelineCount, stats, team, awards, awardCount,
                     shifts, shiftCount, hl, &hlCount, LV_HIGHLIGHTS_SHOWN);
@@ -234,17 +235,15 @@ void lvStatsEmitRoundSummary(void) {
   }
 
   if (hlCount > 0) {
-    lv_windowAddEvent(0, "Highlights:");
+    lv_windowAddSummary("Highlights:");
   }
 
   for (i = 0; i < hlCount; i++) {
     const HighlightWindow *h = &hl[i];
-    char when[16];
     char actorA[PACKET_MAX_PLAYER_NAME + 16];
     char line[256];
     uint32_t clipMs = (uint32_t)(calA * (double)h->startTick + calB);
 
-    lvStatsFormatClipTime(clipMs, when, sizeof(when));
     formatSlotName(header, h->actorA, actorA, sizeof(actorA));
 
     switch (h->type) {
@@ -254,41 +253,33 @@ void lvStatsEmitRoundSummary(void) {
       if (h->awardId == AWARD_NEMESIS) {
         char actorB[PACKET_MAX_PLAYER_NAME + 16];
         formatSlotName(header, h->actorB, actorB, sizeof(actorB));
-        snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 %s (%s vs %s)",
-                 when, name, actorA, actorB);
+        snprintf(line, sizeof(line), "%s (%s vs %s)", name, actorA, actorB);
       } else {
-        snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 %s (%s)", when,
-                 name, actorA);
+        snprintf(line, sizeof(line), "%s (%s)", name, actorA);
       }
       break;
     }
     case HL_CLUSTER_WIPE:
-      snprintf(line, sizeof(line),
-               "Highlight %s \xe2\x80\x94 Team wipe: %u down (%s)", when,
-               h->value, actorA);
+      snprintf(line, sizeof(line), "Team wipe: %u down (%s)", h->value, actorA);
       break;
     case HL_OBJECTIVE_STEAL: {
       char actorB[PACKET_MAX_PLAYER_NAME + 16];
       formatSlotName(header, h->actorB, actorB, sizeof(actorB));
-      snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 Steal (%s from %s)",
-               when, actorA, actorB);
+      snprintf(line, sizeof(line), "Steal (%s from %s)", actorA, actorB);
       break;
     }
     case HL_BREAKTHROUGH:
       /* A swing belongs to a team; actorA only names a slot standing in for it,
        * and is NEUTRAL when the gaining team has no one to point at. */
       if (h->actorA < header->slotCount) {
-        snprintf(line, sizeof(line),
-                 "Highlight %s \xe2\x80\x94 Turning point: %u tiles swung (%s)",
-                 when, h->value, actorA);
+        snprintf(line, sizeof(line), "Turning point: %u tiles swung (%s)",
+                 h->value, actorA);
       } else {
-        snprintf(line, sizeof(line),
-                 "Highlight %s \xe2\x80\x94 Turning point: %u tiles swung", when,
-                 h->value);
+        snprintf(line, sizeof(line), "Turning point: %u tiles swung", h->value);
       }
       break;
     default:
-      snprintf(line, sizeof(line), "Highlight %s \xe2\x80\x94 Highlight", when);
+      snprintf(line, sizeof(line), "Highlight");
       break;
     }
 

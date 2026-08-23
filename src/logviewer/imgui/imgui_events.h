@@ -35,6 +35,10 @@ void lv_imgui_events_add(int eventType, const char *msg);
 void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
                                    int mapY);
 
+/* Add a load-time round-summary line (awards, section headers): no timestamp,
+ * and pinned so the presentation window never hides it. */
+void lv_imgui_events_add_summary(const char *msg);
+
 /* Clear all events */
 void lv_imgui_events_clear(void);
 
