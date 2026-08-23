@@ -20,7 +20,7 @@
  *  companion "X.scenario.lua"; when present the server hosts a Lua VM
  *  for the round and calls the script's hooks:
  *
- *    on_start(game)        -- once, when the sim is created
+ *    on_start(game)        -- once per round, on its first running tick
  *    on_tick(game, tick)   -- EVERY game tick while the round runs
  *
  *  The `game` API table exposes reads (tiles, pills, bases, tanks and
@@ -45,9 +45,10 @@
 struct ServerSim;
 
 /* Look for <map minus .map>.scenario.lua beside the map file; when found,
- * boot the VM, run the chunk, capture metadata, and call on_start.
- * Returns TRUE when a scenario is active afterwards. Absence of a sidecar
- * is not an error (returns FALSE, sim->scenario stays NULL). */
+ * boot the VM, run the chunk, and capture metadata (on_start fires later,
+ * from the first scenarioTick of the round). Returns TRUE when a scenario
+ * is active afterwards. Absence of a sidecar is not an error (returns
+ * FALSE, sim->scenario stays NULL). */
 bool scenarioLoad(struct ServerSim *sim, const char *mapFileName,
                   gameType game, bool hiddenMines);
 
@@ -55,6 +56,13 @@ bool scenarioLoad(struct ServerSim *sim, const char *mapFileName,
  * is running. Errors are logged and the scenario disables itself after
  * repeated failures rather than wedging the sim. */
 void scenarioTick(struct ServerSim *sim);
+
+/* Re-boot the VM with fresh script state — called at each authoritative
+ * round start (serverSimStartGame*) so a lobby server's second round
+ * doesn't inherit the first round's script variables; the fresh VM's
+ * on_start then fires on the round's first tick. Safe no-op when no
+ * scenario is loaded. */
+void scenarioReset(struct ServerSim *sim);
 
 /* Tear down the VM (safe when no scenario is loaded). */
 void scenarioShutdown(struct ServerSim *sim);

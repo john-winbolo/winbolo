@@ -24,7 +24,7 @@
  *
  *  Script surface:
  *    scenario = { name = "...", max_players = 6 }   -- optional metadata
- *    function on_start(game) end                    -- once at sim create
+ *    function on_start(game) end                    -- once per round, first tick
  *    function on_tick(game, tick) end               -- every game tick
  *
  *  `game` API (n is 1-based for pills/bases to match engine numbering;
@@ -85,6 +85,8 @@ typedef struct ScenarioState {
     char       winMessage[256];         /* game.end_round text */
     char       name[64];                /* scenario.name (logs) */
     char       defaultBrain[256];       /* scenario.default_brain fallback */
+    char       path[FILENAME_MAX];      /* sidecar path, for per-round reboots */
+    bool       started;                 /* on_start fired for this round */
 } ScenarioState;
 
 static ScenarioState *scState(const ServerSim *sim) {
@@ -439,44 +441,32 @@ static void scReportError(ScenarioState *st, const char *what) {
     }
 }
 
-bool scenarioLoad(ServerSim *sim, const char *mapFileName,
-                  gameType game, bool hiddenMines) {
-    char path[FILENAME_MAX];
-    size_t len;
-    FILE *probe;
-    ScenarioState *st;
+/* Boot (or re-boot) the VM from st->path: fresh lua_State, run the
+ * chunk, capture metadata, cache on_tick. Resets all per-round script
+ * state by construction; on_start fires lazily from the first
+ * scenarioTick of the (re)booted VM — i.e. once the round is actually
+ * running with the world in place — never here, because at boot time
+ * neither lobbyEnabled nor the round's tanks are reliably set yet.
+ * Returns FALSE (with L=NULL) when the chunk fails to load. */
+static bool scBoot(ScenarioState *st) {
     lua_State *L;
     BYTE i;
 
-    if (sim == NULL || mapFileName == NULL) return FALSE;
-    sim->scenario = NULL;
-
-    /* Sidecar path: strip a trailing ".map", append ".scenario.lua". */
-    SDL_strlcpy(path, mapFileName, sizeof(path));
-    len = strlen(path);
-    if (len >= 4 && strcmp(path + len - 4, ".map") == 0) {
-        path[len - 4] = '\0';
+    if (st->L != NULL) {
+        lua_close(st->L);
+        st->L = NULL;
     }
-    SDL_strlcat(path, ".scenario.lua", sizeof(path));
-
-    probe = fopen(path, "rb");
-    if (probe == NULL) return FALSE;   /* plain map — not an error */
-    fclose(probe);
-
-    st = (ScenarioState *)calloc(1, sizeof(ScenarioState));
-    if (st == NULL) return FALSE;
-    st->sim = sim;
-    st->game = game;
-    st->hiddenMines = hiddenMines;
     st->tickRef = LUA_NOREF;
     st->gameRef = LUA_NOREF;
+    st->errorCount = 0;
+    st->disabled = FALSE;
+    st->started = FALSE;
+    st->maxPlayers = 0;
+    st->winMessage[0] = '\0';
     for (i = 0; i < MAX_TANKS; i++) st->teamOf[i] = i;
 
     L = luaL_newstate();
-    if (L == NULL) {
-        free(st);
-        return FALSE;
-    }
+    if (L == NULL) return FALSE;
     st->L = L;
     /* The sidecar lives next to the operator's own map files and runs
      * with server privileges by design ("the server will execute all
@@ -484,11 +474,12 @@ bool scenarioLoad(ServerSim *sim, const char *mapFileName,
     luaL_openlibs(L);
     scBuildGameTable(L, st);
 
-    if (luaL_loadfile(L, path) != 0 || lua_pcall(L, 0, 0, 0) != 0) {
+    if (luaL_loadfile(L, st->path) != 0 || lua_pcall(L, 0, 0, 0) != 0) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER, "scenario load '%s' failed: %s",
-                     path, lua_tostring(L, -1) ? lua_tostring(L, -1) : "?");
+                     st->path,
+                     lua_tostring(L, -1) ? lua_tostring(L, -1) : "?");
         lua_close(L);
-        free(st);
+        st->L = NULL;
         return FALSE;
     }
 
@@ -521,25 +512,84 @@ bool scenarioLoad(ServerSim *sim, const char *mapFileName,
         st->tickRef = luaL_ref(L, LUA_REGISTRYINDEX);
     }
 
-    sim->scenario = st;
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "scenario loaded: '%s' (%s) max_players=%d on_tick=%s",
-        st->name[0] ? st->name : "(unnamed)", path, st->maxPlayers,
+        "scenario booted: '%s' (%s) max_players=%d on_tick=%s",
+        st->name[0] ? st->name : "(unnamed)", st->path, st->maxPlayers,
         st->tickRef != LUA_NOREF ? "yes" : "no");
-
-    /* on_start(game) */
-    if (scPushHook(L, "on_start")) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, st->gameRef);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            scReportError(st, "on_start");
-        }
-    }
     return TRUE;
+}
+
+bool scenarioLoad(ServerSim *sim, const char *mapFileName,
+                  gameType game, bool hiddenMines) {
+    char path[FILENAME_MAX];
+    size_t len;
+    FILE *probe;
+    ScenarioState *st;
+
+    if (sim == NULL || mapFileName == NULL) return FALSE;
+    sim->scenario = NULL;
+
+    /* Sidecar path: strip a trailing ".map", append ".scenario.lua". */
+    SDL_strlcpy(path, mapFileName, sizeof(path));
+    len = strlen(path);
+    if (len >= 4 && strcmp(path + len - 4, ".map") == 0) {
+        path[len - 4] = '\0';
+    }
+    SDL_strlcat(path, ".scenario.lua", sizeof(path));
+
+    probe = fopen(path, "rb");
+    if (probe == NULL) return FALSE;   /* plain map — not an error */
+    fclose(probe);
+
+    st = (ScenarioState *)calloc(1, sizeof(ScenarioState));
+    if (st == NULL) return FALSE;
+    st->sim = sim;
+    st->game = game;
+    st->hiddenMines = hiddenMines;
+    st->tickRef = LUA_NOREF;
+    st->gameRef = LUA_NOREF;
+    SDL_strlcpy(st->path, path, sizeof(st->path));
+
+    if (!scBoot(st)) {
+        free(st);
+        return FALSE;
+    }
+    sim->scenario = st;
+    return TRUE;
+}
+
+void scenarioReset(ServerSim *sim) {
+    ScenarioState *st = scState(sim);
+    if (st == NULL) return;
+    if (!scBoot(st)) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "scenario reset failed — scenario disabled for this round");
+        sim->scenario = NULL;
+        free(st);
+    }
 }
 
 void scenarioTick(ServerSim *sim) {
     ScenarioState *st = scState(sim);
-    if (st == NULL || st->disabled || st->tickRef == LUA_NOREF) return;
+    if (st == NULL || st->disabled || st->L == NULL) return;
+
+    /* First tick of a freshly booted VM = the round is genuinely
+     * running (this is only ever called in serverStateRunning), so this
+     * is where on_start belongs — the lobby wait is over and the reset
+     * world + restored tanks exist. Re-armed by every scBoot, so a
+     * lobby server's round 2+ gets its own on_start. */
+    if (!st->started) {
+        st->started = TRUE;
+        if (scPushHook(st->L, "on_start")) {
+            lua_rawgeti(st->L, LUA_REGISTRYINDEX, st->gameRef);
+            if (lua_pcall(st->L, 1, 0, 0) != 0) {
+                scReportError(st, "on_start");
+            }
+        }
+        if (st->disabled || st->L == NULL) return;
+    }
+
+    if (st->tickRef == LUA_NOREF) return;
     lua_rawgeti(st->L, LUA_REGISTRYINDEX, st->tickRef);
     lua_rawgeti(st->L, LUA_REGISTRYINDEX, st->gameRef);
     lua_pushinteger(st->L, (lua_Integer)sim->tick);

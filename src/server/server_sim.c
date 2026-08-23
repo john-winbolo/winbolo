@@ -4511,6 +4511,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * once a human is seen this round. */
     sim->roundHadHuman = false;
 
+    /* Fresh round, fresh scenario (see serverSimStartGame). */
+    scenarioReset(sim);
+
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
      * per-tick drain never runs and discrete events accumulate — most
@@ -4631,6 +4634,11 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
+
+    /* Fresh round, fresh scenario: re-boot the sidecar VM so script
+     * state (waves, timers, flags) never leaks between rounds; fires
+     * the script's on_start for this round. */
+    scenarioReset(sim);
 
     /* Restore connected-player state so tank creation works */
     for (i = 0; i < MAX_TANKS; i++) {
