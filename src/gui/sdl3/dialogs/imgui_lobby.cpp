@@ -118,6 +118,7 @@ void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
 void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
 void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
+void lvEmbedSeekToTime(uint32_t roundRelMs);
 #endif
 }
 #include "../wb_theme.h"
@@ -6258,6 +6259,9 @@ static const float REEL_HEIGHT_FRAC     = 0.45f;
 static const float REEL_HEIGHT_MIN      = 180.0f;
 static const float REEL_HEIGHT_MAX_FRAC = 0.75f;
 
+/* Defined down with the chat input's state, which is declared after this. */
+static void lobbyChatInputAppendTime(uint32_t curMs);
+
 static void lobbyRenderReel(float s) {
     /* A triple gate: only a round this process recorded, published to a file
      * that is actually there. gameFrontHasLocalServer() is the load-bearing
@@ -6399,12 +6403,21 @@ static void lobbyRenderReel(float s) {
         }
     }
 
+    uint32_t curMs = 0, totalMs = 0;
+    lvEmbedGetProgress(&curMs, &totalMs);
+
+    /* Drop where the reel is sitting into the chat box, so the moment can be
+     * talked about. Punctuation rather than a lang string, like the zoom
+     * buttons: the token it writes is the caption. */
+    ImGui::SameLine();
+    if (ImGui::Button("@")) {
+        lobbyChatInputAppendTime(curMs);
+    }
+
     /* Seek slider shares the transport row with Play/Pause and takes the rest
      * of the width. Times are the presented window's, which with the lobby
      * hidden is the round itself. */
     ImGui::SameLine();
-    uint32_t curMs = 0, totalMs = 0;
-    lvEmbedGetProgress(&curMs, &totalMs);
     if (!s_reelSeeking) {
         s_reelSeekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
         if (s_reelSeekRatio > 1.0f) s_reelSeekRatio = 1.0f;
@@ -7228,6 +7241,190 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 #endif
 }
 
+/* ----------------------------------------------------------------------
+ * Chat history with clickable timestamps
+ *
+ * A chat line may name a moment in the round as "@m:ss" / "@mm:ss". The token
+ * is ordinary text everywhere else — it goes over the wire, into the history
+ * and into the .wbv verbatim — so a client with no reel just reads it. Only
+ * the render below turns it into something to click.
+ * ------------------------------------------------------------------- */
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* Match a timestamp token at p. Returns one past its last digit and fills the
+ * out-params on a match, NULL otherwise. Minutes are one or two digits,
+ * seconds exactly two and under 60. A third seconds digit rejects the whole
+ * candidate, so "@1:234" stays text instead of matching "@1:23" out of the
+ * front of it. */
+static const char *lobbyMatchChatTime(const char *p, const char *end,
+                                      unsigned *outMins, unsigned *outSecs) {
+    const char *q;
+    unsigned    mins   = 0, secs = 0;
+    int         digits = 0;
+
+    if (p >= end || *p != '@') {
+        return NULL;
+    }
+    q = p + 1;   /* past the '@' */
+    while (q < end && digits < 2 && *q >= '0' && *q <= '9') {
+        mins = mins * 10u + (unsigned)(*q - '0');
+        q++;
+        digits++;
+    }
+    if (digits == 0 || q >= end || *q != ':') {
+        return NULL;
+    }
+    q++;
+    if ((end - q) < 2 || q[0] < '0' || q[0] > '9' || q[1] < '0' || q[1] > '9') {
+        return NULL;
+    }
+    secs = (unsigned)(q[0] - '0') * 10u + (unsigned)(q[1] - '0');
+    q += 2;
+    if (secs >= 60u || (q < end && *q >= '0' && *q <= '9')) {
+        return NULL;
+    }
+    *outMins = mins;
+    *outSecs = secs;
+    return q;
+}
+
+static bool lobbyChatLineHasTime(const char *begin, const char *end) {
+    unsigned mins = 0, secs = 0;
+    for (const char *q = begin; q < end; q++) {
+        if (*q == '@' && lobbyMatchChatTime(q, end, &mins, &secs) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Lay out one line that holds at least one token as alternating text and link
+ * runs, butted together with zero-spacing SameLine so no gap is invented. Such
+ * a line is not wrapped: a wrap position does not carry across SameLine, so a
+ * long one clips at the panel edge rather than flowing onto a second row. That
+ * is the deliberate trade for laying the line out by hand — chat is capped at
+ * 128 characters, so the case is rare. TextLink takes its id from its label,
+ * so the ids pushed here are what stop two identical tokens in one history
+ * from sharing one. */
+static void lobbyRenderChatTimeLine(const char *begin, const char *end,
+                                    int lineIndex) {
+    const char *p       = begin;
+    int         segment = 0;
+
+    ImGui::PushID(lineIndex);
+    while (p < end) {
+        const char *tok = NULL, *tokEnd = NULL, *q;
+        unsigned    mins = 0, secs = 0;
+        char        label[8];
+        size_t      labelLen;
+
+        for (q = p; q < end; q++) {
+            if (*q != '@') {
+                continue;
+            }
+            tokEnd = lobbyMatchChatTime(q, end, &mins, &secs);
+            if (tokEnd != NULL) {
+                tok = q;
+                break;
+            }
+        }
+
+        if (tok == NULL) {
+            if (segment > 0) ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(p, end);
+            break;
+        }
+        if (tok > p) {
+            if (segment > 0) ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(p, tok);
+            segment++;
+        }
+
+        labelLen = (size_t)(tokEnd - tok);
+        if (labelLen >= sizeof(label)) {
+            labelLen = sizeof(label) - 1;
+        }
+        SDL_memcpy(label, tok, labelLen);
+        label[labelLen] = '\0';
+
+        if (segment > 0) ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushID(segment);
+        if (ImGui::TextLink(label)) {
+            lvEmbedSeekToTime((mins * 60u + secs) * 1000u);
+        }
+        ImGui::PopID();
+        segment++;
+
+        p = tokEnd;
+    }
+    ImGui::PopID();
+}
+#endif
+
+/* One chat history, the \n-separated blob the sim owns (read only — never
+ * written to here). Runs of lines with no token are batched into a single
+ * wrapped TextUnformatted, so a history without one renders as the same lone
+ * blob draw it always did; only a line carrying a token is split up. Zero
+ * vertical item spacing is what makes the two kinds of line stack at the pitch
+ * a single text block would. With no reel to seek there is nothing to link, so
+ * every line takes the plain path. */
+static void lobbyRenderChatHistory(const char *blob) {
+    if (blob == NULL) {
+        return;
+    }
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    if (lvEmbedIsActive()) {
+        const ImGuiStyle &style     = ImGui::GetStyle();
+        const char       *runBegin  = NULL;
+        const char       *runEnd    = NULL;
+        const char       *p         = blob;
+        int               lineIndex = 0;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                            ImVec2(style.ItemSpacing.x, 0.0f));
+        for (;;) {
+            const char *lineEnd = p;
+            while (*lineEnd != '\0' && *lineEnd != '\n') {
+                lineEnd++;
+            }
+            if (lobbyChatLineHasTime(p, lineEnd)) {
+                if (runBegin != NULL) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextUnformatted(runBegin, runEnd);
+                    ImGui::PopTextWrapPos();
+                    runBegin = NULL;
+                }
+                lobbyRenderChatTimeLine(p, lineEnd, lineIndex);
+            } else {
+                if (runBegin == NULL) {
+                    runBegin = p;
+                }
+                runEnd = lineEnd;
+            }
+            if (*lineEnd == '\0') {
+                break;
+            }
+            p = lineEnd + 1;
+            lineIndex++;
+        }
+        if (runBegin != NULL) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(runBegin, runEnd);
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::PopStyleVar();
+        return;
+    }
+#endif
+
+    /* Wrap long lines at the child's right edge so a full-length (128-char)
+     * message flows onto extra lines instead of running off the panel. */
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(blob);
+    ImGui::PopTextWrapPos();
+}
+
 /* Render the lobby chat InputText + Send button pair, with the
  * 2-frame refocus-after-send and nav-highlight suppression logic
  * shared between the chat tab and the in-game lobby chat panel.
@@ -7335,6 +7532,28 @@ typedef struct LobbyFrameState {
 } LobbyFrameState;
 
 static LobbyFrameState s_lf = {};
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* Append the reel's position to the chat box as "@mm:ss ", then take the
+ * keyboard focus the way a send does so the player types straight after it.
+ * Silently does nothing when the whole token will not fit: half a token in
+ * the box reads as a link nobody can follow. A round past 99 minutes writes
+ * three minute digits, which lobbyMatchChatTime leaves as plain text. */
+static void lobbyChatInputAppendTime(uint32_t curMs) {
+    unsigned secs = (unsigned)(curMs / 1000u);
+    char     token[16];
+    size_t   used, room;
+
+    snprintf(token, sizeof(token), "@%02u:%02u ", secs / 60u, secs % 60u);
+    used = SDL_strlen(s_lf.chatInput);
+    room = (size_t)(CHAT_INPUT_SIZE - 1) - used;
+    if (SDL_strlen(token) > room) {
+        return;
+    }
+    SDL_strlcat(s_lf.chatInput, token, CHAT_INPUT_SIZE);
+    s_chatRefocusFrames = 2;
+}
+#endif
 
 /* Seed the data + default-chrome fields for a fresh lobby session.
  * imguiLobbyShow() overrides the chrome (scale / countdown font / insets)
@@ -8346,12 +8565,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         if (chatHistH < 20.0f) chatHistH = 20.0f;
 
                         ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-                        /* Wrap long lines at the child's right edge so a
-                         * full-length (128-char) message flows onto extra
-                         * lines instead of running off the panel. */
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
-                        ImGui::PopTextWrapPos();
+                        lobbyRenderChatHistory(clientSimGetLobbyChatHistory(cs));
                         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                             ImGui::SetScrollHereY(1.0f);
                         }
@@ -8391,9 +8605,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             if (chatHistH < 20.0f) chatHistH = 20.0f;
 
                             ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
-                            ImGui::PopTextWrapPos();
+                            lobbyRenderChatHistory(clientSimGetLobbyTeamChatHistory(cs));
                             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                                 ImGui::SetScrollHereY(1.0f);
                             }
@@ -8821,11 +9033,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
                             chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
                         ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-                        /* Wrap long lines at the child's right edge (see the
-                         * lobby Chat tab above). */
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
-                        ImGui::PopTextWrapPos();
+                        lobbyRenderChatHistory(clientSimGetLobbyChatHistory(cs));
                         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                             ImGui::SetScrollHereY(1.0f);
                         }
@@ -8853,9 +9061,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
                                 chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
                             ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
-                            ImGui::PopTextWrapPos();
+                            lobbyRenderChatHistory(clientSimGetLobbyTeamChatHistory(cs));
                             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                                 ImGui::SetScrollHereY(1.0f);
                             }

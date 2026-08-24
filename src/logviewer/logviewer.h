@@ -205,11 +205,13 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin.
  * lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
  * size its image at the slice times the zoom instead of stretching it to fill.
- * lvEmbedGetProgress, lvEmbedSeekRatio and lvEmbedSeekToClip all speak in the
- * presented window rather than the whole log: progress is elapsed and total
- * milliseconds within it (zeros while no embed is running), a ratio addresses
- * it as 0..1, and a clip time is measured from its start, with the view then
- * centred on the cell the clip happened at.
+ * lvEmbedGetProgress, lvEmbedSeekRatio, lvEmbedSeekToClip and lvEmbedSeekToTime
+ * all speak in the presented window rather than the whole log: progress is
+ * elapsed and total milliseconds within it (zeros while no embed is running), a
+ * ratio addresses it as 0..1, and both seek times are measured from its start.
+ * lvEmbedSeekToClip also centres the view on the cell the clip happened at;
+ * lvEmbedSeekToTime leaves the view alone, for a caller naming a moment rather
+ * than a place. Times past the end of the window clamp to it.
  * lvEmbedEnd is safe to call twice or while inactive. */
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
@@ -228,6 +230,7 @@ void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
 void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
 void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
+void lvEmbedSeekToTime(uint32_t roundRelMs);
 
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world

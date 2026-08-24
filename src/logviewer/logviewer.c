@@ -1653,7 +1653,7 @@ void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs) {
     }
 }
 
-/* Both seeks below walk the log and rebuild the world — the same state
+/* The seeks below walk the log and rebuild the world — the same state
  * lv_windowTimer ticks on the SDL timer thread under lv_clientMutex — so
  * playback is stopped and the lock held across the seek exactly as the
  * standalone scrubber does. Without that, a seek during playback lands
@@ -1685,13 +1685,14 @@ void lvEmbedSeekRatio(float ratio) {
     g_lv->wantScreenUpdate = TRUE;
 }
 
-/* Jump to a moment measured from the start of the presented window and centre
- * the view on the cell it happened at. Callers pass a round-relative time and
- * the window origin is added here, so if the round clock and the log clock ever
- * turn out to disagree this is the single place that gets the correction.
- * No camera re-init afterwards: that pans to the camera tank, which is only
- * wanted in the viewer's game view and would undo the centring. */
-void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY) {
+/* Jump to a moment measured from the start of the presented window, optionally
+ * centring the view on the cell it happened at. Callers pass a round-relative
+ * time and the window origin is added here, so if the round clock and the log
+ * clock ever turn out to disagree this is the single place that gets the
+ * correction. No camera re-init afterwards: that pans to the camera tank, which
+ * is only wanted in the viewer's game view and would undo the centring. */
+static void lvEmbedSeekWindowMs(uint32_t roundRelMs, bool centreOnCell,
+                                int mapX, int mapY) {
     unsigned char wasPlaying;
 
     if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
@@ -1704,7 +1705,9 @@ void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY) {
     lv_clientMutexWaitFor();
     lv_drawDirtyScreen();
     lv_screenSeekToTimeMs(lv_screenWindowStartMs() + roundRelMs);
-    lv_screenCentreOnCell(mapX, mapY);
+    if (centreOnCell) {
+        lv_screenCentreOnCell(mapX, mapY);
+    }
     lv_drawDirtyScreen();
     lv_clientMutexRelease();
     lv_windowNeedRedraw();
@@ -1712,6 +1715,16 @@ void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY) {
         lv_windowPlay();
     }
     g_lv->wantScreenUpdate = TRUE;
+}
+
+/* A clip names a place as well as a moment, so the view follows it there. */
+void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY) {
+    lvEmbedSeekWindowMs(roundRelMs, true, mapX, mapY);
+}
+
+/* A timestamp names only a moment — the view stays where the player left it. */
+void lvEmbedSeekToTime(uint32_t roundRelMs) {
+    lvEmbedSeekWindowMs(roundRelMs, false, 0, 0);
 }
 
 /* Apply a decoded seed/keyframe's lobby roster to the viewer's player table:
