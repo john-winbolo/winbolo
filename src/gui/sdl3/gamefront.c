@@ -1620,6 +1620,32 @@ bool gameFrontSetDlgState(openingStates newState) {
             spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
             returnValue = FALSE;
           } else {
+            /* Single-player rounds are recorded so the lobby recap can play
+             * the round back. One fixed file in the prefs dir, overwritten by
+             * the next game — an explicit path (not a directory) so the name
+             * never rotates: the path composer only auto-names inside its
+             * argument when that argument already exists on disk as a
+             * directory. dontSendLog is unconditionally true; a single-player
+             * round is never uploaded to WinBolo.net. Tutorials are skipped —
+             * they set cfg.skipLobby, so they never reach the lobby that would
+             * offer the playback. Installed here, before the client-type
+             * resolution, because the subscriber's sync replay opens the log
+             * immediately. */
+            if (!isTutorial) {
+              char spLogPath[FILENAME_MAX];
+              const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+              if (prefDir != NULL) {
+                snprintf(spLogPath, sizeof(spLogPath), "%ssingleplayer.wbv",
+                         prefDir);
+                SDL_free((void *)prefDir);
+              } else {
+                snprintf(spLogPath, sizeof(spLogPath), "singleplayer.wbv");
+              }
+              serverSimSetWantLogging(spServerSim, true);
+              serverSimSetUserLogFileName(spServerSim, spLogPath);
+              serverDedicatedLogInstall(spServerSim, true);
+            }
+
             /* Resolve the self client type / flags. */
             uint8_t selfType  = bolo_detect_client_type();
             uint8_t selfFlags = 0;
