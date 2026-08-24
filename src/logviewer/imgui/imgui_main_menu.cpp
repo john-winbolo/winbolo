@@ -174,8 +174,6 @@ void lv_imgui_toggle_tank_centred(void) {
 
 /* No cached copy: screen.c holds the flag, and enabling it can move the
  * playhead, so the menu always reads the live value back. */
-int lv_imgui_get_hide_lobby(void) { return lv_screenGetHideLobby(); }
-
 void lv_imgui_toggle_hide_lobby(void) {
     lv_screenSetHideLobby(lv_screenGetHideLobby() ? 0 : 1);
 }
