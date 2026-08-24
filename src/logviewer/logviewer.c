@@ -1634,6 +1634,86 @@ void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx) {
     g_lv->wantScreenUpdate = TRUE;
 }
 
+/* Elapsed and total milliseconds of the presented window. An embed hides the
+ * lobby, so that window is the game portion of the round. Either out-param may
+ * be NULL; both read 0 while no embed is running, so a host can drive its
+ * transport without checking first. */
+void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs) {
+    size_t   pos = 0, size = 0;
+    uint32_t cur = 0, total = 0;
+
+    if (s_embedActive && g_lv != NULL && g_lv->isLoaded == TRUE) {
+        lv_screenGetLogProgress(&pos, &size, &cur, &total);
+    }
+    if (outCurMs != NULL) {
+        *outCurMs = cur;
+    }
+    if (outTotalMs != NULL) {
+        *outTotalMs = total;
+    }
+}
+
+/* Both seeks below walk the log and rebuild the world — the same state
+ * lv_windowTimer ticks on the SDL timer thread under lv_clientMutex — so
+ * playback is stopped and the lock held across the seek exactly as the
+ * standalone scrubber does. Without that, a seek during playback lands
+ * lv_shellsAddItem and lv_shellsDestroy on the same list from two threads and
+ * corrupts the heap. wantScreenUpdate is what makes lvEmbedFrameTexture
+ * repaint, so a reel seeked while paused still shows the new moment. */
+void lvEmbedSeekRatio(float ratio) {
+    unsigned char wasPlaying;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToPosition(ratio);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Jump to a moment measured from the start of the presented window and centre
+ * the view on the cell it happened at. Callers pass a round-relative time and
+ * the window origin is added here, so if the round clock and the log clock ever
+ * turn out to disagree this is the single place that gets the correction.
+ * No camera re-init afterwards: that pans to the camera tank, which is only
+ * wanted in the viewer's game view and would undo the centring. */
+void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY) {
+    unsigned char wasPlaying;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(lv_screenWindowStartMs() + roundRelMs);
+    lv_screenCentreOnCell(mapX, mapY);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 /* Apply a decoded seed/keyframe's lobby roster to the viewer's player table:
  * name every present lobby slot (silently, via the quiet setter — no newswire
  * spam) and adopt the snapshot's phase. The quiet setter touches only inUse +

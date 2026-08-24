@@ -113,6 +113,9 @@ bool lvEmbedIsPlaying(void);
 void lvEmbedWheel(int localX, int localY, float wheelY);
 void lvEmbedPanBegin(void);
 void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
+void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
+void lvEmbedSeekRatio(float ratio);
+void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 #endif
 }
 #include "../wb_theme.h"
@@ -6155,6 +6158,11 @@ static bool  s_reelDrawn      = false;  /* body drew the reel this frame */
 static bool  s_reelAutoPaused = false;
 static float s_reelViewW      = 0.0f;
 static float s_reelViewH      = 0.0f;
+/* Where the seek slider sits, and whether the player is dragging it. Held
+ * apart from the playhead so a drag is not fought by the reel advancing under
+ * it; the seek itself lands once, on release. */
+static float s_reelSeekRatio  = 0.0f;
+static bool  s_reelSeeking    = false;
 
 static void lobbyReelEnd(void) {
     if (s_reelActive) {
@@ -6164,6 +6172,8 @@ static void lobbyReelEnd(void) {
     s_reelTried      = false;
     s_reelDrawn      = false;
     s_reelAutoPaused = false;
+    s_reelSeekRatio  = 0.0f;
+    s_reelSeeking    = false;
 }
 
 /* Reel height: a share of whatever vertical room the container has left,
@@ -6311,6 +6321,43 @@ static void lobbyRenderReel(float s) {
         }
     }
 
+    /* Seek slider shares the transport row with Play/Pause and takes the rest
+     * of the width. Times are the presented window's, which with the lobby
+     * hidden is the round itself. */
+    ImGui::SameLine();
+    uint32_t curMs = 0, totalMs = 0;
+    lvEmbedGetProgress(&curMs, &totalMs);
+    if (!s_reelSeeking) {
+        s_reelSeekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
+        if (s_reelSeekRatio > 1.0f) s_reelSeekRatio = 1.0f;
+    }
+    unsigned curSecs = (unsigned)(curMs / 1000u);
+    char seekLabel[48];
+    if (totalMs > 0) {
+        unsigned totalSecs = (unsigned)(totalMs / 1000u);
+        snprintf(seekLabel, sizeof(seekLabel), "%02u:%02u / %02u:%02u",
+                 curSecs / 60u, curSecs % 60u, totalSecs / 60u, totalSecs % 60u);
+    } else {
+        snprintf(seekLabel, sizeof(seekLabel), "%02u:%02u / --:--",
+                 curSecs / 60u, curSecs % 60u);
+    }
+    ImGui::PushItemWidth(-1);
+    /* NoRoundToFormat is essential: seekLabel is a pre-rendered string
+     * ("01:12 / 04:30"), not a numeric printf format. Without the flag ImGui
+     * rounds the dragged value by round-tripping it through that label, which
+     * parses back to 0 and pins every seek to the start of the log. */
+    if (ImGui::SliderFloat("##ReelSeek", &s_reelSeekRatio, 0.0f, 1.0f, seekLabel,
+                           ImGuiSliderFlags_NoRoundToFormat)) {
+        s_reelSeeking = true;
+    }
+    /* One seek, on release: every frame of the drag would rebuild the world
+     * from a snapshot and stall the whole lobby. */
+    if (s_reelSeeking && ImGui::IsItemDeactivatedAfterEdit()) {
+        s_reelSeeking = false;
+        lvEmbedSeekRatio(s_reelSeekRatio);
+    }
+    ImGui::PopItemWidth();
+
     s_reelDrawn = true;
 }
 #endif
@@ -6353,6 +6400,27 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             /* Clip ticks are per-round at 50 ticks/s, so the round clock
              * is a plain division — nothing to calibrate against. */
             unsigned secs = (unsigned)(h->startTick / 50u);
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* While a reel is up the whole row is a seek target: a selectable
+             * underneath for the hit area and controller focus, with the row's
+             * own two-tone text drawn back over it (text is not interactive,
+             * so it does not steal the hover). With no reel to seek there is
+             * no selectable at all — the text still renders everywhere, it
+             * just does not look clickable when it isn't. */
+            if (lvEmbedIsActive()) {
+                ImVec2 rowPos = ImGui::GetCursorPos();
+                char rowId[16];
+                snprintf(rowId, sizeof(rowId), "##clip%d", i);
+                if (ImGui::Selectable(rowId, false, 0,
+                                      ImVec2(0, ImGui::GetTextLineHeight()))) {
+                    /* Ticks run at 50/s, so × 20 is the millisecond offset
+                     * into the round — the same base the timestamp above is
+                     * divided out of. */
+                    lvEmbedSeekToClip(h->startTick * 20u, h->mapX, h->mapY);
+                }
+                ImGui::SetCursorPos(rowPos);
+            }
+#endif
             ImGui::TextDisabled("%02u:%02u", secs / 60u, secs % 60u);
             ImGui::SameLine();
 
