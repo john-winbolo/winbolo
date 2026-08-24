@@ -1830,7 +1830,8 @@ static void simRunHalfStep(ServerSim *sim) {
             char buf[256];
             char name[256];
             BYTE winner = serverSimWinningOwner(sim);
-            playersGetPlayerName(&sim->sim.plyrs, winner, name, TRUE);
+            playersGetPlayerName(&sim->sim.plyrs, winner, name, sizeof(name),
+                                 TRUE);
             snprintf(buf, sizeof(buf),
                      "*** %s and their allies control every base. ***", name);
             publishServerMessage(sim, buf);
@@ -2217,7 +2218,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     wasBot = botManagerIsBot(sim, playerNum);
     {
         char nm[PLAYER_NAME_LEN];
-        playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, sizeof(nm), TRUE);
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
             "removePlayer slot=%u name='%s' state=%d",
             (unsigned)playerNum, nm, (int)sim->state);
@@ -2240,13 +2241,14 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * which would leave a mid-round leaver nameless in the finished log. */
     {
         AttrSlotIdentity *id = &sim->trackIdentity[playerNum];
-        /* playersGetPlayerName copies unbounded, so it needs a full
-         * PLAYER_NAME_LEN buffer; id->name is the shorter wire-sized field. */
+        /* Read the full-length name first; id->name is the shorter
+         * wire-sized field, so the copy into it truncates. */
         char nameBuf[PLAYER_NAME_LEN];
         memset(id, 0, sizeof(*id));
         id->isBot = wasBot ? 1 : 0;
         id->team  = sim->lobbyPlayers[playerNum].teamNumber;
-        playersGetPlayerName(&sim->sim.plyrs, playerNum, nameBuf, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, nameBuf,
+                             sizeof(nameBuf), TRUE);
         snprintf(id->name, sizeof(id->name), "%s", nameBuf);
     }
 
@@ -2315,7 +2317,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         BYTE numPills = pillsGetNumPills(&sim->sim.pb);
         BYTE numBases = basesGetNumBases(&sim->sim.bs);
         BYTE i;
-        playersGetPlayerName(&sim->sim.plyrs, playerNum, pName, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, pName, sizeof(pName),
+                             TRUE);
         for (i = 1; i <= numPills; i++) {
             if (pillsGetPillOwner(&sim->sim.pb, i) == playerNum) {
                 pillBits |= (1u << (i - 1));
@@ -3601,7 +3604,7 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         fprintf(stdout, "Players:\n");
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
-            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
 
             /* Ping and the input-buffer depth are in-process artifacts for
              * bot slots (0ms ping, a buffer that exists but never gates an
@@ -3781,7 +3784,7 @@ bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
-                playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
                 fprintf(stdout, "  %s\n", name);
             }
         }
@@ -3993,13 +3996,14 @@ void serverSimEnterGameOver(ServerSim *sim) {
          * serverSimResetGameWorld zeroes the whole table at round start, so
          * an entry surviving to here belongs to the round just played. */
         if (!sim->playerConnected[slot]) continue;
-        /* playersGetPlayerName copies unbounded, so it needs a full
-         * PLAYER_NAME_LEN buffer; id->name is the shorter wire-sized field. */
+        /* Read the full-length name first; id->name is the shorter
+         * wire-sized field, so the copy into it truncates. */
         char nameBuf[PLAYER_NAME_LEN];
         memset(id, 0, sizeof(*id));
         id->isBot = botManagerIsBot(sim, (BYTE)slot) ? 1 : 0;
         id->team  = sim->lobbyPlayers[slot].teamNumber;
-        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, nameBuf, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, nameBuf,
+                             sizeof(nameBuf), TRUE);
         snprintf(id->name, sizeof(id->name), "%s", nameBuf);
     }
 
@@ -4852,7 +4856,7 @@ bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
         if (!sim->playerConnected[count]) continue;
         if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
-            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
             pos = winMsgAdvance(pos, bufSize,
                                 snprintf(buf + pos, bufSize - pos, " %s", name));
         }
@@ -4913,7 +4917,7 @@ bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
                                          "\nGame Won! Winners:"));
             any = TRUE;
         }
-        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
         pos = winMsgAdvance(pos, bufSize,
                             snprintf(buf + pos, bufSize - pos, " %s", name));
     }
@@ -6878,7 +6882,8 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
 
     memset(out, 0, sizeof(*out));
     /* isServer=TRUE: read the server-side player table directly. */
-    playersGetPlayerName(&sim->sim.plyrs, i, out->name, TRUE);
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, sizeof(out->name),
+                         TRUE);
     out->name[sizeof(out->name) - 1] = '\0';
 
     t = &sim->sim.tanks[i];

@@ -2387,7 +2387,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     char pName[FILENAME_MAX];
                     playersGetPlayerName(&c->clientSim->sim.plyrs,
                                          evt.u.allianceRequest.fromPlayer,
-                                         pName, FALSE);
+                                         pName, sizeof(pName), FALSE);
                     if (windowShowAllianceRequest() == TRUE) {
                         dialogAllianceSetName(pName,
                                               evt.u.allianceRequest.fromPlayer);
@@ -3221,7 +3221,8 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
             evt->u.allianceRequest.toPlayer == c->playerNum) {
             BYTE fromPN = evt->u.allianceRequest.fromPlayer;
             char pName[FILENAME_MAX];
-            playersGetPlayerName(&c->clientSim->sim.plyrs, fromPN, pName, FALSE);
+            playersGetPlayerName(&c->clientSim->sim.plyrs, fromPN, pName,
+                                 sizeof(pName), FALSE);
             if (windowShowAllianceRequest() == TRUE) {
                 dialogAllianceSetName(pName, fromPN);
             } else {

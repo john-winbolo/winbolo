@@ -26,6 +26,7 @@
 *********************************************************/
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "allience.h"
@@ -533,23 +534,29 @@ void playersGameTickUpdate(players *plrs) {
 * Gets a player name.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer names
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest, bool isServer) {
+void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest,
+                          size_t destSize, bool isServer) {
+  if (destSize == 0) {
+    return;
+  }
   if (plrs != NULL) {
     if (playerNum >= MAX_TANKS) {
-      strcpy(dest, NO_TANK);
+      snprintf(dest, destSize, "%s", NO_TANK);
       return;
     }
     if ((*plrs)->item[playerNum].inUse == TRUE) {
-      strcpy(dest, (*plrs)->item[playerNum].playerName);
+      snprintf(dest, destSize, "%s", (*plrs)->item[playerNum].playerName);
     } else {
-      strcpy(dest, NO_TANK);
+      snprintf(dest, destSize, "%s", NO_TANK);
     }
   } else {
-    strcpy(dest, NO_TANK);
+    snprintf(dest, destSize, "%s", NO_TANK);
   }
 }
 

@@ -995,7 +995,8 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       playersMakeMessageName(NULL, &sim->plyrs, sim->viewPlayer, owner, args.playerName);
       args.playerFlags = playersGetAccountFlags(&sim->plyrs, owner);
       playersGetCountryCode(&sim->plyrs, owner, args.playerCountry);
-      playersGetPlayerName(&sim->plyrs, returnValue, args.otherName, sim->isServer);
+      playersGetPlayerName(&sim->plyrs, returnValue, args.otherName,
+                           sizeof(args.otherName), sim->isServer);
       args.otherFlags = playersGetAccountFlags(&sim->plyrs, returnValue);
       playersGetCountryCode(&sim->plyrs, returnValue, args.otherCountry);
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);

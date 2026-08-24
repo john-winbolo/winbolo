@@ -93,7 +93,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     char playerName[PLAYER_NAME_LEN];
     playerName[0] = '\0';
     if (inGame) {
-        clientSimGetPlayerName(cs, playerName);
+        clientSimGetPlayerName(cs, playerName, sizeof(playerName));
     } else {
         gameFrontGetPlayerName(playerName);
     }
@@ -203,7 +203,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
             } else if (inGame) {
                 char oldName[PLAYER_NAME_LEN];
                 oldName[0] = '\0';
-                clientSimGetPlayerName(cs, oldName);
+                clientSimGetPlayerName(cs, oldName, sizeof(oldName));
                 if (playerNameCompare(oldName, newName) == 0) {
                     running = false;
                 } else {

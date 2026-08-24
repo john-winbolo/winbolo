@@ -388,7 +388,9 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message);
 void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName);
-void clientSimGetPlayerName(ClientSim *cs, char *value);
+/* Reads the local player's name into value, which holds at most
+   valueSize bytes including the NUL; longer names are truncated. */
+void clientSimGetPlayerName(ClientSim *cs, char *value, size_t valueSize);
 bool clientSimSetPlayerName(ClientSim *cs, char *value);
 
 /* High-level send-message wrappers used by the players-panel UI. */

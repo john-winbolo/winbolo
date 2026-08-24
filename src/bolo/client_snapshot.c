@@ -403,7 +403,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
             args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, newOwner);
             playersGetCountryCode(&csPtr->sim.plyrs, newOwner, args.playerCountry);
             if (prevOwner != NEUTRAL) {
-              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName, FALSE);
+              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName,
+                                   sizeof(args.otherName), FALSE);
               args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, prevOwner);
               playersGetCountryCode(&csPtr->sim.plyrs, prevOwner, args.otherCountry);
               csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
@@ -513,7 +514,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         if (isHuman) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
-          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], args.playerName, FALSE);
+          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
+                               args.playerName, sizeof(args.playerName), FALSE);
           args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
           playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);

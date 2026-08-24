@@ -293,7 +293,7 @@ static bool s_closeMenuPopups = false;
  * one). A local define drifting past it would silently render every extra
  * slot grey rather than fail. */
 static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
-static char     s_playerName[MAX_PLAYERS][33] = {};        /* PLAYER_NAME_LEN = 33 */
+static char     s_playerName[MAX_PLAYERS][33] = {};        /* display copy; longer names truncate */
 static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country code + NUL */
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
 static bool     s_playerChecked[MAX_PLAYERS]  = {};
@@ -365,7 +365,7 @@ static bool s_wbnInitialised     = false;
 static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
-static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
+static char s_changeNameBuf[PLAYER_NAME_LEN] = "";
 
 static bool s_showAllianceOpen   = false;
 static char s_alliancePlayerName[33] = "";
@@ -1735,7 +1735,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showChangeName    = false;
         s_changeNameBuf[0] = '\0';
-        clientSimGetPlayerName(cs, s_changeNameBuf);
+        clientSimGetPlayerName(cs, s_changeNameBuf, sizeof(s_changeNameBuf));
     }
     static float s_fadeChangeName = 0.0f;
     bool changeNameOpen = true;
@@ -1760,7 +1760,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         bool doCancel = (f == WBUI::FOOTER_CANCEL);
 
         if (doOK) {
-            s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
+            s_changeNameBuf[PLAYER_NAME_LAST] = '\0'; /* final byte stays NUL */
             utilStripName(s_changeNameBuf);
             if (s_changeNameBuf[0] == '\0') {
                 /* blank — stay open */

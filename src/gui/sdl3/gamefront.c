@@ -3110,7 +3110,7 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
-    clientSimGetPlayerName(humanSim, playerName);
+    clientSimGetPlayerName(humanSim, playerName, sizeof(playerName));
     strcpy(gameFrontName, playerName);
     prefsSetString("SETTINGS", "Player Name", playerName);
   } else {

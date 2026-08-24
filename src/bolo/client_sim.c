@@ -1142,11 +1142,16 @@ void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName)
   }
 }
 
-void clientSimGetPlayerName(ClientSim *csPtr, char *value) {
+void clientSimGetPlayerName(ClientSim *csPtr, char *value, size_t valueSize) {
+  if (valueSize == 0) {
+    return;
+  }
   if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
-    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
+    SDL_strlcpy(value, clientSimGetMyLastPlayerName(csPtr), valueSize);
   } else {
-    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
+    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs,
+                         clientSimGetMyPlayerNum(csPtr), value, valueSize,
+                         FALSE);
   }
 }
 
