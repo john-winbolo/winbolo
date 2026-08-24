@@ -691,29 +691,6 @@ static void wbnRenderLoginPopup(void) {
     }
 }
 
-/* Draws a 16x16 tile from the game atlas inline at text height, used to
- * mark the Bases/Pills/Tanks column headers with their map sprites. Tile
- * coords are in 1x units; the atlas is assembled at gSheetScale, but UVs
- * normalised against the 1x reference size (TILE_FILE_X/Y) stay correct
- * at any scale. */
-static void wbnDrawTileIcon(int tileX, int tileY) {
-    SDL_Texture *tex = sdl3DrawGetTilesTexture();
-    if (!tex) return;
-    float sz = ImGui::GetTextLineHeight();
-    ImVec2 uv0((float)tileX / TILE_FILE_X, (float)tileY / TILE_FILE_Y);
-    ImVec2 uv1((float)(tileX + TILE_SIZE_X) / TILE_FILE_X,
-               (float)(tileY + TILE_SIZE_Y) / TILE_FILE_Y);
-    ImGui::Image((ImTextureID)tex, ImVec2(sz, sz), uv0, uv1);
-}
-
-/* Builds a table header cell whose label is preceded by an inline map
- * sprite (icon to the left of the text). */
-static void wbnDrawIconHeader(int tileX, int tileY, const char *label) {
-    wbnDrawTileIcon(tileX, tileY);
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    ImGui::TableHeader(label);
-}
-
 /* Formats a non-negative integer with thousands separators, e.g.
  * 12345 -> "12,345". The separator is a fixed comma rather than locale
  * aware: the cross-platform builds don't set a C locale, and MSVC has no
@@ -960,11 +937,11 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
                 ImGui::TableHeader(ImGui::TableGetColumnName(c));
             }
             ImGui::TableSetColumnIndex(5);
-            wbnDrawIconHeader(BASE_GOOD_X, BASE_GOOD_Y, ImGui::TableGetColumnName(5));
+            imguiDrawIconHeader(BASE_GOOD_X, BASE_GOOD_Y, ImGui::TableGetColumnName(5));
             ImGui::TableSetColumnIndex(6);
-            wbnDrawIconHeader(PILL_EVIL15_X, PILL_EVIL15_Y, ImGui::TableGetColumnName(6));
+            imguiDrawIconHeader(PILL_EVIL15_X, PILL_EVIL15_Y, ImGui::TableGetColumnName(6));
             ImGui::TableSetColumnIndex(7);
-            wbnDrawIconHeader(TANK_SELF_0_X, TANK_SELF_0_Y, ImGui::TableGetColumnName(7));
+            imguiDrawIconHeader(TANK_SELF_0_X, TANK_SELF_0_Y, ImGui::TableGetColumnName(7));
 
             wbnDrawStatsRow(langGetText(STR_DLGWBN_STATS_OPEN),   &st.open);
             wbnDrawStatsRow(langGetText(STR_DLGWBN_STATS_TOURN),  &st.tourn);

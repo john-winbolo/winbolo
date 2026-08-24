@@ -52,6 +52,7 @@
 extern "C" {
 #include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
+#include "../../tiles.h"   /* map sprites for the recap scoreboard headers */
 #include "../../gamefront.h"
 #include "global.h"
 #include "bolo_rand.h"
@@ -3656,6 +3657,7 @@ static SDL_Texture *s_iconSettings = nullptr;
 static SDL_Texture *s_iconBotCpuGreen  = nullptr;
 static SDL_Texture *s_iconBotCpuRed    = nullptr;
 static SDL_Texture *s_iconLocked       = nullptr;
+static SDL_Texture *s_iconSkull        = nullptr;
 static bool         s_iconsAttempted = false;
 /* The renderer instance the icons above were created against. SDL_Texture
  * is tied to the renderer that created it, so if the renderer instance
@@ -3763,6 +3765,7 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_iconBotCpuGreen) { SDL_DestroyTexture(s_iconBotCpuGreen); s_iconBotCpuGreen = nullptr; }
         if (s_iconBotCpuRed)   { SDL_DestroyTexture(s_iconBotCpuRed);   s_iconBotCpuRed   = nullptr; }
         if (s_iconLocked)      { SDL_DestroyTexture(s_iconLocked);      s_iconLocked      = nullptr; }
+        if (s_iconSkull)       { SDL_DestroyTexture(s_iconSkull);       s_iconSkull       = nullptr; }
     }
     s_iconsAttempted = true;
     s_iconsRenderer  = renderer;
@@ -3806,6 +3809,19 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
             SDL_snprintf(basePathBuf, sizeof(basePathBuf),
                          "%sdata/ui/mapeditor/locked.svg", base);
             s_iconLocked = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+        }
+    }
+
+    /* Skull for the recap scoreboard's death columns — a white alpha mask
+     * like the lock badge, so the header can tint it to the text colour. */
+    s_iconSkull = imguiLoadSvgIconWhite(renderer, "data/ui/skull.svg", iconPx);
+    if (s_iconSkull == nullptr) {
+        char basePathBuf[FILENAME_MAX];
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                         "%sdata/ui/skull.svg", base);
+            s_iconSkull = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
         }
     }
 }
@@ -6075,13 +6091,33 @@ static ImU32 lastRoundTeamTint(ClientSim *cs, uint8_t teamNumber) {
 
 /* Resolve and render a slot's name inline: bots use the bot-badge tint
  * plus the BOT tag (as in the roster); humans are tinted by team color.
- * Falls back to a placeholder when the slot has no name. */
+ * Falls back to a placeholder when the slot has no name.
+ *
+ * Country flag and platform/WBN badges come first, on the same line, the
+ * way the roster renders them. Both hang off the lobby slot, so a player
+ * who left before the recap (no slot) simply gets the placeholder name on
+ * its own — nothing to draw and nothing to misalign. */
 static void lastRoundRenderName(ClientSim *cs, uint8_t slot, bool isBot) {
     const ClientLobbySlot *ls =
         (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot) : nullptr;
     const char *name = (ls && ls->playerName[0])
                            ? ls->playerName
                            : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER);
+    if (ls) {
+        if (drawCountryFlagWithTip(ls->countryCode)) {
+            ImGui::SameLine();
+        }
+        /* Badges only: the name itself is drawn below with its team tint.
+         * Bots are skipped — the BOT tag already says what they are. The
+         * WBN shield is meaningless off the network, so drop it there. */
+        if (!isBot) {
+            uint8_t pflags = ls->clientFlags;
+            if (clientSimIsSinglePlayer(cs) || clientSimIsLanOnly(cs)) {
+                pflags &= ~PLAYER_FLAG_WBN_VERIFIED;
+            }
+            renderPlayerName(NULL, pflags, ls->clientType, "", false);
+        }
+    }
     if (isBot) {
         ImGui::TextColored(wbThemeColor(g_theme->botBadge), "%s", name);
         ImGui::SameLine(0, 4.0f);
@@ -6152,6 +6188,20 @@ static const int RECAP_AWARDS_SHOWN = 4;
  * a new round's recap opens on the short list. */
 static bool s_recapShowAllAwards = false;
 
+/* Skull for the scoreboard's death columns, drawn square at text height and
+ * tinted to the text colour so it sits with the other header art rather than
+ * shouting. Returns false when the asset is missing, which is the caller's
+ * cue to fall back to the column's written label. */
+static bool lastRoundDrawSkull(void) {
+    if (!s_iconSkull) return false;
+    float sz = ImGui::GetTextLineHeight();
+    ImGui::ImageWithBg((ImTextureID)s_iconSkull, ImVec2(sz, sz),
+                       ImVec2(0, 0), ImVec2(1, 1),
+                       ImVec4(0, 0, 0, 0),
+                       ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    return true;
+}
+
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
 /* ── Embedded replay reel ─────────────────────────────────────────
  * The log viewer decodes on its own timer threads and paints the round
@@ -6174,6 +6224,16 @@ static float s_reelViewH      = 0.0f;
 static float s_reelSeekRatio  = 0.0f;
 static bool  s_reelSeeking    = false;
 
+/* Vertical room the recap left unused on the previous frame, accumulated.
+ * The reel adds it to its own height, which is what stops the body ending
+ * well short of the bottom of a tall panel. Immediate mode gives no way to
+ * know what the content below the reel will cost before drawing it, so this
+ * is a one-frame feedback loop: renderLastRoundBody measures the shortfall
+ * at the end of the frame and this grows or shrinks by that much. It has to
+ * accumulate rather than hold the raw shortfall — a raw value would be
+ * spent, measure zero, and collapse back the next frame. */
+static float s_recapSlack = 0.0f;
+
 static void lobbyReelEnd(void) {
     if (s_reelActive) {
         lvEmbedEnd();
@@ -6184,15 +6244,19 @@ static void lobbyReelEnd(void) {
     s_reelAutoPaused = false;
     s_reelSeekRatio  = 0.0f;
     s_reelSeeking    = false;
+    s_recapSlack     = 0.0f;
 }
 
-/* Reel height: a share of whatever vertical room the container has left,
- * bounded so it stays watchable in a short controller tab and does not eat a
- * tall recap column whole. Bounds are unscaled pixels. Taken from the content
- * region rather than the window so the same numbers serve both containers. */
-static const float REEL_HEIGHT_FRAC = 0.45f;
-static const float REEL_HEIGHT_MIN  = 180.0f;
-static const float REEL_HEIGHT_MAX  = 420.0f;
+/* Reel height: a share of whatever vertical room the container has left, plus
+ * the room the rest of the recap turned out not to need, floored so it stays
+ * watchable in a short controller tab and capped as a share of the container
+ * so the transport and the scoreboard below it are never pushed out. The
+ * floor is in unscaled pixels; the cap is a fraction, because a tall panel is
+ * exactly the case the slack exists to fill. Taken from the content region
+ * rather than the window so the same numbers serve both containers. */
+static const float REEL_HEIGHT_FRAC     = 0.45f;
+static const float REEL_HEIGHT_MIN      = 180.0f;
+static const float REEL_HEIGHT_MAX_FRAC = 0.75f;
 
 static void lobbyRenderReel(float s) {
     /* A triple gate: only a round this process recorded, published to a file
@@ -6209,9 +6273,13 @@ static void lobbyRenderReel(float s) {
     }
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC);
+    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC + s_recapSlack);
     if (rect.y < REEL_HEIGHT_MIN * s) rect.y = REEL_HEIGHT_MIN * s;
-    if (rect.y > REEL_HEIGHT_MAX * s) rect.y = REEL_HEIGHT_MAX * s;
+    /* Cap last, so a container too short for the floor is still not overrun. */
+    if (rect.y > avail.y * REEL_HEIGHT_MAX_FRAC) {
+        rect.y = avail.y * REEL_HEIGHT_MAX_FRAC;
+    }
+    if (rect.y < 1.0f) rect.y = 1.0f;
     if (rect.x < 1.0f) rect.x = 1.0f;
 
     if (!s_reelActive && !s_reelTried) {
@@ -6389,6 +6457,12 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Height of the container the body is about to fill, and where it starts,
+     * so the tail of this function can see how much of it went unused and feed
+     * that back into the reel. */
+    const float bodyAvailH = ImGui::GetContentRegionAvail().y;
+    const float bodyStartY = ImGui::GetCursorPosY();
+
     lobbyRenderReel(s);
 #endif
 
@@ -6486,6 +6560,40 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         if (id >= 1 && id <= AWARD_COUNT) awardIdx[id] = i;
     }
 
+    /* Widest count each column will actually print this round. A fixed-width
+     * column clips, so a column has to cover its own numbers — but only the
+     * ones that are there, not a worst case this round never reached. */
+    unsigned colMax[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    for (int i = 0; i < n; i++) {
+        const RoundPlayerSummary *pp = &st->players[i];
+        if ((unsigned)pp->kills        > colMax[1]) colMax[1] = pp->kills;
+        if ((unsigned)pp->deaths       > colMax[2]) colMax[2] = pp->deaths;
+        if ((unsigned)pp->baseCaptures > colMax[3]) colMax[3] = pp->baseCaptures;
+        if ((unsigned)pp->pillCaptures > colMax[4]) colMax[4] = pp->pillCaptures;
+        if ((unsigned)pp->builds       > colMax[6]) colMax[6] = pp->builds;
+        if ((unsigned)pp->lgmKills     > colMax[7]) colMax[7] = pp->lgmKills;
+        if ((unsigned)pp->lgmDeaths    > colMax[8]) colMax[8] = pp->lgmDeaths;
+    }
+
+    /* Every column that counts something the map draws is headed by that
+     * sprite alone, with the written name on the tooltip, so the column only
+     * has to hold its icon and its numbers — the Name column is stretch-sized
+     * and gets back everything the written labels used to cost. Icons are
+     * text-height tall and keep their source aspect, so these follow the UI
+     * scale without a hard-coded pixel anywhere. */
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float iconH = ImGui::GetTextLineHeight();
+    const float lgmW  = iconH * (float)LGM_WIDTH / (float)LGM_HEIGHT;
+    auto iconColWidth = [&](int col, float iconExtent) {
+        char buf[16];
+        SDL_snprintf(buf, sizeof(buf), "%u", colMax[col]);
+        float w = ImGui::CalcTextSize(buf).x;
+        if (iconExtent > w) w = iconExtent;
+        /* One pixel of slop: an icon sized to exactly fill the cell would
+         * otherwise be at the mercy of rounding at the clip edge. */
+        return w + sty.CellPadding.x * 2.0f + 1.0f;
+    };
+
     if (n > 0 &&
         ImGui::BeginTable("##lastRoundScore", 9,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
@@ -6493,25 +6601,100 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_NAME),
                                 ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_KILLS),
-                                ImGuiTableColumnFlags_WidthFixed, 28.0f * s);
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(1, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DEATHS),
-                                ImGuiTableColumnFlags_WidthFixed, 28.0f * s);
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(2, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BASE),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(3, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_PILL),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(4, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DMG),
                                 ImGuiTableColumnFlags_WidthFixed, 52.0f * s);
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BUILDS),
-                                ImGuiTableColumnFlags_WidthFixed, 48.0f * s);
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(6, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMK),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(7, lgmW));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMD),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
-        ImGui::TableHeadersRow();
+                                ImGuiTableColumnFlags_WidthFixed,
+                                iconColWidth(8, lgmW + sty.ItemInnerSpacing.x +
+                                                iconH));
+
+        /* Header row drawn by hand: every column that counts something the
+         * map draws is headed by that sprite instead of a word, with the
+         * written name on the tooltip. Name and Dmg keep their text — no
+         * sprite says "name" or "damage" — and need no tooltip, since they
+         * already read as what they are. Deaths reuses the skull the LGM
+         * Deaths column ends with. TableHeader is still submitted for every
+         * column, with an empty label where the icon speaks, so the cell
+         * keeps its header background, hover and id path; the id comes from
+         * the column index the way TableHeadersRow does it. */
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        for (int c = 0; c < 9; c++) {
+            ImGui::TableSetColumnIndex(c);
+            const char *label = ImGui::TableGetColumnName(c);
+            bool drewIcon = false;
+            switch (c) {
+                case 1:
+                    imguiDrawTileIcon(TANK_SELF_0_X, TANK_SELF_0_Y);
+                    drewIcon = true;
+                    break;
+                case 2:
+                    drewIcon = lastRoundDrawSkull();
+                    break;
+                case 3:
+                    imguiDrawTileIcon(BASE_GOOD_X, BASE_GOOD_Y);
+                    drewIcon = true;
+                    break;
+                case 4:
+                    imguiDrawTileIcon(PILL_EVIL15_X, PILL_EVIL15_Y);
+                    drewIcon = true;
+                    break;
+                case 6:
+                    imguiDrawTileIcon(BUILD_SINGLE_X, BUILD_SINGLE_Y);
+                    drewIcon = true;
+                    break;
+                case 7:
+                    imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                    drewIcon = true;
+                    break;
+                case 8:
+                    /* Man then skull — the pair reads as "little men lost",
+                     * against column 7's bare man for the ones you killed.
+                     * Without the skull the pair is ambiguous, so that case
+                     * falls back to the written label. */
+                    imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                    ImGui::SameLine(0.0f, sty.ItemInnerSpacing.x);
+                    drewIcon = lastRoundDrawSkull();
+                    break;
+                default:
+                    break;
+            }
+            if (drewIcon) ImGui::SameLine(0.0f, 0.0f);
+            ImGui::PushID(c);
+            ImGui::TableHeader(drewIcon ? "" : label);
+            ImGui::PopID();
+            if (drewIcon) imguiHelpTooltip(label);
+        }
+
+        const BYTE mySlot = gameFrontGetPlayerNum();
         for (int r = 0; r < n; r++) {
             const RoundPlayerSummary *p = &st->players[order[r]];
             ImGui::TableNextRow();
+            /* Lift your own line off the alternating row background so it
+             * is findable at a glance. Background only — the team tint has
+             * to stay the row's text colour. */
+            if (p->slot == mySlot) {
+                ImVec4 mine = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+                mine.w = 0.38f;
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       ImGui::GetColorU32(mine));
+            }
             ImGui::TableSetColumnIndex(0);
             lastRoundRenderName(cs, p->slot, p->isBot != 0);
             ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
@@ -6592,6 +6775,21 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             }
         }
     }
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* What the body did not use goes to the reel next frame. One frame of lag
+     * is inherent — the cost of everything below the reel is only known once
+     * it has been drawn — so switching between the desktop column and the
+     * controller tab, which are different heights, shows a single frame at the
+     * old size before this settles. Growing the reel shrinks the shortfall by
+     * the same amount, so it converges instead of hunting. Bounded by the
+     * container: with no replay to show, the reel draws nothing and there is
+     * nothing to absorb the shortfall, so an unbounded total would climb for
+     * as long as the recap is on screen. */
+    s_recapSlack += bodyAvailH - (ImGui::GetCursorPosY() - bodyStartY);
+    if (s_recapSlack < 0.0f)       s_recapSlack = 0.0f;
+    if (s_recapSlack > bodyAvailH) s_recapSlack = bodyAvailH;
+#endif
 }
 
 /* ── Layout A — small inline lock badge ───────────────────────────

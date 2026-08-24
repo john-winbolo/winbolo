@@ -31,6 +31,10 @@
 #include "../../../common/wb_log.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+/* Tile-atlas geometry for imguiDrawTileIcon() below. tiles.h is a
+ * dependency-free constants header, so it costs the many TUs that include
+ * this one nothing beyond the macros themselves. */
+#include "../../tiles.h"
 
 /* Pulled in early so dialogApplyScaling() below can branch on Deck mode.
  * (Same file also re-includes near s_devicePresets — that's fine, the
@@ -388,6 +392,49 @@ static inline void imguiHelpTooltip(const char *text) {
     if (!text) return;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) || ImGui::IsItemFocused())
         ImGui::SetTooltip("%s", text);
+}
+
+/* The game's tile atlas, owned by the SDL3 renderer. Declared here rather
+ * than including sdl3draw.h, which would pull the whole render/sim surface
+ * into every dialog translation unit. Non-game builds that include this
+ * header never call the helpers below, so the declaration costs them
+ * nothing. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+SDL_Texture *sdl3DrawGetTilesTexture(void);
+#ifdef __cplusplus
+}
+#endif
+
+/* Draws a sprite from the game atlas inline at text height, used to mark a
+ * table column with the map art for the thing it counts. The width follows
+ * the source aspect, so a sprite that is not square — the 3x4 LGM — keeps
+ * its proportions instead of being stretched. Source coords and extents are
+ * in 1x units; the atlas is assembled at gSheetScale, but UVs normalised
+ * against the 1x reference size (TILE_FILE_X/Y) stay correct at any scale. */
+static inline void imguiDrawAtlasIcon(int srcX, int srcY, int srcW, int srcH) {
+    SDL_Texture *tex = sdl3DrawGetTilesTexture();
+    if (!tex || srcW <= 0 || srcH <= 0) return;
+    float h = ImGui::GetTextLineHeight();
+    float w = h * (float)srcW / (float)srcH;
+    ImVec2 uv0((float)srcX / TILE_FILE_X, (float)srcY / TILE_FILE_Y);
+    ImVec2 uv1((float)(srcX + srcW) / TILE_FILE_X,
+               (float)(srcY + srcH) / TILE_FILE_Y);
+    ImGui::Image((ImTextureID)tex, ImVec2(w, h), uv0, uv1);
+}
+
+/* A whole 16x16 map tile — the common case, square at text height. */
+static inline void imguiDrawTileIcon(int tileX, int tileY) {
+    imguiDrawAtlasIcon(tileX, tileY, TILE_SIZE_X, TILE_SIZE_Y);
+}
+
+/* Builds a table header cell whose label is preceded by an inline map
+ * sprite (icon to the left of the text). */
+static inline void imguiDrawIconHeader(int tileX, int tileY, const char *label) {
+    imguiDrawTileIcon(tileX, tileY);
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::TableHeader(label);
 }
 
 /* Register Platform_OpenInShellFn on the current ImGui context so that
