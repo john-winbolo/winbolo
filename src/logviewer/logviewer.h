@@ -188,6 +188,36 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
 
+/* Embedded reel: drives the decoder and the block-grid render-to-texture for a
+ * host that already owns an ImGui frame, so a round can be drawn as a texture
+ * inside that frame. The viewer's ImGui context, panels, sound and preferences
+ * are never brought up. Scalars and void * only — hosts that cannot include
+ * this header (the client's GUI, whose types collide with backend.h) hand-
+ * declare the same signatures.
+ *
+ * lvEmbedBegin borrows window/renderer, takes ownership of zipData (freeing it
+ * on every refusal), and refuses while any viewer, spectator or earlier embed
+ * still holds the decoder singleton. viewW/viewH are the host's image rect in
+ * pixels; the tile grid is sized to it and re-fitted by lvEmbedSetViewportSize.
+ * lvEmbedFrameTexture updates the render target when the decode timers asked
+ * for it and reports the texture plus the visible slice within it (src rect in
+ * texture pixels), clearing and presenting nothing. Wheel coordinates are
+ * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin.
+ * lvEmbedEnd is safe to call twice or while inactive. */
+bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  uint8_t *zipData, size_t zipLen, int viewW, int viewH);
+void lvEmbedEnd(void);
+bool lvEmbedIsActive(void);
+void lvEmbedSetViewportSize(int viewW, int viewH);
+bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
+                         int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
+void lvEmbedPlay(void);
+void lvEmbedPause(void);
+bool lvEmbedIsPlaying(void);
+void lvEmbedWheel(int localX, int localY, float wheelY);
+void lvEmbedPanBegin(void);
+void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
+
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world
  * ClientSim (passed opaquely as cs) through the spectator_drain.h seam. The

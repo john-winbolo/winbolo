@@ -91,6 +91,28 @@ extern "C" {
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
+
+/* Embedded log-viewer reel (src/logviewer/logviewer.c). Hand-declared rather
+ * than included: logviewer.h pulls in backend.h / viewport_types.h, whose
+ * screen / screenMines types collide with the client's — the same rule
+ * gamefront.c documents. Scalars and void * only, so no viewer type crosses
+ * the seam. Must stay inside this extern "C" block or the calls compile and
+ * then fail to link on a mangled symbol. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  uint8_t *zipData, size_t zipLen, int viewW, int viewH);
+void lvEmbedEnd(void);
+bool lvEmbedIsActive(void);
+void lvEmbedSetViewportSize(int viewW, int viewH);
+bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
+                         int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
+void lvEmbedPlay(void);
+void lvEmbedPause(void);
+bool lvEmbedIsPlaying(void);
+void lvEmbedWheel(int localX, int localY, float wheelY);
+void lvEmbedPanBegin(void);
+void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
+#endif
 }
 #include "../wb_theme.h"
 #include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
@@ -6120,6 +6142,133 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
     }
 }
 
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* ── Embedded replay reel ─────────────────────────────────────────
+ * The log viewer decodes on its own timer threads and paints the round
+ * into an SDL render target; the recap blits the visible slice of that
+ * target as an image and feeds wheel/drag input back. The viewer owns a
+ * process-wide decoder singleton, so the reel is torn down whenever the
+ * recap stops drawing it, the summary clears, or the full-window
+ * takeover starts. */
+static bool  s_reelActive     = false;
+static bool  s_reelTried      = false;  /* one load attempt per summary */
+static bool  s_reelDrawn      = false;  /* body drew the reel this frame */
+static float s_reelViewW      = 0.0f;
+static float s_reelViewH      = 0.0f;
+
+static void lobbyReelEnd(void) {
+    if (s_reelActive) {
+        lvEmbedEnd();
+        s_reelActive = false;
+    }
+    s_reelTried = false;
+    s_reelDrawn = false;
+}
+
+/* Reel height in the recap body, before UI scale. */
+static const float REEL_HEIGHT = 220.0f;
+
+static void lobbyRenderReel(float s) {
+    /* Same triple gate the Watch replay button uses: only a round this
+     * process recorded, published to a file that is actually there. */
+    const char *replayPath = serverDedicatedLogLastRoundFile();
+    SDL_PathInfo replayInfo;
+    if (!gameFrontHasLocalServer() || replayPath[0] == '\0' ||
+        !SDL_GetPathInfo(replayPath, &replayInfo)) {
+        return;
+    }
+
+    ImVec2 rect(ImGui::GetContentRegionAvail().x, REEL_HEIGHT * s);
+    if (rect.x < 1.0f) rect.x = 1.0f;
+
+    if (!s_reelActive && !s_reelTried) {
+        /* One attempt per summary either way — a failed load must not be
+         * retried every frame. */
+        s_reelTried = true;
+        s_reelViewW = rect.x;
+        s_reelViewH = rect.y;
+        SDL_IOStream *io = SDL_IOFromFile(replayPath, "rb");
+        if (io) {
+            Sint64 len = SDL_GetIOSize(io);
+            /* malloc, not SDL_malloc: the viewer releases the buffer with
+             * plain free(), and it owns it from the call on — including
+             * when the load fails. */
+            uint8_t *buf = (len > 0) ? (uint8_t *)malloc((size_t)len) : NULL;
+            if (buf) {
+                if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
+                    s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                                                sdl3DrawGetRenderer(),
+                                                buf, (size_t)len,
+                                                (int)rect.x, (int)rect.y);
+                } else {
+                    free(buf);
+                }
+            }
+            SDL_CloseIO(io);
+        }
+    }
+    if (!s_reelActive) return;
+
+    if (rect.x != s_reelViewW || rect.y != s_reelViewH) {
+        lvEmbedSetViewportSize((int)rect.x, (int)rect.y);
+        s_reelViewW = rect.x;
+        s_reelViewH = rect.y;
+    }
+
+    void *tex = NULL;
+    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    ImVec2 imgMin = ImGui::GetCursorScreenPos();
+    if (lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) &&
+        tex && texW > 0 && texH > 0) {
+        /* The render target is a tile larger than the visible slice, so the
+         * UVs pick the slice the viewer would otherwise have blitted. */
+        ImVec2 uv0((float)srcX / (float)texW, (float)srcY / (float)texH);
+        ImVec2 uv1((float)(srcX + srcW) / (float)texW,
+                   (float)(srcY + srcH) / (float)texH);
+        ImGui::Image((ImTextureID)tex, rect, uv0, uv1);
+    } else {
+        ImGui::Dummy(rect);
+    }
+
+    /* Input overlay on the image rect: the button takes the drag as an
+     * active item, so a drag pans the reel instead of moving the window
+     * under it. Mirrors the map preview popup. */
+    ImGui::SetCursorScreenPos(imgMin);
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##ReelView", rect);
+    if (ImGui::IsItemHovered()) {
+        /* Claim the wheel on every hovered frame, not just the ones that
+         * carry a notch: the ownership set here is what ImGui reads at the
+         * start of the next frame, and it is what stops the enclosing recap
+         * window from scrolling under the reel as it zooms. */
+        ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGui::GetItemID());
+        float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f) {
+            ImVec2 mp = ImGui::GetMousePos();
+            lvEmbedWheel((int)(mp.x - imgMin.x), (int)(mp.y - imgMin.y), wheel);
+        }
+    }
+    if (ImGui::IsItemActivated()) {
+        lvEmbedPanBegin();
+    }
+    if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+        lvEmbedPanDelta(drag.x, drag.y);
+    }
+
+    if (ImGui::Button(lvEmbedIsPlaying() ? langGetText(STR_LV_PAUSE)
+                                         : langGetText(STR_LV_PLAY_BTN))) {
+        if (lvEmbedIsPlaying()) {
+            lvEmbedPause();
+        } else {
+            lvEmbedPlay();
+        }
+    }
+
+    s_reelDrawn = true;
+}
+#endif
+
 /* Container-less recap body: the between-rounds scoreboard table, a
  * flat list of every won award, plus the round's highlight clips.
  * Renders no chrome and decides nothing about visibility — the caller
@@ -6127,7 +6276,16 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
  * and supplies the surrounding window. */
 static void renderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
-    if (!st) return;
+    if (!st) {
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+        lobbyReelEnd();
+#endif
+        return;
+    }
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    lobbyRenderReel(s);
+#endif
 
     /* ── Scoreboard ordering ─────────────────────────────────────── */
     /* Display order: kills desc, then fewest deaths, then slot. */
@@ -6309,6 +6467,11 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             SDL_GetPathInfo(replayPath, &replayInfo)) {
             ImGui::Separator();
             if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_WATCH))) {
+#if !defined(__EMSCRIPTEN__)
+                /* The takeover's viewer allocates the same process-wide
+                 * decoder state the reel holds; the two cannot coexist. */
+                lobbyReelEnd();
+#endif
                 /* Request only — the viewer cannot start while this frame's
                  * ImGui context is live. The host exits the modal first. */
                 g_watchReplayRequested = true;
@@ -6884,6 +7047,12 @@ extern "C" void imguiLobbyFrameReset(void) {
     /* Consumed by whoever is about to run the replay; clearing it here means
      * the re-entered lobby starts with no request pending. */
     g_watchReplayRequested = false;
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* The reel holds the viewer's decoder singleton — never leave it running
+     * past the lobby session. */
+    lobbyReelEnd();
+#endif
 
     s_kickPendingOpen = false;
     s_kickPendingSlot = -1;
@@ -8802,6 +8971,22 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * SDL_GetWindowSize) — screenW/screenH is cached at lobby
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* The reel outlives any single body render. Once the summary is gone (the
+     * countdown clears it) drop the reel and the per-summary load latch —
+     * unconditionally, since a round whose load failed leaves the latch set
+     * with no reel to end, and would otherwise block every later round in the
+     * session. lobbyReelEnd is idempotent. While a summary stands, freeze a
+     * reel the recap stopped drawing — a popup closed or a tab switched away
+     * must not leave the decoder ticking unseen. */
+    if (!clientSimGetLastRoundStats(cs)) {
+        lobbyReelEnd();
+    } else if (s_reelActive && !s_reelDrawn && lvEmbedIsPlaying()) {
+        lvEmbedPause();
+    }
+    s_reelDrawn = false;
+#endif
 
     /* Leaving outranks a pending replay request: a player who asks for the
      * replay and then confirms Leave in the same frame gets the leave. */
