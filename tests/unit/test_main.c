@@ -134,6 +134,8 @@ static const UnitTestEntry s_tests[] = {
     { "awards_omission",                            run_awards_omission                            },
     { "awards_floors",                              run_awards_floors                              },
     { "awards_include_bots",                        run_awards_include_bots                        },
+    { "awards_subset_basic",                        run_awards_subset_basic                        },
+    { "awards_subset_deterministic",                run_awards_subset_deterministic                },
     { "round_stats_codec_roundtrip",                run_round_stats_codec_roundtrip                },
     { "round_stats_codec_worstcase",                run_round_stats_codec_worstcase                },
     { "round_stats_build_summary",                  run_round_stats_build_summary                  },

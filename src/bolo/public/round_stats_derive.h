@@ -88,6 +88,21 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
                    const bool isBot[], AwardResult out[], int *outCount);
 
+/* Choose which of a summary's won awards to show when there are more of them
+ * than there is room for. Writes up to maxOut indices into summary->awards[]
+ * (indices, not ids and not copies) and returns how many it wrote; a round that
+ * won maxOut or fewer gets all of them, in order, with no draw at all.
+ *
+ * The draw is seeded from the summary's own content and nothing else, so every
+ * client holding the same summary picks the same awards — players compare
+ * recaps side by side, so agreement is the point, not a nicety — and a
+ * re-render of the same summary never reshuffles. At least one of the
+ * negative/fun awards is kept whenever the round won one. Returned indices are
+ * unique and ordered by ascending award id, matching the full list's order.
+ * Pure: no allocation, no I/O, no globals. */
+int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
+                              uint8_t *outIdx, int maxOut);
+
 /* Score a round's notable timeline into a ranked, non-overlapping top-N set of
  * highlight windows. Pure: no sim, no globals. `team[s]` is slot s's team (for
  * wipe weighting). `shifts` is the territory series from computeTerritoryShifts

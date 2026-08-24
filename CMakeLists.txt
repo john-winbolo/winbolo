@@ -3430,6 +3430,8 @@ set(_unit_test_names
     awards_omission
     awards_floors
     awards_include_bots
+    awards_subset_basic
+    awards_subset_deterministic
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
     round_stats_build_summary

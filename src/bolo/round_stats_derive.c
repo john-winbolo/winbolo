@@ -352,6 +352,133 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
     *outCount = count;
 }
 
+/* ---- Award subset draw ---------------------------------------------------- */
+
+/* The negative awards — the ones a round gets teased about rather than bragged
+ * about. The subset draw always keeps one of these when the round won one, so a
+ * shortened list never reads as a flat roll of winners. */
+static bool awardIsFun(uint8_t awardId) {
+    return awardId == AWARD_MOST_DEATHS   || awardId == AWARD_FISH_FOOD ||
+           awardId == AWARD_CANNON_FODDER || awardId == AWARD_WASTEFUL  ||
+           awardId == AWARD_BIGGEST_FUMBLE;
+}
+
+/* xorshift32: three shifts, no state beyond the seed, and the same sequence on
+ * every compiler and platform — which is the entire requirement here. It is
+ * stuck at zero, so callers force a non-zero seed before the first draw. */
+static uint32_t pickRand(uint32_t *state) {
+    uint32_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    return x;
+}
+
+int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
+                              uint8_t *outIdx, int maxOut) {
+    if (summary == NULL || outIdx == NULL || maxOut <= 0) {
+        return 0;
+    }
+
+    int n = summary->awardCount;
+    if (n > AWARD_COUNT) {
+        n = AWARD_COUNT;
+    }
+    if (n <= 0) {
+        return 0;
+    }
+    if (n <= maxOut) {
+        /* Everything fits: nothing to choose, so nothing is drawn. */
+        for (int i = 0; i < n; i++) {
+            outIdx[i] = (uint8_t)i;
+        }
+        return n;
+    }
+
+    /* The seed folds the summary's own content and reads nothing else — no
+     * clock, no call counter, no address — because two clients showing the same
+     * summary have to land on the same picks. FNV-1a over each won
+     * award's id and value plus each highlight's start tick; whole integers go
+     * into the mix rather than their bytes, so the fold is endian-independent. */
+    uint32_t seed = 2166136261u;   /* FNV-1a offset basis */
+    for (int i = 0; i < n; i++) {
+        seed = (seed ^ summary->awards[i].awardId) * 16777619u;
+        seed = (seed ^ summary->awards[i].value)   * 16777619u;
+    }
+    int hc = summary->highlightCount;
+    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) {
+        hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+    }
+    for (int i = 0; i < hc; i++) {
+        seed = (seed ^ summary->highlights[i].startTick) * 16777619u;
+    }
+    if (seed == 0) {
+        seed = 2654435769u;   /* xorshift32 would never leave zero */
+    }
+
+    bool taken[AWARD_COUNT];
+    for (int i = 0; i < AWARD_COUNT; i++) {
+        taken[i] = false;
+    }
+    int picked = 0;
+
+    /* One negative award first, drawn from those the round actually won; the
+     * rest of the slots then fill from everything still unpicked, which is what
+     * keeps the guarantee from costing more than a single slot. */
+    int fun[AWARD_COUNT];
+    int funCount = 0;
+    for (int i = 0; i < n; i++) {
+        if (awardIsFun(summary->awards[i].awardId)) {
+            fun[funCount++] = i;
+        }
+    }
+    if (funCount > 0) {
+        int f = (int)(pickRand(&seed) % (uint32_t)funCount);
+        taken[fun[f]] = true;
+        outIdx[picked++] = (uint8_t)fun[f];
+    }
+
+    /* Without replacement: each draw walks to the k'th award still untaken, so
+     * an index can never come up twice. n > maxOut here, so there is always one
+     * left to take. */
+    while (picked < maxOut) {
+        int k = (int)(pickRand(&seed) % (uint32_t)(n - picked));
+        int chosen = -1;
+        for (int i = 0; i < n; i++) {
+            if (taken[i]) {
+                continue;
+            }
+            if (k == 0) {
+                chosen = i;
+                break;
+            }
+            k--;
+        }
+        if (chosen < 0) {
+            break;   /* unreachable while any award is untaken; bounds the loop */
+        }
+        taken[chosen] = true;
+        outIdx[picked++] = (uint8_t)chosen;
+    }
+
+    /* Sorted by award id so the shown picks read in the same order the full list
+     * does, and so the order is a property of the summary rather than of the
+     * order the draw happened to visit them in. */
+    for (int i = 1; i < picked; i++) {
+        uint8_t v = outIdx[i];
+        uint8_t vid = summary->awards[v].awardId;
+        int j = i;
+        while (j > 0 && summary->awards[outIdx[j - 1]].awardId > vid) {
+            outIdx[j] = outIdx[j - 1];
+            j--;
+        }
+        outIdx[j] = v;
+    }
+
+    return picked;
+}
+
 /* ---- Territory influence pre-pass ---------------------------------------- */
 
 /* Record mapX/mapY are bytes, so the influence grid is 256x256 regardless of the

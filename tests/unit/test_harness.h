@@ -158,6 +158,8 @@ int run_awards_tiebreak(void);
 int run_awards_omission(void);
 int run_awards_floors(void);
 int run_awards_include_bots(void);
+int run_awards_subset_basic(void);
+int run_awards_subset_deterministic(void);
 int run_round_stats_codec_roundtrip(void);
 int run_round_stats_codec_worstcase(void);
 int run_round_stats_build_summary(void);

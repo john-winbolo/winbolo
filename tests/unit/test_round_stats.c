@@ -784,6 +784,189 @@ int run_awards_include_bots(void) {
     return 0;
 }
 
+/* Build a summary carrying the listed awards plus `hlCount` highlights. The
+ * subset picker reads nothing but the summary, so the fixtures are filled in
+ * directly rather than derived from a sim. */
+static void make_award_summary(RoundStatsSummary *st, const uint8_t *ids,
+                               int count, int hlCount) {
+    memset(st, 0, sizeof(*st));
+    st->awardCount = (uint8_t)count;
+    for (int i = 0; i < count; i++) {
+        st->awards[i].awardId     = ids[i];
+        st->awards[i].winnerSlot  = (uint8_t)(i % MAX_TANKS);
+        st->awards[i].subjectSlot = NEUTRAL;
+        st->awards[i].value       = (uint32_t)(10 + i * 7);
+    }
+    st->highlightCount = (uint8_t)hlCount;
+    for (int i = 0; i < hlCount; i++) {
+        st->highlights[i].startTick     = (uint32_t)(100 + i * 250);
+        st->highlights[i].durationTicks = 150;
+        st->highlights[i].type          = HL_CLUSTER_WIPE;
+    }
+}
+
+/* The shape every pick set must have: the expected count, in-range indices, no
+ * repeats, and ascending award ids. Returns 0 on success, 1 on failure (the
+ * UT_ASSERT_MSG contract), so callers propagate the result. */
+static int check_pick_shape(const RoundStatsSummary *st, const uint8_t *idx,
+                            int n, int expect, const char *what) {
+    UT_ASSERT_MSG(n == expect, "%s: expected %d picks, got %d", what, expect, n);
+    for (int i = 0; i < n; i++) {
+        UT_ASSERT_MSG(idx[i] < st->awardCount,
+                      "%s: pick %d index %u out of range", what, i,
+                      (unsigned)idx[i]);
+        for (int j = 0; j < i; j++) {
+            UT_ASSERT_MSG(idx[j] != idx[i],
+                          "%s: index %u picked twice", what, (unsigned)idx[i]);
+        }
+        if (i > 0) {
+            UT_ASSERT_MSG(st->awards[idx[i - 1]].awardId <
+                              st->awards[idx[i]].awardId,
+                          "%s: award ids ascend, got %u then %u", what,
+                          (unsigned)st->awards[idx[i - 1]].awardId,
+                          (unsigned)st->awards[idx[i]].awardId);
+        }
+    }
+    return 0;
+}
+
+/* Is any picked award one of the negative set the draw guarantees? */
+static bool picks_have_fun(const RoundStatsSummary *st, const uint8_t *idx,
+                           int n) {
+    for (int i = 0; i < n; i++) {
+        uint8_t id = st->awards[idx[i]].awardId;
+        if (id == AWARD_MOST_DEATHS || id == AWARD_FISH_FOOD ||
+            id == AWARD_CANNON_FODDER || id == AWARD_WASTEFUL ||
+            id == AWARD_BIGGEST_FUMBLE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Shape and edges of the subset draw: a crowded round is cut to the cap, a
+ * short one is passed through whole, and the degenerate inputs write nothing. */
+int run_awards_subset_basic(void) {
+    RoundStatsSummary st;
+    uint8_t idx[AWARD_COUNT];
+    int n;
+
+    /* Eight won, four shown. */
+    static const uint8_t eight[8] = {
+        AWARD_MOST_KILLS, AWARD_MOST_DEATHS, AWARD_BEST_KD,
+        AWARD_MOST_BASE_CAPTURES, AWARD_NEMESIS, AWARD_DEMOLITION,
+        AWARD_ENGINEER, AWARD_LUMBERJACK
+    };
+    make_award_summary(&st, eight, 8, 3);
+    n = roundStatsPickAwardSubset(&st, idx, 4);
+    if (check_pick_shape(&st, idx, n, 4, "eight won") != 0) return 1;
+
+    /* Fewer won than the cap: everything is shown, in stored order. */
+    static const uint8_t three[3] = {
+        AWARD_MOST_KILLS, AWARD_SAPPER, AWARD_WASTEFUL
+    };
+    make_award_summary(&st, three, 3, 2);
+    n = roundStatsPickAwardSubset(&st, idx, 4);
+    if (check_pick_shape(&st, idx, n, 3, "three won") != 0) return 1;
+    for (int i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(idx[i] == (uint8_t)i,
+                      "three won: index %d is %u, expected %d", i,
+                      (unsigned)idx[i], i);
+    }
+
+    /* A round that won nothing has nothing to pick. */
+    make_award_summary(&st, three, 0, 0);
+    n = roundStatsPickAwardSubset(&st, idx, 4);
+    UT_ASSERT_MSG(n == 0, "no awards won picks nothing, got %d", n);
+
+    /* Degenerate inputs write nothing and report nothing. */
+    make_award_summary(&st, eight, 8, 3);
+    memset(idx, 0xEE, sizeof(idx));
+    UT_ASSERT_MSG(roundStatsPickAwardSubset(NULL, idx, 4) == 0,
+                  "NULL summary picks nothing");
+    UT_ASSERT_MSG(idx[0] == 0xEE, "NULL summary wrote to the output");
+    UT_ASSERT_MSG(roundStatsPickAwardSubset(&st, NULL, 4) == 0,
+                  "NULL output picks nothing");
+    UT_ASSERT_MSG(roundStatsPickAwardSubset(&st, idx, 0) == 0,
+                  "zero cap picks nothing");
+    UT_ASSERT_MSG(idx[0] == 0xEE, "zero cap wrote to the output");
+
+    return 0;
+}
+
+/* The two properties the lobby leans on: the same summary always draws the same
+ * awards (every client shows one set), and a round that earned a negative award
+ * always shows one of them. */
+int run_awards_subset_deterministic(void) {
+    RoundStatsSummary st, copy;
+    uint8_t a[AWARD_COUNT], b[AWARD_COUNT];
+    int na, nb;
+
+    /* Exactly one negative award among eight. */
+    static const uint8_t oneFun[8] = {
+        AWARD_MOST_KILLS, AWARD_BEST_KD, AWARD_MOST_BASE_CAPTURES,
+        AWARD_MOST_PILL_CAPTURES, AWARD_NEMESIS, AWARD_DEMOLITION,
+        AWARD_ENGINEER, AWARD_BIGGEST_FUMBLE
+    };
+    make_award_summary(&st, oneFun, 8, 4);
+
+    na = roundStatsPickAwardSubset(&st, a, 4);
+    nb = roundStatsPickAwardSubset(&st, b, 4);
+    if (check_pick_shape(&st, a, na, 4, "repeat draw") != 0) return 1;
+    UT_ASSERT_MSG(na == nb, "repeat draw count, got %d then %d", na, nb);
+    UT_ASSERT_MSG(memcmp(a, b, (size_t)na) == 0,
+                  "the same summary draws the same picks");
+
+    /* A byte-copy is the same summary as far as the draw is concerned — this is
+     * what makes two clients agree. */
+    memcpy(&copy, &st, sizeof(copy));
+    nb = roundStatsPickAwardSubset(&copy, b, 4);
+    UT_ASSERT_MSG(nb == na && memcmp(a, b, (size_t)na) == 0,
+                  "a copied summary draws the same picks");
+
+    /* The round's only negative award is shown. */
+    UT_ASSERT_MSG(picks_have_fun(&st, a, na),
+                  "the sole negative award is always picked");
+
+    /* Several negative awards: at least one of them is shown. Fish Food is
+     * stored ahead of Engineer here, out of id order, so the ascending-id check
+     * exercises the sort rather than the storage order it usually matches. */
+    static const uint8_t manyFun[9] = {
+        AWARD_MOST_KILLS, AWARD_MOST_DEATHS, AWARD_BEST_KD, AWARD_NEMESIS,
+        AWARD_FISH_FOOD, AWARD_ENGINEER, AWARD_CANNON_FODDER, AWARD_WASTEFUL,
+        AWARD_BIGGEST_FUMBLE
+    };
+    make_award_summary(&st, manyFun, 9, 5);
+    na = roundStatsPickAwardSubset(&st, a, 4);
+    if (check_pick_shape(&st, a, na, 4, "many negative") != 0) return 1;
+    UT_ASSERT_MSG(picks_have_fun(&st, a, na),
+                  "a negative award is picked when several were won");
+
+    /* No negative award won: the draw still fills the cap. */
+    static const uint8_t noFun[7] = {
+        AWARD_MOST_KILLS, AWARD_BEST_KD, AWARD_MOST_BASE_CAPTURES,
+        AWARD_MOST_PILL_CAPTURES, AWARD_SHARPSHOOTER, AWARD_ENGINEER,
+        AWARD_LUMBERJACK
+    };
+    make_award_summary(&st, noFun, 7, 3);
+    na = roundStatsPickAwardSubset(&st, a, 4);
+    if (check_pick_shape(&st, a, na, 4, "no negative") != 0) return 1;
+    UT_ASSERT_MSG(!picks_have_fun(&st, a, na),
+                  "no negative award to pick when none was won");
+
+    /* A highlight tick is part of the seed, so moving one re-runs the draw. The
+     * picks may legitimately land on the same combination — only the shape is
+     * asserted, not that they changed. */
+    make_award_summary(&st, oneFun, 8, 4);
+    st.highlights[2].startTick += 37;
+    na = roundStatsPickAwardSubset(&st, a, 4);
+    if (check_pick_shape(&st, a, na, 4, "perturbed highlight") != 0) return 1;
+    UT_ASSERT_MSG(picks_have_fun(&st, a, na),
+                  "perturbed seed still honours the negative-award guarantee");
+
+    return 0;
+}
+
 /* Encode a CTRL_ROUND_STATS event through the full encoder, confirm it
  * carries PACKET_ROUND_STATS, then decode the body back. Mirrors the
  * alliance-reset codec helper. */

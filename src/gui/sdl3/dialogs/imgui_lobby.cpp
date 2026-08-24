@@ -72,6 +72,7 @@ extern "C" {
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
 #include "../../../bolo/public/wire_limits.h"
+#include "../../../bolo/public/round_stats_derive.h"  /* roundStatsPickAwardSubset */
 #include <errno.h>
 
 /* stb_image entry points used by lobbyWbnGeneratePreview (defined in
@@ -6142,6 +6143,15 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
  * of the panel flips it. */
 static bool s_recapShowMap = false;
 
+/* How many of the round's awards the recap shows before the rest go behind the
+ * expand. A round can win all eighteen, and a list that long buries the ones
+ * worth reading. */
+static const int RECAP_AWARDS_SHOWN = 4;
+
+/* Whether the "More awards" expand is open. Per-summary, like s_recapShowMap:
+ * a new round's recap opens on the short list. */
+static bool s_recapShowAllAwards = false;
+
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
 /* ── Embedded replay reel ─────────────────────────────────────────
  * The log viewer decodes on its own timer threads and paints the round
@@ -6363,7 +6373,8 @@ static void lobbyRenderReel(float s) {
 #endif
 
 /* Container-less recap body, in reading order: the round's replay reel, its
- * highlight clips, the scoreboard table, then a flat list of every won award.
+ * highlight clips, the scoreboard table, then a handful of the round's awards
+ * with the rest behind an expand.
  * Renders no chrome and decides nothing about visibility — the caller (the
  * desktop lobby's right column / the controller layout's Last round tab)
  * gates it on clientSimGetLastRoundStats and supplies the surrounding
@@ -6557,9 +6568,29 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         }
     };
 
-    /* Every won award, listed in award-id order. */
-    for (int id = 1; id <= AWARD_COUNT; id++) {
-        if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
+    /* A busy round wins most of the eighteen, which reads as a wall of text and
+     * buries the ones worth reading. Show a handful, drawn from the summary's
+     * own bytes so every client shows the same ones, and keep the full list one
+     * click away. */
+    uint8_t picks[RECAP_AWARDS_SHOWN];
+    int pickCount = roundStatsPickAwardSubset(st, picks, RECAP_AWARDS_SHOWN);
+    for (int i = 0; i < pickCount; i++) {
+        renderAward(picks[i]);
+    }
+
+    /* Nothing was left out when everything fit, so there is no header at all.
+     * Its open state is driven from our own flag rather than ImGui's storage so
+     * the next round's recap starts collapsed. */
+    if (ac > pickCount) {
+        ImGui::SetNextItemOpen(s_recapShowAllAwards, ImGuiCond_Always);
+        s_recapShowAllAwards =
+            ImGui::CollapsingHeader(langGetText(STR_DLGLOBBY_LASTROUND_MORE));
+        if (s_recapShowAllAwards) {
+            /* Every won award, listed in award-id order. */
+            for (int id = 1; id <= AWARD_COUNT; id++) {
+                if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
+            }
+        }
     }
 }
 
@@ -7188,6 +7219,7 @@ extern "C" void imguiLobbyFrameReset(void) {
     /* A lobby re-entered with a summary still stored should open on the
      * recap, not on whatever the last session was left looking at. */
     s_recapShowMap              = false;
+    s_recapShowAllAwards        = false;
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     /* The reel holds the viewer's decoder singleton — never leave it running
@@ -7676,10 +7708,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
 #endif
-        /* The countdown clearing the summary also clears the map view, so the
-         * next round's recap opens on itself rather than on wherever the
-         * player left the panel. */
-        if (!lobbyShowLastRound) s_recapShowMap = false;
+        /* The countdown clearing the summary also clears the map view and the
+         * awards expand, so the next round's recap opens on itself rather than
+         * on wherever the player left the panel. */
+        if (!lobbyShowLastRound) {
+            s_recapShowMap       = false;
+            s_recapShowAllAwards = false;
+        }
 
         /* Settings above the layout is the two-column (mouse) path only; the
          * tabbed layout renders the same form in a dedicated tab, so skip it
