@@ -6684,6 +6684,17 @@ static void SDLCALL lobbyClipGifSaveCallback(void *userdata,
     (void)filter;
     if (filelist && filelist[0]) {
         SDL_strlcpy(st->path, filelist[0], sizeof(st->path));
+        /* Not every platform's dialog applies the filter's extension to a name
+         * typed without one, so a name that arrives bare gets it here — the
+         * file has to open as a GIF wherever the player shares it. Matched
+         * case-insensitively so a name already ending .GIF keeps the one it
+         * has. If there is no room for the suffix the path stands as typed;
+         * SDL_strlcat leaves it terminated either way. */
+        size_t len = SDL_strlen(st->path);
+        if (len > 0 &&
+            (len < 4 || SDL_strcasecmp(st->path + len - 4, ".gif") != 0)) {
+            SDL_strlcat(st->path, ".gif", sizeof(st->path));
+        }
         st->ok = 1;
     }
     st->done = 1;
