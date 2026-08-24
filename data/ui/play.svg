@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Transport play control for the recap reel. One flat triangle, no strokes
+     and no gradients, so it survives being rasterised at 18px. The corners are
+     left sharp rather than rounded: at this size a rounded tip loses the point
+     that makes it read as play rather than as a wedge. Sized to the same
+     margins as the other data/ui glyphs because imguiLoadSvgIconWhite scales
+     by the declared page rather than the drawn bounds. Rendered as a white
+     alpha mask and tinted at draw time. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M5.5 2.8 L20.5 12 L5.5 21.2 Z"/>
+</svg>

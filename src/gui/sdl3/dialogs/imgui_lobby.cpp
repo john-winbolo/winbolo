@@ -3667,6 +3667,8 @@ static SDL_Texture *s_iconBotCpuRed    = nullptr;
 static SDL_Texture *s_iconLocked       = nullptr;
 static SDL_Texture *s_iconSkull        = nullptr;
 static SDL_Texture *s_iconPicture      = nullptr;
+static SDL_Texture *s_iconPlay         = nullptr;
+static SDL_Texture *s_iconPause        = nullptr;
 static bool         s_iconsAttempted = false;
 /* The renderer instance the icons above were created against. SDL_Texture
  * is tied to the renderer that created it, so if the renderer instance
@@ -3760,6 +3762,23 @@ static SDL_Texture *getTankGood04Texture(SDL_Renderer *renderer) {
     return s_tankGood04;
 }
 
+/* Two-path load for a white-mask icon: relative to the working directory
+ * first, then relative to the executable, which is where an installed build
+ * keeps its data/ tree. Same fallback the coloured icons above do inline. */
+static SDL_Texture *loadWhiteIcon(SDL_Renderer *renderer, const char *relPath,
+                                  int iconPx) {
+    SDL_Texture *tex = imguiLoadSvgIconWhite(renderer, relPath, iconPx);
+    if (tex == nullptr) {
+        char basePathBuf[FILENAME_MAX];
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            SDL_snprintf(basePathBuf, sizeof(basePathBuf), "%s%s", base, relPath);
+            tex = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+        }
+    }
+    return tex;
+}
+
 static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
@@ -3776,6 +3795,8 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_iconLocked)      { SDL_DestroyTexture(s_iconLocked);      s_iconLocked      = nullptr; }
         if (s_iconSkull)       { SDL_DestroyTexture(s_iconSkull);       s_iconSkull       = nullptr; }
         if (s_iconPicture)     { SDL_DestroyTexture(s_iconPicture);     s_iconPicture     = nullptr; }
+        if (s_iconPlay)        { SDL_DestroyTexture(s_iconPlay);        s_iconPlay        = nullptr; }
+        if (s_iconPause)       { SDL_DestroyTexture(s_iconPause);       s_iconPause       = nullptr; }
     }
     s_iconsAttempted = true;
     s_iconsRenderer  = renderer;
@@ -3835,18 +3856,11 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         }
     }
 
-    /* Picture glyph for the clip rows' export control — a white alpha mask
-     * like the two above, so the button tints it to the row's text colour. */
-    s_iconPicture = imguiLoadSvgIconWhite(renderer, "data/ui/picture.svg", iconPx);
-    if (s_iconPicture == nullptr) {
-        char basePathBuf[FILENAME_MAX];
-        const char *base = SDL_GetBasePath();
-        if (base) {
-            SDL_snprintf(basePathBuf, sizeof(basePathBuf),
-                         "%sdata/ui/picture.svg", base);
-            s_iconPicture = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
-        }
-    }
+    /* The reel's transport and export glyphs — white alpha masks like the two
+     * above, so each button tints them to its surrounding text colour. */
+    s_iconPicture = loadWhiteIcon(renderer, "data/ui/picture.svg", iconPx);
+    s_iconPlay    = loadWhiteIcon(renderer, "data/ui/play.svg", iconPx);
+    s_iconPause   = loadWhiteIcon(renderer, "data/ui/pause.svg", iconPx);
 }
 
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
@@ -6290,7 +6304,13 @@ static const float REEL_HEIGHT_MAX_FRAC = 0.75f;
 /* Defined down with the chat input's state, which is declared after this. */
 static void lobbyChatInputAppendTime(uint32_t curMs);
 
-static void lobbyRenderReel(float s) {
+/* Defined with the clip export below, which needs the reel's own state. The
+ * transport bar carries the same control the clip rows do, so both are reached
+ * from here. */
+static bool lobbyClipGifButton(const char *id, bool compact);
+static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+
+static void lobbyRenderReel(ClientSim *cs, float s) {
     /* A triple gate: only a round this process recorded, published to a file
      * that is actually there. gameFrontHasLocalServer() is the load-bearing
      * one — the accessor describes whatever round this process last recorded
@@ -6419,12 +6439,32 @@ static void lobbyRenderReel(float s) {
      * not shuffle everything below the reel up and down. */
     ImGui::SetCursorPosY(blockTopY + rect.y);
 
-    if (ImGui::Button(lvEmbedIsPlaying() ? langGetText(STR_LV_PAUSE)
-                                         : langGetText(STR_LV_PLAY_BTN))) {
+    /* Transport toggle as a glyph: a written caption is the widest thing on
+     * this row and its width moves as the label swaps and as the language
+     * changes, which shoves everything after it. The icon is square and the
+     * two states are the same size, so the row holds still. The written label
+     * stays as the tooltip — it is already translated, and a bare glyph does
+     * not say what it does for someone meeting it the first time. */
+    const bool reelPlaying = lvEmbedIsPlaying();
+    SDL_Texture *transportIcon = reelPlaying ? s_iconPause : s_iconPlay;
+    const char  *transportText = langGetText(reelPlaying ? STR_LV_PAUSE
+                                                         : STR_LV_PLAY_BTN);
+    bool transportClicked;
+    if (transportIcon) {
+        transportClicked = ImGui::ImageButton(
+            "##reelplay", (ImTextureID)transportIcon,
+            ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()),
+            ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
+            ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        imguiHelpTooltip(transportText);
+    } else {
+        transportClicked = ImGui::Button(transportText);
+    }
+    if (transportClicked) {
         /* Whichever way it goes, the player has now said what they want —
          * drop any claim we had on the transport. */
         s_reelAutoPaused = false;
-        if (lvEmbedIsPlaying()) {
+        if (reelPlaying) {
             lvEmbedPause();
         } else {
             lvEmbedPlay();
@@ -6440,6 +6480,16 @@ static void lobbyRenderReel(float s) {
     ImGui::SameLine();
     if (ImGui::Button("@")) {
         lobbyChatInputAppendTime(curMs);
+    }
+
+    /* Export the next few seconds from wherever the reel is sitting. The view
+     * is left as the player framed it — they have already chosen what they are
+     * looking at, which is the whole point of exporting from here rather than
+     * off a row. Full height, so it sits level with the two buttons before
+     * it rather than shrinking the transport row. */
+    ImGui::SameLine();
+    if (lobbyClipGifButton("##reelgif", false)) {
+        lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
     }
 
     /* Seek slider shares the transport row with Play/Pause and takes the rest
@@ -6506,6 +6556,9 @@ static const int CLIP_GIF_QUALITY         = 16;  /* the encoder's own default */
  * exports something rather than an empty file. */
 static const int CLIP_GIF_MAX_FRAMES      = 150;
 static const int CLIP_GIF_MIN_FRAMES      = 10;
+/* What the transport's own button captures, having no clip to take a length
+ * from: long enough to hold a moment, short enough to still be worth posting. */
+static const uint32_t CLIP_GIF_PLAYHEAD_MS = 5000u;
 /* Frames per lobby frame. Four keeps the longest clip under a second of
  * wall time while leaving the readback stalls small enough to hide. */
 static const int CLIP_GIF_FRAMES_PER_PASS = 4;
@@ -6582,9 +6635,15 @@ static void lobbyClipGifAbort(void) {
     }
 }
 
-/* Park the reel on the clip and open the encoder at the size every frame of
- * this capture will be. */
-static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
+/* Park the reel on the moment and open the encoder at the size every frame of
+ * this capture will be. Takes a time and a length rather than a clip: the
+ * transport's button has neither a clip nor a cell, only where the playhead is.
+ * centreOnCell splits the two the same way lvEmbedSeekWindowMs does — a clip
+ * row names a place as well as a moment, the transport names only a moment and
+ * leaves the framing the player set up alone. */
+static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
+                              bool centreOnCell, int mapX, int mapY,
+                              const char *mapName) {
     if (s_clipGif.active || !lvEmbedIsActive()) {
         return;
     }
@@ -6592,9 +6651,13 @@ static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
     lvEmbedGetProgress(&s_clipGif.restoreMs, NULL);
     s_clipGif.restorePlaying = lvEmbedIsPlaying();
     lvEmbedPause();
-    /* Same seek the row itself does, so the capture opens on the moment the
-     * row names, centred where it happened. */
-    lvEmbedSeekToClip(h->startMs, h->mapX, h->mapY);
+    /* Same seek the caller's own control does, so the capture opens on the
+     * moment it named. */
+    if (centreOnCell) {
+        lvEmbedSeekToClip(startMs, mapX, mapY);
+    } else {
+        lvEmbedSeekToTime(startMs);
+    }
 
     void *tex = NULL;
     int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
@@ -6625,9 +6688,9 @@ static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
     s_clipGif.crop.w = cropW;
     s_clipGif.crop.h = cropH;
 
-    /* From the clip's length in ms, not its ticks: the reel steps a log clock
-     * and the clip is measured in sim ticks, and the two do not share a rate. */
-    uint32_t frames = h->durationMs / CLIP_GIF_FRAME_MS;
+    /* From the length in ms, not in ticks: the reel steps a log clock and a
+     * clip is measured in sim ticks, and the two do not share a rate. */
+    uint32_t frames = durationMs / CLIP_GIF_FRAME_MS;
     if (frames > (uint32_t)CLIP_GIF_MAX_FRAMES) frames = CLIP_GIF_MAX_FRAMES;
     if (frames < (uint32_t)CLIP_GIF_MIN_FRAMES) frames = CLIP_GIF_MIN_FRAMES;
 
@@ -6636,13 +6699,67 @@ static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
         return;
     }
 
-    unsigned secs = (unsigned)(h->startMs / 1000u);
+    unsigned secs = (unsigned)(startMs / 1000u);
     lobbyClipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
                          secs / 60u, secs % 60u);
     s_clipGif.frame  = 0;
     s_clipGif.total  = (int)frames;
     s_clipGif.failed = false;
     s_clipGif.active = true;
+}
+
+/* A clip row's export: the moment and the place the row names, for as long as
+ * the round's scorer decided the clip runs. */
+static void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName) {
+    lobbyClipGifStart(h->startMs, h->durationMs, true, h->mapX, h->mapY,
+                      mapName);
+}
+
+/* The transport's export: a fixed length from wherever the playhead sits, with
+ * the view left where the player put it. */
+static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName) {
+    lobbyClipGifStart(curMs, CLIP_GIF_PLAYHEAD_MS, false, 0, 0, mapName);
+}
+
+/* The export control itself: the picture glyph where it loaded, the format's
+ * name where it didn't. `compact` drops the frame padding's vertical half so
+ * the button fits a one-text-line clip row; the transport's copy keeps it and
+ * comes out the height of the buttons beside it. The tooltip names the format
+ * either way — a glyph on its own does not say which one. (Not `small`: the
+ * Windows RPC headers define that as a type.) */
+static bool lobbyClipGifButton(const char *id, bool compact) {
+    const float lineH = ImGui::GetTextLineHeight();
+    bool clicked;
+
+    if (s_iconPicture) {
+        if (compact) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+        }
+        clicked = ImGui::ImageButton(id, (ImTextureID)s_iconPicture,
+                                     ImVec2(lineH, lineH),
+                                     ImVec2(0, 0), ImVec2(1, 1),
+                                     ImVec4(0, 0, 0, 0),
+                                     ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        if (compact) {
+            ImGui::PopStyleVar();
+        }
+    } else {
+        /* id already carries its own ## prefix, so this reads as the caption
+         * with the same hidden id the icon path uses. */
+        char label[48];
+        snprintf(label, sizeof(label), "%s%s", CLIP_GIF_TITLE, id);
+        clicked = compact ? ImGui::SmallButton(label) : ImGui::Button(label);
+    }
+    imguiHelpTooltip(CLIP_GIF_TITLE);
+    return clicked;
+}
+
+/* Width the control above will take, for a caller placing it by hand. */
+static float lobbyClipGifButtonWidth(void) {
+    return (s_iconPicture ? ImGui::GetTextLineHeight()
+                          : ImGui::CalcTextSize(CLIP_GIF_TITLE).x)
+           + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
 
 /* One frame: read the fixed crop out of the viewer's render target and hand it
@@ -6869,7 +6986,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     const float bodyAvailH = ImGui::GetContentRegionAvail().y;
     const float bodyStartY = ImGui::GetCursorPosY();
 
-    lobbyRenderReel(s);
+    lobbyRenderReel(cs, s);
 #endif
 
     /* ── Highlight clips ─────────────────────────────────────────── */
@@ -6948,30 +7065,12 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
              * the format; with no icon loaded the format's name is the
              * caption, as it was before. */
             if (lvEmbedIsActive()) {
-                const float lineH  = ImGui::GetTextLineHeight();
-                const float padX   = ImGui::GetStyle().FramePadding.x;
-                const float btnW   = (s_iconPicture ? lineH
-                                        : ImGui::CalcTextSize(CLIP_GIF_TITLE).x)
-                                     + padX * 2.0f;
                 ImGui::SameLine();
-                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btnW);
+                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
+                                     lobbyClipGifButtonWidth());
                 ImGui::PushID(i);
-                bool exportClicked;
-                if (s_iconPicture) {
-                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                                        ImVec2(padX, 0.0f));
-                    exportClicked = ImGui::ImageButton(
-                        "##clipgif", (ImTextureID)s_iconPicture,
-                        ImVec2(lineH, lineH), ImVec2(0, 0), ImVec2(1, 1),
-                        ImVec4(0, 0, 0, 0),
-                        ImGui::GetStyleColorVec4(ImGuiCol_Text));
-                    ImGui::PopStyleVar();
-                } else {
-                    exportClicked = ImGui::SmallButton(CLIP_GIF_TITLE);
-                }
-                imguiHelpTooltip(CLIP_GIF_TITLE);
-                if (exportClicked) {
-                    lobbyClipGifStart(h, clientSimGetMapName(cs));
+                if (lobbyClipGifButton("##clipgif", true)) {
+                    lobbyClipGifStartClip(h, clientSimGetMapName(cs));
                 }
                 ImGui::PopID();
             }
