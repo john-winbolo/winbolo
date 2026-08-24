@@ -3736,6 +3736,7 @@ set(_unit_test_names
     scenario_setup_pre_snapshot
     scenario_enemy_roster
     scenario_seeded_round_start
+    scenario_lobby_reset_recommit
     maprotate_restarts_round_and_rearms
     maprotate_boot_does_not_rotate_while_empty
     maprotate_gameover_is_not_terminal

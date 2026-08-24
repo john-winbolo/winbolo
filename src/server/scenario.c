@@ -547,6 +547,27 @@ static int l_lobby_slot(lua_State *L) {
     return 1;
 }
 
+/* game.set_tile(x, y, terrain): server-authoritative terrain write via
+ * mapSetPos, so the change rides the normal EVENT_MAP_CHANGE delta to
+ * every client (humans AND bot ClientSims). Terrain is the engine
+ * code (BUILDING 0..MINE_GRASS 15). Best used from a RUNNING tick
+ * (on_start/on_tick) — the per-tick map-event buffer fans it out;
+ * mutations made in on_setup ride the baseline snapshot instead. */
+static int l_set_tile(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    GameSim *gs = serverSimGetGameSim(st->sim);
+    int x = (int)luaL_checkinteger(L, 1);
+    int y = (int)luaL_checkinteger(L, 2);
+    int t = (int)luaL_checkinteger(L, 3);
+    if (x < 0 || x > 255 || y < 0 || y > 255 || t < 0 || t > 15) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, (BYTE)t, TRUE, FALSE);
+    lua_pushboolean(L, TRUE);
+    return 1;
+}
+
 /* game.give_pill(p, n): load pill n (1-based, matching game.pill) into
  * player p's tank as if it had been driven over — the survival-map seam
  * for "each enemy tank spawns carrying pillboxes". Returns true, or
@@ -720,6 +741,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "tank",           l_tank);
     scRegister(L, st, "set_pill_owner", l_set_pill_owner);
     scRegister(L, st, "set_base_owner", l_set_base_owner);
+    scRegister(L, st, "set_tile",       l_set_tile);
     scRegister(L, st, "spawn_bot",      l_spawn_bot);
     scRegister(L, st, "remove_bot",     l_remove_bot);
     scRegister(L, st, "give_pill",      l_give_pill);

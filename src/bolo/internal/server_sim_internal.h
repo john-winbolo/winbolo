@@ -254,6 +254,13 @@ struct ServerSim {
     /* Scripted-scenario runtime (src/server/scenario.c). NULL for plain
      * maps; owned by the sim (scenarioShutdown in serverSimDestroy). */
     void        *scenario;
+    bool         scenarioCommitInProgress; /* re-entrancy guard for
+                                        * serverSimApplyScenarioCommit: its
+                                        * seeding can fail into
+                                        * serverSimRemovePlayer, whose
+                                        * last-human-left lobby reset calls
+                                        * the commit again — unguarded, that
+                                        * recursed to a stack overflow. */
     bool         scenarioSeededBot[MAX_TANKS]; /* slots holding the enemy
                                         * bots the server auto-added to lobby
                                         * Team 2 when the scenario map was

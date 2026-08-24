@@ -306,6 +306,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_setup_pre_snapshot",               run_scenario_setup_pre_snapshot               },
     { "scenario_enemy_roster",                     run_scenario_enemy_roster                     },
     { "scenario_seeded_round_start",               run_scenario_seeded_round_start               },
+    { "scenario_lobby_reset_recommit",             run_scenario_lobby_reset_recommit             },
     { "maprotate_restarts_round_and_rearms",       run_maprotate_restarts_round_and_rearms       },
     { "maprotate_defers_wbn_update_until_key_rotated", run_maprotate_defers_wbn_update_until_key_rotated },
     { "maprotate_gameover_is_not_terminal",        run_maprotate_gameover_is_not_terminal        },

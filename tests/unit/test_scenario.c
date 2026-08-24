@@ -933,6 +933,50 @@ int run_scenario_seeded_round_start(void) {
 }
 
 /* ================================================================
+ * 6c. Last human leaving the lobby must not strip the scenario.
+ * ================================================================ */
+int run_scenario_lobby_reset_recommit(void) {
+    ServerSim *sim;
+
+    sc_cleanup_files();
+    UT_ASSERT(sc_write_map_file(SC_MAP));
+    UT_ASSERT(sc_write_sidecar(
+        "function enemy_bots(game) return 4 end\n"
+        "function on_tick(game, tick) end\n"));
+
+    sim = sc_create();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(scenarioIsActive(sim));
+
+    /* The operator's startup snapshot predates the scenario: the server
+     * booted on plain Open settings before Choose Map picked this map. */
+    sim->originalLobbySettings.valid    = true;
+    sim->originalLobbySettings.gameType = gameOpen;
+
+    /* Choose Map commit — scenario takes the lobby over. */
+    serverSimApplyScenarioCommit(sim);
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                  "the commit must force the Scenario game type, got %d",
+                  (int)serverSimGetGameType(sim));
+
+    /* A human joins the lobby and leaves again. The last-human-out wipe
+     * restores the startup defaults (Open) — the scenario must re-commit
+     * itself on top, or the next joiner finds a plain lobby with no
+     * enemy team (the leave-and-rejoin bug). */
+    serverSimAddPlayer(sim, 0, "Human", false);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+    serverSimRemovePlayer(sim, 0);
+
+    UT_ASSERT_MSG(serverSimGetGameType(sim) == gameScripted,
+                  "the empty-lobby reset must re-commit the scenario map's "
+                  "game type, got %d", (int)serverSimGetGameType(sim));
+
+    serverSimDestroy(sim);
+    sc_cleanup_files();
+    return 0;
+}
+
+/* ================================================================
  * 7. A persistently-erroring script disables itself, sim survives.
  * ================================================================ */
 int run_scenario_error_disables_after_limit(void) {

@@ -590,6 +590,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->serverLocks         = 0;
     sim->maxPlayers          = MAX_TANKS;
     sim->startInProgress     = FALSE;
+    sim->scenarioCommitInProgress = FALSE;
     memset(sim->scenarioSeededBot, 0, sizeof(sim->scenarioSeededBot));
     sim->configuredMaxPlayers = 0;
     sim->mapFilePath[0]      = '\0';
@@ -2595,6 +2596,13 @@ static void serverSimResetLobbyToDefaults(ServerSim *sim) {
     sim->allowNewPlayers      = TRUE;
     sim->savedAllowNewPlayers = TRUE;
     transportUdpServerSetLock(sim, FALSE);
+
+    /* A scenario map re-commits itself over the freshly-restored
+     * defaults: game type back to Scenario, enemy Team 2 re-seeded to
+     * the script's roster — the wipe above dropped the seeded bots, and
+     * without this the next joiner would find an empty enemy side
+     * (leave-and-rejoin used to lose the whole setup). */
+    serverSimApplyScenarioCommit(sim);
 
     /* Publish the restored settings and refresh the WBN listing. The last
      * human just left, so no control-event subscribers remain to receive the
@@ -8626,6 +8634,10 @@ static void serverSimReloadScenarioForMap(ServerSim *sim) {
 
 void serverSimApplyScenarioCommit(ServerSim *sim) {
     if (sim == NULL) return;
+    /* Seeding failures clean up through serverSimRemovePlayer, whose
+     * lobby reset re-commits — once is enough. */
+    if (sim->scenarioCommitInProgress) return;
+    sim->scenarioCommitInProgress = TRUE;
     /* The "Scenario" game type tracks the COMMITTED map: choosing a
      * scenario map defaults the lobby to it (bots force-allowed —
      * the host can still switch types afterwards), and committing a
@@ -8646,6 +8658,7 @@ void serverSimApplyScenarioCommit(ServerSim *sim) {
     /* Seed (or clear) the enemy side's lobby bots for the new map. */
     serverSimSeedScenarioEnemyTeam(sim);
     serverSimPublishLobbySettings(sim);
+    sim->scenarioCommitInProgress = FALSE;
 }
 
 BYTE serverSimGetMaxBots(const ServerSim *sim) {

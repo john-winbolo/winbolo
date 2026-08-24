@@ -310,7 +310,46 @@ function on_setup(game)
   dealt = deal_center(game)
 end
 
+-- Terrain codes (engine values; see global.h).
+local T_SWAMP, T_CRATER, T_ROAD, T_FOREST, T_GRASS = 2, 3, 4, 5, 7
+
+-- Fresh forest every round: fill ~30% of the area INSIDE the ring road
+-- (radius < 10 around the center, puddle excluded automatically — only
+-- grass/road/crater/swamp convert) with trees, skipping the tiles under
+-- bases and pills. Runs from on_start (a RUNNING tick) so every client
+-- receives the changes through the normal map-delta stream; a new
+-- random layout each round keeps the defenders in building material.
+local function plant_core_forest(game)
+  math.randomseed(os.time())
+  local structures = {}
+  for b = 1, game.num_bases() do
+    local bi = game.base(b)
+    if bi then structures[bi.x * 256 + bi.y] = true end
+  end
+  for n = 1, game.num_pills() do
+    local pi = game.pill(n)
+    if pi and not pi.in_tank then structures[pi.x * 256 + pi.y] = true end
+  end
+  local planted = 0
+  for x = 118, 138 do
+    for y = 118, 138 do
+      local dx, dy = x - 128, y - 128
+      if dx * dx + dy * dy < 93 then          -- strictly inside r=10 ring
+        local t = game.map_tile(x, y)
+        if (t == T_GRASS or t == T_ROAD or t == T_CRATER or t == T_SWAMP)
+            and not structures[x * 256 + y]
+            and math.random() < 0.30 then
+          game.set_tile(x, y, T_FOREST)
+          planted = planted + 1
+        end
+      end
+    end
+  end
+  return planted
+end
+
 function on_start(game)
+  plant_core_forest(game)
   game.message(string.format(
     "*** SURVIVAL: dig in! First of %d waves in %d seconds. ***",
     WAVES, GRACE_TICKS / 50))

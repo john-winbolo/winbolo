@@ -520,6 +520,7 @@ int run_scenario_choose_start(void);
 int run_scenario_setup_pre_snapshot(void);
 int run_scenario_enemy_roster(void);
 int run_scenario_seeded_round_start(void);
+int run_scenario_lobby_reset_recommit(void);
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
 

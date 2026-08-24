@@ -49,6 +49,11 @@ bot_angles   = [k * 36 for k in range(10)]
 human_starts = [pol(R_HSTART, a) for a in human_angles]
 human_bases  = [pol(R_HBASE,  a) for a in human_angles]      # owners 0..5
 bot_bases    = [pol(R_BBASE,  a) for a in bot_angles]        # owners 15..6
+# Two of the enemy bases push in close — just outside the ring road —
+# so their bots treat the collision zone with the core as home turf.
+FORWARD_BASES = {2: 13, 7: 13}          # zero-based index -> radius
+for _i, _r in FORWARD_BASES.items():
+    bot_bases[_i] = pol(_r, bot_angles[_i])
 bot_starts   = [pol(R_BSTART, a) for a in bot_angles]
 pills = ([pol(R_PILL, a) for a in human_angles] +        # 1..6: base 10+k's pill
          [pol(R_PILL_OUT, a + 18) for a in bot_angles])  # 7..16: wave-1 carry
@@ -83,10 +88,17 @@ def terrain(x, y):
 
 grid = [[terrain(x, y) for y in range(256)] for x in range(256)]
 
-# ring road at the human perimeter (r ~ 10) for looks + mobility
-for deg10 in range(0, 3600):
-    x, y = pol(10, deg10 / 10.0)
+# ring road at the human perimeter (r ~ 10) for looks + mobility.
+# Bridge diagonal steps: the polar march can hop kitty-corner at the
+# quadrant mirror points, leaving roads that only touch at corners —
+# insert one orthogonal tile so the ring reads as connected.
+px, py = None, None
+for deg10 in range(0, 3601):
+    x, y = pol(10, (deg10 % 3600) / 10.0)
+    if px is not None and x != px and y != py:
+        grid[x][py] = ROAD
     grid[x][y] = ROAD
+    px, py = x, y
 
 # clear pads under/around every structure
 for (px, py) in human_bases + bot_bases + pills:
@@ -110,6 +122,10 @@ for i, s in enumerate(human_starts + bot_starts):
         # CENTER bases (harmless — the hook decides placement), but it
         # must never see an OUTER base.
         assert all(bi >= 10 for bi in near), f"human start {i} sees outer bases {near}"
+    elif (i - 6) in FORWARD_BASES:
+        # A forward base sits far inland from its ocean start — the
+        # start pairs with nothing (placement is hook-driven anyway).
+        assert near == [], f"forward-base start {i} sees bases {near}"
     else:
         # Each bot start pairs with exactly its own base so the engine
         # fallback stays correct for bots.
