@@ -203,6 +203,8 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * for it and reports the texture plus the visible slice within it (src rect in
  * texture pixels), clearing and presenting nothing. Wheel coordinates are
  * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin.
+ * lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
+ * size its image at the slice times the zoom instead of stretching it to fill.
  * lvEmbedEnd is safe to call twice or while inactive. */
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
@@ -211,6 +213,7 @@ bool lvEmbedIsActive(void);
 void lvEmbedSetViewportSize(int viewW, int viewH);
 bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
                          int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
+float lvEmbedGetZoomLevel(void);
 void lvEmbedPlay(void);
 void lvEmbedPause(void);
 bool lvEmbedIsPlaying(void);

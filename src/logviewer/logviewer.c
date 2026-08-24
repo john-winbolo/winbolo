@@ -1552,6 +1552,19 @@ bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
     return true;
 }
 
+/* Scale the slice reported by lvEmbedFrameTexture is meant to be drawn at:
+ * one source pixel becomes this many host pixels. 1.0 while no embed is
+ * running, so a host that asks too early still gets a usable number. */
+float lvEmbedGetZoomLevel(void) {
+    float zoom;
+
+    if (!s_embedActive || g_lv == NULL) {
+        return 1.0f;
+    }
+    zoom = lv_drawGetZoomLevel();
+    return (zoom > 0.0f) ? zoom : 1.0f;
+}
+
 void lvEmbedPlay(void) {
     if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
         return;

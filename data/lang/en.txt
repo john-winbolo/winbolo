@@ -687,7 +687,6 @@ STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT=Front collapse: {number} tiles taken
 STR_DLGLOBBY_HL_TURNING_FMT=Turning point: {number} tiles swung ({player})
 STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT=Turning point: {number} tiles swung
 STR_DLGLOBBY_HL_GENERIC=Highlight
-STR_DLGLOBBY_LASTROUND_WATCH=Watch replay
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name

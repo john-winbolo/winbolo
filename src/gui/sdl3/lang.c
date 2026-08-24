@@ -588,7 +588,6 @@ static const LangEntry langTable[] = {
     {1934, "Turning point: {number} tiles swung ({player})"},
     {1935, "Turning point: {number} tiles swung"},
     {1936, "Highlight"},
-    {1937, "Watch replay"},
     {757,  "WinBolo - Set Player Name"},
     {758,  "Your player name is set by WinBolo.net."},
     {759,  "Please enter your player name."},
