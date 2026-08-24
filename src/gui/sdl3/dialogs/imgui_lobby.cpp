@@ -6225,6 +6225,12 @@ static const int RECAP_AWARDS_SHOWN = 4;
  * a new round's recap opens on the short list. */
 static bool s_recapShowAllAwards = false;
 
+/* Whether the highlight-clip list is expanded. Per-summary like the two above,
+ * and closed to begin with: the clips are a place to go looking once something
+ * in the round is worth finding again, and the replay above them is what the
+ * recap is for. Folded away, the reel gets the rows' height. */
+static bool s_recapShowHighlights = false;
+
 /* Skull for the scoreboard's death columns, drawn square at text height and
  * tinted to the text colour so it sits with the other header art rather than
  * shouting. Returns false when the asset is missing, which is the caller's
@@ -6293,13 +6299,16 @@ static void lobbyReelEnd(void) {
 /* Reel height: a share of whatever vertical room the container has left, plus
  * the room the rest of the recap turned out not to need, floored so it stays
  * watchable in a short controller tab and capped as a share of the container
- * so the transport and the scoreboard below it are never pushed out. The
- * floor is in unscaled pixels; the cap is a fraction, because a tall panel is
- * exactly the case the slack exists to fill. Taken from the content region
- * rather than the window so the same numbers serve both containers. */
-static const float REEL_HEIGHT_FRAC     = 0.45f;
+ * so the transport row underneath is never pushed off. The share is the term
+ * that decides the size in practice: the slack only ever hands over room the
+ * rest of the recap genuinely left, which in a panel the scoreboard already
+ * overflows is none. The floor is in unscaled pixels; the cap is a fraction,
+ * because a tall panel is exactly the case the slack exists to fill. Taken
+ * from the content region rather than the window so the same numbers serve
+ * both containers. */
+static const float REEL_HEIGHT_FRAC     = 0.60f;
 static const float REEL_HEIGHT_MIN      = 180.0f;
-static const float REEL_HEIGHT_MAX_FRAC = 0.75f;
+static const float REEL_HEIGHT_MAX_FRAC = 0.85f;
 
 /* Defined down with the chat input's state, which is declared after this. */
 static void lobbyChatInputAppendTime(uint32_t curMs);
@@ -6992,89 +7001,108 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     /* ── Highlight clips ─────────────────────────────────────────── */
     /* Read-only list, in the order the server selected them (already
      * chronological). Each line is a round-relative timestamp plus a
-     * one-phrase description. */
+     * one-phrase description.
+     *
+     * Behind an expand that starts closed, so the reel above gets the height
+     * the rows would have taken and the scoreboard stays in view. The count
+     * rides on the header because a closed section otherwise says nothing
+     * about whether opening it is worth it — parenthesised digits after the
+     * translated noun, not a sentence, so there is no new string to
+     * translate. The ### keeps the widget's id off the changing count. */
     ImGui::Separator();
-    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_HL_HEADER));
     if (st->highlightCount == 0) {
-        /* A quiet round selects no clips — normal, not an error. */
+        /* A quiet round selects no clips — normal, not an error. Nothing to
+         * fold away, so this stays the plain header it always was rather than
+         * an expand that opens on one disabled line. */
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_HL_HEADER));
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_HL_NONE));
     } else {
         int hc = st->highlightCount;
         if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) {
             hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
         }
-        for (int i = 0; i < hc; i++) {
-            const HighlightWindow *h = &st->highlights[i];
-            /* The summary carries the clip's round-relative milliseconds, so
-             * the round clock is a plain division. The tick fields it also
-             * carries are the scorer's own units and do not convert at any
-             * rate this side knows. */
-            unsigned secs = (unsigned)(h->startMs / 1000u);
+        char hlHeader[96];
+        snprintf(hlHeader, sizeof(hlHeader), "%s (%d)###recapHighlights",
+                 langGetText(STR_DLGLOBBY_HL_HEADER), hc);
+        /* Driven from our own flag rather than ImGui's storage, the way the
+         * awards expand below is, so the next round's recap starts closed
+         * again instead of inheriting this one's state. */
+        ImGui::SetNextItemOpen(s_recapShowHighlights, ImGuiCond_Always);
+        s_recapShowHighlights = ImGui::CollapsingHeader(hlHeader);
+        if (s_recapShowHighlights) {
+            for (int i = 0; i < hc; i++) {
+                const HighlightWindow *h = &st->highlights[i];
+                /* The summary carries the clip's round-relative milliseconds, so
+                 * the round clock is a plain division. The tick fields it also
+                 * carries are the scorer's own units and do not convert at any
+                 * rate this side knows. */
+                unsigned secs = (unsigned)(h->startMs / 1000u);
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-            /* While a reel is up the whole row is a seek target: a selectable
-             * underneath for the hit area and controller focus, with the row's
-             * own two-tone text drawn back over it (text is not interactive,
-             * so it does not steal the hover). With no reel to seek there is
-             * no selectable at all — the text still renders everywhere, it
-             * just does not look clickable when it isn't. */
-            if (lvEmbedIsActive()) {
-                ImVec2 rowPos = ImGui::GetCursorPos();
-                char rowId[16];
-                snprintf(rowId, sizeof(rowId), "##clip%d", i);
-                /* The export button sits on top of this at the far end of the
-                 * row; without the overlap the selectable underneath keeps the
-                 * hover and the button can never be pressed. */
-                ImGui::SetNextItemAllowOverlap();
-                if (ImGui::Selectable(rowId, false, 0,
-                                      ImVec2(0, ImGui::GetTextLineHeight()))) {
-                    /* Round-relative ms, the same base the reel's own window
-                     * is measured in and the same one the timestamp above is
-                     * divided out of. */
-                    lvEmbedSeekToClip(h->startMs, h->mapX, h->mapY);
+                /* While a reel is up the whole row is a seek target: a selectable
+                 * underneath for the hit area and controller focus, with the row's
+                 * own two-tone text drawn back over it (text is not interactive,
+                 * so it does not steal the hover). With no reel to seek there is
+                 * no selectable at all — the text still renders everywhere, it
+                 * just does not look clickable when it isn't. */
+                if (lvEmbedIsActive()) {
+                    ImVec2 rowPos = ImGui::GetCursorPos();
+                    char rowId[16];
+                    snprintf(rowId, sizeof(rowId), "##clip%d", i);
+                    /* The export button sits on top of this at the far end of the
+                     * row; without the overlap the selectable underneath keeps the
+                     * hover and the button can never be pressed. */
+                    ImGui::SetNextItemAllowOverlap();
+                    if (ImGui::Selectable(rowId, false, 0,
+                                          ImVec2(0, ImGui::GetTextLineHeight()))) {
+                        /* Round-relative ms, the same base the reel's own window
+                         * is measured in and the same one the timestamp above is
+                         * divided out of. */
+                        lvEmbedSeekToClip(h->startMs, h->mapX, h->mapY);
+                    }
+                    ImGui::SetCursorPos(rowPos);
                 }
-                ImGui::SetCursorPos(rowPos);
-            }
 #endif
-            ImGui::TextDisabled("%02u:%02u", secs / 60u, secs % 60u);
-            ImGui::SameLine();
-
-            MessageArgs args = {};
-            SDL_strlcpy(args.playerName, lastRoundSlotName(cs, h->actorA),
-                        sizeof(args.playerName));
-            SDL_strlcpy(args.otherName, lastRoundSlotName(cs, h->actorB),
-                        sizeof(args.otherName));
-            args.number = (int)h->value;
-            if (h->type == HL_AWARD) {
-                /* An award-anchored clip reuses that award's own label. */
-                SDL_strlcpy(args.string1,
-                            langGetText(lastRoundAwardLabel(h->awardId)),
-                            sizeof(args.string1));
-            }
-            /* Names render plain inside the sentence, not team-tinted, so
-             * the clip reads as one phrase. */
-            ImGui::TextUnformatted(
-                langGetTextFmt(lastRoundHighlightLabel(h), &args));
-
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-            /* Export control, right-aligned so the rows keep a column of them
-             * however long the sentences run. Sized to one text line, so the
-             * row stays the height the selectable underneath was given: the
-             * icon takes the line height and the frame padding loses its
-             * vertical half, which is what SmallButton does for a caption.
-             * The glyph says what the control produces and the tooltip names
-             * the format; with no icon loaded the format's name is the
-             * caption, as it was before. */
-            if (lvEmbedIsActive()) {
+                ImGui::TextDisabled("%02u:%02u", secs / 60u, secs % 60u);
                 ImGui::SameLine();
-                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
-                                     lobbyClipGifButtonWidth());
-                ImGui::PushID(i);
-                if (lobbyClipGifButton("##clipgif", true)) {
-                    lobbyClipGifStartClip(h, clientSimGetMapName(cs));
+
+                MessageArgs args = {};
+                SDL_strlcpy(args.playerName, lastRoundSlotName(cs, h->actorA),
+                            sizeof(args.playerName));
+                SDL_strlcpy(args.otherName, lastRoundSlotName(cs, h->actorB),
+                            sizeof(args.otherName));
+                args.number = (int)h->value;
+                if (h->type == HL_AWARD) {
+                    /* An award-anchored clip reuses that award's own label. */
+                    SDL_strlcpy(args.string1,
+                                langGetText(lastRoundAwardLabel(h->awardId)),
+                                sizeof(args.string1));
                 }
-                ImGui::PopID();
-            }
+                /* Names render plain inside the sentence, not team-tinted, so
+                 * the clip reads as one phrase. */
+                ImGui::TextUnformatted(
+                    langGetTextFmt(lastRoundHighlightLabel(h), &args));
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                /* Export control, right-aligned so the rows keep a column of them
+                 * however long the sentences run. Sized to one text line, so the
+                 * row stays the height the selectable underneath was given: the
+                 * icon takes the line height and the frame padding loses its
+                 * vertical half, which is what SmallButton does for a caption.
+                 * The glyph says what the control produces and the tooltip names
+                 * the format; with no icon loaded the format's name is the
+                 * caption, as it was before. */
+                if (lvEmbedIsActive()) {
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
+                                         lobbyClipGifButtonWidth());
+                    ImGui::PushID(i);
+                    if (lobbyClipGifButton("##clipgif", true)) {
+                        lobbyClipGifStartClip(h, clientSimGetMapName(cs));
+                    }
+                    ImGui::PopID();
+                }
 #endif
+            }
         }
     }
 
@@ -8179,6 +8207,7 @@ extern "C" void imguiLobbyFrameReset(void) {
      * recap, not on whatever the last session was left looking at. */
     s_recapShowMap              = false;
     s_recapShowAllAwards        = false;
+    s_recapShowHighlights       = false;
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     /* The reel holds the viewer's decoder singleton — never leave it running
@@ -8667,12 +8696,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
 #endif
-        /* The countdown clearing the summary also clears the map view and the
-         * awards expand, so the next round's recap opens on itself rather than
-         * on wherever the player left the panel. */
+        /* The countdown clearing the summary also clears the map view and both
+         * expands, so the next round's recap opens on itself rather than on
+         * wherever the player left the panel. */
         if (!lobbyShowLastRound) {
-            s_recapShowMap       = false;
-            s_recapShowAllAwards = false;
+            s_recapShowMap        = false;
+            s_recapShowAllAwards  = false;
+            s_recapShowHighlights = false;
         }
 
         /* Settings above the layout is the two-column (mouse) path only; the
