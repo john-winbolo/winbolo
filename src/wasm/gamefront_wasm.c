@@ -819,6 +819,9 @@ void gameFrontReloadSkins(void)               { }
 void gameFrontShutdownServer(void)            { }
 bool gameFrontPreferencesExist(void)          { return FALSE; }
 bool gameFrontSetupServer(void)               { return FALSE; }
+/* The web build never owns a round log to offer back, so callers that gate
+ * on a locally recorded round see nothing. */
+bool gameFrontHasLocalServer(void)            { return FALSE; }
 
 /* Lobby/host helpers the in-game lobby pulls in now that it renders in the
  * web build (C6). Host-only / Steam / persistence features that are inert in

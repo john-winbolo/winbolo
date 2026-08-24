@@ -62,6 +62,7 @@ extern "C" {
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
+#include "../../../server/server_dedicated_log.h"  /* last completed round's .wbv */
 #include "../../../server/threads.h"  /* threadsWaitForMutex / Release — SP-host server calls */
 #include "platform_net.h"
 #include "../../../common/mp_diag_log.h"
@@ -516,6 +517,11 @@ static bool             s_chooseMapWantCloseConfirm = false;
  * above Ready sets it; it is forced false when no stored summary
  * exists (the next countdown clears the summary). */
 static bool             g_lastRoundWinOpen        = false;
+/* Set by the recap's Watch replay button, consumed by the frame result so
+ * the host can tear the lobby down before the viewer takes the window.
+ * Cleared on lobby teardown, so a request can never survive into a later
+ * lobby entry. */
+static bool             g_watchReplayRequested    = false;
 /* Cached ClientSim pointer for the chooser. Captured by
  * lobbyChooseMapOpen so the listProvider (which only gets a void*
  * ctx) can reach into the cs's lobbyMapList* state without each
@@ -6282,6 +6288,34 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                 langGetTextFmt(lastRoundHighlightLabel(h), &args));
         }
     }
+
+#if !BOLO_MOBILE
+    /* Watch the round back from the log the server wrote. Desktop only: the
+     * replay is a blocking window takeover, which the mobile hosts' per-frame
+     * lobby cannot perform, and logViewerRun is stubbed there anyway.
+     *
+     * gameFrontHasLocalServer() is the load-bearing condition. The accessor
+     * describes whatever round this process last recorded, and it is only
+     * cleared when the log writer is installed — which happens for single
+     * player and hosting. A player who hosted a round, left, and then joined
+     * someone else's server still has that old round in the accessor, so a
+     * lobby-host or admin check would happily offer a playback of a
+     * completely different game. The file check keeps a failed publish from
+     * leaving a button that opens nothing. */
+    {
+        const char *replayPath = serverDedicatedLogLastRoundFile();
+        SDL_PathInfo replayInfo;
+        if (gameFrontHasLocalServer() && replayPath[0] != '\0' &&
+            SDL_GetPathInfo(replayPath, &replayInfo)) {
+            ImGui::Separator();
+            if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_WATCH))) {
+                /* Request only — the viewer cannot start while this frame's
+                 * ImGui context is live. The host exits the modal first. */
+                g_watchReplayRequested = true;
+            }
+        }
+    }
+#endif
 }
 
 /* ── Layout A — small inline lock badge ───────────────────────────
@@ -6846,6 +6880,10 @@ extern "C" void imguiLobbyFrameReset(void) {
     s_chooseMapWantCloseConfirm = false;
     s_chooseMapPreviewPending   = false;
     s_chooseMapCs               = NULL;
+
+    /* Consumed by whoever is about to run the replay; clearing it here means
+     * the re-entered lobby starts with no request pending. */
+    g_watchReplayRequested = false;
 
     s_kickPendingOpen = false;
     s_kickPendingSlot = -1;
@@ -8765,7 +8803,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
-    return leftLobby ? LOBBY_FRAME_LEFT : LOBBY_FRAME_CONTINUE;
+    /* Leaving outranks a pending replay request: a player who asks for the
+     * replay and then confirms Leave in the same frame gets the leave. */
+    if (leftLobby) return LOBBY_FRAME_LEFT;
+    if (g_watchReplayRequested) return LOBBY_FRAME_WATCH_REPLAY;
+    return LOBBY_FRAME_CONTINUE;
 }
 
 /* Blocking desktop modal: owns a private ImGui context + SDL backends and
@@ -8917,9 +8959,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         imguiSteamNavFeedCurrentContext();
         controllerDialogsRenderMenu();
 
-        if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
-            result = 0;
-            running = false;
+        switch (imguiLobbyRenderFrame(cs)) {
+            case LOBBY_FRAME_LEFT:
+                result = 0;
+                running = false;
+                break;
+            case LOBBY_FRAME_WATCH_REPLAY:
+                /* Exit so the caller can run the replay viewer with no ImGui
+                 * context live, then re-enter the lobby. The teardown below
+                 * runs either way, which is what makes that exit clean. */
+                result = 2;
+                running = false;
+                break;
+            default:
+                break;
         }
 
         dialogDrawNavOutline();

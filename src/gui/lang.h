@@ -730,6 +730,7 @@
 #define STR_DLGLOBBY_HL_TURNING_FMT          1934
 #define STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT  1935
 #define STR_DLGLOBBY_HL_GENERIC              1936
+#define STR_DLGLOBBY_LASTROUND_WATCH         1937
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757

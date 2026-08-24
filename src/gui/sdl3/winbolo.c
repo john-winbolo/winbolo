@@ -84,10 +84,16 @@
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
 #include "../../common/crash_handler.h"
+#include "../../server/server_dedicated_log.h"  /* last completed round's .wbv */
 
 /* humanSim is owned by gamefront.c; declared up here so the timer
  * callback and main game-tick path can pass it to clientSim* wrappers. */
 extern ClientSim *humanSim;
+
+/* Forward declaration only — don't include logviewer.h to avoid type conflicts
+   between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
+void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  const char *logPath, bool fromMainMenu);
 
 /* Forward declarations */
 void sdl3MessageHandler(const char *message, const char *title);
@@ -460,6 +466,17 @@ int main(int argc, char *argv[]) {
         (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
       const DialogBackend *db = dialogBackendGet();
       int lobbyResult = db->lobbyShow(cs);
+      if (lobbyResult == 2) {
+        /* Watch replay: the lobby has torn its ImGui context down, so the
+         * viewer can take the window. It returns when the player exits, and
+         * nothing here has touched clientSimIsInLobby or the net status —
+         * so re-evaluating the while re-enters the lobby with the recap
+         * still showing. fromMainMenu is false: exiting the viewer goes back
+         * to the lobby, not the menu. */
+        logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                     serverDedicatedLogLastRoundFile(), false);
+        continue;
+      }
       if (lobbyResult == 0) {
         /* Player chose to leave — fall through to normal cleanup.
          * gamePlayed=FALSE because no tank exists during lobby. */

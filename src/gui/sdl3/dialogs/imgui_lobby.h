@@ -49,9 +49,20 @@ int imguiLobbyShow(struct ClientSim *cs);
  * should then disconnect/quit), otherwise LOBBY_FRAME_CONTINUE. Game
  * start is NOT signalled here: the host detects it from the sim leaving
  * the lobby state (clientSimIsInLobby flips false). */
+/* LOBBY_FRAME_WATCH_REPLAY asks the host to exit the modal, play the last
+ * round's log, and re-enter the lobby. It is only ever returned to a host
+ * that can run a blocking window takeover: the replay viewer creates its own
+ * ImGui context and destroys it on exit, so it cannot be nested inside a
+ * live lobby frame. A host that cannot do that — the per-frame lobby, or any
+ * platform where logViewerRun is stubbed — MUST treat this as
+ * LOBBY_FRAME_CONTINUE. Never as "game started": these values reach
+ * imguiLobbyShow's callers as a plain int, and a host that reads "anything
+ * non-zero" as a game start would flip the net status to running with no
+ * game behind it. */
 typedef enum {
-    LOBBY_FRAME_CONTINUE = 0,
-    LOBBY_FRAME_LEFT     = 1
+    LOBBY_FRAME_CONTINUE     = 0,
+    LOBBY_FRAME_LEFT         = 1,
+    LOBBY_FRAME_WATCH_REPLAY = 2
 } LobbyFrameStatus;
 
 LobbyFrameStatus imguiLobbyRenderFrame(struct ClientSim *cs);

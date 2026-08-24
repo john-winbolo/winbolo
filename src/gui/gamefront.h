@@ -839,6 +839,19 @@ void gameFrontReloadSkins(void);
 void gameFrontShutdownServer(void);
 
 /*********************************************************
+*NAME:          gameFrontHasLocalServer
+*PURPOSE:
+* TRUE while this process owns a local ServerSim (single
+* player or a listen server). The round-log accessors only
+* describe a round this process recorded, so a caller must
+* not offer them otherwise.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+bool gameFrontHasLocalServer(void);
+
+/*********************************************************
 *NAME:          gameFrontSetServerPaused
 *PURPOSE:
 *  Freeze or resume the in-process server tick. When paused

@@ -2451,6 +2451,10 @@ void gameFrontShutdownServer(void) {
   serverSimDestroy(toFree);
 }
 
+bool gameFrontHasLocalServer(void) {
+  return spServerSimActive;
+}
+
 bool gameFrontPreferencesExist(void) {
   FILE *fp;
   const char *path = getPreferenceFilePath();
