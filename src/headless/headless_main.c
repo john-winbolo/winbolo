@@ -566,9 +566,10 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_ROUND_STATS:
-      fprintf(f, ",\"playerCount\":%u,\"awardCount\":%u",
+      fprintf(f, ",\"playerCount\":%u,\"awardCount\":%u,\"highlightCount\":%u",
               (unsigned)evt->u.roundStats.playerCount,
-              (unsigned)evt->u.roundStats.awardCount);
+              (unsigned)evt->u.roundStats.awardCount,
+              (unsigned)evt->u.roundStats.highlightCount);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:
