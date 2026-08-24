@@ -115,6 +115,7 @@ void lvStatsEmitRoundSummary(void) {
   TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
   int shiftCount;
   uint32_t gameStartMs;
+  uint32_t windowStartMs;
   double calA, calB;
   size_t off;
   int i;
@@ -249,11 +250,22 @@ void lvStatsEmitRoundSummary(void) {
     lv_windowAddSummary("Highlights:");
   }
 
+  /* The fit above lands in absolute log ms; the clip's own field is measured
+   * from the start of the presented window, the same origin the server's
+   * round-relative ms use. Fill it here and read it back below, so the two
+   * producers of a HighlightWindow hand their consumers one field with one
+   * meaning. windowStart is 0 whenever the window is the whole file, which
+   * makes the two forms the same number. */
+  windowStartMs = lv_screenWindowStartMs();
+
   for (i = 0; i < hlCount; i++) {
-    const HighlightWindow *h = &hl[i];
+    HighlightWindow *h = &hl[i];
     char actorA[PACKET_MAX_PLAYER_NAME + 16];
     char line[256];
     uint32_t clipMs = (uint32_t)(calA * (double)h->startTick + calB);
+
+    h->startMs = (clipMs > windowStartMs) ? (clipMs - windowStartMs) : 0u;
+    h->durationMs = (uint32_t)(calA * (double)h->durationTicks);
 
     formatSlotName(header, h->actorA, actorA, sizeof(actorA));
 
@@ -321,7 +333,8 @@ void lvStatsEmitRoundSummary(void) {
     }
 
     /* Emit as a clickable clip: clicking jumps the scrubber a few seconds ahead
-     * of the moment and centres the map on it. */
-    lv_windowAddHighlight(line, clipMs, h->mapX, h->mapY);
+     * of the moment and centres the map on it. The panel seeks in absolute log
+     * ms, so the window origin goes back on here. */
+    lv_windowAddHighlight(line, h->startMs + windowStartMs, h->mapX, h->mapY);
   }
 }

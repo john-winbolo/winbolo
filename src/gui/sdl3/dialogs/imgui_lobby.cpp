@@ -6478,9 +6478,14 @@ static void lobbyRenderReel(float s) {
 static const char *const CLIP_GIF_TITLE = "GIF";
 static const char *const CLIP_GIF_POPUP = "GIF##clipgif";
 
-/* 50 ticks/s ÷ 5 = 10 fps, which is 10 centiseconds a frame. */
+/* Log ticks per captured frame. The viewer's log clock is 20 ms an entry, so
+ * five of them is 100 ms — 10 fps, which is 10 centiseconds a frame. This is
+ * the reel's clock only; a clip's own duration is in sim ticks and is never
+ * divided by this. */
 static const int CLIP_GIF_TICKS_PER_FRAME = 5;
 static const int CLIP_GIF_CS_PER_FRAME    = 10;
+/* Wall-clock length of one captured frame, the same 10 fps said in ms. */
+static const uint32_t CLIP_GIF_FRAME_MS   = 100u;
 static const int CLIP_GIF_QUALITY         = 16;  /* the encoder's own default */
 /* 15 s of clip, and a floor so a clip that arrives with no duration still
  * exports something rather than an empty file. */
@@ -6574,7 +6579,7 @@ static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
     lvEmbedPause();
     /* Same seek the row itself does, so the capture opens on the moment the
      * row names, centred where it happened. */
-    lvEmbedSeekToClip(h->startTick * 20u, h->mapX, h->mapY);
+    lvEmbedSeekToClip(h->startMs, h->mapX, h->mapY);
 
     void *tex = NULL;
     int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
@@ -6605,7 +6610,9 @@ static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
     s_clipGif.crop.w = cropW;
     s_clipGif.crop.h = cropH;
 
-    uint32_t frames = h->durationTicks / (uint32_t)CLIP_GIF_TICKS_PER_FRAME;
+    /* From the clip's length in ms, not its ticks: the reel steps a log clock
+     * and the clip is measured in sim ticks, and the two do not share a rate. */
+    uint32_t frames = h->durationMs / CLIP_GIF_FRAME_MS;
     if (frames > (uint32_t)CLIP_GIF_MAX_FRAMES) frames = CLIP_GIF_MAX_FRAMES;
     if (frames < (uint32_t)CLIP_GIF_MIN_FRAMES) frames = CLIP_GIF_MIN_FRAMES;
 
@@ -6614,7 +6621,7 @@ static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
         return;
     }
 
-    unsigned secs = (unsigned)(h->startTick / 50u);
+    unsigned secs = (unsigned)(h->startMs / 1000u);
     lobbyClipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
                          secs / 60u, secs % 60u);
     s_clipGif.frame  = 0;
@@ -6855,9 +6862,11 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         }
         for (int i = 0; i < hc; i++) {
             const HighlightWindow *h = &st->highlights[i];
-            /* Clip ticks are per-round at 50 ticks/s, so the round clock
-             * is a plain division — nothing to calibrate against. */
-            unsigned secs = (unsigned)(h->startTick / 50u);
+            /* The summary carries the clip's round-relative milliseconds, so
+             * the round clock is a plain division. The tick fields it also
+             * carries are the scorer's own units and do not convert at any
+             * rate this side knows. */
+            unsigned secs = (unsigned)(h->startMs / 1000u);
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             /* While a reel is up the whole row is a seek target: a selectable
              * underneath for the hit area and controller focus, with the row's
@@ -6875,10 +6884,10 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                 ImGui::SetNextItemAllowOverlap();
                 if (ImGui::Selectable(rowId, false, 0,
                                       ImVec2(0, ImGui::GetTextLineHeight()))) {
-                    /* Ticks run at 50/s, so × 20 is the millisecond offset
-                     * into the round — the same base the timestamp above is
+                    /* Round-relative ms, the same base the reel's own window
+                     * is measured in and the same one the timestamp above is
                      * divided out of. */
-                    lvEmbedSeekToClip(h->startTick * 20u, h->mapX, h->mapY);
+                    lvEmbedSeekToClip(h->startMs, h->mapX, h->mapY);
                 }
                 ImGui::SetCursorPos(rowPos);
             }

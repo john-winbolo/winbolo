@@ -54,11 +54,22 @@
 #define RETURN_REASON_BASE_WIN    3
 #define RETURN_REASON_ABANDONED   4
 
+/* roundLogStartTick before the round's first log entry has been written. Not a
+ * plausible tick, so it doubles as the "not latched yet" flag. */
+#define ROUND_LOG_START_UNSET     0xFFFFFFFFu
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
     /* Tick state */
     uint32_t     tick;
+    /* The tick the current round's log segment starts at, latched the first
+     * time serverSimLogTick writes while running. Clip times are measured from
+     * it: ticks that ran before the log did (the startDelay hold advances the
+     * sim without writing an entry) are not part of the round the viewer sees.
+     * ROUND_LOG_START_UNSET until that first write, and reset to it whenever
+     * tick is. */
+    uint32_t     roundLogStartTick;
     int32_t      startDelay;
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */

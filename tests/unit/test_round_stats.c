@@ -1028,18 +1028,23 @@ int run_round_stats_codec_roundtrip(void) {
     s->highlightCount = 3;
     /* An award anchor, carrying a non-zero awardId. */
     s->highlights[0].startTick = 1234; s->highlights[0].durationTicks = 250;
+    s->highlights[0].startMs = 12340; s->highlights[0].durationMs = 2500;
     s->highlights[0].mapX = 17; s->highlights[0].mapY = 200;
     s->highlights[0].type = HL_AWARD; s->highlights[0].awardId = AWARD_BIGGEST_FUMBLE;
     s->highlights[0].actorA = 3; s->highlights[0].actorB = NEUTRAL;
     s->highlights[0].value = 6; s->highlights[0].score = 120;
     /* A clip with both actors set. */
     s->highlights[1].startTick = 700; s->highlights[1].durationTicks = 312;
+    s->highlights[1].startMs = 7000; s->highlights[1].durationMs = 3120;
     s->highlights[1].mapX = 5; s->highlights[1].mapY = 9;
     s->highlights[1].type = HL_CLUSTER_WIPE; s->highlights[1].awardId = 0;
     s->highlights[1].actorA = 2; s->highlights[1].actorB = 7;
     s->highlights[1].value = 4; s->highlights[1].score = 450;
-    /* Max-ish ticks and value to catch byte-order/width bugs. */
+    /* Max-ish ticks and value to catch byte-order/width bugs. The ms fields
+     * carry their own distinct patterns: they are separate wire slots, not a
+     * restatement of the ticks, so a swap between the two pairs must show. */
     s->highlights[2].startTick = 0xFEDCBA98u; s->highlights[2].durationTicks = 0x01020304u;
+    s->highlights[2].startMs = 0x89ABCDEFu; s->highlights[2].durationMs = 0x0A0B0C0Du;
     s->highlights[2].mapX = 255; s->highlights[2].mapY = 1;
     s->highlights[2].type = HL_TURNING_POINT; s->highlights[2].awardId = 0;
     s->highlights[2].actorA = 15; s->highlights[2].actorB = NEUTRAL;
@@ -1089,6 +1094,10 @@ int run_round_stats_codec_roundtrip(void) {
                       "clip %d startTick, got %u", i, b->startTick);
         UT_ASSERT_MSG(b->durationTicks == a->durationTicks,
                       "clip %d durationTicks, got %u", i, b->durationTicks);
+        UT_ASSERT_MSG(b->startMs == a->startMs,
+                      "clip %d startMs, got %u", i, b->startMs);
+        UT_ASSERT_MSG(b->durationMs == a->durationMs,
+                      "clip %d durationMs, got %u", i, b->durationMs);
         UT_ASSERT_MSG(b->mapX == a->mapX, "clip %d mapX", i);
         UT_ASSERT_MSG(b->mapY == a->mapY, "clip %d mapY", i);
         UT_ASSERT_MSG(b->type == a->type, "clip %d type", i);
@@ -1132,6 +1141,7 @@ int run_round_stats_codec_worstcase(void) {
     for (int i = 0; i < ROUND_STATS_HIGHLIGHTS_WIRE_MAX; i++) {
         HighlightWindow *h = &s->highlights[i];
         h->startTick = 0xFFFFFFFFu; h->durationTicks = 0xFFFFFFFFu;
+        h->startMs = 0xFFFFFFFFu; h->durationMs = 0xFFFFFFFFu;
         h->mapX = 255; h->mapY = 255;
         h->type = HL_AWARD; h->awardId = (uint8_t)(i + 1);
         h->actorA = (uint8_t)i; h->actorB = (uint8_t)i;
@@ -1146,6 +1156,16 @@ int run_round_stats_codec_worstcase(void) {
     UT_ASSERT_MSG(r == ENCODE_OK, "worst case must encode, got %d", (int)r);
     UT_ASSERT_MSG(outLen <= MAX_CONTROL_PACKET,
                   "worst case fits one packet, got %zu", outLen);
+
+    /* Packet size, pinned so a field added to any of the three repeated blocks
+     * has to come past this line. This encoder emits the header too, so the
+     * count matches the codec's own static assert:
+     * 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820. */
+    UT_ASSERT_MSG(outLen == (size_t)(PACKET_HEADER_SIZE + 1 + MAX_TANKS * 20 +
+                                     1 + AWARD_COUNT * 8 + 1 +
+                                     (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
+                                     ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26),
+                  "worst-case packet size, got %zu", outLen);
 
     return 0;
 }

@@ -123,10 +123,24 @@ typedef enum {
 /* One selected highlight window. tick fields are per-round (log-relative). value
  * is signal-specific (deaths in a wipe, award value for an anchor, …); score is
  * the internal ranking magnitude (not shipped on the wire). awardId is the AwardId
- * when type==HL_AWARD, else 0. */
+ * when type==HL_AWARD, else 0.
+ *
+ * Two clocks live here and they are not the same clock. startTick/durationTicks
+ * are the scorer's own units — sim->tick, which runs at two ticks per 20 ms
+ * frame while a round is running — and they are what round_stats_derive.c
+ * computes in and what lv_stats.c calibrates against. startMs/durationMs are
+ * round-relative milliseconds for a consumer that just wants a time.
+ *
+ * computeHighlights fills only the tick fields and leaves the ms fields zero:
+ * it has the ticks but not the origin or the rate they convert at. Whoever
+ * produces a summary fills them — the server from its latched round-log start
+ * tick, the log viewer from its per-log calibration — so do not assume they
+ * arrive populated from anything that only ran the scorer. */
 typedef struct {
     uint32_t startTick;
     uint32_t durationTicks;
+    uint32_t startMs;       /* round-relative ms; producer-filled, 0 from the scorer */
+    uint32_t durationMs;    /* ditto */
     uint8_t  mapX, mapY;
     uint8_t  type;          /* HighlightType */
     uint8_t  awardId;       /* AwardId when HL_AWARD, else 0 */

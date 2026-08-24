@@ -755,9 +755,12 @@ BOLO_STATIC_ASSERT(
  *     [awardId 1][winnerSlot 1][subjectSlot 1][winnerIsBot 1][value 4]
  *   [keyLen 1] [wbnLogKey keyLen]
  *   [highlightCount 1]
- *   repeat highlightCount times (18 bytes each):
- *     [startTick 4][durationTicks 4][mapX 1][mapY 1][type 1][awardId 1]
- *     [actorA 1][actorB 1][value 4]
+ *   repeat highlightCount times (26 bytes each):
+ *     [startTick 4][durationTicks 4][startMs 4][durationMs 4]
+ *     [mapX 1][mapY 1][type 1][awardId 1][actorA 1][actorB 1][value 4]
+ * The ticks are the scorer's units and the ms are the server's conversion of
+ * them; both cross so a client can take the time without modelling the sim's
+ * cadence and the viewer's own calibration still has the ticks to work from.
  * HighlightWindow.score is the scorer's internal ranking magnitude and does
  * not cross; it decodes as 0.
  * Multi-byte fields are big-endian via packU16/packU32, matching every
@@ -780,7 +783,7 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
 
     /* Pre-compute total size; bail before any write if it can't fit. */
     size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen +
-                    1 + (size_t)hc * 18;
+                    1 + (size_t)hc * 26;
     if (bufCap < needed) return ENCODE_OVERFLOW;
 
     size_t pos = 0;
@@ -814,6 +817,8 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
         const HighlightWindow *h = &s->highlights[i];
         packU32(buf + pos, h->startTick);     pos += 4;
         packU32(buf + pos, h->durationTicks); pos += 4;
+        packU32(buf + pos, h->startMs);       pos += 4;
+        packU32(buf + pos, h->durationMs);    pos += 4;
         buf[pos++] = h->mapX;
         buf[pos++] = h->mapY;
         buf[pos++] = h->type;
@@ -931,11 +936,13 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
     if (pos + 1 > len) return false;
     uint8_t hc = buf[pos++];
     if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) return false;
-    if (pos + (size_t)hc * 18 > len) return false;
+    if (pos + (size_t)hc * 26 > len) return false;
     for (uint8_t i = 0; i < hc; i++) {
         HighlightWindow *h = &s->highlights[i];
         h->startTick     = unpackU32(buf + pos); pos += 4;
         h->durationTicks = unpackU32(buf + pos); pos += 4;
+        h->startMs       = unpackU32(buf + pos); pos += 4;
+        h->durationMs    = unpackU32(buf + pos); pos += 4;
         h->mapX    = buf[pos++];
         h->mapY    = buf[pos++];
         h->type    = buf[pos++];
@@ -951,11 +958,11 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
 
 /* Compile-time guarantee that the round-stats worst case (every slot
  * present, every award won, a full-length key, a full clip list) fits
- * MAX_CONTROL_PACKET. */
+ * MAX_CONTROL_PACKET. 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820. */
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
         (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
-        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 18
+        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26
         <= MAX_CONTROL_PACKET,
     round_stats_worst_case_fits_MAX_CONTROL_PACKET);
 

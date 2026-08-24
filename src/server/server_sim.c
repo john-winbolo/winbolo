@@ -92,6 +92,13 @@
 #define SNAPSHOT_SCREEN_SIZE 15
 #define SNAPSHOT_VIEWPORT_MARGIN 20
 
+/* Wall-clock length of one sim->tick while a round is running. serverSimTick
+ * runs simRunHalfStep twice per 20 ms frame in serverStateRunning and once in
+ * every other state, so a running tick is 10 ms and a lobby/countdown tick is
+ * 20 ms. Anything converting a round's ticks to time wants this one; change the
+ * half-step count and this has to change with it. */
+#define SIM_TICK_MS 10u
+
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
     int i;
     for (i = 0; i < count; i++) {
@@ -508,6 +515,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->gameTickLimit = 0;
     sim->gameTicksRun = 0;
     sim->tick = 0;
+    sim->roundLogStartTick = ROUND_LOG_START_UNSET;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;
@@ -1037,6 +1045,18 @@ static void serverSimLogTick(ServerSim *sim) {
     /* Periodic snapshot */
     if ((sim->tick % FULL_SYNC_INTERVAL) == 0) {
         logWriteSnapshot(sim, TRUE);
+    }
+
+    /* First entry of the running round is where the round's log segment — and
+     * so every clip time measured against it — begins. Latched here rather than
+     * derived from startDelay: the hold at the top of simRunHalfStep advances
+     * the sim without writing anything, and its counter is in half-steps while
+     * the value it was given is in the legacy 20 ms units, so no arithmetic on
+     * it gives the right answer. Whichever tick actually wrote first is the
+     * answer by definition. */
+    if (sim->roundLogStartTick == ROUND_LOG_START_UNSET &&
+        sim->state == serverStateRunning) {
+        sim->roundLogStartTick = sim->tick;
     }
 
     logWriteTick();
@@ -3255,6 +3275,21 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
                       ROUND_STATS_HIGHLIGHTS_WIRE_MAX);
     out->highlightCount = (uint8_t)hlCount;
 
+    /* computeHighlights works in sim ticks; the clients want a time. Convert
+     * once, here, so nothing downstream has to know the sim's cadence.
+     * The origin is the tick the round's log segment started at, so a clip's
+     * ms is measured from the same instant the viewer's window is. A clip that
+     * somehow predates the latch clamps to the start rather than wrapping. */
+    for (int i = 0; i < hlCount; i++) {
+        HighlightWindow *h = &out->highlights[i];
+        h->startMs = (sim->roundLogStartTick != ROUND_LOG_START_UNSET &&
+                      h->startTick >= sim->roundLogStartTick)
+                         ? (h->startTick - sim->roundLogStartTick) *
+                               SIM_TICK_MS
+                         : 0u;
+        h->durationMs = h->durationTicks * SIM_TICK_MS;
+    }
+
     /* wbnLogKey stays empty here; the finished-round key is filled later. */
 }
 
@@ -4345,6 +4380,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 7. Reset tick */
     sim->tick = 0;
+    /* Re-arm the latch with it: the next round's log segment starts wherever
+     * its first written tick lands, not where the last one did. */
+    sim->roundLogStartTick = ROUND_LOG_START_UNSET;
 
     /* 8. Flush all input queues */
     for (i = 0; i < MAX_TANKS; i++) {

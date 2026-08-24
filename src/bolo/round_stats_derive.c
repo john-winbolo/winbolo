@@ -1522,6 +1522,11 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
         if (e < s) e = s;
         w->startTick = s;
         w->durationTicks = e - s;
+        /* Ticks are all the scorer has: the rate and origin they convert at
+         * belong to whoever produced the summary. Zeroed rather than left as
+         * whatever tmp held, so "unfilled" is a value a reader can test. */
+        w->startMs = 0;
+        w->durationMs = 0;
         w->mapX = c->mapX;
         w->mapY = c->mapY;
         w->type = c->type;
