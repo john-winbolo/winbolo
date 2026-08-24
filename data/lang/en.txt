@@ -671,6 +671,23 @@ STR_DLGLOBBY_LASTROUND_BTN=Last round
 STR_DLGLOBBY_LASTROUND_COL_LGMK=LGM K
 STR_DLGLOBBY_LASTROUND_COL_LGMD=LGM D
 
+# Lobby "Last round" panel — the round's highlight clips.
+STR_DLGLOBBY_HL_HEADER=Highlights
+STR_DLGLOBBY_HL_NONE=No highlights this round
+STR_DLGLOBBY_HL_AWARD_FMT={string1} ({player})
+STR_DLGLOBBY_HL_AWARD_VS_FMT={string1} ({player} vs {other})
+STR_DLGLOBBY_HL_WIPE_FMT=Team wipe: {number} down ({player})
+STR_DLGLOBBY_HL_STEAL_FMT=Steal ({player} from {other})
+STR_DLGLOBBY_HL_LGM_FMT=LGM sweep: {number} down ({player})
+STR_DLGLOBBY_HL_FUMBLE_FMT=Fumble: {number} pills dropped ({player})
+STR_DLGLOBBY_HL_DROWN_PILLS_FMT=Drowned with {number} pills ({player})
+STR_DLGLOBBY_HL_DROWN_FMT=Drowned ({player})
+STR_DLGLOBBY_HL_COLLAPSE_FMT=Front collapse: {number} tiles taken ({player})
+STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT=Front collapse: {number} tiles taken
+STR_DLGLOBBY_HL_TURNING_FMT=Turning point: {number} tiles swung ({player})
+STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT=Turning point: {number} tiles swung
+STR_DLGLOBBY_HL_GENERIC=Highlight
+
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
 STR_DLGSETNAME_WBN_LOCKED=Your player name is set by WinBolo.net.

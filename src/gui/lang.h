@@ -714,6 +714,23 @@
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
 
+/* Lobby "Last round" panel — the round's highlight clips. */
+#define STR_DLGLOBBY_HL_HEADER               1922
+#define STR_DLGLOBBY_HL_NONE                 1923
+#define STR_DLGLOBBY_HL_AWARD_FMT            1924
+#define STR_DLGLOBBY_HL_AWARD_VS_FMT         1925
+#define STR_DLGLOBBY_HL_WIPE_FMT             1926
+#define STR_DLGLOBBY_HL_STEAL_FMT            1927
+#define STR_DLGLOBBY_HL_LGM_FMT              1928
+#define STR_DLGLOBBY_HL_FUMBLE_FMT           1929
+#define STR_DLGLOBBY_HL_DROWN_PILLS_FMT      1930
+#define STR_DLGLOBBY_HL_DROWN_FMT            1931
+#define STR_DLGLOBBY_HL_COLLAPSE_FMT         1932
+#define STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT 1933
+#define STR_DLGLOBBY_HL_TURNING_FMT          1934
+#define STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT  1935
+#define STR_DLGLOBBY_HL_GENERIC              1936
+
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
 #define STR_DLGSETNAME_WBN_LOCKED           758

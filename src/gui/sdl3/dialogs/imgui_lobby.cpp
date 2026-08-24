@@ -6070,10 +6070,55 @@ static void lastRoundRenderName(ClientSim *cs, uint8_t slot, bool isBot) {
     }
 }
 
-/* Container-less recap body: the between-rounds scoreboard table plus a
- * flat list of every won award. Renders no chrome and decides nothing
- * about visibility — the caller (mouse popup / controller tab) gates it
- * on clientSimGetLastRoundStats and supplies the surrounding window. */
+/* Resolve a slot to a display name without rendering it, for the clip
+ * lines that build a whole sentence through langGetTextFmt. Same
+ * fallback as lastRoundRenderName. */
+static const char *lastRoundSlotName(ClientSim *cs, uint8_t slot) {
+    const ClientLobbySlot *ls =
+        (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot) : nullptr;
+    return (ls && ls->playerName[0])
+               ? ls->playerName
+               : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER);
+}
+
+/* Highlight clip → localized line-format id. Some types choose between
+ * two formats on the clip's own fields — a drowning with or without
+ * carried pills, a team's swing with or without a slot to name — so this
+ * takes the clip rather than just its type. Types the scorer does not
+ * select yet land on the generic label. */
+static langid lastRoundHighlightLabel(const HighlightWindow *h) {
+    switch (h->type) {
+        case HL_AWARD:
+            return (h->awardId == AWARD_NEMESIS)
+                       ? STR_DLGLOBBY_HL_AWARD_VS_FMT
+                       : STR_DLGLOBBY_HL_AWARD_FMT;
+        case HL_CLUSTER_WIPE:    return STR_DLGLOBBY_HL_WIPE_FMT;
+        case HL_OBJECTIVE_STEAL: return STR_DLGLOBBY_HL_STEAL_FMT;
+        case HL_MULTI_LGM:       return STR_DLGLOBBY_HL_LGM_FMT;
+        case HL_FUMBLE:          return STR_DLGLOBBY_HL_FUMBLE_FMT;
+        case HL_RARE_DEATH:
+            return (h->value > 0) ? STR_DLGLOBBY_HL_DROWN_PILLS_FMT
+                                  : STR_DLGLOBBY_HL_DROWN_FMT;
+        /* Ground taken off a team belongs to the team that took it;
+         * actorA only names a slot standing in for it, and is NEUTRAL
+         * when the gaining team has no one to point at. */
+        case HL_BREAKTHROUGH:
+            return (h->actorA < MAX_TANKS)
+                       ? STR_DLGLOBBY_HL_COLLAPSE_FMT
+                       : STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT;
+        case HL_TURNING_POINT:
+            return (h->actorA < MAX_TANKS)
+                       ? STR_DLGLOBBY_HL_TURNING_FMT
+                       : STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT;
+        default:                 return STR_DLGLOBBY_HL_GENERIC;
+    }
+}
+
+/* Container-less recap body: the between-rounds scoreboard table, a
+ * flat list of every won award, plus the round's highlight clips.
+ * Renders no chrome and decides nothing about visibility — the caller
+ * (mouse popup / controller tab) gates it on clientSimGetLastRoundStats
+ * and supplies the surrounding window. */
 static void renderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
     if (!st) return;
@@ -6195,6 +6240,47 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     /* Every won award, listed in award-id order. */
     for (int id = 1; id <= AWARD_COUNT; id++) {
         if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
+    }
+
+    /* ── Highlight clips ─────────────────────────────────────────── */
+    /* Read-only list, in the order the server selected them (already
+     * chronological). Each line is a round-relative timestamp plus a
+     * one-phrase description. */
+    ImGui::Separator();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_HL_HEADER));
+    if (st->highlightCount == 0) {
+        /* A quiet round selects no clips — normal, not an error. */
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_HL_NONE));
+    } else {
+        int hc = st->highlightCount;
+        if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) {
+            hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+        }
+        for (int i = 0; i < hc; i++) {
+            const HighlightWindow *h = &st->highlights[i];
+            /* Clip ticks are per-round at 50 ticks/s, so the round clock
+             * is a plain division — nothing to calibrate against. */
+            unsigned secs = (unsigned)(h->startTick / 50u);
+            ImGui::TextDisabled("%02u:%02u", secs / 60u, secs % 60u);
+            ImGui::SameLine();
+
+            MessageArgs args = {};
+            SDL_strlcpy(args.playerName, lastRoundSlotName(cs, h->actorA),
+                        sizeof(args.playerName));
+            SDL_strlcpy(args.otherName, lastRoundSlotName(cs, h->actorB),
+                        sizeof(args.otherName));
+            args.number = (int)h->value;
+            if (h->type == HL_AWARD) {
+                /* An award-anchored clip reuses that award's own label. */
+                SDL_strlcpy(args.string1,
+                            langGetText(lastRoundAwardLabel(h->awardId)),
+                            sizeof(args.string1));
+            }
+            /* Names render plain inside the sentence, not team-tinted, so
+             * the clip reads as one phrase. */
+            ImGui::TextUnformatted(
+                langGetTextFmt(lastRoundHighlightLabel(h), &args));
+        }
     }
 }
 
