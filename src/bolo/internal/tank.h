@@ -913,6 +913,12 @@ void tankAccel(struct GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton 
 *********************************************************/
 void tankCheckPillCapture(struct GameSim *sim, tank *value);
 
+/* Loads pill pillNum (1-based, pills* API convention) into the tank's
+ * carry list as if it had been driven over — no position requirement.
+ * Scripted-scenario seam (game.give_pill). FALSE when the pill is
+ * missing/already carried or the tank is dead. */
+bool tankGivePill(struct GameSim *sim, tank *value, BYTE pillNum);
+
 /*********************************************************
 *NAME:          tankDropPills
 *AUTHOR:        John Morrison

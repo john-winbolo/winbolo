@@ -111,6 +111,13 @@ typedef struct GameSimCallbacks {
                                BYTE mapX, BYTE mapY);
     void (*recordPillPickup)(void *ctx, BYTE picker, BYTE pillIndex,
                              BYTE mapX, BYTE mapY);
+    /* Optional start-placement override, consulted by startsGetStart
+     * before its own algorithms every time a tank needs a spot (initial
+     * spawn AND respawns). Return TRUE with *startIdx set to a 0-based
+     * start to force that start; FALSE falls through to the normal
+     * per-game-type pick. Server sims route this to the scripted
+     * scenario's on_choose_start hook; NULL everywhere else. */
+    bool (*chooseStart)(void *ctx, BYTE playerNum, BYTE *startIdx);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
@@ -208,6 +215,13 @@ struct GameSim {
      * consumption so siblings already created in the batch loop are
      * visible during the per-square nudge. */
     BYTE        pendingStartIdx[MAX_TANKS];
+    /* Per-slot spawn-loadout override: 0 = follow sim->game, else a
+     * gameType value tankCreate uses for THIS slot's starting items —
+     * initial spawn and every respawn alike. Lets a scripted scenario
+     * field full open-mode wave bots inside a tournament round without
+     * re-statting after every death. Zero-initialised by the sim-create
+     * memset; cleared when the slot's player is removed. */
+    BYTE        spawnLoadout[MAX_TANKS];
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
        returns this fixed start (not the open-game algorithm). The GUI raises
        it from 0 (sea) to 1 (far bank) once the player passes the boat step.

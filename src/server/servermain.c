@@ -920,6 +920,9 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
       *game = gameTournament;
     } else if (strcmp((char *) argv[argNum], "strict") == 0) {
       *game = gameStrictTournament;
+    } else if (strcmp((char *) argv[argNum], "scripted") == 0 ||
+               strcmp((char *) argv[argNum], "scenario") == 0) {
+      *game = gameScripted;
     } else {
       returnValue = FALSE;
       fprintf(stderr, "Error in game type parameter\n");

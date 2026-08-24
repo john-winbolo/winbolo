@@ -1400,6 +1400,26 @@ bool          serverSimIsLobbyEnabled(const ServerSim *sim);
 bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 /* Cap on join slots; 0 in the struct field falls back to MAX_TANKS. */
 BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
+
+/* Recompute the effective join cap: the operator's configured limit
+ * further clamped by the active scenario's max_players (stricter
+ * wins). Called at instance startup and after every map change. */
+void          serverSimApplyScenarioPlayerCap(ServerSim *sim);
+
+/* (Re)seed lobby Team 2 with the scenario's enemy bots (the script's
+ * enemy_bots(game) hook decides how many): real, pool-named lobby bots
+ * in the high slots that the host edits with the normal team controls.
+ * Clears previous seeds first; no-op outside a scenario lobby. */
+void          serverSimSeedScenarioEnemyTeam(ServerSim *sim);
+
+/* The scenario lobby takeover, applied at map COMMIT time only (Choose
+ * Map, rotation's instant pick, instance startup) — never on a mere
+ * chooser preview, which must not wipe teams or override the host's
+ * game-type choice: auto-selects the Scenario game type (bots
+ * force-allowed; ranked exempt; committing a plain map downgrades a
+ * lingering Scenario type to Open), seeds/clears the enemy team, and
+ * republishes the settings block. */
+void          serverSimApplyScenarioCommit(ServerSim *sim);
 /* Cap on AI bots addable in the lobby; 0 = no cap. */
 BYTE          serverSimGetMaxBots(const ServerSim *sim);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */

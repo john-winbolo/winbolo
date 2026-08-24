@@ -264,6 +264,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.explosion = NULL;
   cs->sim.callbacks.tkExplosion = NULL;
   cs->sim.callbacks.recordDamage = NULL;
+  cs->sim.callbacks.chooseStart = NULL;
   cs->sim.callbacks.recordPlayerAction = NULL;
   cs->sim.callbacks.recordPillPickup = NULL;
   cs->sim.callbacks.ctx = cs;
@@ -1529,6 +1530,9 @@ bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnT
 
 buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }
 gameType    clientSimGetLobbyGameType(const ClientSim *cs)      { return cs->lobbyGameType; }
+bool        clientSimGetLobbyIsScenarioMap(const ClientSim *cs) { return cs->lobbyScenarioMap; }
+const char *clientSimGetLobbyScenarioDesc(const ClientSim *cs) { return cs->lobbyScenarioDesc; }
+bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs) { return cs->lobbyScenarioExtraTeams; }
 labelLen    clientSimGetLabelMessage(const ClientSim *cs)       { return cs->labelMessage; }
 labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->labelTankLabel; }
 

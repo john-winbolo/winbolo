@@ -211,16 +211,13 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   }
 
   if (cfg->acceptRemoteClients) {
-    sim->maxPlayers = (cfg->maxPlayers > 0) ? cfg->maxPlayers : (BYTE)MAX_TANKS;
-    /* A scripted scenario may declare its own hard player cap
-     * (scenario.max_players — e.g. a wave-defense map that needs 10
-     * slots free for wave bots). The stricter limit wins. */
-    {
-      int smp = scenarioGetMaxPlayers(sim);
-      if (smp > 0 && sim->maxPlayers > (BYTE)smp) {
-        sim->maxPlayers = (BYTE)smp;
-      }
-    }
+    /* Remember the operator's own cap, then derive the effective cap —
+     * a scripted scenario may declare a stricter scenario.max_players
+     * (e.g. a wave-defense map that needs 10 slots free for wave
+     * bots), and the sim re-derives this after every lobby map change
+     * so picking or leaving a scripted map mid-session adjusts it. */
+    sim->configuredMaxPlayers = (cfg->maxPlayers > 0) ? cfg->maxPlayers : 0;
+    serverSimApplyScenarioPlayerCap(sim);
     if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
                                  password) == FALSE) {
       return FALSE;
@@ -239,6 +236,10 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   }
 
   serverSimApplyInstanceConfig(sim, cfg);
+
+  /* A server hosting a scenario map from boot commits it here (game
+   * type + enemy-team seeding) — later picks commit via Choose Map. */
+  serverSimApplyScenarioCommit(sim);
 
   /* Stand up the live delayed-stream ring once the spectator cap / delay are
    * populated. Only for a real MP host — the welcome-screen sim runs startup

@@ -478,8 +478,12 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
- * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1). */
-#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1)
+ * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + scenarioMap(1)
+ * + scenarioExtraTeams(1) + scenarioDesc(1 len + up to 255 bytes,
+ * length-prefixed — the payload macro reserves the maximum; the encoder
+ * emits only the actual length). */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD \
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 1 + 1 + 1 + 255)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -518,6 +522,17 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
     pos += 4;
     buf[pos++] = evt->u.lobbySettings.hostSlot;
+    buf[pos++] = evt->u.lobbySettings.lobbyScenarioMap ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyScenarioExtraTeams ? 1 : 0;
+    {
+        size_t dlen = strnlen(evt->u.lobbySettings.lobbyScenarioDesc,
+                              sizeof(evt->u.lobbySettings.lobbyScenarioDesc) - 1);
+        buf[pos++] = (uint8_t)dlen;
+        if (dlen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.lobbyScenarioDesc, dlen);
+            pos += dlen;
+        }
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1699,6 +1714,26 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.hostSlot = buf[pos++];
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyScenarioMap = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyScenarioExtraTeams = buf[pos++] ? true : false;
+    } else {
+        /* Older sender without the field: don't lock plain lobbies. */
+        outEvt->u.lobbySettings.lobbyScenarioExtraTeams = true;
+    }
+    if (len >= pos + 1) {
+        size_t dlen = buf[pos++];
+        if (dlen >= sizeof(outEvt->u.lobbySettings.lobbyScenarioDesc)) {
+            dlen = sizeof(outEvt->u.lobbySettings.lobbyScenarioDesc) - 1;
+        }
+        if (len >= pos + dlen) {
+            memcpy(outEvt->u.lobbySettings.lobbyScenarioDesc, buf + pos, dlen);
+            outEvt->u.lobbySettings.lobbyScenarioDesc[dlen] = '\0';
+            pos += dlen;
+        }
     }
     return true;
 }

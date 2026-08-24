@@ -56,7 +56,9 @@ typedef enum {
 typedef enum {
   gameOpen = 1,
   gameTournament,
-  gameStrictTournament
+  gameStrictTournament,
+  gameScripted          /* map's scenario script defines the rules —
+                         * keep in lockstep with gametype.h */
 } gameType;
 
 #endif

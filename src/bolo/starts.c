@@ -1272,6 +1272,26 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     return;
   }
 
+  /* Scripted-scenario override: the script gets a chance to specify
+   * EVERY start — consulted for each placement (initial spawn and
+   * respawn alike), ahead of the lobby batch stash and the per-game-
+   * type algorithms. An out-of-range answer falls through. */
+  if (sim->callbacks.chooseStart != NULL) {
+    BYTE idx = MAX_STARTS;
+    if (sim->callbacks.chooseStart(sim->callbacks.ctx, playerNum, &idx) &&
+        idx < (*value)->numStarts) {
+      BYTE rx;
+      BYTE ry;
+      BYTE bt;
+      startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+      bt = startsConvertDir((*value)->item[idx].dir);
+      *x = rx;
+      *y = ry;
+      *dir = (TURNTYPE)(bt * START_TIMES_16);
+      return;
+    }
+  }
+
   if (playerNum < MAX_TANKS && sim->pendingStartIdx[playerNum] < (*value)->numStarts) {
     BYTE idx = sim->pendingStartIdx[playerNum];
     BYTE rx;
@@ -1286,7 +1306,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     return;
   }
 
-  if (sim->game == gameOpen) {
+  if (sim->game == gameOpen || sim->game == gameScripted) {
     startsGetStartOpen(sim, value, x, y, dir, playerNum);
   } else {
     startsGetStartTournament(sim, value, x, y, dir, playerNum);

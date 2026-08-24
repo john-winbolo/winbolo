@@ -292,6 +292,11 @@ struct ClientSim {
 
     /* Lobby game settings (received from server in LOBBY_STATE packet) */
     gameType         lobbyGameType;
+    bool             lobbyScenarioMap;  /* current lobby map has a scenario
+                                         * sidecar — gates the "Scenario"
+                                         * game-type option in the UI */
+    char             lobbyScenarioDesc[256]; /* scenario.description blurb */
+    bool             lobbyScenarioExtraTeams; /* scenario allows Add Team */
     bool             lobbyHiddenMines;
     uint8_t          lobbyAiType;       /* 0=none, 1=yes, 2=yesAdvantage, 3=full */
     int32_t          lobbyTimeLimit;    /* Game length in ticks (-1 = unlimited) */

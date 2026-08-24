@@ -3584,6 +3584,7 @@ static const char *gameTypeStr(gameType gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
         case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
         case gameStrictTournament: return langGetText(STR_DLGGAMEINFO_STRICT);
+        case gameScripted:         return langGetText(STR_DLGGAMESETUP_RADIO4);
         default:                   return langGetText(STR_UNKNOWN);
     }
 }
@@ -4331,7 +4332,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * host has explicitly added them via "+ Add Team"
          * (lobbyTeamInUse=1). Without the in_use check, freshly added
          * teams would vanish on the same frame because they have no
-         * members yet. */
+         * members yet.
+         * Scenario maps: team 2 is the enemy side, but it renders and
+         * behaves like ANY other team — the server pre-seeds it with
+         * the script's enemy bots as REAL lobby bots (Add Bot, Bot
+         * Naming, drag all work), and the script reads the final
+         * roster (size AND names) at round start. */
         bool persistTeam = (teamId == 1 || teamId == 2)
                         || clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId));
         if (!persistTeam && memberCount[teamId] == 0) continue;
@@ -5411,8 +5417,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * "+ another team after these ones" rather than a header action.
      * Picks the lowest unused teamId and sends a default-name TEAM_META
      * (SP path writes the TeamMetadata directly since the wire packet
-     * has no SP equivalent). */
-    if (effectiveHost) {
+     * has no SP equivalent).
+     * Whether a scenario lobby gets extra teams is the SCENARIO's call
+     * (scenario.allow_extra_teams; default no — defenders vs the
+     * script's enemy roster). Plain maps always keep the button. */
+    bool extraTeamsOk =
+        !(clientSimGetLobbyIsScenarioMap(cs) ||
+          clientSimGetLobbyGameType(cs) == gameScripted) ||
+        clientSimGetLobbyScenarioExtraTeams(cs);
+    if (effectiveHost && extraTeamsOk) {
         /* Full-width "Add Team" affordance, styled to read as a subtle
          * "+1 row" prompt rather than a primary action — translucent
          * background and dimmed text so it doesn't dominate the team
@@ -6336,17 +6349,30 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             langGetText(STR_DLGGAMESETUP_RADIO1),
             langGetText(STR_DLGGAMESETUP_RADIO2),
             langGetText(STR_DLGGAMESETUP_RADIO3),
+            langGetText(STR_DLGGAMESETUP_RADIO4),
         };
         bool rankedNow = clientSimGetLobbyRanked(cs);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             /* gameType enum is 1-based (gameOpen=1, gameTournament=2,
-             * gameStrictTournament=3), so the array index → enum
-             * mapping is i+1. The previous (gameType)i comparison
-             * read the wrong row as "checked" — Open showed as
-             * Unknown, Tournament showed as Open, etc. */
+             * gameStrictTournament=3, gameScripted=4), so the array
+             * index → enum mapping is i+1. The previous (gameType)i
+             * comparison read the wrong row as "checked" — Open showed
+             * as Unknown, Tournament showed as Open, etc. */
             int enumVal = i + 1;
-            /* Ranked games forbid the "Open" type — grey it out. */
-            bool optDisabled = rankedNow && (gameType)enumVal == gameOpen;
+            /* "Scenario" is only offered when the selected map actually
+             * has a scenario script (kept visible while selected so the
+             * host can still switch away after a map change; the server
+             * itself downgrades the type when the scenario disappears). */
+            if ((gameType)enumVal == gameScripted &&
+                !clientSimGetLobbyIsScenarioMap(cs) &&
+                clientSimGetLobbyGameType(cs) != gameScripted) {
+                continue;
+            }
+            /* Ranked games forbid the "Open" and "Scripted" types —
+             * grey them out. */
+            bool optDisabled = rankedNow &&
+                ((gameType)enumVal == gameOpen ||
+                 (gameType)enumVal == gameScripted);
             if (optDisabled) ImGui::BeginDisabled();
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##gt%d", items[i], i);
@@ -6377,9 +6403,17 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             langGetText(STR_DLGLOBBY_AI_ADVANTAGE),
             langGetText(STR_DLGLOBBY_AI_FULLADV),
         };
+        /* Scripted rounds are driven by bot-spawning map scripts, so
+         * "No computer tanks" is incoherent with them — grey it out
+         * (the server rejects it too, and force-allows bots when the
+         * Scripted type is chosen). */
+        bool scriptedNow =
+            (clientSimGetLobbyGameType(cs) == gameScripted);
         for (int i = 0; i < 4; i++) {
             /* Same trick as the Game Type radios — embed the label so
              * the whole row is clickable. */
+            bool optDisabled = scriptedNow && (aiType)i == aiNone;
+            if (optDisabled) ImGui::BeginDisabled();
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##ai%d", items[i], i);
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
@@ -6387,6 +6421,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 uint8_t v = (uint8_t)i;
                 lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
             }
+            if (optDisabled) ImGui::EndDisabled();
         }
         if (disable) ImGui::EndDisabled();
     }
@@ -8356,6 +8391,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
+
+            /* Scenario blurb (scenario.description) — a couple of
+             * wrapped lines under the map stats so joiners know what
+             * this scripted map plays like. */
+            if (clientSimGetLobbyIsScenarioMap(cs) &&
+                clientSimGetLobbyScenarioDesc(cs)[0] != '\0') {
+                ImGui::Spacing();
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", clientSimGetLobbyScenarioDesc(cs));
+                ImGui::PopTextWrapPos();
+            }
 
             if (!spectator && clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
                 !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {

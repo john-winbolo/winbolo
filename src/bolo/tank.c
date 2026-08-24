@@ -368,7 +368,17 @@ void tankCreate(GameSim *sim, tank *value) {
   New(*value);
   (*value)->x = 0;
   (*value)->y = 0;
-  gameTypeGetItems(sim, &sim->game, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
+  {
+    /* Per-slot spawn-loadout override (scripted scenarios): this slot
+     * starts with THAT game type's items — every spawn, respawns
+     * included — instead of the sim-wide rules. 0 = no override. */
+    gameType loadoutType = sim->game;
+    BYTE plr = gameSimGetTankPlayer(sim, value);
+    if (plr < MAX_TANKS && sim->spawnLoadout[plr] != 0) {
+      loadoutType = (gameType)sim->spawnLoadout[plr];
+    }
+    gameTypeGetItems(sim, &loadoutType, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
+  }
   (*value)->armour = armourAmount;
   (*value)->shells = shellsAmount;
   (*value)->mines = minesAmount;
@@ -2105,6 +2115,57 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 		}
 		if (captured && !sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
 	}
+}
+
+/*********************************************************
+*NAME:          tankGivePill
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 23/8/26
+*LAST MODIFIED: 23/8/26
+*PURPOSE:
+* Loads pillbox pillNum straight into the tank's carry list,
+* exactly as if the tank had driven over it — inTank set, owner
+* transferred — but with no position requirement. Server-side
+* scripted-scenario seam (game.give_pill) so a scenario can
+* start tanks pre-loaded with pillboxes. Returns FALSE when the
+* pill doesn't exist, is already in a tank, or the tank is dead.
+*
+*ARGUMENTS:
+*  sim     - The game sim
+*  value   - Pointer to the tank structure
+*  pillNum - 1-based pill number to load (pills* API convention)
+*********************************************************/
+bool tankGivePill(GameSim *sim, tank *value, BYTE pillNum) {
+	pillboxes *pb = &sim->pb;
+	tankCarryPb q;
+
+	if (value == NULL || (*value) == NULL ||
+	    pillNum == 0 || pillNum > pillsGetNumPills(pb)) {
+		return FALSE;
+	}
+	if ((*value)->armour > TANK_FULL_ARMOUR) {
+		return FALSE;   /* dead tank */
+	}
+	if ((*pb)->item[pillNum - 1].inTank == TRUE) {
+		return FALSE;   /* some tank already carries it */
+	}
+
+	pillsSetPillInTank(pb, pillNum, TRUE);
+	if (sim->callbacks.recordPillPickup) {
+		sim->callbacks.recordPillPickup(sim->callbacks.ctx,
+			gameSimGetTankPlayer(sim, value), pillNum,
+			(BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
+			(BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
+	}
+	New(q);
+	q->pillNum = pillNum;
+	q->next = (*value)->carryPills;
+	(*value)->carryPills = q;
+	if (pillsGetPillOwner(pb, pillNum) != gameSimGetTankPlayer(sim, value)) {
+		pillsSetPillOwner(sim, pb, pillNum,
+		                  gameSimGetTankPlayer(sim, value), FALSE);
+	}
+	return TRUE;
 }
 
 /*********************************************************

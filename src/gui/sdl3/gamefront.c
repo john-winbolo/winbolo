@@ -837,6 +837,27 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
  * gameFrontDialogs — setup dialog state machine
  * ------------------------------------------------------- */
 /* Pick a random .map file from data/maps/ for the background game */
+/* TRUE when "<dir>/<mapName minus .map>.scenario.lua" exists — scenario
+ * maps are excluded from the welcome-screen background game: their
+ * scripts spawn waves, broadcast messages and end rounds, none of which
+ * belongs behind the splash screen. */
+static bool mapHasScenarioSidecar(const char *dir, const char *mapName) {
+    char sidecar[512];
+    size_t len;
+    SDL_snprintf(sidecar, sizeof(sidecar), "%s/%s", dir, mapName);
+    len = strlen(sidecar);
+    if (len > 4 && SDL_strcasecmp(sidecar + len - 4, ".map") == 0) {
+        sidecar[len - 4] = '\0';
+    }
+    SDL_strlcat(sidecar, ".scenario.lua", sizeof(sidecar));
+    SDL_IOStream *io = SDL_IOFromFile(sidecar, "r");
+    if (io) {
+        SDL_CloseIO(io);
+        return true;
+    }
+    return false;
+}
+
 static bool pickRandomMap(char *out, size_t outLen) {
     const char *dir = "data/maps";
     int count = 0;
@@ -856,7 +877,8 @@ static bool pickRandomMap(char *out, size_t outLen) {
             size_t len = strlen(ent->d_name);
             if (len > 4 && strcasecmp(ent->d_name + len - 4, ".map") == 0 &&
                 strcasecmp(ent->d_name, "Inbuilt Tutorial.map") != 0 &&
-                strcasecmp(ent->d_name, "Better Best Map Ever.map") != 0) {
+                strcasecmp(ent->d_name, "Better Best Map Ever.map") != 0 &&
+                !mapHasScenarioSidecar(dir, ent->d_name)) {
                 mapFiles[count] = SDL_strdup(ent->d_name);
                 count++;
             }
@@ -883,7 +905,8 @@ static bool pickRandomMap(char *out, size_t outLen) {
     int filtered = 0;
     for (int i = 0; i < count; i++) {
         if (SDL_strcasecmp(list[i], "Inbuilt Tutorial.map") != 0 &&
-            SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0) {
+            SDL_strcasecmp(list[i], "Better Best Map Ever.map") != 0 &&
+            !mapHasScenarioSidecar(dir, list[i])) {
             list[filtered++] = list[i];
         }
     }

@@ -122,6 +122,11 @@ void serverSimStartGame(ServerSim *sim);
  * path; defined alongside lobbyAutoUnreadyOnChange below. */
 static void serverSimApplyMapChange(ServerSim *sim);
 
+/* Swaps the scenario VM to match sim->mapFilePath and re-derives the
+ * player cap; defined alongside serverSimApplyScenarioPlayerCap below.
+ * Called by every map-content mutator after mapFilePath is updated. */
+static void serverSimReloadScenarioForMap(ServerSim *sim);
+
 /* Reserves a free lobby start for one slot, clustered near its
  * teammates. Defined below; called from the join path and the
  * map-change reconcile. */
@@ -476,6 +481,10 @@ static void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
     serverSimTrackAppend(sim, &r, sizeof r);
 }
 
+static bool serverSimCbChooseStart(void *ctx, BYTE playerNum, BYTE *startIdx) {
+    return scenarioChooseStart((ServerSim *)ctx, playerNum, startIdx);
+}
+
 static void serverSimCbCenterTank(void *ctx) {
     (void)ctx;
     /* No-op on server */
@@ -580,6 +589,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
     sim->maxPlayers          = MAX_TANKS;
+    sim->startInProgress     = FALSE;
+    memset(sim->scenarioSeededBot, 0, sizeof(sim->scenarioSeededBot));
+    sim->configuredMaxPlayers = 0;
+    sim->mapFilePath[0]      = '\0';
+    sim->previousMapPath[0]  = '\0';
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
     sim->specRosterEnum      = NULL;
@@ -616,6 +630,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
+    sim->sim.callbacks.chooseStart = serverSimCbChooseStart;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -722,10 +737,13 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
     }
 
     /* Scripted scenario: a "<map>.scenario.lua" sidecar next to the map
-     * file boots a server-side Lua VM (on_start now, on_tick every game
-     * tick). File-based creation only — a network-transferred compressed
-     * map has no local sidecar. */
+     * file boots a server-side Lua VM (on_start on the first running
+     * tick, on_tick every game tick). File-based creation and the
+     * file-based lobby map-change paths only — a network-transferred
+     * compressed map has no local sidecar. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
     scenarioLoad(sim, mapFileName, game, hiddenMines);
+    serverSimApplyScenarioPlayerCap(sim);
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;
@@ -1849,7 +1867,9 @@ static void simRunHalfStep(ServerSim *sim) {
      * reason the returning lobby is given. The sweep must not relabel a
      * surrender's win credit on its way out. */
     if (sim->lobbyEnabled) {
-        if (sim->returnToLobbyTicks == 0 && serverSimCheckGameWin(sim, FALSE)) {
+        if (sim->returnToLobbyTicks == 0 &&
+            scenarioGetAllowBaseWin(sim) &&
+            serverSimCheckGameWin(sim, FALSE)) {
             char buf[256];
             char name[256];
             BYTE winner = serverSimWinningOwner(sim);
@@ -1867,7 +1887,8 @@ static void simRunHalfStep(ServerSim *sim) {
             sim->tick++;
             return;
         }
-    } else if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
+    } else if (sim->quitOnWin && scenarioGetAllowBaseWin(sim) &&
+               serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
         serverSimConsoleMessage("Game won!");
         serverSimEnterGameOver(sim);
@@ -2247,6 +2268,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
+
+    /* A scripted scenario may have armed a spawn-loadout override for
+     * this slot (open-mode wave bots) — it must not leak to the slot's
+     * next occupant. */
+    sim->sim.spawnLoadout[playerNum] = 0;
 
     /* Publish before clearing the slot — the filler reads the player's
      * name and country out of sim->sim.plyrs->item[playerNum], which is
@@ -4230,6 +4256,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
         serverSimFillGamePhaseEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
     }
+
+    /* Scenario maps: the returning lobby must look exactly like the
+     * map did when first chosen — the round consumed the enemy team
+     * (on_setup pulled the seeded bots into the waves), so re-commit:
+     * game type re-forced, Team 2 re-seeded to the script's default
+     * roster, settings republished. */
+    if (scenarioIsActive(sim)) {
+        serverSimApplyScenarioCommit(sim);
+    }
 }
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
@@ -4238,6 +4273,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     BYTE i;
 
     if (sim->state != serverStateLobby) return;
+    /* A start is already running (state flips to Running only at its
+     * end): roster edits inside it — scenario on_setup removals in
+     * particular — must not recursively start a second game. */
+    if (sim->startInProgress) return;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
@@ -4507,6 +4546,8 @@ static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
+    sim->startInProgress = TRUE;
+
     /* Fresh round — the last-human-left return-to-lobby check arms only
      * once a human is seen this round. */
     sim->roundHadHuman = false;
@@ -4578,7 +4619,16 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     }
     serverSimStaggerBaseTimers(sim);
 
+    /* Scripted scenario setup — see serverSimStartGame: a silent
+     * pre-snapshot tick for the script, with its world-delta events
+     * dropped so the arranged world is the baseline. */
+    if (scenarioSetup(sim)) {
+        sim->eventCount = 0;
+        sim->mapEventCount = 0;
+    }
+
     sim->state = serverStateRunning;
+    sim->startInProgress = FALSE;
 
     serverSimApplyAutoLockOnGameStart(sim);
 
@@ -4605,6 +4655,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 }
 
 void serverSimStartGame(ServerSim *sim) {
+    sim->startInProgress = TRUE;
+
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
        playerConnected[], but we need it to create tanks below. Player
@@ -4719,7 +4771,21 @@ void serverSimStartGame(ServerSim *sim) {
     }
     serverSimStaggerBaseTimers(sim);
 
+    /* Scripted scenario setup: the script gets a silent tick to arrange
+     * the round (owners, teams, pills) with the tanks already placed but
+     * BEFORE the first running snapshot exists. Any world-delta events
+     * its mutations queued are dropped so clients meet the arranged
+     * world as the baseline instead of watching a burst of "changed
+     * alliance" newswire lines at tick 0 — world state rides the
+     * snapshot's own arrays, so flushing loses nothing (same reasoning
+     * as serverSimStartGameInPlace's entry flush). */
+    if (scenarioSetup(sim)) {
+        sim->eventCount = 0;
+        sim->mapEventCount = 0;
+    }
+
     sim->state = serverStateRunning;
+    sim->startInProgress = FALSE;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 
@@ -4832,6 +4898,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
             }
         }
     }
+
+    /* New map file — swap in its scenario sidecar (or drop the old
+     * one) and re-derive the player cap. Rotation is an instant pick
+     * (no preview step), so the scenario commit applies right away. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
+    serverSimReloadScenarioForMap(sim);
+    serverSimApplyScenarioCommit(sim);
 
     /* Map changed — unready humans, keep bots ready, abort any
      * in-flight countdown, and republish affected slots. The earlier
@@ -5959,6 +6032,12 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
     evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
+    evt->u.lobbySettings.lobbyScenarioMap         = scenarioIsActive(sim);
+    SDL_strlcpy(evt->u.lobbySettings.lobbyScenarioDesc,
+                scenarioGetDescription(sim),
+                sizeof(evt->u.lobbySettings.lobbyScenarioDesc));
+    evt->u.lobbySettings.lobbyScenarioExtraTeams =
+        scenarioGetAllowExtraTeams(sim);
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -7124,6 +7203,10 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
             sim->previousMapDataLen = sim->cachedMapDataLen;
             memcpy(sim->previousMapName, sim->mapName,
                    sizeof(sim->previousMapName));
+            /* Remember the committed map's source file too, so a
+             * preview Cancel can restore its scenario sidecar. */
+            memcpy(sim->previousMapPath, sim->mapFilePath,
+                   sizeof(sim->previousMapPath));
         }
     }
 
@@ -7216,6 +7299,11 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         "serverSimReloadMap: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* New map file — swap in its scenario sidecar and re-derive the
+     * player cap. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
+    serverSimReloadScenarioForMap(sim);
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -7255,6 +7343,10 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
             sim->previousMapDataLen = sim->cachedMapDataLen;
             memcpy(sim->previousMapName, sim->mapName,
                    sizeof(sim->previousMapName));
+            /* Remember the committed map's source file too, so a
+             * preview Cancel can restore its scenario sidecar. */
+            memcpy(sim->previousMapPath, sim->mapFilePath,
+                   sizeof(sim->previousMapPath));
         }
     }
 
@@ -7363,6 +7455,11 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* In-memory map — no source file, so no sidecar can apply. Drop
+     * any active scenario and restore the operator's plain player cap. */
+    sim->mapFilePath[0] = '\0';
+    serverSimReloadScenarioForMap(sim);
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -7410,6 +7507,10 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
             sim->previousMapDataLen = sim->cachedMapDataLen;
             memcpy(sim->previousMapName, sim->mapName,
                    sizeof(sim->previousMapName));
+            /* Remember the committed map's source file too, so a
+             * preview Cancel can restore its scenario sidecar. */
+            memcpy(sim->previousMapPath, sim->mapFilePath,
+                   sizeof(sim->previousMapPath));
         }
     }
 
@@ -7426,6 +7527,11 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
             "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
             sim->mapName, sim->cachedMapDataLen);
     }
+
+    /* Generated map — no source file, so no sidecar can apply. */
+    sim->mapFilePath[0] = '\0';
+    serverSimReloadScenarioForMap(sim);
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -7484,6 +7590,14 @@ bool serverSimRevertPreview(ServerSim *sim) {
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
 
+    /* Cancelling a preview restores the original committed map — and,
+     * when that map came from a file, its scenario sidecar (the preview
+     * shut it down when it swapped the content out). */
+    memcpy(sim->mapFilePath, sim->previousMapPath,
+           sizeof(sim->mapFilePath));
+    sim->previousMapPath[0] = '\0';
+    serverSimReloadScenarioForMap(sim);
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
@@ -7496,8 +7610,13 @@ void serverSimCommitPreview(ServerSim *sim) {
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimCommitPreview: committed '%s'", sim->mapName);
+
+    /* Choose Map is where a scenario takes the lobby over (game type,
+     * enemy-team seeding) — previews stayed hands-off. */
+    serverSimApplyScenarioCommit(sim);
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -7909,6 +8028,15 @@ void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySlotEvent(sim, slot, &evt);
     serverSimPublishControl(sim, &evt);
+
+    /* Scenario lobbies: tell the script the roster changed (it may
+     * edit the team lists itself via game.lobby_* — guarded against
+     * recursion), then re-ask its query hooks (Add Team visibility
+     * etc.) so the settings block carries fresh answers everywhere. */
+    if (scenarioIsActive(sim) && sim->state == serverStateLobby) {
+        scenarioLobbyChanged(sim);
+        serverSimPublishLobbySettings(sim);
+    }
 }
 
 void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot) {
@@ -8017,10 +8145,20 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
     if (sim == NULL || value == NULL) return false;
     switch (lst) {
         case LST_GAME_TYPE:
-            if (len != 1 || value[0] < 1 || value[0] > 3) return false;
+            if (len != 1 || value[0] < 1 || value[0] > 4) return false;
             if (serverSimGetRanked(sim) &&
-                (gameType)value[0] == gameOpen) return false;
+                ((gameType)value[0] == gameOpen ||
+                 (gameType)value[0] == gameScripted)) return false;
             serverSimSetGameType(sim, (gameType)value[0]);
+            /* Scripted rounds are driven by bot-spawning scripts —
+             * "no computer tanks" is incoherent with them, so choosing
+             * Scripted force-allows bots (the whole settings block
+             * republishes after this, keeping every client in sync). */
+            if ((gameType)value[0] == gameScripted &&
+                (aiType)sim->aiPolicy == aiNone) {
+                serverSimSetAiPolicy(sim, (uint8_t)aiYes);
+                serverSimSetBotAiType(sim, aiYes);
+            }
             return true;
         case LST_HIDDEN_MINES:
             if (len != 1) return false;
@@ -8030,6 +8168,9 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if (len != 1 || value[0] > 3) return false;
             if (serverSimGetRanked(sim) &&
                 (aiType)value[0] != aiNone) return false;
+            /* Scripted game type needs bots (see LST_GAME_TYPE). */
+            if ((aiType)value[0] == aiNone &&
+                serverSimGetGameType(sim) == gameScripted) return false;
             serverSimSetAiPolicy(sim, value[0]);
             serverSimSetBotAiType(sim, (aiType)value[0]);
             if ((aiType)value[0] == aiNone) {
@@ -8358,6 +8499,153 @@ bool serverSimIsAcceptingJoins(const ServerSim *sim) {
 BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
     if (sim == NULL) return MAX_TANKS;
     return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
+}
+
+void serverSimApplyScenarioPlayerCap(ServerSim *sim) {
+    BYTE cap;
+    int smp;
+    if (sim == NULL) return;
+    cap = (sim->configuredMaxPlayers > 0) ? sim->configuredMaxPlayers
+                                          : (BYTE)MAX_TANKS;
+    smp = scenarioGetMaxPlayers(sim);
+    if (smp > 0 && cap > (BYTE)smp) {
+        cap = (BYTE)smp;
+    }
+    if (sim->maxPlayers != cap) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "player cap now %d (configured=%d scenario=%d)",
+            (int)cap, (int)sim->configuredMaxPlayers, smp);
+    }
+    sim->maxPlayers = cap;
+}
+
+/* (Re)seed lobby Team 2 with the scenario's enemy bots: ask the
+ * script's enemy_bots(game) hook how many, then add that many REAL
+ * lobby bots — pool-named, team 2, filling slots from the top so the
+ * defender seats stay low — that the host can then edit with the
+ * normal team controls (add, remove, rename, Bot Naming). Previous
+ * seeds are removed first, so a map change away from the scenario
+ * clears them again. Lobby servers only. */
+void serverSimSeedScenarioEnemyTeam(ServerSim *sim) {
+    int want;
+    int slot;
+    const char *brain;
+    const char *used[MAX_TANKS];
+    char names[MAX_TANKS][64];
+    int usedCount = 0;
+    int poolIdx = 0;
+
+    if (sim == NULL) return;
+
+    /* Drop the previous map's seeds (still-present bots only — the
+     * host may have removed some already). */
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        if (sim->scenarioSeededBot[slot]) {
+            sim->scenarioSeededBot[slot] = FALSE;
+            if (botManagerIsBot(sim, (BYTE)slot)) {
+                serverSimRemoveBot(sim, (BYTE)slot);
+            }
+        }
+    }
+
+    if (!sim->lobbyEnabled || sim->state != serverStateLobby) return;
+    want = scenarioGetEnemyBots(sim);
+    {
+        int room = MAX_TANKS - (int)serverSimGetMaxPlayers(sim);
+        if (want > room) want = room;
+    }
+    if (want <= 0) return;
+
+    brain = serverSimGetBotBrainPath(sim);
+    if (brain == NULL || brain[0] == '\0') {
+        brain = scenarioGetDefaultBrain(sim);
+    }
+    if (brain == NULL || brain[0] == '\0') {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "scenario: no bot brain available — enemy team not seeded");
+        return;
+    }
+
+    /* One random themed pool names the whole enemy side. */
+    if (lobbyBotPoolCount() > 0) {
+        poolIdx = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+    }
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        if (sim->playerConnected[slot]) {
+            playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot,
+                                 names[usedCount], FALSE);
+            used[usedCount] = names[usedCount];
+            usedCount++;
+        }
+    }
+
+    for (slot = MAX_TANKS - 1; slot >= 0 && want > 0; slot--) {
+        char botName[64];
+        if (sim->playerConnected[slot]) continue;
+        lobbyBotPoolPick(poolIdx, used, usedCount, botName, sizeof(botName));
+        if (!botManagerAddBot(sim, (BYTE)slot, brain, botName,
+                              (aiType)serverSimGetBotAiType(sim),
+                              gameTypeGet(&sim->sim.game),
+                              sim->sim.hiddenMines)) {
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "scenario: enemy seed failed at slot %d (brain '%s')",
+                slot, brain);
+            break;
+        }
+        serverSimSetTeam(sim, (BYTE)slot, 2);
+        serverSimPublishLobbySlot(sim, (BYTE)slot);
+        sim->scenarioSeededBot[slot] = TRUE;
+        if (usedCount < MAX_TANKS) {
+            SDL_strlcpy(names[usedCount], botName, sizeof(names[usedCount]));
+            used[usedCount] = names[usedCount];
+            usedCount++;
+        }
+        want--;
+    }
+}
+
+/* Swap the active scenario for the one belonging to mapFilePath (which
+ * may be "" = no file = no scenario), then re-derive the player cap.
+ * Every lobby map-content change funnels through here so a scripted
+ * map picked mid-session behaves exactly like one hosted from boot. */
+static void serverSimReloadScenarioForMap(ServerSim *sim) {
+    scenarioShutdown(sim);
+    if (sim->mapFilePath[0] != '\0') {
+        scenarioLoad(sim, sim->mapFilePath,
+                     gameTypeGet(&sim->sim.game), sim->sim.hiddenMines);
+    }
+    serverSimApplyScenarioPlayerCap(sim);
+    /* NOTE: deliberately NO game-type switch and NO team seeding here.
+     * This funnel also runs for map PREVIEWS (clicking a map in the
+     * chooser) — a host merely curious what a scenario map is must not
+     * have their teams wiped or their Open/Tournament/Strict choice
+     * overridden. Those takeover effects happen at COMMIT time only:
+     * serverSimApplyScenarioCommit, from Choose Map / map rotation /
+     * instance startup. */
+}
+
+void serverSimApplyScenarioCommit(ServerSim *sim) {
+    if (sim == NULL) return;
+    /* The "Scenario" game type tracks the COMMITTED map: choosing a
+     * scenario map defaults the lobby to it (bots force-allowed —
+     * the host can still switch types afterwards), and committing a
+     * plain map downgrades a lingering Scenario type to Open. Ranked
+     * lobbies never auto-enter it (ranked forbids the type). */
+    if (scenarioIsActive(sim)) {
+        if (!sim->ranked && gameTypeGet(&sim->sim.game) != gameScripted) {
+            gameTypeSet(&sim->sim.game, gameScripted);
+            if ((aiType)sim->aiPolicy == aiNone) {
+                serverSimSetAiPolicy(sim, (uint8_t)aiYes);
+                serverSimSetBotAiType(sim, aiYes);
+            }
+        }
+    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
+        gameTypeSet(&sim->sim.game, gameOpen);
+    }
+
+    /* Seed (or clear) the enemy side's lobby bots for the new map. */
+    serverSimSeedScenarioEnemyTeam(sim);
+    serverSimPublishLobbySettings(sim);
 }
 
 BYTE serverSimGetMaxBots(const ServerSim *sim) {

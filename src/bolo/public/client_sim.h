@@ -522,6 +522,18 @@ uint8_t      clientSimGetLastBalanceFailedReason(const ClientSim *cs);
 bool         clientSimIsLabelOwnTank(const ClientSim *cs);
 buildSelect  clientSimGetCurrentBuildSelect(const ClientSim *cs);
 gameType     clientSimGetLobbyGameType(const ClientSim *cs);
+
+/* TRUE when the lobby's current map has a scenario sidecar loaded on
+ * the server — the "Scenario" game type is only offered for such maps. */
+bool         clientSimGetLobbyIsScenarioMap(const ClientSim *cs);
+
+/* The scenario's lobby blurb (scenario.description); "" when none. */
+const char  *clientSimGetLobbyScenarioDesc(const ClientSim *cs);
+
+/* Whether the lobby may add teams beyond the scenario's two sides
+ * (scenario.allow_extra_teams; scenarios default to no). TRUE on
+ * plain maps. */
+bool         clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
 labelLen     clientSimGetLabelMessage(const ClientSim *cs);
 labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
 

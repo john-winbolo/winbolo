@@ -240,6 +240,15 @@ typedef struct ControlEvent {
             uint16_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
             uint8_t  hostSlot;   /* current lobby host's player slot */
+            bool     lobbyScenarioMap; /* current map has a scenario
+                                        * sidecar loaded — gates the
+                                        * "Scenario" game-type option */
+            char     lobbyScenarioDesc[256]; /* scenario.description blurb
+                                        * for the lobby map info; "" =
+                                        * none */
+            bool     lobbyScenarioExtraTeams; /* scenario allows teams
+                                        * beyond its two sides (Add Team
+                                        * button); true on plain maps */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

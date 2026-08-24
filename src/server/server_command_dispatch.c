@@ -27,6 +27,8 @@
 #include "playername_validate.h"      /* playerNameValidate, playerNameCompare */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
+#include "server_sim_join.h"          /* serverSimFindFreeSlot — honors player cap */
+#include "../server/scenario.h"       /* scenarioIsActive — enemy-team slot pick */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "threads.h"
 #include "../common/wb_log.h"
@@ -432,15 +434,29 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                 return CMD_REJECT_INVALID;
             }
         }
-        BYTE slot;
-        bool found = false;
-        for (slot = 0; slot < MAX_TANKS; slot++) {
-            if (!serverSimIsPlayerConnected(sim, slot)) { found = true; break; }
+        /* Slot pick: on a scenario map, bots joining the ENEMY side
+         * (team 2) fill from the TOP — those seats are the script's
+         * roster and live above the defender cap. Everything else goes
+         * through serverSimFindFreeSlot, which honors the effective
+         * player cap (operator -maxplayers clamped by the scenario's
+         * max_players) so scenario defender seats stay bounded. */
+        int freeSlot = -1;
+        if (scenarioIsActive(sim) && p->teamNumber == 2) {
+            for (int s2 = MAX_TANKS - 1; s2 >= 0; s2--) {
+                if (!serverSimIsPlayerConnected(sim, (BYTE)s2)) {
+                    freeSlot = s2;
+                    break;
+                }
+            }
+        } else {
+            freeSlot = serverSimFindFreeSlot(sim);
         }
-        if (!found) {
-            fprintf(stderr, "ADD_BOT reject INVALID: no free slot (all %d slots in use)\n", MAX_TANKS);
+        if (freeSlot < 0) {
+            fprintf(stderr, "ADD_BOT reject INVALID: no free slot under the "
+                    "player cap (%d)\n", (int)serverSimGetMaxPlayers(sim));
             return CMD_REJECT_INVALID;
         }
+        BYTE slot = (BYTE)freeSlot;
         char botName[64];
         if (haveName) {
             SDL_strlcpy(botName, validatedName, sizeof(botName));

@@ -347,6 +347,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyBaseCount   = evt->u.lobbySettings.lobbyBaseCount;
         cs->lobbyStartCount  = evt->u.lobbySettings.lobbyStartCount;
         cs->mapSkipAvailable = evt->u.lobbySettings.mapSkipAvailable;
+        cs->lobbyScenarioMap = evt->u.lobbySettings.lobbyScenarioMap;
+        strncpy(cs->lobbyScenarioDesc, evt->u.lobbySettings.lobbyScenarioDesc,
+                sizeof(cs->lobbyScenarioDesc) - 1);
+        cs->lobbyScenarioDesc[sizeof(cs->lobbyScenarioDesc) - 1] = '\0';
+        cs->lobbyScenarioExtraTeams = evt->u.lobbySettings.lobbyScenarioExtraTeams;
         /* Server lobby capability ("does this server run a lobby"), distinct
          * from cs->inLobby (the current phase). Carried by the hasLobby wire
          * field but stored separately so it survives phase changes and can

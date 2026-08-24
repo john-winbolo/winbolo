@@ -1983,6 +1983,9 @@
 #define STR_WEB_JOIN_CODE_UNREACHABLE       1871
 #define STR_WEB_CONNECT_FAILED              1872
 #define STR_WEB_JOIN_NO_RESPONSE            1873
+/* 1874..1920 are already taken by blocks defined elsewhere in this
+ * file (e.g. STR_DLGLOBBY_LASTROUND_*) — IDs are not sequential here. */
+#define STR_DLGGAMESETUP_RADIO4             1921
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

@@ -19,6 +19,7 @@
 #define SERVER_SIM_INTERNAL_H
 
 #include <stddef.h>
+#include <stdio.h>   /* FILENAME_MAX — mapFilePath / previousMapPath below */
 #include <time.h>
 #include "server_sim.h"
 #include "control_event.h"  /* ControlEvent — stored by value in the lobby-chat buffer */
@@ -165,6 +166,18 @@ struct ServerSim {
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */
+    bool     startInProgress;      /* TRUE while serverSimStartGame /
+                                    * serverSimStartGameInPlace is running.
+                                    * Guards serverSimLobbyCheckAllReady:
+                                    * roster edits DURING a start (e.g. a
+                                    * scenario's on_setup removing its
+                                    * seeded bots) re-enter the all-ready
+                                    * check via serverSimRemovePlayer, and
+                                    * with the state still Lobby that
+                                    * recursively started a second game
+                                    * mid-teardown (the 1:42 Ready-click
+                                    * crash: botManagerOnGameStart walked a
+                                    * half-removed bot). */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from
                                     * serverSimCreate*; FALSE after the first
                                     * serverSimResetGameWorld. Drives the
@@ -241,6 +254,32 @@ struct ServerSim {
     /* Scripted-scenario runtime (src/server/scenario.c). NULL for plain
      * maps; owned by the sim (scenarioShutdown in serverSimDestroy). */
     void        *scenario;
+    bool         scenarioSeededBot[MAX_TANKS]; /* slots holding the enemy
+                                        * bots the server auto-added to lobby
+                                        * Team 2 when the scenario map was
+                                        * picked (count from the script's
+                                        * enemy_bots(game) hook). Cleared /
+                                        * re-seeded on every map change so a
+                                        * plain map removes them again. The
+                                        * host edits the roster with the
+                                        * NORMAL team controls afterwards. */
+    BYTE         configuredMaxPlayers; /* operator's cap from startup config;
+                                        * 0 = none. maxPlayers above is the
+                                        * EFFECTIVE cap = min(this, the active
+                                        * scenario's max_players) — recomputed
+                                        * by serverSimApplyScenarioPlayerCap
+                                        * whenever the map (and therefore the
+                                        * scenario) changes. */
+    char         mapFilePath[FILENAME_MAX];      /* source .map file of the
+                                        * current map; "" when the map came
+                                        * from memory (upload / random gen),
+                                        * where no scenario sidecar can
+                                        * exist. Drives sidecar (re)loads on
+                                        * lobby map changes. */
+    char         previousMapPath[FILENAME_MAX];  /* mapFilePath snapshot taken
+                                        * with previousMapData, so cancelling
+                                        * a map preview also restores the
+                                        * original map's scenario. */
 
     /* Per-player input queues — allows 2 inputs per server timer callback */
 #define SERVER_INPUT_QUEUE_SIZE 16  /* Must be power of 2 */

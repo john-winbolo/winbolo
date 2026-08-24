@@ -502,6 +502,24 @@ int run_wbn_lobby_update_sends_when_not_rotating(void);
 int run_maprotate_restarts_round_and_rearms(void);
 int run_maprotate_defers_wbn_update_until_key_rotated(void);
 int run_maprotate_gameover_is_not_terminal(void);
+
+/* Scripted map scenarios (test_scenario.c): sidecar discovery,
+ * first-tick on_start, per-round VM reset, the map-following player
+ * cap, the scripted win path, the engine owner setters, and the
+ * error self-disable guard. */
+int run_scenario_sidecar_load(void);
+int run_scenario_on_start_first_tick(void);
+int run_scenario_round_restart_fresh_state(void);
+int run_scenario_player_cap_follows_map(void);
+int run_scenario_end_round_scripted_win(void);
+int run_scenario_owner_setters(void);
+int run_scenario_error_disables_after_limit(void);
+int run_scenario_give_pill(void);
+int run_scenario_forced_game_type(void);
+int run_scenario_choose_start(void);
+int run_scenario_setup_pre_snapshot(void);
+int run_scenario_enemy_roster(void);
+int run_scenario_seeded_round_start(void);
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
 

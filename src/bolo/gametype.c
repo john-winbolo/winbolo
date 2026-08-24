@@ -93,6 +93,7 @@ void gameTypeGetItems(GameSim *sim, gameType *gmeType, BYTE *shellsAmount, BYTE 
   *armour = TANK_FULL_ARMOUR;
   switch (*gmeType) {
   case gameOpen:
+  case gameScripted:   /* script overrides via scenario.game when it cares */
     *shellsAmount = TANK_FULL_SHELLS;
     *mines = TANK_FULL_MINES;
     *trees = TANK_FULL_TREES;

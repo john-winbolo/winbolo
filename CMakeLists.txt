@@ -2955,6 +2955,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_maprotate_rotation.c
+    # Scripted map scenarios: sidecar discovery + metadata, on_start on
+    # the round's first tick, the per-round VM reset, the player cap
+    # following lobby map changes (including preview revert), the
+    # game.end_round win path (RETURN_REASON_SCENARIO), the owner
+    # setters, and the SCENARIO_MAX_ERRORS self-disable guard.
+    tests/unit/test_scenario.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_lobby_reset_cleanup.c
@@ -3717,6 +3723,19 @@ set(_unit_test_names
     autolock_lobby_stays_open
     autolock_released_on_return_to_lobby
     no_autolock_stays_open_on_start
+    scenario_sidecar_load
+    scenario_on_start_first_tick
+    scenario_round_restart_fresh_state
+    scenario_player_cap_follows_map
+    scenario_end_round_scripted_win
+    scenario_owner_setters
+    scenario_error_disables_after_limit
+    scenario_give_pill
+    scenario_forced_game_type
+    scenario_choose_start
+    scenario_setup_pre_snapshot
+    scenario_enemy_roster
+    scenario_seeded_round_start
     maprotate_restarts_round_and_rearms
     maprotate_boot_does_not_rotate_while_empty
     maprotate_gameover_is_not_terminal

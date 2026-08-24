@@ -49,7 +49,11 @@
 typedef enum {
   gameOpen = 1,
   gameTournament,
-  gameStrictTournament
+  gameStrictTournament,
+  gameScripted          /* map's scenario script defines the rules; the
+                         * engine treats it as Open unless the sidecar's
+                         * scenario.game forces something else. Requires
+                         * bots to be allowed (scripts spawn them). */
 } gameType;
 
 #endif

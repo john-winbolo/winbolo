@@ -354,6 +354,8 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
     int len;
     bool ok;
 
+    if (bot->cs == NULL) return false;   /* mid-teardown / never built */
+
     buf = (BYTE *)malloc(65536);
     if (buf == NULL) {
         return false;
@@ -1288,6 +1290,13 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     bot = &sim->botMgr.bots[playerNum];
     if (!bot->active) return;
 
+    /* Deactivate FIRST: serverSimRemovePlayer below publishes and can
+     * re-enter walkers (all-ready checks, scenario hooks) that iterate
+     * active bots — none of them may see this half-torn-down context
+     * (active with cs == NULL was the Ready-click start crash). */
+    bot->active = false;
+    sim->botMgr.numBots--;
+
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -1299,9 +1308,6 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     clientSimDestroy(bot->cs);
     bot->cs = NULL;
     serverSimRemovePlayer(sim, playerNum);
-
-    bot->active = false;
-    sim->botMgr.numBots--;
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d removed", playerNum);
 }

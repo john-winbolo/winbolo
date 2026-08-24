@@ -33,6 +33,7 @@
                                     * T2 grant for the bot-team assignment
                                     * in setup (see CMakeLists.txt). */
 #include "../../server/server_lifecycle.h"
+#include "../../server/scenario.h"   /* scenarioShutdown — splash sim runs plain */
 #include "../../server/threads.h"   /* threadsWaitForMutex / threadsReleaseMutex */
 
 #include <stdio.h>
@@ -121,6 +122,12 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             return false;
         }
     }
+    /* The welcome-screen game is pure eye candy — if the picked map
+     * happens to carry a scenario sidecar, drop the script so no waves
+     * spawn, no messages broadcast and no scripted round-end fires
+     * behind the splash screen. */
+    scenarioShutdown(bg->sim);
+
     /* Embedded sim: silence its console messages — no server console. */
     serverSimSetQuiet(bg->sim, true);
     /* bg_game is a local headless sim — no lobby, run immediately.
