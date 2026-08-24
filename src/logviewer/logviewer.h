@@ -212,6 +212,9 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * lvEmbedSeekToClip also centres the view on the cell the clip happened at;
  * lvEmbedSeekToTime leaves the view alone, for a caller naming a moment rather
  * than a place. Times past the end of the window clamp to it.
+ * lvEmbedStepTicks walks the log forward by whole ticks with no timer driving
+ * it, for a host stepping the round a fixed amount at a time; the next
+ * lvEmbedFrameTexture repaints to the moment it stepped to.
  * lvEmbedEnd is safe to call twice or while inactive. */
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
@@ -231,6 +234,7 @@ void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
 void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
+void lvEmbedStepTicks(int ticks);
 
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world

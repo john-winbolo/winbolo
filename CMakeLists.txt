@@ -1288,6 +1288,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
+    # GIF encoder for the recap's clip export. Client only — no other target
+    # exports clips, and the LogViewer already omits stb_image_write_impl.c.
+    src/third_party/msf_gif/msf_gif_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/third_party/tweetnacl/tweetnacl.c
 )

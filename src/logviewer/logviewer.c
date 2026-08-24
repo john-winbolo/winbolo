@@ -1727,6 +1727,27 @@ void lvEmbedSeekToTime(uint32_t roundRelMs) {
     lvEmbedSeekWindowMs(roundRelMs, false, 0, 0);
 }
 
+/* Walk the log forward by whole ticks with no timer driving it, for a host that
+ * wants the round a fixed step at a time rather than in real time. Same list
+ * lv_windowTimer walks on the SDL timer thread, so the mutex is held across the
+ * whole step exactly as it is there — a caller that paused first still shares
+ * the decode lists with a frame timer that may not have retired yet. Marking
+ * the screen stale is what makes the next lvEmbedFrameTexture repaint, so the
+ * caller sees the moment it stepped to. */
+void lvEmbedStepTicks(int ticks) {
+    int i;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE || ticks <= 0) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    for (i = 0; i < ticks; i++) {
+        lv_screenLogTick();
+    }
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
 /* Apply a decoded seed/keyframe's lobby roster to the viewer's player table:
  * name every present lobby slot (silently, via the quiet setter — no newswire
  * spam) and adopt the snapshot's phase. The quiet setter touches only inUse +

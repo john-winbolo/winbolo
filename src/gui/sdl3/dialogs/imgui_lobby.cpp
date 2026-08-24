@@ -119,8 +119,15 @@ void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
 void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
+void lvEmbedStepTicks(int ticks);
 #endif
 }
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+/* Single-header GIF encoder behind the recap's clip export; the one
+ * implementation TU is src/third_party/msf_gif/msf_gif_impl.c. Carries its own
+ * extern "C" guards, so it goes outside the block above. */
+#include "../../../third_party/msf_gif/msf_gif.h"
+#endif
 #include "../wb_theme.h"
 #include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
 
@@ -6235,7 +6242,13 @@ static bool  s_reelSeeking    = false;
  * spent, measure zero, and collapse back the next frame. */
 static float s_recapSlack = 0.0f;
 
+/* Defined with the clip export below, which needs the reel's own state. */
+static void lobbyClipGifAbort(void);
+
 static void lobbyReelEnd(void) {
+    /* An export in flight is holding encoder allocations and a playback
+     * position to put back, and the reel it was reading is about to go. */
+    lobbyClipGifAbort();
     if (s_reelActive) {
         lvEmbedEnd();
         s_reelActive = false;
@@ -6451,6 +6464,353 @@ static void lobbyRenderReel(float s) {
 
     s_reelDrawn = true;
 }
+
+/* ── Clip GIF export ──────────────────────────────────────────────
+ * A clip row can hand its moment to a GIF the player can post somewhere.
+ * The round is not sitting in memory as frames — it has to be replayed to be
+ * seen — so the export steps the reel five ticks at a time and reads the
+ * result back off the GPU, which is a second or more of work for a long clip.
+ * That runs a batch per lobby frame under a modal rather than in one loop, so
+ * the lobby keeps drawing and the player can call it off.
+ *
+ * The caption and the modal's title are the format's name, not copy — the same
+ * rule the transport's @ button follows. */
+static const char *const CLIP_GIF_TITLE = "GIF";
+static const char *const CLIP_GIF_POPUP = "GIF##clipgif";
+
+/* 50 ticks/s ÷ 5 = 10 fps, which is 10 centiseconds a frame. */
+static const int CLIP_GIF_TICKS_PER_FRAME = 5;
+static const int CLIP_GIF_CS_PER_FRAME    = 10;
+static const int CLIP_GIF_QUALITY         = 16;  /* the encoder's own default */
+/* 15 s of clip, and a floor so a clip that arrives with no duration still
+ * exports something rather than an empty file. */
+static const int CLIP_GIF_MAX_FRAMES      = 150;
+static const int CLIP_GIF_MIN_FRAMES      = 10;
+/* Frames per lobby frame. Four keeps the longest clip under a second of
+ * wall time while leaving the readback stalls small enough to hide. */
+static const int CLIP_GIF_FRAMES_PER_PASS = 4;
+/* Every frame in a GIF is the same size, so the crop is fixed once at the
+ * start; this caps how wide it may be, and the height follows the same ratio
+ * so the clip keeps the shape the reel showed. */
+static const int CLIP_GIF_MAX_WIDTH       = 480;
+
+static struct ClipGifCapture {
+    bool        active;
+    bool        failed;
+    MsfGifState enc;
+    int         frame;
+    int         total;
+    SDL_Rect    crop;           /* inside the viewer's render target */
+    uint32_t    restoreMs;      /* where the reel was before we took it */
+    bool        restorePlaying;
+    char        name[96];       /* <map>_<mmss>, the file's base name */
+} s_clipGif = {};
+
+/* <map>_<mmss>, reduced to characters every filesystem here will take — a map
+ * name is free text and reaches this straight off the wire. */
+static void lobbyClipGifBaseName(char *out, size_t outLen, const char *mapName,
+                                 unsigned mins, unsigned secs) {
+    char base[64];
+    if (mapName && mapName[0]) {
+        snprintf(base, sizeof(base), "%s", mapName);
+        size_t blen = SDL_strlen(base);
+        if (blen > 4 && SDL_strcmp(base + blen - 4, ".map") == 0) {
+            base[blen - 4] = '\0';
+        }
+    } else {
+        snprintf(base, sizeof(base), "clip");
+    }
+    for (char *p = base; *p != '\0'; p++) {
+        char c = *p;
+        bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') || c == '-' || c == '_';
+        if (!keep) *p = '_';
+    }
+    snprintf(out, outLen, "%s_%02u%02u", base, mins, secs);
+}
+
+/* Put the reel back where the player had it, transport included: an export is
+ * a detour, not a seek they asked for. */
+static void lobbyClipGifRestoreReel(void) {
+    lvEmbedSeekToTime(s_clipGif.restoreMs);
+    if (s_clipGif.restorePlaying) {
+        lvEmbedPlay();
+    }
+}
+
+/* End the encoder however the capture ended — it holds heap buffers from
+ * msf_gif_begin on and only msf_gif_end releases them, so cancelling has to
+ * come through here too. outResult takes the finished bytes when the caller
+ * means to write them (and then owes msf_gif_free); NULL throws them away. */
+static void lobbyClipGifFinish(MsfGifResult *outResult) {
+    MsfGifResult res = msf_gif_end(&s_clipGif.enc);
+    if (outResult != NULL) {
+        *outResult = res;
+    } else {
+        msf_gif_free(res);
+    }
+    lobbyClipGifRestoreReel();
+    s_clipGif.active = false;
+    s_clipGif.failed = false;
+    s_clipGif.frame  = 0;
+    s_clipGif.total  = 0;
+}
+
+static void lobbyClipGifAbort(void) {
+    if (s_clipGif.active) {
+        lobbyClipGifFinish(NULL);
+    }
+}
+
+/* Park the reel on the clip and open the encoder at the size every frame of
+ * this capture will be. */
+static void lobbyClipGifStart(const HighlightWindow *h, const char *mapName) {
+    if (s_clipGif.active || !lvEmbedIsActive()) {
+        return;
+    }
+
+    lvEmbedGetProgress(&s_clipGif.restoreMs, NULL);
+    s_clipGif.restorePlaying = lvEmbedIsPlaying();
+    lvEmbedPause();
+    /* Same seek the row itself does, so the capture opens on the moment the
+     * row names, centred where it happened. */
+    lvEmbedSeekToClip(h->startTick * 20u, h->mapX, h->mapY);
+
+    void *tex = NULL;
+    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    if (!lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) ||
+        tex == NULL || srcW <= 0 || srcH <= 0) {
+        lobbyClipGifRestoreReel();
+        return;
+    }
+    /* The slice is reported against a target a tile larger than itself, but
+     * clamp anyway — the crop is read back as-is for every frame after this. */
+    if (srcX + srcW > texW) srcW = texW - srcX;
+    if (srcY + srcH > texH) srcH = texH - srcY;
+    if (srcW <= 0 || srcH <= 0) {
+        lobbyClipGifRestoreReel();
+        return;
+    }
+    int cropW = srcW;
+    int cropH = srcH;
+    if (cropW > CLIP_GIF_MAX_WIDTH) {
+        cropW = CLIP_GIF_MAX_WIDTH;
+        cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+    }
+    if (cropW < 1) cropW = 1;
+    if (cropH < 1) cropH = 1;
+    if (cropH > srcH) cropH = srcH;
+    s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
+    s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
+    s_clipGif.crop.w = cropW;
+    s_clipGif.crop.h = cropH;
+
+    uint32_t frames = h->durationTicks / (uint32_t)CLIP_GIF_TICKS_PER_FRAME;
+    if (frames > (uint32_t)CLIP_GIF_MAX_FRAMES) frames = CLIP_GIF_MAX_FRAMES;
+    if (frames < (uint32_t)CLIP_GIF_MIN_FRAMES) frames = CLIP_GIF_MIN_FRAMES;
+
+    if (!msf_gif_begin(&s_clipGif.enc, cropW, cropH)) {
+        lobbyClipGifRestoreReel();
+        return;
+    }
+
+    unsigned secs = (unsigned)(h->startTick / 50u);
+    lobbyClipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
+                         secs / 60u, secs % 60u);
+    s_clipGif.frame  = 0;
+    s_clipGif.total  = (int)frames;
+    s_clipGif.failed = false;
+    s_clipGif.active = true;
+}
+
+/* One frame: read the fixed crop out of the viewer's render target and hand it
+ * to the encoder. The lobby is mid-frame and owns the render target, so
+ * whatever it was pointing at goes straight back. */
+static bool lobbyClipGifCaptureFrame(void) {
+    void *tex = NULL;
+    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    if (!lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) ||
+        tex == NULL) {
+        return false;
+    }
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer == NULL) {
+        return false;
+    }
+
+    SDL_Texture *saved = SDL_GetRenderTarget(renderer);
+    if (!SDL_SetRenderTarget(renderer, (SDL_Texture *)tex)) {
+        return false;
+    }
+    SDL_Surface *raw = SDL_RenderReadPixels(renderer, &s_clipGif.crop);
+    SDL_SetRenderTarget(renderer, saved);
+    if (raw == NULL) {
+        return false;
+    }
+
+    /* Convert rather than assume: the readback's layout follows the render
+     * target, and the encoder reads RGBA8 rows. Its own pitch goes with it —
+     * a converted surface is not promised to be tightly packed. */
+    SDL_Surface *rgba = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(raw);
+    if (rgba == NULL) {
+        return false;
+    }
+    bool ok = msf_gif_frame(&s_clipGif.enc, (uint8_t *)rgba->pixels,
+                            CLIP_GIF_CS_PER_FRAME, CLIP_GIF_QUALITY,
+                            rgba->pitch) != 0;
+    SDL_DestroySurface(rgba);
+    return ok;
+}
+
+/* Native save dialog's answer. */
+typedef struct {
+    char path[FILENAME_MAX];
+    int  ok;
+    int  done;
+} ClipGifSaveState;
+
+static void SDLCALL lobbyClipGifSaveCallback(void *userdata,
+                                             const char *const *filelist,
+                                             int filter) {
+    ClipGifSaveState *st = (ClipGifSaveState *)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(st->path, filelist[0], sizeof(st->path));
+        st->ok = 1;
+    }
+    st->done = 1;
+}
+
+static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
+    SDL_IOStream *io = SDL_IOFromFile(path, "wb");
+    if (io == NULL) {
+        return false;
+    }
+    bool ok = (SDL_WriteIO(io, res->data, res->dataSize) == res->dataSize);
+    SDL_CloseIO(io);
+    return ok;
+}
+
+/* Where the bytes go, on the split windowSaveMap uses: no usable native dialog
+ * under a controller, so that path names the file itself under the pref dir and
+ * reports where it went; the desktop path asks. The report is the path — the
+ * box's title is the format name and its icon carries the rest, so neither
+ * outcome needs a sentence. */
+static void lobbyClipGifSave(const MsfGifResult *res) {
+    if (uiShouldUseControllerMode()) {
+        char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (prefDir == NULL) {
+            return;
+        }
+        char clipsDir[FILENAME_MAX];
+        snprintf(clipsDir, sizeof(clipsDir), "%sclips", prefDir);
+        SDL_CreateDirectory(clipsDir);
+
+        char fullPath[FILENAME_MAX];
+        snprintf(fullPath, sizeof(fullPath), "%s/%s.gif", clipsDir,
+                 s_clipGif.name);
+        SDL_free(prefDir);
+
+        bool ok = lobbyClipGifWriteFile(fullPath, res);
+        imguiMessageBoxEx(CLIP_GIF_TITLE, fullPath,
+                          ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
+                          IMGUI_MSG_OK);
+        return;
+    }
+
+    ClipGifSaveState state;
+    SDL_DialogFileFilter filters[] = {
+        { "GIF Images", "gif" },
+    };
+
+    memset(&state, 0, sizeof(state));
+
+    SDL_ShowSaveFileDialog(lobbyClipGifSaveCallback, &state,
+                           sdl3DrawGetWindow(), filters, 1, NULL);
+    while (!state.done) {
+        SDL_Event e;
+        SDL_WaitEventTimeout(&e, 100);
+    }
+    if (state.ok && !lobbyClipGifWriteFile(state.path, res)) {
+        /* The player picked the place, so silence would be the only cue that
+         * nothing landed there. */
+        imguiMessageBoxEx(CLIP_GIF_TITLE, state.path, IMGUI_MSG_ERROR,
+                          IMGUI_MSG_OK);
+    }
+}
+
+/* Drives a capture from the recap's own frames and draws the modal over it.
+ * Called once per body render, after the clip rows that arm it. */
+static void lobbyClipGifRender(float s) {
+    if (!s_clipGif.active) {
+        return;
+    }
+    /* Opened from here rather than from the row that started the capture: a
+     * popup's id is seeded from the window submitting it, and the recap body
+     * is drawn from two different containers. Re-asserting it every frame the
+     * capture is live is what keeps the modal with the capture if the lobby
+     * swaps layouts underneath it. */
+    if (!ImGui::IsPopupOpen(CLIP_GIF_POPUP)) {
+        ImGui::OpenPopup(CLIP_GIF_POPUP);
+    }
+
+    MsfGifResult finished = {};
+    bool         haveFinished = false;
+
+    if (ImGui::BeginPopupModal(CLIP_GIF_POPUP, NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize
+                               | ImGuiWindowFlags_NoCollapse
+                               | ImGuiWindowFlags_NoSavedSettings)) {
+        for (int i = 0; i < CLIP_GIF_FRAMES_PER_PASS &&
+                        s_clipGif.frame < s_clipGif.total; i++) {
+            lvEmbedStepTicks(CLIP_GIF_TICKS_PER_FRAME);
+            if (!lobbyClipGifCaptureFrame()) {
+                /* A refused readback or a spent encoder stops here rather than
+                 * writing a clip that cuts off mid-moment. */
+                s_clipGif.failed = true;
+                break;
+            }
+            s_clipGif.frame++;
+        }
+
+        /* Both widgets take the same explicit width rather than -1: the window
+         * auto-resizes, and a fill-the-rest width inside one chases its own
+         * previous frame until the modal is as narrow as the button. */
+        const float rowW = 280.0f * s;
+        float done = (s_clipGif.total > 0)
+                         ? (float)s_clipGif.frame / (float)s_clipGif.total
+                         : 0.0f;
+        ImGui::ProgressBar(done, ImVec2(rowW, 0.0f));
+
+        WBUI::PushCancelStyle();
+        bool cancel = ImGui::Button(langGetText(STR_CANCEL),
+                                    ImVec2(rowW, 0.0f));
+        WBUI::PopCancelStyle();
+        if (WBUI::CancelKeyPressed()) {
+            cancel = true;
+        }
+
+        if (cancel || s_clipGif.failed) {
+            lobbyClipGifFinish(NULL);
+            ImGui::CloseCurrentPopup();
+        } else if (s_clipGif.frame >= s_clipGif.total) {
+            lobbyClipGifFinish(&finished);
+            haveFinished = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    /* Saving runs its own dialog loop, so it waits until the popup is off the
+     * stack. The bytes are ours from msf_gif_end on either way. */
+    if (haveFinished) {
+        if (finished.data != NULL) {
+            lobbyClipGifSave(&finished);
+        }
+        msf_gif_free(finished);
+    }
+}
 #endif
 
 /* Container-less recap body, in reading order: the round's replay reel, its
@@ -6509,6 +6869,10 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                 ImVec2 rowPos = ImGui::GetCursorPos();
                 char rowId[16];
                 snprintf(rowId, sizeof(rowId), "##clip%d", i);
+                /* The export button sits on top of this at the far end of the
+                 * row; without the overlap the selectable underneath keeps the
+                 * hover and the button can never be pressed. */
+                ImGui::SetNextItemAllowOverlap();
                 if (ImGui::Selectable(rowId, false, 0,
                                       ImVec2(0, ImGui::GetTextLineHeight()))) {
                     /* Ticks run at 50/s, so × 20 is the millisecond offset
@@ -6538,6 +6902,23 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
              * the clip reads as one phrase. */
             ImGui::TextUnformatted(
                 langGetTextFmt(lastRoundHighlightLabel(h), &args));
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* Export control, right-aligned so the rows keep a column of them
+             * however long the sentences run. Small, so the row stays the one
+             * text line the selectable underneath was sized to. */
+            if (lvEmbedIsActive()) {
+                float btnW = ImGui::CalcTextSize(CLIP_GIF_TITLE).x +
+                             ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btnW);
+                ImGui::PushID(i);
+                if (ImGui::SmallButton(CLIP_GIF_TITLE)) {
+                    lobbyClipGifStart(h, clientSimGetMapName(cs));
+                }
+                ImGui::PopID();
+            }
+#endif
         }
     }
 
@@ -6790,6 +7171,11 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* A clip export in progress. Drawn after the rows that start it, and after
+     * the rest of the body: it is a popup, so it costs the layout nothing and
+     * the slack measurement below still sees what the body really used. */
+    lobbyClipGifRender(s);
+
     /* What the body did not use goes to the reel next frame. One frame of lag
      * is inherent — the cost of everything below the reel is only known once
      * it has been drawn — so switching between the desktop column and the
