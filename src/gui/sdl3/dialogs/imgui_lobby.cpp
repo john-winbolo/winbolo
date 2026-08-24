@@ -3666,6 +3666,7 @@ static SDL_Texture *s_iconBotCpuGreen  = nullptr;
 static SDL_Texture *s_iconBotCpuRed    = nullptr;
 static SDL_Texture *s_iconLocked       = nullptr;
 static SDL_Texture *s_iconSkull        = nullptr;
+static SDL_Texture *s_iconPicture      = nullptr;
 static bool         s_iconsAttempted = false;
 /* The renderer instance the icons above were created against. SDL_Texture
  * is tied to the renderer that created it, so if the renderer instance
@@ -3774,6 +3775,7 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_iconBotCpuRed)   { SDL_DestroyTexture(s_iconBotCpuRed);   s_iconBotCpuRed   = nullptr; }
         if (s_iconLocked)      { SDL_DestroyTexture(s_iconLocked);      s_iconLocked      = nullptr; }
         if (s_iconSkull)       { SDL_DestroyTexture(s_iconSkull);       s_iconSkull       = nullptr; }
+        if (s_iconPicture)     { SDL_DestroyTexture(s_iconPicture);     s_iconPicture     = nullptr; }
     }
     s_iconsAttempted = true;
     s_iconsRenderer  = renderer;
@@ -3830,6 +3832,19 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
             SDL_snprintf(basePathBuf, sizeof(basePathBuf),
                          "%sdata/ui/skull.svg", base);
             s_iconSkull = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+        }
+    }
+
+    /* Picture glyph for the clip rows' export control — a white alpha mask
+     * like the two above, so the button tints it to the row's text colour. */
+    s_iconPicture = imguiLoadSvgIconWhite(renderer, "data/ui/picture.svg", iconPx);
+    if (s_iconPicture == nullptr) {
+        char basePathBuf[FILENAME_MAX];
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                         "%sdata/ui/picture.svg", base);
+            s_iconPicture = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
         }
     }
 }
@@ -6925,15 +6940,37 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
             /* Export control, right-aligned so the rows keep a column of them
-             * however long the sentences run. Small, so the row stays the one
-             * text line the selectable underneath was sized to. */
+             * however long the sentences run. Sized to one text line, so the
+             * row stays the height the selectable underneath was given: the
+             * icon takes the line height and the frame padding loses its
+             * vertical half, which is what SmallButton does for a caption.
+             * The glyph says what the control produces and the tooltip names
+             * the format; with no icon loaded the format's name is the
+             * caption, as it was before. */
             if (lvEmbedIsActive()) {
-                float btnW = ImGui::CalcTextSize(CLIP_GIF_TITLE).x +
-                             ImGui::GetStyle().FramePadding.x * 2.0f;
+                const float lineH  = ImGui::GetTextLineHeight();
+                const float padX   = ImGui::GetStyle().FramePadding.x;
+                const float btnW   = (s_iconPicture ? lineH
+                                        : ImGui::CalcTextSize(CLIP_GIF_TITLE).x)
+                                     + padX * 2.0f;
                 ImGui::SameLine();
                 ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btnW);
                 ImGui::PushID(i);
-                if (ImGui::SmallButton(CLIP_GIF_TITLE)) {
+                bool exportClicked;
+                if (s_iconPicture) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                        ImVec2(padX, 0.0f));
+                    exportClicked = ImGui::ImageButton(
+                        "##clipgif", (ImTextureID)s_iconPicture,
+                        ImVec2(lineH, lineH), ImVec2(0, 0), ImVec2(1, 1),
+                        ImVec4(0, 0, 0, 0),
+                        ImGui::GetStyleColorVec4(ImGuiCol_Text));
+                    ImGui::PopStyleVar();
+                } else {
+                    exportClicked = ImGui::SmallButton(CLIP_GIF_TITLE);
+                }
+                imguiHelpTooltip(CLIP_GIF_TITLE);
+                if (exportClicked) {
                     lobbyClipGifStart(h, clientSimGetMapName(cs));
                 }
                 ImGui::PopID();
