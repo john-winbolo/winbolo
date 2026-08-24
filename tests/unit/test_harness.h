@@ -161,6 +161,7 @@ int run_awards_include_bots(void);
 int run_round_stats_codec_roundtrip(void);
 int run_round_stats_codec_worstcase(void);
 int run_round_stats_build_summary(void);
+int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
 int run_round_stats_track_cap(void);

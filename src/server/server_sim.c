@@ -3230,6 +3230,28 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
                   out->awards, &n);
     out->awardCount = (uint8_t)n;
 
+    /* The round's highlight clips. The accumulator and the notable timeline are
+     * already live, so only the territory series has to be derived here: one
+     * walk of the attribution stream turning pill/base ownership changes into
+     * per-team map control. sim->trackBuf is NULL on a round that recorded
+     * nothing, which computeTerritoryShifts handles by yielding no shifts. */
+    uint8_t team[MAX_TANKS];
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        team[slot] = sim->trackIdentity[slot].team;
+    }
+
+    TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+    int shiftCount = 0;
+    computeTerritoryShifts(sim->trackBuf, sim->trackLen, sim->trackIdentity,
+                           MAX_TANKS, shifts, &shiftCount, TERRITORY_SHIFTS_MAX);
+
+    int hlCount = 0;
+    computeHighlights(sim->notableEvents, sim->notableEventCount,
+                      sim->roundStats, team, out->awards, (int)out->awardCount,
+                      shifts, shiftCount, out->highlights, &hlCount,
+                      ROUND_STATS_HIGHLIGHTS_WIRE_MAX);
+    out->highlightCount = (uint8_t)hlCount;
+
     /* wbnLogKey stays empty here; the finished-round key is filled later. */
 }
 

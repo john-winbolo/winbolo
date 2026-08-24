@@ -754,6 +754,12 @@ BOLO_STATIC_ASSERT(
  *   repeat awardCount times (8 bytes each):
  *     [awardId 1][winnerSlot 1][subjectSlot 1][winnerIsBot 1][value 4]
  *   [keyLen 1] [wbnLogKey keyLen]
+ *   [highlightCount 1]
+ *   repeat highlightCount times (18 bytes each):
+ *     [startTick 4][durationTicks 4][mapX 1][mapY 1][type 1][awardId 1]
+ *     [actorA 1][actorB 1][value 4]
+ * HighlightWindow.score is the scorer's internal ranking magnitude and does
+ * not cross; it decodes as 0.
  * Multi-byte fields are big-endian via packU16/packU32, matching every
  * other body encoder. */
 
@@ -769,9 +775,12 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     uint8_t ac = s->awardCount;
     if (ac > AWARD_COUNT) ac = AWARD_COUNT;
     uint8_t keyLen = (uint8_t)strnlen(s->wbnLogKey, ROUND_STATS_LOGKEY_LEN - 1);
+    uint8_t hc = s->highlightCount;
+    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
 
     /* Pre-compute total size; bail before any write if it can't fit. */
-    size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen;
+    size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen +
+                    1 + (size_t)hc * 18;
     if (bufCap < needed) return ENCODE_OVERFLOW;
 
     size_t pos = 0;
@@ -800,6 +809,19 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     }
     buf[pos++] = keyLen;
     if (keyLen > 0) { memcpy(buf + pos, s->wbnLogKey, keyLen); pos += keyLen; }
+    buf[pos++] = hc;
+    for (uint8_t i = 0; i < hc; i++) {
+        const HighlightWindow *h = &s->highlights[i];
+        packU32(buf + pos, h->startTick);     pos += 4;
+        packU32(buf + pos, h->durationTicks); pos += 4;
+        buf[pos++] = h->mapX;
+        buf[pos++] = h->mapY;
+        buf[pos++] = h->type;
+        buf[pos++] = h->awardId;
+        buf[pos++] = h->actorA;
+        buf[pos++] = h->actorB;
+        packU32(buf + pos, h->value);         pos += 4;
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -905,14 +927,35 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
     if (keyLen > 0) memcpy(s->wbnLogKey, buf + pos, keyLen);
     s->wbnLogKey[keyLen] = '\0';
     pos += keyLen;
+
+    if (pos + 1 > len) return false;
+    uint8_t hc = buf[pos++];
+    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) return false;
+    if (pos + (size_t)hc * 18 > len) return false;
+    for (uint8_t i = 0; i < hc; i++) {
+        HighlightWindow *h = &s->highlights[i];
+        h->startTick     = unpackU32(buf + pos); pos += 4;
+        h->durationTicks = unpackU32(buf + pos); pos += 4;
+        h->mapX    = buf[pos++];
+        h->mapY    = buf[pos++];
+        h->type    = buf[pos++];
+        h->awardId = buf[pos++];
+        h->actorA  = buf[pos++];
+        h->actorB  = buf[pos++];
+        h->value   = unpackU32(buf + pos); pos += 4;
+        /* score is not on the wire; the event-wide memset above leaves it 0. */
+    }
+    s->highlightCount = hc;
     return true;
 }
 
 /* Compile-time guarantee that the round-stats worst case (every slot
- * present, every award won, a full-length key) fits MAX_CONTROL_PACKET. */
+ * present, every award won, a full-length key, a full clip list) fits
+ * MAX_CONTROL_PACKET. */
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
-        (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1)
+        (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
+        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 18
         <= MAX_CONTROL_PACKET,
     round_stats_worst_case_fits_MAX_CONTROL_PACKET);
 

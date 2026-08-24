@@ -842,6 +842,26 @@ int run_round_stats_codec_roundtrip(void) {
 
     strncpy(s->wbnLogKey, "abc123DEF456", ROUND_STATS_LOGKEY_LEN - 1);
 
+    s->highlightCount = 3;
+    /* An award anchor, carrying a non-zero awardId. */
+    s->highlights[0].startTick = 1234; s->highlights[0].durationTicks = 250;
+    s->highlights[0].mapX = 17; s->highlights[0].mapY = 200;
+    s->highlights[0].type = HL_AWARD; s->highlights[0].awardId = AWARD_BIGGEST_FUMBLE;
+    s->highlights[0].actorA = 3; s->highlights[0].actorB = NEUTRAL;
+    s->highlights[0].value = 6; s->highlights[0].score = 120;
+    /* A clip with both actors set. */
+    s->highlights[1].startTick = 700; s->highlights[1].durationTicks = 312;
+    s->highlights[1].mapX = 5; s->highlights[1].mapY = 9;
+    s->highlights[1].type = HL_CLUSTER_WIPE; s->highlights[1].awardId = 0;
+    s->highlights[1].actorA = 2; s->highlights[1].actorB = 7;
+    s->highlights[1].value = 4; s->highlights[1].score = 450;
+    /* Max-ish ticks and value to catch byte-order/width bugs. */
+    s->highlights[2].startTick = 0xFEDCBA98u; s->highlights[2].durationTicks = 0x01020304u;
+    s->highlights[2].mapX = 255; s->highlights[2].mapY = 1;
+    s->highlights[2].type = HL_TURNING_POINT; s->highlights[2].awardId = 0;
+    s->highlights[2].actorA = 15; s->highlights[2].actorB = NEUTRAL;
+    s->highlights[2].value = 4000000000u; s->highlights[2].score = 140;
+
     UT_ASSERT_MSG(codec_roundtrip_round_stats(&in, &out) == 0,
                   "round-stats codec round-trip failed");
     UT_ASSERT(out.type == CTRL_ROUND_STATS);
@@ -878,6 +898,25 @@ int run_round_stats_codec_roundtrip(void) {
     UT_ASSERT_MSG(strcmp(d->wbnLogKey, "abc123DEF456") == 0,
                   "wbnLogKey round-trips, got '%s'", d->wbnLogKey);
 
+    UT_ASSERT_MSG(d->highlightCount == 3, "highlightCount, got %u", d->highlightCount);
+    for (int i = 0; i < 3; i++) {
+        const HighlightWindow *a = &s->highlights[i];
+        const HighlightWindow *b = &d->highlights[i];
+        UT_ASSERT_MSG(b->startTick == a->startTick,
+                      "clip %d startTick, got %u", i, b->startTick);
+        UT_ASSERT_MSG(b->durationTicks == a->durationTicks,
+                      "clip %d durationTicks, got %u", i, b->durationTicks);
+        UT_ASSERT_MSG(b->mapX == a->mapX, "clip %d mapX", i);
+        UT_ASSERT_MSG(b->mapY == a->mapY, "clip %d mapY", i);
+        UT_ASSERT_MSG(b->type == a->type, "clip %d type", i);
+        UT_ASSERT_MSG(b->awardId == a->awardId, "clip %d awardId", i);
+        UT_ASSERT_MSG(b->actorA == a->actorA, "clip %d actorA", i);
+        UT_ASSERT_MSG(b->actorB == a->actorB, "clip %d actorB", i);
+        UT_ASSERT_MSG(b->value == a->value, "clip %d value, got %u", i, b->value);
+        /* score is the scorer's internal magnitude and never crosses. */
+        UT_ASSERT_MSG(b->score == 0, "clip %d score not shipped, got %u", i, b->score);
+    }
+
     return 0;
 }
 
@@ -905,6 +944,16 @@ int run_round_stats_codec_worstcase(void) {
     }
     memset(s->wbnLogKey, 'K', ROUND_STATS_LOGKEY_LEN - 1);
     s->wbnLogKey[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
+
+    s->highlightCount = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+    for (int i = 0; i < ROUND_STATS_HIGHLIGHTS_WIRE_MAX; i++) {
+        HighlightWindow *h = &s->highlights[i];
+        h->startTick = 0xFFFFFFFFu; h->durationTicks = 0xFFFFFFFFu;
+        h->mapX = 255; h->mapY = 255;
+        h->type = HL_AWARD; h->awardId = (uint8_t)(i + 1);
+        h->actorA = (uint8_t)i; h->actorB = (uint8_t)i;
+        h->value = 0xFFFFFFFFu; h->score = 0xFFFFFFFFu;
+    }
 
     uint8_t buf[MAX_CONTROL_PACKET];
     size_t outLen = 0;
@@ -959,6 +1008,69 @@ int run_round_stats_build_summary(void) {
     UT_ASSERT_MSG(mk != NULL, "Most Kills award present");
     UT_ASSERT_MSG(mk->winnerSlot == 0, "Most Kills winner, got %u", mk->winnerSlot);
     UT_ASSERT_MSG(mk->value == 5, "Most Kills value, got %u", mk->value);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The summary also carries the round's highlight clips, scored from the live
+ * accumulator and notable timeline. Two clusters of kills, far enough apart in
+ * time and space to be separate fights, yield at least one clip. */
+int run_round_stats_summary_highlights(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    sim->roundStats[0].kills  = 6;
+    sim->roundStats[1].deaths = 6;
+
+    /* Two fights: three kills around (100,100) early, three around (50,60)
+     * late. Each cluster is inside the wipe window; the two are not. */
+    static const struct { uint32_t tick; uint8_t x, y; } kills[] = {
+        {  500, 100, 100 }, {  540, 102, 101 }, {  580, 101, 103 },
+        { 2000,  50,  60 }, { 2040,  52,  61 }, { 2080,  51,  63 }
+    };
+    sim->notableEventCount = (int)(sizeof(kills) / sizeof(kills[0]));
+    for (int i = 0; i < sim->notableEventCount; i++) {
+        NotableEvent *e = &sim->notableEvents[i];
+        memset(e, 0, sizeof(*e));
+        e->tick   = kills[i].tick;
+        e->mapX   = kills[i].x;
+        e->mapY   = kills[i].y;
+        e->type   = NOTABLE_KILL;
+        e->actorA = 0;
+        e->actorB = 1;
+    }
+
+    RoundStatsSummary summary;
+    serverSimBuildRoundStatsSummary(sim, &summary);
+
+    UT_ASSERT_MSG(summary.highlightCount > 0, "at least one clip selected");
+    UT_ASSERT_MSG(summary.highlightCount <= ROUND_STATS_HIGHLIGHTS_WIRE_MAX,
+                  "clip count within the wire cap, got %u", summary.highlightCount);
+
+    uint32_t prevStart = 0;
+    bool sawWipe = false;
+    for (int i = 0; i < summary.highlightCount; i++) {
+        const HighlightWindow *h = &summary.highlights[i];
+        UT_ASSERT_MSG(h->type >= HL_AWARD && h->type <= HL_TURNING_POINT,
+                      "clip %d type in range, got %u", i, h->type);
+        UT_ASSERT_MSG(h->durationTicks > 0, "clip %d has a duration", i);
+        UT_ASSERT_MSG(h->startTick >= kills[0].tick,
+                      "clip %d starts inside the round, got %u", i, h->startTick);
+        UT_ASSERT_MSG(h->startTick >= prevStart, "clip %d in chronological order", i);
+        UT_ASSERT_MSG(h->actorA < MAX_TANKS || h->actorA == NEUTRAL,
+                      "clip %d actorA is a slot or NEUTRAL, got %u", i, h->actorA);
+        prevStart = h->startTick;
+        if (h->type == HL_CLUSTER_WIPE) {
+            UT_ASSERT_MSG(h->actorA == 0, "wipe credited to the killer, got %u", h->actorA);
+            UT_ASSERT_MSG(h->value >= 3, "wipe counts its deaths, got %u", h->value);
+            sawWipe = true;
+        }
+    }
+    UT_ASSERT_MSG(sawWipe, "the clustered kills produced a wipe clip");
 
     serverSimDestroy(sim);
     return 0;

@@ -34,7 +34,7 @@
 /* Post-game stats/awards: the wire publish (server) and the lobby recap
  * UI (client) are built but withheld from this release. Set to 1 to
  * surface them. */
-#define POSTGAME_STATS_ENABLED 0
+#define POSTGAME_STATS_ENABLED 1
 
 #include <stdint.h>
 #include "global.h"    /* MAX_TANKS, NEUTRAL */
@@ -137,9 +137,14 @@ typedef struct {
 
 #define HIGHLIGHTS_MAX 32
 
+/* Clips carried by RoundStatsSummary — what the lobby recap lists, which is
+ * fewer than the scorer can select. Must stay <= HIGHLIGHTS_MAX. */
+#define ROUND_STATS_HIGHLIGHTS_WIRE_MAX 12
+
 /* End-of-round summary shipped to clients: a curated per-player scoreboard
- * row plus the won awards. The full PlayerRoundStats accumulator stays
- * server-side; only this subset crosses the wire. */
+ * row, the won awards, and the round's highlight clips. The full
+ * PlayerRoundStats accumulator stays server-side; only this subset crosses
+ * the wire. */
 #define ROUND_STATS_LOGKEY_LEN 33   /* mirrors WINBOLONET_KEY_LEN */
 
 typedef struct {
@@ -161,6 +166,8 @@ typedef struct {
     uint8_t  awardCount;                     /* <= AWARD_COUNT */
     AwardResult awards[AWARD_COUNT];
     char     wbnLogKey[ROUND_STATS_LOGKEY_LEN]; /* finished round's WBN log key; "" if none */
+    uint8_t  highlightCount;                 /* <= ROUND_STATS_HIGHLIGHTS_WIRE_MAX */
+    HighlightWindow highlights[ROUND_STATS_HIGHLIGHTS_WIRE_MAX];
 } RoundStatsSummary;
 
 /* Awards tuning (tunable). */

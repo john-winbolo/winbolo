@@ -137,6 +137,7 @@ static const UnitTestEntry s_tests[] = {
     { "round_stats_codec_roundtrip",                run_round_stats_codec_roundtrip                },
     { "round_stats_codec_worstcase",                run_round_stats_codec_worstcase                },
     { "round_stats_build_summary",                  run_round_stats_build_summary                  },
+    { "round_stats_summary_highlights",             run_round_stats_summary_highlights             },
     { "round_stats_client_ingest",                  run_round_stats_client_ingest                  },
     { "round_stats_track_records",                  run_round_stats_track_records                  },
     { "round_stats_track_cap",                      run_round_stats_track_cap                      },

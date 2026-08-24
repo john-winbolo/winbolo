@@ -3433,6 +3433,7 @@ set(_unit_test_names
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
     round_stats_build_summary
+    round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
     round_stats_track_cap
