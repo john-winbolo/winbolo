@@ -35,6 +35,19 @@ void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog);
 bool serverDedicatedLogIsActive(void);
 const char *serverDedicatedLogCurrentFile(void);
 
+/* Where a finished round should be published. Set by a caller that records
+ * to a reused filename (single player), so the completed log is moved clear
+ * before the next lobby entry truncates the recording path. Pass NULL or ""
+ * to disable — the default, used by hosting, whose rounds already resolve
+ * unique timestamped names. Cleared by serverDedicatedLogInstall, so set it
+ * after installing, not before. */
+void serverDedicatedLogSetCompletedPath(const char *path);
+
+/* Absolute path of the most recently completed round's log, or "" when no
+ * round has finished since the writer was installed. For hosting that is the
+ * round's own timestamped file; with a completed path set it is that path. */
+const char *serverDedicatedLogLastRoundFile(void);
+
 /* Finalize the current round's log (logStop, isLogging=false) and
  * stash its filename for a later upload. Called from handleGameOver
  * for lobby-enabled rounds and from the empty-reset path. WBN log

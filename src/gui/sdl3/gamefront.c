@@ -1621,29 +1621,41 @@ bool gameFrontSetDlgState(openingStates newState) {
             returnValue = FALSE;
           } else {
             /* Single-player rounds are recorded so the lobby recap can play
-             * the round back. One fixed file in the prefs dir, overwritten by
-             * the next game — an explicit path (not a directory) so the name
-             * never rotates: the path composer only auto-names inside its
-             * argument when that argument already exists on disk as a
-             * directory. dontSendLog is unconditionally true; a single-player
-             * round is never uploaded to WinBolo.net. Tutorials are skipped —
-             * they set cfg.skipLobby, so they never reach the lobby that would
-             * offer the playback. Installed here, before the client-type
-             * resolution, because the subscriber's sync replay opens the log
-             * immediately. */
+             * the round back. Two paths in the prefs dir, and they have to
+             * stay distinct: singleplayer-recording.wbv is the live
+             * recording, which every lobby entry truncates and reopens, while
+             * singleplayer.wbv holds the last completed round. Three seconds
+             * after game over the sim returns to the lobby and the log module
+             * reopens the recording path — so folding these back into one
+             * name means the lobby the round returns to destroys the round
+             * itself. Both are explicit file paths rather than a directory,
+             * so the path composer uses them verbatim instead of auto-naming
+             * a fresh timestamped file per round. dontSendLog is
+             * unconditionally true; a single-player round is never uploaded
+             * to WinBolo.net. Tutorials are skipped — they set cfg.skipLobby,
+             * so they never reach the lobby that would offer the playback.
+             * Installed before the client-type resolution because the
+             * subscriber's sync replay opens the log immediately, and the
+             * completed path is set after the install, which clears it. */
             if (!isTutorial) {
               char spLogPath[FILENAME_MAX];
+              char spRoundPath[FILENAME_MAX];
               const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
               if (prefDir != NULL) {
-                snprintf(spLogPath, sizeof(spLogPath), "%ssingleplayer.wbv",
-                         prefDir);
+                snprintf(spLogPath, sizeof(spLogPath),
+                         "%ssingleplayer-recording.wbv", prefDir);
+                snprintf(spRoundPath, sizeof(spRoundPath),
+                         "%ssingleplayer.wbv", prefDir);
                 SDL_free((void *)prefDir);
               } else {
-                snprintf(spLogPath, sizeof(spLogPath), "singleplayer.wbv");
+                snprintf(spLogPath, sizeof(spLogPath),
+                         "singleplayer-recording.wbv");
+                snprintf(spRoundPath, sizeof(spRoundPath), "singleplayer.wbv");
               }
               serverSimSetWantLogging(spServerSim, true);
               serverSimSetUserLogFileName(spServerSim, spLogPath);
               serverDedicatedLogInstall(spServerSim, true);
+              serverDedicatedLogSetCompletedPath(spRoundPath);
             }
 
             /* Resolve the self client type / flags. */

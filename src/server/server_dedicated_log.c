@@ -69,6 +69,23 @@ static char s_pendingUploadFile[512];
  * Empty when the log was named from an explicit -log <file> path. */
 static char s_logStamp[16];
 
+/* Publish target for a finished round, for callers that record to a reused
+ * filename. Single player records to one fixed path and would otherwise lose
+ * the round to the next lobby entry's logStart, which truncates that same
+ * path three seconds after game over. "" disables the move, which is what
+ * hosting uses — its rounds already resolve unique timestamped names. */
+static char s_completedPath[512];
+
+/* Where the last completed round's log ended up, for callers that want to
+ * offer it back. "" until a round has finished. */
+static char s_lastRoundFile[512];
+
+/* TRUE once the open log has seen a game start, i.e. it holds a round and
+ * not just a lobby. Gates the publish: without it, closing the lobby log
+ * that a finished round returns to would move that lobby log over the
+ * round it just published. */
+static bool s_roundRan = FALSE;
+
 static void serverDedicatedLogRenameForMap(ServerSim *sim);
 
 /* Generate a log file name from the current time and map name into
@@ -110,6 +127,35 @@ void serverDedicatedLogStashCurrentRound(void) {
     } else {
         s_pendingUploadFile[0] = '\0';
     }
+    /* Publish the finished round clear of the recording path so the next
+     * lobby entry's logStart can truncate that path without destroying the
+     * round. Only for a log that actually holds a round: a lobby log closed
+     * on the way out of the game must not overwrite the round it followed,
+     * nor repoint s_lastRoundFile at itself. */
+    if (s_roundRan) {
+        if (s_completedPath[0] != '\0' &&
+            strcmp(s_completedPath, s_logFileName) != 0 &&
+            SDL_RenamePath(s_logFileName, s_completedPath)) {
+            strncpy(s_logFileName, s_completedPath, sizeof(s_logFileName) - 1);
+            s_logFileName[sizeof(s_logFileName) - 1] = '\0';
+            /* An upload stashed above named the pre-move path. No caller
+             * both publishes and uploads today (hosting sets no completed
+             * path, single player never uploads), but a stale name here
+             * would be a quiet failure for whoever combines them. */
+            if (s_pendingUploadFile[0] != '\0') {
+                strncpy(s_pendingUploadFile, s_logFileName,
+                        sizeof(s_pendingUploadFile) - 1);
+                s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+            }
+        }
+        /* s_logFileName names a file that exists either way: the published
+         * copy after a move, the original when there was no completed path
+         * or the move failed. A failed move is not fatal — the round stays
+         * where it was recorded. */
+        strncpy(s_lastRoundFile, s_logFileName, sizeof(s_lastRoundFile) - 1);
+        s_lastRoundFile[sizeof(s_lastRoundFile) - 1] = '\0';
+    }
+    s_roundRan = FALSE;
 }
 
 void serverDedicatedLogFlushPendingUpload(void) {
@@ -213,6 +259,10 @@ static void handleLobbyEnter(ServerSim *sim) {
     logSetLobbyMode(TRUE);
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
+    /* A freshly opened lobby log holds no round yet. Redundant with the
+     * reset at the end of the stash, deliberately: the invariant then holds
+     * whichever path opened this log. */
+    s_roundRan = FALSE;
     if (s_isLogging) {
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
         for (i = 0; i < MAX_TANKS; i++) {
@@ -280,6 +330,9 @@ static void handleGameStart(ServerSim *sim) {
          * alliance audit events, and the rewriting snapshot all land
          * in the running segment under normal writer semantics. */
         logSetLobbyMode(FALSE);
+        /* The open log stops being a lobby log here and becomes a round,
+         * which is what makes it worth publishing when it closes. */
+        s_roundRan = TRUE;
         logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
         /* Team-derived alliances from serverSimReapplyTeamAlliances are
          * applied silently — playersAcceptAlliance writes the bitmap but
@@ -309,6 +362,10 @@ static void handleGameStart(ServerSim *sim) {
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
     if (s_isLogging) {
+        /* A no-lobby log is a round from the moment it opens — recording
+         * starts at the running transition, with no lobby segment in front
+         * of it — so the publish gate has to be armed here too. */
+        s_roundRan = TRUE;
         fprintf(stderr, "Logging to %s\n", s_logFileName);
     }
 }
@@ -341,6 +398,14 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     if (sim == NULL) {
         return;
     }
+    /* Install is where per-sim publish policy resets. The completed path is
+     * module state that outlives the sim that asked for it, so without this
+     * a single-player game would leave its path set and the next server in
+     * the same process — a hosted game, whose rounds must stay where the
+     * host configured them — would move its round log there. */
+    s_completedPath[0] = '\0';
+    s_lastRoundFile[0] = '\0';
+    s_roundRan = FALSE;
     s_dontSendLog = dontSendLog;
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
@@ -356,4 +421,17 @@ bool serverDedicatedLogIsActive(void) {
 
 const char *serverDedicatedLogCurrentFile(void) {
     return s_logFileName;
+}
+
+void serverDedicatedLogSetCompletedPath(const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        s_completedPath[0] = '\0';
+        return;
+    }
+    strncpy(s_completedPath, path, sizeof(s_completedPath) - 1);
+    s_completedPath[sizeof(s_completedPath) - 1] = '\0';
+}
+
+const char *serverDedicatedLogLastRoundFile(void) {
+    return s_lastRoundFile;
 }
