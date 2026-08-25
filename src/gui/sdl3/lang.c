@@ -624,6 +624,7 @@ static const LangEntry langTable[] = {
     {784,  "Signing in..."},
     {785,  "Sign in"},
     {786,  "Please enter your username and password."},
+    {1943, "WinBolo.net accounts can only be changed from the main menu, not during a game."},
     {787,  "WinBolo - Game Selection"},
     {788,  "Single Player"},
     {789,  "Local"},

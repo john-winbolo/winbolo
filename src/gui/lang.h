@@ -776,6 +776,10 @@
 #define STR_DLGWBN_SIGNIN_OK                785
 #define STR_DLGWBN_NEEDCREDS                786
 
+/* Stands in for the sign in / sign out button while a game is running, where
+ * the account is fixed for the session. */
+#define STR_DLGWBN_ACCOUNT_LOCKED           1943
+
 /* Welcome dialog */
 #define STR_DLGWELCOME_WINTITLE             787
 #define STR_DLGWELCOME_SINGLE               788

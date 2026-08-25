@@ -7662,9 +7662,9 @@ static void lobbyRenderRatingBlock(const RoundStatsSummary *st, float s) {
         gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
 
         if (wbnToken[0] == '\0') {
-            /* Read-only, the way the section renders in game: it says the
-             * account is not signed in and leaves its sign-in button
-             * disabled. Signing in is a welcome-screen and settings action —
+            /* Read-only, the way the section renders in game: it reports the
+             * account state and, in place of a sign-in button, says where
+             * accounts are changed. Signing in is a welcome-screen action —
              * the lobby only reports which account it already has. */
             imguiWinbolonetDrawSection(true);
         } else {

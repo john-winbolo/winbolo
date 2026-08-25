@@ -1051,6 +1051,19 @@ extern "C" void imguiWinbolonetStartValidation(void) {
     }
 }
 
+/* Where the sign in / sign out button goes while a game is running. The
+ * account is handed to the server when the session joins, so it is fixed for
+ * the duration — and a button that is drawn but dead reads as a fault rather
+ * than as a rule, which is the whole reason this is a sentence and not a
+ * disabled control. Wrapped, because the lobby recap draws it in a column
+ * narrower than the settings dialog. */
+static void wbnDrawAccountLockedLine(void) {
+    ImGui::PushStyleColor(ImGuiCol_Text,
+                          ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_ACCOUNT_LOCKED));
+    ImGui::PopStyleColor();
+}
+
 extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     /* Check for async completion */
     wbnCheckThread();
@@ -1083,23 +1096,27 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
             wbnShowStats = true;
         }
         imguiHandOnHover();
-        ImGui::SameLine();
-        if (inGame) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
-            wbnSignOut();
+        if (inGame) {
+            wbnDrawAccountLockedLine();
+        } else {
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
+                wbnSignOut();
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
-        if (inGame) ImGui::EndDisabled();
     } else {
         ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
         ImGui::SameLine();
         ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
-        if (inGame) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
-            wbnOpenLoginPopup();
+        if (inGame) {
+            wbnDrawAccountLockedLine();
+        } else {
+            if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
+                wbnOpenLoginPopup();
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
-        if (inGame) ImGui::EndDisabled();
     }
 
     wbnRenderLoginPopup();
