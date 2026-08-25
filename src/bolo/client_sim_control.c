@@ -457,6 +457,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_ROUND_STATS:
         cs->lastRoundStats = evt->u.roundStats;
         cs->lastRoundStatsValid = true;
+        /* Nothing reads wbnLogKey yet, so this is the only way to see
+         * whether the server published the finished round's key. A prefix
+         * is enough to tell two rounds apart and to match the key in the
+         * round's .wbv header; the whole key never goes to the log. */
+        WB_LOG_INFO(WB_LOG_CAT_CLIENT,
+                    "CTRL_ROUND_STATS wbnLogKey %s prefix='%.6s'",
+                    cs->lastRoundStats.wbnLogKey[0] != '\0' ? "present"
+                                                            : "empty",
+                    cs->lastRoundStats.wbnLogKey);
         break;
 
     case CTRL_LOBBY_BOT_POOL_CHUNK: {

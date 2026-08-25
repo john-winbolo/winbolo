@@ -3290,7 +3290,25 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
         h->durationMs = h->durationTicks * SIM_TICK_MS;
     }
 
-    /* wbnLogKey stays empty here; the finished-round key is filled later. */
+    /* The round's WinBolo.net identity is the server key it was played
+     * under, read live here so the lobby recap can name this round's log
+     * to WBN later. That live read is correct only because of when this
+     * runs: the summary is built at game over, ahead of the
+     * EndSession/upload/BeginSession sandwich in server_lifecycle.c, so
+     * winboloNetServerKey still holds the finished round's key. Move the
+     * round-stats publish after that rotation, or the rotation ahead of
+     * it, and this silently publishes the next round's key instead.
+     * Stays empty (memset above) when WBN isn't running: a LAN or
+     * single-player round's log is never uploaded, so there is no key
+     * for the recap to point at. */
+    if (winbolonetIsRunning()) {
+        char serverKey[WINBOLONET_KEY_LEN];
+        serverKey[0] = '\0';
+        winboloNetGetServerKey(serverKey);
+        serverKey[WINBOLONET_KEY_LEN - 1] = '\0';
+        strncpy(out->wbnLogKey, serverKey, sizeof(out->wbnLogKey) - 1);
+        out->wbnLogKey[sizeof(out->wbnLogKey) - 1] = '\0';
+    }
 }
 
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
