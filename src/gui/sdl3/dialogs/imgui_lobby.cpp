@@ -6199,6 +6199,10 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
         case HL_RARE_DEATH:
             return (h->value > 0) ? STR_DLGLOBBY_HL_DROWN_PILLS_FMT
                                   : STR_DLGLOBBY_HL_DROWN_FMT;
+        case HL_PICKUP_SPREE:    return STR_DLGLOBBY_HL_PICKUP_FMT;
+        /* A busy stretch of the round is nobody's, so its line names no
+         * player — both actors are NEUTRAL on this type. */
+        case HL_ACTION_DENSITY:  return STR_DLGLOBBY_HL_DENSITY_FMT;
         /* Ground taken off a team belongs to the team that took it;
          * actorA only names a slot standing in for it, and is NEUTRAL
          * when the gaining team has no one to point at. */

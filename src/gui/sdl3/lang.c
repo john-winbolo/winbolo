@@ -588,6 +588,8 @@ static const LangEntry langTable[] = {
     {1934, "Turning point: {number} tiles swung ({player})"},
     {1935, "Turning point: {number} tiles swung"},
     {1936, "Highlight"},
+    {1944, "Pill sweep: {number} grabbed ({player})"},
+    {1945, "All-out action: {number} events"},
     /* Lobby "Last round" panel — the reel's delivery state. */
     {1938, "Asking the server for the replay..."},
     {1939, "Downloading replay... {number}%"},

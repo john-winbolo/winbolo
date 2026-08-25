@@ -163,6 +163,8 @@ static const UnitTestEntry s_tests[] = {
     { "highlights_fumble",                          run_highlights_fumble                          },
     { "highlights_rare_death",                      run_highlights_rare_death                      },
     { "highlights_award_dedup",                     run_highlights_award_dedup                     },
+    { "highlights_pickup_spree",                    run_highlights_pickup_spree                    },
+    { "highlights_action_density",                  run_highlights_action_density                  },
     { "lv_stats_clip_time_format",                  run_lv_stats_clip_time_format                  },
     { "attribution_track_schema",                   run_attribution_track_schema                   },
     { "vote_toggle_standalone_no_does_nothing",            run_vote_toggle_standalone_no_does_nothing            },

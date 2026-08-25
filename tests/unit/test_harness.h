@@ -187,6 +187,8 @@ int run_highlights_multi_lgm(void);
 int run_highlights_fumble(void);
 int run_highlights_rare_death(void);
 int run_highlights_award_dedup(void);
+int run_highlights_pickup_spree(void);
+int run_highlights_action_density(void);
 int run_lv_stats_clip_time_format(void);
 int run_attribution_track_schema(void);
 int run_vote_toggle_standalone_no_does_nothing(void);

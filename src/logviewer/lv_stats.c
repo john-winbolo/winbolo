@@ -188,8 +188,9 @@ void lvStatsEmitRoundSummary(void) {
   /* Score the timeline into a ranked, non-overlapping set of clips and emit one
    * line per selection; the panel prefixes each with its own clip time. Only
    * HL_AWARD, HL_CLUSTER_WIPE, HL_OBJECTIVE_STEAL, HL_MULTI_LGM, HL_FUMBLE,
-   * HL_RARE_DEATH, HL_BREAKTHROUGH and HL_TURNING_POINT are produced today;
-   * other types get a safe generic label until their signals come online. */
+   * HL_RARE_DEATH, HL_PICKUP_SPREE, HL_ACTION_DENSITY, HL_BREAKTHROUGH and
+   * HL_TURNING_POINT are produced today; other types get a safe generic label
+   * until their signals come online. */
   hlCount = 0;
   computeHighlights(timeline, timelineCount, stats, team, awards, awardCount,
                     shifts, shiftCount, hl, &hlCount, LV_HIGHLIGHTS_SHOWN);
@@ -305,6 +306,15 @@ void lvStatsEmitRoundSummary(void) {
       } else {
         snprintf(line, sizeof(line), "Drowned (%s)", actorA);
       }
+      break;
+    case HL_PICKUP_SPREE:
+      snprintf(line, sizeof(line), "Pill sweep: %u grabbed (%s)", h->value,
+               actorA);
+      break;
+    case HL_ACTION_DENSITY:
+      /* A busy stretch of the round is nobody's, so the line names no player —
+       * both actors are NEUTRAL on this type. */
+      snprintf(line, sizeof(line), "All-out action: %u events", h->value);
       break;
     case HL_BREAKTHROUGH:
       /* Ground taken off a team belongs to the team that took it; actorA only

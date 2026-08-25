@@ -867,12 +867,27 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 #define HL_DROWN_PILL_BONUS      15    /* per pill carried into the sea */
 #define HL_AWARD_DEDUP_TICKS     HL_CLIP_TICKS  /* same moment as the award clip */
 
-/* Upper bound on candidate windows collected before selection. Five passes can
+/* Pickup sprees and action density. Starting values chosen by eye like the
+ * block above. Windows are in ticks, which run at 100 a second while a round
+ * is running, so the seconds each one is worth are spelled out beside it. */
+#define HL_PICKUP_MIN_GRABS      3     /* dead pills grabbed to make a spree */
+#define HL_PICKUP_TICK_WINDOW    1000  /* 10 s span for one spree */
+#define HL_PICKUP_TILE_RADIUS    8     /* Chebyshev radius from the first grab */
+#define HL_PICKUP_WEIGHT         50
+#define HL_PICKUP_GRAB_BONUS     15    /* per pill above HL_PICKUP_MIN_GRABS */
+#define HL_DENSITY_TICK_WINDOW   500   /* 5 s span a busy stretch is counted over */
+#define HL_DENSITY_MIN_EVENTS    6     /* below this the round was quiet */
+#define HL_DENSITY_MAX_CANDS     2     /* deliberately few — see the pass */
+#define HL_DENSITY_WEIGHT        25    /* below every signal that names a moment */
+#define HL_DENSITY_EVENT_BONUS   3     /* per event above HL_DENSITY_MIN_EVENTS */
+
+/* Upper bound on candidate windows collected before selection. Six passes can
  * each emit at most one window per timeline event (steals, wipes, LGM sweeps,
- * fumbles, drownings), plus the awards, the one turning point, and up to one
- * collapse per territory shift. */
-#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 5 + AWARD_COUNT + 1 + \
-                                  TERRITORY_SHIFTS_MAX)
+ * pickup sprees, fumbles, drownings), plus the awards, the one turning point,
+ * up to one collapse per territory shift, and the capped few action-density
+ * windows. */
+#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 6 + AWARD_COUNT + 1 + \
+                                  TERRITORY_SHIFTS_MAX + HL_DENSITY_MAX_CANDS)
 
 /* A scored candidate window before selection. `endTick` is the selection span
  * end (the last clustered event for a wipe, else the anchor tick); lead-in and
@@ -1333,6 +1348,151 @@ void computeHighlights(const NotableEvent *timeline, int timelineCount,
         c.value = pills;
         c.score = (uint32_t)(HL_DROWN_WEIGHT + HL_DROWN_PILL_BONUS * pills);
         hlAppend(cands, &candCount, &c);
+    }
+
+    /* Pickup sprees: one tank scooping several dead pills in a single short run
+     * around the same corner of the map. Greedy like the LGM loop — the next
+     * start jumps past the spree just emitted, so a long scavenge yields one
+     * window, not one per pill. NOTABLE_PICKUP names the picker in actorA and
+     * carries the cell the pill was lifted from. No award anchors on pickups, so
+     * unlike the sweep and fumble passes there is nothing here to dedup against. */
+    {
+        uint32_t clusterEnd = 0;
+        bool haveCluster = false;
+        for (int i = 0; i < timelineCount; i++) {
+            if (timeline[i].type != NOTABLE_PICKUP) continue;
+            if (haveCluster && timeline[i].tick <= clusterEnd) continue;
+
+            uint32_t winEnd = timeline[i].tick + HL_PICKUP_TICK_WINDOW;
+            uint32_t lastEvTick = timeline[i].tick;
+            int count = 0;
+            HlCand c;
+
+            for (int j = i; j < timelineCount; j++) {
+                if (timeline[j].type != NOTABLE_PICKUP) continue;
+                if (timeline[j].actorA != timeline[i].actorA) continue;
+                if (timeline[j].tick < timeline[i].tick ||
+                    timeline[j].tick > winEnd) continue;
+                if (hlTileDist(timeline[i].mapX, timeline[i].mapY,
+                               timeline[j].mapX, timeline[j].mapY) > HL_PICKUP_TILE_RADIUS)
+                    continue;
+                count++;
+                if (timeline[j].tick > lastEvTick) lastEvTick = timeline[j].tick;
+            }
+            if (count < HL_PICKUP_MIN_GRABS) continue;
+
+            c.anchorIdx = i;
+            c.startTick = timeline[i].tick;
+            c.endTick   = lastEvTick;
+            c.mapX = timeline[i].mapX;
+            c.mapY = timeline[i].mapY;
+            c.type = HL_PICKUP_SPREE;
+            c.awardId = 0;
+            c.actorA = timeline[i].actorA;   /* the one doing the scooping */
+            c.actorB = NEUTRAL;              /* a dead pill has no owner to name */
+            c.value = (uint32_t)count;
+            c.score = (uint32_t)(HL_PICKUP_WEIGHT +
+                                 HL_PICKUP_GRAB_BONUS * (count - HL_PICKUP_MIN_GRABS));
+            hlAppend(cands, &candCount, &c);
+            clusterEnd = lastEvTick;
+            haveCluster = true;
+        }
+    }
+
+    /* Action density: the round's busiest short stretches, whatever they were
+     * made of. Deliberately the weakest signal in the set — it names nothing
+     * that actually happened, so it is here to fill out a quiet round rather
+     * than to crowd out a clip that says who did what. Only the busiest few are
+     * kept and the weight sits below every named signal; the selection overlap
+     * cull then drops any that collide with an accepted window.
+     *
+     * One window per timeline event, counting every event that falls inside it.
+     * A window is kept only where it is busier than the window before it and at
+     * least as busy as the one after — strict on the left so a run of equally
+     * busy windows collapses to its first, which is what stops one long fight
+     * yielding a candidate per event in it. The counts either side are known one
+     * step apart, so each window is judged a step after it is counted and every
+     * event's window is counted exactly once. */
+    {
+        int      bestIdx[HL_DENSITY_MAX_CANDS] = {0};
+        int      bestCount[HL_DENSITY_MAX_CANDS] = {0};
+        int      bestN = 0;
+        int      prevCount = 0;   /* the window before the one being judged */
+        int      curCount = 0;    /* the window being judged */
+        int      curIdx = -1;
+
+        for (int i = 0; i <= timelineCount; i++) {
+            int nextCount = 0;
+
+            /* Past the last event the "next" window is empty, which is what lets
+             * the final window be judged on the same rule as the rest. */
+            if (i < timelineCount) {
+                uint32_t winEnd = timeline[i].tick + HL_DENSITY_TICK_WINDOW;
+                for (int j = 0; j < timelineCount; j++)
+                    if (timeline[j].tick >= timeline[i].tick &&
+                        timeline[j].tick <= winEnd) nextCount++;
+            }
+
+            if (curIdx >= 0 && curCount >= HL_DENSITY_MIN_EVENTS &&
+                curCount > prevCount && curCount >= nextCount) {
+                /* Keep the busiest HL_DENSITY_MAX_CANDS windows. Score rises with
+                 * the count, so the busiest are also the highest-scoring; ties
+                 * keep the window already held, which is the earlier one. */
+                int slot = -1;
+                if (bestN < HL_DENSITY_MAX_CANDS) {
+                    slot = bestN++;
+                } else {
+                    int worst = 0;
+                    for (int k = 1; k < HL_DENSITY_MAX_CANDS; k++)
+                        if (bestCount[k] < bestCount[worst]) worst = k;
+                    if (curCount > bestCount[worst]) slot = worst;
+                }
+                if (slot >= 0) {
+                    bestCount[slot] = curCount;
+                    bestIdx[slot] = curIdx;
+                }
+            }
+
+            prevCount = curCount;
+            curCount = nextCount;
+            curIdx = i;
+        }
+
+        for (int k = 0; k < bestN; k++) {
+            int      start = bestIdx[k];
+            uint32_t startTick = timeline[start].tick;
+            uint32_t winEnd = startTick + HL_DENSITY_TICK_WINDOW;
+            uint32_t mid = startTick + HL_DENSITY_TICK_WINDOW / 2;
+            int      anchor = start;
+            uint32_t bestGap = HL_DENSITY_TICK_WINDOW / 2;  /* start's own gap */
+            HlCand   c;
+
+            /* Anchor on the event nearest the window's middle, so the lead-in has
+             * a moment in the thick of it to walk back from rather than the edge.
+             * Ties keep the earlier event, so the pick is the same every run. */
+            for (int j = 0; j < timelineCount; j++) {
+                uint32_t t = timeline[j].tick;
+                uint32_t gap;
+                if (t < startTick || t > winEnd) continue;
+                gap = t > mid ? t - mid : mid - t;
+                if (gap < bestGap) { bestGap = gap; anchor = j; }
+            }
+
+            c.anchorIdx = anchor;
+            c.startTick = startTick;
+            c.endTick   = winEnd;
+            c.mapX = timeline[anchor].mapX;
+            c.mapY = timeline[anchor].mapY;
+            c.type = HL_ACTION_DENSITY;
+            c.awardId = 0;
+            c.actorA = NEUTRAL;   /* a busy stretch of the round is nobody's */
+            c.actorB = NEUTRAL;
+            c.value = (uint32_t)bestCount[k];
+            c.score = (uint32_t)(HL_DENSITY_WEIGHT +
+                                 HL_DENSITY_EVENT_BONUS *
+                                     (bestCount[k] - HL_DENSITY_MIN_EVENTS));
+            hlAppend(cands, &candCount, &c);
+        }
     }
 
     /* Turning point: the HL_TURN_WINDOW-tick span over which one team gained the

@@ -2307,3 +2307,140 @@ int run_highlights_award_dedup(void) {
 
     return 0;
 }
+
+/* Dead pills scooped by one tank close in tick and cell collapse to a single
+ * spree whose value is the haul; grabs spread past the tick window, spread past
+ * the tile radius, or simply too few to qualify make no spree at all. */
+int run_highlights_pickup_spree(void) {
+    NotableEvent tl[3];
+    NotableEvent late[3];
+    NotableEvent scattered[3];
+    NotableEvent few[3];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    int sprees = 0;
+    const HighlightWindow *spree = NULL;
+
+    /* Three of slot 4's grabs, inside the tick window and a few tiles apart. */
+    tl[0] = mkEvent(100, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    tl[1] = mkEvent(300, 12, 11, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    tl[2] = mkEvent(600, 14, 13, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    for (int i = 0; i < n; i++)
+        if (out[i].type == HL_PICKUP_SPREE) { sprees++; spree = &out[i]; }
+    UT_ASSERT_MSG(n == 1, "one window in all, got %d", n);
+    UT_ASSERT_MSG(sprees == 1, "one spree, got %d", sprees);
+    UT_ASSERT_MSG(spree->value == 3, "the spree counts the pills grabbed, got %u",
+                  spree->value);
+    UT_ASSERT_MSG(spree->actorA == 4, "the spree names the picker, got %u",
+                  spree->actorA);
+    UT_ASSERT_MSG(spree->actorB == NEUTRAL, "a dead pill has no owner, got %u",
+                  spree->actorB);
+    UT_ASSERT_MSG(spree->startTick == 100, "spree starts at the first grab, got %u",
+                  spree->startTick);
+    UT_ASSERT_MSG(spree->startTick + spree->durationTicks == 600,
+                  "spree runs to the last grab, got %u",
+                  spree->startTick + spree->durationTicks);
+    UT_ASSERT_MSG(spree->mapX == 10 && spree->mapY == 10,
+                  "spree sits at the first grab's cell, got %u,%u",
+                  spree->mapX, spree->mapY);
+
+    /* The same haul, but each grab well outside the previous one's window. */
+    late[0] = mkEvent(100,  10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    late[1] = mkEvent(1500, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    late[2] = mkEvent(3000, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    n = -1;
+    computeHighlights(late, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "grabs spread past the tick window are no spree, got %d", n);
+
+    /* Inside the tick window, but strung right across the map. */
+    scattered[0] = mkEvent(100, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    scattered[1] = mkEvent(300, 30, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    scattered[2] = mkEvent(600, 50, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    n = -1;
+    computeHighlights(scattered, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "grabs past the tile radius are no spree, got %d", n);
+
+    /* Two grabs is under the minimum, and another player's grab alongside them
+     * does not top up someone else's cluster. */
+    few[0] = mkEvent(100, 10, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    few[1] = mkEvent(200, 11, 10, NOTABLE_PICKUP, 4, NEUTRAL, 0, 0, 0);
+    few[2] = mkEvent(300, 12, 10, NOTABLE_PICKUP, 5, NEUTRAL, 0, 0, 0);
+    n = -1;
+    computeHighlights(few, 3, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "two grabs and a stranger's are no spree, got %d", n);
+
+    return 0;
+}
+
+/* The busiest stretches of a crowded round become action-density windows, held
+ * to the scorer's cap however many busy stretches there are; a round that never
+ * reaches the event floor produces none. The numbers here mirror the scorer's
+ * own HL_DENSITY_* constants, which are private to round_stats_derive.c. */
+int run_highlights_action_density(void) {
+    static const uint32_t burstStart[3] = { 1000, 5000, 9000 };
+    NotableEvent busy[18];
+    NotableEvent quiet[5];
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    int dense = 0;
+
+    /* Three flurries of six ownership changes, each burst packed inside one
+     * density window and the bursts far apart in tick and map. Nothing was taken
+     * off an enemy, so no steal — or any other signal — competes for the
+     * timeline and the count below is the density pass's alone. */
+    for (int b = 0; b < 3; b++)
+        for (int k = 0; k < 6; k++)
+            busy[b * 6 + k] = mkEvent(burstStart[b] + (uint32_t)k * 50,
+                                      (uint8_t)(10 + b * 20), (uint8_t)(10 + k),
+                                      NOTABLE_PILL_CAPTURE, 1, 2,
+                                      ATTR_CAP_NEUTRAL, 0, 0);
+
+    computeHighlights(busy, 18, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+
+    for (int i = 0; i < n; i++)
+        if (out[i].type == HL_ACTION_DENSITY) dense++;
+    UT_ASSERT_MSG(dense > 0, "a crowded round yields a density window, got %d", dense);
+    /* HL_DENSITY_MAX_CANDS is 2: three busy stretches still yield at most two. */
+    UT_ASSERT_MSG(dense <= 2, "density windows are capped at two, got %d", dense);
+    UT_ASSERT_MSG(n == dense, "only density windows this round, got %d of %d",
+                  dense, n);
+
+    for (int i = 0; i < n; i++) {
+        /* HL_DENSITY_MIN_EVENTS is 6. */
+        UT_ASSERT_MSG(out[i].value >= 6,
+                      "window %d counts at least the floor, got %u", i, out[i].value);
+        UT_ASSERT_MSG(out[i].actorA == NEUTRAL && out[i].actorB == NEUTRAL,
+                      "a busy stretch is nobody's, got %u and %u",
+                      out[i].actorA, out[i].actorB);
+        UT_ASSERT_MSG(out[i].awardId == 0, "window %d anchors no award, got %u", i,
+                      out[i].awardId);
+    }
+
+    /* Output is chronological, so the first window is the first burst's: it opens
+     * on that burst's first event and spans at least the density window. */
+    UT_ASSERT_MSG(out[0].startTick == 1000, "first window opens on the burst, got %u",
+                  out[0].startTick);
+    UT_ASSERT_MSG(out[0].startTick + out[0].durationTicks >= 1500,
+                  "first window covers its span, got %u",
+                  out[0].startTick + out[0].durationTicks);
+    UT_ASSERT_MSG(out[0].mapX == 10, "first window anchors inside its burst, got %u",
+                  out[0].mapX);
+
+    /* Five events in one window is one short of the floor. */
+    for (int k = 0; k < 5; k++)
+        quiet[k] = mkEvent(1000 + (uint32_t)k * 50, 10, (uint8_t)(10 + k),
+                           NOTABLE_PILL_CAPTURE, 1, 2, ATTR_CAP_NEUTRAL, 0, 0);
+    n = -1;
+    computeHighlights(quiet, 5, NULL, NULL, NULL, 0, NULL, 0, out, &n,
+                      HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "a quiet round yields no density window, got %d", n);
+
+    return 0;
+}

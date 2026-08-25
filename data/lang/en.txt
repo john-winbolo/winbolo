@@ -687,6 +687,8 @@ STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT=Front collapse: {number} tiles taken
 STR_DLGLOBBY_HL_TURNING_FMT=Turning point: {number} tiles swung ({player})
 STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT=Turning point: {number} tiles swung
 STR_DLGLOBBY_HL_GENERIC=Highlight
+STR_DLGLOBBY_HL_PICKUP_FMT=Pill sweep: {number} grabbed ({player})
+STR_DLGLOBBY_HL_DENSITY_FMT=All-out action: {number} events
 
 # Lobby "Last round" panel — the reel's delivery state.
 STR_DLGLOBBY_REEL_WAITING=Asking the server for the replay...

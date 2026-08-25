@@ -3468,6 +3468,8 @@ set(_unit_test_names
     highlights_fumble
     highlights_rare_death
     highlights_award_dedup
+    highlights_pickup_spree
+    highlights_action_density
     lv_stats_clip_time_format
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing

@@ -730,6 +730,8 @@
 #define STR_DLGLOBBY_HL_TURNING_FMT          1934
 #define STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT  1935
 #define STR_DLGLOBBY_HL_GENERIC              1936
+#define STR_DLGLOBBY_HL_PICKUP_FMT           1944
+#define STR_DLGLOBBY_HL_DENSITY_FMT          1945
 
 /* Lobby "Last round" panel — the reel's delivery state. */
 #define STR_DLGLOBBY_REEL_WAITING            1938
