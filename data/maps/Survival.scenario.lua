@@ -11,7 +11,8 @@
 -- defenders' starting pills — scoop, place, repair), 10 outer-ring
 -- bases owned by slots 15..6 (wave bots fill slots top-down, so each
 -- bot is pulled to the outer start beside its own base), and 10 DEAD
--- neutral pills parked out there for the wave-1 tanks to carry in.
+-- neutral pills parked out there, stamped to the wave at round start —
+-- dead on the ground for the attackers' own engineering to field.
 --
 -- Round flow:
 --   * on_setup (the SILENT pre-snapshot tick) deals center bases and
@@ -104,7 +105,7 @@ local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 local OUTER_BASES  = 10     -- bases 1..10 ring the island, base k -> slot 16-k
 local CENTER_FIRST = 11     -- bases 11..16 form the human center, owners 0..5
 local CENTER_PILLS = 6      -- pill k (1..6) pairs center base 10+k
-local WAVE_PILLS   = 10     -- pills 7..16 ride in with the wave-1 tanks
+local WAVE_PILLS   = 10     -- pills 7..16: the wave's dead ground pills
 
 local wave = 0
 local wave_bots = {}        -- playerNum -> true for living wave members
@@ -204,34 +205,21 @@ local function spawn_wave(game)
     end
   end
 
-  -- Wave 1 tanks each carry one of the outer pills (7..16) into
-  -- battle. From then on those pills are fair game wherever they fall
-  -- — defenders that capture them keep them.
-  if wave == 1 then
-    for i, p in ipairs(spawned) do
-      local pill = CENTER_PILLS + i
-      if pill <= CENTER_PILLS + WAVE_PILLS then
-        local ok, err = game.give_pill(p, pill)
-        if not ok then
-          game.message(string.format("Scenario warning: pill %d failed to "
-                                     .. "load (%s)", pill, tostring(err)))
-        end
-      end
-    end
-  end
+  -- The 10 outer pills (7..16) start DEAD ON THE GROUND, parked at
+  -- their map spots between the enemy bases. The wave-start ownership
+  -- pass above stamps them to the wave's slots, so the attackers'
+  -- brains treat them as their own dead pills — scoop, carry, place,
+  -- repair, at the AI's discretion instead of pre-loaded into tanks.
+  -- (An earlier design give_pill'd one into each wave-1 tank; kept out
+  -- deliberately so field engineering is emergent.) Defenders that
+  -- capture them keep them.
 
   wave_ends_at = game.tick() + WAVE_LIMIT
   last_min_mark = nil
   half_min_said = false
 
-  if wave == 1 then
-    game.message(string.format(
-      "*** Wave %d/%d: %d attackers inbound — each carrying a pillbox! ***",
-      wave, WAVES, #spawned))
-  else
-    game.message(string.format("*** Wave %d/%d: %d attackers inbound! ***",
-                               wave, WAVES, #spawned))
-  end
+  game.message(string.format("*** Wave %d/%d: %d attackers inbound! ***",
+                             wave, WAVES, #spawned))
 end
 
 -- Deterministic spawn pinning (fires for EVERY placement — initial
