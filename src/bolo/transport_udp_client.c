@@ -4163,11 +4163,11 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     return pct > 100 ? 100 : (uint8_t)pct;
 }
 
-void transportUdpClientSendRoundLogRequest(Transport *t) {
+bool transportUdpClientSendRoundLogRequest(Transport *t) {
     TransportUdpClientCtx *c;
-    if (t == NULL || t->ctx == NULL) return;
+    if (t == NULL || t->ctx == NULL) return false;
     c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
     /* A fresh ask supersedes whatever the last one left behind — a blob nobody
      * took, or a body still arriving. Freeing it here is one of the three
      * places that keeps it from leaking or dangling (the others are transport
@@ -4180,6 +4180,7 @@ void transportUdpClientSendRoundLogRequest(Transport *t) {
     c->roundLogTransientRetries  = 0;
     c->roundLogRetryAtTick       = 0;
     udpClientSendRoundLogReq(c);
+    return true;
 }
 
 int transportUdpClientGetRoundLogState(Transport *t) {

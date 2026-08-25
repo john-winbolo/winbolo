@@ -6701,21 +6701,24 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     /* A client that joined recorded nothing, so it asks the server that ran
      * the round for the bytes and waits for them. The request goes out from
      * here and nowhere else, so a player who never opens the recap never costs
-     * the server a transfer, and once per summary, so waiting is not a request
-     * a frame. Asking comes before reading the state, which is what stops a
-     * blob left over from an earlier round being played as this one: the
-     * request supersedes whatever the transport is still holding. Only until a
-     * reel is up: taking the blob returns the state to idle, and past that
-     * point idle means the viewer has it, not that there is nothing to play.
+     * the server a transfer, and the latch closes on a send the transport
+     * accepted rather than on the attempt — the recap can be drawing before
+     * the return-to-lobby handshake has finished, and a request made then goes
+     * nowhere. Until it is accepted the ask is retried each frame, which costs
+     * one comparison against the join state. Asking comes before reading the
+     * state, which is what stops a blob left over from an earlier round being
+     * played as this one: the request supersedes whatever the transport is
+     * still holding. Only until a reel is up: taking the blob returns the
+     * state to idle, and past that point idle means the viewer has it, not
+     * that there is nothing to play.
      *
      * Until the bytes are here the rect above carries the transfer's state
      * instead of a reel. A host or single-player session that recorded the
      * round never reaches this: it resolves to its own file above and goes
      * straight to playing it, asking for nothing and drawing no overlay. */
     if (!s_reelActive && !haveLocalFile) {
-        if (!s_reelLogAsked) {
+        if (!s_reelLogAsked && clientSimNetSendRoundLogRequest(cs)) {
             s_reelLogAsked = true;
-            clientSimNetSendRoundLogRequest(cs);
         }
         s_reelLogState = clientSimGetRoundLogState(cs);
         s_reelLogPercent = (s_reelLogState == CLIENT_ROUND_LOG_DOWNLOADING)

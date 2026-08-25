@@ -305,8 +305,9 @@ uint8_t clientSimGetRoundLogPercent(const ClientSim *cs);
 /* Ask the server for the last completed round's log. Supersedes anything the
  * transport already holds for an earlier request — a completed blob or a
  * part-received one is freed — and moves the state to CLIENT_ROUND_LOG_WAITING.
- * No-op without a connected UDP transport. */
-void clientSimNetSendRoundLogRequest(ClientSim *cs);
+ * Returns false and changes nothing without a connected UDP transport, so a
+ * caller that means to ask only once must keep asking until it returns true. */
+bool clientSimNetSendRoundLogRequest(ClientSim *cs);
 
 /* Take ownership of a completed transfer: returns the blob, writes its length
  * through outLen (may be NULL), clears the transport's pointer and returns the

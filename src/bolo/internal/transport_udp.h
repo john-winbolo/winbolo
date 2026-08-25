@@ -398,8 +398,9 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
  * header's ClientRoundLogState. */
 
 /* Send PACKET_ROUND_LOG_REQ with a fresh reqSeq, freeing anything held for an
- * earlier request first. No-op unless the client is connected. */
-void transportUdpClientSendRoundLogRequest(Transport *t);
+ * earlier request first. Returns true once the request is on its way; returns
+ * false and leaves every field untouched unless the client is connected. */
+bool transportUdpClientSendRoundLogRequest(Transport *t);
 
 /* Current transfer state as a ClientRoundLogState; CLIENT_ROUND_LOG_IDLE with
  * no transport context. */

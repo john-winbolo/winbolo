@@ -328,6 +328,21 @@ int run_round_log_refused_when_unavailable(void) {
         UT_FAIL("harness start (round log) failed");
     }
 
+    /* Nothing has been pumped yet, so the join handshake cannot have completed.
+     * A request made here must report that it went nowhere and must leave the
+     * state alone, so a caller latching on one ask can tell it has to ask
+     * again. */
+    if (clientSimNetSendRoundLogRequest(h.cs)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the request claimed to go out before the client connected");
+    }
+    state = clientSimGetRoundLogState(h.cs);
+    if (state != (int)CLIENT_ROUND_LOG_IDLE) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("round-log state %d after a request made while joining, "
+                "want IDLE (%d)", state, (int)CLIENT_ROUND_LOG_IDLE);
+    }
+
     connectedAt = loopbackHarnessPumpUntil(&h, RL_CONNECT_MAX, rlPredConnected,
                                            NULL);
     if (connectedAt < 0) {
@@ -336,7 +351,7 @@ int run_round_log_refused_when_unavailable(void) {
                 RL_CONNECT_MAX);
     }
 
-    /* Nothing asked for yet. */
+    /* Nothing the transport accepted yet, so the state has still not moved. */
     state = clientSimGetRoundLogState(h.cs);
     if (state != (int)CLIENT_ROUND_LOG_IDLE) {
         loopbackHarnessStop(&h);
@@ -345,7 +360,10 @@ int run_round_log_refused_when_unavailable(void) {
     }
 
     /* The real PACKET_ROUND_LOG_REQ goes out here. */
-    clientSimNetSendRoundLogRequest(h.cs);
+    if (!clientSimNetSendRoundLogRequest(h.cs)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the request was refused with the client connected");
+    }
     state = clientSimGetRoundLogState(h.cs);
     if (state != (int)CLIENT_ROUND_LOG_WAITING) {
         loopbackHarnessStop(&h);

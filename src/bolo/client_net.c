@@ -685,9 +685,9 @@ uint8_t clientSimGetRoundLogPercent(const ClientSim *cs) {
   return transportUdpClientGetRoundLogPercent((Transport *)&cs->transport);
 }
 
-void clientSimNetSendRoundLogRequest(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendRoundLogRequest(&cs->transport);
+bool clientSimNetSendRoundLogRequest(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientSendRoundLogRequest(&cs->transport);
 }
 
 uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen) {
