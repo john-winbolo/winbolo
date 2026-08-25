@@ -940,9 +940,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         nameBuf[sizeof(nameBuf) - 1] = '\0';
         /* announce=false in the lobby: the in-game newswire is wrong there
          * (it would queue and pop at game start); the lobby chat line below
-         * is the right surface. In-game, announce the leave on the newswire. */
+         * is the right surface. In-game, announce the leave on the newswire —
+         * unless the server flagged it silent (scenario-scripted removal:
+         * a vanishing wave is 10 leaves at once and the wave banner already
+         * tells the story). */
         playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                         pNum, FALSE, !cs->inLobby);
+                         pNum, FALSE,
+                         !cs->inLobby && !evt->u.playerLeave.silent);
         if (cs->inLobby) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);

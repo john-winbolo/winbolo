@@ -159,6 +159,7 @@ local function spawn_wave(game)
 
   -- The forest regrows to its target coverage before every wave, so
   -- the defenders never run out of building material mid-game.
+  game.message(string.format("[forest] wave %d top-up check:", wave))
   local regrown = plant_core_forest(game)
   if wave > 1 and regrown > 0 then
     game.message(string.format(
@@ -383,10 +384,29 @@ function plant_core_forest(game)  -- assigns the forward local above
     game.set_tile(math.floor(xy / 256), xy % 256, T_FOREST)
     planted = planted + 1
   end
+  -- Replanting debug: the full inventory arithmetic every time the
+  -- planter runs, so a "why no new trees?" round is diagnosable from
+  -- the newswire / DS console alone.
+  local ground = #eligible + nForest
+  game.message(string.format(
+    "[forest] ground=%d (forest=%d + open=%d) cover=%.0f%% target=%.0f%%"
+    .. " want=%+d planted=%d -> now %d/%d (%.0f%%)",
+    ground, nForest, #eligible,
+    ground > 0 and 100 * nForest / ground or 0,
+    100 * FOREST_FRACTION,
+    want, planted,
+    nForest + planted, ground,
+    ground > 0 and 100 * (nForest + planted) / ground or 0))
+  if want > 0 and planted < want then
+    game.message(string.format(
+      "[forest] WARNING: wanted %d but only %d open tiles were plantable",
+      want, planted))
+  end
   return planted
 end
 
 function on_start(game)
+  game.message("[forest] round-start planting:")
   plant_core_forest(game)
   game.message(string.format(
     "*** SURVIVAL: dig in! First of %d waves in %d seconds. ***",

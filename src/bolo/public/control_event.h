@@ -183,6 +183,11 @@ typedef struct ControlEvent {
             BYTE playerNum;
             char name[PACKET_MAX_PLAYER_NAME];
             char country[3];            /* 2 chars + NUL */
+            BYTE silent;                /* 1 = scenario-scripted removal:
+                                         * clients skip the "has quit"
+                                         * newswire line (wave churn).
+                                         * Optional on the wire — old
+                                         * senders decode as 0. */
         } playerLeave;
 
         /* CTRL_PLAYER_NAME */

@@ -755,6 +755,25 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->active = true;
     sim->botMgr.numBots++;
 
+    /* A recording block may already be open (server_lifecycle publishes
+     * DEBUG_SESSION_DIR to every bot when the block OPENS) — a bot born
+     * mid-round (scenario spawn_bot waves, host mid-game adds) missed
+     * that publish and would scatter its print2/jsonl debug files into
+     * the cwd instead of the session dir, invisible to BrainTest's
+     * session browser. Hand the newborn the live session dir directly. */
+    if (brainRecordIsEnabled() && bot->brain.L != NULL) {
+        const char *sdir = brainRecordGetSessionDir();
+        if (sdir != NULL && sdir[0] != '\0') {
+            char setSession[600];
+            snprintf(setSession, sizeof(setSession),
+                     "_G.DEBUG_SESSION_DIR=\"%s\"", sdir);
+            botManagerExecLua(sim, playerNum, setSession);
+            botManagerExecLua(sim, playerNum,
+                "local ok,p=pcall(require,'print2'); "
+                "if ok and p.reset_log then p.reset_log() end");
+        }
+    }
+
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d started with brain '%s'",
             playerNum, brainName);
     return true;

@@ -470,7 +470,13 @@ static int l_remove_bot(lua_State *L) {
         lua_pushboolean(L, FALSE);
         return 1;
     }
+    /* Script-driven removal: the leave event goes out flagged silent so
+     * clients don't newswire "has quit" for wave churn — ONLY this path;
+     * every other removal (host kick, crash kick, disconnect) announces
+     * exactly as before. */
+    st->sim->scenarioSilentRemove = TRUE;
     serverSimRemoveBot(st->sim, (BYTE)p);
+    st->sim->scenarioSilentRemove = FALSE;
     /* Break the slot out of its team so a future occupant doesn't
      * inherit stale alliance intent from our side. (Engine alliances
      * for the departed player are cleaned by the remove itself.) */

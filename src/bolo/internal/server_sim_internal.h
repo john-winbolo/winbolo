@@ -254,6 +254,13 @@ struct ServerSim {
     /* Scripted-scenario runtime (src/server/scenario.c). NULL for plain
      * maps; owned by the sim (scenarioShutdown in serverSimDestroy). */
     void        *scenario;
+    bool         scenarioSilentRemove; /* set while the scenario script's
+                                        * remove_bot API is mid-removal:
+                                        * serverSimFillPlayerLeaveEvent
+                                        * stamps the leave event silent so
+                                        * clients skip the "has quit"
+                                        * newswire line for scripted wave
+                                        * churn (10 leaves at once). */
     bool         scenarioCommitInProgress; /* re-entrancy guard for
                                         * serverSimApplyScenarioCommit: its
                                         * seeding can fail into

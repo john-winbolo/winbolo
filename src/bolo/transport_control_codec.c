@@ -267,7 +267,7 @@ static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
     (void)recipient;
-    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.playerLeave.playerNum;
@@ -279,6 +279,10 @@ static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
     pos += PACKET_MAX_PLAYER_NAME;
     buf[pos++] = (uint8_t)evt->u.playerLeave.country[0];
     buf[pos++] = (uint8_t)evt->u.playerLeave.country[1];
+    /* Optional tail (see lobbySettings' pattern): silent-removal flag.
+     * Old decoders ignore trailing bytes; old senders omit it and the
+     * decoder defaults to 0 (announce as before). */
+    buf[pos++] = evt->u.playerLeave.silent ? 1 : 0;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1585,6 +1589,9 @@ static bool decodePlayerLeaveBody(const uint8_t *buf, size_t len,
     outEvt->u.playerLeave.country[0] = (char)buf[pos++];
     outEvt->u.playerLeave.country[1] = (char)buf[pos++];
     outEvt->u.playerLeave.country[2] = '\0';
+    if (len >= pos + 1) {
+        outEvt->u.playerLeave.silent = buf[pos++];
+    }
     return true;
 }
 

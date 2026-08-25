@@ -179,10 +179,14 @@ for i, (x, y) in enumerate(all_bases):
     owner = (15 - i) if i < 10 else (i - 10)          # outer 15..6, center 0..5
     out += bytes([x, y, owner, 90, 90, 90])
 def out_dir(x, y, inward):
+    # Map-file start dirs count COUNTERclockwise from east in y-UP map
+    # coords; our angle is computed in y-DOWN screen coords, so negate
+    # it (the old formula skipped that and vertically mirrored every
+    # off-axis start — tanks spawned facing open water).
     ang = math.degrees(math.atan2(y - C, x - C))
     if inward:
         ang += 180
-    return int(round(((ang + 360) % 360) / 22.5)) % 16
+    return int(round(((-ang) % 360) / 22.5)) % 16
 for (x, y) in human_starts:
     out += bytes([x, y, out_dir(x, y, False)])        # humans face outward
 for (x, y) in bot_starts:

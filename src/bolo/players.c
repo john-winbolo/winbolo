@@ -1132,7 +1132,10 @@ void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE self
       /* Make a message about it — only when asked. The in-game newswire
        * "<name> has left the game" is wrong for a lobby removal (e.g.
        * removing a bot before the game starts): it would sit queued and
-       * surface at game start. Callers pass announce=false in the lobby. */
+       * surface at game start. Callers pass announce=false in the lobby
+       * — and for scenario-scripted removals, which flag their leave
+       * events silent (a wave vanishing is 10 leaves at once; the wave
+       * banner already tells the story). */
       if (announce) {
         sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
       }

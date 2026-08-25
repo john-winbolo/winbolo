@@ -6130,6 +6130,7 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
 void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     evt->type = CTRL_PLAYER_LEAVE;
     evt->u.playerLeave.playerNum = i;
+    evt->u.playerLeave.silent = sim->scenarioSilentRemove ? 1 : 0;
     memset(evt->u.playerLeave.name, 0, PACKET_MAX_PLAYER_NAME);
     strncpy(evt->u.playerLeave.name, sim->sim.plyrs->item[i].playerName,
             PACKET_MAX_PLAYER_NAME - 1);
