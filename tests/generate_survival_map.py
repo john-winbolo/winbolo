@@ -76,8 +76,12 @@ def terrain(x, y):
     h = cell_hash(rb, ab)
     if r <= R_HBASE + 1:
         return GRASS                                  # clear human base ring
-    if r >= R_BBASE - 2:
-        return GRASS if h % 10 < 8 else FOREST        # light cover out wide
+    if r >= 24:
+        # Light cover out wide — kept at the historical belt boundary
+        # (the old bot-base ring at r=26, minus the 2-tile skirt), NOT
+        # tied to R_BBASE: the bases moving inward must not deforest
+        # the island's midfield.
+        return GRASS if h % 10 < 8 else FOREST
     # main belt: decent forest for fort building + a few swamp accents
     m = h % 100
     if m < 34:

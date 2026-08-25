@@ -148,8 +148,23 @@ local function vanish_wave(game)
   return n
 end
 
+-- Forward declaration: the body lives further down (with the terrain
+-- constants it captures), but spawn_wave below calls it — without this
+-- the later `local function` would be invisible here and every wave
+-- spawn would die on a nil call (the no-enemies-ever bug).
+local plant_core_forest
+
 local function spawn_wave(game)
   wave = wave + 1
+
+  -- The forest regrows to its target coverage before every wave, so
+  -- the defenders never run out of building material mid-game.
+  local regrown = plant_core_forest(game)
+  if wave > 1 and regrown > 0 then
+    game.message(string.format(
+      "*** The forest regrows — %d fresh trees inside the ring. ***",
+      regrown))
+  end
 
   -- Every wave opens with the outer ring back in bot hands — whatever
   -- the humans captured since the last one.
@@ -313,13 +328,15 @@ end
 -- Terrain codes (engine values; see global.h).
 local T_SWAMP, T_CRATER, T_ROAD, T_FOREST, T_GRASS = 2, 3, 4, 5, 7
 
--- Fresh forest every round: fill ~30% of the area INSIDE the ring road
--- (radius < 10 around the center, puddle excluded automatically — only
--- grass/road/crater/swamp convert) with trees, skipping the tiles under
+-- Fresh forest every round AND a top-up at every wave start: fill the
+-- area INSIDE the ring road to ~50% forest coverage
+-- (radius < 10 around the center; the puddle and ALL road tiles are
+-- excluded — only grass/crater/swamp convert) with trees, skipping the tiles under
 -- bases and pills. Runs from on_start (a RUNNING tick) so every client
 -- receives the changes through the normal map-delta stream; a new
 -- random layout each round keeps the defenders in building material.
-local function plant_core_forest(game)
+local FOREST_FRACTION = 0.50
+function plant_core_forest(game)  -- assigns the forward local above
   math.randomseed(os.time())
   local structures = {}
   for b = 1, game.num_bases() do
@@ -330,20 +347,41 @@ local function plant_core_forest(game)
     local pi = game.pill(n)
     if pi and not pi.in_tank then structures[pi.x * 256 + pi.y] = true end
   end
-  local planted = 0
+  -- Inventory the core: existing forest counts toward the target, every
+  -- grass/crater/swamp tile is plantable ground (roads never). Top-up semantics:
+  -- planting stops once forest reaches FOREST_FRACTION of the combined
+  -- ground, so a wave-start call regrows only what the fighting consumed.
+  local eligible = {}
+  local nForest = 0
   for x = 118, 138 do
     for y = 118, 138 do
       local dx, dy = x - 128, y - 128
       if dx * dx + dy * dy < 93 then          -- strictly inside r=10 ring
         local t = game.map_tile(x, y)
-        if (t == T_GRASS or t == T_ROAD or t == T_CRATER or t == T_SWAMP)
-            and not structures[x * 256 + y]
-            and math.random() < 0.30 then
-          game.set_tile(x, y, T_FOREST)
-          planted = planted + 1
+        if not structures[x * 256 + y] then
+          if t == T_FOREST then
+            nForest = nForest + 1
+          elseif t == T_GRASS or t == T_CRATER or t == T_SWAMP then
+            -- Roads are deliberately NOT plantable: the ring road's
+            -- rounded tiles dip just inside the fill disc and were
+            -- sprouting trees, and a top-up must never overgrow roads
+            -- the defenders paved themselves.
+            eligible[#eligible + 1] = x * 256 + y
+          end
         end
       end
     end
+  end
+  local want = math.floor(FOREST_FRACTION * (#eligible + nForest)) - nForest
+  local planted = 0
+  local n = #eligible
+  while planted < want and n > 0 do
+    local i = math.random(n)                  -- random tile, no repeats
+    local xy = eligible[i]
+    eligible[i] = eligible[n]
+    n = n - 1
+    game.set_tile(math.floor(xy / 256), xy % 256, T_FOREST)
+    planted = planted + 1
   end
   return planted
 end

@@ -1420,6 +1420,10 @@ void          serverSimSeedScenarioEnemyTeam(ServerSim *sim);
  * lingering Scenario type to Open), seeds/clears the enemy team, and
  * republishes the settings block. */
 void          serverSimApplyScenarioCommit(ServerSim *sim);
+/* Drop the sim's scripted scenario (if any): the VM is destroyed and no
+ * further hooks run. For hosts that want a scenario map's terrain
+ * without its script — e.g. the menu-background splash sim. */
+void          serverSimDropScenario(ServerSim *sim);
 /* Cap on AI bots addable in the lobby; 0 = no cap. */
 BYTE          serverSimGetMaxBots(const ServerSim *sim);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */

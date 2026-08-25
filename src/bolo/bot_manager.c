@@ -1307,7 +1307,12 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
      * and would double-free. */
     clientSimDestroy(bot->cs);
     bot->cs = NULL;
+    /* The context is already deactivated, so serverSimRemovePlayer's
+     * botManagerIsBot check can no longer see this leaver was a bot —
+     * flag the slot for the duration of the call. */
+    sim->botMgr.removingBotSlot = (BYTE)(playerNum + 1);
     serverSimRemovePlayer(sim, playerNum);
+    sim->botMgr.removingBotSlot = 0;
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d removed", playerNum);
 }
@@ -1391,6 +1396,7 @@ uint32_t botManagerGetClientAllieRow(const ServerSim *sim, BYTE botPlayer, BYTE 
  * clients — this direct sync makes the in-process bots deterministic
  * regardless of control-event timing/processing at startup. */
 void botManagerSyncClientAlliances(ServerSim *sim) {
+    int synced = 0;
     if (sim == NULL) return;
     players srv = sim->sim.plyrs;
     if (srv == NULL) return;
@@ -1400,9 +1406,24 @@ void botManagerSyncClientAlliances(ServerSim *sim) {
         players cli = bot->cs->sim.plyrs;
         if (cli == NULL) continue;
         for (int i = 0; i < MAX_TANKS; i++) {
-            cli->item[i].allie = srv->item[i].allie;
+            /* DEEP copy. allie is a heap list — assigning the pointer
+             * aliased the server's live lists into every bot ClientSim,
+             * and the next playersLeaveAlliance (scenario on_setup
+             * removing its seeded bots, any mid-game leaver) then
+             * destroyed/mutated the shared nodes from both sides:
+             * double-frees, and every bot's matrix silently emptied
+             * (teammates rendered/treated as enemies all round). */
+            allienceDestroy(&cli->item[i].allie);
+            cli->item[i].allie = allienceCreate();
+            for (int j = 0; j < MAX_TANKS; j++) {
+                if (j != i && allienceExist(&srv->item[i].allie, (BYTE)j)) {
+                    allienceAdd(&cli->item[i].allie, (BYTE)j);
+                }
+            }
         }
+        synced++;
     }
+    (void)synced;
 }
 
 bool botManagerGetBotInfo(const ServerSim *sim, BYTE playerNum, BotInfo *out) {

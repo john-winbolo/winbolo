@@ -153,11 +153,24 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                               evt->u.allianceAccept.acceptedBy,
                               evt->u.allianceAccept.newMember,
                               FALSE);
+        if (getenv("WB_ALLYDBG")) {
+            fprintf(stderr, "[CLI-ACCEPT %d~%d] me0=%04x\n",
+                    (int)evt->u.allianceAccept.acceptedBy,
+                    (int)evt->u.allianceAccept.newMember,
+                    (unsigned)playersGetAlliesBitMap(&cs->sim.plyrs, cs->myPlayerNum));
+            fflush(stderr);
+        }
         break;
 
     case CTRL_ALLIANCE_LEAVE:
         playersLeaveAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
                              evt->u.allianceLeave.playerNum, FALSE);
+        if (getenv("WB_ALLYDBG")) {
+            fprintf(stderr, "[CLI-LEAVE p%d] me=%04x\n",
+                    (int)evt->u.allianceLeave.playerNum,
+                    (unsigned)playersGetAlliesBitMap(&cs->sim.plyrs, cs->myPlayerNum));
+            fflush(stderr);
+        }
         break;
 
     case CTRL_ALLIANCE_RESET: {
@@ -179,6 +192,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                                           cs->myPlayerNum, i, j, FALSE);
                 }
             }
+        }
+        if (getenv("WB_ALLYDBG")) {   /* TEMP client-side alliance trace */
+            fprintf(stderr, "[CLI-RESET]");
+            for (i = 0; i < MAX_TANKS; i++) {
+                fprintf(stderr, " %04x",
+                        (unsigned)playersGetAlliesBitMap(&cs->sim.plyrs, i));
+            }
+            fprintf(stderr, "\n"); fflush(stderr);
         }
         break;
     }

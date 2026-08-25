@@ -163,6 +163,14 @@ typedef struct BotManager {
     BotContext   bots[MAX_TANKS];
     int          numBots;
 
+    /* Slot+1 of the bot currently mid-teardown in botManagerRemoveBot
+     * (0 = none). The teardown deactivates the context BEFORE calling
+     * serverSimRemovePlayer, so botManagerIsBot alone would misread the
+     * departing bot as a human — which used to trip the last-human-left
+     * lobby reset on every seeded-bot removal (and with scenario
+     * re-seeding, loop the server to death). */
+    BYTE         removingBotSlot;
+
     /* Total concurrent brain-tick runners including the producer thread.
      * Saved by botManagerInit after validation; read by the budget formula
      * to scale per-bot time when more bots than runners are active. */

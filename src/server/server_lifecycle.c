@@ -679,6 +679,13 @@ void serverInstanceTick(ServerSim *sim) {
         if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }
+        /* Re-assert team alliances now that (a) the reliable queues were
+         * reset above — discarding the CTRL_ALLIANCE_RESET the start
+         * sequence published, which left remote clients rendering their
+         * own teammates as enemies — and (b) botManagerOnGameStart just
+         * rebuilt the bot ClientSims, whose alliance matrices start
+         * empty. One republish + direct bot sync fixes both sides. */
+        serverSimReapplyTeamAlliances(sim);
         /* Notify WBN that we are now in-game */
         winbolonetSendLobbyStatus(FALSE);
         /* Send EVENT_PLAYER_JOIN for each connected WBN player */

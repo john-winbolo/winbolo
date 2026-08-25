@@ -1962,6 +1962,23 @@ static void simRunHalfStep(ServerSim *sim) {
  * one-half-step-per-frame rate they were tuned for. */
 void serverSimTick(ServerSim *sim) {
     if (sim->state == serverStateRunning) {
+        /* Alliance forensics, opt-in via WB_ALLYDBG=1: dump every
+         * connected slot's server-side ally bitmap + lobby team every
+         * 5 s. Pairs with the client-side [CLI-*] traces behind the
+         * same variable (client_sim_control.c) so a mismatched tank
+         * indicator can be attributed to server state vs client state
+         * from one play session's console output. */
+        if (getenv("WB_ALLYDBG") != NULL &&
+            (serverSimGetTick(sim) % 250) == 0) {
+            fprintf(stderr, "[ALLY-DBG] t=%u", (unsigned)serverSimGetTick(sim));
+            for (BYTE d = 0; d < MAX_TANKS; d++) {
+                if (!sim->playerConnected[d]) continue;
+                fprintf(stderr, " p%d=%04x/T%d", (int)d,
+                        (unsigned)playersGetAlliesBitMap(&sim->sim.plyrs, d),
+                        (int)sim->lobbyPlayers[d].teamNumber);
+            }
+            fprintf(stderr, "\n"); fflush(stderr);
+        }
         sim->eventCount = 0;
         sim->mapEventCount = 0;
         simRunHalfStep(sim);
@@ -2259,7 +2276,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
      * gating on a human leaver keeps that from re-entering. */
-    wasBot = botManagerIsBot(sim, playerNum);
+    wasBot = botManagerIsBot(sim, playerNum) ||
+             sim->botMgr.removingBotSlot == (BYTE)(playerNum + 1);
     {
         char nm[PLAYER_NAME_LEN];
         playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, TRUE);
@@ -4660,6 +4678,16 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         phaseEvt.type = CTRL_GAME_PHASE_RUNNING;
         serverSimPublishControl(sim, &phaseEvt);
     }
+
+    /* Re-assert team alliances AFTER the reliable-queue reset above: the
+     * CTRL_ALLIANCE_RESET published by the mid-start conversion was
+     * discarded with the rest of the pre-RUNNING queue, so without this
+     * re-publish remote clients render their own teammates as enemies
+     * (and the in-process bot matrices, overwritten by start-sequence
+     * player re-registration, never learn who their allies are). Runs
+     * on the post-scenario roster, so a scenario's on_setup removals
+     * are already settled. */
+    serverSimReapplyTeamAlliances(sim);
 }
 
 void serverSimStartGame(ServerSim *sim) {
@@ -8348,6 +8376,19 @@ static void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
     numStarts = startsGetNumStarts(&sim->sim.ss);
     if (numStarts == 0) return;
 
+    /* Scripted scenario: on_choose_start decides EVERY real placement
+     * (startsGetStart consults it ahead of these reservations), so the
+     * lobby preview must show the script's answer, not the generic
+     * clustering — which happily parked the seeded enemy bots on the
+     * defenders' inner starts and made the roster look miswired. */
+    {
+        BYTE scIdx = MAX_STARTS;
+        if (scenarioChooseStart(sim, slot, &scIdx) && scIdx < numStarts) {
+            sim->lobbyPlayers[slot].startIdx = (BYTE)(scIdx + 1);
+            return;
+        }
+    }
+
     for (i = 0; i < MAX_STARTS; i++) {
         taken[i] = false;
     }
@@ -8630,6 +8671,11 @@ static void serverSimReloadScenarioForMap(ServerSim *sim) {
      * overridden. Those takeover effects happen at COMMIT time only:
      * serverSimApplyScenarioCommit, from Choose Map / map rotation /
      * instance startup. */
+}
+
+void serverSimDropScenario(ServerSim *sim) {
+    if (sim == NULL) return;
+    scenarioShutdown(sim);
 }
 
 void serverSimApplyScenarioCommit(ServerSim *sim) {
