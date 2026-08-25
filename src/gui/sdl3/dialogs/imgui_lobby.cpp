@@ -70,6 +70,7 @@ extern "C" {
 #include "../../../common/mp_diag_log.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../input_gamepad.h"  /* inputGamepadGetScrollDirection — right stick */
 #include "../../ui_mode.h"
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
@@ -7712,7 +7713,17 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
          * a list free to grow with the round's comment count would starve it. */
         ImGui::BeginChild("##recapCommentList",
                           ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 6.0f),
-                          ImGuiChildFlags_Borders);
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+
+        /* The list is text only, so nothing in it can take focus and a round
+         * with more comments than the six lines fit is out of reach on a pad.
+         * The right stick pans it instead — nothing else in the lobby reads
+         * that stick. Covers Steam Input and a native pad alike, +Y = down. */
+        float sdx, sdy;
+        if (inputGamepadGetScrollDirection(&sdx, &sdy)) {
+            ImGui::SetScrollY(ImGui::GetScrollY() + sdy * ImGui::GetTextLineHeight());
+        }
+
         if (s_recapComments.empty()) {
             ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOCOMMENTS));
         } else {
