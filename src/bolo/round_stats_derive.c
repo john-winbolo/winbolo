@@ -500,7 +500,7 @@ int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
  * (Chebyshev) and this many prior ticks of the shift's cell are summed into its
  * recentDamage. The window bounds the rolling damage buffer's live size too. */
 #define HL_COLLAPSE_DMG_RADIUS 8
-#define HL_COLLAPSE_DMG_WINDOW 500   /* ~10 s of prior fire at 50 ticks/s */
+#define HL_COLLAPSE_DMG_WINDOW 500   /* ~5 s of prior fire at 100 ticks/s */
 /* Hard cap on buffered damage events; oldest is dropped if it fills. Pruning by
  * tick usually keeps it far below this, so the cap is only a runaway backstop. */
 #define HL_DMG_BUF_MAX         4096
@@ -827,9 +827,10 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 
 /* ---- Highlight scorer ---------------------------------------------------- */
 
-/* Tunable weights and window sizes. Ticks are per-round at 50 ticks/s. */
+/* Tunable weights and window sizes. Windows are in ticks, which run at 100 a
+ * second while a round is running. */
 #define HL_WIPE_MIN_DEATHS       3
-#define HL_WIPE_TICK_WINDOW      150   /* ~3 s span for a cluster of deaths */
+#define HL_WIPE_TICK_WINDOW      150   /* ~1.5 s span for a cluster of deaths */
 #define HL_WIPE_TILE_RADIUS      6     /* Chebyshev radius from the first death */
 #define HL_WIPE_WEIGHT           100   /* per death in the cluster */
 #define HL_WIPE_TEAM_BONUS       50    /* added when all the dead share a team */
@@ -845,10 +846,10 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 #define HL_ANCHOR_DENSITY_TICKS  HL_CLIP_TICKS  /* count-award anchor: events this
                                                  * close would share a clip */
 #define HL_TIME_BUCKETS          4     /* split the round into this many spread buckets */
-#define HL_TURN_WINDOW           500   /* ~10 s span the territory swing is summed over */
+#define HL_TURN_WINDOW           500   /* ~5 s span the territory swing is summed over */
 #define HL_TURN_WEIGHT           140   /* ranking magnitude; the pick is seeded, not earned */
 #define HL_TEAM_ID_MAX           256   /* team ids are a byte, so this bounds them */
-#define HL_COLLAPSE_WINDOW       300   /* ~6 s span a front collapse is summed over */
+#define HL_COLLAPSE_WINDOW       300   /* ~3 s span a front collapse is summed over */
 #define HL_COLLAPSE_TILE_RADIUS  6     /* Chebyshev cluster radius from the first shift */
 #define HL_COLLAPSE_MIN_CELLS    150   /* summed swing a collapse must reach */
 #define HL_COLLAPSE_MIN_DAMAGE   200   /* summed recent fire that gates a collapse */
@@ -857,7 +858,7 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
 /* The death-flavoured signals. Starting values chosen by eye, not derived from
  * anything — expect them to move once real logs have been watched. */
 #define HL_LGM_MIN_KILLS         2     /* LGM kills that make a sweep */
-#define HL_LGM_TICK_WINDOW       250   /* ~5 s span for one sweep */
+#define HL_LGM_TICK_WINDOW       250   /* ~2.5 s span for one sweep */
 #define HL_LGM_TILE_RADIUS       8     /* Chebyshev radius from the first kill */
 #define HL_LGM_WEIGHT            45    /* per LGM killed in the sweep */
 #define HL_FUMBLE_MIN_PILLS      3     /* pills a death must dump to count */

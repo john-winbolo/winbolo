@@ -102,9 +102,9 @@ typedef struct {
     uint32_t value;       /* headline number; ratio awards ×100; see notes */
 } AwardResult;
 
-/* Highlight clip category. Append-only — ids are frozen; never renumber. Some
- * values are produced by later scorer passes (pickup spree, revenge, …) but are
- * defined now so the enum never renumbers. */
+/* Highlight clip category. Append-only — ids are frozen; never renumber.
+ * HL_MULTI_CAPTURE and HL_REVENGE have no producer; they are defined so the
+ * enum never renumbers around them. */
 typedef enum {
     HL_AWARD = 1,        /* anchored on an award-winning moment; awardId set */
     HL_CLUSTER_WIPE,     /* multiple deaths close in time and space           */
@@ -112,10 +112,10 @@ typedef enum {
     HL_MULTI_LGM,        /* several of a team's men cut down in one sweep     */
     HL_FUMBLE,           /* a death that dumped a load of carried pills       */
     HL_RARE_DEATH,       /* a drowning                                        */
-    HL_PICKUP_SPREE,     /* (later scorer pass) */
-    HL_MULTI_CAPTURE,    /* (later scorer pass) */
-    HL_ACTION_DENSITY,   /* (later scorer pass) */
-    HL_REVENGE,          /* (later scorer pass) */
+    HL_PICKUP_SPREE,     /* dead pills grabbed close together by one tank     */
+    HL_MULTI_CAPTURE,    /* (later scorer pass)                               */
+    HL_ACTION_DENSITY,   /* a busy stretch of the round with no single actor  */
+    HL_REVENGE,          /* not produced; kept so the enum never renumbers    */
     HL_BREAKTHROUGH,     /* a front collapse: ground taken off a team under fire */
     HL_TURNING_POINT     /* the round's single largest map-control swing */
 } HighlightType;
