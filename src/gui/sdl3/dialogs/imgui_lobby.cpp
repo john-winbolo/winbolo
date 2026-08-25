@@ -6267,6 +6267,10 @@ static bool lastRoundDrawSkull(void) {
  * recap stops drawing it or the summary clears. */
 static bool  s_reelActive     = false;
 static bool  s_reelTried      = false;  /* one load attempt per summary */
+/* The one attempt came to nothing — the viewer refused this summary's bytes,
+ * or there were none to hand it. There is nothing further to try for this
+ * round, so the recap says so instead of going back round for more bytes. */
+static bool  s_reelLoadFailed = false;
 static bool  s_reelDrawn      = false;  /* body drew the reel this frame */
 /* True when the pause was ours (the recap stopped being drawn), not the
  * player's — the reel resumes on its own when the recap comes back, but only
@@ -6458,6 +6462,7 @@ static void lobbyReelEnd(void) {
         s_reelActive = false;
     }
     s_reelTried      = false;
+    s_reelLoadFailed = false;
     s_reelDrawn      = false;
     s_reelAutoPaused = false;
     s_reelSeekRatio  = 0.0f;
@@ -6708,6 +6713,17 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (rect.y < 1.0f) rect.y = 1.0f;
     if (rect.x < 1.0f) rect.x = 1.0f;
 
+    /* A load that came to nothing is the end of it for this round: the bytes
+     * were had and refused, so there is no source left to try. Said with the
+     * arm that already means "no replay for this round", and said here because
+     * the block below would otherwise re-read the transfer state and re-kick
+     * the WinBolo.net fetch every frame, leaving the recap on "asking the
+     * server" for the rest of the lobby. */
+    if (s_reelLoadFailed) {
+        lobbyRenderReelStatus(CLIENT_ROUND_LOG_UNAVAILABLE_NONE, 0, rect, s);
+        return;
+    }
+
     /* A client that joined recorded nothing, so it asks the server that ran
      * the round for the bytes and waits for them. The request goes out from
      * here and nowhere else, so a player who never opens the recap never costs
@@ -6842,6 +6858,12 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                                             (int)rect.x, (int)rect.y);
             }
         }
+        /* No reel out of the attempt means there is no replay to be had for
+         * this round, whichever way it fell short — the file would not open,
+         * came up short, would not fit in memory, no bytes were handed over,
+         * or the viewer refused the ones that were. They all read the same to
+         * the player, and none of them get better by being tried again. */
+        s_reelLoadFailed = !s_reelActive;
     }
     if (!s_reelActive) return;
 
@@ -7652,14 +7674,22 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
     ImGui::Separator();
 
     if (s_recapFetchStatus == 200) {
-        imguiStarRating(s_recapRating10);
-        ImGui::SameLine();
-        char ratingBuf[16];
-        SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", s_recapRating10);
-        MessageArgs args = {};
-        SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
-        args.number = s_recapNumRatings;
-        ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+        if (s_recapNumRatings > 0) {
+            imguiStarRating(s_recapRating10);
+            ImGui::SameLine();
+            char ratingBuf[16];
+            SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", s_recapRating10);
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
+            args.number = s_recapNumRatings;
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+        } else {
+            /* Nobody has rated the round, so an average of 0.0 out of 0 is a
+             * score nobody gave it. Said the way the browser's rating column
+             * says it, and with no stars, since five empty ones read as a
+             * verdict rather than as an absence of one. */
+            ImGui::TextDisabled("%s: --", langGetText(STR_DLGWBN_COL_RATING));
+        }
     } else if (!s_recapFetch && s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) {
         const char *err = s_recapFetchErr[0] ? s_recapFetchErr
                                              : langGetText(STR_DLGWBN_NETERR);
