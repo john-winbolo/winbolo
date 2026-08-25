@@ -6267,6 +6267,20 @@ static float s_reelViewH      = 0.0f;
 static float s_reelSeekRatio  = 0.0f;
 static bool  s_reelSeeking    = false;
 
+/* Where a client that did not record the round stands in getting it from the
+ * server that did: the transfer's state as a ClientRoundLogState, the percent
+ * that goes with it while bytes are arriving, and the latch that keeps the
+ * request to one send per summary. Read by the recap so it can say what is
+ * happening in place of a reel it has no bytes for yet. A process replaying
+ * its own recording never asks, and leaves these idle. */
+static bool    s_reelLogAsked   = false;
+static int     s_reelLogState   = CLIENT_ROUND_LOG_IDLE;
+static uint8_t s_reelLogPercent = 0;
+/* Last state and ten-percent step written to winbolo.log, so the transfer is
+ * traced as it moves instead of once a frame. */
+static int     s_reelLogStateSeen = -1;
+static int     s_reelLogStepSeen  = -1;
+
 /* Vertical room the recap left unused on the previous frame, accumulated.
  * The reel adds it to its own height, which is what stops the body ending
  * well short of the bottom of a tall panel. Immediate mode gives no way to
@@ -6294,6 +6308,67 @@ static void lobbyReelEnd(void) {
     s_reelSeekRatio  = 0.0f;
     s_reelSeeking    = false;
     s_recapSlack     = 0.0f;
+    /* The next summary asks for its own round's log, and reports nothing about
+     * a transfer until it has one. */
+    s_reelLogAsked     = false;
+    s_reelLogState     = CLIENT_ROUND_LOG_IDLE;
+    s_reelLogPercent   = 0;
+    s_reelLogStateSeen = -1;
+    s_reelLogStepSeen  = -1;
+}
+
+/* Trace the transfer as it moves, so winbolo.log tells a slow download apart
+ * from a stalled one and both apart from a refusal — the recap draws nothing
+ * about it yet. Ten-percent steps while bytes arrive keep a 4 MB transfer to a
+ * handful of lines. */
+static void lobbyReelLogTransfer(int state, uint8_t percent) {
+    const int step = (state == CLIENT_ROUND_LOG_DOWNLOADING) ? percent / 10 : -1;
+    if (state == s_reelLogStateSeen && step == s_reelLogStepSeen) return;
+    s_reelLogStateSeen = state;
+    s_reelLogStepSeen  = step;
+    switch (state) {
+        case CLIENT_ROUND_LOG_WAITING:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log requested, no bytes yet");
+            break;
+        case CLIENT_ROUND_LOG_DOWNLOADING:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log downloading %u%%", (unsigned)percent);
+            break;
+        case CLIENT_ROUND_LOG_READY:
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[REEL] round log ready to play");
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log unavailable: server does not serve logs");
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_NONE:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log unavailable: server has no completed round");
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log unavailable: over the transfer cap");
+            break;
+        default:
+            /* Idle: nothing asked for, or the viewer has taken the blob. */
+            break;
+    }
+}
+
+/* Give back a downloaded round that nothing is going to play. A blob belongs
+ * to the round its recap described, and the transport holds a completed one
+ * until it is taken — so once the summary is gone (the countdown clears it)
+ * the bytes are stale and the next round must fetch its own. Kept apart from
+ * lobbyReelEnd, which also runs at the end of a lobby session with no
+ * ClientSim in reach. */
+static void lobbyReelDropRoundLog(ClientSim *cs) {
+    if (clientSimGetRoundLogState(cs) != CLIENT_ROUND_LOG_READY) return;
+    size_t len = 0;
+    uint8_t *buf = clientSimTakeRoundLog(cs, &len);
+    free(buf);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[REEL] dropped round log (%zu bytes), its recap is gone", len);
 }
 
 /* Reel height: a share of whatever vertical room the container has left, plus
@@ -6320,17 +6395,41 @@ static bool lobbyClipGifButton(const char *id, bool compact);
 static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
 
 static void lobbyRenderReel(ClientSim *cs, float s) {
-    /* A triple gate: only a round this process recorded, published to a file
-     * that is actually there. gameFrontHasLocalServer() is the load-bearing
-     * one — the accessor describes whatever round this process last recorded
-     * and is only cleared when the log writer is installed, so a player who
-     * hosted, left and then joined someone else's server would otherwise see
-     * a completely different game replayed here. */
+    /* Source, in order: the file this process wrote, else the copy the server
+     * sent us.
+     *
+     * A triple gate on the file: only a round this process recorded, published
+     * to a file that is actually there. gameFrontHasLocalServer() is the
+     * load-bearing one — the accessor describes whatever round this process
+     * last recorded and is only cleared when the log writer is installed, so a
+     * player who hosted, left and then joined someone else's server would
+     * otherwise see a completely different game replayed here. */
     const char *replayPath = serverDedicatedLogLastRoundFile();
     SDL_PathInfo replayInfo;
-    if (!gameFrontHasLocalServer() || replayPath[0] == '\0' ||
-        !SDL_GetPathInfo(replayPath, &replayInfo)) {
-        return;
+    const bool haveLocalFile = gameFrontHasLocalServer() &&
+                               replayPath[0] != '\0' &&
+                               SDL_GetPathInfo(replayPath, &replayInfo);
+
+    /* A client that joined recorded nothing, so it asks the server that ran
+     * the round for the bytes and waits for them. The request goes out from
+     * here and nowhere else, so a player who never opens the recap never costs
+     * the server a transfer, and once per summary, so waiting is not a request
+     * a frame. Asking comes before reading the state, which is what stops a
+     * blob left over from an earlier round being played as this one: the
+     * request supersedes whatever the transport is still holding. Only until a
+     * reel is up: taking the blob returns the state to idle, and past that
+     * point idle means the viewer has it, not that there is nothing to play. */
+    if (!s_reelActive && !haveLocalFile) {
+        if (!s_reelLogAsked) {
+            s_reelLogAsked = true;
+            clientSimNetSendRoundLogRequest(cs);
+        }
+        s_reelLogState = clientSimGetRoundLogState(cs);
+        s_reelLogPercent = (s_reelLogState == CLIENT_ROUND_LOG_DOWNLOADING)
+                               ? clientSimGetRoundLogPercent(cs)
+                               : 0;
+        lobbyReelLogTransfer(s_reelLogState, s_reelLogPercent);
+        if (s_reelLogState != CLIENT_ROUND_LOG_READY) return;
     }
 
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -6349,24 +6448,39 @@ static void lobbyRenderReel(ClientSim *cs, float s) {
         s_reelTried = true;
         s_reelViewW = rect.x;
         s_reelViewH = rect.y;
-        SDL_IOStream *io = SDL_IOFromFile(replayPath, "rb");
-        if (io) {
-            Sint64 len = SDL_GetIOSize(io);
-            /* malloc, not SDL_malloc: the viewer releases the buffer with
-             * plain free(), and it owns it from the call on — including
-             * when the load fails. */
-            uint8_t *buf = (len > 0) ? (uint8_t *)malloc((size_t)len) : NULL;
-            if (buf) {
-                if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
-                    s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
-                                                sdl3DrawGetRenderer(),
-                                                buf, (size_t)len,
-                                                (int)rect.x, (int)rect.y);
-                } else {
-                    free(buf);
+        if (haveLocalFile) {
+            SDL_IOStream *io = SDL_IOFromFile(replayPath, "rb");
+            if (io) {
+                Sint64 len = SDL_GetIOSize(io);
+                /* malloc, not SDL_malloc: the viewer releases the buffer with
+                 * plain free(), and it owns it from the call on — including
+                 * when the load fails. */
+                uint8_t *buf = (len > 0) ? (uint8_t *)malloc((size_t)len) : NULL;
+                if (buf) {
+                    if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
+                        s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                                                    sdl3DrawGetRenderer(),
+                                                    buf, (size_t)len,
+                                                    (int)rect.x, (int)rect.y);
+                    } else {
+                        free(buf);
+                    }
                 }
+                SDL_CloseIO(io);
             }
-            SDL_CloseIO(io);
+        } else {
+            /* The downloaded blob is already the bytes the viewer wants, on
+             * the same malloc terms as the read above — hand it straight over
+             * rather than looking at it first, since the viewer owns it from
+             * the call on and frees it even when it refuses the data. */
+            size_t len = 0;
+            uint8_t *buf = clientSimTakeRoundLog(cs, &len);
+            if (buf) {
+                s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                                            sdl3DrawGetRenderer(),
+                                            buf, len,
+                                            (int)rect.x, (int)rect.y);
+            }
         }
     }
     if (!s_reelActive) return;
@@ -10085,10 +10199,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
      * countdown clears it) drop the reel and the per-summary load latch —
      * unconditionally, since a round whose load failed leaves the latch set
      * with no reel to end, and would otherwise block every later round in the
-     * session. lobbyReelEnd is idempotent. While a summary stands, freeze a
-     * reel the recap stopped drawing — a tab switched away from must not
-     * leave the decoder ticking unseen. */
+     * session. lobbyReelEnd is idempotent, and so is the blob drop that goes
+     * with it — a download that completed after the recap it belongs to went
+     * away is stale, and the round starting now will ask for its own. While a
+     * summary stands, freeze a reel the recap stopped drawing — a tab switched
+     * away from must not leave the decoder ticking unseen. */
     if (!clientSimGetLastRoundStats(cs)) {
+        lobbyReelDropRoundLog(cs);
         lobbyReelEnd();
     } else if (s_reelActive && !s_reelDrawn && lvEmbedIsPlaying()) {
         lvEmbedPause();
