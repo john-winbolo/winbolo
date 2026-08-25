@@ -7298,6 +7298,24 @@ static void lobbyRatingReset(void) {
      * auto-refresh. */
 }
 
+/* Point the state at the round the lobby is holding, dropping whatever the
+ * previous one loaded. Keyed off the summary rather than off the block being
+ * drawn: between rounds the summary is gone, the desktop panel may be flipped
+ * to the map and the controller layout may be on another tab, and none of
+ * those paths reach the renderer — so a render-driven reset would leave the
+ * finished round's stars and comments loaded and show them for the frames
+ * before the next round's summary lands. Idempotent, so both the per-frame
+ * hook and the renderer can call it. */
+static void lobbyRatingSyncKey(const RoundStatsSummary *st) {
+    const char *key = (st && st->wbnLogKey[0] != '\0') ? st->wbnLogKey : "";
+    if (strncmp(s_recapRatingKey, key, sizeof(s_recapRatingKey)) == 0) return;
+
+    lobbyRatingReset();
+    if (key[0] != '\0') {
+        SDL_strlcpy(s_recapRatingKey, key, sizeof(s_recapRatingKey));
+    }
+}
+
 static void lobbyRatingKick(const char *key) {
     if (s_recapFetch || s_recapFetchComplete) return;
     if (s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) return;
@@ -7358,18 +7376,12 @@ static void lobbyRatingPoll(void) {
 }
 
 static void lobbyRenderRatingBlock(const RoundStatsSummary *st, float s) {
+    lobbyRatingSyncKey(st);
+
     if (st->wbnLogKey[0] == '\0') {
         /* Nothing on WinBolo.net to rate, so not a separator and not a
          * disabled line — the block costs the body no height at all. */
-        if (s_recapRatingKey[0] != '\0') {
-            lobbyRatingReset();
-        }
         return;
-    }
-
-    if (strncmp(s_recapRatingKey, st->wbnLogKey, sizeof(s_recapRatingKey)) != 0) {
-        lobbyRatingReset();
-        SDL_strlcpy(s_recapRatingKey, st->wbnLogKey, sizeof(s_recapRatingKey));
     }
 
     /* Every frame: the textures are shared with the log browser, whose exit
@@ -7446,9 +7458,11 @@ static void lobbyRenderRatingBlock(const RoundStatsSummary *st, float s) {
         gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
 
         if (wbnToken[0] == '\0') {
-            /* Carries its own sign-in popup and stats dialog, so there is
-             * nothing else to pump from here. */
-            imguiWinbolonetDrawSection(false);
+            /* Read-only, the way the section renders in game: it says the
+             * account is not signed in and leaves its sign-in button
+             * disabled. Signing in is a welcome-screen and settings action —
+             * the lobby only reports which account it already has. */
+            imguiWinbolonetDrawSection(true);
         } else {
             float cw = ImGui::GetContentRegionAvail().x;
             ImGui::SetNextItemWidth(80 * s);
@@ -8763,6 +8777,12 @@ extern "C" void imguiLobbyFrameReset(void) {
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
 extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Before anything draws, so a round that has ended takes its rating and
+     * comments with it whether or not the recap is the view on screen. */
+    lobbyRatingSyncKey(cs ? clientSimGetLastRoundStats(cs) : NULL);
+#endif
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
