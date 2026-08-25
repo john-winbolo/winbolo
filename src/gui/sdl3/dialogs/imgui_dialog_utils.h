@@ -387,10 +387,17 @@ static inline void imguiHandOnHover(void) {
 
 /* Show a one-line tooltip on mouse hover OR gamepad/keyboard focus, so
    controller users (who can't hover) still get it. Call right after the
-   item whose tooltip this is. */
+   item whose tooltip this is.
+
+   One test covers both: while the player is on the stick or the keys, ImGui
+   counts the navigated item as the hovered one, and _ForTooltip picks the
+   delay to match whichever of the two is driving. Asking IsItemFocused() on
+   top of that only ever adds the case nobody wants — a mouse click leaves its
+   target focused, which would pin the tooltip up, trailing the pointer around
+   the window, until something else was clicked. */
 static inline void imguiHelpTooltip(const char *text) {
     if (!text) return;
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) || ImGui::IsItemFocused())
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
         ImGui::SetTooltip("%s", text);
 }
 

@@ -6234,6 +6234,12 @@ static bool s_recapShowAllAwards = false;
  * recap is for. Folded away, the reel gets the rows' height. */
 static bool s_recapShowHighlights = false;
 
+/* Which scoreboard column the table is sorted on, mirrored out of the table's
+ * own sort specs. Columns are sized before the specs can be read, so the
+ * sorted column — the one that has to leave room for the sort arrow — is known
+ * here a frame late, which is a frame nobody can see. */
+static int s_recapSortCol = -1;
+
 /* Skull for the scoreboard's death columns, drawn square at text height and
  * tinted to the text colour so it sits with the other header art rather than
  * shouting. Returns false when the asset is missing, which is the caller's
@@ -7892,26 +7898,36 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
     /* ── Scoreboard ordering ─────────────────────────────────────── */
-    /* Display order: kills desc, then fewest deaths, then slot. */
+    /* The table sorts on whichever column its header was last clicked, so the
+     * order can only be built once the specs are readable — inside the table,
+     * below. What lives here is what the comparison is made of.
+     *
+     * Default order, and the tie-break under every other column: kills desc,
+     * then fewest deaths, then slot. */
     int n = st->playerCount;
     if (n > MAX_TANKS) n = MAX_TANKS;
     int order[MAX_TANKS];
-    for (int i = 0; i < n; i++) order[i] = i;
-    for (int i = 1; i < n; i++) {
-        int j = i;
-        while (j > 0) {
-            const RoundPlayerSummary *a = &st->players[order[j - 1]];
-            const RoundPlayerSummary *b = &st->players[order[j]];
-            bool swap =
-                (b->kills > a->kills) ||
-                (b->kills == a->kills && b->deaths < a->deaths) ||
-                (b->kills == a->kills && b->deaths == a->deaths &&
-                 b->slot < a->slot);
-            if (!swap) break;
-            int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
-            j--;
+    auto scoreBefore = [](const RoundPlayerSummary *a,
+                          const RoundPlayerSummary *b) {
+        if (a->kills != b->kills)   return a->kills > b->kills;
+        if (a->deaths != b->deaths) return a->deaths < b->deaths;
+        return a->slot < b->slot;
+    };
+    /* Every column but the name counts something, so one unsigned reads them
+     * all. Column 0 sorts by name and never reaches this. */
+    auto colValue = [](const RoundPlayerSummary *p, int col) -> unsigned {
+        switch (col) {
+            case 1:  return p->kills;
+            case 2:  return p->deaths;
+            case 3:  return p->baseCaptures;
+            case 4:  return p->pillCaptures;
+            case 5:  return p->dmgDealt;
+            case 6:  return p->builds;
+            case 7:  return p->lgmKills;
+            case 8:  return p->lgmDeaths;
+            default: return 0;
         }
-    }
+    };
 
     /* awardId (1..AWARD_COUNT) → index into awards[], -1 when unwon. */
     int ac = st->awardCount;
@@ -7933,6 +7949,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         if ((unsigned)pp->deaths       > colMax[2]) colMax[2] = pp->deaths;
         if ((unsigned)pp->baseCaptures > colMax[3]) colMax[3] = pp->baseCaptures;
         if ((unsigned)pp->pillCaptures > colMax[4]) colMax[4] = pp->pillCaptures;
+        if ((unsigned)pp->dmgDealt     > colMax[5]) colMax[5] = pp->dmgDealt;
         if ((unsigned)pp->builds       > colMax[6]) colMax[6] = pp->builds;
         if ((unsigned)pp->lgmKills     > colMax[7]) colMax[7] = pp->lgmKills;
         if ((unsigned)pp->lgmDeaths    > colMax[8]) colMax[8] = pp->lgmDeaths;
@@ -7947,56 +7964,67 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float iconH = ImGui::GetTextLineHeight();
     const float lgmW  = iconH * (float)LGM_WIDTH / (float)LGM_HEIGHT;
+    /* What the header spends on the sort arrow, which ImGui draws hard against
+     * the right edge of the sorted column's cell — the same width TableHeader
+     * reserves for it. On a column only as wide as its icon that would be the
+     * icon's own pixels, so the sorted column asks for the arrow as well. */
+    const float arrowW =
+        SDL_truncf(ImGui::GetFontSize() * 0.65f + sty.FramePadding.x);
     auto iconColWidth = [&](int col, float iconExtent) {
         char buf[16];
         SDL_snprintf(buf, sizeof(buf), "%u", colMax[col]);
         float w = ImGui::CalcTextSize(buf).x;
         if (iconExtent > w) w = iconExtent;
+        if (col == s_recapSortCol) w += arrowW;
         /* One pixel of slop: an icon sized to exactly fill the cell would
          * otherwise be at the mercy of rounding at the clip edge. */
         return w + sty.CellPadding.x * 2.0f + 1.0f;
     };
 
+    /* Sortable: a click sorts on that column, a second click reverses it. The
+     * counting columns lead with their biggest, which is the answer anyone
+     * clicking them is after; names lead A→Z. Kills is where the table starts,
+     * so an untouched scoreboard reads the way it always did. */
+    const ImGuiTableColumnFlags statCol = ImGuiTableColumnFlags_WidthFixed |
+                                          ImGuiTableColumnFlags_PreferSortDescending;
     if (n > 0 &&
         ImGui::BeginTable("##lastRoundScore", 9,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
-                              ImGuiTableFlags_NoHostExtendX)) {
+                              ImGuiTableFlags_NoHostExtendX |
+                              ImGuiTableFlags_Sortable)) {
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_NAME),
                                 ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_KILLS),
-                                ImGuiTableColumnFlags_WidthFixed,
+                                statCol | ImGuiTableColumnFlags_DefaultSort,
                                 iconColWidth(1, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DEATHS),
-                                ImGuiTableColumnFlags_WidthFixed,
-                                iconColWidth(2, iconH));
+                                statCol, iconColWidth(2, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BASE),
-                                ImGuiTableColumnFlags_WidthFixed,
-                                iconColWidth(3, iconH));
+                                statCol, iconColWidth(3, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_PILL),
-                                ImGuiTableColumnFlags_WidthFixed,
-                                iconColWidth(4, iconH));
+                                statCol, iconColWidth(4, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DMG),
-                                ImGuiTableColumnFlags_WidthFixed, 52.0f * s);
+                                statCol, iconColWidth(5, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BUILDS),
-                                ImGuiTableColumnFlags_WidthFixed,
-                                iconColWidth(6, iconH));
+                                statCol, iconColWidth(6, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMK),
-                                ImGuiTableColumnFlags_WidthFixed,
-                                iconColWidth(7, lgmW));
+                                statCol, iconColWidth(7, lgmW));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMD),
-                                ImGuiTableColumnFlags_WidthFixed,
+                                statCol,
                                 iconColWidth(8, lgmW + sty.ItemInnerSpacing.x +
                                                 iconH));
 
         /* Header row drawn by hand: every column that counts something the
          * map draws is headed by that sprite instead of a word, with the
-         * written name on the tooltip. Name and Dmg keep their text — no
-         * sprite says "name" or "damage" — and need no tooltip, since they
-         * already read as what they are. Deaths reuses the skull the LGM
-         * Deaths column ends with. TableHeader is still submitted for every
-         * column, with an empty label where the icon speaks, so the cell
-         * keeps its header background, hover and id path; the id comes from
-         * the column index the way TableHeadersRow does it. */
+         * written name on the tooltip. Only Name keeps its text — no sprite
+         * says "name", and none is needed: the column already reads as what
+         * it is. Deaths reuses the skull the LGM Deaths column ends with, and
+         * Dmg the widest frame of a shell burst, which is the map's own
+         * picture of damage being done. TableHeader is still submitted for
+         * every column, with an empty label where the icon speaks, so the
+         * cell keeps its header background, hover, sort click and id path;
+         * the id comes from the column index the way TableHeadersRow does
+         * it. */
         ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
         for (int c = 0; c < 9; c++) {
             ImGui::TableSetColumnIndex(c);
@@ -8016,6 +8044,10 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                     break;
                 case 4:
                     imguiDrawTileIcon(PILL_EVIL15_X, PILL_EVIL15_Y);
+                    drewIcon = true;
+                    break;
+                case 5:
+                    imguiDrawTileIcon(EXPLOSION4_X, EXPLOSION4_Y);
                     drewIcon = true;
                     break;
                 case 6:
@@ -8043,6 +8075,45 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             ImGui::TableHeader(drewIcon ? "" : label);
             ImGui::PopID();
             if (drewIcon) imguiHelpTooltip(label);
+        }
+
+        /* Rows in the order the header row just asked for. Reading the specs
+         * after the headers rather than before them is what makes a click
+         * land on the frame it happened rather than the one after. A column
+         * that ties falls back to the default order, so equal counts still
+         * come out best-round-first instead of shuffling. */
+        int sortCol = 1;
+        bool sortAsc = false;
+        if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
+            if (specs->SpecsCount > 0) {
+                sortCol = specs->Specs[0].ColumnIndex;
+                sortAsc = specs->Specs[0].SortDirection ==
+                          ImGuiSortDirection_Ascending;
+            }
+            specs->SpecsDirty = false;
+        }
+        s_recapSortCol = sortCol;
+
+        auto rowBefore = [&](const RoundPlayerSummary *a,
+                             const RoundPlayerSummary *b) {
+            if (sortCol == 0) {
+                int c = SDL_strcasecmp(lastRoundSlotName(cs, a->slot),
+                                       lastRoundSlotName(cs, b->slot));
+                if (c != 0) return sortAsc ? (c < 0) : (c > 0);
+            } else {
+                unsigned va = colValue(a, sortCol), vb = colValue(b, sortCol);
+                if (va != vb) return sortAsc ? (va < vb) : (va > vb);
+            }
+            return scoreBefore(a, b);
+        };
+        for (int i = 0; i < n; i++) order[i] = i;
+        for (int i = 1; i < n; i++) {
+            int j = i;
+            while (j > 0 && rowBefore(&st->players[order[j]],
+                                      &st->players[order[j - 1]])) {
+                int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
+                j--;
+            }
         }
 
         const BYTE mySlot = gameFrontGetPlayerNum();
