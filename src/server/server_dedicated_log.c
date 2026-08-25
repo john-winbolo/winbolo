@@ -15,9 +15,10 @@
 /* Bus subscriber that maintains the dedicated-server replay log in
  * response to CTRL_GAME_PHASE_* events. Registered from servermain.c
  * when the --log argument is present. The subscriber's sync-replay
- * delivers the current phase at registration time, so the log file is
- * opened immediately for both lobby (CTRL_GAME_PHASE_LOBBY) and
- * no-lobby (CTRL_GAME_PHASE_RUNNING) startup paths. */
+ * delivers the current phase at registration time: the no-lobby startup
+ * path (CTRL_GAME_PHASE_RUNNING) opens the log file there and then, while
+ * the lobby path (CTRL_GAME_PHASE_LOBBY) only arms the drain, so that log
+ * opens on the first log tick instead. */
 
 #include <string.h>
 #include <stdio.h>
@@ -99,7 +100,20 @@ static bool s_roundRan = FALSE;
  * everything they emit. The deliver path records what to emit and
  * serverDedicatedLogDrain, registered as log.c's pre-tick hook, emits it from
  * the owning thread. The map message keeps the pascal-string shape logAddEvent
- * takes; two map changes before a drain leave the later one. */
+ * takes; two map changes before a drain leave the later one.
+ *
+ * CTRL_GAME_PHASE_LOBBY goes through the same drain for a different reason:
+ * ordering against the WinBolo.net session rotation, not thread ownership.
+ * serverSimReturnToLobby publishes it from inside serverSimTick, while the
+ * finished round's server_key is still installed; only afterwards does
+ * serverInstanceTick run winbolonetEndSession -> round-log upload ->
+ * winbolonetBeginSession, which mints the next round's key. logStart stamps
+ * the header with winboloNetGetServerKey, so opening the log from the deliver
+ * path wrote the outgoing round's key into the incoming round's file — one
+ * rotation stale for every round after the first, which is the key the
+ * standalone viewer then fetches comments against. Opening from the drain puts
+ * logStart on the next log tick, after the new key exists. */
+static bool s_lobbyEnterPending = FALSE;
 static bool s_gameStartPending = FALSE;
 static bool s_mapMsgPending = FALSE;
 static char s_pendingMapMsg[256];
@@ -389,9 +403,9 @@ static void handleGameStart(ServerSim *sim) {
     }
 }
 
-/* log.c's pre-tick hook: emit what the off-thread control-event handlers
- * queued. Runs on the thread logWriteTick pinned, so these writes pass the
- * writer's owner check, and runs before the tick's accounting, so they are
+/* log.c's pre-tick hook: open the round's log and emit what the control-event
+ * handlers queued. Runs on the thread logWriteTick pinned, so these writes pass
+ * the writer's owner check, and runs before the tick's accounting, so they are
  * framed as this tick's events. Inert when nothing is pending. */
 static void serverDedicatedLogDrain(void) {
     ServerSim *sim = s_logSim;
@@ -399,18 +413,27 @@ static void serverDedicatedLogDrain(void) {
     if (sim == NULL) {
         return;
     }
-    if (s_gameStartPending == FALSE && s_mapMsgPending == FALSE) {
+    if (s_lobbyEnterPending == FALSE && s_gameStartPending == FALSE &&
+        s_mapMsgPending == FALSE) {
         return;
     }
-    /* Game start first: logWriteSnapshot flushes the queued log_LobbyExit and
-     * log_AllyAccept events before it writes the snapshot marker, which is what
-     * puts the LOG_EVENT frame ahead of the LOG_SNAPSHOT in the byte stream. */
+    /* Lobby enter first: it is the arm that opens the log, and the two below
+     * only write into an open one — handleGameStart's recording branch and the
+     * map message both need logIsRecording() to already be true. */
+    if (s_lobbyEnterPending == TRUE) {
+        handleLobbyEnter(sim);
+    }
+    /* Game start before the map message: logWriteSnapshot flushes the queued
+     * log_LobbyExit and log_AllyAccept events before it writes the snapshot
+     * marker, which is what puts the LOG_EVENT frame ahead of the LOG_SNAPSHOT
+     * in the byte stream. */
     if (s_gameStartPending == TRUE) {
         handleGameStart(sim);
     }
     if (s_mapMsgPending == TRUE) {
         logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, s_pendingMapMsg);
     }
+    s_lobbyEnterPending = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;
 }
@@ -423,7 +446,13 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
     }
     switch (evt->type) {
         case CTRL_GAME_PHASE_LOBBY:
-            handleLobbyEnter(sim);
+            /* Queued, not opened here — the header's WinBolo.net key has to be
+             * read after this tick's session rotation, not before it. The
+             * lobby state calls logWriteTick() directly (server_sim.c's
+             * serverStateLobby arm) rather than going through
+             * serverSimLogTick's logIsRecording() early return, so the drain
+             * still fires on the very next tick with no log open. */
+            s_lobbyEnterPending = TRUE;
             break;
         case CTRL_GAME_PHASE_RUNNING:
             /* The recording branch emits the round's marker, the alliance
@@ -556,6 +585,7 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     s_completedPath[0] = '\0';
     s_lastRoundFile[0] = '\0';
     s_roundRan = FALSE;
+    s_lobbyEnterPending = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;
     s_serveMode = ROUND_LOG_SERVE_AUTO;

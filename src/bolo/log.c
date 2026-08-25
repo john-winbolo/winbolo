@@ -243,17 +243,24 @@ void logWriteEmpty() {
 void logWriteTick() {
   BYTE savedKey = logOldKey;
 
-  /* First call pins the owner thread. logStart runs from main() at
-   * startup (sync-replay of CTRL_GAME_PHASE_LOBBY inside
-   * serverDedicatedLogInstall), but every tick afterwards runs from the
-   * SDL timer thread — capturing the owner at logStart would pin the
-   * wrong thread and drop every subsequent logAddEvent. logWriteTick is
-   * only ever called from the timer thread (serverSimLogTick /
-   * simRunHalfStep), so capturing here pins the correct one. The
-   * startup-thread window between logStart and the first logWriteTick
-   * has no concurrent writers (worker pool isn't running yet), so the
-   * log_LobbyEnter / log_PlayerJoined writes during sync-replay pass
-   * through with logOwnerThread still 0. */
+  /* First call pins the owner thread; logStart clears the pin so the next
+   * logWriteTick re-pins it per log. logWriteTick is only ever called from
+   * the SDL timer thread (serverSimLogTick / simRunHalfStep), so capturing
+   * here pins the thread that does the writing — capturing at logStart
+   * would pin whichever thread happened to open the log and drop every
+   * subsequent logAddEvent.
+   *
+   * The lobby log opens from the pre-tick hook below
+   * (serverDedicatedLogDrain -> handleLobbyEnter), i.e. from inside this
+   * call: logStart clears the pin, so the log_LobbyEnter /
+   * log_PlayerJoined writes that follow run with logOwnerThread back at 0
+   * for the remainder of this tick, on the very timer thread that pinned
+   * it a moment earlier and will re-pin it next tick. The no-lobby path is
+   * the one that still opens its log off the timer thread — logStart from
+   * main() during the sync-replay of CTRL_GAME_PHASE_RUNNING inside
+   * serverDedicatedLogInstall — but that call only writes the header, and
+   * the worker pool isn't running yet, so that window has no concurrent
+   * writers either. */
   if (logOwnerThread == 0) {
     logOwnerThread = SDL_GetCurrentThreadID();
   }
