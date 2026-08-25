@@ -912,6 +912,11 @@ extern char           gameFrontHostingUploadDir[FILENAME_MAX];
 extern bool           gameFrontHostingLogging;         /* default Yes   */
 extern char           gameFrontHostingLogDir[FILENAME_MAX];
                               /* Round-log dir; default <prefs path> */
+extern bool           gameFrontHostingServeReplays;    /* default Yes   */
+                              /* Hand a finished round's log to players who
+                               * ask for it. Yes leaves the serve policy at
+                               * ROUND_LOG_SERVE_AUTO, which serves unless
+                               * WinBolo.net is running; No forces it off. */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
@@ -922,5 +927,6 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
+void gameFrontSetHostingServeReplays(bool serve);
 
 #endif

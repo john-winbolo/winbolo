@@ -225,6 +225,7 @@ bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+bool           gameFrontHostingServeReplays   = TRUE;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -2000,6 +2001,11 @@ void gameFrontSetHostingLogDir(const char *dir) {
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
 }
 
+void gameFrontSetHostingServeReplays(bool serve) {
+  gameFrontHostingServeReplays = serve;
+  prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2670,6 +2676,14 @@ bool gameFrontSetupServer(void) {
     serverSimSetWantLogging(spServerSim, true);
     serverSimSetUserLogFileName(spServerSim, gameFrontHostingLogDir);
     serverDedicatedLogInstall(spServerSim, s_isLanOnly);
+    /* Whether a joined player can pull the finished round's log back for
+     * the recap. The install above resets the mode, so this runs after it.
+     * The host's Yes means AUTO, not ON: AUTO still declines to serve while
+     * WinBolo.net is running, because a WBN round's log is uploaded there
+     * instead. No is the hard off the host asked for. */
+    if (!gameFrontHostingServeReplays) {
+      serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_OFF);
+    }
   }
   return TRUE;
 }
@@ -2789,6 +2803,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
                    FILENAME_MAX);
   }
+  prefsGetString("HOSTING", "Serve Replays", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingServeReplays = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -3189,6 +3205,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+  prefsSetString("HOSTING", "Serve Replays",
+                            TRUEFALSE_TO_STR(gameFrontHostingServeReplays));
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

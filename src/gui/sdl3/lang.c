@@ -1794,6 +1794,7 @@ static const LangEntry langTable[] = {
     {1917, "Enable Logging"},
     {1919, "Log Directory"},
     {1920, "Applies to the next hosted / New Internet game."},
+    {1937, "Send Replays to Players"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
     {1866, "[Spectator] {string1}"},
