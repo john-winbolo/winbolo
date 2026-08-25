@@ -7708,6 +7708,10 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
             imguiWinbolonetDrawSection(true);
         } else {
             float cw = ImGui::GetContentRegionAvail().x;
+            /* "-" is a comment with no rating, so the combo needs to say what
+             * it sets — on its own it reads as an unexplained number picker. */
+            ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_COL_RATING));
+            ImGui::SameLine();
             ImGui::SetNextItemWidth(80 * s);
             ImGui::Combo("##recapRating", &s_recapCommentRating,
                          "-\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
