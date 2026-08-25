@@ -1601,10 +1601,67 @@ M.TRAIL_DROP_MIN_SPEED          = 4     -- tank must be moving at this speed
 
 -- Defend pill response
 M.PILL_ATTACK_COOLDOWN       = 200   -- ticks before clearing under_attack flag (~4 sec)
-M.DEFEND_PILL_MIN_DAMAGE     = 3     -- minimum HP lost before triggering defense
-M.DEFEND_PILL_BASE_COST      = 30    -- base cost for defend goal
-M.DEFEND_PILL_URGENCY_WEIGHT = 5     -- cost reduction per damage point above threshold
-M.DEFEND_PILL_MAX_TRAVEL     = 150   -- don't defend pills too far away (would arrive too late)
+M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense trip; distance
+                                     -- adds on top, threat multipliers scale the sum DOWN
+
+-- Defend formula (eval_defend_pill): cost = (base+travel) * threat_mult
+-- * lateness (quiet pills bid nothing at all). Threat evidence only ever
+-- LOWERS the cost (multiplier < 1, strongest live tier wins); lateness
+-- only ever RAISES it. Multiplicative on a ~250 base so common threatened
+-- cases land naturally around 100-300 instead of clipping the MIN floor —
+-- severity and distance stay ordered. Hand-tunable; expect these to move
+-- after Heat Lab runs.
+M.DEFEND_ENEMY_NEAR_RADIUS   = 10    -- hostile tank within this of a team pill -> sighting stamp
+M.DEFEND_LGM_NEAR_RADIUS     = 6     -- setup-tell stamp radius: hostile LGM seen within this of a
+                                     -- team pill, a wall/halfwall APPEARING (non-friendly builder;
+                                     -- threat.lua terrain diff), or a hostile pill freshly planted
+                                     -- (world.lua) — all stamp _lgm_near_tick
+M.DEFEND_DMG_FRESH_TICKS     = 400   -- last_hit_tick age for "active siege" (~8 s)
+M.DEFEND_SIGHT_FRESH_TICKS   = 600   -- sighting/setup stamp age still counted (~12 s), linear decay
+M.DEFEND_SETUP_MULT          = 0.25  -- LGM building/planting nearby: the MOST savable moment
+                                     -- (nothing lost yet, build interruptible) -> strongest tier
+M.DEFEND_SIEGE_MULT          = 0.30  -- fresh damage on a FULL-health pill; scales toward 1 as hp
+                                     -- drops (almost-dead = mostly lost = weak pull; recovery is
+                                     -- capture/rebuild territory)
+M.DEFEND_SIGHT_MULT          = 0.50  -- hostile tank seen near the pill (prevention tier)
+M.DEFEND_COVERAGE_MULT       = 0.95  -- per covering friendly pill (heat-up potential); threat-gated
+-- Quiet pills (no threat evidence) place NO bid at all: explore is the
+-- fallback that fires only when nothing bids, so any finite quiet cost
+-- would glue idle bots to garrison duty. Rows stay listed for visibility.
+M.DEFEND_ASSUMED_TICKS_PER_HP = 80   -- assumed siege damage rate: 15 HP ~ 60 s (TTL = hp x this)
+M.DEFEND_ETA_PER_COST        = 6     -- rough ticks of travel per dij cost unit (ETA estimate)
+M.DEFEND_FUTILITY_MAX        = 3.0   -- cap on the late-arrival cost multiplier during a siege
+M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the multipliers above.
+                                     -- Sits ABOVE attack_tank engage (~11) and mid-take
+                                     -- attack_pill locks (10-50), so on arrival the fight
+                                     -- takes over from the drive; below explore (500) and
+                                     -- most fresh attacks, so defense still wins the pool.
+
+-- Arrival handoff: within this Euclidean tile radius of the pill, the
+-- "travel closer" phase is COMPLETE — the travel formula stops bidding
+-- entirely (it must not beat real close-range goals like attack_tank or
+-- repair_pill) and the pill's bid becomes the heat-up action alone.
+M.DEFEND_ARRIVE_RADIUS       = 10
+M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill to anger it".
+                                     -- Loses to attack_tank (~11) and close repair (<100);
+                                     -- beats explore (500) when nothing else is pressing.
+M.HEAT_PILL_SHOTS            = 3     -- shells per heat sequence
+M.HEAT_PILL_MIN_HP           = 6     -- don't shave a pill that can't spare the HP
+M.HEAT_PILL_MAX_ANGER        = 0.4   -- already hot -> more shells add nothing (3 hits saturate)
+M.HEAT_SELF_STAMP_TICKS      = 150   -- world.lua skips the under_attack stamp this long after our
+                                     -- own heat shot / an all-friendly shell watch stamp (covers
+                                     -- shell flight) — tickling must not read as an enemy siege
+M.HEAT_ALLY_SHELL_RADIUS     = 2     -- perception's shell watch: shells within this of a team pill
+                                     -- count as "about to hit it"; ALL friendly-labeled -> ally
+                                     -- heating (suppress alarm), ANY hostile/neutral -> real attack
+M.HEAT_SEQUENCE_TICKS        = 150   -- estimated heat volley length: aim + 3 reload cycles + flight
+M.HEAT_REPAIR_OVERLAP_MARGIN = 100   -- safety margin on the timed ally-repair overlap check: block
+                                     -- heating only when their repair ETA lands within
+                                     -- HEAT_SEQUENCE_TICKS + this of now
+M.REPAIR_HOLD_ENEMY_NEAR_TICKS = 400 -- hold the repair LGM dispatch while a hostile tank was seen
+                                     -- near the pill this recently (~8 s) — don't walk the little
+                                     -- guy into a live fight; the pool's contested x3 already
+                                     -- de-prioritizes the trip itself
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase

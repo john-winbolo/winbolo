@@ -125,6 +125,12 @@ local PP_STATIONARY_SUBS = {
 local TANK_COMBAT_STATIONARY_SUBS = {
   engage=true, close=true, disengage=true,
 }
+-- Defend heat (ARRIVED-phase win): parked in firing range, deliberately
+-- putting HEAT_PILL_SHOTS shells into our own pill to anger it. Aiming /
+-- firing / the post-sequence hold are all intentional stillness.
+local DEFEND_HEAT_STATIONARY_SUBS = {
+  heat_pill_aim=true, heat_pill_shoot=true, heat_done=true,
+}
 -- Substates during which a goal-change should preserve standoff/wall
 -- state (so a re-target doesn't drop in-progress geometry).
 local ACTIVE_SUBS = {
@@ -2474,6 +2480,8 @@ function Brain.think(info)
     -- Reposition: parked next to our own pill, deliberately shooting it down.
     or (state.goal.kind == "capture_pill" and state.goal.reposition
         and state.goal.substate == "reposition_shoot")
+    -- Defend heat: parked in range, deliberately tickling our own pill.
+    or (state.goal.kind == "defend_pill" and DEFEND_HEAT_STATIONARY_SUBS[state.goal.substate or ""])
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
@@ -2514,7 +2522,16 @@ function Brain.think(info)
      and not state.wall_clearing
      and not fired_this_tick then
     state.stuck_for = state.stuck_for + 1
-    if state.stuck_for > 150 then  -- ~3 s
+    -- In water the tank turns at 0.25 brad/tick (a 90-deg turn alone is
+    -- ~256 ticks) and drives 3-4 WU/tick, so the 150-tick same-tile test
+    -- misfires on a tank that's legitimately turning toward its escape
+    -- target — each misfire rotates the escape destination and restarts
+    -- the slow turn, thrashing forever. Give water 450 ticks: a 90-deg
+    -- turn plus 2-3 river tiles of driving fits inside it.
+    local cur_tt = U.ttype(cur_mx, cur_my)
+    local stuck_limit = (cur_tt == C.T_RIVER or cur_tt == C.T_DEEPSEA)
+                        and 450 or 150
+    if state.stuck_for > stuck_limit then
       if state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Couldn't reach the attack position: flee away from the pill.
         -- Radial projection can land on water/building — walk the ray back
@@ -2678,7 +2695,10 @@ function Brain.think(info)
 
     -- Only override goal with escape_water if A* isn't actively routing us through
     if not pf_routing then
-      local dry_x, dry_y = PF.find_dry_land(cur_mx, cur_my)
+      -- state/now let find_dry_land skip destinations the stuck handler
+      -- blocked, so a wall-pinned escape target rotates instead of being
+      -- re-picked every tick forever (5-8 min idles on river-maze maps).
+      local dry_x, dry_y = PF.find_dry_land(cur_mx, cur_my, state, now)
       if dry_x then
         if state.goal.kind ~= "escape_water"
            or state.goal.mx ~= dry_x or state.goal.my ~= dry_y then
@@ -3007,10 +3027,12 @@ function Brain.think(info)
       local p = W.pill_at(world, gmx, gmy)
       if not p or p.owner == "friendly" or p.health == 0 then goal_valid = false end
     elseif gk == "defend_pill" then
+      -- Only definitional invalidation: pill gone, no longer the team's
+      -- (own or allied), or dead. Attack state plays no part — the pool
+      -- scores every built team pill and replans re-compete naturally.
       local p = W.pill_at(world, gmx, gmy)
-      if not p or p.owner ~= "friendly" or p.health == 0 then goal_valid = false end
-      -- Also invalidate if attack has stopped
-      if p and not p.under_attack then goal_valid = false end
+      if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
+         or p.health == 0 then goal_valid = false end
     elseif gk == "repair_pill" then
       local p = W.pill_at(world, gmx, gmy)
       -- Abort if our LGM is dead — no one to do the repair (the eval already
@@ -4861,6 +4883,21 @@ function Brain.think(info)
   -- decide whether to pace the tank while the LGM is moving.
   if build_cmd and info.man_status == C.LGM_INTANK then
     state.builder.last_action = build_cmd.action
+    -- LGM-dispatch record for the lgmd advert (/info extra): destination
+    -- + terrain-based ETA, broadcast so allies can predict repair/build
+    -- overlap (heat gate, dedup) without per-shell chatter. The repair
+    -- branch stashes its precise walk-sim ETA; other dispatches estimate
+    -- from tile distance x walk rate.
+    if build_cmd.x and build_cmd.y then
+      local dtx = bit.rshift(info.tankx, 8)
+      local dty = bit.rshift(info.tanky, 8)
+      local eta = state._repair_dispatch_eta
+        or (U.mdist(dtx, dty, build_cmd.x, build_cmd.y)
+            * (C.REPAIR_DEAD_GRASS_TICKS_PER_TILE or 16))
+      state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
+                              eta_tick = now + eta, tick = now }
+      state._repair_dispatch_eta = nil
+    end
   end
 
   local t_pbh_start = t_build1
@@ -5057,6 +5094,13 @@ function Brain.think(info)
 
 
   -- Label all pills and bases with their IDs (centered on tile)
+
+  -- Defend-pill tier overlay: ring + "tier cost" label per team pill from
+  -- the last replan's defend breakdown (state.defend_breakdown rows carry
+  -- the tier that priced each pill), plus the Euclidean
+  -- DEFEND_ARRIVE_RADIUS circle on the ACTIVE defend goal's pill — the
+  -- exact boundary where eval_defend_pill hands the travel phase to the
+  -- heat gate. Colors mirror the tier ladder.
 
   -- Debugger: end trace capture
   if dbg.is_tracing() then
@@ -5711,6 +5755,26 @@ function Brain.think(info)
                             bit.band(state.goal.approach_my, 0xFF),
                             bit.band(state.goal.standoff_mx, 0xFF),
                             bit.band(state.goal.standoff_my, 0xFF))
+    end
+    -- LGM dispatch advert: dest x, dest y (2 hex chars each) + remaining
+    -- ETA ticks (4 hex chars) while our LGM is OUT on a dispatch; "-"
+    -- once it's back. Explicit "-" (not absence) because /info extra is
+    -- MERGED into receiver slots — a dropped key would linger stale.
+    -- Consumers: allied heat gates (don't shell a pill an ally's LGM is
+    -- walking to), future repair dedup.
+    if state._lgm_dispatch and info.man_status ~= C.LGM_INTANK then
+      local ld = state._lgm_dispatch
+      local left = (ld.eta_tick or now) - now
+      if left < 0 then left = 0 elseif left > 65535 then left = 65535 end
+      bse.lgmd = string.format("%02X%02X%04X",
+                               bit.band(ld.x or 0, 0xFF),
+                               bit.band(ld.y or 0, 0xFF), left)
+    else
+      if state._lgm_dispatch and info.man_status == C.LGM_INTANK
+         and (now - (state._lgm_dispatch.tick or 0)) > 2 then
+        state._lgm_dispatch = nil  -- LGM home again; advert the clear
+      end
+      bse.lgmd = "-"
     end
     -- Goal-selection cost (pool_cache winner matching our current goal).
     -- Drifts every tick as we close on the target, so it rides the extra

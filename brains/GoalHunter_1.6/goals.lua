@@ -945,6 +945,12 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
         if U.mdist(e.mx, e.my, pill.mx, pill.my) < our_d then contested = true; break end
       end
     end
+    -- Also contested on a fresh enemy sighting stamped AT the pill
+    -- (perception's _enemy_near_tick) — mirrors the live pool-5 copy.
+    if not contested and pill._enemy_near_tick
+       and ((state.tick or 0) - pill._enemy_near_tick) < (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
+      contested = true
+    end
     if contested then adj_cost = adj_cost * (C.REPAIR_CONTESTED_MULT or 3.0) end
   end
   -- Pool-viz: surface friendly damaged pills we DIDN'T repair because they're a
@@ -2970,60 +2976,399 @@ local function travel_cost_to_pill(pmx, pmy, boat)
   return best
 end
 
-local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
-  local target = state.perc and state.perc.pill_under_attack
-  if not target then return nil end
+-- defend_pill_score — the defend formula for one built team pill.
+--
+--   cost = max(MIN, (base + travel) * threat_mult * lateness)
+--   quiet pills (no threat evidence) place NO bid at all
+--
+-- Design invariant: threat evidence only ever LOWERS the cost, and
+-- infeasibility only ever RAISES it — degraded information degrades
+-- gracefully instead of flipping behavior. The urgency ladder (tiers
+-- stack; each traces to a live signal):
+--   siege : last_hit_tick fresh (DEFEND_DMG_FRESH_TICKS) — someone is
+--           shelling the pill NOW. Flat SIEGE_URGENCY plus cumulative
+--           attack_damage x DMG_URGENCY (depth of the bite, NOT a
+--           damage-rate estimate — attacks are bursty: line up, volley,
+--           swerve — so no rate math anywhere).
+--   setup : hostile LGM seen within DEFEND_LGM_NEAR_RADIUS recently
+--           (perception stamp _lgm_near_tick) — wall-shield / pill-plant
+--           prep. Fires BEFORE damage exists; interrupting setup is the
+--           cheapest defense, hence a siege-sized discount. Linear decay
+--           over DEFEND_SIGHT_FRESH_TICKS.
+--   sight : hostile tank seen within DEFEND_ENEMY_NEAR_RADIUS recently
+--           (_enemy_near_tick) — prevention tier, same linear decay.
+--   cover : other alive team pills whose fire reaches this pill make the
+--           defense cheaper (arrive into friendly cover; heat-up fodder).
+--           Threat-gated: coverage alone is no reason to drive anywhere.
+--   quiet : no evidence at all -> NO BID. Explore is not a competitor —
+--           it's the fallback that fires only when nothing bids — so any
+--           finite quiet cost would garrison idle bots at their pills.
+--           Quiet rows still list in the panel for visibility.
+-- Feasibility (siege only): assumed constant damage rate — TTL =
+-- hp x DEFEND_ASSUMED_TICKS_PER_HP vs ETA = travel x DEFEND_ETA_PER_COST.
+-- Arriving late scales cost up toward DEFEND_FUTILITY_MAX (never INF —
+-- a late arrival still degrades into rebuild/capture recovery).
+--
+-- ARRIVAL HANDOFF: within DEFEND_ARRIVE_RADIUS (Euclidean tiles) the
+-- travel phase is COMPLETE — the formula above must not keep bidding
+-- ~100 and beat real close-range goals (attack_tank ~11, close repair).
+-- Inside the radius the pill's bid becomes the HEAT action alone: a flat
+-- DEFEND_HEAT_COST when every heat condition holds, or NO bid at all
+-- (cost=huge, chip explains which condition blocked). Heat conditions:
+--   taking_damage — enemy shells are heating it for free, no need
+--   already_hot   — anger >= HEAT_PILL_MAX_ANGER (3 hits saturate)
+--   low_hp        — hp < HEAT_PILL_MIN_HP (each shell costs ~1 HP)
+--   low_shells    — shells < HEAT_PILL_SHOTS + SHELL_RESERVE
+--   no_evidence   — nobody seen/felt near the pill within the sight
+--                   window (recent hostile damage counts as evidence)
+--   lgm_out       — our LGM is walking (possibly repairing this pill);
+--                   never shell over our own man
+--   ally_repair   — a teammate advertises repair_pill on this pill
+-- Returns (cost, bd) — bd carries the per-term breakdown for the panel.
+local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
+  local bd = { travel = travel }
+  local hp  = p.health or 0
+  local dmg = p.attack_damage or 0
 
-  -- Reposition-target guard: the "attacker" is a teammate (or ourselves)
-  -- shooting our own pill down for an approved reposition — don't drive
-  -- over to defend it. Same tile-keyed TTL map filter_repair_pill uses,
-  -- maintained by reposition_vote.update from votes + repos broadcasts.
-  if state._repos_guard then
-    local gu = state._repos_guard[target.my * 256 + target.mx]
-    if gu and (state.tick or 0) < gu then return nil end
+  local hit_age   = (p.last_hit_tick and p.last_hit_tick > 0)
+                    and (now - p.last_hit_tick) or math.huge
+  local sight_age = p._enemy_near_tick and (now - p._enemy_near_tick) or math.huge
+  local setup_age = p._lgm_near_tick and (now - p._lgm_near_tick) or math.huge
+
+  -- ── Arrival handoff ────────────────────────────────────────────────
+  local ddx, ddy = (tmx or 0) - p.mx, (tmy or 0) - p.my
+  if math.sqrt(ddx * ddx + ddy * ddy) <= (C.DEFEND_ARRIVE_RADIUS or 10) then
+    bd.arrived = true
+    local block
+    if hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400) then
+      block = "taking_damage"
+    elseif (p.anger or 0) >= (C.HEAT_PILL_MAX_ANGER or 0.4) then
+      block = "already_hot"
+    elseif hp < (C.HEAT_PILL_MIN_HP or 6) then
+      block = "low_hp"
+    elseif (info.shells or 0) < (C.HEAT_PILL_SHOTS or 3) + (C.SHELL_RESERVE or 0) then
+      block = "low_shells"
+    elseif math.min(hit_age, sight_age, setup_age)
+           >= (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
+      block = "no_evidence"
+    elseif info.man_status ~= C.LGM_INTANK then
+      block = "lgm_out"
+    else
+      -- Ally repair overlap — TIMED: block heating only when the ally's
+      -- repair would actually land inside our shoot window (aim + 3
+      -- reload cycles + shell flight = HEAT_SEQUENCE_TICKS, plus
+      -- HEAT_REPAIR_OVERLAP_MARGIN). An ally whose repair arrives well
+      -- AFTER our volley finishes is no reason to hold fire. Sources:
+      --   * lgmd advert (/info extra): ally LGM DISPATCHED to this tile,
+      --     hex XXYY EEEE — real walk-sim ETA at send time, aged by the
+      --     heartbeat gap. "-" = no dispatch.
+      --   * goal advert: ally repair_pill CLAIM on this tile; arrival
+      --     estimated from their broadcast pool cost (cost x
+      --     DEFEND_ETA_PER_COST). No cost seen yet -> assume imminent.
+      local our_window = (C.HEAT_SEQUENCE_TICKS or 150)
+                         + (C.HEAT_REPAIR_OVERLAP_MARGIN or 100)
+      for ally_pn, slot in ally_state.iter_active(now, 1750) do
+        if ally_pn ~= info.player_number then
+          local h = slot.info
+          local their_eta, src = nil, nil
+          local ld = h and h.lgmd
+          if ld and ld ~= "-" and #ld >= 8 then
+            local lx = tonumber(string.sub(ld, 1, 2), 16)
+            local ly = tonumber(string.sub(ld, 3, 4), 16)
+            if lx == p.mx and ly == p.my then
+              local eta = tonumber(string.sub(ld, 5, 8), 16) or 0
+              local age = now - (slot.last_tick or now)
+              their_eta = eta - age
+              if their_eta < 0 then their_eta = 0 end
+              src = "lgmd"
+            end
+          end
+          if their_eta == nil and h and h.goal == "repair_pill"
+             and tonumber(h.mx) == p.mx and tonumber(h.my) == p.my then
+            local hc = tonumber(h.cost)
+            their_eta = hc and (hc * (C.DEFEND_ETA_PER_COST or 6)) or 0
+            src = hc and "goal_cost" or "goal_nocost"
+          end
+          if their_eta ~= nil then
+            if their_eta < our_window then
+              block = "ally_repair"
+              print2(string.format(
+                "HEAT_GATE t=%d pill@(%d,%d) BLOCK ally_repair: p%d %s eta=%dt < window=%dt",
+                now, p.mx, p.my, ally_pn, src, their_eta, our_window))
+              break
+            else
+              print2(string.format(
+                "HEAT_GATE t=%d pill@(%d,%d) ally p%d repair intent (%s eta=%dt) OUTSIDE window=%dt -> heat still allowed",
+                now, p.mx, p.my, ally_pn, src, their_eta, our_window))
+            end
+          end
+        end
+      end
+    end
+    if block then
+      bd.heat_block = block
+      bd.cost = math.huge
+      print2(string.format(
+        "HEAT_GATE t=%d pill@(%d,%d) NO-BID (%s) hp=%d anger=%.2f shells=%d hit_age=%s sight_age=%s setup_age=%s",
+        now, p.mx, p.my, block, hp, p.anger or 0, info.shells or 0,
+        hit_age < math.huge and tostring(hit_age) or "-",
+        sight_age < math.huge and tostring(sight_age) or "-",
+        setup_age < math.huge and tostring(setup_age) or "-"))
+      return math.huge, bd
+    end
+    bd.heat = true
+    bd.cost = C.DEFEND_HEAT_COST or 200
+    print2(string.format(
+      "HEAT_GATE t=%d pill@(%d,%d) HEAT BID %.0f hp=%d anger=%.2f shells=%d evidence(hit=%s sight=%s setup=%s)",
+      now, p.mx, p.my, bd.cost, hp, p.anger or 0, info.shells or 0,
+      hit_age < math.huge and tostring(hit_age) or "-",
+      sight_age < math.huge and tostring(sight_age) or "-",
+      setup_age < math.huge and tostring(setup_age) or "-"))
+    return bd.cost, bd
   end
 
-  -- Don't defend if we're critically low on health ourselves
-  if info.armour < C.ARMOUR_CRITICAL then return nil end
+  local siege       = hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400)
+  local sight_fresh = C.DEFEND_SIGHT_FRESH_TICKS or 600
+  local sight_f     = (sight_age < sight_fresh) and (1 - sight_age / sight_fresh) or 0
+  local setup_f     = (setup_age < sight_fresh) and (1 - setup_age / sight_fresh) or 0
 
-  -- Only respond to sustained attacks (>= threshold damage)
-  if target.damage < C.DEFEND_PILL_MIN_DAMAGE then return nil end
+  -- Threat tiers as MULTIPLIERS on (base + travel); the strongest live
+  -- tier wins (min). Multiplicative keeps bids proportional — severity
+  -- and distance stay ordered instead of everything slamming into the
+  -- MIN_COST floor — and with base ~250 the common threatened cases land
+  -- naturally around 100-300.
+  local mult = 1.0
+  if siege then
+    -- Savability-scaled: a healthy pill under fresh attack pulls hardest
+    -- (SIEGE_MULT_MIN); an almost-dead one is mostly lost (recovery is
+    -- capture/rebuild territory) so its multiplier decays toward 1.
+    -- Damage depth thus works AGAINST the bid — weaker pull here,
+    -- shorter TTL below.
+    bd.siege_m = 1 - (1 - (C.DEFEND_SIEGE_MULT or 0.30))
+                     * (hp / (C.PILLS_MAX_HEALTH or 15))
+    if bd.siege_m < mult then mult = bd.siege_m; bd.tier = "siege" end
+  end
+  if setup_f > 0 then
+    -- Wall/pill-plant tell: the MOST savable moment (nothing lost yet,
+    -- build interruptible) -> strongest tier. Decays toward 1 with age.
+    local m = C.DEFEND_SETUP_MULT or 0.25
+    bd.setup_m = m + (1 - m) * (1 - setup_f)
+    if bd.setup_m < mult then mult = bd.setup_m; bd.tier = "setup" end
+  end
+  if sight_f > 0 then
+    local m = C.DEFEND_SIGHT_MULT or 0.50
+    bd.sight_m = m + (1 - m) * (1 - sight_f)
+    if bd.sight_m < mult then mult = bd.sight_m; bd.tier = "sight" end
+  end
 
-  -- Don't defend if already attacking near this pill
-  local gk = state.goal and state.goal.kind or "none"
-  if gk == "attack_pill" or gk == "attack_tank" or gk == "pill_place" then
-    if state.goal.mx and U.mdist(state.goal.mx, state.goal.my, target.mx, target.my) <= 5 then
-      return nil
+  -- Quiet (no fresh threat evidence):
+  --   damaged -> WORN bid: an attack happened here at some point, and a
+  --     wounded pill is worth more than wandering. Plain base+travel (no
+  --     threat discount, no lateness) — beats nothing-better, loses to
+  --     every real discounted goal; repair (when LGM+trees allow)
+  --     usually underbids it and does the actual fixing.
+  --   healthy -> NO bid. Explore is not a pool competitor — it's the
+  --     fallback that fires only when nothing bids — so any finite
+  --     quiet cost would glue idle bots to garrison duty. Rows stay
+  --     listed in the panel for visibility.
+  if mult >= 1.0 then
+    bd.mult = 1.0
+    if hp < (C.PILLS_MAX_HEALTH or 15) then
+      bd.worn = true
+      bd.feas = 1.0
+      local cost = (C.DEFEND_PILL_BASE_COST or 250) + travel
+      bd.cost = cost
+      return cost, bd
+    end
+    bd.quiet = true
+    bd.cost = math.huge
+    return math.huge, bd
+  end
+
+  if mult < 1.0 then
+    -- Coverage, only while some threat tier is live: each other alive
+    -- team pill whose fire reaches this one shaves a little more off.
+    local cover = 0
+    for _, q in pairs(world.pills) do
+      if q ~= p and q.owner == "friendly" and (q.health or 0) > 0
+         and not (q.in_tank or q.carrier or q._synth_carry)
+         and U.mdist(q.mx, q.my, p.mx, p.my) <= (C.PILL_FIRE_RANGE or 8) then
+        cover = cover + 1
+      end
+    end
+    if cover > 0 then
+      bd.cover_n = cover
+      bd.cover_m = (C.DEFEND_COVERAGE_MULT or 0.95) ^ cover
+      mult = mult * bd.cover_m
+    end
+  end
+  bd.mult = mult
+
+  local feas = 1.0
+  if siege and travel < math.huge then
+    bd.ttl = hp * (C.DEFEND_ASSUMED_TICKS_PER_HP or 80)
+    bd.eta = travel * (C.DEFEND_ETA_PER_COST or 6)
+    if bd.ttl > 0 and bd.eta > bd.ttl then
+      feas = math.min(bd.eta / bd.ttl, C.DEFEND_FUTILITY_MAX or 3.0)
+    end
+  end
+  bd.feas = feas
+
+  local cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas
+  local floor_c = C.DEFEND_MIN_COST or 100
+  if cost < floor_c then cost = floor_c end
+  bd.cost = cost
+  return cost, bd
+end
+
+-- eval_defend_pill — internal scoring pool over ALL BUILT team pills
+-- (own "friendly" pills AND teammates' "allied" pills).
+-- The legacy implementation (single perc.pill_under_attack target, silent
+-- whole-pool nil gates — armour/busy/repos/min-damage/max-travel/under-
+-- attack — and the travel+base-urgency formula) is fully gutted. Every
+-- deployed friendly pill gets a row with the raw ingredients (dij travel,
+-- hp, attack damage, last-hit age, repair readiness); carried pills
+-- (in_tank) aren't on the map and get no row. The only reject left is
+-- "dead" (hp=0 — nothing to defend). Attack state gates NOTHING — it
+-- feeds defend_pill_score above.
+--
+-- Unreachable pills score math.huge and lose naturally (no travel gate).
+-- Cheapest pill is the pool's winner (pc[2]); if it wins the WINNERS
+-- competition it becomes the main goal and the tank travels to the pill.
+--
+-- Rows persist in state.defend_breakdown even on replans where NOTHING is
+-- defendable, so the panel never goes blank. Runs at finalize cadence;
+-- travel is O(1) dij-slate lookups per pill (travel_cost_to_pill).
+local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
+  local now = state.tick or 0
+  local rows = BRAIN_POOL_VIZ and {} or nil
+
+  -- Repair-readiness (row detail only): could we patch the pill up on
+  -- arrival? Actual dispatch stays repair_pill/builder territory.
+  local repair_ready = (info.man_status == C.LGM_INTANK) and (info.trees or 0) > 0
+
+  local best, best_id, best_cost, best_travel, best_dmg =
+        nil, nil, math.huge, 0, 0
+  local best_bd = nil
+  -- BUILT team pills only (own "friendly" + teammates' "allied"): a pill
+  -- riding in a tank isn't on the map and can't be defended — no row.
+  for id, p in pairs(world.pills) do
+    if (p.owner == "friendly" or p.owner == "allied")
+       and not (p.in_tank or p.carrier or p._synth_carry) then
+      local dmg = p.attack_damage or 0
+      local hp  = p.health or 0
+      local reject = (hp == 0) and "dead" or nil
+      -- Score everything on the map (O(1) dij lookups) — dead rows too, so
+      -- their would-be cost shows in the panel. An unreachable pill scores
+      -- math.huge and simply never wins; no gate needed. Attack state does
+      -- NOT gate anything — it feeds defend_pill_score.
+      local travel = travel_cost_to_pill(p.mx, p.my, boat)
+      local cost, bd
+      if not reject then
+        cost, bd = defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
+        if cost < best_cost then
+          best, best_id, best_cost, best_travel, best_dmg = p, id, cost, travel, dmg
+          best_bd = bd
+        end
+      end
+      if rows then
+        local hit_age   = (p.last_hit_tick and p.last_hit_tick > 0) and (now - p.last_hit_tick) or -1
+        local sight_age = p._enemy_near_tick and (now - p._enemy_near_tick) or -1
+        local setup_age = p._lgm_near_tick and (now - p._lgm_near_tick) or -1
+        local detail = string.format(
+          "hp=%d/%d dmg=%d%s%s%s; repair-ready=%s (lgm=%s trees=%d)",
+          hp, C.PILLS_MAX_HEALTH, dmg,
+          hit_age >= 0 and string.format(" last_hit=%dt", hit_age) or "",
+          sight_age >= 0 and string.format(" enemy_seen=%dt", sight_age) or "",
+          setup_age >= 0 and string.format(" setup_seen=%dt", setup_age) or "",
+          tostring(repair_ready),
+          (info.man_status == C.LGM_INTANK) and "in_tank" or "out", info.trees or 0)
+        local formula
+        if not reject then
+          if bd and bd.arrived then
+            if bd.heat then
+              formula = string.format(
+                "ARRIVED heat{%.0f}||within %d tiles: travel phase done; bidding the heat-up action only (%d shells to anger the pill); %s",
+                cost, C.DEFEND_ARRIVE_RADIUS or 10, C.HEAT_PILL_SHOTS or 3, detail)
+            else
+              formula = string.format(
+                "ARRIVED no-bid (%s)||within %d tiles: travel phase done; heat blocked by %s -> defend yields to attack_tank / repair_pill / whatever else bids; %s",
+                bd.heat_block, C.DEFEND_ARRIVE_RADIUS or 10, bd.heat_block, detail)
+            end
+          elseif bd and bd.quiet then
+            formula = string.format(
+              "QUIET no-bid||no threat evidence (no fresh damage / sighting / setup tell): defend leaves the pool alone so idle bots explore instead of garrisoning; %s",
+              detail)
+          elseif cost >= 1e29 or travel >= math.huge then
+            formula = string.format("base{%.0f}+dij{unreachable} = INF||%s",
+              C.DEFEND_PILL_BASE_COST, detail)
+          else
+            -- Threat-tier chips, only the live ones (strongest wins).
+            local u = ""
+            if bd.worn then u = " WORN(damaged, quiet: plain base+travel)" end
+            if bd.siege_m then u = u .. string.format(" siege{%.2f}", bd.siege_m) end
+            if bd.setup_m then u = u .. string.format(" setup{%.2f}", bd.setup_m) end
+            if bd.sight_m then u = u .. string.format(" sight{%.2f}", bd.sight_m) end
+            if bd.cover_m then u = u .. string.format(" cover{%.2fx%d}", bd.cover_m, bd.cover_n) end
+            local f = (bd.feas ~= 1.0)
+              and string.format("*late{%.2f eta=%.0f ttl=%.0f}", bd.feas, bd.eta or 0, bd.ttl or 0)
+              or ""
+            formula = string.format(
+              "(base{%.0f}+dij{%.0f})*m{%.2f}%s%s = %.0f||%s",
+              C.DEFEND_PILL_BASE_COST, travel, bd.mult, f, u, cost, detail)
+          end
+        else
+          local why = "hp=0 — rebuild/capture territory, not defend"
+          local wb = ""
+          if travel and travel ~= math.huge then
+            wb = string.format("; would-be base{%.0f}+dij{%.0f}",
+                 C.DEFEND_PILL_BASE_COST, travel)
+          end
+          formula = string.format("REJECT %s||reject:%s%s; %s", reject, why, wb, detail)
+        end
+        rows[#rows + 1] = {
+          id = id, mx = p.mx, my = p.my,
+          -- 1e30 = renderer INF: rejects AND unreachable (dij=math.huge,
+          -- which json.lua would otherwise encode as a real-looking 9999).
+          cost = (reject or cost >= math.huge) and 1e30 or cost,
+          formula = formula,
+          stale = 0,  -- overwritten with rows' age at panel-read time
+          reject = reject,
+          reject_remaining = 0,
+          -- Tier tag for the defend_pill_viz overlay (init.lua draws from
+          -- these rows every tick).
+          tier = reject and "dead"
+                 or (bd.heat and "heat") or (bd.heat_block and "no_heat")
+                 or (bd.quiet and "quiet") or (bd.worn and "worn")
+                 or bd.tier or "quiet",
+        }
+      end
     end
   end
 
-  -- Cheap straight-line pre-gate: Manhattan tile distance is a lower bound
-  -- on the real path cost, so if even that exceeds the travel budget the
-  -- pill is unreachable in time — reject before paying for any cost lookup.
-  if U.mdist(tmx, tmy, target.mx, target.my) > C.DEFEND_PILL_MAX_TRAVEL then
-    return nil
-  end
+  -- Stash rows for the pool grid BEFORE any nil return — the cell lists
+  -- every owned pill regardless of whether the pool produced a winner.
+  state.defend_breakdown = rows and { tick = now, rows = rows } or nil
 
-  -- Dijkstra-slate cost to the cheapest passable neighbour of the pill
-  -- (the pill tile itself is an impassable live pillbox). O(1) lookup
-  -- against the per-tick slate — no A* detour. math.huge if unreachable.
-  local travel = travel_cost_to_pill(target.mx, target.my, boat)
-
-  -- Don't go if it's too far / unreachable (pill will be dead before we arrive)
-  if travel > C.DEFEND_PILL_MAX_TRAVEL then return nil end
-
-  -- Urgency bonus: more damage = lower cost (more urgent)
-  local urgency = math.max(0, target.damage - C.DEFEND_PILL_MIN_DAMAGE) * C.DEFEND_PILL_URGENCY_WEIGHT
-
-  local cost = travel + C.DEFEND_PILL_BASE_COST - urgency
-
+  if not best then return nil end
+  local is_heat = best_bd and best_bd.heat or nil
   return {
-    cost = cost,
-    goal = { kind = "defend_pill", mx = target.mx, my = target.my,
-             wx = U.m2w(target.mx), wy = U.m2w(target.my),
-             pill_id = target.id },
-    desc = BRAIN_POOL_VIZ and string.format("dij{%.0f}+base{%.0f}-urgency{%.0f} dmg=%d",
-           travel, C.DEFEND_PILL_BASE_COST, urgency, target.damage) or "",
+    cost = best_cost,
+    goal = { kind = "defend_pill", mx = best.mx, my = best.my,
+             wx = U.m2w(best.mx), wy = U.m2w(best.my),
+             target_id = best_id,
+             -- Arrival-phase win: the bid is the heat-up action, not a
+             -- drive. Phase-3 heat substates key off this flag.
+             heat = is_heat },
+    desc = BRAIN_POOL_VIZ and (is_heat
+           and string.format("defend#%d@(%d,%d) ARRIVED heat{%.0f}",
+               best_id, best.mx, best.my, best_cost)
+           or string.format(
+               "defend#%d@(%d,%d) (base{%.0f}+dij{%.0f})*m{%.2f}*feas{%.2f} = %.0f dmg=%d",
+               best_id, best.mx, best.my, C.DEFEND_PILL_BASE_COST, best_travel,
+               best_bd and best_bd.mult or 1.0, best_bd and best_bd.feas or 1.0,
+               best_cost, best_dmg)) or "",
+    cands = rows,
   }
 end
 
@@ -5864,6 +6209,41 @@ function M.step_eval_queue(state, world, info)
         raw_cost = _cpill_dist_raw
       end
 
+      -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
+      -- Historically the damage discount lived only in the finalize step
+      -- (applied to the raw-path winner, so the pool picked by DISTANCE,
+      -- not repair merit) and the base-cost + contested x3 terms only in
+      -- the fallback evaluator — two drifting copies. One copy now, here;
+      -- finalize passes best_cost straight through. Dead (0-HP) pills
+      -- keep raw_cost: it is already the full rebuild-in-place model.
+      local _rp_dmg, _rp_contested = 0, false
+      if pool_idx == 5 and (obj.health or 0) > 0 then
+        _rp_dmg = (C.PILLS_MAX_HEALTH or 15) - obj.health
+        c = (C.REPAIR_BASE_COST or 30)
+            + math.max(0, raw_cost - _rp_dmg * (C.REPAIR_DAMAGE_BONUS or 10))
+            + stale_cost
+        -- Contested: an enemy tank closer to the pill than we are, OR a
+        -- fresh enemy sighting stamped at the pill (perception's
+        -- _enemy_near_tick — the same evidence defend runs on, and via
+        -- team pill view it works at any range). A contested repair sends
+        -- the LGM into likely fire: price it x3, don't ban it.
+        local _ets5 = state.perc and state.perc.enemy_tanks
+        if _ets5 then
+          local _our_d5 = U.mdist(tmx, tmy, obj.mx, obj.my)
+          for _, _e5 in ipairs(_ets5) do
+            if U.mdist(_e5.mx, _e5.my, obj.mx, obj.my) < _our_d5 then
+              _rp_contested = true
+              break
+            end
+          end
+        end
+        if not _rp_contested and obj._enemy_near_tick
+           and (now - obj._enemy_near_tick) < (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
+          _rp_contested = true
+        end
+        if _rp_contested then c = c * (C.REPAIR_CONTESTED_MULT or 3.0) end
+      end
+
       -- Ally-claimed handling for generic pools (2,3,4,5,6,7,8).
       --
       -- Pools 9 (attack_tank) and 13 (kill_lgm) are EXEMPT — time-
@@ -5993,6 +6373,10 @@ function M.step_eval_queue(state, world, info)
         entry._lgm_mult=_cpill_lgm_mult
         entry._dist_method=_cpill_dist_method
         entry._free=_cpill_free_disc
+      elseif pool_idx == 5 then
+        entry._stale=stale_cost; entry._age=_gen_age
+        entry._dmg=_rp_dmg
+        entry._contested=_rp_contested or nil
       else
         entry._stale=stale_cost; entry._age=_gen_age
       end
@@ -7182,30 +7566,35 @@ function M.finalize_pools(state, world, info)
     pc[4] = nil
   end
 
-  -- Pool 5: repair_pill
+  -- Pool 5: repair_pill. best_cost is ALREADY the unified per-candidate
+  -- repair score (base + max(0, path - dmg x bonus), contested x3; dead
+  -- pills carry the rebuild-in-place model) computed in step_eval_queue —
+  -- the pool now picks its winner by repair MERIT, not raw distance, and
+  -- there is exactly one copy of the formula. Pass it straight through.
   local pr5 = partial[5]
   if pr5 and pr5.best_obj then
     local pill = pr5.best_obj
     local pid = pr5.best_id
     local pcost = pr5.best_cost
-    local damage = C.PILLS_MAX_HEALTH - pill.health
-    -- Dead (0-HP) pills: pcost is ALREADY the full rebuild-in-place cost from
-    -- compute_repair_dead_cost — no damage discount (that's the alive model).
-    local adj_cost
-    if pill.health == 0 and C.REPAIR_FIX_ENABLED then
-      adj_cost = pcost
-    else
-      adj_cost = math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    local desc5 = ""
+    if BRAIN_POOL_VIZ then
+      if pill.health == 0 then
+        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)",
+                              pid, pill.mx, pill.my, pcost)
+      else
+        local ce5 = state.cost_cache and state.cost_cache["5:" .. pid]
+        desc5 = string.format("repair_pill#%d@(%d,%d) cost=%.0f (base+path-dam=%d×%d)%s",
+                pid, pill.mx, pill.my, pcost,
+                ce5 and ce5._dmg or (C.PILLS_MAX_HEALTH - pill.health),
+                C.REPAIR_DAMAGE_BONUS,
+                (ce5 and ce5._contested) and " ×3 CONTESTED" or "")
+      end
     end
     pc[5] = {
-      cost = adj_cost,
+      cost = pcost,
       goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
                wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid },
-      desc = BRAIN_POOL_VIZ and (pill.health == 0
-        and string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)",
-              pid, pill.mx, pill.my, adj_cost)
-        or string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
-              pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS)) or "",
+      desc = desc5,
       cands = pr5.candidates,
     }
   else
@@ -9739,6 +10128,7 @@ function M.get_queue_status(state)
       formula = entry.desc or "", flags = "",
     }
   end
+  append_finalize(2)  -- defend_pill
   append_finalize(8)  -- place_strategic
   append_finalize(9)  -- attack_tank
 
@@ -10117,6 +10507,20 @@ function M.get_pool_breakdown_json(state)
       reject = reason,
       reject_remaining = 0,
     }}
+  end
+
+  -- Inject defend_pill (pool 2) rows. eval_defend_pill is a finalize pool —
+  -- it never enqueues eval_queue items — and scores ALL owned pills itself,
+  -- leaving the full candidate list in state.defend_breakdown every replan
+  -- (including replans where nothing is defendable), so the cell always
+  -- lists every owned pill with its score or reject reason.
+  do
+    local db = state.defend_breakdown
+    if db and db.rows and #db.rows > 0 then
+      local age = now - (db.tick or now)
+      for _, r in ipairs(db.rows) do r.stale = age end
+      by_pool[2] = db.rows
+    end
   end
 
   -- Build a normal pool section. Used for indexes 1..9 and the

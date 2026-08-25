@@ -582,6 +582,96 @@ function M.update(state, world, info)
   perc.enemy_lgms = enemy_lgms
   kill_lgm.purge_stale(state, now, enemy_lgms)
 
+  -- ----- Defend-signal stamps: enemy presence near team pills -----
+  -- Stamped onto the pill records (world.pills) so goal evaluators read
+  -- them as plain tick comparisons:
+  --   _enemy_near_tick — hostile TANK seen within DEFEND_ENEMY_NEAR_RADIUS
+  --   _lgm_near_tick   — hostile LGM  seen within DEFEND_LGM_NEAR_RADIUS
+  --                      (attack setup: wall-shield building / pill plant)
+  -- Deployed team pills only (a carried pill has no meaningful tile;
+  -- deployed allied pills classify "friendly"). With team pill view these
+  -- sightings arrive even when the pill is far from every teammate's tank.
+  -- Chebyshev radius; cost is |enemies| x |pills| with early rejects.
+  do
+    local et = enemy_tanks
+    local tank_r = C.DEFEND_ENEMY_NEAR_RADIUS or 10
+    local lgm_r  = C.DEFEND_LGM_NEAR_RADIUS or 6
+    if (et and #et > 0) or n_lgm > 0 then
+      for _, p in pairs(world.pills) do
+        if p.owner == "friendly"
+           and not (p.in_tank or p.carrier or p._synth_carry) then
+          if et then
+            for i = 1, #et do
+              local e = et[i]
+              if math.abs(e.mx - p.mx) <= tank_r
+                 and math.abs(e.my - p.my) <= tank_r then
+                p._enemy_near_tick = now
+                break
+              end
+            end
+          end
+          for i = 1, n_lgm do
+            local e = enemy_lgms[i]
+            if math.abs(e.mx - p.mx) <= lgm_r
+               and math.abs(e.my - p.my) <= lgm_r then
+              p._lgm_near_tick = now
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- ----- Ally-heating shell watch -----
+  -- The under-attack alarm should fire only for shells that are NOT
+  -- ours/allies. Every tick, examine shells within HEAT_ALLY_SHELL_RADIUS
+  -- of each deployed team pill — the engine labels every visible shell
+  -- friendly / hostile / neutral (server truth via playersIsAllie; pill
+  -- fire is neutral), and team pill view delivers shells near our pills
+  -- at any range. Shells present and ALL friendly-labeled -> stamp
+  -- _ally_heat_tick: world.lua suppresses the under_attack stamp within
+  -- HEAT_SELF_STAMP_TICKS of it, so an ally's (or our own) heat tickle
+  -- never reads as an enemy siege. ANY non-friendly shell nearby -> no
+  -- stamp -> the alarm fires as usual.
+  do
+    local SHELL_FRIENDLY = 0  -- SHELLS_BRAIN_FRIENDLY (shells.h)
+    local r = C.HEAT_ALLY_SHELL_RADIUS or 2
+    local hits = nil  -- pill -> {friendly=n, other=n}, lazily built
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_SHOT then
+        local smx = bit.rshift(ob.x, 8)
+        local smy = bit.rshift(ob.y, 8)
+        for _, p in pairs(world.pills) do
+          if p.owner == "friendly"
+             and not (p.in_tank or p.carrier or p._synth_carry)
+             and math.abs(p.mx - smx) <= r and math.abs(p.my - smy) <= r then
+            hits = hits or {}
+            local h = hits[p]
+            if not h then h = { friendly = 0, other = 0 }; hits[p] = h end
+            if ob.info == SHELL_FRIENDLY then
+              h.friendly = h.friendly + 1
+            else
+              h.other = h.other + 1
+            end
+          end
+        end
+      end
+    end
+    if hits then
+      for p, h in pairs(hits) do
+        if h.friendly > 0 and h.other == 0 then
+          -- Log the transition (stale/absent -> fresh), not every tick of
+          -- a volley, so the print stays greppable.
+          if not p._ally_heat_tick or (now - p._ally_heat_tick) > 30 then
+          end
+          p._ally_heat_tick = now
+        elseif h.other > 0 then
+        end
+      end
+    end
+  end
+
   -- ----- Under fire: shell danger or angry pill in range -----
   local threat_at_tank = danger.danger_at(tmx, tmy, now, world)
   perc.threat_at_tank = threat_at_tank
