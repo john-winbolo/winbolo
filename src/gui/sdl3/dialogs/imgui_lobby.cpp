@@ -6284,6 +6284,145 @@ static uint8_t s_reelLogPercent = 0;
 static int     s_reelLogStateSeen = -1;
 static int     s_reelLogStepSeen  = -1;
 
+/* Where a round shared through WinBolo.net comes from. A host registered with
+ * WinBolo.net uploads its log there rather than serving it over the game
+ * connection, so a client that joined fetches the same bytes over HTTP using
+ * the key the round summary carries. The upload lands a few seconds after the
+ * recap opens, so the first GET is expected to miss a round that is about to
+ * exist; a bounded ladder covers that lag without becoming a request a frame.
+ *
+ * The worker writes buf/len/status and then releases s_reelWbnDone; the render
+ * thread reads those three only after acquiring it, which is the whole
+ * hand-off — one producer, one consumer, no mutex. Every other field here is
+ * the render thread's own, s_reelWbnRunning included, so the guards that
+ * decide whether to start another attempt never read a field a worker is
+ * writing. */
+static const int    REEL_WBN_RETRY_MAX = 12;
+static const Uint64 REEL_WBN_RETRY_MS  = 5000;
+
+static char                   s_reelWbnKey[ROUND_STATS_LOGKEY_LEN] = "";
+static std::thread            s_reelWbnThread;
+static std::atomic<bool>      s_reelWbnDone{false};
+static volatile int           s_reelWbnCancel = 0;
+static std::atomic<long long> s_reelWbnBytesNow{0};
+static std::atomic<long long> s_reelWbnBytesTotal{0};
+static bool                   s_reelWbnRunning   = false;
+static uint8_t               *s_reelWbnBuf       = nullptr;
+static size_t                 s_reelWbnLen       = 0;
+static int                    s_reelWbnStatus    = 0;
+static int                    s_reelWbnAttempts  = 0;
+static Uint64                 s_reelWbnRetryAtMs = 0;
+
+/* Stop whatever is in flight and forget the round it belonged to. The worker
+ * is joined and never detached: it writes into the statics above, and a lobby
+ * that has gone away leaves nothing for it to write into. Cancelling first is
+ * what keeps the join short, since curl polls the flag as bytes arrive. */
+static void lobbyReelWbnAbort(void) {
+    s_reelWbnCancel = 1;
+    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+    free(s_reelWbnBuf);
+    s_reelWbnBuf       = nullptr;
+    s_reelWbnLen       = 0;
+    s_reelWbnStatus    = 0;
+    s_reelWbnRunning   = false;
+    s_reelWbnAttempts  = 0;
+    s_reelWbnRetryAtMs = 0;
+    s_reelWbnKey[0]    = '\0';
+    s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
+    s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+    s_reelWbnDone.store(false, std::memory_order_relaxed);
+    s_reelWbnCancel = 0;
+}
+
+/* Spend one rung of the ladder, if one is due. Everything that would make a
+ * fetch pointless is a guard rather than a condition at the call site, so the
+ * caller can ask every frame. */
+static void lobbyReelWbnKick(void) {
+    if (s_reelWbnRunning || s_reelWbnBuf) return;
+    if (s_reelWbnKey[0] == '\0') return;
+    /* The load below gets one attempt per summary; once it has spent it there
+     * is nothing left to play another copy of the same round. */
+    if (s_reelTried) return;
+    if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) return;
+    if (SDL_GetTicks() < s_reelWbnRetryAtMs) return;
+    /* A worker that finished without the poll below seeing it still owns a
+     * thread handle; std::thread destructs hard on a joinable one. */
+    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+
+    /* The one WinBolo.net entry point that does not bring HTTP up on its own:
+     * it fails outright when nothing has called httpCreate, where the GET and
+     * POST paths create lazily. Reentrant, so the browser's own create/destroy
+     * pair is unaffected. Once a round is enough. */
+    if (s_reelWbnAttempts == 0) httpCreate();
+
+    char keyCopy[ROUND_STATS_LOGKEY_LEN];
+    SDL_strlcpy(keyCopy, s_reelWbnKey, sizeof(keyCopy));
+
+    /* Curl's byte sink, running on the worker. Non-capturing so it converts to
+     * the C function pointer, and it keeps the last total it was given, since
+     * curl reports zero until it has read a Content-Length. */
+    WbnProgressFn progressFn = [](void *user, int64_t now, int64_t total) {
+        (void)user;
+        s_reelWbnBytesNow.store((long long)now, std::memory_order_relaxed);
+        if (total > 0) {
+            s_reelWbnBytesTotal.store((long long)total, std::memory_order_relaxed);
+        }
+    };
+
+    s_reelWbnAttempts++;
+    s_reelWbnRunning = true;
+    s_reelWbnStatus  = 0;
+    s_reelWbnDone.store(false, std::memory_order_relaxed);
+    s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
+    s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[REEL] winbolo.net round log attempt %d/%d, key '%s'",
+                s_reelWbnAttempts, REEL_WBN_RETRY_MAX, keyCopy);
+
+    s_reelWbnThread = std::thread([keyCopy, progressFn]() {
+        char path[128];
+        SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
+        uint8_t *data = nullptr;
+        size_t   size = 0;
+        int status = wbn_api_download_to_memory_progress(path, &data, &size,
+                                                         progressFn, nullptr,
+                                                         &s_reelWbnCancel);
+        if (status != 200 || size == 0) {
+            free(data);
+            data = nullptr;
+            size = 0;
+        }
+        s_reelWbnBuf    = data;
+        s_reelWbnLen    = size;
+        s_reelWbnStatus = status;
+        /* Last, and releasing: the three writes above are published by it. */
+        s_reelWbnDone.store(true, std::memory_order_release);
+    });
+}
+
+/* Collect a finished attempt. A 200 leaves its bytes standing for the load
+ * below to take; anything else arms the next rung. */
+static void lobbyReelWbnPoll(void) {
+    if (!s_reelWbnDone.load(std::memory_order_acquire)) return;
+    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+    s_reelWbnDone.store(false, std::memory_order_relaxed);
+    s_reelWbnRunning = false;
+
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[REEL] winbolo.net round log attempt %d done: status %d, "
+                "%zu bytes",
+                s_reelWbnAttempts, s_reelWbnStatus, s_reelWbnLen);
+    if (s_reelWbnBuf) return;
+
+    s_reelWbnLen       = 0;
+    s_reelWbnRetryAtMs = SDL_GetTicks() + REEL_WBN_RETRY_MS;
+    if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[REEL] winbolo.net round log gave up after %d attempts",
+                    s_reelWbnAttempts);
+    }
+}
+
 /* Vertical room the recap left unused on the previous frame, accumulated.
  * The reel adds it to its own height, which is what stops the body ending
  * well short of the bottom of a tall panel. Immediate mode gives no way to
@@ -6301,6 +6440,9 @@ static void lobbyReelEnd(void) {
     /* An export in flight is holding encoder allocations and a playback
      * position to put back, and the reel it was reading is about to go. */
     lobbyClipGifAbort();
+    /* And a WinBolo.net fetch is a thread writing into state this is about to
+     * zero, so it is cancelled and joined here too. */
+    lobbyReelWbnAbort();
     if (s_reelActive) {
         lvEmbedEnd();
         s_reelActive = false;
@@ -6525,9 +6667,10 @@ static void lobbyChatInputAppendTime(uint32_t curMs);
 static bool lobbyClipGifButton(const char *id, bool compact);
 static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
 
-static void lobbyRenderReel(ClientSim *cs, float s) {
+static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
+                            float s) {
     /* Source, in order: the file this process wrote, else the copy the server
-     * sent us.
+     * sent us, else the copy WinBolo.net holds under the round's key.
      *
      * A triple gate on the file: only a round this process recorded, published
      * to a file that is actually there. gameFrontHasLocalServer() is the
@@ -6579,7 +6722,55 @@ static void lobbyRenderReel(ClientSim *cs, float s) {
                                ? clientSimGetRoundLogPercent(cs)
                                : 0;
         lobbyReelLogTransfer(s_reelLogState, s_reelLogPercent);
-        if (s_reelLogState != CLIENT_ROUND_LOG_READY) {
+
+        /* A host registered with WinBolo.net hands the round there instead of
+         * serving it itself, so its refusal is the cue to go and get the same
+         * bytes over HTTP. Only the three terminal answers qualify: a transfer
+         * still moving is left alone to finish. Without a key there is nowhere
+         * to go, and the refusal stands as the thing the recap says. */
+        const bool serverRefused =
+            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED ||
+            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_NONE ||
+            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE;
+        bool haveWbnBytes = false;
+        if (serverRefused && st && st->wbnLogKey[0] != '\0') {
+            /* A key that is not the one being fetched belongs to a later
+             * round, and whatever the previous one gathered is stale. */
+            if (strncmp(s_reelWbnKey, st->wbnLogKey, sizeof(s_reelWbnKey)) != 0) {
+                lobbyReelWbnAbort();
+                SDL_strlcpy(s_reelWbnKey, st->wbnLogKey, sizeof(s_reelWbnKey));
+            }
+            lobbyReelWbnKick();
+            lobbyReelWbnPoll();
+            haveWbnBytes = (s_reelWbnBuf != nullptr);
+            if (!haveWbnBytes) {
+                /* Said in the states the overlay already draws, so the fetch
+                 * costs no state of its own and no string of its own: a
+                 * transfer with a length behind it is a download with a real
+                 * fraction of the bytes, a spent ladder is a round with no
+                 * replay to be had, and anything else is still waiting. */
+                const long long got =
+                    s_reelWbnBytesNow.load(std::memory_order_relaxed);
+                const long long total =
+                    s_reelWbnBytesTotal.load(std::memory_order_relaxed);
+                int     wbnState = CLIENT_ROUND_LOG_WAITING;
+                uint8_t wbnPct   = 0;
+                if (s_reelWbnRunning && total > 0) {
+                    long long pct = got * 100 / total;
+                    if (pct < 0) pct = 0;
+                    if (pct > 100) pct = 100;
+                    wbnState = CLIENT_ROUND_LOG_DOWNLOADING;
+                    wbnPct   = (uint8_t)pct;
+                } else if (!s_reelWbnRunning &&
+                           s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) {
+                    wbnState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
+                }
+                lobbyRenderReelStatus(wbnState, wbnPct, rect, s);
+                return;
+            }
+        }
+
+        if (!haveWbnBytes && s_reelLogState != CLIENT_ROUND_LOG_READY) {
             lobbyRenderReelStatus(s_reelLogState, s_reelLogPercent, rect, s);
             return;
         }
@@ -6615,9 +6806,22 @@ static void lobbyRenderReel(ClientSim *cs, float s) {
             /* The downloaded blob is already the bytes the viewer wants, on
              * the same malloc terms as the read above — hand it straight over
              * rather than looking at it first, since the viewer owns it from
-             * the call on and frees it even when it refuses the data. */
-            size_t len = 0;
-            uint8_t *buf = clientSimTakeRoundLog(cs, &len);
+             * the call on and frees it even when it refuses the data.
+             * WinBolo.net's copy goes first when there is one, since it is
+             * only ever fetched after the server has already declined to send
+             * one. Nulling the static as the pointer goes is what keeps the
+             * ownership single: from here the viewer frees it, and nothing
+             * else may. */
+            size_t   len = 0;
+            uint8_t *buf = nullptr;
+            if (s_reelWbnBuf) {
+                buf          = s_reelWbnBuf;
+                len          = s_reelWbnLen;
+                s_reelWbnBuf = nullptr;
+                s_reelWbnLen = 0;
+            } else {
+                buf = clientSimTakeRoundLog(cs, &len);
+            }
             if (buf) {
                 s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
                                             sdl3DrawGetRenderer(),
@@ -7528,7 +7732,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     const float bodyAvailH = ImGui::GetContentRegionAvail().y;
     const float bodyStartY = ImGui::GetCursorPosY();
 
-    lobbyRenderReel(cs, s);
+    lobbyRenderReel(cs, st, s);
 #endif
 
     /* ── Highlight clips ─────────────────────────────────────────── */
