@@ -6376,7 +6376,7 @@ static void lobbyReelWbnKick(void) {
     s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
     s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
     WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[REEL] winbolo.net round log attempt %d/%d, key '%s'",
+                "[REEL] winbolo.net round log attempt %d/%d, key prefix '%.6s'",
                 s_reelWbnAttempts, REEL_WBN_RETRY_MAX, keyCopy);
 
     s_reelWbnThread = std::thread([keyCopy, progressFn]() {
