@@ -1141,13 +1141,18 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_DURATION, &args));
                 }
                 ImGui::SameLine(0, 20);
-                {
+                if (e.num_ratings > 0) {
                     char ratingBuf[16];
                     SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", e.rating);
                     MessageArgs args = {};
                     SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
                     args.number = e.num_ratings;
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+                } else {
+                    /* Nobody has rated the round, so an average of 0.0 out of 0
+                     * is a score nobody gave it. Said the way the list column
+                     * above says it. */
+                    ImGui::TextDisabled("%s: --", langGetText(STR_DLGWBN_COL_RATING));
                 }
                 {
                     MessageArgs args = {};
