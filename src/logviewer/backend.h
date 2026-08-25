@@ -595,7 +595,7 @@ void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);
 
 void lv_screenCentreOnSelectedItem();
-void lv_screenGetPlayerName(char *name, BYTE playerNum);
+void lv_screenGetPlayerName(char *name, BYTE playerNum, size_t destSize);
 
 /* Name the log recorded for a slot, from a one-shot scan of its join events at
  * load. Returns FALSE when the log never named that slot. Independent of the

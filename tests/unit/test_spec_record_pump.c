@@ -153,7 +153,7 @@ int run_spec_record_pump(void) {
   UT_ASSERT_MSG(steps < 100000, "one-shot playback did not reach end-of-log");
   UT_ASSERT_MSG(nb >= 2, "expected at least one record after the snapshot");
 
-  lv_screenGetPlayerName(oneShotName, 1);
+  lv_screenGetPlayerName(oneShotName, 1, sizeof(oneShotName));
   oneShotNum = (int) lv_screenGetNumPlayers();
   UT_ASSERT_MSG(strcmp(oneShotName, "Joiner") == 0,
                 "one-shot slot-1 name = '%s' (want 'Joiner')", oneShotName);
@@ -247,7 +247,7 @@ int run_spec_record_pump(void) {
 
   /* The event-record replay reached the one-shot end state: the "Joiner" join
    * applied and the roster matches. */
-  lv_screenGetPlayerName(name, 1);
+  lv_screenGetPlayerName(name, 1, sizeof(name));
   UT_ASSERT_MSG(strcmp(name, "Joiner") == 0,
                 "after replay slot-1 = '%s' (want 'Joiner')", name);
   UT_ASSERT_MSG((int) lv_screenGetNumPlayers() == oneShotNum,

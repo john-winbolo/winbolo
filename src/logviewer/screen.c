@@ -657,7 +657,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerQuit:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       lv_playersLeaveGame(opt1, TRUE);
       {
         MessageArgs args = {0};
@@ -691,7 +691,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_LostMan:
       logReadBytes(&opt1, 1);
       lv_playersSetLgmDead(opt1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -714,8 +714,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_AllyRequest:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lv_playersGetPlayerName(opt1, str);
-      lv_playersGetPlayerName(opt2, mem);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
+      lv_playersGetPlayerName(opt2, mem, sizeof(mem));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -727,8 +727,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       lv_playersAcceptAlliance(opt1, opt2);
-      lv_playersGetPlayerName(opt1, str);
-      lv_playersGetPlayerName(opt2, mem);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
+      lv_playersGetPlayerName(opt2, mem, sizeof(mem));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -739,7 +739,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_AllyLeave:
       logReadBytes(&opt1, 1);
       lv_playersLeaveAlliance(opt1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -849,7 +849,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
-      lv_playersGetPlayerName(opt1, name);
+      lv_playersGetPlayerName(opt1, name, sizeof(name));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
@@ -863,8 +863,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
-      lv_playersGetPlayerName(opt1, name);
-      lv_playersGetPlayerName(opt2, name2);
+      lv_playersGetPlayerName(opt1, name, sizeof(name));
+      lv_playersGetPlayerName(opt2, name2, sizeof(name2));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
@@ -958,14 +958,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lv_playersGetPlayerName(opt1, mem);
+      lv_playersGetPlayerName(opt1, mem, sizeof(mem));
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
-        lv_playersGetPlayerName(opt2, str);
+        lv_playersGetPlayerName(opt2, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
@@ -983,7 +983,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerRejoin:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -997,7 +997,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerLeaving:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1047,7 +1047,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerReady:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1056,7 +1056,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerUnready:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1066,7 +1066,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_TeamSet:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1086,7 +1086,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_MapSkipVote:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1110,7 +1110,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);  /* kind */
       logReadBytes(&opt2, 1);  /* initiator */
       logReadBytes(&opt3, 1);  /* team (0 = global) */
-      lv_playersGetPlayerName(opt2, str);
+      lv_playersGetPlayerName(opt2, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1125,7 +1125,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);  /* kind */
       logReadBytes(&opt2, 1);  /* player */
       logReadBytes(&opt3, 1);  /* voteYes (0/1) */
-      lv_playersGetPlayerName(opt2, str);
+      lv_playersGetPlayerName(opt2, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -3388,8 +3388,8 @@ BYTE lv_screenGetNumPlayers() {
   return lv_playersGetNumPlayers();
 }
 
-void lv_screenGetPlayerName(char *name, BYTE playerNum) {
-  lv_playersGetPlayerName(playerNum, name);
+void lv_screenGetPlayerName(char *name, BYTE playerNum, size_t destSize) {
+  lv_playersGetPlayerName(playerNum, name, destSize);
 }
 
 bool lv_screenGetLoggedPlayerName(BYTE slot, char *dest, size_t destSize) {

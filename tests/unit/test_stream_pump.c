@@ -106,7 +106,7 @@ int run_stream_pump(void) {
    * are never fed. */
   UT_ASSERT_MSG(bound[nb - 1] <= fullLen, "playback ran past the buffer end");
 
-  lv_screenGetPlayerName(osName, 1);
+  lv_screenGetPlayerName(osName, 1, sizeof(osName));
   osNum = (int)lv_screenGetNumPlayers();
   UT_ASSERT_MSG(strcmp(osName, "Joiner") == 0,
                 "one-shot slot-1 name = '%s' (want 'Joiner')", osName);
@@ -161,7 +161,7 @@ int run_stream_pump(void) {
   UT_ASSERT_MSG(lv_screenIsPlaying() == FALSE,
                 "stream did not finish after the final record");
 
-  lv_screenGetPlayerName(chName, 1);
+  lv_screenGetPlayerName(chName, 1, sizeof(chName));
   chNum = (int)lv_screenGetNumPlayers();
   UT_ASSERT_MSG(strcmp(chName, osName) == 0,
                 "chunked slot-1 name '%s' != one-shot '%s'", chName, osName);

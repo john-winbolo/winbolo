@@ -656,7 +656,7 @@ int run_lv_logged_name_from_join_event(void) {
                 lv_screenGetTimeRunning());
 
   /* The playhead has not reached the join, so the live roster is empty here. */
-  lv_screenGetPlayerName(live, 3);
+  lv_screenGetPlayerName(live, 3, sizeof(live));
   UT_ASSERT_MSG(strcmp(live, NO_TANK) == 0,
                 "live roster named slot 3 '%s' at game start (want %s)", live,
                 NO_TANK);

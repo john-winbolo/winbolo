@@ -25,7 +25,7 @@ extern "C" {
     int32_t lv_screenGetGameTimeLeft(void);
     int32_t lv_screenGetGameStartDelay(void);
     void lv_screenGetMapName(char *buffer);
-    void lv_screenGetPlayerName(char *buffer, unsigned char player);
+    void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
 }
 
 /* Game info state */

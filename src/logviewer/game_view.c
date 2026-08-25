@@ -77,7 +77,7 @@ extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
 extern void  lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                      BYTE *px, BYTE *py, BYTE *frame);
 extern void  lv_playersGetLgmStatus(BYTE playerNumber, bool *isOut, bool *isDead);
-extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest);
+extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize);
 extern bool         lv_playersIsBot(BYTE playerNumber);
 extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
 
@@ -812,7 +812,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
 
       char rawName[PLAYER_NAME_LEN];
       rawName[0] = '\0';
-      lv_playersGetPlayerName(slot, rawName);
+      lv_playersGetPlayerName(slot, rawName, sizeof(rawName));
       if (rawName[0] == '\0') continue;
 
       /* Brain-driven slots get an "[AI]" tag so a viewer scanning the
