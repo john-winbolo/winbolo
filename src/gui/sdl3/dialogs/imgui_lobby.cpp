@@ -6858,24 +6858,29 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) &&
         tex && texW > 0 && texH > 0) {
         /* The tile grid is fitted to the rect by rounding to whole tiles, so
-         * the slice almost never matches it exactly. Draw at the slice times
-         * the zoom — one source pixel to `zoom` host pixels — and crop the
-         * overhang rather than scaling the round to fit; anything left over
-         * is padding. */
+         * the slice it reports rarely lands on the rect exactly. Trim the
+         * visible slice down to whole source pixels and take the drawn size
+         * from that, so one source pixel is always exactly `zoom` host pixels
+         * — the ratio the standalone viewer gets by blitting at that multiple
+         * and letting the window edge clip. What the trim leaves over is under
+         * one zoom step wide and stays as padding. */
         float zoom = lvEmbedGetZoomLevel();
         if (zoom <= 0.0f) zoom = 1.0f;
-        float wantW = (float)srcW * zoom;
-        float wantH = (float)srcH * zoom;
-        imgSize.x = (wantW > rect.x) ? rect.x : wantW;
-        imgSize.y = (wantH > rect.y) ? rect.y : wantH;
-        if (imgSize.x < 1.0f) imgSize.x = 1.0f;
-        if (imgSize.y < 1.0f) imgSize.y = 1.0f;
+        int visW = (int)floorf(rect.x / zoom);
+        int visH = (int)floorf(rect.y / zoom);
+        if (visW < 1) visW = 1;
+        if (visH < 1) visH = 1;
+        if (visW > srcW) visW = srcW;
+        if (visH > srcH) visH = srcH;
+        imgSize.x = (float)visW * zoom;
+        imgSize.y = (float)visH * zoom;
         /* The render target is a tile larger than the visible slice, so the
-         * UVs pick the slice the viewer would otherwise have blitted, narrowed
-         * to the part that fits. */
+         * UVs pick whole source pixels out of it, starting at the sub-tile pan
+         * offset. Whole pixels on both edges are what keeps the blit an exact
+         * multiple instead of a resample. */
         ImVec2 uv0((float)srcX / (float)texW, (float)srcY / (float)texH);
-        ImVec2 uv1(((float)srcX + imgSize.x / zoom) / (float)texW,
-                   ((float)srcY + imgSize.y / zoom) / (float)texH);
+        ImVec2 uv1((float)(srcX + visW) / (float)texW,
+                   (float)(srcY + visH) / (float)texH);
         ImGui::Image((ImTextureID)tex, imgSize, uv0, uv1);
     } else {
         ImGui::Dummy(rect);
