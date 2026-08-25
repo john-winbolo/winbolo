@@ -569,18 +569,24 @@ void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest,
 * Gets a player location.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer locations
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest) {
+void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest,
+                              size_t destSize) {
+  if (destSize == 0) {
+    return;
+  }
   if (plrs != NULL) {
     if ((*plrs)->item[playerNum].inUse == TRUE) {
-      strcpy(dest, (*plrs)->item[playerNum].location);
+      snprintf(dest, destSize, "%s", (*plrs)->item[playerNum].location);
     } else {
-      strcpy(dest, NO_TANK);
+      snprintf(dest, destSize, "%s", NO_TANK);
     }
-  } 
+  }
 }
 
 void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {

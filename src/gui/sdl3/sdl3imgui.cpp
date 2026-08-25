@@ -844,7 +844,8 @@ static void renderNetInfoContent(ClientSim *cs) {
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr,
+                                   sizeof(addr));
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {

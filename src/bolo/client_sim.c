@@ -1348,8 +1348,10 @@ uint8_t clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum) {
   return playersGetClientType(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
 
-void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest) {
-  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest,
+                                size_t destSize) {
+  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest,
+                           destSize);
 }
 
 uint8_t clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum) {

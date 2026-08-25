@@ -452,7 +452,10 @@ uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
 PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
-void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);
+/* destSize is the size of dest in bytes, including the NUL; a longer
+ * location is truncated rather than overrunning the caller. */
+void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest,
+                                    size_t destSize);
 uint8_t  clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum);
 void     clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest);
 bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);

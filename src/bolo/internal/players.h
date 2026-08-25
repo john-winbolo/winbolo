@@ -329,8 +329,11 @@ void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest,
 * plrs - Pointer to the players object 
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer locations
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest);
+void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest,
+                              size_t destSize);
 
 /*********************************************************
 *NAME:          playersGetCountryCode
