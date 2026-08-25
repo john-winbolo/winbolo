@@ -3374,8 +3374,10 @@ set(_unit_test_names
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
     lobby_sync_complete_codec_roundtrip
+    lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
     command_codec_lobby_claim_start
+    command_codec_rating_posted
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected

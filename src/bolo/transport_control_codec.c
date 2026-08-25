@@ -970,6 +970,41 @@ BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 4 + LOBBY_BOT_POOL_CHUNK_FRAG_MAX <= MAX_CONTROL_PACKET,
     bot_pool_chunk_worst_case_fits_MAX_CONTROL_PACKET);
 
+/* CTRL_ROUND_RATING_POSTED body wire format (fixed length):
+ *   [fromPlayer 1] [key RATING_POSTED_KEY_BODY_LEN]
+ * A short key is NUL-padded out to fill the field, so the body is the same
+ * size on every event and the decoder can reject anything else outright.
+ * Delivered body-only on CHANNEL_CONTROL; there is no full-packet wrapper or
+ * PACKET_* type for this event. */
+#define RATING_POSTED_KEY_BODY_LEN (ROUND_STATS_LOGKEY_LEN - 1)
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeRoundRatingPostedBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)recipient;
+    const size_t needed = 1 + RATING_POSTED_KEY_BODY_LEN;
+    size_t keyLen = strnlen(evt->u.ratingPosted.key, RATING_POSTED_KEY_BODY_LEN);
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.ratingPosted.fromPlayer;
+    memset(buf + 1, 0, RATING_POSTED_KEY_BODY_LEN);
+    memcpy(buf + 1, evt->u.ratingPosted.key, keyLen);
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeRoundRatingPostedBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    if (len != 1 + RATING_POSTED_KEY_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ROUND_RATING_POSTED;
+    outEvt->u.ratingPosted.fromPlayer = buf[0];
+    memcpy(outEvt->u.ratingPosted.key, buf + 1, RATING_POSTED_KEY_BODY_LEN);
+    outEvt->u.ratingPosted.key[RATING_POSTED_KEY_BODY_LEN] = '\0';
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -2131,6 +2166,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SPECTATOR_SLOT]        = encodeSpectatorSlotBody,
     [CTRL_ROUND_STATS]           = encodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
+    [CTRL_ROUND_RATING_POSTED]   = encodeRoundRatingPostedBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2169,6 +2205,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SPECTATOR_SLOT]        = decodeSpectatorSlotBody,
     [CTRL_ROUND_STATS]           = decodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
+    [CTRL_ROUND_RATING_POSTED]   = decodeRoundRatingPostedBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

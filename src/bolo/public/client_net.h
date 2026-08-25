@@ -273,6 +273,13 @@ void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);
 void clientSimNetSendWbnReauth(ClientSim *cs);
 
+/* Tell the server this client has just had a rating or comment accepted on
+ * the WinBolo.net page for round `key32` (the summary's wbnLogKey), so the
+ * other clients in the lobby can re-read that page instead of showing a
+ * stale list. Sends nothing without a transport, on an empty key, or from a
+ * spectator. */
+void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32);
+
 /* === Last completed round's replay log === */
 
 /* State of the round-log transfer. A joined client cannot record a round

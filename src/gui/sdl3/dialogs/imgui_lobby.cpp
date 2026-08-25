@@ -7475,6 +7475,17 @@ static int             s_recapCommentRating    = 0;
 static int    s_recapFetchAttempts  = 0;
 static Uint64 s_recapFetchRetryAtMs = 0;
 
+/* Another player posting against this round re-reads the page, so their stars
+ * and comment show without waiting for the next round. The counter is only
+ * watched for movement; it is consumed on every move but acted on at most once
+ * per interval, so a burst of nudges cannot queue a re-read up for later. The
+ * bound sits here rather than on the server because what it protects is this
+ * client's traffic to WinBolo.net, and it holds whatever the server or a
+ * modified client sends. */
+static uint32_t     s_recapRatingSeenSeq       = 0;
+static Uint64       s_recapRatingNudgeAtMs     = 0;
+static const Uint64 RECAP_RATING_NUDGE_MIN_MS  = 10000;
+
 /* Both expands, driven from our own flags the way the highlight and award
  * expands above are, so a new round's recap starts on the closed form. */
 static bool s_recapShowComments   = false;
@@ -7513,11 +7524,16 @@ static void lobbyRatingReset(void) {
  * finished round's stars and comments loaded and show them for the frames
  * before the next round's summary lands. Idempotent, so both the per-frame
  * hook and the renderer can call it. */
-static void lobbyRatingSyncKey(const RoundStatsSummary *st) {
+static void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st) {
     const char *key = (st && st->wbnLogKey[0] != '\0') ? st->wbnLogKey : "";
     if (strncmp(s_recapRatingKey, key, sizeof(s_recapRatingKey)) == 0) return;
 
     lobbyRatingReset();
+    /* Latched, not zeroed: the counter belongs to the sim and keeps climbing
+     * across rounds, so a new round starting from zero would read the running
+     * total as movement and read the page back a second time. */
+    s_recapRatingSeenSeq   = clientSimGetRatingPostedSeq(cs);
+    s_recapRatingNudgeAtMs = 0;
     if (key[0] != '\0') {
         SDL_strlcpy(s_recapRatingKey, key, sizeof(s_recapRatingKey));
     }
@@ -7537,7 +7553,7 @@ static void lobbyRatingKick(const char *key) {
     }
 }
 
-static void lobbyRatingPoll(void) {
+static void lobbyRatingPoll(ClientSim *cs) {
     if (s_recapFetch && wbn_comments_fetch_done(s_recapFetch)) {
         const WbnComment *raw = nullptr;
         size_t count = 0;
@@ -7578,12 +7594,16 @@ static void lobbyRatingPoll(void) {
             s_recapFetchComplete  = false;
             s_recapFetchAttempts  = 0;
             s_recapFetchRetryAtMs = 0;
+            /* And tell the rest of the lobby, so their blocks read it back
+             * too instead of listing this round without the new comment. */
+            clientSimNetSendRatingPosted(cs, s_recapRatingKey);
         }
     }
 }
 
-static void lobbyRenderRatingBlock(const RoundStatsSummary *st, float s) {
-    lobbyRatingSyncKey(st);
+static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
+                                   float s) {
+    lobbyRatingSyncKey(cs, st);
 
     if (st->wbnLogKey[0] == '\0') {
         /* Nothing on WinBolo.net to rate, so not a separator and not a
@@ -7591,12 +7611,28 @@ static void lobbyRenderRatingBlock(const RoundStatsSummary *st, float s) {
         return;
     }
 
+    /* Someone else in the lobby has posted against this round. Take the new
+     * value whether or not the fetch is allowed yet, so a burst leaves nothing
+     * armed behind it, and re-arm only once the interval has passed. */
+    {
+        uint32_t postedSeq = clientSimGetRatingPostedSeq(cs);
+        if (postedSeq != s_recapRatingSeenSeq) {
+            s_recapRatingSeenSeq = postedSeq;
+            if (SDL_GetTicks() >= s_recapRatingNudgeAtMs) {
+                s_recapFetchComplete   = false;
+                s_recapFetchAttempts   = 0;
+                s_recapFetchRetryAtMs  = 0;
+                s_recapRatingNudgeAtMs = SDL_GetTicks() + RECAP_RATING_NUDGE_MIN_MS;
+            }
+        }
+    }
+
     /* Every frame: the textures are shared with the log browser, whose exit
      * destroys them, so re-entering the lobby afterwards has to be able to
      * rebuild them. Once they are up the call is an early-out. */
     imguiStarRatingLoadIcons(sdl3DrawGetRenderer());
     lobbyRatingKick(s_recapRatingKey);
-    lobbyRatingPoll();
+    lobbyRatingPoll(cs);
 
     ImGui::Separator();
 
@@ -8096,7 +8132,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     /* ── WinBolo.net rating & comments ───────────────────────────── */
-    lobbyRenderRatingBlock(st, s);
+    lobbyRenderRatingBlock(cs, st, s);
 
     /* A clip export in progress. Drawn after the rows that start it, and after
      * the rest of the body: it is a popup, so it costs the layout nothing and
@@ -8988,7 +9024,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
-    lobbyRatingSyncKey(cs ? clientSimGetLastRoundStats(cs) : NULL);
+    lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
 #endif
 
     SDL_Window   *window   = sdl3DrawGetWindow();

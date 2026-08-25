@@ -838,6 +838,12 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
  * received since the last countdown (round-only scope). */
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs);
 
+/* Counter bumped each time another player reports having rated or commented
+ * on the round clientSimGetLastRoundStats describes. Only movement matters —
+ * a caller holding its own last-seen value re-reads that round's WinBolo.net
+ * page when the two differ. 0 for a NULL cs. */
+uint32_t clientSimGetRatingPostedSeq(const ClientSim *cs);
+
 /* Server-supplied map directory listing — populated asynchronously
  * by PACKET_LOBBY_MAP_LIST_RSP after the client sends a
  * MAP_LIST_REQ. Use the InFlight/Ready/Path triple to coordinate

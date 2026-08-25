@@ -468,6 +468,25 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     cs->lastRoundStats.wbnLogKey);
         break;
 
+    case CTRL_ROUND_RATING_POSTED: {
+        const char *key = evt->u.ratingPosted.key;
+        /* The poster's own client re-armed its fetch when its POST returned,
+         * so a self-nudge would only make it read the round back twice. */
+        if (evt->u.ratingPosted.fromPlayer == cs->myPlayerNum) break;
+        /* A nudge for a round this client has already moved past must not
+         * disturb the one its recap is showing. */
+        if (key[0] == '\0' || cs->lastRoundStats.wbnLogKey[0] == '\0') break;
+        if (strncmp(key, cs->lastRoundStats.wbnLogKey,
+                    sizeof(cs->lastRoundStats.wbnLogKey)) != 0) {
+            break;
+        }
+        cs->ratingPostedSeq++;
+        WB_LOG_INFO(WB_LOG_CAT_CLIENT,
+                    "CTRL_ROUND_RATING_POSTED from %u key prefix='%.6s'",
+                    (unsigned)evt->u.ratingPosted.fromPlayer, key);
+        break;
+    }
+
     case CTRL_LOBBY_BOT_POOL_CHUNK: {
         /* Reassemble in-order fragments of the server's compressed
          * bot-pool catalog; install on the final fragment so the lobby

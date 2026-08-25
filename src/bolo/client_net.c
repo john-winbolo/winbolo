@@ -839,6 +839,15 @@ void clientSimNetSendWbnReauth(ClientSim *cs) {
   threadsReleaseMutex();
 }
 
+void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (key32 == NULL || key32[0] == '\0') return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_RATING_POSTED };
+  SDL_strlcpy(cmd.u.ratingPosted.key, key32, sizeof(cmd.u.ratingPosted.key));
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 /* === Net stats === */
 
 uint16_t clientSimGetNetPing(const ClientSim *cs) {

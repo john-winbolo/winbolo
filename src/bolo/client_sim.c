@@ -2002,6 +2002,11 @@ const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
   return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
 }
 
+uint32_t clientSimGetRatingPostedSeq(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return cs->ratingPostedSeq;
+}
+
 const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {
   return cs->lobbyMapListPath;
 }

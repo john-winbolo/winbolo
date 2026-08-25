@@ -528,6 +528,15 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 #define ROUND_LOG_ERR_RATE_LIMITED  5  /* this client asked too soon, or too
                                         * many times this round */
 
+#define PACKET_RATING_POSTED           212  /* client → server
+                                              { key 32 } — the sender has just
+                                              rated or commented on the
+                                              finished round's WinBolo.net
+                                              page. The server neither reads
+                                              nor checks the key; it fans the
+                                              event out so the other clients
+                                              re-read that page. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2
