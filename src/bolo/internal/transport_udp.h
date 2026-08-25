@@ -392,6 +392,29 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
  * happens in practice). */
 uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
 
+/* ── Last completed round's replay log (BULK_KIND_ROUND_LOG) ─────── */
+/* Backing calls for the clientSimGetRoundLog* / clientSimTakeRoundLog
+ * wrappers in public/client_net.h; the states they speak in are that
+ * header's ClientRoundLogState. */
+
+/* Send PACKET_ROUND_LOG_REQ with a fresh reqSeq, freeing anything held for an
+ * earlier request first. No-op unless the client is connected. */
+void transportUdpClientSendRoundLogRequest(Transport *t);
+
+/* Current transfer state as a ClientRoundLogState; CLIENT_ROUND_LOG_IDLE with
+ * no transport context. */
+int transportUdpClientGetRoundLogState(Transport *t);
+
+/* Transfer progress as 0..100, read live from the bulk receiver. 0 unless a
+ * transfer is in flight. */
+uint8_t transportUdpClientGetRoundLogPercent(Transport *t);
+
+/* Hand a completed blob to the caller: returns it, writes its length through
+ * outLen (may be NULL), clears the context's pointer and returns the state to
+ * idle. NULL unless a completed blob is held. The caller then owns the buffer
+ * and releases it with plain free(). */
+uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen);
+
 
 /*********************************************************
  * UDP Transport — Server Side
