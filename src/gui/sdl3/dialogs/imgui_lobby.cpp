@@ -40,6 +40,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_star_rating.h"
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "imgui_server_address.h"
@@ -90,7 +91,9 @@ extern "C" {
 #include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
+#include "imgui_winbolonet.h"    /* sign-in section, for the recap's comment form */
 #include "../../../winbolonet/http.h"
+#include "../../../winbolonet/wbn_comments.h"  /* recap ratings + comments */
 #include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
 
@@ -7224,6 +7227,268 @@ static void lobbyClipGifRender(float s) {
         msf_gif_free(finished);
     }
 }
+
+/* ── WinBolo.net rating & comments ────────────────────────────────
+ * The finished round's own page on WinBolo.net: the aggregate stars it
+ * has been given, the comments left on it, and a form to add one. All of
+ * it hangs off the summary's log key, which only a round a
+ * WinBolo.net-registered host uploaded ever carries — a LAN or
+ * single-player round has nothing to fetch and draws nothing.
+ *
+ * The async lifecycle is the log viewer's comments window
+ * (src/logviewer/imgui/imgui_comments.cpp): one fetch per key, polled
+ * from the render, and a post that re-arms the fetch when it lands. */
+
+/* The round's log reaches WinBolo.net a few seconds after the recap opens,
+ * so the first GET can legitimately miss a round that is about to exist.
+ * Bounded retries cover the upload lag without becoming a per-frame
+ * request loop against a key the server will never have. */
+static const int    RECAP_RATING_RETRY_MAX = 6;
+static const Uint64 RECAP_RATING_RETRY_MS  = 5000;
+
+/* The key everything below belongs to; a different one means the state is
+ * for the previous round and is thrown away. */
+static char s_recapRatingKey[ROUND_STATS_LOGKEY_LEN] = "";
+
+static WbnCommentsFetch       *s_recapFetch         = nullptr;
+static bool                    s_recapFetchComplete = false;
+static int                     s_recapFetchStatus   = 0;
+static char                    s_recapFetchErr[256] = "";
+static std::vector<WbnComment> s_recapComments;
+static float                   s_recapRating10      = 0.0f;
+static int                     s_recapNumRatings    = 0;
+
+static WbnCommentPost *s_recapPost             = nullptr;
+static char            s_recapPostMsg[256]     = "";
+static int             s_recapPostStatus       = 0;
+static char            s_recapCommentText[512] = "";
+static int             s_recapCommentRating    = 0;
+
+/* Fetches spent on this key, and the earliest tick the next one may go out. */
+static int    s_recapFetchAttempts  = 0;
+static Uint64 s_recapFetchRetryAtMs = 0;
+
+/* Both expands, driven from our own flags the way the highlight and award
+ * expands above are, so a new round's recap starts on the closed form. */
+static bool s_recapShowComments   = false;
+static bool s_recapShowAddComment = false;
+
+static void lobbyRatingReset(void) {
+    if (s_recapFetch) {
+        wbn_comments_fetch_free(s_recapFetch);
+        s_recapFetch = nullptr;
+    }
+    s_recapComments.clear();
+    s_recapRating10       = 0.0f;
+    s_recapNumRatings     = 0;
+    s_recapFetchComplete  = false;
+    s_recapFetchStatus    = 0;
+    s_recapFetchErr[0]    = '\0';
+    s_recapFetchAttempts  = 0;
+    s_recapFetchRetryAtMs = 0;
+    s_recapPostMsg[0]     = '\0';
+    s_recapPostStatus     = 0;
+    s_recapCommentText[0] = '\0';
+    s_recapCommentRating  = 0;
+    s_recapShowComments   = false;
+    s_recapShowAddComment = false;
+    s_recapRatingKey[0]   = '\0';
+    /* An in-flight post is deliberately left running — it may still complete
+     * against the old key, and the only cost is that that round does not
+     * auto-refresh. */
+}
+
+static void lobbyRatingKick(const char *key) {
+    if (s_recapFetch || s_recapFetchComplete) return;
+    if (s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) return;
+    if (SDL_GetTicks() < s_recapFetchRetryAtMs) return;
+
+    s_recapFetch = wbn_comments_fetch_start(key);
+    s_recapFetchAttempts++;
+    if (!s_recapFetch) {
+        /* HTTP isn't up yet. Space the next try like a failed one rather than
+         * spending the whole budget over six consecutive frames. */
+        s_recapFetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
+    }
+}
+
+static void lobbyRatingPoll(void) {
+    if (s_recapFetch && wbn_comments_fetch_done(s_recapFetch)) {
+        const WbnComment *raw = nullptr;
+        size_t count = 0;
+        int status = wbn_comments_fetch_result(s_recapFetch, &raw, &count,
+                                               s_recapFetchErr,
+                                               sizeof(s_recapFetchErr));
+        s_recapComments.clear();
+        if (raw && count > 0) {
+            s_recapComments.assign(raw, raw + count);
+        }
+        wbn_comments_fetch_rating(s_recapFetch, &s_recapRating10,
+                                  &s_recapNumRatings);
+        s_recapFetchStatus = status;
+
+        wbn_comments_fetch_free(s_recapFetch);
+        s_recapFetch = nullptr;
+
+        if (status == 200) {
+            s_recapFetchComplete = true;
+        } else {
+            /* Left incomplete so the kick above comes back for it once the
+             * gap has passed, until the budget runs out. */
+            s_recapFetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
+        }
+    }
+
+    if (s_recapPost && wbn_comments_post_done(s_recapPost)) {
+        s_recapPostStatus = wbn_comments_post_result(s_recapPost, s_recapPostMsg,
+                                                     sizeof(s_recapPostMsg));
+        wbn_comments_post_free(s_recapPost);
+        s_recapPost = nullptr;
+
+        if (s_recapPostStatus == 200 || s_recapPostStatus == 201) {
+            s_recapCommentText[0] = '\0';
+            s_recapCommentRating  = 0;
+            /* Read the round back so the new comment and the rating it moved
+             * both show. */
+            s_recapFetchComplete  = false;
+            s_recapFetchAttempts  = 0;
+            s_recapFetchRetryAtMs = 0;
+        }
+    }
+}
+
+static void lobbyRenderRatingBlock(const RoundStatsSummary *st, float s) {
+    if (st->wbnLogKey[0] == '\0') {
+        /* Nothing on WinBolo.net to rate, so not a separator and not a
+         * disabled line — the block costs the body no height at all. */
+        if (s_recapRatingKey[0] != '\0') {
+            lobbyRatingReset();
+        }
+        return;
+    }
+
+    if (strncmp(s_recapRatingKey, st->wbnLogKey, sizeof(s_recapRatingKey)) != 0) {
+        lobbyRatingReset();
+        SDL_strlcpy(s_recapRatingKey, st->wbnLogKey, sizeof(s_recapRatingKey));
+    }
+
+    /* Every frame: the textures are shared with the log browser, whose exit
+     * destroys them, so re-entering the lobby afterwards has to be able to
+     * rebuild them. Once they are up the call is an early-out. */
+    imguiStarRatingLoadIcons(sdl3DrawGetRenderer());
+    lobbyRatingKick(s_recapRatingKey);
+    lobbyRatingPoll();
+
+    ImGui::Separator();
+
+    if (s_recapFetchStatus == 200) {
+        imguiStarRating(s_recapRating10);
+        ImGui::SameLine();
+        char ratingBuf[16];
+        SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", s_recapRating10);
+        MessageArgs args = {};
+        SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
+        args.number = s_recapNumRatings;
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+    } else if (!s_recapFetch && s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) {
+        const char *err = s_recapFetchErr[0] ? s_recapFetchErr
+                                             : langGetText(STR_DLGWBN_NETERR);
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", err);
+    } else {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
+    }
+
+    {
+        MessageArgs args = {};
+        args.number = (int)s_recapComments.size();
+        char cmtHeader[128];
+        snprintf(cmtHeader, sizeof(cmtHeader), "%s###recapWbnComments",
+                 langGetTextFmt(STR_DLGWBN_COMMENTS_FMT, &args));
+        ImGui::SetNextItemOpen(s_recapShowComments, ImGuiCond_Always);
+        s_recapShowComments = ImGui::CollapsingHeader(cmtHeader);
+    }
+    if (s_recapShowComments) {
+        /* Height-bounded: the reel is fed whatever the body leaves unused, so
+         * a list free to grow with the round's comment count would starve it. */
+        ImGui::BeginChild("##recapCommentList",
+                          ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 6.0f),
+                          ImGuiChildFlags_Borders);
+        if (s_recapComments.empty()) {
+            ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOCOMMENTS));
+        } else {
+            for (const WbnComment &c : s_recapComments) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
+                ImGui::TextUnformatted(c.username);
+                ImGui::PopStyleColor();
+                if (c.rating > 0) {
+                    ImGui::SameLine();
+                    imguiStarRating((float)c.rating);
+                }
+                if (c.time_formatted[0]) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("- %s", c.time_formatted);
+                }
+                ImGui::TextWrapped("  %s", c.comment);
+                ImGui::Spacing();
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    /* Closed unless the player opens it, so the text field stays out of the
+     * nav graph and the Deck's on-screen keyboard never comes up while the
+     * recap is only being read. */
+    ImGui::SetNextItemOpen(s_recapShowAddComment, ImGuiCond_Always);
+    s_recapShowAddComment =
+        ImGui::CollapsingHeader(langGetText(STR_DLGWBN_ADDCOMMENT));
+    if (s_recapShowAddComment) {
+        char wbnToken[256], wbnExpiry[256];
+        gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
+
+        if (wbnToken[0] == '\0') {
+            /* Carries its own sign-in popup and stats dialog, so there is
+             * nothing else to pump from here. */
+            imguiWinbolonetDrawSection(false);
+        } else {
+            float cw = ImGui::GetContentRegionAvail().x;
+            ImGui::SetNextItemWidth(80 * s);
+            ImGui::Combo("##recapRating", &s_recapCommentRating,
+                         "-\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
+            ImGui::SetNextItemWidth(cw);
+            ImGui::InputTextWithHint("##recapCmtText",
+                                     langGetText(STR_DLGWBN_HINT_COMMENT),
+                                     s_recapCommentText,
+                                     sizeof(s_recapCommentText));
+
+            /* Until the fetch has found the round, WinBolo.net does not have
+             * it yet and a comment posted against the key would be refused. */
+            bool canPost = s_recapCommentText[0] != '\0' &&
+                           s_recapPost == nullptr &&
+                           s_recapFetchStatus == 200;
+            if (!canPost) ImGui::BeginDisabled();
+            if (ImGui::Button(langGetText(STR_DLGWBN_POST), ImVec2(cw, 0))) {
+                s_recapPostStatus = 0;
+                s_recapPostMsg[0] = '\0';
+                s_recapPost = wbn_comments_post_start(s_recapRatingKey, wbnToken,
+                                                      s_recapCommentText,
+                                                      s_recapCommentRating);
+            }
+            imguiHandOnHover();
+            if (!canPost) ImGui::EndDisabled();
+
+            if (s_recapPost) {
+                ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
+            } else if (s_recapPostStatus == 200 || s_recapPostStatus == 201) {
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s",
+                                   langGetText(STR_DLGWBN_POSTED));
+            } else if (s_recapPostStatus != 0) {
+                const char *err = s_recapPostMsg[0] ? s_recapPostMsg
+                                                    : langGetText(STR_DLGWBN_NETERR);
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", err);
+            }
+        }
+    }
+}
 #endif
 
 /* Container-less recap body, in reading order: the round's replay reel, its
@@ -7609,6 +7874,9 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* ── WinBolo.net rating & comments ───────────────────────────── */
+    lobbyRenderRatingBlock(st, s);
+
     /* A clip export in progress. Drawn after the rows that start it, and after
      * the rest of the body: it is a popup, so it costs the layout nothing and
      * the slack measurement below still sees what the body really used. */
@@ -8467,6 +8735,10 @@ extern "C" void imguiLobbyFrameReset(void) {
     /* The reel holds the viewer's decoder singleton — never leave it running
      * past the lobby session. */
     lobbyReelEnd();
+    /* Release the rating fetch and everything it filled in. The star textures
+     * stay: they belong to the WBN browser as much as to the recap, and the
+     * loader rebuilds them on demand. */
+    lobbyRatingReset();
 #endif
 
     s_kickPendingOpen = false;

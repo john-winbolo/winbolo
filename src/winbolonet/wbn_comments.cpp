@@ -82,6 +82,8 @@ struct WbnCommentsFetch {
     std::atomic<bool>        done{false};
     std::mutex               mtx;
     std::vector<WbnComment>  comments;
+    float                    rating10 = 0.0f;
+    int                      numRatings = 0;
     int                      httpStatus = -1;
     char                     errMsg[256] = {0};
 };
@@ -101,11 +103,17 @@ extern "C" WbnCommentsFetch *wbn_comments_fetch_start(const char *key32) {
 
         std::vector<WbnComment> parsed;
         char err[256] = {0};
+        float rating10   = 0.0f;
+        int   numRatings = 0;
 
         if (status == 200 && response) {
             cJSON *json = cJSON_Parse(response);
             if (json) {
                 parseCommentsArray(cJSON_GetObjectItem(json, "comments"), parsed);
+                cJSON *rv = cJSON_GetObjectItem(json, "rating");
+                if (rv) rating10 = (float)rv->valuedouble;
+                cJSON *nv = cJSON_GetObjectItem(json, "num_ratings");
+                if (nv) numRatings = nv->valueint;
                 cJSON_Delete(json);
             }
         } else {
@@ -117,6 +125,8 @@ extern "C" WbnCommentsFetch *wbn_comments_fetch_start(const char *key32) {
         {
             std::lock_guard<std::mutex> lock(f->mtx);
             f->comments = std::move(parsed);
+            f->rating10 = rating10;
+            f->numRatings = numRatings;
             f->httpStatus = status;
             SDL_strlcpy(f->errMsg, err, sizeof(f->errMsg));
         }
@@ -145,6 +155,19 @@ extern "C" int wbn_comments_fetch_result(WbnCommentsFetch *f,
     if (out_count)    *out_count    = f->comments.size();
     if (err_msg && err_size > 0)    SDL_strlcpy(err_msg, f->errMsg, err_size);
     return f->httpStatus;
+}
+
+extern "C" void wbn_comments_fetch_rating(WbnCommentsFetch *f,
+                                          float *out_rating10,
+                                          int *out_num_ratings) {
+    if (!f) {
+        if (out_rating10)    *out_rating10 = 0.0f;
+        if (out_num_ratings) *out_num_ratings = 0;
+        return;
+    }
+    std::lock_guard<std::mutex> lock(f->mtx);
+    if (out_rating10)    *out_rating10    = f->rating10;
+    if (out_num_ratings) *out_num_ratings = f->numRatings;
 }
 
 extern "C" void wbn_comments_fetch_free(WbnCommentsFetch *f) {

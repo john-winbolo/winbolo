@@ -32,8 +32,8 @@ typedef struct WbnComment {
 } WbnComment;
 
 /* ===== Async comment fetch =====
- * GETs logs/<key> and extracts the comments[] array. The rest of the
- * response is discarded. */
+ * GETs logs/<key> and extracts the comments[] array plus the log's
+ * aggregate rating. The rest of the response is discarded. */
 
 typedef struct WbnCommentsFetch WbnCommentsFetch;
 
@@ -52,6 +52,12 @@ bool wbn_comments_fetch_done(const WbnCommentsFetch *f);
 int wbn_comments_fetch_result(WbnCommentsFetch *f,
                               const WbnComment **out_comments, size_t *out_count,
                               char *err_msg, size_t err_size);
+
+/* Aggregate rating carried by the same logs/<key> response the comment
+ * fetch reads. rating10 is 0-10; num_ratings is how many ratings are
+ * behind it. Both are 0 until the fetch completes with status 200. */
+void wbn_comments_fetch_rating(WbnCommentsFetch *f, float *out_rating10,
+                               int *out_num_ratings);
 
 void wbn_comments_fetch_free(WbnCommentsFetch *f);
 

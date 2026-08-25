@@ -38,6 +38,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_star_rating.h"
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "dialog_footer.h"
@@ -123,71 +124,6 @@ struct TabState {
     bool fetched;
     const char *error;
 };
-
-/* ---- Star icon textures ---- */
-static SDL_Texture *s_starFull  = nullptr;
-static SDL_Texture *s_starHalf  = nullptr;
-static SDL_Texture *s_starEmpty = nullptr;
-static bool s_starsLoaded = false;
-
-static void loadStarIcons(SDL_Renderer *renderer) {
-    if (s_starsLoaded) return;
-    s_starsLoaded = true;
-
-    int iconSize = 16;
-    const char *paths[][2] = {
-        { "data/ui/star_full.svg",  nullptr },
-        { "data/ui/star_half.svg",  nullptr },
-        { "data/ui/star_empty.svg", nullptr },
-    };
-
-    char baseBuf[FILENAME_MAX];
-    const char *base = SDL_GetBasePath();
-    SDL_Texture **targets[] = { &s_starFull, &s_starHalf, &s_starEmpty };
-
-    for (int i = 0; i < 3; i++) {
-        *targets[i] = imguiLoadSvgIcon(renderer, paths[i][0], iconSize);
-        if (!*targets[i] && base) {
-            SDL_snprintf(baseBuf, sizeof(baseBuf), "%s%s", base, paths[i][0]);
-            *targets[i] = imguiLoadSvgIcon(renderer, baseBuf, iconSize);
-        }
-    }
-}
-
-static void destroyStarIcons() {
-    if (s_starFull)  { SDL_DestroyTexture(s_starFull);  s_starFull = nullptr; }
-    if (s_starHalf)  { SDL_DestroyTexture(s_starHalf);  s_starHalf = nullptr; }
-    if (s_starEmpty) { SDL_DestroyTexture(s_starEmpty); s_starEmpty = nullptr; }
-    s_starsLoaded = false;
-}
-
-/* ---- Render star rating inline ---- */
-static void renderStarRating(float rating10) {
-    /* Convert 0-10 scale to 0-5 stars */
-    float stars5 = rating10 / 2.0f;
-    int full = (int)stars5;
-    bool half = (stars5 - (float)full) >= 0.25f;
-    int empty = 5 - full - (half ? 1 : 0);
-
-    ImVec2 sz(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight());
-
-    for (int i = 0; i < full; i++) {
-        if (s_starFull) {
-            ImGui::Image((ImTextureID)s_starFull, sz);
-            if (i < full - 1 || half || empty > 0) ImGui::SameLine(0, 0);
-        }
-    }
-    if (half && s_starHalf) {
-        ImGui::Image((ImTextureID)s_starHalf, sz);
-        if (empty > 0) ImGui::SameLine(0, 0);
-    }
-    for (int i = 0; i < empty; i++) {
-        if (s_starEmpty) {
-            ImGui::Image((ImTextureID)s_starEmpty, sz);
-            if (i < empty - 1) ImGui::SameLine(0, 0);
-        }
-    }
-}
 
 /* ---- JSON parsing ---- */
 
@@ -384,7 +320,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     dialogApplyScaling(s);
 
     /* Load star icons */
-    loadStarIcons(renderer);
+    imguiStarRatingLoadIcons(renderer);
 
     /* Initialise HTTP for WBN API */
     bool httpOk = httpCreate();
@@ -1097,7 +1033,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
                             ImGui::TableNextColumn();
                             if (e.num_ratings > 0) {
-                                renderStarRating(e.rating);
+                                imguiStarRating(e.rating);
                                 ImGui::SameLine();
                                 ImGui::TextDisabled("(%d)", e.num_ratings);
                             } else {
@@ -1238,7 +1174,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                             ImGui::PopStyleColor();
                             ImGui::SameLine();
                             if (c.rating > 0) {
-                                renderStarRating((float)c.rating);
+                                imguiStarRating((float)c.rating);
                                 ImGui::SameLine();
                             }
 
@@ -1416,7 +1352,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     }
 
     /* Cleanup */
-    destroyStarIcons();
+    imguiStarRatingDestroyIcons();
 
     /* Stop and reap all workers before tearing down curl global state:
      * httpDestroy() -> curl_global_cleanup() is unsafe while any thread is
