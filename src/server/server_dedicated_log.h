@@ -73,6 +73,21 @@ void serverDedicatedLogFlushPendingUpload(void);
  * opted out of uploads (dontSendLog), so those stay untouched. */
 bool serverDedicatedLogHasPendingUpload(void);
 
+/* Round-log serve policy — whether this server answers a joined client's
+ * PACKET_ROUND_LOG_REQ with the last completed round's .wbv. AUTO resolves
+ * at serve time to "on unless WinBolo.net is running", because a WBN
+ * server's round log is uploaded there anyway; the resolution is deliberately
+ * not latched at install, since WBN can start after the recorder does.
+ * serverDedicatedLogInstall resets the mode to AUTO along with the rest of
+ * this module's per-sim policy, so set it after installing, not before.
+ * A value outside 0..2 is ignored. */
+#define ROUND_LOG_SERVE_OFF  0
+#define ROUND_LOG_SERVE_ON   1
+#define ROUND_LOG_SERVE_AUTO 2
+
+int  serverDedicatedLogServeMode(void);
+void serverDedicatedLogSetServeMode(int mode);
+
 /* Compose the final .wbv replay path from the -log argument value.
  * Pure (no globals / time / RNG) and cross-platform (SDL_GetPathInfo) so
  * it is unit-testable. See the definition in server_dedicated_log.c for

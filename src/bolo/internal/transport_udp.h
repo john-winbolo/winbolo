@@ -620,6 +620,41 @@ bool transportUdpServerHasAnyClient(void);
  * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
+/* ── Round-log source ─────────────────────────────────────────────────
+ * Where PACKET_ROUND_LOG_REQ gets its bytes.  The replay recorder
+ * (server_dedicated_log.c) registers itself here at install time and the
+ * transport calls only through this table, naming no recorder symbol.  That
+ * direction matters: a direct call the other way would pull the recorder —
+ * and the WinBolo.net upload it needs — into every target that links the
+ * transport, including the unit tests, the gym and the fuzz harnesses.  With
+ * no source registered the server answers ROUND_LOG_ERR_DISABLED, which is
+ * the honest answer for a build with no recorder in it. */
+typedef enum {
+    ROUND_LOG_READ_OK = 0,
+    ROUND_LOG_READ_NONE,       /* no completed round to serve             */
+    ROUND_LOG_READ_TOO_LARGE,  /* over ROUND_LOG_MAX_BYTES; never read    */
+    ROUND_LOG_READ_ERROR       /* stat / open / read / allocation failure */
+} RoundLogReadResult;
+
+typedef struct {
+    /* Whether the last completed round may be served right now.  Asked on
+     * every request rather than latched, so a policy that depends on runtime
+     * state (whether WinBolo.net is running, say) tracks that state. */
+    bool (*serveEnabled)(void);
+    /* Read the last completed round's log.  On ROUND_LOG_READ_OK, *outBuf is
+     * a malloc'd buffer of *outLen bytes the caller owns and frees, and
+     * outName holds the log file's basename; nothing is written on any other
+     * result.  The size is checked before the read, so a file over the cap
+     * never enters memory. */
+    RoundLogReadResult (*read)(uint8_t **outBuf, uint32_t *outLen,
+                               char *outName, size_t outNameSize);
+} RoundLogSource;
+
+/* Install the round-log source, or clear it by passing NULL (or a table with
+ * a NULL member).  The struct is copied, so the caller need not keep it
+ * alive, and the registration outlives a transport create/destroy cycle. */
+void transportUdpServerSetRoundLogSource(const RoundLogSource *src);
+
 /* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
  * carrying the current server_key.  Called after each round-end
  * winbolonetBeginSession succeeds so still-connected clients can mint a

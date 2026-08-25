@@ -80,6 +80,12 @@ static char s_completedPath[512];
  * offer it back. "" until a round has finished. */
 static char s_lastRoundFile[512];
 
+/* Whether this server hands the last completed round back to a client that
+ * asks for it. Reset to auto by serverDedicatedLogInstall; see
+ * ROUND_LOG_SERVE_* in server_dedicated_log.h for what auto resolves to and
+ * when. */
+static int s_serveMode = ROUND_LOG_SERVE_AUTO;
+
 /* TRUE once the open log has seen a game start, i.e. it holds a round and
  * not just a lobby. Gates the publish: without it, closing the lobby log
  * that a finished round returns to would move that lobby log over the
@@ -443,20 +449,116 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
     }
 }
 
+int serverDedicatedLogServeMode(void) {
+    return s_serveMode;
+}
+
+void serverDedicatedLogSetServeMode(int mode) {
+    if (mode != ROUND_LOG_SERVE_OFF && mode != ROUND_LOG_SERVE_ON &&
+        mode != ROUND_LOG_SERVE_AUTO) {
+        return;
+    }
+    s_serveMode = mode;
+}
+
+/* RoundLogSource::serveEnabled. Auto resolves here rather than at install
+ * because winbolonetIsRunning() can flip after the recorder is installed. */
+static bool serverDedicatedLogServeAllowed(void) {
+    switch (s_serveMode) {
+        case ROUND_LOG_SERVE_OFF: return FALSE;
+        case ROUND_LOG_SERVE_ON:  return TRUE;
+        default:                  return !winbolonetIsRunning();
+    }
+}
+
+/* RoundLogSource::read. Owns the size cap: the file is measured first and one
+ * over ROUND_LOG_MAX_BYTES is refused unopened, because a .wbv cut down to
+ * fit is unopenable rather than merely shorter — minizip writes the zip's
+ * central directory only at zipClose(). The buffer is plain malloc so the
+ * transport can free it with free() after the bulk sender takes its own copy.
+ * The name handed back is the basename: the server's directory layout is not
+ * the client's business. */
+static RoundLogReadResult serverDedicatedLogReadLastRound(uint8_t **outBuf,
+                                                          uint32_t *outLen,
+                                                          char *outName,
+                                                          size_t outNameSize) {
+    SDL_PathInfo info;
+    const char *base;
+    const char *p;
+    FILE *fp;
+    uint8_t *buf;
+    size_t size;
+    size_t got;
+
+    if (outBuf == NULL || outLen == NULL || outName == NULL ||
+        outNameSize == 0) {
+        return ROUND_LOG_READ_ERROR;
+    }
+    if (s_lastRoundFile[0] == '\0') {
+        return ROUND_LOG_READ_NONE;
+    }
+    /* A named-but-missing file reads as "no round" rather than an error: the
+     * round is gone (moved, deleted between rounds), which is the same thing
+     * to the asking client. */
+    if (!SDL_GetPathInfo(s_lastRoundFile, &info) ||
+        info.type != SDL_PATHTYPE_FILE || info.size == 0) {
+        return ROUND_LOG_READ_NONE;
+    }
+    if (info.size > (Uint64)ROUND_LOG_MAX_BYTES) {
+        return ROUND_LOG_READ_TOO_LARGE;
+    }
+    size = (size_t)info.size;
+
+    fp = fopen(s_lastRoundFile, "rb");
+    if (fp == NULL) {
+        return ROUND_LOG_READ_ERROR;
+    }
+    buf = (uint8_t *)malloc(size);
+    if (buf == NULL) {
+        fclose(fp);
+        return ROUND_LOG_READ_ERROR;
+    }
+    got = fread(buf, 1, size, fp);
+    fclose(fp);
+    if (got != size) {
+        free(buf);
+        return ROUND_LOG_READ_ERROR;
+    }
+
+    base = s_lastRoundFile;
+    for (p = s_lastRoundFile; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') {
+            base = p + 1;
+        }
+    }
+    snprintf(outName, outNameSize, "%s", base);
+
+    *outBuf = buf;
+    *outLen = (uint32_t)size;
+    return ROUND_LOG_READ_OK;
+}
+
+static const RoundLogSource s_roundLogSource = {
+    serverDedicatedLogServeAllowed,
+    serverDedicatedLogReadLastRound
+};
+
 void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     if (sim == NULL) {
         return;
     }
-    /* Install is where per-sim publish policy resets. The completed path is
-     * module state that outlives the sim that asked for it, so without this
-     * a single-player game would leave its path set and the next server in
-     * the same process — a hosted game, whose rounds must stay where the
-     * host configured them — would move its round log there. */
+    /* Install is where per-sim publish policy resets. The completed path and
+     * the serve mode are module state that outlives the sim that asked for
+     * them, so without this a single-player game would leave its path set and
+     * the next server in the same process — a hosted game, whose rounds must
+     * stay where the host configured them — would move its round log there,
+     * and would inherit whatever serve mode that game chose. */
     s_completedPath[0] = '\0';
     s_lastRoundFile[0] = '\0';
     s_roundRan = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;
+    s_serveMode = ROUND_LOG_SERVE_AUTO;
     s_dontSendLog = dontSendLog;
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
@@ -467,6 +569,11 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
      * cleanup can drive the per-round upload. */
     serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
                                     serverDedicatedLogFlushPendingUpload);
+    /* Tell the transport where a PACKET_ROUND_LOG_REQ gets its bytes. Pushed
+     * outward like the two registrations above so the transport never names a
+     * symbol in this file — it must stay linkable without the WinBolo.net
+     * upload path this module depends on. */
+    transportUdpServerSetRoundLogSource(&s_roundLogSource);
 }
 
 bool serverDedicatedLogIsActive(void) {

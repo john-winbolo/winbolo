@@ -65,7 +65,14 @@ enum {
      * [type u8][bodyLen u16 BE][body] control-event records. Sent on
      * CHANNEL_BULK so the ≤200-event burst never pressures the reliable
      * control window (which the same-tick sync replay already fills). */
-    BULK_KIND_LOBBY_CHAT_BACKLOG = 7
+    BULK_KIND_LOBBY_CHAT_BACKLOG = 7,
+    /* Server->client one-shot, sent in answer to PACKET_ROUND_LOG_REQ: the
+     * last completed round's .wbv bytes, so a joined client's lobby recap can
+     * replay a round it did not host and therefore has no local copy of. The
+     * header's gen echoes the request's reqSeq (a stale reply is droppable),
+     * its path carries the log file's basename, and its totalSize is bounded
+     * by ROUND_LOG_MAX_BYTES. */
+    BULK_KIND_ROUND_LOG = 8
 };
 
 /* App-level stream header that precedes a blob on CHANNEL_BULK. Big-endian on
