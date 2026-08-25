@@ -649,10 +649,14 @@ int run_lv_walk_base_anchor_ordinal(void);
 
 /* Hide Lobby presentation window (test_lv_calibration.c): with the lobby
  * hidden the viewer's progress, seeks and clock run against
- * [gameStart, totalTime) while the decoder stays on absolute log ms; a log
- * with no log_LobbyExit falls back to the whole file. */
+ * [gameStart, totalTime) while the decoder stays on absolute log ms. Game
+ * start is the world rewrite that ends the lobby, so a log whose lobby left no
+ * log_LobbyExit still opens on the round, and a log that never had a lobby —
+ * periodic in-game snapshots and all — falls back to the whole file. */
 int run_lv_hide_lobby_window_mapping(void);
 int run_lv_hide_lobby_no_lobby_fallback(void);
+int run_lv_hide_lobby_no_marker_anchor(void);
+int run_lv_hide_lobby_periodic_snapshot(void);
 
 /* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
  * the lobby marker is absent from the live roster at game start, where the

@@ -78,28 +78,40 @@ static void putHeader(LogBuf *b) {
   putZeros(b, 32);        /* WBN key */
 }
 
-/* One LOG_SNAPSHOT frame. withBases=false is the lobby form (empty world,
- * no bases); withBases=true carries two bases at (10,20) and (30,40) in
- * the 10-byte-per-base blob lv_basesSetBaseNetData consumes. */
-static void putSnapshot(LogBuf *b, bool withBases) {
+/* One LOG_SNAPSHOT frame. withWorld=false is the lobby form the recorder
+ * writes while the game world doesn't exist yet: no bases and no map runs.
+ * withWorld=true is a running-round snapshot — two bases at (10,20) and
+ * (30,40) in the 10-byte-per-base blob lv_basesSetBaseNetData consumes, plus
+ * one real map run. The run is what marks a snapshot as carrying a world:
+ * a lobby body writes only the terminator, a running one always writes at
+ * least one run. */
+static void putSnapshot(LogBuf *b, bool withWorld) {
   static const uint8_t baseBlob[1 + 2 * 10] = {
       2,
       10, 20, 255, 90, 10, 10, 0, 0, 0, 0,
       30, 40, 255, 90, 10, 10, 0, 0, 0, 0};
+  /* datalen (header + data), y, startx, endx, then the nibble RLE
+   * lv_mapProcessRun reads: a high nibble of 8 is >= MAP_RUN_DIFF, so it is a
+   * "same" run of 8 - MAP_RUN_SAME = 2 cells of the low nibble's terrain,
+   * landing on endx 2. */
+  static const uint8_t mapRun[5] = {5, 0, 0, 2, (8 << 4) | GRASS};
   static const uint8_t mapTerminator[4] = {4, 255, 255, 255};
   int i;
 
   putU8(b, LOG_SNAPSHOT);
   putZeros(b, 8);                    /* gmeStartDelay + gmeLength */
   putU8(b, 1); putU8(b, 0);          /* pills: count 0 */
-  if (withBases) {
+  if (withWorld) {
     putU8(b, (uint8_t)sizeof(baseBlob));
     put(b, baseBlob, sizeof(baseBlob));
   } else {
     putU8(b, 1); putU8(b, 0);        /* bases: count 0 */
   }
   putU8(b, 1); putU8(b, 0);          /* starts: count 0 */
-  put(b, mapTerminator, 4);          /* no map runs */
+  if (withWorld) {
+    put(b, mapRun, sizeof(mapRun));
+  }
+  put(b, mapTerminator, 4);
   for (i = 0; i < MAX_TANKS; i++) {  /* every slot "not in use" */
     putU8(b, 2); putU8(b, 0); putU8(b, 0);
   }
@@ -187,12 +199,11 @@ static LogViewerState *loadSynthetic(const LogBuf *b, const char *path) {
 
 /*
  * Lobby-started log: opening snapshot has NO bases; the base table appears
- * only in a mid-stream snapshot after the LobbyExit marker. Playback tick
+ * only in the mid-stream world rewrite that ends the lobby. Playback tick
  * accounting (per the walker: snapshot/event frames +1, NOEVENTS 1+wait):
  *
- *   LobbyExit frame       -> tick   1  (gameStartMs 20)
- *   NOEVENTS 100          -> tick 102
- *   snapshot (with bases) -> tick 103
+ *   snapshot (with world) -> tick   1  (gameStartMs 20)
+ *   NOEVENTS 101          -> tick 103
  *   BaseSetOwner idx0     -> tick 104  (ms 2080)
  *   NOEVENTS 50           -> tick 155
  *   BaseSetOwner idx1     -> tick 156  (ms 3120)
@@ -207,9 +218,8 @@ int run_lv_walk_base_anchor_lobby_log(void) {
   b.len = 0;
   putHeader(&b);
   putSnapshot(&b, false);   /* lobby: empty world, empty base table */
-  putEventFrame(&b, log_LobbyExit, NULL, 0);
-  putNoEvents(&b, 100);
-  putSnapshot(&b, true);    /* first in-game snapshot carries the bases */
+  putSnapshot(&b, true);    /* the world rewrite carries the bases */
+  putNoEvents(&b, 101);
   putBaseSetOwner(&b, 0, 2);
   putNoEvents(&b, 50);
   putBaseSetOwner(&b, 1, 3);
@@ -222,7 +232,7 @@ int run_lv_walk_base_anchor_lobby_log(void) {
                 "gameStartMs = %u (want 20)", lv_screenGameStartMs());
 
   /* The load-time base table is the empty lobby snapshot — the walker must
-   * pick the cells up from the mid-stream snapshot instead. */
+   * pick the cells up from the mid-stream world rewrite instead. */
   found = lv_walkFindBaseOwnerTimes(10, 20, 2, 1, 30, 40, 3, 1, &msE, &msL);
   UT_ASSERT_MSG(found == TRUE, "anchor walk found nothing on a lobby log");
   UT_ASSERT_MSG(msE == 2080, "first anchor ms = %u (want 2080)", msE);
@@ -327,12 +337,18 @@ int run_lv_walk_base_anchor_ordinal(void) {
  * +1, NOEVENTS n counts 1 + n, 20 ms a tick; the opening snapshot is consumed
  * at load and counts 0):
  *
- *   24 x NOEVENTS 249  -> tick 6000
- *   LobbyExit frame    -> tick 6001  (gameStartMs 120020)
- *   NOEVENTS 99        -> tick 6101
- *   snapshot           -> tick 6102  (ms 122040)
- *   12 x NOEVENTS 249  -> tick 9102
+ *   23 x NOEVENTS 249  -> tick 5750
+ *   NOEVENTS 248       -> tick 5999
+ *   LobbyExit frame    -> tick 6000
+ *   snapshot           -> tick 6001  (gameStartMs 120020)
+ *   12 x NOEVENTS 249  -> tick 9001
+ *   NOEVENTS 100       -> tick 9102
  *   LOG_QUIT           -> tick 9103  (totalTimeMs 182060)
+ *
+ * The marker and the world rewrite sit one tick apart, the order the recorder
+ * writes them in: log_LobbyExit is queued as an event and the snapshot that
+ * follows flushes it. The anchor is the snapshot, so the window opens on the
+ * round's first real frame rather than on the empty frame before it.
  *
  * The two walkers differ on that last frame: lv_walkComputeTotalTimeMs counts
  * LOG_QUIT as a tick and lv_walkComputeGameStartMs does not. That matches the
@@ -357,15 +373,16 @@ int run_lv_hide_lobby_window_mapping(void) {
   b.len = 0;
   putHeader(&b);
   putSnapshot(&b, false);          /* lobby: empty world, empty base table */
-  for (i = 0; i < 24; i++) {
+  for (i = 0; i < 23; i++) {
     putNoEvents(&b, 249);          /* waitLen is a uint8_t, so loop the wait */
   }
+  putNoEvents(&b, 248);
   putEventFrame(&b, log_LobbyExit, NULL, 0);
-  putNoEvents(&b, 99);
   putSnapshot(&b, true);
   for (i = 0; i < 12; i++) {
     putNoEvents(&b, 249);
   }
+  putNoEvents(&b, 100);
   putU8(&b, LOG_QUIT);
 
   lv_screenSetHideLobby(1);
@@ -488,6 +505,105 @@ int run_lv_hide_lobby_no_lobby_fallback(void) {
   return 0;
 }
 
+/*
+ * Marker-less lobby log: the round sat in the lobby but nothing wrote
+ * log_LobbyExit, which is what a single-player recording looks like. The
+ * anchor is the world rewrite itself — the first snapshot whose body carries a
+ * map run — so the window still opens on the round instead of playing the
+ * lobby out. Ticks: 4 x NOEVENTS 249 -> 1000, snapshot -> 1001 (20020),
+ * NOEVENTS 99 -> 1101, LOG_QUIT -> 1102 (totalTimeMs 22040).
+ */
+int run_lv_hide_lobby_no_marker_anchor(void) {
+  const char *path = "lv_hide_lobby_no_marker.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  size_t curPos, totSize;
+  uint32_t curTime, totTime;
+  int savedHide = lv_screenGetHideLobby();
+  int i;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, false);          /* lobby: empty world */
+  for (i = 0; i < 4; i++) {
+    putNoEvents(&b, 249);
+  }
+  putSnapshot(&b, true);           /* the world rewrite, with no marker in front */
+  putNoEvents(&b, 99);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic marker-less log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenGameStartMs() == 20020,
+                "gameStartMs = %u (want 20020)", lv_screenGameStartMs());
+
+  /* The park lands on the rewrite, so 00:00 is the round's first frame. */
+  lv_screenGetLogProgress(&curPos, &totSize, &curTime, &totTime);
+  UT_ASSERT_MSG(totTime == 2020, "window length = %u (want 2020)", totTime);
+  UT_ASSERT_MSG(curTime == 0, "position after load = %u (want 0)", curTime);
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 20020,
+                "parked at %u absolute (want 20020)",
+                lv_screenGetTimeRunning());
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
+/*
+ * No-lobby log carrying the periodic in-game snapshots the recorder writes
+ * every FULL_SYNC_INTERVAL ticks. Those carry a world too, so "the first
+ * snapshot with a map run" cannot be the anchor on its own: the opening
+ * snapshot, which the loader consumes, is what says whether a lobby ran. It
+ * carries a world here, so the round starts at tick 0 and the window is the
+ * whole file.
+ */
+int run_lv_hide_lobby_periodic_snapshot(void) {
+  const char *path = "lv_hide_lobby_periodic.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  size_t onPos, onSize, offPos, offSize;
+  uint32_t onTime, onTotal, offTime, offTotal;
+  int savedHide = lv_screenGetHideLobby();
+  int i;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);           /* opening: the world is already there */
+  for (i = 0; i < 2; i++) {
+    putNoEvents(&b, 249);
+  }
+  putSnapshot(&b, true);           /* periodic in-game resync, not a game start */
+  putNoEvents(&b, 99);
+  putU8(&b, LOG_QUIT);
+
+  lv_screenSetHideLobby(1);
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic periodic-snapshot log failed to build/load");
+
+  UT_ASSERT_MSG(lv_screenGameStartMs() == 0,
+                "gameStartMs = %u (want 0)", lv_screenGameStartMs());
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 0,
+                "a no-lobby log parked at %u (want 0)",
+                lv_screenGetTimeRunning());
+
+  lv_screenGetLogProgress(&onPos, &onSize, &onTime, &onTotal);
+  lv_screenSetHideLobby(0);
+  lv_screenGetLogProgress(&offPos, &offSize, &offTime, &offTotal);
+  UT_ASSERT_MSG(onPos == offPos && onSize == offSize && onTime == offTime &&
+                    onTotal == offTotal,
+                "the toggle moved a no-lobby log: %u/%u on, %u/%u off",
+                onTime, onTotal, offTime, offTotal);
+
+  lv_decoderDestroy(lv);
+  lv_screenSetHideLobby(savedHide);
+  remove(path);
+  return 0;
+}
+
 /* One log_PlayerJoined event: slot, 2-char country, account flags, reserved,
  * then the name as a pascal string (the layout screen.c's decode reads). */
 static void putPlayerJoined(LogBuf *b, uint8_t slot, const char *name) {
@@ -504,14 +620,15 @@ static void putPlayerJoined(LogBuf *b, uint8_t slot, const char *name) {
 }
 
 /*
- * A player who joins after the log_LobbyExit marker is not in the live roster
- * while the playhead is parked at game start, which is where the round summary
- * is emitted from. The load-time name walk reads the join event out of the log
- * itself, so the name is available regardless of the playhead.
+ * A player who joins after the round starts is not in the live roster while the
+ * playhead is parked at game start, which is where the round summary is emitted
+ * from. The load-time name walk reads the join event out of the log itself, so
+ * the name is available regardless of the playhead.
  *
- *   LobbyExit frame  -> tick   1  (gameStartMs 20, where the load parks)
- *   NOEVENTS 100     -> tick 102
- *   PlayerJoined     -> tick 103
+ *   LobbyExit frame  -> tick   1
+ *   snapshot         -> tick   2  (gameStartMs 40, where the load parks)
+ *   NOEVENTS 100     -> tick 103
+ *   PlayerJoined     -> tick 104
  */
 int run_lv_logged_name_from_join_event(void) {
   const char *path = "lv_logged_name_join.wbv";
@@ -525,6 +642,7 @@ int run_lv_logged_name_from_join_event(void) {
   putHeader(&b);
   putSnapshot(&b, false);   /* lobby: every slot not in use */
   putEventFrame(&b, log_LobbyExit, NULL, 0);
+  putSnapshot(&b, true);    /* the world rewrite the round starts on */
   putNoEvents(&b, 100);
   putPlayerJoined(&b, 3, "Chapu");
   putU8(&b, LOG_QUIT);
@@ -533,8 +651,8 @@ int run_lv_logged_name_from_join_event(void) {
   lv = loadSynthetic(&b, path);
   UT_ASSERT_MSG(lv != NULL, "synthetic join log failed to build/load");
 
-  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 20,
-                "parked at %u (want 20, the game start)",
+  UT_ASSERT_MSG(lv_screenGetTimeRunning() == 40,
+                "parked at %u (want 40, the game start)",
                 lv_screenGetTimeRunning());
 
   /* The playhead has not reached the join, so the live roster is empty here. */

@@ -1358,6 +1358,18 @@ void lv_screenCentreOnSelectedItem() {
   }
 }
 
+/* Whether the snapshot lv_processSnapshot last decoded carried a world. The
+ * recorder's lobby-mode body writes no map runs at all (logSerializeSnapshotBody
+ * in log.c), a running-round body always writes at least one, so the run count
+ * is what separates the two. */
+static bool s_lastSnapshotHadWorld = FALSE;
+
+/* The same answer for the opening snapshot, which the loader consumes before
+ * the event stream starts. Set, it means the log opened on a running round and
+ * has no lobby in front of it. Both loaders write it as they decode that
+ * snapshot, so it needs no separate reset. */
+static bool s_openingSnapshotHadWorld = FALSE;
+
 bool lv_processSnapshot() {
   bool returnValue = TRUE;
   BYTE data[512];
@@ -1417,10 +1429,9 @@ bool lv_processSnapshot() {
     }
   }
   if (returnValue == TRUE) {
-    returnValue = lv_mapReadRuns(&g_lv->mp);
-    if (returnValue == FALSE) {
-      returnValue = FALSE;
-    }
+    int numRuns = 0;
+    returnValue = lv_mapReadRuns(&g_lv->mp, &numRuns);
+    s_lastSnapshotHadWorld = (numRuns > 0);
   }
 
 
@@ -1682,14 +1693,17 @@ static bool walkSkipEvents(unsigned short numEvents) {
  * carries a base table, the bases' map cells are copied out in blob order —
  * the same 0-based index a log_BaseSetOwner event carries. A snapshot with no
  * bases (any lobby-phase snapshot: the game world doesn't exist yet) leaves
- * the outputs untouched, so a previously extracted table survives. */
+ * the outputs untouched, so a previously extracted table survives. When
+ * numRuns is non-NULL it reports how many non-terminator map runs the body
+ * carried — none for a lobby snapshot, at least one for a running round. */
 static bool walkSkipSnapshotBases(uint8_t *baseX, uint8_t *baseY,
-                                  int *numBases) {
+                                  int *numBases, int *numRuns) {
   BYTE buf[512];
   BYTE dlen;
   int32_t hdr;
   BYTE runHead[SIZEOFBMAP_RUN_HEADER];
   int i;
+  int runs = 0;
 
   /* gmeStartDelay + gmeLength */
   if (logReadBytes((BYTE *)&hdr, (int)sizeof(int32_t)) != (int)sizeof(int32_t)) return FALSE;
@@ -1734,7 +1748,9 @@ static bool walkSkipSnapshotBases(uint8_t *baseX, uint8_t *baseY,
         dataBytes -= chunk;
       }
     }
+    runs++;
   }
+  if (numRuns != NULL) *numRuns = runs;
 
   /* MAX_TANKS player records: 1-byte len + len bytes (BYTE max 255 fits in buf) */
   for (i = 0; i < MAX_TANKS; i++) {
@@ -1745,7 +1761,7 @@ static bool walkSkipSnapshotBases(uint8_t *baseX, uint8_t *baseY,
 }
 
 static bool walkSkipSnapshot(void) {
-  return walkSkipSnapshotBases(NULL, NULL, NULL);
+  return walkSkipSnapshotBases(NULL, NULL, NULL, NULL);
 }
 
 /* Walk the log buffer from the current position to LOG_QUIT/EOF, counting
@@ -1809,8 +1825,9 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
   return (uint32_t)(ticks * 20);
 }
 
-/* Playback time (ms) of the log's game-start marker (log_LobbyExit), computed
- * once at load. 0 when the log has no lobby, so the game runs from tick 0. */
+/* Playback time (ms) of the world rewrite that ends the lobby — the round's
+ * first real frame — computed once at load. 0 when the log has no lobby, so
+ * the round runs from tick 0. */
 static uint32_t s_gameStartMs = 0;
 
 /* Every name each slot carried this round, collected once at load from the
@@ -1829,54 +1846,49 @@ static bool s_hideLobby = TRUE;
  * from a known-good position instead of trusting the caller's current one. */
 static size_t s_walkStartPos = 0;
 
-/* Like walkSkipEvents, but also reports whether this frame carried the
- * log_LobbyExit (game-start) marker. */
-static bool walkScanEvents(unsigned short numEvents, bool *sawLobbyExit) {
-  unsigned short i;
-  BYTE code;
-  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
-  for (i = 0; i < numEvents; i++) {
-    if (logReadBytes(&code, 1) != 1) return FALSE;
-    if (code == log_LobbyExit) *sawLobbyExit = TRUE;
-    if (isV2) {
-      BYTE lenBytes[2];
-      unsigned short evLen;
-      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
-      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
-      lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
-    } else {
-      if (walkSkipEventBody(code) < 0) return FALSE;
-      lv_blocksSetKey(code);
-    }
-  }
-  return TRUE;
-}
-
-/* Walk the log from the current position to the first log_LobbyExit, counting
- * 20ms ticks, and return that marker's playback time in ms — the lobby length
- * that clip times are offset by. 0 if the log has no lobby marker. Mirrors
- * lv_walkComputeTotalTimeMs; must be entered at the event-stream start (as at
- * load). Saves and restores logPosition + XOR key. */
+/* Walk the log from the current position to LOG_QUIT/EOF counting 20ms ticks,
+ * and return the playback time in ms of the first snapshot whose body carries
+ * a world — the rewrite the recorder emits when the lobby ends, which is the
+ * round's first real frame. Returns 0 when the opening snapshot the loader
+ * consumed already carried a world (no lobby ran, so the round starts at tick
+ * 0 and every snapshot left in the stream is a periodic in-game resync), and
+ * 0 if no such snapshot is reached. The tick accounting mirrors
+ * lv_walkComputeTotalTimeMs, so the result is comparable to the decoder's
+ * timeRunning; must be entered at the event-stream start (as at load). Saves
+ * and restores logPosition + XOR key. */
 static uint32_t lv_walkComputeGameStartMs(void) {
-  size_t   savedPos = lv_logGetCurrentPosition();
-  BYTE     savedKey = lv_blocksGetKey();
+  size_t   savedPos;
+  BYTE     savedKey;
   uint64_t ticks    = 0;
   bool     done     = FALSE;
-  bool     found    = FALSE;
   BYTE     code, b1, b2;
   unsigned short waitLen, numEvents;
   uint16_t us;
   uint32_t result = 0;
+  int      numRuns;
 
-  while (!done && !found && !lv_blocksIsEOF()) {
+  if (s_openingSnapshotHadWorld == TRUE) return 0;
+
+  savedPos = lv_logGetCurrentPosition();
+  savedKey = lv_blocksGetKey();
+
+  while (!done && !lv_blocksIsEOF()) {
     if (logReadBytes(&code, 1) != 1) break;
     switch (code) {
       case LOG_QUIT:
         done = TRUE;
         break;
       case LOG_SNAPSHOT:
-        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        numRuns = 0;
+        if (!walkSkipSnapshotBases(NULL, NULL, NULL, &numRuns)) {
+          done = TRUE;
+          break;
+        }
         ticks++;
+        if (numRuns > 0) {
+          result = (uint32_t)(ticks * 20);
+          done = TRUE;
+        }
         break;
       case LOG_NOEVENTS:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
@@ -1894,7 +1906,7 @@ static uint32_t lv_walkComputeGameStartMs(void) {
       case LOG_EVENT:
         if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
         numEvents = b1;
-        if (!walkScanEvents(numEvents, &found)) { done = TRUE; break; }
+        if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
         ticks++;
         break;
       case LOG_EVENT_LONG:
@@ -1902,7 +1914,7 @@ static uint32_t lv_walkComputeGameStartMs(void) {
         if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
         us = (uint16_t)((b1 << 8) | b2);
         numEvents = ntohs(us);
-        if (!walkScanEvents(numEvents, &found)) { done = TRUE; break; }
+        if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
         ticks++;
         break;
       default:
@@ -1911,7 +1923,6 @@ static uint32_t lv_walkComputeGameStartMs(void) {
     }
   }
 
-  if (found) result = (uint32_t)(ticks * 20);
   lv_logSetPosition(savedPos);
   lv_blocksSetKey(savedKey);
   return result;
@@ -2026,7 +2037,8 @@ static void lv_walkCollectSlotNames(void) {
   lv_blocksSetKey(savedKey);
 }
 
-/* Log time (ms) at which the game started (lobby ended); 0 if no lobby. */
+/* Log time (ms) at which the round started (the lobby's world rewrite); 0 if
+ * no lobby. */
 uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
 
 static void lv_screenSeekToAbsoluteMs(uint32_t targetTime);
@@ -2154,7 +2166,7 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
         done = TRUE;
         break;
       case LOG_SNAPSHOT:
-        if (!walkSkipSnapshotBases(baseX, baseY, &numBases)) { done = TRUE; break; }
+        if (!walkSkipSnapshotBases(baseX, baseY, &numBases, NULL)) { done = TRUE; break; }
         ticks++;
         break;
       case LOG_NOEVENTS:
@@ -2288,6 +2300,10 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     returnValue = FALSE;
   } else {
     returnValue = lv_processSnapshot();
+    /* Latch whether the opening snapshot carried a world, before anything else
+     * can decode another one. That is what tells lv_walkComputeGameStartMs
+     * whether a lobby ran in front of the event stream. */
+    s_openingSnapshotHadWorld = s_lastSnapshotHadWorld;
   }
 
   g_lv->logLoaded = returnValue;
@@ -2428,6 +2444,10 @@ static bool lv_logLoadCommon(void) {
     returnValue = FALSE;
   } else {
     returnValue = lv_processSnapshot();
+    /* Latch whether the opening snapshot carried a world, before anything else
+     * can decode another one. That is what tells lv_walkComputeGameStartMs
+     * whether a lobby ran in front of the event stream. */
+    s_openingSnapshotHadWorld = s_lastSnapshotHadWorld;
   }
 
   g_lv->logLoaded = returnValue;
