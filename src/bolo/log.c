@@ -159,6 +159,20 @@ bool logHasSpectatorRing(void) {
   return logSpectatorRing != NULL;
 }
 
+/* Run at the top of every logWriteTick, before this tick's accounting. Gives a
+ * caller that produced log events off the recording thread somewhere to emit
+ * them from: logAddEvent drops writes from any thread but the one logWriteTick
+ * pinned, so an event queued here lands in this tick's LOG_EVENT frame instead
+ * of being discarded. Deliberately not cleared by logCreate — that runs from
+ * serverSimCreate, so a background-menu sim created after the hook was
+ * installed would disarm it. The registered function lives in a module that is
+ * never unloaded, and it guards itself when there is nothing to do. */
+static void (*logPreTickHook)(void) = NULL;
+
+void logSetPreTickHook(void (*fn)(void)) {
+  logPreTickHook = fn;
+}
+
 /*********************************************************
 *NAME:          logCreate
 *AUTHOR:        John Morrison
@@ -242,6 +256,12 @@ void logWriteTick() {
    * through with logOwnerThread still 0. */
   if (logOwnerThread == 0) {
     logOwnerThread = SDL_GetCurrentThreadID();
+  }
+
+  /* Owner is pinned, nothing is written yet: the point where a deferred
+     emission can queue events that this tick's accounting will frame. */
+  if (logPreTickHook != NULL) {
+    logPreTickHook();
   }
 
   /* Spectator ring tap: record one ring tick for the registered sim, using the

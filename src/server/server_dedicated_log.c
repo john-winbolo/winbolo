@@ -86,6 +86,18 @@ static char s_lastRoundFile[512];
  * round it just published. */
 static bool s_roundRan = FALSE;
 
+/* Control-event work handed to the recording thread. CTRL_GAME_PHASE_RUNNING
+ * and CTRL_LOBBY_MAP_CHANGE are published from whichever thread drove the
+ * transition — for in-process single player the main thread, not the timer
+ * thread logWriteTick pinned as the log's owner — so logAddEvent would drop
+ * everything they emit. The deliver path records what to emit and
+ * serverDedicatedLogDrain, registered as log.c's pre-tick hook, emits it from
+ * the owning thread. The map message keeps the pascal-string shape logAddEvent
+ * takes; two map changes before a drain leave the later one. */
+static bool s_gameStartPending = FALSE;
+static bool s_mapMsgPending = FALSE;
+static char s_pendingMapMsg[256];
+
 static void serverDedicatedLogRenameForMap(ServerSim *sim);
 
 /* Generate a log file name from the current time and map name into
@@ -316,7 +328,8 @@ static void handleLobbyMapChange(ServerSim *sim) {
     if (nameLen < 0) return;
     if (nameLen > 255) nameLen = 255;
     pstr[0] = (char)nameLen;
-    logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+    memcpy(s_pendingMapMsg, pstr, (size_t)nameLen + 1);
+    s_mapMsgPending = TRUE;
 }
 
 static void handleGameStart(ServerSim *sim) {
@@ -370,6 +383,32 @@ static void handleGameStart(ServerSim *sim) {
     }
 }
 
+/* log.c's pre-tick hook: emit what the off-thread control-event handlers
+ * queued. Runs on the thread logWriteTick pinned, so these writes pass the
+ * writer's owner check, and runs before the tick's accounting, so they are
+ * framed as this tick's events. Inert when nothing is pending. */
+static void serverDedicatedLogDrain(void) {
+    ServerSim *sim = s_logSim;
+
+    if (sim == NULL) {
+        return;
+    }
+    if (s_gameStartPending == FALSE && s_mapMsgPending == FALSE) {
+        return;
+    }
+    /* Game start first: logWriteSnapshot flushes the queued log_LobbyExit and
+     * log_AllyAccept events before it writes the snapshot marker, which is what
+     * puts the LOG_EVENT frame ahead of the LOG_SNAPSHOT in the byte stream. */
+    if (s_gameStartPending == TRUE) {
+        handleGameStart(sim);
+    }
+    if (s_mapMsgPending == TRUE) {
+        logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, s_pendingMapMsg);
+    }
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
+}
+
 static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
     ServerSim *sim = s_logSim;
     (void)ctx;
@@ -381,7 +420,17 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
             handleLobbyEnter(sim);
             break;
         case CTRL_GAME_PHASE_RUNNING:
-            handleGameStart(sim);
+            /* The recording branch emits the round's marker, the alliance
+             * audit events and the world rewrite, so it has to run on the
+             * recording thread. The no-lobby branch only opens the file —
+             * logStart re-pins the owner itself — and has to stay here: with
+             * no lobby and no spectator ring, serverSimLogTick returns before
+             * logWriteTick, so there would be no drain until a log exists. */
+            if (sim->wantLogging && logIsRecording()) {
+                s_gameStartPending = TRUE;
+            } else {
+                handleGameStart(sim);
+            }
             break;
         case CTRL_GAME_PHASE_GAME_OVER:
             handleGameOver(sim);
@@ -406,9 +455,14 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     s_completedPath[0] = '\0';
     s_lastRoundFile[0] = '\0';
     s_roundRan = FALSE;
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
     s_dontSendLog = dontSendLog;
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
+    /* Emit point for the handlers that run off the recording thread. Like the
+     * two registrations around it, install-only — nothing unregisters it. */
+    logSetPreTickHook(serverDedicatedLogDrain);
     /* Hand the lifecycle our stash/flush so its lobby/empty-reset
      * cleanup can drive the per-round upload. */
     serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
