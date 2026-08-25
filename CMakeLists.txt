@@ -3116,6 +3116,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
     tests/unit/test_bulk_transfer.c
+    # Round-log transfer: the BULK_KIND_ROUND_LOG stream header at the extremes
+    # the transfer uses, the realignment a rejected stream must leave behind,
+    # and the loopback refusal a server with no RoundLogSource answers with.
+    tests/unit/test_round_log.c
     # Send-side overflow guards on channelStreamSend / bulkSenderBegin: a
     # wrap-prone length is rejected with no state change.
     tests/unit/test_overflow_guards.c
@@ -3703,6 +3707,9 @@ set(_unit_test_names
     spectator_lobby_cutover
     loopback_spectator_lobby
     bulk_transfer
+    round_log_header_roundtrip
+    round_log_sink_rejection_realigns
+    round_log_refused_when_unavailable
     overflow_guards
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines

@@ -456,6 +456,19 @@ int run_loopback_spectator_lobby(void);
  * robustness, pipelining and the send-side serializer guard. */
 int run_bulk_transfer(void);
 
+/* Round-log transfer (test_round_log.c): the BULK_KIND_ROUND_LOG stream
+ * header round-trips at the extremes the transfer uses (kind 8, a reqSeq echo
+ * in gen, a totalSize at ROUND_LOG_MAX_BYTES, a path at BULK_PATH_MAX) and
+ * refuses a truncated one without over-reading; a rejected round-log stream
+ * leaves the byte run aligned, proved on the stream that follows it; and a
+ * client asking a loopback server with no RoundLogSource registered lands on
+ * CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED over the real REQ/ERR packets. The
+ * success path needs a recorded round and a recorder in the server, so it is
+ * human-gated on two machines rather than covered here. */
+int run_round_log_header_roundtrip(void);
+int run_round_log_sink_rejection_realigns(void);
+int run_round_log_refused_when_unavailable(void);
+
 /* Send-side overflow guards (test_overflow_guards.c): channelStreamSend and
  * bulkSenderBegin reject a wrap-prone length via the existing false path with
  * no state change. */
