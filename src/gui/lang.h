@@ -731,6 +731,13 @@
 #define STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT  1935
 #define STR_DLGLOBBY_HL_GENERIC              1936
 
+/* Lobby "Last round" panel — the reel's delivery state. */
+#define STR_DLGLOBBY_REEL_WAITING            1938
+#define STR_DLGLOBBY_REEL_DOWNLOADING        1939
+#define STR_DLGLOBBY_REEL_DISABLED           1940
+#define STR_DLGLOBBY_REEL_NONE               1941
+#define STR_DLGLOBBY_REEL_TOO_LARGE          1942
+
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
 #define STR_DLGSETNAME_WBN_LOCKED           758

@@ -588,6 +588,12 @@ static const LangEntry langTable[] = {
     {1934, "Turning point: {number} tiles swung ({player})"},
     {1935, "Turning point: {number} tiles swung"},
     {1936, "Highlight"},
+    /* Lobby "Last round" panel — the reel's delivery state. */
+    {1938, "Asking the server for the replay..."},
+    {1939, "Downloading replay... {number}%"},
+    {1940, "This server does not share replays"},
+    {1941, "No replay available for this round"},
+    {1942, "The round was too long to send"},
     {757,  "WinBolo - Set Player Name"},
     {758,  "Your player name is set by WinBolo.net."},
     {759,  "Please enter your player name."},

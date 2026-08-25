@@ -688,6 +688,13 @@ STR_DLGLOBBY_HL_TURNING_FMT=Turning point: {number} tiles swung ({player})
 STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT=Turning point: {number} tiles swung
 STR_DLGLOBBY_HL_GENERIC=Highlight
 
+# Lobby "Last round" panel — the reel's delivery state.
+STR_DLGLOBBY_REEL_WAITING=Asking the server for the replay...
+STR_DLGLOBBY_REEL_DOWNLOADING=Downloading replay... {number}%
+STR_DLGLOBBY_REEL_DISABLED=This server does not share replays
+STR_DLGLOBBY_REEL_NONE=No replay available for this round
+STR_DLGLOBBY_REEL_TOO_LARGE=The round was too long to send
+
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
 STR_DLGSETNAME_WBN_LOCKED=Your player name is set by WinBolo.net.

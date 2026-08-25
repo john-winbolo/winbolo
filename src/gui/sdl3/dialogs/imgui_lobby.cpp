@@ -6371,6 +6371,134 @@ static void lobbyReelDropRoundLog(ClientSim *cs) {
                 "[REEL] dropped round log (%zu bytes), its recap is gone", len);
 }
 
+/* Say where the round log has got to, centred in the space the reel would have
+ * filled, so a recap with nothing to play yet reads as waiting or refused
+ * rather than as a blank rectangle.
+ *
+ * Waiting and each of the three refusals get an icon and a line of their own —
+ * the refusals are worded apart because they tell a player different things:
+ * one is the host's choice, one is a round the server never finished, one is a
+ * round too long to send. A transfer in flight gets a ring struck from the
+ * percent the transport reports, which is a real fraction of the bytes and not
+ * an animation, so a stalled download looks stalled.
+ *
+ * Reports only: the state is whatever the caller read off the transport this
+ * frame, and nothing here times anything out, retries, or moves the transfer
+ * along. */
+static void lobbyRenderReelStatus(int state, uint8_t percent, ImVec2 rect,
+                                  float s) {
+    /* The recap can be the first thing on screen in the controller layout's
+     * Last round tab, where the player list that usually brings the status
+     * icons up is not drawn. The load is idempotent, so asking again is free. */
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer) loadStatusIconsOnce(renderer, s);
+
+    const char  *msg = nullptr;
+    SDL_Texture *ico = nullptr;
+    char msgBuf[128];
+
+    switch (state) {
+        case CLIENT_ROUND_LOG_WAITING:
+            ico = s_iconInfo;
+            msg = langGetText(STR_DLGLOBBY_REEL_WAITING);
+            break;
+        case CLIENT_ROUND_LOG_DOWNLOADING: {
+            /* Copied out rather than held: langGetTextFmt returns a pointer
+             * into a short ring of buffers that later calls reuse. */
+            MessageArgs args = {};
+            args.number = (int)percent;
+            SDL_snprintf(msgBuf, sizeof(msgBuf), "%s",
+                         langGetTextFmt(STR_DLGLOBBY_REEL_DOWNLOADING, &args));
+            msg = msgBuf;
+            break;
+        }
+        case CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED:
+            ico = s_iconError;
+            msg = langGetText(STR_DLGLOBBY_REEL_DISABLED);
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_NONE:
+            ico = s_iconError;
+            msg = langGetText(STR_DLGLOBBY_REEL_NONE);
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE:
+            ico = s_iconError;
+            msg = langGetText(STR_DLGLOBBY_REEL_TOO_LARGE);
+            break;
+        default:
+            /* Idle: nothing was asked for on this connection, or the viewer has
+             * already taken the bytes and a load is on its way. Neither is
+             * something to tell the player about, and drawing nothing at all
+             * leaves the recap the layout it had before there was a transfer to
+             * describe. */
+            return;
+    }
+
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const bool   ring     = (state == CLIENT_ROUND_LOG_DOWNLOADING);
+    const float  ringR    = 22.0f * s;
+    const float  iconSize = 18.0f * s;
+    const float  gapX     = style.ItemSpacing.x;
+    const float  gapY     = style.ItemSpacing.y;
+    const ImVec2 textSz   = ImGui::CalcTextSize(msg);
+    /* Icon and message share one row; the ring, when there is one, sits above
+     * it and the pair is centred in the area as a block. */
+    const float rowH   = (ico && iconSize > textSz.y) ? iconSize : textSz.y;
+    const float rowW   = textSz.x + (ico ? iconSize + gapX : 0.0f);
+    const float blockH = rowH + (ring ? ringR * 2.0f + gapY : 0.0f);
+
+    /* A round still on its way holds the reel's whole rect, so the scoreboard
+     * does not shuffle down the moment the reel appears in that same space. A
+     * refusal never becomes a reel, so it keeps only the band its own line
+     * needs and leaves the rest of the panel to the rows below. */
+    const bool holdRect = (state == CLIENT_ROUND_LOG_WAITING || ring);
+    ImVec2     area(rect.x, holdRect ? rect.y : blockH + gapY * 2.0f);
+    if (area.y > rect.y) area.y = rect.y;
+
+    ImDrawList  *dl = ImGui::GetWindowDrawList();
+    const ImVec2 pmin = ImGui::GetCursorScreenPos();
+    const ImVec2 pmax(pmin.x + area.x, pmin.y + area.y);
+
+    /* Nothing may leave that area — a long translation is cut off rather than
+     * written across the rows underneath. */
+    dl->PushClipRect(pmin, pmax, true);
+    dl->AddRectFilled(pmin, pmax, ImGui::GetColorU32(ImGuiCol_FrameBg),
+                      style.FrameRounding);
+
+    const float cx  = pmin.x + area.x * 0.5f;
+    const float top = pmin.y + (area.y - blockH) * 0.5f;
+
+    if (ring) {
+        /* Struck clockwise from 12 o'clock on a full-circle track, the shape
+         * the vote ring already uses. */
+        const ImVec2 centre(cx, top + ringR);
+        dl->AddCircle(centre, ringR, ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                      36, 3.0f * s);
+        const float frac = ((percent > 100) ? 100.0f : (float)percent) / 100.0f;
+        if (frac > 0.0f) {
+            const float a0 = -IM_PI * 0.5f;
+            dl->PathArcTo(centre, ringR, a0, a0 + frac * IM_PI * 2.0f, 36);
+            dl->PathStroke(ImGui::GetColorU32(ImGuiCol_PlotHistogram),
+                           3.5f * s);
+        }
+    }
+
+    const float rowY = top + blockH - rowH;
+    float       x    = cx - rowW * 0.5f;
+    if (ico) {
+        const ImVec2 iconMin(x, rowY + (rowH - iconSize) * 0.5f);
+        dl->AddImage((ImTextureID)ico, iconMin,
+                     ImVec2(iconMin.x + iconSize, iconMin.y + iconSize));
+        x += iconSize + gapX;
+    }
+    dl->AddText(ImVec2(x, rowY + (rowH - textSz.y) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text), msg);
+    dl->PopClipRect();
+
+    /* Spend what was drawn into, so the rows below start under it and the
+     * height the recap feeds back has somewhere to land instead of climbing. */
+    ImGui::Dummy(area);
+}
+
 /* Reel height: a share of whatever vertical room the container has left, plus
  * the room the rest of the recap turned out not to need, floored so it stays
  * watchable in a short controller tab and capped as a share of the container
@@ -6410,6 +6538,20 @@ static void lobbyRenderReel(ClientSim *cs, float s) {
                                replayPath[0] != '\0' &&
                                SDL_GetPathInfo(replayPath, &replayInfo);
 
+    /* Sized before the source is settled, because a round still on its way from
+     * the server draws its delivery state into this same rect. Nothing has been
+     * drawn yet either way, so the room measured here is the room the reel gets
+     * once there is one. */
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC + s_recapSlack);
+    if (rect.y < REEL_HEIGHT_MIN * s) rect.y = REEL_HEIGHT_MIN * s;
+    /* Cap last, so a container too short for the floor is still not overrun. */
+    if (rect.y > avail.y * REEL_HEIGHT_MAX_FRAC) {
+        rect.y = avail.y * REEL_HEIGHT_MAX_FRAC;
+    }
+    if (rect.y < 1.0f) rect.y = 1.0f;
+    if (rect.x < 1.0f) rect.x = 1.0f;
+
     /* A client that joined recorded nothing, so it asks the server that ran
      * the round for the bytes and waits for them. The request goes out from
      * here and nowhere else, so a player who never opens the recap never costs
@@ -6418,7 +6560,12 @@ static void lobbyRenderReel(ClientSim *cs, float s) {
      * blob left over from an earlier round being played as this one: the
      * request supersedes whatever the transport is still holding. Only until a
      * reel is up: taking the blob returns the state to idle, and past that
-     * point idle means the viewer has it, not that there is nothing to play. */
+     * point idle means the viewer has it, not that there is nothing to play.
+     *
+     * Until the bytes are here the rect above carries the transfer's state
+     * instead of a reel. A host or single-player session that recorded the
+     * round never reaches this: it resolves to its own file above and goes
+     * straight to playing it, asking for nothing and drawing no overlay. */
     if (!s_reelActive && !haveLocalFile) {
         if (!s_reelLogAsked) {
             s_reelLogAsked = true;
@@ -6429,18 +6576,11 @@ static void lobbyRenderReel(ClientSim *cs, float s) {
                                ? clientSimGetRoundLogPercent(cs)
                                : 0;
         lobbyReelLogTransfer(s_reelLogState, s_reelLogPercent);
-        if (s_reelLogState != CLIENT_ROUND_LOG_READY) return;
+        if (s_reelLogState != CLIENT_ROUND_LOG_READY) {
+            lobbyRenderReelStatus(s_reelLogState, s_reelLogPercent, rect, s);
+            return;
+        }
     }
-
-    ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC + s_recapSlack);
-    if (rect.y < REEL_HEIGHT_MIN * s) rect.y = REEL_HEIGHT_MIN * s;
-    /* Cap last, so a container too short for the floor is still not overrun. */
-    if (rect.y > avail.y * REEL_HEIGHT_MAX_FRAC) {
-        rect.y = avail.y * REEL_HEIGHT_MAX_FRAC;
-    }
-    if (rect.y < 1.0f) rect.y = 1.0f;
-    if (rect.x < 1.0f) rect.x = 1.0f;
 
     if (!s_reelActive && !s_reelTried) {
         /* One attempt per summary either way — a failed load must not be
