@@ -98,30 +98,37 @@ extern "C" {
 #include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
 
-/* Parts of the recap that need something the web build does not have. Named
- * for what they need rather than for the platform, so the reason each one is
- * out reads at the site as well as here.
+/* Parts of the recap that need something a given build does not have, and the
+ * one that has a transport per platform. Named for what they need rather than
+ * for the platform, so the reason each one is out reads at the site as well as
+ * here.
  *
- * BOLO_REEL_WBN_FETCH   — the reel's WinBolo.net fallback source, used when a
- *   WBN-registered host uploads its round log instead of serving it over the
- *   game socket. It downloads on a std::thread through http.c, which refuses
- *   to build under Emscripten because it embeds the WinBolo.net signing key.
- *   Without it the reel plays only what the game socket delivers.
- * BOLO_RECAP_WBN_RATING — the round's stars and comments, on the same http.c
- *   through wbn_comments; neither that nor the star widget is in the wasm
- *   target's sources.
- * BOLO_RECAP_CLIP_GIF   — the clip export. The GIF encoder's implementation
+ * BOLO_REEL_WBN_FETCH      — the reel's WinBolo.net fallback source, used when
+ *   a WBN-registered host uploads its round log instead of serving it over the
+ *   game socket. On for every build: the retry ladder, the attempt cap, the
+ *   size ceiling and the progress reporting are one copy, and only the
+ *   transport underneath forks.
+ * BOLO_REEL_WBN_FETCH_CURL — which transport that is. Desktop downloads on a
+ *   std::thread through http.c. The browser has neither: http.c refuses to
+ *   build under Emscripten because it embeds the WinBolo.net signing key, and
+ *   the wasm client is single-threaded, so it drives the page's fetch()
+ *   through src/wasm/round_log_fetch_wasm.c instead.
+ * BOLO_RECAP_WBN_RATING    — the round's stars and comments, on the same
+ *   http.c through wbn_comments; neither that nor the star widget is in the
+ *   wasm target's sources.
+ * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
  *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
  *   sources, and the save path spins its own SDL event loop waiting on a
  *   native file dialog, which a browser main loop cannot do. */
+#define BOLO_REEL_WBN_FETCH 1
 #ifdef __EMSCRIPTEN__
-#define BOLO_REEL_WBN_FETCH   0
-#define BOLO_RECAP_WBN_RATING 0
-#define BOLO_RECAP_CLIP_GIF   0
+#define BOLO_REEL_WBN_FETCH_CURL 0
+#define BOLO_RECAP_WBN_RATING    0
+#define BOLO_RECAP_CLIP_GIF      0
 #else
-#define BOLO_REEL_WBN_FETCH   1
-#define BOLO_RECAP_WBN_RATING 1
-#define BOLO_RECAP_CLIP_GIF   1
+#define BOLO_REEL_WBN_FETCH_CURL 1
+#define BOLO_RECAP_WBN_RATING    1
+#define BOLO_RECAP_CLIP_GIF      1
 #endif
 
 /* Embedded log-viewer reel (src/logviewer/lv_embed.c). Hand-declared rather
@@ -150,6 +157,18 @@ void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
 void lvEmbedStepTicks(int ticks);
+#endif
+#if !BOLO_REEL_WBN_FETCH_CURL
+/* Round-log download for the reel's WinBolo.net source
+ * (src/wasm/round_log_fetch_wasm.c). Start hands the request to the page and
+ * returns; the poll is read once a frame, so nothing here suspends the C stack
+ * inside an ImGui frame. Poll gives 0 while the request is in flight, otherwise
+ * the HTTP status, or -1 when it never completed; on a 200 whose body fits the
+ * ceiling it hands over a malloc'd buffer the caller owns. Hand-declared on the
+ * same terms as the reel above. */
+void wbRoundLogFetchStart(const char *key);
+int  wbRoundLogFetchPoll(uint8_t **outBuf, int *outLen);
+void wbRoundLogFetchCancel(void);
 #endif
 }
 #if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
@@ -6333,19 +6352,27 @@ static int     s_reelLogStepSeen  = -1;
  * recap opens, so the first GET is expected to miss a round that is about to
  * exist; a bounded ladder covers that lag without becoming a request a frame.
  *
- * The worker writes buf/len/status and then releases s_reelWbnDone; the render
- * thread reads those three only after acquiring it, which is the whole
- * hand-off — one producer, one consumer, no mutex. Every other field here is
- * the render thread's own, s_reelWbnRunning included, so the guards that
- * decide whether to start another attempt never read a field a worker is
- * writing. */
+ * Under the curl transport the worker writes buf/len/status and then releases
+ * s_reelWbnDone; the render thread reads those three only after acquiring it,
+ * which is the whole hand-off — one producer, one consumer, no mutex. Every
+ * other field here is the render thread's own, s_reelWbnRunning included, so
+ * the guards that decide whether to start another attempt never read a field a
+ * worker is writing. The fetch transport has no second thread at all and fills
+ * the same three fields from its poll. */
 static const int    REEL_WBN_RETRY_MAX = 12;
 static const Uint64 REEL_WBN_RETRY_MS  = 5000;
 
 static char                   s_reelWbnKey[ROUND_STATS_LOGKEY_LEN] = "";
+#if BOLO_REEL_WBN_FETCH_CURL
+/* The worker and the two fields that coordinate with it. Nothing outside the
+ * curl transport has a second thread to coordinate with. */
 static std::thread            s_reelWbnThread;
 static std::atomic<bool>      s_reelWbnDone{false};
 static volatile int           s_reelWbnCancel = 0;
+#endif
+/* What the transfer has moved, for the reading below. Curl fills both from its
+ * worker as bytes arrive; fetch resolves the whole body at once and leaves them
+ * at zero, which that reading already treats as "nothing to report yet". */
 static std::atomic<long long> s_reelWbnBytesNow{0};
 static std::atomic<long long> s_reelWbnBytesTotal{0};
 static bool                   s_reelWbnRunning   = false;
@@ -6355,13 +6382,19 @@ static int                    s_reelWbnStatus    = 0;
 static int                    s_reelWbnAttempts  = 0;
 static Uint64                 s_reelWbnRetryAtMs = 0;
 
-/* Stop whatever is in flight and forget the round it belonged to. The worker
- * is joined and never detached: it writes into the statics above, and a lobby
- * that has gone away leaves nothing for it to write into. Cancelling first is
- * what keeps the join short, since curl polls the flag as bytes arrive. */
+/* Stop whatever is in flight and forget the round it belonged to. The curl
+ * worker is joined and never detached: it writes into the statics above, and a
+ * lobby that has gone away leaves nothing for it to write into. Cancelling
+ * first is what keeps the join short, since curl polls the flag as bytes
+ * arrive. The fetch transport aborts its request and drops the slot its reply
+ * would have landed in, which is the same thing without the join. */
 static void lobbyReelWbnAbort(void) {
+#if BOLO_REEL_WBN_FETCH_CURL
     s_reelWbnCancel = 1;
     if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+#else
+    wbRoundLogFetchCancel();
+#endif
     free(s_reelWbnBuf);
     s_reelWbnBuf       = nullptr;
     s_reelWbnLen       = 0;
@@ -6372,8 +6405,10 @@ static void lobbyReelWbnAbort(void) {
     s_reelWbnKey[0]    = '\0';
     s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
     s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+#if BOLO_REEL_WBN_FETCH_CURL
     s_reelWbnDone.store(false, std::memory_order_relaxed);
     s_reelWbnCancel = 0;
+#endif
 }
 
 /* Spend one rung of the ladder, if one is due. Everything that would make a
@@ -6382,7 +6417,7 @@ static void lobbyReelWbnAbort(void) {
 static void lobbyReelWbnKick(void) {
     if (s_reelWbnRunning || s_reelWbnBuf) return;
     if (s_reelWbnKey[0] == '\0') return;
-    /* The key is pasted into "logs/%s/download" below, so it never goes out
+    /* The key is pasted into the request path below, so it never goes out
      * unless it is the 32-hex shape WBN issues. The codec already drops a
      * malformed one off the wire; this is the backstop on the path itself,
      * the same one wbn_comments_fetch_start applies to its own. */
@@ -6392,6 +6427,7 @@ static void lobbyReelWbnKick(void) {
     if (s_reelTried) return;
     if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) return;
     if (SDL_GetTicks() < s_reelWbnRetryAtMs) return;
+#if BOLO_REEL_WBN_FETCH_CURL
     /* A worker that finished without the poll below seeing it still owns a
      * thread handle; std::thread destructs hard on a joinable one. */
     if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
@@ -6401,10 +6437,12 @@ static void lobbyReelWbnKick(void) {
      * POST paths create lazily. Reentrant, so the browser's own create/destroy
      * pair is unaffected. Once a round is enough. */
     if (s_reelWbnAttempts == 0) httpCreate();
+#endif
 
     char keyCopy[ROUND_STATS_LOGKEY_LEN];
     SDL_strlcpy(keyCopy, s_reelWbnKey, sizeof(keyCopy));
 
+#if BOLO_REEL_WBN_FETCH_CURL
     /* Curl's byte sink, running on the worker. Non-capturing so it converts to
      * the C function pointer, and it keeps the last total it was given, since
      * curl reports zero until it has read a Content-Length. */
@@ -6415,17 +6453,25 @@ static void lobbyReelWbnKick(void) {
             s_reelWbnBytesTotal.store((long long)total, std::memory_order_relaxed);
         }
     };
+#endif
 
     s_reelWbnAttempts++;
     s_reelWbnRunning = true;
     s_reelWbnStatus  = 0;
+#if BOLO_REEL_WBN_FETCH_CURL
     s_reelWbnDone.store(false, std::memory_order_relaxed);
+#endif
     s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
     s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
     WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[REEL] winbolo.net round log attempt %d/%d, key prefix '%.6s'",
                 s_reelWbnAttempts, REEL_WBN_RETRY_MAX, keyCopy);
 
+#if !BOLO_REEL_WBN_FETCH_CURL
+    /* Returns at once; the reply lands in the page and the poll below takes it
+     * on a later frame. The ceiling is applied there, where the bytes are. */
+    wbRoundLogFetchStart(keyCopy);
+#else
     s_reelWbnThread = std::thread([keyCopy, progressFn]() {
         char path[128];
         SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
@@ -6450,14 +6496,27 @@ static void lobbyReelWbnKick(void) {
         /* Last, and releasing: the three writes above are published by it. */
         s_reelWbnDone.store(true, std::memory_order_release);
     });
+#endif
 }
 
 /* Collect a finished attempt. A 200 leaves its bytes standing for the load
  * below to take; anything else arms the next rung. */
 static void lobbyReelWbnPoll(void) {
+#if BOLO_REEL_WBN_FETCH_CURL
     if (!s_reelWbnDone.load(std::memory_order_acquire)) return;
     if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
     s_reelWbnDone.store(false, std::memory_order_relaxed);
+#else
+    /* Still in flight reads as 0; any other answer settles the attempt, and
+     * brings the bytes with it when there are any to bring. */
+    uint8_t *fetched = nullptr;
+    int      fetchedLen = 0;
+    int      fetchedStatus = wbRoundLogFetchPoll(&fetched, &fetchedLen);
+    if (fetchedStatus == 0) return;
+    s_reelWbnBuf    = fetched;
+    s_reelWbnLen    = (fetched != nullptr) ? (size_t)fetchedLen : 0;
+    s_reelWbnStatus = fetchedStatus;
+#endif
     s_reelWbnRunning = false;
 
     WB_LOG_INFO(WB_LOG_CAT_GUI,
@@ -6731,11 +6790,6 @@ static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
 
 static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                             float s) {
-#if !BOLO_REEL_WBN_FETCH
-    /* The summary is read for its WinBolo.net log key and nothing else; with
-     * that source out, everything the reel needs comes off the transport. */
-    (void)st;
-#endif
     /* Source, in order: the file this process wrote, else the copy the server
      * sent us, else the copy WinBolo.net holds under the round's key.
      *
@@ -6806,7 +6860,6 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                                : 0;
         lobbyReelLogTransfer(s_reelLogState, s_reelLogPercent);
 
-#if BOLO_REEL_WBN_FETCH
         /* A host registered with WinBolo.net hands the round there instead of
          * serving it itself, so its refusal is the cue to go and get the same
          * bytes over HTTP. Only the three terminal answers qualify: a transfer
@@ -6853,11 +6906,6 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                 return;
             }
         }
-#else
-        /* No WinBolo.net source in this build, so the server's answer is the
-         * whole of it and the check below reports it as it stands. */
-        const bool haveWbnBytes = false;
-#endif
 
         if (!haveWbnBytes && s_reelLogState != CLIENT_ROUND_LOG_READY) {
             lobbyRenderReelStatus(s_reelLogState, s_reelLogPercent, rect, s);
@@ -6903,7 +6951,6 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
              * else may. */
             size_t   len = 0;
             uint8_t *buf = nullptr;
-#if BOLO_REEL_WBN_FETCH
             if (s_reelWbnBuf) {
                 buf          = s_reelWbnBuf;
                 len          = s_reelWbnLen;
@@ -6912,10 +6959,6 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
             } else {
                 buf = clientSimTakeRoundLog(cs, &len);
             }
-#else
-            /* Only the one source here, so no order to resolve. */
-            buf = clientSimTakeRoundLog(cs, &len);
-#endif
             if (buf) {
                 s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
                                             sdl3DrawGetRenderer(),
