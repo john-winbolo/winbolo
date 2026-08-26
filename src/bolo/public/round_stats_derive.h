@@ -76,7 +76,13 @@ typedef struct {
  * with the most influence there. Every ownership change re-derives control near
  * the object and emits one TerritoryShift counting the cells that changed hands.
  * Writes up to maxOut entries in stream order, sets *outCount. Pure: heap and
- * locals only, no sim state. A stream with no ownership changes yields none. */
+ * locals only, no sim state. A stream with no ownership changes yields none.
+ *
+ * maxOut bounds the output but not the work: an ownership change that moves no
+ * ground costs the same and emits nothing. The stream is untrusted — a client
+ * loads one straight off a game server or WinBolo.net — so the walk also stops
+ * after a fixed ceiling of ownership changes, set far above what any real round
+ * produces. A stream past that point is analysed as far as the ceiling. */
 void computeTerritoryShifts(const uint8_t *records, size_t len,
                             const AttrSlotIdentity slots[MAX_TANKS],
                             int slotCount,

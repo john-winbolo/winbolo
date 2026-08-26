@@ -155,6 +155,7 @@ static const UnitTestEntry s_tests[] = {
     { "highlights_lead_in",                         run_highlights_lead_in                         },
     { "highlights_empty",                           run_highlights_empty                           },
     { "territory_shift_basic",                      run_territory_shift_basic                      },
+    { "territory_shift_bounded",                    run_territory_shift_bounded                    },
     { "highlights_turning_point",                   run_highlights_turning_point                   },
     { "territory_recent_damage",                    run_territory_recent_damage                    },
     { "highlights_front_collapse",                  run_highlights_front_collapse                  },

@@ -180,6 +180,7 @@ int run_highlights_lead_in(void);
 int run_highlights_empty(void);
 int run_territory_shift_basic(void);
 int run_highlights_turning_point(void);
+int run_territory_shift_bounded(void);
 int run_territory_recent_damage(void);
 int run_highlights_front_collapse(void);
 int run_highlights_award_anchor_density(void);

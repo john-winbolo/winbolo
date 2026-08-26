@@ -14,7 +14,9 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "global.h"
 #include "input_packet.h"
@@ -1948,6 +1950,54 @@ int run_territory_shift_basic(void) {
     computeTerritoryShifts(buf, 0, slots, MAX_TANKS, shifts, &n,
                            TERRITORY_SHIFTS_MAX);
     UT_ASSERT_MSG(n == 0, "an empty stream yields no shifts, got %d", n);
+
+    return 0;
+}
+
+/* A crafted stream cannot make the territory pre-pass run for ever. maxOut
+ * bounds the shifts written but not the walk: a capture that moves no ground
+ * emits nothing and leaves the output count where it was, so a stream of them
+ * pays the per-change cost once per record with nothing to stop it. One base
+ * recaptured in place, by the same owner, is exactly that — the grids come out
+ * identical after each record, so control never moves — and 200k records is a
+ * twenty-fifth of what a stream at the attribution cap holds.
+ *
+ * Every slot on its own team, because the cost that ran away scaled with how
+ * many teams have a grid: this is the shape that took a quarter-hour, where a
+ * single-team stream of the same length took a second and would have passed.
+ *
+ * The assertion is wall time because the failure was wall time. The budget is
+ * around forty times what the pass now needs and a fraction of what it needed
+ * before, so it is not a benchmark — it fails only if the bound is gone. */
+int run_territory_shift_bounded(void) {
+    AttrSlotIdentity slots[MAX_TANKS];
+    TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+    const int records = 200000;
+    uint8_t *buf;
+    size_t len = 0;
+    clock_t started;
+    double secs;
+    int n = -1;
+
+    memset(slots, 0, sizeof slots);
+    for (int s = 0; s < MAX_TANKS; s++) slots[s].team = (uint8_t)s;
+
+    buf = (uint8_t *)malloc((size_t)records * sizeof(AttrCaptureRecord));
+    UT_ASSERT(buf != NULL);
+    for (int i = 0; i < records; i++)
+        len = putCapture(buf, len, (uint32_t)i, ATTR_CAP_TGT_BASE, 0, 0,
+                         i == 0 ? NEUTRAL : 0, 60, 60);
+
+    started = clock();
+    computeTerritoryShifts(buf, len, slots, MAX_TANKS, shifts, &n,
+                           TERRITORY_SHIFTS_MAX);
+    secs = (double)(clock() - started) / (double)CLOCKS_PER_SEC;
+    free(buf);
+
+    UT_ASSERT_MSG(n == 0, "recapturing in place moves no ground, got %d", n);
+    UT_ASSERT_MSG(secs < 5.0,
+                  "territory pre-pass must stay bounded on a crafted stream, "
+                  "took %.1fs for %d records", secs, records);
 
     return 0;
 }
