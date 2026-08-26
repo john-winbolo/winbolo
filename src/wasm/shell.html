@@ -266,10 +266,21 @@
                  - production web play: wbMintJoinCode() mints the single-use
                    code and points this at the probed relay just before connect.
                  - ?proxyURL=<wsurl>  : dev/LAN escape hatch, used verbatim.
-               Start with the dev proxy (or empty); the mint fills it in. */
+               Start with the dev proxy (or empty); the mint fills it in.
+
+               subprotocol: null offers no Sec-WebSocket-Protocol at all.
+               Left unset, sockfs falls back to WEBSOCKET_SUBPROTOCOL
+               ("binary"), and RFC 6455 then obliges the browser to fail
+               any handshake whose 101 does not echo that back. The relay
+               does not echo it, which Chrome and Edge treat as fatal
+               (Firefox does not) — and since the relay has already
+               resolved and consumed the single-use join code by then, the
+               retry that follows dies on "join code already used".
+               A literal null makes sockfs pass no protocol list to the
+               WebSocket constructor, so there is nothing to echo. */
             websocket: (function() {
                 var devProxy = new URLSearchParams(window.location.search).get('proxyURL');
-                return { url: devProxy || '' };
+                return { url: devProxy || '', subprotocol: null };
             })(),
             canvas: (function() { return document.getElementById('canvas'); })(),
             print: (function() {
