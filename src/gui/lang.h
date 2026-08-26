@@ -453,6 +453,10 @@
 #define STR_DLGLOBBY_HIDDEN                 603
 #define STR_DLGLOBBY_VISIBLE                604
 #define STR_DLGLOBBY_DOWNLOADING            605
+/* Shown in place of the download bar while the client is re-joining after
+   a map change: the server has not started sending the new map yet, so
+   there is no progress to report. */
+#define STR_DLGLOBBY_AWAITING_MAP           1946
 #define STR_DLGLOBBY_MAP_UNAVAILABLE        606
 #define STR_DLGLOBBY_PILLBOXES              607
 #define STR_DLGLOBBY_BASES                  608

@@ -3414,6 +3414,35 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
     clientMapPreviewDestroy(mp);
 }
 
+/* Caption + bar fraction for the map-transfer line the preview panel shows
+ * while the map is not yet in hand. Both places that draw it call this so
+ * they cannot drift apart.
+ *
+ * The percentage on its own cannot say "not started". It is computed from
+ * the transport's byte counters, and those outlive a transfer: after a
+ * mid-lobby map change the client re-JOINs, and until the new JOIN_ACCEPT
+ * re-arms them they still describe the PREVIOUS map — fully received, so
+ * 100%. Reporting that verbatim is what made a wedged re-join look like a
+ * download stuck at the finish line. The connect state is the only thing
+ * that separates the two, so read them together.
+ *
+ * A live-lobby spectator fetching its own copy of the map stays
+ * SPECTATING throughout, so it lands on the waiting caption for the
+ * duration rather than showing a bar. Counting it as downloading would be
+ * worse: a spectator the server sent no map for has no byte total either,
+ * and the percentage answers "nothing to fetch" as 100 — a full bar for a
+ * transfer that never started, which is the exact thing this is undoing.
+ * Telling the two apart needs the transport's spectator-download flag,
+ * which no T1 accessor exposes today. */
+static const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
+    if (clientSimGetConnectState(cs) == CLIENT_CONNECT_DOWNLOADING_MAP) {
+        *outProgress = (float)clientSimGetMapDownloadPercent(cs) / 100.0f;
+        return langGetText(STR_DLGLOBBY_DOWNLOADING);
+    }
+    *outProgress = 0.0f;
+    return langGetText(STR_DLGLOBBY_AWAITING_MAP);
+}
+
 /* Per-start ownership codes (0-based, start index i+1) for the minimap
  * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy. Also returns an FNV-1a
  * signature so the caller can detect when a recolour rebuild is needed
@@ -10081,9 +10110,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
                     } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
-                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                        float progress = 0.0f;
+                        ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
                         ImGui::Spacing();
-                        float progress = (float)netGetDownloadPos() / 255.0f;
                         ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                     } else {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
@@ -10848,9 +10877,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                         awaitingMapChangePacket)) {
                 /* No texture yet AND we're mid-download — show the
                  * progress bar so the user knows something's coming. */
-                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                float progress = 0.0f;
+                ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
                 ImGui::Spacing();
-                float progress = (float)netGetDownloadPos() / 255.0f;
                 ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                 ImGui::Spacing();
             } else if (showMapPanel) {

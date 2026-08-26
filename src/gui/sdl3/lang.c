@@ -352,6 +352,7 @@ static const LangEntry langTable[] = {
     {603,  "Hidden"},
     {604,  "Visible"},
     {605,  "Downloading map..."},
+    {1946, "Waiting for server..."},
     {606,  "Map preview unavailable"},
     {607,  "Pillboxes:"},
     {608,  "Bases:"},
