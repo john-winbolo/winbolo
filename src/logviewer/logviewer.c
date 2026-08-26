@@ -191,16 +191,6 @@ void lv_controlsEnable(int state) {
 }
 
 /* --------------------------------------------------------------------------
- * Playback drawing
- * -------------------------------------------------------------------------- */
-void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks,
-                            screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-    lv_drawMainScreen(value, mineView, tks, gs, sBullet, lgms,
-                   FALSE, FALSE, srtDelay, isPillView, edgeX, edgeY, FALSE, 0, 0);
-}
-
-/* --------------------------------------------------------------------------
  * Playback control
  * -------------------------------------------------------------------------- */
 /* Jump the scrubber to a highlight moment and centre the view on its cell.
@@ -260,12 +250,8 @@ void lv_windowResize(void) {
 }
 
 /* --------------------------------------------------------------------------
- * End-of-log / start-of-log callbacks from backend
+ * Start-of-log callback from backend
  * -------------------------------------------------------------------------- */
-void lv_finished(void) {
-    g_lv->playIsPlaying = FALSE;
-}
-
 void lv_startOfLog(void) {
     /* ImGui controls panel reads isLoaded each frame */
 }

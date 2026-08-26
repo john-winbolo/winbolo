@@ -189,6 +189,33 @@ void lv_windowStop(int corruptLog) {
 }
 
 /* --------------------------------------------------------------------------
+ * Decoder callbacks
+ *
+ * The two backend callbacks the decode path reaches on its own: one from
+ * lv_screenUpdate on every repaint, one from lv_screenLogTick when the log
+ * runs out. They sit with the replay driver rather than with the modal viewer
+ * for the same reason it does — every build that decodes a log needs them, and
+ * one copy serves them all.
+ * -------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------
+ * Playback drawing
+ * -------------------------------------------------------------------------- */
+void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks,
+                            screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
+                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
+    lv_drawMainScreen(value, mineView, tks, gs, sBullet, lgms,
+                   FALSE, FALSE, srtDelay, isPillView, edgeX, edgeY, FALSE, 0, 0);
+}
+
+/* --------------------------------------------------------------------------
+ * End-of-log callback from backend
+ * -------------------------------------------------------------------------- */
+void lv_finished(void) {
+    g_lv->playIsPlaying = FALSE;
+}
+
+/* --------------------------------------------------------------------------
  * lvHostSetupCore -- ImGui-free half of the host bring-up.
  *
  * Allocates g_lv and brings up the platform layer, mutex, draw module and

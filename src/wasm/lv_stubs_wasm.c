@@ -19,11 +19,11 @@
  *  key, so those cannot be built here at all.
  *
  *  screen.c, draw.c and lv_embed.c still call back into that
- *  surface.  Everything below is either a no-op that the
- *  embed's own state makes unreachable or inert, or — for the
- *  two entry points the decoder's behaviour depends on — the
- *  same body logviewer.c has.  Each carries the path that
- *  reaches it.
+ *  surface.  Everything below is a no-op that the embed's own
+ *  state makes unreachable or inert, and each carries the path
+ *  that reaches it.  The callbacks the decoder's behaviour does
+ *  depend on are not here: they live in lv_embed.c, which this
+ *  build links, so there is one copy of each.
  *
  *  Declarations come from the real headers where one exists;
  *  the lv_frontEnd* / lv_updateItem / lv_startOfLog /
@@ -36,42 +36,14 @@
  *********************************************************/
 
 /* Spelled out relative to src/logviewer rather than leaning on the target's
- * include path: src/gui/sdl3/draw.h and src/gui/sound.h are on that path
- * ahead of the log viewer's, and they are the bolo-world headers this
- * translation unit must not see. */
-#include "../logviewer/logviewer.h"
+ * include path: src/gui/sound.h is on that path ahead of the log viewer's,
+ * and it is a bolo-world header this translation unit must not see. */
 #include "../logviewer/backend.h"
-#include "../logviewer/draw.h"
 #include "../logviewer/sound.h"
 #include "../logviewer/imgui/imgui_comments.h"
 #include "../logviewer/imgui/imgui_context.h"
 #include "../logviewer/imgui/imgui_events.h"
 #include "../logviewer/imgui/imgui_main_menu.h"
-
-/* ----- Playback drawing ------------------------------------------------
- * Reached every frame: lvEmbedFrameTexture -> lv_screenUpdate ->
- * lv_frontEndDrawMainScreen.  This is what fills the render target the host
- * then draws, so it forwards to lv_drawMainScreen exactly as logviewer.c
- * does rather than being stubbed out. */
-void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks,
-                               screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                               int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-    lv_drawMainScreen(value, mineView, tks, gs, sBullet, lgms,
-                      FALSE, FALSE, srtDelay, isPillView, edgeX, edgeY, FALSE, 0, 0);
-}
-
-/* ----- End of log ------------------------------------------------------
- * Reached from lv_screenLogTick on LOG_QUIT, so it clears the playing flag
- * the same way logviewer.c does — without it the replay timer keeps
- * rescheduling itself past the end of the round.  The state pointer comes
- * from lv_screenGetState() because g_lv's declaration (lv_host.h) is
- * internal to src/logviewer. */
-void lv_finished(void) {
-    LogViewerState *lv = lv_screenGetState();
-    if (lv != NULL) {
-        lv->playIsPlaying = FALSE;
-    }
-}
 
 /* Start-of-log notification. Empty in logviewer.c too — the viewer's controls
  * panel reads isLoaded each frame instead. */
