@@ -111,6 +111,10 @@ file(GLOB LV_SOURCES
 # Exclude files we're replacing with WASM versions
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*main\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer\\.c$")
+# lv_embed.c is the embed host, split out of logviewer.c. This target excludes
+# logviewer.c and supplies its own host in main_wasm.c, so the embed has no
+# caller here — keep it out of the standalone viewer's payload.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*lv_embed\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
 

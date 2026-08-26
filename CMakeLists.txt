@@ -1311,6 +1311,7 @@ endif()
 # Logviewer library sources (embedded in WinBolo, excludes standalone main.c)
 set(LOGVIEWER_LIB_SOURCES
     src/logviewer/logviewer.c
+    src/logviewer/lv_embed.c
     src/logviewer/screen.c
     src/logviewer/draw.c
     src/logviewer/sound.c
