@@ -2961,6 +2961,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # game.end_round win path (RETURN_REASON_SCENARIO), the owner
     # setters, and the SCENARIO_MAX_ERRORS self-disable guard.
     tests/unit/test_scenario.c
+    # Per-slot spawn-loadout override across respawns: game.spawn_bot's
+    # "open" mode arms GameSim::spawnLoadout[slot], and the slot must be
+    # refuelled to the OPEN loadout on every server-authoritative
+    # respawn (tankDeath) as well as on the join (tankCreate), while
+    # unarmed slots stay on the sim's own rules.
+    tests/unit/test_spawn_loadout_respawn.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_lobby_reset_cleanup.c
@@ -3737,6 +3743,8 @@ set(_unit_test_names
     scenario_enemy_roster
     scenario_seeded_round_start
     scenario_lobby_reset_recommit
+    spawn_loadout_open_every_respawn
+    spawn_loadout_human_unaffected
     maprotate_restarts_round_and_rearms
     maprotate_boot_does_not_rotate_while_empty
     maprotate_gameover_is_not_terminal

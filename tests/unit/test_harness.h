@@ -521,6 +521,16 @@ int run_scenario_setup_pre_snapshot(void);
 int run_scenario_enemy_roster(void);
 int run_scenario_seeded_round_start(void);
 int run_scenario_lobby_reset_recommit(void);
+
+/* Per-slot spawn-loadout override across respawns
+ * (test_spawn_loadout_respawn.c): game.spawn_bot(..., "open") arms
+ * GameSim::spawnLoadout[slot], and the slot must come back fully armed
+ * on EVERY respawn (tankDeath), not just the join (tankCreate), while
+ * unarmed slots keep the sim's own rules and the leave-path clear stops
+ * the override leaking to the next occupant. */
+int run_spawn_loadout_open_every_respawn(void);
+int run_spawn_loadout_human_unaffected(void);
+
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
 
