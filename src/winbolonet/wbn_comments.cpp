@@ -20,6 +20,7 @@ extern "C" {
 #include <SDL3/SDL.h>
 #include "http.h"
 #include "cJSON.h"
+#include "winbolonet_core.h"
 }
 
 #include <atomic>
@@ -96,7 +97,10 @@ struct WbnCommentsFetch {
 };
 
 extern "C" WbnCommentsFetch *wbn_comments_fetch_start(const char *key32) {
-    if (!key32 || !key32[0]) return nullptr;
+    /* key32 lands in an API path below, so it is held to the 32-hex shape WBN
+     * issues. Callers are expected to have checked it where it entered the
+     * process; this is the backstop that makes the path safe on its own. */
+    if (!winbolonetKeyIsValid(key32)) return nullptr;
 
     auto *f = new WbnCommentsFetch();
     std::string keyCopy(key32);
@@ -208,7 +212,10 @@ struct WbnCommentPost {
 
 extern "C" WbnCommentPost *wbn_comments_post_start(const char *key32, const char *token,
                                                     const char *text, int rating) {
-    if (!key32 || !key32[0] || !token || !token[0] || !text || !text[0]) return nullptr;
+    /* Same gate as the fetch, and it matters more here: this request carries
+     * the signed-in user's token in its body. */
+    if (!winbolonetKeyIsValid(key32)) return nullptr;
+    if (!token || !token[0] || !text || !text[0]) return nullptr;
 
     auto *p = new WbnCommentPost();
     std::string keyCopy(key32);

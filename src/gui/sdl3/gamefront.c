@@ -2453,6 +2453,14 @@ void gameFrontShutdownServer(void) {
     httpSetLogUploadTimeout(0);
   }
 
+  /* And let go of the round, after the stash and upload above have had it.
+   * Unconditional, because the server being torn down may never have installed
+   * the writer: hosting installs only when the host has logging on, and a host
+   * that has it off would otherwise leave the previous server's round in place
+   * — a single-player game played earlier in this process — to be served to
+   * whoever joins and named in the host's recap as the last round. */
+  serverDedicatedLogUninstall();
+
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
 }

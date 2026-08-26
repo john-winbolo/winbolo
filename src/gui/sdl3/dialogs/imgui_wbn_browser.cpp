@@ -53,6 +53,7 @@ extern "C" {
 #include "../../lang.h"
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/winbolonet_client.h"
+#include "../../../bolo/public/wire_limits.h"  /* ROUND_LOG_MAX_BYTES */
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
@@ -607,6 +608,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             uint8_t *data = nullptr;
             size_t dataSize = 0;
             int status = wbn_api_download_to_memory_progress(apiPath, &data, &dataSize,
+                                                             ROUND_LOG_MAX_BYTES,
                                                              downloadProgressFn, nullptr,
                                                              &downloadCancel);
             if (status == 200 && data && dataSize > 0) {

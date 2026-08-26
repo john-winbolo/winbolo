@@ -14,7 +14,9 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "global.h"
 #include "input_packet.h"
@@ -1023,7 +1025,10 @@ int run_round_stats_codec_roundtrip(void) {
     s->awards[2].subjectSlot = NEUTRAL; s->awards[2].winnerIsBot = 1;
     s->awards[2].value = 9;
 
-    strncpy(s->wbnLogKey, "abc123DEF456", ROUND_STATS_LOGKEY_LEN - 1);
+    /* A real WBN key's shape — 32 hex digits. The decoder holds the field to
+     * it, so a stand-in that is merely alphanumeric would not survive. */
+    strncpy(s->wbnLogKey, "0123456789abcdefABCDEF0123456789",
+            ROUND_STATS_LOGKEY_LEN - 1);
 
     s->highlightCount = 3;
     /* An award anchor, carrying a non-zero awardId. */
@@ -1083,7 +1088,7 @@ int run_round_stats_codec_roundtrip(void) {
         UT_ASSERT_MSG(b->value == a->value, "award %d value, got %u", i, b->value);
     }
 
-    UT_ASSERT_MSG(strcmp(d->wbnLogKey, "abc123DEF456") == 0,
+    UT_ASSERT_MSG(strcmp(d->wbnLogKey, "0123456789abcdefABCDEF0123456789") == 0,
                   "wbnLogKey round-trips, got '%s'", d->wbnLogKey);
 
     UT_ASSERT_MSG(d->highlightCount == 3, "highlightCount, got %u", d->highlightCount);
@@ -1112,6 +1117,69 @@ int run_round_stats_codec_roundtrip(void) {
     return 0;
 }
 
+/* A key that is not the 32-hex shape WinBolo.net issues is dropped at decode,
+ * because the recap pastes it straight into "logs/%s/download" and
+ * "logs/%s/comment" — authenticated, redirect-following requests to the WBN
+ * host. A hostile server must not be able to steer those. The rest of the
+ * body is kept: an empty key is the ordinary state of a LAN round. */
+int run_round_stats_codec_rejects_bad_key(void) {
+    static const char *const bad[] = {
+        "../../../etc/passwd",                 /* traversal */
+        "0123456789abcdef0123456789abcd/x",    /* 32 long, but a path segment */
+        "0123456789abcdef0123456789ab?a=b",    /* 32 long, but a query */
+        "0123456789abcdef0123456789abc#f",     /* a fragment */
+        "0123456789abcdef0123456789abcdeg",    /* 32 long, one non-hex digit */
+        "0123456789abcdef",                    /* right alphabet, too short */
+        "abc123GHI456ABC123xyz456ABC12345",    /* alphanumeric but not hex */
+    };
+
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        ControlEvent in, out;
+        memset(&in, 0, sizeof(in));
+        memset(&out, 0, sizeof(out));
+        in.type = CTRL_ROUND_STATS;
+        RoundStatsSummary *s = &in.u.roundStats;
+
+        /* One row and one award, so the assert below can show they survived
+         * the key being dropped. */
+        s->playerCount = 1;
+        s->players[0].slot = 3;
+        s->players[0].kills = 8;
+        s->awardCount = 1;
+        s->awards[0].awardId = AWARD_MOST_KILLS;
+        s->awards[0].winnerSlot = 3;
+        s->awards[0].subjectSlot = NEUTRAL;
+        s->awards[0].value = 8;
+        strncpy(s->wbnLogKey, bad[i], ROUND_STATS_LOGKEY_LEN - 1);
+        s->wbnLogKey[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
+
+        UT_ASSERT_MSG(codec_roundtrip_round_stats(&in, &out) == 0,
+                      "'%s': packet still decodes", bad[i]);
+        const RoundStatsSummary *d = &out.u.roundStats;
+        UT_ASSERT_MSG(d->wbnLogKey[0] == '\0',
+                      "'%s': key must be dropped, got '%s'", bad[i],
+                      d->wbnLogKey);
+        UT_ASSERT_MSG(d->playerCount == 1 && d->players[0].kills == 8,
+                      "'%s': scoreboard survives the drop", bad[i]);
+        UT_ASSERT_MSG(d->awardCount == 1 && d->awards[0].value == 8,
+                      "'%s': awards survive the drop", bad[i]);
+    }
+
+    /* And the empty key a LAN or single-player round carries stays empty
+     * without being mistaken for a rejection. */
+    {
+        ControlEvent in, out;
+        memset(&in, 0, sizeof(in));
+        memset(&out, 0, sizeof(out));
+        in.type = CTRL_ROUND_STATS;
+        in.u.roundStats.playerCount = 1;
+        UT_ASSERT(codec_roundtrip_round_stats(&in, &out) == 0);
+        UT_ASSERT(out.u.roundStats.wbnLogKey[0] == '\0');
+    }
+
+    return 0;
+}
+
 /* The worst case — every slot present, every award won, a full-length key —
  * encodes successfully and stays within one control packet. */
 int run_round_stats_codec_worstcase(void) {
@@ -1134,7 +1202,9 @@ int run_round_stats_codec_worstcase(void) {
         a->awardId = (uint8_t)(i + 1); a->winnerSlot = (uint8_t)i;
         a->subjectSlot = NEUTRAL; a->winnerIsBot = 0; a->value = 0xFFFFFFFFu;
     }
-    memset(s->wbnLogKey, 'K', ROUND_STATS_LOGKEY_LEN - 1);
+    /* Full-length and hex, so it is both the widest key the field holds and
+     * one the decoder would keep. */
+    memset(s->wbnLogKey, 'f', ROUND_STATS_LOGKEY_LEN - 1);
     s->wbnLogKey[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
 
     s->highlightCount = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
@@ -1880,6 +1950,54 @@ int run_territory_shift_basic(void) {
     computeTerritoryShifts(buf, 0, slots, MAX_TANKS, shifts, &n,
                            TERRITORY_SHIFTS_MAX);
     UT_ASSERT_MSG(n == 0, "an empty stream yields no shifts, got %d", n);
+
+    return 0;
+}
+
+/* A crafted stream cannot make the territory pre-pass run for ever. maxOut
+ * bounds the shifts written but not the walk: a capture that moves no ground
+ * emits nothing and leaves the output count where it was, so a stream of them
+ * pays the per-change cost once per record with nothing to stop it. One base
+ * recaptured in place, by the same owner, is exactly that — the grids come out
+ * identical after each record, so control never moves — and 200k records is a
+ * twenty-fifth of what a stream at the attribution cap holds.
+ *
+ * Every slot on its own team, because the cost that ran away scaled with how
+ * many teams have a grid: this is the shape that took a quarter-hour, where a
+ * single-team stream of the same length took a second and would have passed.
+ *
+ * The assertion is wall time because the failure was wall time. The budget is
+ * around forty times what the pass now needs and a fraction of what it needed
+ * before, so it is not a benchmark — it fails only if the bound is gone. */
+int run_territory_shift_bounded(void) {
+    AttrSlotIdentity slots[MAX_TANKS];
+    TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+    const int records = 200000;
+    uint8_t *buf;
+    size_t len = 0;
+    clock_t started;
+    double secs;
+    int n = -1;
+
+    memset(slots, 0, sizeof slots);
+    for (int s = 0; s < MAX_TANKS; s++) slots[s].team = (uint8_t)s;
+
+    buf = (uint8_t *)malloc((size_t)records * sizeof(AttrCaptureRecord));
+    UT_ASSERT(buf != NULL);
+    for (int i = 0; i < records; i++)
+        len = putCapture(buf, len, (uint32_t)i, ATTR_CAP_TGT_BASE, 0, 0,
+                         i == 0 ? NEUTRAL : 0, 60, 60);
+
+    started = clock();
+    computeTerritoryShifts(buf, len, slots, MAX_TANKS, shifts, &n,
+                           TERRITORY_SHIFTS_MAX);
+    secs = (double)(clock() - started) / (double)CLOCKS_PER_SEC;
+    free(buf);
+
+    UT_ASSERT_MSG(n == 0, "recapturing in place moves no ground, got %d", n);
+    UT_ASSERT_MSG(secs < 5.0,
+                  "territory pre-pass must stay bounded on a crafted stream, "
+                  "took %.1fs for %d records", secs, records);
 
     return 0;
 }

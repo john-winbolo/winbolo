@@ -6355,6 +6355,11 @@ static void lobbyReelWbnAbort(void) {
 static void lobbyReelWbnKick(void) {
     if (s_reelWbnRunning || s_reelWbnBuf) return;
     if (s_reelWbnKey[0] == '\0') return;
+    /* The key is pasted into "logs/%s/download" below, so it never goes out
+     * unless it is the 32-hex shape WBN issues. The codec already drops a
+     * malformed one off the wire; this is the backstop on the path itself,
+     * the same one wbn_comments_fetch_start applies to its own. */
+    if (!winbolonetKeyIsValid(s_reelWbnKey)) return;
     /* The load below gets one attempt per summary; once it has spent it there
      * is nothing left to play another copy of the same round. */
     if (s_reelTried) return;
@@ -6399,7 +6404,12 @@ static void lobbyReelWbnKick(void) {
         SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
         uint8_t *data = nullptr;
         size_t   size = 0;
+        /* Held to the same ceiling the server-served path enforces on its own
+         * transfer. Without it this is the one way into the reel that a round
+         * log of any size at all can come through, and the recap opens and
+         * fetches on its own between rounds. */
         int status = wbn_api_download_to_memory_progress(path, &data, &size,
+                                                         ROUND_LOG_MAX_BYTES,
                                                          progressFn, nullptr,
                                                          &s_reelWbnCancel);
         if (status != 200 || size == 0) {
@@ -6691,9 +6701,11 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * A triple gate on the file: only a round this process recorded, published
      * to a file that is actually there. gameFrontHasLocalServer() is the
      * load-bearing one — the accessor describes whatever round this process
-     * last recorded and is only cleared when the log writer is installed, so a
-     * player who hosted, left and then joined someone else's server would
-     * otherwise see a completely different game replayed here. */
+     * last recorded, so a player who hosted, left and then joined someone
+     * else's server would otherwise see a completely different game replayed
+     * here. It does not cover a host that is local but is not the server that
+     * recorded the round; what covers that is gameFrontShutdownServer clearing
+     * the accessor as it tears each server down. */
     const char *replayPath = serverDedicatedLogLastRoundFile();
     SDL_PathInfo replayInfo;
     const bool haveLocalFile = gameFrontHasLocalServer() &&

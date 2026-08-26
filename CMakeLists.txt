@@ -3445,6 +3445,7 @@ set(_unit_test_names
     awards_subset_deterministic
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
+    round_stats_codec_rejects_bad_key
     round_stats_build_summary
     round_stats_summary_highlights
     round_stats_client_ingest
@@ -3459,6 +3460,7 @@ set(_unit_test_names
     highlights_lead_in
     highlights_empty
     territory_shift_basic
+    territory_shift_bounded
     highlights_turning_point
     territory_recent_damage
     highlights_front_collapse
@@ -3585,6 +3587,7 @@ set(_unit_test_names
     attribution_reader_roundtrip
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
+    attribution_reader_clamps_slotcount
     lv_walk_base_anchor_lobby_log
     lv_walk_base_anchor_opening_snapshot
     lv_walk_base_anchor_ordinal
