@@ -1023,7 +1023,10 @@ int run_round_stats_codec_roundtrip(void) {
     s->awards[2].subjectSlot = NEUTRAL; s->awards[2].winnerIsBot = 1;
     s->awards[2].value = 9;
 
-    strncpy(s->wbnLogKey, "abc123DEF456", ROUND_STATS_LOGKEY_LEN - 1);
+    /* A real WBN key's shape — 32 hex digits. The decoder holds the field to
+     * it, so a stand-in that is merely alphanumeric would not survive. */
+    strncpy(s->wbnLogKey, "0123456789abcdefABCDEF0123456789",
+            ROUND_STATS_LOGKEY_LEN - 1);
 
     s->highlightCount = 3;
     /* An award anchor, carrying a non-zero awardId. */
@@ -1083,7 +1086,7 @@ int run_round_stats_codec_roundtrip(void) {
         UT_ASSERT_MSG(b->value == a->value, "award %d value, got %u", i, b->value);
     }
 
-    UT_ASSERT_MSG(strcmp(d->wbnLogKey, "abc123DEF456") == 0,
+    UT_ASSERT_MSG(strcmp(d->wbnLogKey, "0123456789abcdefABCDEF0123456789") == 0,
                   "wbnLogKey round-trips, got '%s'", d->wbnLogKey);
 
     UT_ASSERT_MSG(d->highlightCount == 3, "highlightCount, got %u", d->highlightCount);
@@ -1112,6 +1115,69 @@ int run_round_stats_codec_roundtrip(void) {
     return 0;
 }
 
+/* A key that is not the 32-hex shape WinBolo.net issues is dropped at decode,
+ * because the recap pastes it straight into "logs/%s/download" and
+ * "logs/%s/comment" — authenticated, redirect-following requests to the WBN
+ * host. A hostile server must not be able to steer those. The rest of the
+ * body is kept: an empty key is the ordinary state of a LAN round. */
+int run_round_stats_codec_rejects_bad_key(void) {
+    static const char *const bad[] = {
+        "../../../etc/passwd",                 /* traversal */
+        "0123456789abcdef0123456789abcd/x",    /* 32 long, but a path segment */
+        "0123456789abcdef0123456789ab?a=b",    /* 32 long, but a query */
+        "0123456789abcdef0123456789abc#f",     /* a fragment */
+        "0123456789abcdef0123456789abcdeg",    /* 32 long, one non-hex digit */
+        "0123456789abcdef",                    /* right alphabet, too short */
+        "abc123DEF456ABC123def456ABC12345",    /* alphanumeric but not hex */
+    };
+
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        ControlEvent in, out;
+        memset(&in, 0, sizeof(in));
+        memset(&out, 0, sizeof(out));
+        in.type = CTRL_ROUND_STATS;
+        RoundStatsSummary *s = &in.u.roundStats;
+
+        /* One row and one award, so the assert below can show they survived
+         * the key being dropped. */
+        s->playerCount = 1;
+        s->players[0].slot = 3;
+        s->players[0].kills = 8;
+        s->awardCount = 1;
+        s->awards[0].awardId = AWARD_MOST_KILLS;
+        s->awards[0].winnerSlot = 3;
+        s->awards[0].subjectSlot = NEUTRAL;
+        s->awards[0].value = 8;
+        strncpy(s->wbnLogKey, bad[i], ROUND_STATS_LOGKEY_LEN - 1);
+        s->wbnLogKey[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
+
+        UT_ASSERT_MSG(codec_roundtrip_round_stats(&in, &out) == 0,
+                      "'%s': packet still decodes", bad[i]);
+        const RoundStatsSummary *d = &out.u.roundStats;
+        UT_ASSERT_MSG(d->wbnLogKey[0] == '\0',
+                      "'%s': key must be dropped, got '%s'", bad[i],
+                      d->wbnLogKey);
+        UT_ASSERT_MSG(d->playerCount == 1 && d->players[0].kills == 8,
+                      "'%s': scoreboard survives the drop", bad[i]);
+        UT_ASSERT_MSG(d->awardCount == 1 && d->awards[0].value == 8,
+                      "'%s': awards survive the drop", bad[i]);
+    }
+
+    /* And the empty key a LAN or single-player round carries stays empty
+     * without being mistaken for a rejection. */
+    {
+        ControlEvent in, out;
+        memset(&in, 0, sizeof(in));
+        memset(&out, 0, sizeof(out));
+        in.type = CTRL_ROUND_STATS;
+        in.u.roundStats.playerCount = 1;
+        UT_ASSERT(codec_roundtrip_round_stats(&in, &out) == 0);
+        UT_ASSERT(out.u.roundStats.wbnLogKey[0] == '\0');
+    }
+
+    return 0;
+}
+
 /* The worst case — every slot present, every award won, a full-length key —
  * encodes successfully and stays within one control packet. */
 int run_round_stats_codec_worstcase(void) {
@@ -1134,7 +1200,9 @@ int run_round_stats_codec_worstcase(void) {
         a->awardId = (uint8_t)(i + 1); a->winnerSlot = (uint8_t)i;
         a->subjectSlot = NEUTRAL; a->winnerIsBot = 0; a->value = 0xFFFFFFFFu;
     }
-    memset(s->wbnLogKey, 'K', ROUND_STATS_LOGKEY_LEN - 1);
+    /* Full-length and hex, so it is both the widest key the field holds and
+     * one the decoder would keep. */
+    memset(s->wbnLogKey, 'f', ROUND_STATS_LOGKEY_LEN - 1);
     s->wbnLogKey[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
 
     s->highlightCount = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;

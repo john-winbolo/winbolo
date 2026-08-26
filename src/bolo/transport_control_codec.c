@@ -46,6 +46,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "../winbolonet/winbolonet_core.h" /* winbolonetKeyIsValid */
 #include "control_event.h"
 #include "netpacks.h"
 #include "player_flags.h"  /* CLIENT_TYPE_COUNT / CLIENT_TYPE_UNKNOWN */
@@ -932,6 +933,17 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
     if (keyLen > 0) memcpy(s->wbnLogKey, buf + pos, keyLen);
     s->wbnLogKey[keyLen] = '\0';
     pos += keyLen;
+    /* The key crosses from a server we do not trust and the recap hands it
+     * straight to WinBolo.net inside "logs/%s/download" and "logs/%s/comment"
+     * — authenticated, redirect-following requests. Anything that is not the
+     * 32-hex shape WBN issues is dropped here, at the only door it comes in
+     * by, rather than at each URL. Dropping it and not the packet is
+     * deliberate: the scoreboard, awards and highlights in the rest of the
+     * body are still worth showing, and an empty key is already the ordinary
+     * state of a LAN or single-player round, so every consumer handles it. */
+    if (keyLen > 0 && !winbolonetKeyIsValid(s->wbnLogKey)) {
+        s->wbnLogKey[0] = '\0';
+    }
 
     if (pos + 1 > len) return false;
     uint8_t hc = buf[pos++];

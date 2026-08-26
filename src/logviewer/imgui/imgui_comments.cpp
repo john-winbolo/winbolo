@@ -24,6 +24,7 @@
 extern "C" {
 #include "../../winbolonet/wbn_comments.h"
 #include "../../winbolonet/http.h"
+#include "../../winbolonet/winbolonet_core.h"  /* winbolonetKeyIsValid() */
 }
 
 /* ---- State ---- */
@@ -79,7 +80,11 @@ extern "C" void lv_imgui_comments_shutdown(void) {
 }
 
 extern "C" void lv_imgui_comments_set_key(const char *wbnKey) {
-    if (!wbnKey || wbnKey[0] == '\0' || strlen(wbnKey) != 32) {
+    /* The key comes out of the loaded log's header, which is a file from
+     * wherever the user got it, and it ends up in "logs/%s". A length check
+     * alone still lets "../../..%20" through at exactly 32 characters, so this
+     * holds it to the 32-hex shape WBN issues. */
+    if (!winbolonetKeyIsValid(wbnKey)) {
         s_wbn_key[0] = '\0';
         return;
     }

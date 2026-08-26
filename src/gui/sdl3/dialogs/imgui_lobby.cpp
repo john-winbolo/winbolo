@@ -6355,6 +6355,11 @@ static void lobbyReelWbnAbort(void) {
 static void lobbyReelWbnKick(void) {
     if (s_reelWbnRunning || s_reelWbnBuf) return;
     if (s_reelWbnKey[0] == '\0') return;
+    /* The key is pasted into "logs/%s/download" below, so it never goes out
+     * unless it is the 32-hex shape WBN issues. The codec already drops a
+     * malformed one off the wire; this is the backstop on the path itself,
+     * the same one wbn_comments_fetch_start applies to its own. */
+    if (!winbolonetKeyIsValid(s_reelWbnKey)) return;
     /* The load below gets one attempt per summary; once it has spent it there
      * is nothing left to play another copy of the same round. */
     if (s_reelTried) return;
