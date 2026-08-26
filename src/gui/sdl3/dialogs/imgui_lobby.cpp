@@ -124,7 +124,7 @@ extern "C" {
 #define BOLO_RECAP_CLIP_GIF   1
 #endif
 
-/* Embedded log-viewer reel (src/logviewer/logviewer.c). Hand-declared rather
+/* Embedded log-viewer reel (src/logviewer/lv_embed.c). Hand-declared rather
  * than included: logviewer.h pulls in backend.h / viewport_types.h, whose
  * screen / screenMines types collide with the client's — the same rule
  * gamefront.c documents. Scalars and void * only, so no viewer type crosses
