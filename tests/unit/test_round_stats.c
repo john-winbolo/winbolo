@@ -1130,7 +1130,7 @@ int run_round_stats_codec_rejects_bad_key(void) {
         "0123456789abcdef0123456789abc#f",     /* a fragment */
         "0123456789abcdef0123456789abcdeg",    /* 32 long, one non-hex digit */
         "0123456789abcdef",                    /* right alphabet, too short */
-        "abc123DEF456ABC123def456ABC12345",    /* alphanumeric but not hex */
+        "abc123GHI456ABC123xyz456ABC12345",    /* alphanumeric but not hex */
     };
 
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
