@@ -6404,7 +6404,12 @@ static void lobbyReelWbnKick(void) {
         SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
         uint8_t *data = nullptr;
         size_t   size = 0;
+        /* Held to the same ceiling the server-served path enforces on its own
+         * transfer. Without it this is the one way into the reel that a round
+         * log of any size at all can come through, and the recap opens and
+         * fetches on its own between rounds. */
         int status = wbn_api_download_to_memory_progress(path, &data, &size,
+                                                         ROUND_LOG_MAX_BYTES,
                                                          progressFn, nullptr,
                                                          &s_reelWbnCancel);
         if (status != 200 || size == 0) {

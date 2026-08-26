@@ -148,11 +148,17 @@ typedef struct {
   char  *data;
   size_t size;
   size_t capacity;
+  /* Bytes this buffer will accept before it stops the transfer, or 0 for no
+   * ceiling. A response grows this buffer as it arrives and the far end
+   * decides how much arrives, so any caller reading something with a known
+   * largest legitimate size should say so. */
+  size_t limit;
 } DynBuf;
 
 static void dynBufInit(DynBuf *buf) {
   buf->capacity = 1024;
   buf->size = 0;
+  buf->limit = 0;
   buf->data = malloc(buf->capacity);
   if (buf->data) {
     buf->data[0] = '\0';
@@ -163,6 +169,16 @@ static size_t dynWriteCallback(char *ptr, size_t size, size_t nmemb, void *userd
   DynBuf *buf = (DynBuf *)userdata;
   size_t incoming = size * nmemb;
   size_t needed = buf->size + incoming + 1;
+  /* Short of what curl handed us, which fails the transfer with
+   * CURLE_WRITE_ERROR. Refusing here rather than checking the total at the end
+   * is the point: an endpoint that means to exhaust this client's memory never
+   * finishes, so a size checked afterwards is a size never reached. */
+  if (buf->limit != 0 && buf->size + incoming > buf->limit) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "response exceeds its %zu byte ceiling — transfer stopped",
+                buf->limit);
+    return 0;
+  }
   if (needed > buf->capacity) {
     size_t newcap = buf->capacity * 2;
     if (newcap < needed) newcap = needed;
@@ -1121,16 +1137,18 @@ int wbn_api_download_to_memory_cancellable(const char *path,
                                            uint8_t **data_out,
                                            size_t *size_out,
                                            volatile int *cancel_flag) {
-  return wbn_api_download_to_memory_progress(path, data_out, size_out,
+  return wbn_api_download_to_memory_progress(path, data_out, size_out, 0,
                                              NULL, NULL, cancel_flag);
 }
 
 int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
-  return wbn_api_download_to_memory_progress(path, data_out, size_out, NULL, NULL, NULL);
+  return wbn_api_download_to_memory_progress(path, data_out, size_out, 0,
+                                             NULL, NULL, NULL);
 }
 
 int wbn_api_download_to_memory_progress(const char *path,
                                         uint8_t **data_out, size_t *size_out,
+                                        size_t maxBytes,
                                         WbnProgressFn progressFn,
                                         void *progressUserData,
                                         volatile int *cancel_flag) {
@@ -1166,6 +1184,8 @@ int wbn_api_download_to_memory_progress(const char *path,
     curl_easy_cleanup(curl);
     return -1;
   }
+
+  respBuf.limit = maxBytes;
 
   XferProgressCtx progressCtx = { progressFn, progressUserData, cancel_flag };
 
