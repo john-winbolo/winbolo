@@ -606,6 +606,14 @@ int run_autolock_released_on_return_to_lobby(void);
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
 
+/* Pillbox repair load (test_pill_repair_load.c). The man carries a full
+ * load and spends it against the armour the pill has when he arrives, so a
+ * pill that took more fire on the way still ends up topped up, and the
+ * trees he didn't need come back to the tank. */
+int run_pill_repair_tops_up_from_arrival_armour(void);
+int run_pill_repair_short_load_spends_what_it_has(void);
+int run_pill_repair_full_load_covers_a_dead_pill(void);
+
 /* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
  * cluster / farthest-first selection that auto-assigns a lobby start on
  * join, shared with startsAssignBatch's distance + validity logic. */

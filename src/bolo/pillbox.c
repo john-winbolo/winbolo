@@ -1120,28 +1120,49 @@ BYTE pillsNumInRect(GameSim *sim, pillboxes *value, BYTE leftPos, BYTE rightPos,
 *  value  - Pointer to the pillbox structure
 *  xValue - X Map position
 *  yValue - Y Map position
+*  treeAmount - Trees the man is carrying
+*
+*  Returns the trees that weren't needed, for the man to carry home.
 *********************************************************/
-void pillsRepairPos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE treeAmount) {
-  BYTE count; /* Looping variable */
-  BYTE repairAmount =0;
+BYTE pillsRepairPos(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE treeAmount) {
+  BYTE count;   /* Looping variable */
+  BYTE armour;  /* Armour the pill has right now */
+  BYTE needed;  /* Trees it takes to reach full armour from there */
+  BYTE used;    /* Trees actually spent */
 
+  used = 0;
   count = 0;
   while (count < ((*value)->numPills)) {
     if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && ((*value)->item[count].inTank) == FALSE) {
-      repairAmount = treeAmount*PILL_REPAIR_AMOUNT;
-	  (*value)->item[count].armour = (*value)->item[count].armour + repairAmount;
-	  if((*value)->item[count].armour>PILLS_MAX_ARMOUR) {
-	    (*value)->item[count].armour = PILLS_MAX_ARMOUR;
+      /* Repair against the armour the pill has on arrival, not the armour it
+         had when the order was given — it may have taken more hits since, or
+         been patched up by someone else. */
+      armour = (*value)->item[count].armour;
+      needed = 0;
+      if (armour < PILLS_MAX_ARMOUR) {
+        needed = (BYTE) (((PILLS_MAX_ARMOUR - armour) + PILL_REPAIR_AMOUNT - 1) / PILL_REPAIR_AMOUNT);
       }
-      if (sim->isServer == FALSE) {
-        frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), (pillsGetAllianceNum(sim, value, (BYTE) (count+1))));
+      used = treeAmount;
+      if (used > needed) {
+        used = needed;
       }
-      logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+      if (used > 0) {
+        armour = (BYTE) (armour + (used * PILL_REPAIR_AMOUNT));
+        if (armour > PILLS_MAX_ARMOUR) {
+          armour = PILLS_MAX_ARMOUR;
+        }
+        (*value)->item[count].armour = armour;
+        if (sim->isServer == FALSE) {
+          frontEndStatusPillbox(clientSimFromSim(sim), (BYTE) (count+1), (pillsGetAllianceNum(sim, value, (BYTE) (count+1))));
+        }
+        logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
+      }
       count = (*value)->numPills;
 
     }
     count++;
   }
+  return (BYTE) (treeAmount - used);
 }
 
 /*********************************************************
