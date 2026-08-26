@@ -165,27 +165,47 @@ void serverDedicatedLogStashCurrentRound(void) {
      * on the way out of the game must not overwrite the round it followed,
      * nor repoint s_lastRoundFile at itself. */
     if (s_roundRan) {
+        /* True unless a move was wanted and did not happen. A caller that
+         * records to a path it reuses is asking for the round to be taken off
+         * that path, so a move it did not get is the round not surviving. */
+        bool published = TRUE;
+
         if (s_completedPath[0] != '\0' &&
-            strcmp(s_completedPath, s_logFileName) != 0 &&
-            SDL_RenamePath(s_logFileName, s_completedPath)) {
-            strncpy(s_logFileName, s_completedPath, sizeof(s_logFileName) - 1);
-            s_logFileName[sizeof(s_logFileName) - 1] = '\0';
-            /* An upload stashed above named the pre-move path. No caller
-             * both publishes and uploads today (hosting sets no completed
-             * path, single player never uploads), but a stale name here
-             * would be a quiet failure for whoever combines them. */
-            if (s_pendingUploadFile[0] != '\0') {
-                strncpy(s_pendingUploadFile, s_logFileName,
-                        sizeof(s_pendingUploadFile) - 1);
-                s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+            strcmp(s_completedPath, s_logFileName) != 0) {
+            if (SDL_RenamePath(s_logFileName, s_completedPath)) {
+                strncpy(s_logFileName, s_completedPath, sizeof(s_logFileName) - 1);
+                s_logFileName[sizeof(s_logFileName) - 1] = '\0';
+                /* An upload stashed above named the pre-move path. No caller
+                 * both publishes and uploads today (hosting sets no completed
+                 * path, single player never uploads), but a stale name here
+                 * would be a quiet failure for whoever combines them. */
+                if (s_pendingUploadFile[0] != '\0') {
+                    strncpy(s_pendingUploadFile, s_logFileName,
+                            sizeof(s_pendingUploadFile) - 1);
+                    s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+                }
+            } else {
+                published = FALSE;
             }
         }
-        /* s_logFileName names a file that exists either way: the published
-         * copy after a move, the original when there was no completed path
-         * or the move failed. A failed move is not fatal — the round stays
-         * where it was recorded. */
-        strncpy(s_lastRoundFile, s_logFileName, sizeof(s_lastRoundFile) - 1);
-        s_lastRoundFile[sizeof(s_lastRoundFile) - 1] = '\0';
+
+        if (published) {
+            /* s_logFileName names a file that will still be there when someone
+             * comes for it: the published copy after a move, or the original
+             * when no move was wanted — a host's rounds already resolve unique
+             * timestamped names and nothing goes back over them. */
+            strncpy(s_lastRoundFile, s_logFileName, sizeof(s_lastRoundFile) - 1);
+            s_lastRoundFile[sizeof(s_lastRoundFile) - 1] = '\0';
+        } else {
+            /* The move is the whole reason a completed path exists, so a
+             * failed one leaves the round sitting on the path it was recorded
+             * to — which the next lobby entry's logStart truncates a few
+             * seconds later. Naming it would hand the recap a file about to be
+             * emptied under an open zip reader, and leaving the previous value
+             * would offer the round before this one as if it were this one.
+             * No replay for this round is the only honest answer. */
+            s_lastRoundFile[0] = '\0';
+        }
     }
     s_roundRan = FALSE;
 }

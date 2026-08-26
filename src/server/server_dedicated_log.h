@@ -62,9 +62,15 @@ const char *serverDedicatedLogCurrentFile(void);
  * after installing, not before. */
 void serverDedicatedLogSetCompletedPath(const char *path);
 
-/* Absolute path of the most recently completed round's log, or "" when no
- * round has finished since the writer was installed. For hosting that is the
- * round's own timestamped file; with a completed path set it is that path. */
+/* Absolute path of the most recently completed round's log, or "" when there
+ * is no round to offer. For hosting that is the round's own timestamped file;
+ * with a completed path set it is that path.
+ *
+ * "" covers three cases, and a caller need not tell them apart: no round has
+ * finished since the writer was installed, the writer has since been
+ * uninstalled, or the round finished but could not be moved to its completed
+ * path — which leaves it on a recording path the next lobby entry truncates,
+ * so there is nothing there worth naming. */
 const char *serverDedicatedLogLastRoundFile(void);
 
 /* Finalize the current round's log (logStop, isLogging=false) and
