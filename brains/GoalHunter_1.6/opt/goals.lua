@@ -2281,6 +2281,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
         if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_cell end
+        -- HARD balance gate (STRATEGIC_PLACE_STRICT_NEED): non-panic
+        -- placement fills ONLY the single most-needed category. Merely
+        -- being under target isn't enough — classification drifts with
+        -- the front line (a "front" cell placed mid-firefight rereads
+        -- as back once the wave recedes: 20260825_194741 bot11 t=444,
+        -- back 5/1), so any slack here bleeds the portfolio out of
+        -- balance. Panic/def_build/desperate drops bypass this scan
+        -- entirely and stay exempt.
+        if (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
+           and pf_need_cat and cell_cat ~= pf_need_cat then
+          goto skip_cell
+        end
         local score = 0
         local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
         local sc_center = 0
@@ -2418,13 +2430,26 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- 13. Base-guardian: every friendly base should have >=1 pill in
         --     shooting range. Big bonus per currently-unguarded base this spot
         --     would cover — top placement priority.
+        --     SURPLUS CAP: guardian coverage outranks portfolio balance,
+        --     but not without limit — once the spot's category already
+        --     holds >= CAP x its target, the bonus is withheld so a
+        --     many-based team doesn't guard-place the same category
+        --     forever (20260825_194741 bot11 t=444: back pill #5 at 4/1
+        --     to guard one of the wave's ten bases). Modest surplus
+        --     still guards naked bases.
         if #unguarded_bases > 0 then
-          for _, ub in ipairs(unguarded_bases) do
-            if U.mdist(cx, cy, ub.mx, ub.my) <= C.PILL_FIRE_RANGE then
-              sc13 = sc13 + C.STRATEGIC_PLACE_GUARDIAN_BONUS
+          local gcap = C.STRATEGIC_PLACE_GUARDIAN_SURPLUS_CAP or 3
+          local gat  = pf_counts[cell_cat] or 0
+          local gtgt = pf_targets[cell_cat] or 0
+          if gtgt < 1 then gtgt = 1 end
+          if gat < gtgt * gcap then
+            for _, ub in ipairs(unguarded_bases) do
+              if U.mdist(cx, cy, ub.mx, ub.my) <= C.PILL_FIRE_RANGE then
+                sc13 = sc13 + C.STRATEGIC_PLACE_GUARDIAN_BONUS
+              end
             end
+            score = score + sc13
           end
-          score = score + sc13
         end
 
         all_cands[#all_cands + 1] = {
@@ -2927,6 +2952,20 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   local ddx, ddy = (tmx or 0) - p.mx, (tmy or 0) - p.my
   if math.sqrt(ddx * ddx + ddy * ddy) <= (C.DEFEND_ARRIVE_RADIUS or 10) then
     bd.arrived = true
+    -- LIVE enemy requirement for the heat action: a hostile tank must be
+    -- VISIBLE within HEAT_REQUIRE_ENEMY_RANGE of the pill RIGHT NOW.
+    -- Stale sightings (sight/setup ages up to 600t) justify driving
+    -- here, but never shelling our own pill for an enemy that already
+    -- left — heat costs HP and shells and only pays against a present
+    -- target the angered pill can actually shoot at.
+    local live_enemy = false
+    do
+      local hr = C.HEAT_REQUIRE_ENEMY_RANGE or 10
+      for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+        local edx, edy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
+        if edx * edx + edy * edy <= hr * hr then live_enemy = true break end
+      end
+    end
     local block
     if hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400) then
       block = "taking_damage"
@@ -2936,9 +2975,8 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
       block = "low_hp"
     elseif (info.shells or 0) < (C.HEAT_PILL_SHOTS or 3) + (C.SHELL_RESERVE or 0) then
       block = "low_shells"
-    elseif math.min(hit_age, sight_age, setup_age)
-           >= (C.DEFEND_SIGHT_FRESH_TICKS or 600) then
-      block = "no_evidence"
+    elseif not live_enemy then
+      block = "no_live_enemy"
     elseif info.man_status ~= C.LGM_INTANK then
       block = "lgm_out"
     else
@@ -3041,12 +3079,24 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   --     fallback that fires only when nothing bids — so any finite
   --     quiet cost would glue idle bots to garrison duty. Rows stay
   --     listed in the panel for visibility.
+  -- Readiness: low shells/armour makes THIS bot's defend costlier, so
+  -- the total-score steal hands the pill to the best-equipped responder
+  -- among comparable distances (an empty tank arriving first defends
+  -- nothing). Linear in each deficit below the resupply thresholds,
+  -- +1.0x max per resource, capped overall.
+  local ready = 1.0
+    + (1 - math.min(1, (info.shells or 0) / (C.DEFEND_READY_SHELLS or 20)))
+    + (1 - math.min(1, (info.armour or 0) / (C.DEFEND_READY_ARMOUR or 15)))
+  local ready_cap = C.DEFEND_READY_MAX_MULT or 2.5
+  if ready > ready_cap then ready = ready_cap end
+  if ready > 1.0 then bd.ready = ready end
+
   if mult >= 1.0 then
     bd.mult = 1.0
     if hp < (C.PILLS_MAX_HEALTH or 15) then
       bd.worn = true
       bd.feas = 1.0
-      local cost = (C.DEFEND_PILL_BASE_COST or 250) + travel
+      local cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * ready
       bd.cost = cost
       return cost, bd
     end
@@ -3084,9 +3134,101 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   end
   bd.feas = feas
 
-  local cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas
+  local cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas * ready
+  -- Two-tier floor: with NO fresh damage (siege) and NO setup tell (the
+  -- "pill block going up -> take incoming" LGM sighting), the evidence
+  -- is a mere enemy drive-by — precaution bids floor at the higher
+  -- DEFEND_SIGHT_MIN_COST (~200) so they never outbid real rescues or
+  -- productive work. Siege/setup keep the low floor: those are live.
   local floor_c = C.DEFEND_MIN_COST or 100
-  if cost < floor_c then cost = floor_c end
+  if not siege and setup_f <= 0 then
+    floor_c = C.DEFEND_SIGHT_MIN_COST or 200
+  end
+  if cost < floor_c then
+    bd.floored = floor_c   -- panel: the printed product got clamped up
+    cost = floor_c
+  end
+
+  -- ── Well-defended gate ─────────────────────────────────────────────
+  -- Allies ALREADY at the pill (fresh /info positions, bidder excluded)
+  -- covering the enemies there in team-ratio proportion means this pill
+  -- doesn't need US too — the whole team swarming one threatened pill
+  -- strips every other front. Coverage requirement rounds in the
+  -- defenders' favour: R = ceil(their_team/our_team), well-defended
+  -- when foes <= allies_near * R (no visible foes + any ally = held).
+  local wd_cost = C.DEFEND_WELL_DEFENDED_COST or 500
+  if cost < wd_cost then
+    local wr  = C.DEFEND_WELL_DEFENDED_RADIUS or 10
+    local wr2 = wr * wr
+    -- Defenders already on it, from two live signals:
+    --   (a) VISIBLE allied tanks parked within the radius (info.objects
+    --       hostility bit — real presence, only when we can see them);
+    --   (b) allies whose broadcast goal is a defense RESPONSE targeting
+    --       this pill area (defend_pill / repair_pill claims) — covers
+    --       the fog case AND bots still en route, which is exactly the
+    --       everyone-swarms window. max() of the two, since a visible
+    --       defender usually also claims.
+    local allies_near = 0
+    for _, ob in ipairs(info.objects or {}) do
+      if ob.type == OBJECT_TANK
+         and bit.band(ob.info, OBJECT_HOSTILE) == 0 then
+        local adx = bit.rshift(ob.x, 8) - p.mx
+        local ady = bit.rshift(ob.y, 8) - p.my
+        if adx * adx + ady * ady <= wr2 then
+          allies_near = allies_near + 1
+        end
+      end
+    end
+    local responders = 0
+    for ally_pn, slot in ally_state.iter_active(now, 1750) do
+      if ally_pn ~= info.player_number then
+        local h = slot.info
+        if h and (h.goal == "defend_pill" or h.goal == "repair_pill") then
+          local gx, gy = tonumber(h.mx), tonumber(h.my)
+          if gx and gy then
+            local adx, ady = gx - p.mx, gy - p.my
+            if adx * adx + ady * ady <= wr2 then
+              responders = responders + 1
+            end
+          end
+        end
+      end
+    end
+    if responders > allies_near then allies_near = responders end
+    if allies_near > 0 then
+      local foes_near = 0
+      for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+        local edx, edy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
+        if edx * edx + edy * edy <= wr2 then
+          foes_near = foes_near + 1
+        end
+      end
+      local a, ours_total = info.allies or 0, 0
+      while a > 0 do
+        ours_total = ours_total + (a % 2)
+        a = math.floor(a / 2)
+      end
+      if ours_total < 1 then ours_total = 1 end
+      local theirs_total = (info.num_players or ours_total) - ours_total
+      if theirs_total < 1 then theirs_total = 1 end
+      local ratio = math.ceil(theirs_total / ours_total)
+      if foes_near <= allies_near * ratio then
+        bd.welldef = { ours = allies_near, foes = foes_near, ratio = ratio }
+        cost = wd_cost
+      end
+    end
+  end
+
+  -- Tiebreaker on the FLAT costs (floor / well-defended): flat clamps
+  -- erase the travel AND readiness ordering, which let a far/empty
+  -- bot's claim stick just because it re-scored first — fold both back
+  -- in as a sliver so the defend_pill steal band (~0.5%, see
+  -- sync_ally_claimed_rejects) hands the job to the closer and (at
+  -- comparable distance) better-equipped responder.
+  if bd.floored or bd.welldef then
+    cost = cost + travel * 0.01 + (ready - 1.0) * 2.0
+  end
+
   bd.cost = cost
   return cost, bd
 end
@@ -3112,6 +3254,36 @@ end
 local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
   local now = state.tick or 0
   local rows = BRAIN_POOL_VIZ and {} or nil
+
+  -- Selection-layer preview for the panel rows: mirror the EXACT phase
+  -- weight (distance-attenuated, goal_selection's lerp) and influence
+  -- scaling that will hit this pool's bid downstream, so a clicked
+  -- row's number reconciles with the WINNERS view instead of reading
+  -- ~2x off (middle-phase defend_pill weight is 0.5 — the panel used
+  -- to show only the raw pool cost with no hint of that).
+  local pw0 = (C.PHASE_WEIGHTS and C.PHASE_WEIGHTS[state.phase]
+               and C.PHASE_WEIGHTS[state.phase].defend_pill) or 1.0
+  local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
+  local pw_falloff = (type(_fot) == "table" and (_fot.defend_pill or _fot.default))
+                     or (type(_fot) == "number" and _fot) or 40
+  local function sel_preview(mx, my, cost)
+    if not cost or cost >= math.huge then return "" end
+    local pw = pw0
+    if pw ~= 1.0 then
+      local gd = U.mdist(tmx or 0, tmy or 0, mx, my)
+      pw = 1.0 + (pw - 1.0) * (1 - math.min(1.0, gd / pw_falloff))
+    end
+    local im = 1.0
+    if state.phase ~= "opening" then
+      local inf = cpf.influence_at(mx, my) or 0
+      if inf < -50 then im = 2.0 elseif inf > 50 then im = 0.5 end
+    end
+    if pw == 1.0 and im == 1.0 then return "" end
+    local s = string.format(" ->sel{%.0f", cost * pw * im)
+    if pw ~= 1.0 then s = s .. string.format(" xph%.2f", pw) end
+    if im ~= 1.0 then s = s .. string.format(" xinf%.1f", im) end
+    return s .. "} (+switch/commit at selection)"
+  end
 
   -- Repair-readiness (row detail only): could we patch the pill up on
   -- arrival? Actual dispatch stays repair_pill/builder territory.
@@ -3158,8 +3330,9 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
           if bd and bd.arrived then
             if bd.heat then
               formula = string.format(
-                "ARRIVED heat{%.0f}||within %d tiles: travel phase done; bidding the heat-up action only (%d shells to anger the pill); %s",
-                cost, C.DEFEND_ARRIVE_RADIUS or 10, C.HEAT_PILL_SHOTS or 3, detail)
+                "ARRIVED heat{%.0f}%s||within %d tiles: travel phase done; bidding the heat-up action only (%d shells to anger the pill); %s",
+                cost, sel_preview(p.mx, p.my, cost),
+                C.DEFEND_ARRIVE_RADIUS or 10, C.HEAT_PILL_SHOTS or 3, detail)
             else
               formula = string.format(
                 "ARRIVED no-bid (%s)||within %d tiles: travel phase done; heat blocked by %s -> defend yields to attack_tank / repair_pill / whatever else bids; %s",
@@ -3183,9 +3356,20 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
             local f = (bd.feas ~= 1.0)
               and string.format("*late{%.2f eta=%.0f ttl=%.0f}", bd.feas, bd.eta or 0, bd.ttl or 0)
               or ""
+            local fl = bd.floored
+              and string.format(" floor{%.0f}", bd.floored) or ""
+            local wd = bd.welldef
+              and string.format(" WELLDEF{%d ally vs %d foe, R=%d -> %.0f}",
+                                bd.welldef.ours, bd.welldef.foes,
+                                bd.welldef.ratio, cost) or ""
+            local rd = bd.ready
+              and string.format("*rdy{%.2f sh=%d arm=%d}",
+                                bd.ready, info.shells or 0, info.armour or 0)
+              or ""
             formula = string.format(
-              "(base{%.0f}+dij{%.0f})*m{%.2f}%s%s = %.0f||%s",
-              C.DEFEND_PILL_BASE_COST, travel, bd.mult, f, u, cost, detail)
+              "(base{%.0f}+dij{%.0f})*m{%.2f}%s%s%s%s%s = %.0f%s||%s",
+              C.DEFEND_PILL_BASE_COST, travel, bd.mult, rd, f, fl, wd, u, cost,
+              sel_preview(p.mx, p.my, cost), detail)
           end
         else
           local why = "hp=0 — rebuild/capture territory, not defend"
@@ -3210,6 +3394,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
           tier = reject and "dead"
                  or (bd.heat and "heat") or (bd.heat_block and "no_heat")
                  or (bd.quiet and "quiet") or (bd.worn and "worn")
+                 or (bd.welldef and "welldef")
                  or bd.tier or "quiet",
         }
       end
@@ -6556,8 +6741,17 @@ local function sync_ally_claimed_rejects(state, info)
         -- Per-pool steal threshold: capture_pill grabs are cheap to re-route
         -- (drive-over, no shells invested), so essentially ANY cost edge wins
         -- the pickup (1%); other pools keep the conservative 25% band.
-        local pool_steal_frac = (pool_idx == 4)
-          and (C.ALLY_CLAIMED_STEAL_FRAC_CAPTURE or 0.01) or steal_frac
+        local pool_steal_frac = steal_frac
+        if pool_idx == 4 then
+          pool_steal_frac = C.ALLY_CLAIMED_STEAL_FRAC_CAPTURE or 0.01
+        elseif pool_idx == 2 then
+          -- defend_pill: DISTANCE decides. Defend bids are base-dominated
+          -- and flat-clamped, so a closer responder is only a sliver
+          -- cheaper (floor/welldef carry a travel*0.01 tiebreaker) — a
+          -- hair-trigger band lets the closer ally take over from a far
+          -- one that merely re-scored first; ties still break by id.
+          pool_steal_frac = C.ALLY_CLAIMED_STEAL_FRAC_DEFEND or 0.005
+        end
         local we_keep
         local _reason  -- debug label, set at each decision site
         local kind = _REJECT_POOLS[pool_idx]
@@ -8897,7 +9091,7 @@ local function goal_selection(state, world, info, quiet)
     -- The current target's pool entry has hysteresis == nil (additive
     -- penalty was zero) so its cost is comparable to the candidates'
     -- post-penalty costs.
-    if #pool >= 2 and state.goal and state.goal.kind ~= "none" then
+    if #pool >= 1 and state.goal and state.goal.kind ~= "none" then
       local winner = pool[1]
       local switching = (winner.hysteresis == "type"
                          or winner.hysteresis == "target")
@@ -8909,6 +9103,35 @@ local function goal_selection(state, world, info, quiet)
              and c.goal.my == state.goal.my then
             cur_entry = c
             break
+          end
+        end
+        -- Walkover guard: incremental pools (repair/capture/attack_*)
+        -- re-queue their candidates over many ticks, so the CURRENT
+        -- goal's pool may simply not have bid this cycle. With no
+        -- cur_entry the stickiness bar had nothing to hold onto and ANY
+        -- challenger took the bot mid-goal by walkover (20260825_202948
+        -- bot15 t=1511: dropped a close repair_pill for a cross-map
+        -- defend purely because repair was mid-requeue). Fall back to
+        -- the pool_cache's last finalized cost for the current goal and
+        -- fabricate its entry so the ratio test still applies.
+        if not cur_entry and state.pool_cache then
+          for pi = 0, 12 do
+            local pce = state.pool_cache[pi]
+            if pce and pce.goal and pce.cost
+               and pce.goal.kind == state.goal.kind
+               and pce.goal.mx == state.goal.mx
+               and pce.goal.my == state.goal.my then
+              cur_entry = { cost = pce.cost, goal = state.goal,
+                            desc = "(carried forward: pool mid-requeue)",
+                            _carried_forward = true }
+              pool[#pool + 1] = cur_entry
+              if BRAIN_DEBUG_MODE then
+                print2(string.format(
+                  "  hysteresis(carry): current %s@%d,%d had no pool entry this cycle — carried at last cost %.0f",
+                  state.goal.kind, state.goal.mx or -1, state.goal.my or -1, pce.cost))
+              end
+              break
+            end
           end
         end
         if cur_entry and winner.cost > cur_entry.cost * C.GOAL_SWITCH_RATIO then
@@ -10119,7 +10342,8 @@ function M.get_pool_breakdown_json(state)
       local hist_pen    = penalty - switch_flat - commit_val - ally_pen
 
       -- Build a rich formula for the detail popup
-      local detail_formula = string.format("%s(x%.1f): %s", pname, pw, w.formula)
+      local detail_formula = string.format("%s(x%.2f): %s", pname,
+        (gc and gc.phase_weight) or pw, w.formula)
       local detail_map = {}
 
       detail_map[#detail_map + 1] = string.format("base:%.0f (raw=%.0f x pw=%.1f, %s phase)",
@@ -10190,8 +10414,18 @@ function M.get_pool_breakdown_json(state)
       -- "raw x PHASE@pw +penalties = total" and every number reconciles with
       -- the other views.
       local raw_base = w.cost or (pw ~= 0 and base_cost / pw) or base_cost
+      -- Reconciling multipliers: show the APPLIED phase weight
+      -- (distance-attenuated, recorded by goal_selection) and the
+      -- influence scale — the raw table weight (e.g. "MD@0.50") never
+      -- balanced against =total (defend_pill 100 x MD@0.50 +38 "=75"
+      -- actually meant 100 x 0.74 x inf0.5 + 38 = 75).
+      local eff_pw   = (gc and gc.phase_weight) or pw
+      local inf_mult = (gc and gc.inf_mult) or 1.0
       local row_summary = string.format("%s %.0f x %s@%.2f",
-        pname, raw_base, phase_abbrev, pw)
+        pname, raw_base, phase_abbrev, eff_pw)
+      if inf_mult ~= 1.0 then
+        row_summary = row_summary .. string.format(" x inf@%.1f", inf_mult)
+      end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then
         local parts = {}

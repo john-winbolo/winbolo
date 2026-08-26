@@ -1182,6 +1182,15 @@ M.STRATEGIC_PLACE_COVERAGE_BASE_WEIGHT = 15
 -- Base guardian: every friendly base should have >=1 pill in shooting range.
 -- Big bonus per currently-unguarded base a candidate spot would cover.
 M.STRATEGIC_PLACE_GUARDIAN_BONUS = 150
+-- Guardian surplus cap: the guardian bonus is withheld when the spot's
+-- category already holds >= CAP x its portfolio target (back 4/1 with
+-- CAP=3 -> no more guard-placed back pills; 2/1 still guards).
+M.STRATEGIC_PLACE_GUARDIAN_SURPLUS_CAP = 3
+-- Hardcore balance: non-panic strategic placement fills ONLY the single
+-- most-needed category (see the hard gate in the placement scan);
+-- classification drift with a moving front line otherwise bleeds the
+-- portfolio out of balance. false reverts to any-under-target.
+M.STRATEGIC_PLACE_STRICT_NEED = true
 -- Minimum spot SCORE to deploy a carried pill (eval_place_pill_strategic). The
 -- carry / util-surplus cost discounts make placement EAGER (win the goal); this
 -- keeps the QUALITY bar on WHERE it goes so an eager bot doesn't dump a pill at a
@@ -1632,6 +1641,33 @@ M.DEFEND_ASSUMED_TICKS_PER_HP = 80   -- assumed siege damage rate: 15 HP ~ 60 s 
 M.DEFEND_ETA_PER_COST        = 6     -- rough ticks of travel per dij cost unit (ETA estimate)
 M.DEFEND_FUTILITY_MAX        = 3.0   -- cap on the late-arrival cost multiplier during a siege
 M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the multipliers above.
+-- Precaution floor: a defend bid with NO fresh damage and NO setup tell
+-- (no "a pill block is being built -> take incoming" LGM sighting) is
+-- responding to a mere drive-by — floor it here instead of
+-- DEFEND_MIN_COST so sight-only defends don't outbid real work.
+M.DEFEND_SIGHT_MIN_COST      = 200
+-- Well-defended gate: when allied tanks ALREADY at the pill cover the
+-- enemies there in proportion to the overall team sizes, the bid jumps
+-- straight to this cost so the rest of the team doesn't swarm one pill.
+-- Required coverage rounds in the defenders' favour:
+--   R = ceil(their_team / our_team); well-defended when
+--   foes_near <= allies_near * R (allies exclude the bidder itself).
+-- Ex: teams 5v10 -> R=2 -> one defender holding vs two attackers is
+-- enough; teams 3v4 -> R=2 as well; equal teams -> 1v1 covers it.
+M.DEFEND_WELL_DEFENDED_COST   = 500
+M.DEFEND_WELL_DEFENDED_RADIUS = 10   -- Euclidean tiles around the pill
+-- defend_pill steal band: distance decides (defend costs are base-
+-- dominated + flat-clamped, with a travel*0.01 tiebreaker restoring the
+-- ordering) — the closer responder's sliver-cheaper bid takes the claim
+-- from a farther ally that merely re-scored first.
+M.ALLY_CLAIMED_STEAL_FRAC_DEFEND = 0.005
+-- Readiness scaling: an under-equipped responder is a WORSE defender —
+-- each of shells-below-SHELLS_LOW and armour-below-ARMOUR_LOW adds up
+-- to +1.0x to the bid (linear in the deficit, capped). Feeds the total-
+-- score steal: of equally distant allies, the best-equipped goes.
+M.DEFEND_READY_SHELLS   = 20    -- full weight at/above (= SHELLS_LOW)
+M.DEFEND_READY_ARMOUR   = 15    -- full weight at/above (= ARMOUR_LOW)
+M.DEFEND_READY_MAX_MULT = 2.5
                                      -- Sits ABOVE attack_tank engage (~11) and mid-take
                                      -- attack_pill locks (10-50), so on arrival the fight
                                      -- takes over from the drive; below explore (500) and
@@ -1643,6 +1679,9 @@ M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the mult
 -- repair_pill) and the pill's bid becomes the heat-up action alone.
 M.DEFEND_ARRIVE_RADIUS       = 10
 M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill to anger it".
+M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
+                                     -- euclidean range of the pill (and not actively
+                                     -- shelling it — taking_damage blocks first).
                                      -- Loses to attack_tank (~11) and close repair (<100);
                                      -- beats explore (500) when nothing else is pressing.
 M.HEAT_PILL_SHOTS            = 3     -- shells per heat sequence
@@ -1658,6 +1697,11 @@ M.HEAT_SEQUENCE_TICKS        = 150   -- estimated heat volley length: aim + 3 re
 M.HEAT_REPAIR_OVERLAP_MARGIN = 100   -- safety margin on the timed ally-repair overlap check: block
                                      -- heating only when their repair ETA lands within
                                      -- HEAT_SEQUENCE_TICKS + this of now
+-- Enemy-near repair hold: OFF by default. When the pool has committed to
+-- repair_pill, the LGM goes — holding him in the tank while the pill dies
+-- (then getting stuck-blocked for waiting) defends nothing. Flip on to
+-- restore the old "never walk the LGM toward a seen enemy" caution.
+M.REPAIR_HOLD_ENEMY_NEAR_ENABLED = false
 M.REPAIR_HOLD_ENEMY_NEAR_TICKS = 400 -- hold the repair LGM dispatch while a hostile tank was seen
                                      -- near the pill this recently (~8 s) — don't walk the little
                                      -- guy into a live fight; the pool's contested x3 already

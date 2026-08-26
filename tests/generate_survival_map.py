@@ -26,7 +26,11 @@ different tiles follow; 8-15 = run of len-6 same tiles).
 """
 import math
 
-DST = r"D:\Development\winbolo2\data\maps\Survival.map"
+# Repo-relative output (this script lives in <repo>/tests/), so the
+# generator works identically from any clone (winbolo, winbolo2, winbolo3).
+import os
+DST = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "data", "maps", "Survival.map"))
 
 DEEP = 0xFF
 SWAMP, ROAD, FOREST, GRASS = 2, 4, 5, 7
