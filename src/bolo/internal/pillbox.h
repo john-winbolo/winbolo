@@ -451,9 +451,11 @@ BYTE pillsNumInRect(struct GameSim *sim, pillboxes *value, BYTE leftPos, BYTE ri
 *  value  - Pointer to the pillbox structure
 *  xValue - X Map position
 *  yValue - Y Map position
-*  treeAmount - The amount of trees used to repair the pillbox.
+*  treeAmount - Trees the man is carrying
+*
+*  Returns the trees that weren't needed, for the man to carry home.
 *********************************************************/
-void pillsRepairPos(struct GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE treeAmount);
+BYTE pillsRepairPos(struct GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE treeAmount);
 
 /*********************************************************
 *NAME:          pillsGetArmourPos

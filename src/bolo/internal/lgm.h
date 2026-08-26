@@ -54,7 +54,12 @@ struct GameSim;
 #define LGM_COST_BOAT 20
 #define LGM_COST_PILLNEW 4
 #define LGM_COST_PILLREPAIR 1
-#define LGM_COST_MINE 1 
+#define LGM_COST_MINE 1
+
+/* Trees the man carries out to repair a pill. Each one is worth
+   PILL_REPAIR_AMOUNT armour, so this many always covers a pill on zero
+   armour. Anything left over comes back in the tank. */
+#define LGM_LOAD_PILLREPAIR 4
 
 #define LGM_NO_PILL 37
 
