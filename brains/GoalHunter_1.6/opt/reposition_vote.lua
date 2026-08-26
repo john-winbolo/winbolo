@@ -11,13 +11,33 @@
 -- state._repo_approved_pid).
 --
 -- Allies vote NO when (any of):
+--   * a HUMAN player is on our team and
+--     REPOSITION_DISABLE_WITH_HUMAN_ALLIES is on (human_allies) — the whole
+--     mechanic is off in mixed teams; also blocks the OPEN gate and
+--     eval_reposition_pill's candidate
 --   * the pill is in use as a take blocker (_in_use)
 --   * they remember a reposition EXECUTING within the last ~30s (one move
 --     per RECENT_MEMORY window; urgent negative-score proposals exempt);
 --     any FAILED vote additionally holds all proposals ~30s (FAIL_COOLDOWN)
---   * an enemy tank is within 15 tiles AND nothing else covers the pill
---   * the pill IS covered by >=1 pill but an enemy tank is within 10 tiles
+--   * the pill was PLACED less than PILL_JUST_BUILT_TICKS ago (just_built) —
+--     a pill built a minute ago doesn't get moved again
+--   * ANY enemy tank is within 15 tiles AND nothing else covers the pill
+--   * the pill IS covered by >=1 pill but ANY enemy tank is within 10 tiles
 --   * they have a strictly better (lower-cost) reposition candidate of their own
+--
+-- Both proximity gates trip on a single enemy tank, but LOCAL STRENGTH relaxes
+-- them on a ladder. Count allied and enemy tanks within the gate's BASE range
+-- of the pill, with the voter counting ITSELF when its own tank is in there:
+--   * allies >  enemies      → gate range shrinks x REPOSITION_STALE_RANGE_SCALE
+--   * allies >= 2 * enemies  → the distance gates are SKIPPED entirely
+-- Equal numbers buys nothing. Only the two distance gates are affected — a
+-- skip never bypasses blocker / just_built / recent_repo / better_candidate.
+--
+-- STALENESS independently shrinks the range by the same 0.8: when the team's
+-- last actual reposition is older than REPOSITION_STALE_TICKS (or never
+-- happened at all), a frozen back line should get braver about approving a
+-- move. Staleness and strength do NOT stack — the scale floors at a single 0.8
+-- application, so stale AND allies together is still 0.8, never 0.64.
 --
 -- All wire traffic rides init.lua's comms batcher (state._repo_outbox drained
 -- there). Inbound verbs are parsed in comms.lua onto state._repo_rx_*.
@@ -27,8 +47,19 @@ local C          = require("constants")
 local viz        = require("viz")
 local print2     = require("print2")
 local ally_state = require("ally_state")
+local bit        = require("bitcompat")
+local U          = require("util")
 
 local M = {}
+
+-- Human allies on our team, as a COUNT, but 0 whenever the policy flag is off.
+-- One place decides "is repositioning human-blocked right now", and it returns
+-- a number so the ballot line can say how many were seen. See
+-- util.human_ally_count for why the detection needs no join-lag grace.
+local function human_ally_block(info)
+  if not C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES then return 0 end
+  return U.human_ally_count(info)
+end
 
 local function tdist(ax, ay, bx, by)
   local dx, dy = ax - bx, ay - by
@@ -70,19 +101,89 @@ local function covering_pills(world, pid, mx, my)
   return n
 end
 
--- Nearest enemy-tank distance in tiles to (mx,my); math.huge if none perceived.
-local function nearest_enemy_tank(state, mx, my)
-  local best = math.huge
+-- Tank census within R tiles of (mx,my): how many ENEMY tanks and how many
+-- ALLIED tanks (us excluded) are sitting on the pill right now.
+--
+-- Enemies come from perc.enemy_tanks (real sightings only — ghosts live in a
+-- separate list). Allies come straight from info.objects' tank entries with the
+-- hostility bit clear, the same signal defend_pill's well-defended gate uses:
+-- there is no perception list of allied tank POSITIONS, and ally_state's
+-- broadcast mx/my is the ally's GOAL TARGET, not where its tank is. The engine
+-- never puts our own tank in info.objects (players.c playersGetBrainTanksInRect
+-- skips count == my player number), and the idnum test below is a belt-and-
+-- braces second exclusion in case that ever changes.
+local function tanks_near(state, info, mx, my, R)
+  local n_enemy, n_ally = 0, 0
   local ets = state.perc and state.perc.enemy_tanks
   if ets then
     for _, et in ipairs(ets) do
-      if et.mx and et.my then
-        local d = tdist(mx, my, et.mx, et.my)
-        if d < best then best = d end
+      if et.mx and et.my and tdist(mx, my, et.mx, et.my) <= R then
+        n_enemy = n_enemy + 1
       end
     end
   end
-  return best
+  local self_pn = info and info.player_number
+  for _, ob in ipairs((info and info.objects) or {}) do
+    if ob.type == OBJECT_TANK
+       and bit.band(ob.info, OBJECT_HOSTILE) == 0
+       and ob.idnum ~= self_pn then
+      local amx = bit.rshift(ob.x, 8)
+      local amy = bit.rshift(ob.y, 8)
+      if tdist(mx, my, amx, amy) <= R then n_ally = n_ally + 1 end
+    end
+  end
+  return n_enemy, n_ally
+end
+
+-- Range table for a proximity gate whose BASE range is `base` tiles: the
+-- effective range plus every factor that produced it (for the ballot log).
+--
+-- Local strength around the pill relaxes the gates on a LADDER, measured at the
+-- BASE range with the voter counted on its own side:
+--   * allies >  enemies        → ranges x REPOSITION_STALE_RANGE_SCALE (0.8)
+--   * allies >= 2 * enemies    → the distance gates are SKIPPED outright
+-- (and >=2x implies >, so the skip tier always carries the scale flag too).
+-- Equal numbers is not "more": 1v1 buys nothing. Holding the ground around the
+-- pill is what earns the shorter leash, and holding it 2:1 means enemy presence
+-- is no reason to veto at all — the team can cover the pill's downtime.
+--
+-- Staleness is a separate, independent reason to shrink the range, worth the
+-- SAME scale, and the two do NOT compound — the floor is one application, so
+-- stale+allies is 0.8 rather than 0.64:
+--   * stale  — no team reposition within REPOSITION_STALE_TICKS (or ever)
+--
+-- Self-counting is the exact inverse of tanks_near's exclusion: the engine
+-- never puts our own tank in info.objects (players.c skips our player number),
+-- so tanks_near can't see us and we add ourselves here from info.tankx/tanky.
+-- Both halves are needed — tanks_near must keep excluding us so a duplicate
+-- object entry can never double-count the voter.
+--
+-- Both censuses are taken at the BASE range on purpose: the discount is earned
+-- by the balance of force in the gate's natural reach, not inside the shrunken
+-- circle the discount itself produces (which would be circular).
+local function gate_range(state, info, mx, my, base, now)
+  local last  = state._repo_last_seen_tick
+  local stale = (not last) or (now - last) >= (C.REPOSITION_STALE_TICKS or 3000)
+  local n_enemy_base, n_ally = tanks_near(state, info, mx, my, base)
+  local self_in = false
+  if info and info.tankx and info.tanky then
+    local smx = bit.rshift(info.tankx, 8)
+    local smy = bit.rshift(info.tanky, 8)
+    if tdist(mx, my, smx, smy) <= base then
+      self_in = true
+      n_ally  = n_ally + 1
+    end
+  end
+  local allies = n_ally > n_enemy_base
+  -- 2:1 or better = skip the distance gates entirely. n_ally >= 1 keeps the
+  -- degenerate 0 vs 0 case (nobody anywhere near the pill) off the skip path —
+  -- it can't trip a gate anyway, and leaving it on the normal path keeps the
+  -- ballot line reporting a real range instead of a meaningless "skip".
+  local skip   = n_ally >= 1 and n_ally >= 2 * n_enemy_base
+  local scale  = (stale or allies) and (C.REPOSITION_STALE_RANGE_SCALE or 0.8) or 1.0
+  return { R = base * scale, base = base, scale = scale,
+           stale = stale, allies = allies, skip = skip,
+           na = n_ally, self_in = self_in, neb = n_enemy_base }
 end
 
 -- Per-tick: stamp state._repo_enemy_activity[pid] = now whenever a hostile pill
@@ -123,6 +224,31 @@ local function stamp_enemy_activity(state, world, now)
   state._repo_enemy_activity = act
 end
 
+-- Is a reposition actually IN FLIGHT for this bot right now?
+--
+-- In win-then-vote the goal becomes capture_pill+reposition at BID time, before
+-- any vote exists — that bid must NOT count as a reposition. It used to: the
+-- ally-state broadcast advertised repos=1 for any capture_pill+reposition goal,
+-- so the proposal (/info rvo) and the proposer's own repos=1 flag rode the SAME
+-- packet; every voter stamped _repo_last_seen_tick from the flag and then vetoed
+-- the proposal as recent_repo (now-now = 0) — a guaranteed self-veto.
+--
+-- In flight means: the team approved THIS pill for us, we're demolishing it, or
+-- we're past the shoot-down and carrying/replacing it (goals.lua's
+-- "finishing_swap" — the approval is cleared on consumption but the move is very
+-- much still happening, and the recent-memory window should time from its END).
+function M.is_reposition_active(state, world)
+  local g = state.goal
+  if not (g and g.kind == "capture_pill" and g.reposition) then return false end
+  if g.target_id and state._repo_approved_pid == g.target_id then return true end
+  if g.substate == "reposition_shoot" then return true end
+  local tp = g.target_id and world and world.pills and world.pills[g.target_id]
+  if tp and tp.owner == "friendly" and ((tp.health or 0) <= 0 or tp.in_tank) then
+    return true
+  end
+  return false
+end
+
 -- Decide THIS bot's vote on a proposed reposition. prop = {pid,mx,my,score}.
 -- Returns is_no(bool), reason(string).
 local function evaluate_vote(state, world, info, now, prop)
@@ -130,7 +256,33 @@ local function evaluate_vote(state, world, info, now, prop)
   local mx = (p and p.mx) or prop.mx
   local my = (p and p.my) or prop.my
 
+  -- Policy NO, ahead of everything else: with a human on our team we don't
+  -- reposition at all (REPOSITION_DISABLE_WITH_HUMAN_ALLIES). Every bot runs
+  -- this check independently, so even if the proposer somehow opened a vote —
+  -- stale info, a slot flagged late, the flag toggled mid-game — the ballots
+  -- kill it. Belt-and-braces with the OPEN gate and eval_reposition_pill.
+  local humans = human_ally_block(info)
+  if humans > 0 then
+    return true, "human_allies", { humans = humans }
+  end
+
   if p and p._in_use then return true, "blocker" end
+
+  -- Freshly placed pills are OFF LIMITS for a minute. A pill that just went
+  -- down is the product of a decision someone made seconds ago (a strategic
+  -- placement, a rebuild, or the tail of a reposition that just landed);
+  -- yanking it straight back up churns the back line and wastes the LGM trip
+  -- that put it there. placed_tick is stamped by the world model on a real
+  -- placement only (carry->deployed, or alive at a NEW tile) — never on a
+  -- plain re-sighting — and is nil for pills we've only ever seen standing
+  -- where they started, which are correctly not "just built".
+  if p and p.placed_tick then
+    local age = now - p.placed_tick
+    local lim = C.PILL_JUST_BUILT_TICKS or 1500
+    if age < lim then
+      return true, "just_built", { age = age, limit = lim }
+    end
+  end
 
   -- Pacing NO — but never against an URGENT proposal: a negative score means
   -- the pill's position is actively harmful (deep surplus / redundancy /
@@ -143,23 +295,80 @@ local function evaluate_vote(state, world, info, now, prop)
     return true, "recent_repo"
   end
 
+  -- Proximity gates. ANY enemy tank inside the range vetoes: repositioning
+  -- kills the pill for the duration of the move, and one tank is enough to
+  -- punish that. What allies buy is not immunity but a SHORTER leash — see
+  -- gate_range: their presence (or a stale team clock) shrinks the range by
+  -- 0.8, so the same enemy has to be closer before it counts.
   local cover = covering_pills(world, prop.pid, mx, my)
-  local enemy = nearest_enemy_tank(state, mx, my)
-
-  if cover == 0 and enemy <= (C.REPOSITION_VOTE_ENEMY_NEAR_TILES or 15) then
-    return true, "enemy_uncovered"
-  end
-  if cover >= 1 and enemy <= (C.REPOSITION_VOTE_TANK_COVER_TILES or 10) then
-    return true, "tank_near_covered"
+  local base  = (cover == 0) and (C.REPOSITION_VOTE_ENEMY_NEAR_TILES or 15)
+                             or (C.REPOSITION_VOTE_TANK_COVER_TILES or 10)
+  -- gate holds every input of the decision, and is handed back for the log.
+  local gate  = gate_range(state, info, mx, my, base, now)
+  if gate.skip then
+    -- 2:1 local superiority: neither distance gate may trip. Report the
+    -- base-range enemy count so the line still shows what we're ignoring.
+    gate.ne = gate.neb
+  else
+    -- Enemies counted at the EFFECTIVE range; the censuses that set that range
+    -- were taken at the base range.
+    gate.ne = tanks_near(state, info, mx, my, gate.R)
+    if gate.ne >= 1 then
+      if cover == 0 then
+        return true, "enemy_uncovered", gate
+      end
+      return true, "tank_near_covered", gate
+    end
   end
 
   local mine = state._repo_candidate
   if mine and mine.pid ~= prop.pid and mine.can_carry
      and (mine.score or math.huge) < (prop.score or math.huge) then
-    return true, "better_candidate"
+    return true, "better_candidate", gate
   end
 
-  return false, "ok"
+  return false, "ok", gate
+end
+
+-- -------------------------------------------------------------------------
+-- M.check_bid_timeout(state, world, now) -> true on the tick the bid expires
+--
+-- A capture_pill+reposition goal that WINS the pool is only a BID: steering
+-- refuses to fire until state._repo_approved_pid names the pill, so an
+-- unapproved bid parks in `approach` beside a pill it may never touch — for the
+-- rest of the game if the approval never lands (proposal dropped by the batcher,
+-- an ally NO with the result packet lost, or the OPEN gate never let the vote
+-- start). Bound it: the vote gets its full WINDOW plus BID_TIMEOUT_MARGIN, then
+-- the bid is declared dead and the caller drops the goal.
+--
+-- The expiry reuses the existing FAIL_COOLDOWN pacing (_repo_fail_tick) rather
+-- than a parallel cooldown: a bid that never earned approval is a failed one, so
+-- reposition_vote's OPEN gate and goals.eval_reposition_pill's "vote_cooldown"
+-- reject both hold the pool off it for the same window.
+-- -------------------------------------------------------------------------
+function M.check_bid_timeout(state, world, now)
+  local g = state.goal
+  local is_bid = g and g.kind == "capture_pill" and g.reposition and g.target_id
+                 and not M.is_reposition_active(state, world)
+  if not is_bid then
+    state._repo_bid_tick, state._repo_bid_pid = nil, nil
+    return false
+  end
+  if state._repo_bid_tick == nil or state._repo_bid_pid ~= g.target_id then
+    state._repo_bid_tick, state._repo_bid_pid = now, g.target_id
+    return false
+  end
+  local limit = (C.REPOSITION_VOTE_WINDOW_TICKS or 25)
+              + (C.REPOSITION_VOTE_BID_TIMEOUT_MARGIN or 15)
+  -- Our own ballot may open a replan AFTER the bid was adopted, so give an
+  -- in-flight vote the same budget measured from ITS open tick.
+  local mv = state._repo_my_vote
+  if mv and mv.pid == g.target_id and (now - mv.open_tick) < limit then return false end
+  if (now - state._repo_bid_tick) < limit then return false end
+  state._repo_fail_tick = now
+  state._repo_bid_tick, state._repo_bid_pid = nil, nil
+  state._repo_my_vote = nil
+  return true
 end
 
 -- -------------------------------------------------------------------------
@@ -258,10 +467,32 @@ function M.update(state, world, info, now)
     guard = guard or {}
     guard[gmy * 256 + gmx] = now + guard_ttl
   end
+  --
+  -- Belt-and-braces on the stamp: never let a proposer's own repos flag veto its
+  -- OWN proposal. The winning bid and the /info rvo ride the same packet, so if
+  -- a proposer ever advertises repos=1 while its vote is open (the old emit gate
+  -- did exactly that — see M.is_reposition_active), we'd stamp the memory a tick
+  -- before balloting and then NO it as recent_repo. Skip the proposer of every
+  -- proposal we're about to evaluate; every other ally still stamps normally,
+  -- and the guard-mark below is unaffected (guarding the pill is always right).
+  local proposers = nil
+  local _opq_pre = state._repo_rx_open
+  if _opq_pre then
+    for i = 1, #_opq_pre do
+      local f = _opq_pre[i].from
+      if f and f ~= self_pn then proposers = proposers or {}; proposers[f] = true end
+    end
+  end
+  local _act_from = state._repo_active and state._repo_active.from
+  if _act_from and _act_from ~= self_pn then
+    proposers = proposers or {}; proposers[_act_from] = true
+  end
   if ally_state.iter_active then
     for apn, slot in ally_state.iter_active(now, 1750) do
       if apn ~= self_pn and slot.info and slot.info.repos == "1" then
-        state._repo_last_seen_tick = now
+        if not (proposers and proposers[apn]) then
+          state._repo_last_seen_tick = now
+        end
         guard_mark(tonumber(slot.info.mx), tonumber(slot.info.my))
       end
     end
@@ -442,7 +673,12 @@ function M.update(state, world, info, now)
     -- old "open whenever a candidate exists" trigger.
     local won_pool = cand and state.goal and state.goal.kind == "capture_pill"
                      and state.goal.reposition and state.goal.target_id == cand.pid
-    if cand and won_pool and cand.can_carry and fail_ok and (mem_ok or urgent) and not guarded then
+    -- Human teammate on the roster: never open a vote at all
+    -- (REPOSITION_DISABLE_WITH_HUMAN_ALLIES). eval_reposition_pill already
+    -- refuses to build a candidate, so this is the second of three belts.
+    local humans_ok = human_ally_block(info) == 0
+    if cand and won_pool and cand.can_carry and fail_ok and (mem_ok or urgent)
+       and not guarded and humans_ok then
       tx(string.format("/info rvo %d %d %d %d", cand.pid, cand.mx, cand.my, math.floor(cand.score or 0)))
       state._repo_my_vote = { pid = cand.pid, mx = cand.mx, my = cand.my, score = cand.score,
                               open_tick = now, no = 0 }

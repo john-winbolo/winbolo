@@ -212,6 +212,20 @@ static void brainBudgetHook(lua_State *L, lua_Debug *ar) {
     Uint64 now = SDL_GetPerformanceCounter();
     if (now >= bot->thinkDeadlineCounter) {
         SDL_SetAtomicInt(&bot->abort_flag, 1);
+        /* Record where the budget ran out, allocation-free, into per-bot
+         * storage. braincore.c's killed branch reads it back via
+         * botManagerLastKillSite() to head the partial print2 flush, and
+         * botLogKill() appends it to the killbot.log line. Only ever runs
+         * on the kill path, so normal ticks pay nothing. */
+        {
+            lua_Debug loc;
+            if (lua_getstack(L, 0, &loc) && lua_getinfo(L, "Sl", &loc)) {
+                SDL_snprintf(bot->killSite, sizeof(bot->killSite), "%s:%d",
+                             loc.short_src, loc.currentline);
+            } else {
+                bot->killSite[0] = '\0';
+            }
+        }
         /* Raise. Longjmps unwind to the lua_pcall in brainCoreCallThink,
          * which detects the suffix and reports "killed" rather than the
          * real-error removal path. */
@@ -271,16 +285,21 @@ static void botLogKill(ServerSim *sim, int botIndex) {
     char ts[32];
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm_local);
 
+    /* Kill site captured by brainBudgetHook ("<short_src>:<line>"). Empty
+     * when the hook couldn't resolve a frame — suppress the " at " then. */
+    const char *killSite = bot->killSite;
+
     fprintf(f,
             "[%s] tick=%u bot=%d KILLED: took=%.2fms budget=%.2fms "
-            "over=%.2fms (%.0f%% of budget) overruns=%u\n",
+            "over=%.2fms (%.0f%% of budget) overruns=%u%s%s\n",
             ts, (unsigned)serverSimGetTick(sim), botIndex,
             bot->lastThinkMs, sim->botMgr.lastTargetMs,
             bot->lastThinkMs - sim->botMgr.lastTargetMs,
             sim->botMgr.lastTargetMs > 0.0
                 ? (bot->lastThinkMs / sim->botMgr.lastTargetMs) * 100.0
                 : 0.0,
-            (unsigned)bot->overrunCount);
+            (unsigned)bot->overrunCount,
+            killSite[0] ? " at " : "", killSite);
     fclose(f);
 }
 
@@ -288,6 +307,12 @@ bool botManagerShouldAbort(struct lua_State *L) {
     BotContext *bot = botFromLua((lua_State *)L);
     if (bot == NULL) return false;
     return SDL_GetAtomicInt(&bot->abort_flag) != 0;
+}
+
+const char *botManagerLastKillSite(struct lua_State *L) {
+    BotContext *bot = botFromLua((lua_State *)L);
+    if (bot == NULL) return "";
+    return bot->killSite;
 }
 
 int botManagerActiveBotCountForLua(struct lua_State *L) {
@@ -570,6 +595,7 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     }
     SDL_SetAtomicInt(&bot->abort_flag, 0);
     bot->thinkDeadlineCounter = 0;
+    bot->killSite[0] = '\0';
     bot->wasKilled = false;
     if (bot->brain.pathfinder != NULL) {
         brainPathfinderSetAbortFlag(bot->brain.pathfinder, &bot->abort_flag);
@@ -739,6 +765,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     }
     SDL_SetAtomicInt(&bot->abort_flag, 0);
     bot->thinkDeadlineCounter = 0;
+    bot->killSite[0] = '\0';
     bot->wasKilled = false;
 
     /* Wire the abort flag through to the C pathfinder/worldsim so their

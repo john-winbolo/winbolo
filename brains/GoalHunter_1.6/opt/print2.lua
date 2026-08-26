@@ -225,6 +225,29 @@ function M.flush()
   end
 end
 
+-- Kill-path partial flush. The budget hook longjmps out of brain.think(), so
+-- the normal end-of-tick print2.flush() never runs and this tick's buffered
+-- lines would be silently dropped when the NEXT tick's set_tick() clears the
+-- buffer. braincore.c's killed branch calls this through the
+-- _G.brain_flush_killed global, passing the Lua "source:line" where the
+-- budget ran out. We wrap the partial buffer in banner lines and then reuse
+-- M.flush(), so the write path (serialize block -> pending -> na_opt_log /
+-- file handoff) is byte-for-byte the normal one. No-op on an empty buffer,
+-- so a second call (or an opt/non-debug run) costs nothing.
+function M.flush_killed(site)
+  if not _G._PRINT2_ENABLED then return end
+  if #buffer == 0 then return end
+  local where = (site and site ~= "") and site or "?"
+  local ms = (clock() - tick_start) * 1000
+  table.insert(buffer, 1, { src = "print2", line = 0, msg = string.format(
+    "==== TICK KILLED (budget) at %s after %.2fms - partial log below ====",
+    where, ms) })
+  buffer[#buffer + 1] = { src = "print2", line = 0,
+                          msg = "==== END KILLED TICK ====" }
+  M.flush()
+  for i = #buffer, 1, -1 do buffer[i] = nil end
+end
+
 -- Host-invoked: drain `pending` to disk right now, ignoring the timer.
 -- Called when the sim is paused (think() has stopped, so the per-tick
 -- flush path is dormant) so the log reflects the latest tick on screen.

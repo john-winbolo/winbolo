@@ -68,6 +68,15 @@ function M.set_tick(t)
   for i = #buffer, 1, -1 do buffer[i] = nil end
 end
 
+-- PROFILING LITE: cumulative ms since this tick's set_tick — the exact same
+-- clock and origin that produces each line's "[x.xxms]" prefix. Exposed so
+-- the brain's TICK_COST / NEAR_BUDGET instrumentation reports numbers that
+-- line up with the prefixes in the same log instead of a second, unrelated
+-- timer. Returns 0 before the first set_tick.
+function M.elapsed_ms()
+  return (clock() - tick_start) * 1000
+end
+
 -- Stamp this Lua state with its owning bot index. Call once at brain
 -- startup (Brain.think tick 1) — the file path uses this to route
 -- each bot's lines to its own print2_bot<N>.log.
@@ -223,6 +232,29 @@ function M.flush()
   if (wallclock() - last_handoff) >= FLUSH_INTERVAL_S then
     handoff()
   end
+end
+
+-- Kill-path partial flush. The budget hook longjmps out of brain.think(), so
+-- the normal end-of-tick print2.flush() never runs and this tick's buffered
+-- lines would be silently dropped when the NEXT tick's set_tick() clears the
+-- buffer. braincore.c's killed branch calls this through the
+-- _G.brain_flush_killed global, passing the Lua "source:line" where the
+-- budget ran out. We wrap the partial buffer in banner lines and then reuse
+-- M.flush(), so the write path (serialize block -> pending -> na_opt_log /
+-- file handoff) is byte-for-byte the normal one. No-op on an empty buffer,
+-- so a second call (or an opt/non-debug run) costs nothing.
+function M.flush_killed(site)
+  if not _G._PRINT2_ENABLED then return end
+  if #buffer == 0 then return end
+  local where = (site and site ~= "") and site or "?"
+  local ms = (clock() - tick_start) * 1000
+  table.insert(buffer, 1, { src = "print2", line = 0, msg = string.format(
+    "==== TICK KILLED (budget) at %s after %.2fms - partial log below ====",
+    where, ms) })
+  buffer[#buffer + 1] = { src = "print2", line = 0,
+                          msg = "==== END KILLED TICK ====" }
+  M.flush()
+  for i = #buffer, 1, -1 do buffer[i] = nil end
 end
 
 -- Host-invoked: drain `pending` to disk right now, ignoring the timer.

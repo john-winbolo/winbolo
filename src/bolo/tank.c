@@ -353,6 +353,22 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 *  value  - Pointer to the tank structure
 *  sts    - Pointer to player starts structure
 *********************************************************/
+
+/* The game type whose starting items THIS tank loads. A scripted
+ * scenario can arm a per-slot override (spawnLoadout, e.g. open-mode
+ * wave bots on a tournament map); it must apply on EVERY path that
+ * hands out a fresh loadout — first create AND death respawns — or a
+ * wave bot's first life arrives armed and every later life arrives
+ * empty (tournament start = zero shells/mines/trees). 0 = no
+ * override, use the sim-wide rules. */
+static gameType tankLoadoutType(GameSim *sim, tank *value) {
+  BYTE plr = gameSimGetTankPlayer(sim, value);
+  if (plr < MAX_TANKS && sim->spawnLoadout[plr] != 0) {
+    return (gameType)sim->spawnLoadout[plr];
+  }
+  return sim->game;
+}
+
 void tankCreate(GameSim *sim, tank *value) {
   starts *sts = &sim->ss;
   BYTE minesAmount; /* Stuff the new tank is to start with */
@@ -369,14 +385,7 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->x = 0;
   (*value)->y = 0;
   {
-    /* Per-slot spawn-loadout override (scripted scenarios): this slot
-     * starts with THAT game type's items — every spawn, respawns
-     * included — instead of the sim-wide rules. 0 = no override. */
-    gameType loadoutType = sim->game;
-    BYTE plr = gameSimGetTankPlayer(sim, value);
-    if (plr < MAX_TANKS && sim->spawnLoadout[plr] != 0) {
-      loadoutType = (gameType)sim->spawnLoadout[plr];
-    }
+    gameType loadoutType = tankLoadoutType(sim, value);
     gameTypeGetItems(sim, &loadoutType, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
   }
   (*value)->armour = armourAmount;
@@ -1154,7 +1163,8 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   (*value)->y = y;
   (*value)->angle = angle;
   if (setResources == TRUE) {
-    gameTypeGetItems(sim, &sim->game, &shells, &mines, &armour, &trees);
+    gameType loadoutType = tankLoadoutType(sim, value);
+    gameTypeGetItems(sim, &loadoutType, &shells, &mines, &armour, &trees);
     (*value)->shells = shells;
     (*value)->mines = mines;
     (*value)->armour = armour;
@@ -1423,9 +1433,15 @@ void tankDeath(GameSim *sim, tank *value) {
       frontEndKillsDeaths(clientSimFromSim(sim), (*value)->numKills, (*value)->numDeaths);
     }
   } else if (isServer) {
-    /* Server-authoritative respawn: pick a new start and reset resources */
+    /* Server-authoritative respawn: pick a new start and reset resources.
+     * tankLoadoutType, not sim->game: this was the path that handed a
+     * scenario's open-mode wave bot a TOURNAMENT (empty) loadout on
+     * every death — first life armed, every respawn with zero shells. */
     lgmTankDied(&sim->lgmen[gameSimGetTankPlayer(sim, value)]);
-    gameTypeGetItems(sim, &sim->game, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
+    {
+      gameType loadoutType = tankLoadoutType(sim, value);
+      gameTypeGetItems(sim, &loadoutType, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
+    }
     (*value)->armour = armourAmount;
     (*value)->tankHitCount = 0;
     (*value)->shells = shellAmount;

@@ -100,19 +100,21 @@ static const TermDoc kTermDocs[] = {
     { "tankpen",   "Combat-zone penalty on a NON-emergency strategic pill placement: flat +30 when an enemy tank is within 10 tiles (euclidean) of the chosen spot, +60 within 7. Discourages dropping a pill next to enemy tanks. The def_build emergency drop is exempt." },
     { "blitz_discount", "Multiplier (<=1) on any open blitz-call pill we could join, pulling it into our winners. Distance-scaled to the standoff: ~0.25x at 7 tiles, 1.0x (none) by 20. REF base used for reject/sentinel entries." },
     /* ── defend_pill (pool 2) formula terms ── */
-    { "base",   "DEFEND_PILL_BASE_COST (250) — flat defend base; (base+dij) is the pre-multiplier travel bid." },
+    { "base",   "DEFEND_PILL_BASE_COST (250) — flat defend base; (base+dij) is the pre-multiplier travel bid. LIVE TIERS ONLY (siege/setup/sight): a quiet pill prints quiet_dmg{} in place of base{} and m{}." },
     { "dij",    "Dijkstra travel cost from THIS tank to the pill (per-bot pathfinding, so it doubles as the closeness signal for the defend steal band)." },
-    { "m",      "Winning threat-tier multiplier on (base+dij) — min of the live siege/setup/sight tiers, times the cover multiplier. Lower = more urgent. 1.00 = no live tier (worn/quiet)." },
+    { "m",      "Winning threat-tier multiplier on (base+dij) — min of the live siege/setup/sight tiers, times the cover multiplier. Lower = more urgent. Only printed for LIVE tiers; a quiet row has no m{} at all (the quiet_dmg curve replaces base x m outright)." },
+    { "quiet_dmg", "QUIET-tier damage curve — REPLACES (base+dij)*m entirely when NO threat tier is live (no fresh damage / siege, no setup tell, no sighting). DEFEND_QUIET_DMG_COST indexed by HITS TAKEN = PILLS_MAX_HEALTH - health (printed as 'N hits'; NOT pill.attack_damage, which world.lua zeroes PILL_ATTACK_COOLDOWN ticks after the last hit and so reads 0 on every quiet pill): 0->1500, 1->1000, 2->800, 3->500, 4->300; past the table each further hit eases HALFWAY toward DEFEND_QUIET_DMG_FLOOR(250) — 5->275, 6->262, 7->256. Rationale: an untouched pill is barely worth leaving your post for, and each hit it has taken raises the urgency of going back. Quiet cost = (quiet_dmg + dij) x rdy, then the WELLDEF clamp and the tb sliver. The two-tier floor (100/200) does NOT apply to quiet bids — this curve supersedes it." },
+    { "tb",     "Flat-cost tiebreaker sliver, ADDED after a floor{} or WELLDEF{} clamp flattened the bid: dij x 0.01 + (rdy - 1.00) x 2.0. Flat clamps erase the travel AND readiness ordering, so this folds both back in at ~0.5% scale; the defend steal band (ALLY_CLAIMED_STEAL_FRAC_DEFEND) then hands the job to the closer and better-equipped responder instead of whoever re-scored first." },
     { "siege",  "Siege tier: pill hit within DEFEND_DMG_FRESH_TICKS — someone is shelling it NOW. Savability-scaled: 1-(1-DEFEND_SIEGE_MULT)x(hp/max), so a healthy pill pulls hardest and an almost-dead one decays toward 1." },
     { "setup",  "Setup tier: hostile LGM seen near the pill (a wall/pill-block is going up -> a take is incoming). DEFEND_SETUP_MULT at fresh sighting, decaying linearly to 1 over DEFEND_SIGHT_FRESH_TICKS." },
     { "sight",  "Sight tier: hostile tank seen near the pill. DEFEND_SIGHT_MULT at fresh sighting, decaying to 1 over DEFEND_SIGHT_FRESH_TICKS. Sight-ONLY bids (no siege, no setup) floor at DEFEND_SIGHT_MIN_COST(200) — precaution never outbids real work." },
     { "cover",  "Coverage multiplier: DEFEND_COVERAGE_MULT^n for n other alive team pills whose fire reaches this one — arriving into friendly cover is cheaper. Threat-gated (only applies while a tier is live)." },
-    { "late",   "Lateness/feasibility (siege only): ETA(travel x DEFEND_ETA_PER_COST) vs TTL(hp x DEFEND_ASSUMED_TICKS_PER_HP); arriving after the pill would die scales cost up toward DEFEND_FUTILITY_MAX." },
-    { "rdy",    "Readiness multiplier (>=1): 1 + shells deficit below DEFEND_READY_SHELLS + armour deficit below DEFEND_READY_ARMOUR, capped at DEFEND_READY_MAX_MULT. An under-equipped responder bids worse, so of equally distant allies the best-equipped wins the steal." },
-    { "floor",  "The bid product came in under the floor and was clamped UP to this value. DEFEND_MIN_COST(100) for live siege/setup; DEFEND_SIGHT_MIN_COST(200) for sight-only precaution. Floored (and WELLDEF) bids carry a tiny travel+readiness sliver so the defend steal band still orders equals by distance/equipment." },
-    { "WELLDEF","Well-defended gate: allies already at the pill (visible allied tanks within DEFEND_WELL_DEFENDED_RADIUS, or allies claiming defend/repair there) cover the enemies present at R=ceil(their_team/our_team) — so the bid jumps to DEFEND_WELL_DEFENDED_COST(500) and nobody else swarms in. Shown as ally count vs foe count with the ratio." },
+    { "late",   "Lateness/feasibility (siege only, but ALWAYS printed on a live-tier row so nothing is implied — 1.00 = on time): ETA(dij x DEFEND_ETA_PER_COST) vs TTL(hp x DEFEND_ASSUMED_TICKS_PER_HP); arriving after the pill would die scales cost up toward DEFEND_FUTILITY_MAX. Quiet rows have no late{} — the curve has no lateness term." },
+    { "rdy",    "Readiness multiplier (>=1), ALWAYS printed (1.00 = fully equipped): 1 + shells deficit below DEFEND_READY_SHELLS + armour deficit below DEFEND_READY_ARMOUR, capped at DEFEND_READY_MAX_MULT. An under-equipped responder bids worse, so of equally distant allies the best-equipped wins the steal. Applies to BOTH the live-tier product and the quiet curve; it does NOT apply to an ARRIVED heat{} bid." },
+    { "floor",  "The bid product came in under the floor and was clamped UP to this value — LIVE TIERS ONLY. DEFEND_MIN_COST(100) for live siege/setup; DEFEND_SIGHT_MIN_COST(200) for sight-only precaution. Quiet bids are never floored here: the quiet_dmg curve supersedes the floor and carries its own DEFEND_QUIET_DMG_FLOOR(250). Floored (and WELLDEF) bids then add the tb{} sliver so the defend steal band still orders equals by distance/equipment." },
+    { "WELLDEF","Well-defended gate: allies already at the pill (visible allied tanks within DEFEND_WELL_DEFENDED_RADIUS, or allies claiming defend/repair there) cover the enemies present at R=ceil(their_team/our_team) — so any bid BELOW DEFEND_WELL_DEFENDED_COST(500) is RAISED to it and nobody else swarms in. Shown as ally count vs foe count, the ratio, and the value clamped to; the tb{} sliver is then added on top. A quiet bid above 500 (e.g. an undamaged 1500 pill) is left untouched — the gate only ever raises." },
     { "heat",   "ARRIVED handoff: within DEFEND_ARRIVE_RADIUS the travel bid is done; this flat DEFEND_HEAT_COST bids only the heat-up action (put HEAT_PILL_SHOTS shells in to anger the pill)." },
-    { "sel",    "Selection preview: what THIS row's cost becomes after goal_selection's deterministic scaling — cost x ph (phase weight, distance-attenuated toward 1.0 by PHASE_WEIGHT_DIST_FALLOFF) x inf (territory influence: x0.5 in friendly ground, x2 in hostile). Switch/commit penalties are state-dependent and added on top at selection; see the WINNERS row for the full chain." },
+    { "sel",    "Selection preview: what THIS row's cost becomes after goal_selection's deterministic scaling — cost x ph (phase weight, distance-attenuated toward 1.0 by PHASE_WEIGHT_DIST_FALLOFF) x inf (territory influence: x0.5 in friendly ground, x2 in hostile). ALWAYS printed with both factors, even when both are neutral, so the row's end score is computable from the row alone. Switch/commit penalties are state-dependent and added on top at selection; see the WINNERS row for the full chain." },
     { "xph",    "Phase-weight factor inside sel{}: PHASE_WEIGHTS[phase][pool], lerped toward 1.0 with distance (a far goal doesn't inherit the local phase bias)." },
     { "xinf",   "Influence factor inside sel{}: 0.5 when the target sits in friendly territory (influence > 50), 2.0 in hostile (< -50), else 1.0." },
     { NULL, NULL }
@@ -717,16 +719,22 @@ static void renderDetailPopup(PanelState &st, int winW, int winH,
             ImGui::TableHeadersRow();
 
             for (int ti = 0; ti < nTerms; ti++) {
+                /* The term scanner walks back over '*' as part of the name,
+                 * so a multiplied chip parses as "*m" / "*rdy" / "*late".
+                 * Strip the operator before looking the term up, or every
+                 * multiplicative factor renders "(no description)". */
+                const char *tname = terms[ti].name;
+                while (*tname == '*') tname++;
                 const char *docStr = NULL;
                 for (int di = 0; kTermDocs[di].term; di++) {
-                    if (strcmp(terms[ti].name, kTermDocs[di].term) == 0) {
+                    if (strcmp(tname, kTermDocs[di].term) == 0) {
                         docStr = kTermDocs[di].desc;
                         break;
                     }
                 }
                 const char *compStr = NULL;
                 for (int ci = 0; ci < nComputes; ci++) {
-                    if (strcmp(terms[ti].name, computes[ci].name) == 0) {
+                    if (strcmp(tname, computes[ci].name) == 0) {
                         compStr = computes[ci].compute;
                         break;
                     }

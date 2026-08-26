@@ -271,10 +271,12 @@ function M.update(world, info, tick)
         stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
       else
         -- Read old state BEFORE writing new — damage detection, anger bump,
-        -- and the index move all need the previous tick's values.
-        local old_health = p.health
-        local old_mx     = p.mx
-        local old_my     = p.my
+        -- the index move and the placement stamp all need the previous tick's
+        -- values.
+        local old_health  = p.health
+        local old_mx      = p.mx
+        local old_my      = p.my
+        local old_in_tank = p.in_tank
 
         -- Anger: each fresh damage hit adds C.PILL_ANGER_BUMP, capped at
         -- 1.0. Three hits saturate. Otherwise decays linearly from the
@@ -320,10 +322,28 @@ function M.update(world, info, tick)
           p.attack_damage = 0
         end
 
-        if old_mx ~= new_mx or old_my ~= new_my then
+        local _moved = (old_mx ~= new_mx or old_my ~= new_my)
+        if _moved then
           p.mx = new_mx
           p.my = new_my
           stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
+        end
+        -- Placement stamp (read by PILL_JUST_BUILT_TICKS consumers — the
+        -- reposition vote's just_built gate and eval_reposition_pill's
+        -- candidate filter). This is the tick the pill became a NEWLY placed
+        -- deployed pill, and only two things here qualify:
+        --   * it was CARRIED and is now on the map — an LGM just dropped it
+        --   * it is alive on a tile it wasn't on before — built/rebuilt
+        --     somewhere new (covers the case where we never saw the carry)
+        -- A dead pill repaired back to life ON THE SAME TILE is deliberately
+        -- NOT a placement: nothing was sited, it was just healed. Neither is a
+        -- plain re-sighting of an unmoved pill (no transition, no move).
+        -- Also deliberately not stamped when the record is first created
+        -- (p == nil above): first contact with a pill is DISCOVERY, not
+        -- construction — stamping there would freeze every pill on the map for
+        -- the first minute of the game.
+        if new_health > 0 and (old_in_tank or _moved) then
+          p.placed_tick = tick
         end
         p.health    = new_health
         p.owner     = owner_str
@@ -439,13 +459,14 @@ function M.process_events(world, info, state)
             stamp_hostile_plant_tell(world, p.mx, p.my, owner_str, tick)
           end
         else
-          -- Read old state BEFORE writing new — index move and damage
-          -- detection both need the previous tick's values.
-          local old_health = p.health
-          local old_mx     = p.mx
-          local old_my     = p.my
-          local new_mx     = d[2] or old_mx
-          local new_my     = d[3] or old_my
+          -- Read old state BEFORE writing new — index move, damage detection
+          -- and the placement stamp all need the previous tick's values.
+          local old_health  = p.health
+          local old_mx      = p.mx
+          local old_my      = p.my
+          local old_in_tank = p.in_tank
+          local new_mx      = d[2] or old_mx
+          local new_my      = d[3] or old_my
 
           if new_health < old_health and new_health > 0 then
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
@@ -475,12 +496,21 @@ function M.process_events(world, info, state)
             p.attack_damage = 0
           end
 
-          if old_mx ~= new_mx or old_my ~= new_my then
+          local _moved = (old_mx ~= new_mx or old_my ~= new_my)
+          if _moved then
             p.mx = new_mx
             p.my = new_my
             if not in_tank then
               stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
             end
+          end
+          -- Placement stamp — same rule as the object-scan path above (see the
+          -- long note there), but this is the AUTHORITATIVE one: an LGM drop
+          -- fires EVENT_PILL_UPDATE with in_tank flipping true -> false, which
+          -- is exactly "a pill was just built here". Must be DEPLOYED and alive
+          -- now, and either freshly un-carried or standing on a new tile.
+          if not in_tank and new_health > 0 and (old_in_tank or _moved) then
+            p.placed_tick = tick
           end
           p.health       = new_health
           p.owner        = owner_str
