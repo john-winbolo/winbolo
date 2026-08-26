@@ -16,6 +16,13 @@
  *     globals stay FALSE and logStart() is fed an empty filename so
  *     it fails cleanly.
  *
+ *   - serverDedicatedLogLastRoundFile: the real body is in
+ *     server_dedicated_log.c (server_static), which the wasm client
+ *     doesn't link. The lobby's recap reel asks it for a round this
+ *     process recorded itself, ahead of the copy the server sends; the
+ *     wasm client never hosts, so there is never one, and "" is the
+ *     answer the header already defines for that.
+ *
  *   - serverInstanceGetPortmapInfo / TriggerManualProbe /
  *     GetManualProbeState / IsNatPunchActive: NAT/UPnP probe state owned
  *     by the server-instance lifecycle. The wasm client never hosts a
@@ -35,6 +42,7 @@
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig */
 #include "server_lifecycle.h"
+#include "server_dedicated_log.h"
 
 bool isLogging = FALSE;
 bool dontSendLog = TRUE;
@@ -42,6 +50,10 @@ bool dontSendLog = TRUE;
 void makeLogFileName(char *outFileName, const char *mapName) {
   (void)mapName;
   if (outFileName) outFileName[0] = '\0';
+}
+
+const char *serverDedicatedLogLastRoundFile(void) {
+  return "";
 }
 
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
