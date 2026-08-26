@@ -446,6 +446,17 @@ bool lv_playersChooseView(int x, int y);
 
 BYTE lv_playersGetCentredX();
 BYTE lv_playersGetCentredY();
+
+/* Centred tank in native pixels (square * TILE_SIZE + sub-tile pixel), -1 when
+ * it has no usable position. The BYTE pair above discards the sub-tile part,
+ * which is what limits a follow camera to whole-tile steps. */
+int lv_playersGetCentredPixelX(void);
+int lv_playersGetCentredPixelY(void);
+
+/* Aim the follow camera at a player by name (the only key shared between the
+ * lobby's slots and the log's players). False when nobody matches or the match
+ * has no tank on the map at this point in the replay. */
+bool lv_playersSetViewByName(const char *name);
 BYTE lv_playersGetTeamId(BYTE playerNum);
 BYTE lv_playersGetUnusedTeam(BYTE playerNum);
 BYTE lv_playersGetTeamForOwner(BYTE owner);

@@ -982,6 +982,60 @@ BYTE lv_playersGetCentredY() {
   return 0;
 }
 
+/* The centred tank in native pixels (map square * TILE_SIZE + the sub-tile
+ * pixel), or -1 when it has no usable position.
+ *
+ * The BYTE accessors above compute the same thing and then throw the sub-tile
+ * part away with their >> 8, which is why a follow camera driven off them can
+ * only move in whole 16-pixel steps. Callers that want smooth scrolling use
+ * these instead. */
+int lv_playersGetCentredPixelX(void) {
+    if (plrs.item[myPlayerNum].inUse == TRUE &&
+        plrs.item[myPlayerNum].mapX >= MAP_MINE_EDGE_LEFT) {
+        /* 16 px per map square, matching the << 4 the BYTE accessors use. */
+        return (int)plrs.item[myPlayerNum].mapX * 16 +
+               (int)plrs.item[myPlayerNum].pixelX;
+    }
+    return -1;
+}
+
+int lv_playersGetCentredPixelY(void) {
+    if (plrs.item[myPlayerNum].inUse == TRUE &&
+        plrs.item[myPlayerNum].mapY >= MAP_MINE_EDGE_TOP) {
+        return (int)plrs.item[myPlayerNum].mapY * 16 +
+               (int)plrs.item[myPlayerNum].pixelY;
+    }
+    return -1;
+}
+
+/* Point the follow camera at a named player. Name match is the only bridge
+ * available: the lobby's slot numbering and the log's player numbering are
+ * separate spaces, and the log carries names. Returns false when nobody
+ * matches or the match has no tank on the map right now (dead, or not yet
+ * joined at this point in the replay) — the caller then leaves the view
+ * alone rather than throwing it at (0,0). */
+bool lv_playersSetViewByName(const char *name) {
+    BYTE count;
+    if (name == NULL || name[0] == '\0') {
+        return FALSE;
+    }
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (plrs.item[count].inUse != TRUE) {
+            continue;
+        }
+        if (strcmp(plrs.item[count].playerName, name) != 0) {
+            continue;
+        }
+        if (plrs.item[count].mapX < MAP_MINE_EDGE_LEFT ||
+            plrs.item[count].mapY < MAP_MINE_EDGE_TOP) {
+            return FALSE;
+        }
+        myPlayerNum = count;
+        return TRUE;
+    }
+    return FALSE;
+}
+
 BYTE lv_playersGetTeamId(BYTE playerNum) {
   return plrs.item[playerNum].team;
 }

@@ -688,6 +688,32 @@ extern int g_currentDevicePreset;
 }
 #endif
 
+/* ── Per-image texture sampling ─────────────────────────────────────
+ * SDL_SetTextureScaleMode() on a texture is IGNORED for anything drawn
+ * through ImGui::Image: the SDL_Renderer backend overwrites the scale
+ * mode of every texture it binds, every draw command, from its own
+ * per-frame state —
+ *
+ *     SDL_SetTextureScaleMode(tex, bd->CurrentScaleMode);
+ *
+ * (imgui_impl_sdlrenderer3.cpp) — and that state is reset to
+ * SDL_SCALEMODE_LINEAR at the top of every render pass. The supported
+ * way to get point sampling is the backend's standard sampler draw
+ * callbacks, which it publishes in the platform IO.
+ *
+ * Bracket a magnified pixel-art Image with these: tile art blown up
+ * several times over turns to mush under bilinear, and everything drawn
+ * after it (glyphs especially) needs LINEAR back. Both no-op when the
+ * active backend publishes no callbacks. */
+static inline void imguiPushNearestSampling(void) {
+    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerNearest;
+    if (cb) ImGui::GetWindowDrawList()->AddCallback(cb, NULL);
+}
+static inline void imguiPopNearestSampling(void) {
+    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerLinear;
+    if (cb) ImGui::GetWindowDrawList()->AddCallback(cb, NULL);
+}
+
 /* Set dialog window size; only re-center if the size actually changed.
  * If a device preset is active, uses the preset dimensions instead.
  * In controller mode (Deck always, desktop when the player opted in via
