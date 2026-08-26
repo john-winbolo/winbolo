@@ -11,7 +11,11 @@
  */
 
 #include "lv_global.h"
-#include "clientmutex.h"
+/* Spelled out: src/gui/clientmutex.h carries the same _CLIENT_MUTEX_H guard
+ * and declares the client's own clientMutex* API. It sits ahead of
+ * src/logviewer on the wasm game client's include path, so an unqualified
+ * "clientmutex.h" reaches the wrong world from this directory. */
+#include "../clientmutex.h"
 
 bool lv_clientMutexCreate(void) {
     return TRUE;

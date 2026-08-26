@@ -463,7 +463,6 @@ bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans);
 void netGetServerAddressStr(ClientSim *cs, char *dest);
 void netGetOurAddressStr(ClientSim *cs, char *dest);
-BYTE netGetDownloadPos(void);
 void netSecond(void);
 int netGetNetTime(void);
 bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey);

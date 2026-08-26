@@ -17,6 +17,9 @@
  *   straight from the shared WinBolo.ini.
  * - imguiWinbolonetDrawSection renders a short "sign in via WinBolo (in the
  *   main game)" message. LogViewer has no SRP login flow of its own.
+ * - bolo_detect_client_type / bolo_client_type_name name the platform that
+ *   winbolonet_client.c puts on its join bodies. They live in src/bolo/util.c,
+ *   which LogViewer doesn't link; both are unreachable here.
  */
 
 #include <cstdint>
@@ -85,6 +88,14 @@ void imguiWinbolonetRenderLoginPopup(void) {}
  * the linker doesn't drag winbolonet_core.c.o (and its thread/events/allocator
  * chain) into LogViewer, which runs no WBN session loop. */
 bool winboloNetRunning = false;
+
+/* The same TU's join / join_spectator bodies name the platform they run on,
+ * which reaches them from src/bolo/util.c — not linked here, since LogViewer
+ * has no bolo_static. Unreachable at runtime: the only callers of those two
+ * join functions are in transport_udp_client.c, and LogViewer joins no game
+ * and spectates no server. */
+uint8_t bolo_detect_client_type(void) { return 0; /* CLIENT_TYPE_UNKNOWN */ }
+const char *bolo_client_type_name(uint8_t type) { (void)type; return "Unknown"; }
 
 /* ---- on-screen keyboard support stubs ---------------------------- */
 /* imgui_keyboard.cpp (the controller text-entry overlay) is shared into
