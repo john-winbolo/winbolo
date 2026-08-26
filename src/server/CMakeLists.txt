@@ -13,8 +13,11 @@
 #                        wasm winbolo, WinBoloUnitTests) link it directly.
 #
 #   server_sim_static  — the server-side sim core (server_sim.c,
-#                        servermessages.c, server_command_dispatch.c, and
-#                        round_stats_awards.c).
+#                        servermessages.c, server_command_dispatch.c).
+#                        The shared round-stats derivation (computeAwards,
+#                        roundStatsApplyRecord) lives in bolo_static's
+#                        round_stats_derive.c so the standalone log viewer
+#                        can rebuild stats without the sim.
 #                        Linked by every binary that hosts a sim, including
 #                        the in-process single-player builds (WinBoloIOS,
 #                        BrainTest, MapEditor, android main, wasm
@@ -73,7 +76,6 @@ add_library(server_sim_static STATIC
     server_sim.c
     server_command_dispatch.c
     servermessages.c
-    round_stats_awards.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)

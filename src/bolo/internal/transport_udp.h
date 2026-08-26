@@ -392,6 +392,30 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
  * happens in practice). */
 uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
 
+/* ── Last completed round's replay log (BULK_KIND_ROUND_LOG) ─────── */
+/* Backing calls for the clientSimGetRoundLog* / clientSimTakeRoundLog
+ * wrappers in public/client_net.h; the states they speak in are that
+ * header's ClientRoundLogState. */
+
+/* Send PACKET_ROUND_LOG_REQ with a fresh reqSeq, freeing anything held for an
+ * earlier request first. Returns true once the request is on its way; returns
+ * false and leaves every field untouched unless the client is connected. */
+bool transportUdpClientSendRoundLogRequest(Transport *t);
+
+/* Current transfer state as a ClientRoundLogState; CLIENT_ROUND_LOG_IDLE with
+ * no transport context. */
+int transportUdpClientGetRoundLogState(Transport *t);
+
+/* Transfer progress as 0..100, read live from the bulk receiver. 0 unless a
+ * transfer is in flight. */
+uint8_t transportUdpClientGetRoundLogPercent(Transport *t);
+
+/* Hand a completed blob to the caller: returns it, writes its length through
+ * outLen (may be NULL), clears the context's pointer and returns the state to
+ * idle. NULL unless a completed blob is held. The caller then owns the buffer
+ * and releases it with plain free(). */
+uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen);
+
 
 /*********************************************************
  * UDP Transport — Server Side
@@ -619,6 +643,41 @@ bool transportUdpServerHasAnyClient(void);
  * per-client prep work lands before the codec encodes the
  * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
+
+/* ── Round-log source ─────────────────────────────────────────────────
+ * Where PACKET_ROUND_LOG_REQ gets its bytes.  The replay recorder
+ * (server_dedicated_log.c) registers itself here at install time and the
+ * transport calls only through this table, naming no recorder symbol.  That
+ * direction matters: a direct call the other way would pull the recorder —
+ * and the WinBolo.net upload it needs — into every target that links the
+ * transport, including the unit tests, the gym and the fuzz harnesses.  With
+ * no source registered the server answers ROUND_LOG_ERR_DISABLED, which is
+ * the honest answer for a build with no recorder in it. */
+typedef enum {
+    ROUND_LOG_READ_OK = 0,
+    ROUND_LOG_READ_NONE,       /* no completed round to serve             */
+    ROUND_LOG_READ_TOO_LARGE,  /* over ROUND_LOG_MAX_BYTES; never read    */
+    ROUND_LOG_READ_ERROR       /* stat / open / read / allocation failure */
+} RoundLogReadResult;
+
+typedef struct {
+    /* Whether the last completed round may be served right now.  Asked on
+     * every request rather than latched, so a policy that depends on runtime
+     * state (whether WinBolo.net is running, say) tracks that state. */
+    bool (*serveEnabled)(void);
+    /* Read the last completed round's log.  On ROUND_LOG_READ_OK, *outBuf is
+     * a malloc'd buffer of *outLen bytes the caller owns and frees, and
+     * outName holds the log file's basename; nothing is written on any other
+     * result.  The size is checked before the read, so a file over the cap
+     * never enters memory. */
+    RoundLogReadResult (*read)(uint8_t **outBuf, uint32_t *outLen,
+                               char *outName, size_t outNameSize);
+} RoundLogSource;
+
+/* Install the round-log source, or clear it by passing NULL (or a table with
+ * a NULL member).  The struct is copied, so the caller need not keep it
+ * alive, and the registration outlives a transport create/destroy cycle. */
+void transportUdpServerSetRoundLogSource(const RoundLogSource *src);
 
 /* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
  * carrying the current server_key.  Called after each round-end

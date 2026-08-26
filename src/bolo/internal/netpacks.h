@@ -501,6 +501,42 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 #define PACKET_ROUND_STATS             209  /* server → all: end-of-round
                                               scoreboard + awards */
 
+#define PACKET_ROUND_LOG_REQ           210  /* client → server
+                                              { reqSeq 4 BE } — ask for the
+                                              last completed round's .wbv.
+                                              The bytes stream back over
+                                              CHANNEL_BULK behind a
+                                              BULK_KIND_ROUND_LOG stream
+                                              header whose gen echoes reqSeq,
+                                              so a reply to a superseded
+                                              request is droppable. */
+#define PACKET_ROUND_LOG_ERR           211  /* server → client
+                                              { reqSeq 4 BE, code 1 } — a
+                                              refused ROUND_LOG_REQ. Every
+                                              refusal is answered, so the
+                                              client can tell "no" from a
+                                              lost request. */
+
+/* PACKET_ROUND_LOG_ERR codes. BUSY and RATE_LIMITED are transient — the
+ * client may ask again — while DISABLED, NONE and TOO_LARGE hold for as
+ * long as the round does. */
+#define ROUND_LOG_ERR_DISABLED      1  /* server does not serve round logs, or
+                                        * is not in a state where it can */
+#define ROUND_LOG_ERR_NONE          2  /* no completed round to serve */
+#define ROUND_LOG_ERR_BUSY          3  /* concurrent-transfer cap reached */
+#define ROUND_LOG_ERR_TOO_LARGE     4  /* round log exceeds ROUND_LOG_MAX_BYTES */
+#define ROUND_LOG_ERR_RATE_LIMITED  5  /* this client asked too soon, or too
+                                        * many times this round */
+
+#define PACKET_RATING_POSTED           212  /* client → server
+                                              { key 32 } — the sender has just
+                                              rated or commented on the
+                                              finished round's WinBolo.net
+                                              page. The server neither reads
+                                              nor checks the key; it fans the
+                                              event out so the other clients
+                                              re-read that page. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

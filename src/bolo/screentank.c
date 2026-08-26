@@ -105,7 +105,8 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
     if (tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
       GameSim *gs = clientSimGetGameSim(cs);
       BYTE selfPN = clientSimGetMyPlayerNum(cs);
-      playersGetPlayerName(&gs->plyrs, selfPN, playerName, FALSE);
+      playersGetPlayerName(&gs->plyrs, selfPN, playerName, sizeof(playerName),
+                           FALSE);
       /* Prefer the resolved 2-char country code over the
        * "This Computer" placeholder. The country code arrives via the
        * WBN news fetch / server-side geo path and is written into

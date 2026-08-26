@@ -213,8 +213,10 @@ void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYT
 *ARGUMENTS:
 *  playerNum  - The player number to set
 *  dest       - Destination string
+*  destSize   - Size of dest in bytes, including the NUL. Longer names
+*               are truncated rather than overrunning the caller.
 *********************************************************/
-void lv_playersGetPlayerName(BYTE playerNum, char *dest);
+void lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize);
 
 /*********************************************************
 *NAME:          lv_playersMakeMessageName

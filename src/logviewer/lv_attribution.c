@@ -49,6 +49,19 @@ bool lvAttributionParseMember(const uint8_t *data, size_t len) {
 
     memcpy(&s_track.header, data, sizeof(AttrTrackHeader));
 
+    /* slotCount is a uint16 off disk and the file is not ours — a log arrives
+     * from wherever the user got it, and the client now loads them straight
+     * from a game server and from WinBolo.net. The writer always puts
+     * MAX_TANKS there, but nothing downstream re-checks: readers bound a slot
+     * index against slotCount and then index the fixed MAX_TANKS slots[],
+     * which a crafted 65535 turns into a read off the end of this struct for
+     * any slot byte above 15. Clamp it once here, where the value enters,
+     * rather than at each of those. Clamped and not rejected so a member
+     * written with fewer identities than we compile for still reads. */
+    if (s_track.header.slotCount > MAX_TANKS) {
+        s_track.header.slotCount = MAX_TANKS;
+    }
+
     size_t recLen = len - sizeof(AttrTrackHeader);
     if (recLen > 0) {
         s_track.records = (uint8_t *)malloc(recLen);

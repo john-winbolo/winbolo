@@ -89,6 +89,14 @@ static const float g_zoomSteps[] = {
 static int   g_zoomStepIndex = ZOOM_STEP_1X;
 static float g_zoomLevel     = 1.0f;
 
+/* Embed mode: a host that already owns an ImGui frame draws the world
+ * texture itself, so the two framebuffer blits must not run, the viewer's
+ * menu bar does not exist, and the tile grid sizes against the host's
+ * image rect instead of the window. */
+static int g_embedded   = 0;
+static int g_embedViewW = 0;
+static int g_embedViewH = 0;
+
 
 /* Last drawn map positions for dirty rect optimization.
  * Sized for the maximum map size (255 tiles in each direction). */
@@ -114,6 +122,28 @@ void lv_drawDirtyScreen(void) {
 
 float lv_drawGetZoomLevel(void) {
     return g_zoomLevel;
+}
+
+void lv_drawSetEmbedded(int enabled) {
+    g_embedded = enabled ? 1 : 0;
+}
+
+void lv_drawSetEmbedViewport(int w, int h) {
+    g_embedViewW = w;
+    g_embedViewH = h;
+}
+
+void lv_drawGetGameTargetSize(int *outW, int *outH) {
+    if (outW != NULL) *outW = targetWidth;
+    if (outH != NULL) *outH = targetHeight;
+}
+
+/* Vertical offset the game area starts at inside the viewer's own window.
+ * Embedded there is no viewer menu bar, and lv_imgui_get_menu_bar_height()
+ * would read — and permanently cache — the host's frame height instead. */
+static float lvDrawMenuBarOffset(void) {
+    if (g_embedded) return 0.0f;
+    return lv_imgui_get_menu_bar_height();
 }
 
 /* Apply a stepped zoom change with the map tile under (mouseScreenX,
@@ -144,10 +174,17 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     oldZoom = g_zoomLevel;
     newZoom = g_zoomSteps[newStepIndex];
 
-    if (sdlWindow != NULL) SDL_GetWindowSize(sdlWindow, &windowW, &windowH);
+    if (g_embedded) {
+        /* Size against the host's image rect — the window belongs to the
+         * host and is far larger than the area the reel occupies. */
+        windowW = g_embedViewW;
+        windowH = g_embedViewH;
+    } else if (sdlWindow != NULL) {
+        SDL_GetWindowSize(sdlWindow, &windowW, &windowH);
+    }
     if (windowW < 1) windowW = TILE_SIZE_X;
     if (windowH < 1) windowH = TILE_SIZE_Y;
-    menuH = (int)lv_imgui_get_menu_bar_height();
+    menuH = (int)lvDrawMenuBarOffset();
     gameH = windowH - menuH;
     if (gameH < 1) gameH = 1;
 
@@ -255,6 +292,20 @@ float lv_drawGetZoomStepValue(int index) {
 
 void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY) {
     lv_drawApplyZoomStep(stepIndex, mouseScreenX, mouseScreenY);
+}
+
+/* Set the zoom step and nothing else: no viewport resize, no cursor anchoring,
+ * no screen-state writes. The step is a process-wide static, so the embedded
+ * reel saves what it found, forces its own, and puts the original back rather
+ * than leaving a later full-window session opening at the reel's zoom. The
+ * anchored path is the wrong tool for that: it would resize the tile grid to
+ * the reel's rect, and at restore time it would also be unsafe — it writes
+ * through decoder state the embed has already destroyed. */
+void lv_drawSetZoomStepIndexRaw(int index) {
+    if (index < 0) index = 0;
+    if (index >= ZOOM_STEP_COUNT) index = ZOOM_STEP_COUNT - 1;
+    g_zoomStepIndex = index;
+    g_zoomLevel = g_zoomSteps[index];
 }
 
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
@@ -615,6 +666,10 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     }
 
     zoomFactor = lv_windowGetZoomFactor();
+    /* Save the caller's target rather than assuming the framebuffer: the
+     * embedded host calls this from inside its own frame, which may already
+     * be rendering to a target of its own. */
+    SDL_Texture *prevTarget = SDL_GetRenderTarget(sdlRenderer);
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
 
     for (x = 0, y = 0, done = FALSE; !done; ) {
@@ -668,12 +723,19 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     lv_drawTanks(tks);
     lv_drawLGMs(lgms);
     
-    SDL_SetRenderTarget(sdlRenderer, NULL);
+    SDL_SetRenderTarget(sdlRenderer, prevTarget);
+
+    /* Embedded: the host blits the render target itself (as an ImGui image),
+     * so painting it to the framebuffer here would draw the world over the
+     * host's live frame. */
+    if (g_embedded) {
+        return;
+    }
 
     /* Get ImGui menu bar height to offset game rendering below it.
      * This prevents the game from drawing over the menu bar. */
     float menuBarHeight = 0.0f;
-    menuBarHeight = lv_imgui_get_menu_bar_height();
+    menuBarHeight = lvDrawMenuBarOffset();
 
     /* SDL expects client-area coordinates (0,0), not screen coordinates.
      * The rcWindow passed in contains screen coordinates which would offset
@@ -867,9 +929,11 @@ void lv_drawBlitGameTexture(void) {
     LogViewerState *lv = lv_screenGetState();
 
     if (!textureTarget || !sdlRenderer) return;
+    /* Embedded: the host owns the blit (see lv_drawMainScreen). */
+    if (g_embedded) return;
 
     /* Get ImGui menu bar height to offset game rendering below it */
-    menuBarHeight = lv_imgui_get_menu_bar_height();
+    menuBarHeight = lvDrawMenuBarOffset();
 
     /* Blit the game texture to the screen, scaled by the user zoom level.
      * Sub-tile pan: srcRect picks the visible (sizeX, sizeY)-tile slice

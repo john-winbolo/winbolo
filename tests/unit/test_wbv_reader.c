@@ -101,7 +101,7 @@ int run_wbv_reader_v1(void) {
    * from the snapshot's slot-0 "Tester"; decoding it back proves the
    * variable-length player-join event ran through lv_screenProcessLog.
    * That decode marks the slot in use, so the player count also rises. */
-  lv_screenGetPlayerName(joinName, 1);
+  lv_screenGetPlayerName(joinName, 1, sizeof(joinName));
   UT_ASSERT_MSG(strcmp(joinName, "Joiner") == 0,
                 "slot-1 player name = '%s' (want 'Joiner')", joinName);
   UT_ASSERT_MSG(lv_screenGetNumPlayers() >= 2,
@@ -188,7 +188,7 @@ int run_wbv_reader_v2(void) {
 
   /* The slot-1 join (name "Joiner") decoded back proves the v2
    * variable-length player-join event ran through lv_screenProcessLog. */
-  lv_screenGetPlayerName(joinName, 1);
+  lv_screenGetPlayerName(joinName, 1, sizeof(joinName));
   UT_ASSERT_MSG(strcmp(joinName, "Joiner") == 0,
                 "slot-1 player name = '%s' (want 'Joiner')", joinName);
   UT_ASSERT_MSG(lv_screenGetNumPlayers() >= 2,

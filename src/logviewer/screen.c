@@ -26,7 +26,7 @@
 *********************************************************/
 
 /* Includes */
-#include <math.h>
+#include <stdio.h>
 #ifdef _WIN32
 #  include <winsock2.h>
 #else
@@ -657,7 +657,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerQuit:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       lv_playersLeaveGame(opt1, TRUE);
       {
         MessageArgs args = {0};
@@ -691,7 +691,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_LostMan:
       logReadBytes(&opt1, 1);
       lv_playersSetLgmDead(opt1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -714,8 +714,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_AllyRequest:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lv_playersGetPlayerName(opt1, str);
-      lv_playersGetPlayerName(opt2, mem);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
+      lv_playersGetPlayerName(opt2, mem, sizeof(mem));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -727,8 +727,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       lv_playersAcceptAlliance(opt1, opt2);
-      lv_playersGetPlayerName(opt1, str);
-      lv_playersGetPlayerName(opt2, mem);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
+      lv_playersGetPlayerName(opt2, mem, sizeof(mem));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -739,7 +739,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_AllyLeave:
       logReadBytes(&opt1, 1);
       lv_playersLeaveAlliance(opt1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -849,7 +849,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
-      lv_playersGetPlayerName(opt1, name);
+      lv_playersGetPlayerName(opt1, name, sizeof(name));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
@@ -863,8 +863,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);
-      lv_playersGetPlayerName(opt1, name);
-      lv_playersGetPlayerName(opt2, name2);
+      lv_playersGetPlayerName(opt1, name, sizeof(name));
+      lv_playersGetPlayerName(opt2, name2, sizeof(name2));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
@@ -958,14 +958,14 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_KillPlayer:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lv_playersGetPlayerName(opt1, mem);
+      lv_playersGetPlayerName(opt1, mem, sizeof(mem));
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
-        lv_playersGetPlayerName(opt2, str);
+        lv_playersGetPlayerName(opt2, str, sizeof(str));
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
@@ -983,7 +983,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerRejoin:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -997,7 +997,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerLeaving:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1047,7 +1047,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerReady:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1056,7 +1056,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_PlayerUnready:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1066,7 +1066,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_TeamSet:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1086,7 +1086,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_MapSkipVote:
       logReadBytes(&opt1, 1);
-      lv_playersGetPlayerName(opt1, str);
+      lv_playersGetPlayerName(opt1, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1110,7 +1110,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);  /* kind */
       logReadBytes(&opt2, 1);  /* initiator */
       logReadBytes(&opt3, 1);  /* team (0 = global) */
-      lv_playersGetPlayerName(opt2, str);
+      lv_playersGetPlayerName(opt2, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1125,7 +1125,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);  /* kind */
       logReadBytes(&opt2, 1);  /* player */
       logReadBytes(&opt3, 1);  /* voteYes (0/1) */
-      lv_playersGetPlayerName(opt2, str);
+      lv_playersGetPlayerName(opt2, str, sizeof(str));
       {
         MessageArgs args = {0};
         snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
@@ -1358,6 +1358,18 @@ void lv_screenCentreOnSelectedItem() {
   }
 }
 
+/* Whether the snapshot lv_processSnapshot last decoded carried a world. The
+ * recorder's lobby-mode body writes no map runs at all (logSerializeSnapshotBody
+ * in log.c), a running-round body always writes at least one, so the run count
+ * is what separates the two. */
+static bool s_lastSnapshotHadWorld = FALSE;
+
+/* The same answer for the opening snapshot, which the loader consumes before
+ * the event stream starts. Set, it means the log opened on a running round and
+ * has no lobby in front of it. Both loaders write it as they decode that
+ * snapshot, so it needs no separate reset. */
+static bool s_openingSnapshotHadWorld = FALSE;
+
 bool lv_processSnapshot() {
   bool returnValue = TRUE;
   BYTE data[512];
@@ -1417,10 +1429,9 @@ bool lv_processSnapshot() {
     }
   }
   if (returnValue == TRUE) {
-    returnValue = lv_mapReadRuns(&g_lv->mp);
-    if (returnValue == FALSE) {
-      returnValue = FALSE;
-    }
+    int numRuns = 0;
+    returnValue = lv_mapReadRuns(&g_lv->mp, &numRuns);
+    s_lastSnapshotHadWorld = (numRuns > 0);
   }
 
 
@@ -1678,13 +1689,21 @@ static bool walkSkipEvents(unsigned short numEvents) {
 }
 
 /* Skip a snapshot block. Mirrors lv_processSnapshot's read order without
- * applying any state. */
-static bool walkSkipSnapshot(void) {
+ * applying any state. When baseX/baseY/numBases are non-NULL and the snapshot
+ * carries a base table, the bases' map cells are copied out in blob order —
+ * the same 0-based index a log_BaseSetOwner event carries. A snapshot with no
+ * bases (any lobby-phase snapshot: the game world doesn't exist yet) leaves
+ * the outputs untouched, so a previously extracted table survives. When
+ * numRuns is non-NULL it reports how many non-terminator map runs the body
+ * carried — none for a lobby snapshot, at least one for a running round. */
+static bool walkSkipSnapshotBases(uint8_t *baseX, uint8_t *baseY,
+                                  int *numBases, int *numRuns) {
   BYTE buf[512];
   BYTE dlen;
   int32_t hdr;
   BYTE runHead[SIZEOFBMAP_RUN_HEADER];
   int i;
+  int runs = 0;
 
   /* gmeStartDelay + gmeLength */
   if (logReadBytes((BYTE *)&hdr, (int)sizeof(int32_t)) != (int)sizeof(int32_t)) return FALSE;
@@ -1694,6 +1713,20 @@ static bool walkSkipSnapshot(void) {
   for (i = 0; i < 3; i++) {
     if (logReadBytes(&dlen, 1) != 1) return FALSE;
     if (dlen > 0 && logReadBytes(buf, dlen) != dlen) return FALSE;
+    if (i == 1 && numBases != NULL && dlen > 0 && buf[0] > 0) {
+      /* Bases blob: [numBases] then 10 bytes per base — x, y, owner, armour,
+       * shells, mines, refuelTime, baseTime(2), justStopped (the layout
+       * lv_basesSetBaseNetData consumes). Only the cells are kept. */
+      int n = buf[0] > MAX_BASES ? MAX_BASES : buf[0];
+      int k;
+      for (k = 0; k < n; k++) {
+        int off = 1 + k * 10;
+        if (off + 1 >= (int)dlen) { n = k; break; }
+        baseX[k] = buf[off];
+        baseY[k] = buf[off + 1];
+      }
+      *numBases = n;
+    }
   }
 
   /* Map runs: 4-byte header repeating until terminator
@@ -1715,7 +1748,9 @@ static bool walkSkipSnapshot(void) {
         dataBytes -= chunk;
       }
     }
+    runs++;
   }
+  if (numRuns != NULL) *numRuns = runs;
 
   /* MAX_TANKS player records: 1-byte len + len bytes (BYTE max 255 fits in buf) */
   for (i = 0; i < MAX_TANKS; i++) {
@@ -1723,6 +1758,10 @@ static bool walkSkipSnapshot(void) {
     if (dlen > 0 && logReadBytes(buf, dlen) != dlen) return FALSE;
   }
   return TRUE;
+}
+
+static bool walkSkipSnapshot(void) {
+  return walkSkipSnapshotBases(NULL, NULL, NULL, NULL);
 }
 
 /* Walk the log buffer from the current position to LOG_QUIT/EOF, counting
@@ -1784,6 +1823,397 @@ static uint32_t lv_walkComputeTotalTimeMs(void) {
   lv_logSetPosition(savedPos);
   lv_blocksSetKey(savedKey);
   return (uint32_t)(ticks * 20);
+}
+
+/* Playback time (ms) of the world rewrite that ends the lobby — the round's
+ * first real frame — computed once at load. 0 when the log has no lobby, so
+ * the round runs from tick 0. */
+static uint32_t s_gameStartMs = 0;
+
+/* Every name each slot carried this round, collected once at load from the
+ * log's own join events. Unlike the live roster this never forgets a player
+ * who joined mid-round or quit before the end. */
+static char s_slotNames[MAX_TANKS][PLAYER_NAME_LEN];
+
+/* Presentation window: while set, the viewer reports times and seeks against
+ * [gameStart, totalTime) instead of the whole file, so a log that sat hours in
+ * the lobby reads on the round's own clock. Absolute ms is still what the
+ * decoder, the snapshot index and the highlight clips use. */
+static bool s_hideLobby = TRUE;
+
+/* Event-stream start position (just past the opening snapshot), recorded at
+ * load so later walks (the calibration anchor scan) can re-enter the stream
+ * from a known-good position instead of trusting the caller's current one. */
+static size_t s_walkStartPos = 0;
+
+/* Walk the log from the current position to LOG_QUIT/EOF counting 20ms ticks,
+ * and return the playback time in ms of the first snapshot whose body carries
+ * a world — the rewrite the recorder emits when the lobby ends, which is the
+ * round's first real frame. Returns 0 when the opening snapshot the loader
+ * consumed already carried a world (no lobby ran, so the round starts at tick
+ * 0 and every snapshot left in the stream is a periodic in-game resync), and
+ * 0 if no such snapshot is reached. The tick accounting mirrors
+ * lv_walkComputeTotalTimeMs, so the result is comparable to the decoder's
+ * timeRunning; must be entered at the event-stream start (as at load). Saves
+ * and restores logPosition + XOR key. */
+static uint32_t lv_walkComputeGameStartMs(void) {
+  size_t   savedPos;
+  BYTE     savedKey;
+  uint64_t ticks    = 0;
+  bool     done     = FALSE;
+  BYTE     code, b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+  uint32_t result = 0;
+  int      numRuns;
+
+  if (s_openingSnapshotHadWorld == TRUE) return 0;
+
+  savedPos = lv_logGetCurrentPosition();
+  savedKey = lv_blocksGetKey();
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        numRuns = 0;
+        if (!walkSkipSnapshotBases(NULL, NULL, NULL, &numRuns)) {
+          done = TRUE;
+          break;
+        }
+        ticks++;
+        if (numRuns > 0) {
+          result = (uint32_t)(ticks * 20);
+          done = TRUE;
+        }
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        if (!walkSkipEvents(numEvents)) { done = TRUE; break; }
+        ticks++;
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+  return result;
+}
+
+/* Read the slot and name out of a log_PlayerJoined (5 opt bytes) or
+ * log_ChangeName (1 opt byte) payload and record it in s_slotNames. Entered
+ * with the reader just past the event's code byte — and, on v2, past the
+ * framed length — and consumes exactly the bytes the matching
+ * walkSkipEventBody case would. Last name wins, so a rename replaces the
+ * earlier one and a reused slot ends up holding its most recent occupant.
+ * Returns FALSE on a short read. */
+static bool walkReadSlotName(BYTE code) {
+  BYTE opt[5];
+  int  optCount = (code == log_PlayerJoined) ? 5 : 1;
+  char pstr[256];   /* [len][chars]; `pascal` is an MSVC keyword */
+  char name[256];
+  int  len;
+
+  if (logReadBytes(opt, optCount) != optCount) return FALSE;
+  if (logReadBytes((BYTE *)pstr, 1) != 1) return FALSE;
+  len = (unsigned char)pstr[0];
+  if (len > 0 && logReadBytes((BYTE *)pstr + 1, len) != len) return FALSE;
+  lv_utilPtoCString(pstr, name);
+  if (opt[0] < MAX_TANKS && name[0] != '\0') {
+    snprintf(s_slotNames[opt[0]], sizeof(s_slotNames[opt[0]]), "%s", name);
+  }
+  return TRUE;
+}
+
+/* Like walkSkipEvents, but decodes the two events that carry a slot name;
+ * every other event is skipped by the shared helper. */
+static bool walkScanNames(unsigned short numEvents) {
+  unsigned short i;
+  BYTE code;
+  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+  for (i = 0; i < numEvents; i++) {
+    bool named;
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    named = (code == log_PlayerJoined || code == log_ChangeName);
+    if (isV2) {
+      /* v2: [type][u16 BE payload-length][payload]. Read what we need, then
+         land on the framed end regardless; blockKey stays 0 so no key roll. */
+      BYTE lenBytes[2];
+      unsigned short evLen;
+      size_t payloadPos;
+      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      payloadPos = lv_logGetCurrentPosition();
+      if (named && !walkReadSlotName(code)) return FALSE;
+      lv_logSetPosition(payloadPos + evLen);
+    } else {
+      if (named) {
+        if (!walkReadSlotName(code)) return FALSE;
+      } else if (walkSkipEventBody(code) < 0) {
+        return FALSE;
+      }
+      lv_blocksSetKey(code);
+    }
+  }
+  return TRUE;
+}
+
+/* Walk the log from the event-stream start to LOG_QUIT/EOF, recording the name
+ * each join or rename event gives a slot. Mirrors lv_walkComputeGameStartMs;
+ * must be entered at load, while the reader's XOR key still matches the stream
+ * start. Saves and restores logPosition + XOR key. */
+static void lv_walkCollectSlotNames(void) {
+  size_t savedPos = lv_logGetCurrentPosition();
+  BYTE   savedKey = lv_blocksGetKey();
+  bool   done     = FALSE;
+  BYTE   code, b1, b2;
+  unsigned short numEvents;
+  uint16_t us;
+
+  lv_logSetPosition(s_walkStartPos);
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) done = TRUE;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) done = TRUE;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1 || logReadBytes(&b2, 1) != 1) done = TRUE;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        if (!walkScanNames(numEvents)) done = TRUE;
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        if (!walkScanNames(numEvents)) done = TRUE;
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+}
+
+/* Log time (ms) at which the round started (the lobby's world rewrite); 0 if
+ * no lobby. */
+uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
+
+static void lv_screenSeekToAbsoluteMs(uint32_t targetTime);
+
+/* Start of the presented window in absolute log ms; 0 when the window is the
+ * whole file (feature off, no lobby marker, degenerate log, or a live feed). */
+static uint32_t lv_windowStartMs(void) {
+  if (s_hideLobby == FALSE) return 0;
+  if (lv_screenSpecIsLiveMode()) return 0;
+  if (g_lv == NULL) return 0;
+  if (s_gameStartMs == 0 || s_gameStartMs >= g_lv->totalTimeMs) return 0;
+  return s_gameStartMs;
+}
+
+/* Length of the presented window in ms; 0 when nothing is loaded. */
+static uint32_t lv_windowLenMs(void) {
+  uint32_t start = lv_windowStartMs();
+  if (g_lv == NULL || g_lv->totalTimeMs <= start) return 0;
+  return g_lv->totalTimeMs - start;
+}
+
+/* With the lobby hidden, a freshly loaded log opens at game start so 00:00, the
+ * first rendered frame and Play all agree. No-op when the window is the whole
+ * file. */
+static void lv_screenParkAtWindowStart(void) {
+  uint32_t start = lv_windowStartMs();
+  if (start > 0) {
+    lv_screenSeekToAbsoluteMs(start);
+  }
+}
+
+/* Scan one v2 LOG_EVENT frame for base-ownership gains, counting matches of
+ * (cell, owner) for the two anchors and latching each anchor's time when its
+ * ordinal is reached. Base positions are static per round, so the cell is
+ * resolved from the base index via the caller-maintained table (parsed from
+ * the log's own snapshots — the loaded lobby snapshot has no bases, so
+ * g_lv->bs cannot be used here). */
+static bool walkScanBaseOwners(unsigned short numEvents, uint32_t frameMs,
+                               const uint8_t *baseX, const uint8_t *baseY,
+                               int numBases,
+                               uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
+                               uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
+                               int *cntE, uint32_t *msE, bool *haveE,
+                               int *cntL, uint32_t *msL, bool *haveL) {
+  unsigned short i;
+  for (i = 0; i < numEvents; i++) {
+    BYTE code, lenBytes[2];
+    unsigned short evLen;
+    size_t payloadStart;
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+    evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+    payloadStart = lv_logGetCurrentPosition();
+    if (code == log_BaseSetOwner && evLen >= 2) {
+      BYTE idx, owner;
+      if (logReadBytes(&idx, 1) == 1 && logReadBytes(&owner, 1) == 1 &&
+          owner < MAX_TANKS && idx < numBases) {
+        uint8_t bx = baseX[idx], by = baseY[idx];
+        if (!*haveE && bx == xE && by == yE && owner == ownerE &&
+            ++(*cntE) == ordE) { *msE = frameMs; *haveE = true; }
+        if (!*haveL && bx == xL && by == yL && owner == ownerL &&
+            ++(*cntL) == ordL) { *msL = frameMs; *haveL = true; }
+      }
+    }
+    lv_logSetPosition(payloadStart + evLen);
+  }
+  return TRUE;
+}
+
+/* Calibration anchors: return the playback ms of two base-ownership gains,
+ * each identified as the ordinal-th gain at cell (x,y) by `owner`. Pairs the
+ * attribution track's first/last base captures to their real scrubber times so
+ * the tick->ms line can be fitted. Ordinal + owner matching pins the exact
+ * event: allied captures are recorded in the track too (ATTR_CAP_ALLY), so
+ * before game over every owner<MAX_TANKS gain has a matching capture record —
+ * but the game-over handover re-assigns every base to the winner with no
+ * record, so "last gain at this cell" can be a later event than the track's
+ * last capture (observed inflating the fitted slope ~10%). v2 logs only
+ * (framed events); false otherwise or if either anchor is missing. Walks from
+ * the recorded event-stream start; saves and restores position + key.
+ *
+ * Base index -> cell resolution comes from the log's own snapshots: the walk
+ * is seeded from g_lv->bs (covers a no-lobby log whose only base table is the
+ * opening snapshot, consumed before the stream start) and updated from every
+ * snapshot it passes. A lobby-started log's opening snapshot has NO bases —
+ * the game world doesn't exist yet — so the table only appears in the first
+ * in-game snapshot, which the walk reaches before any capture event can. */
+bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
+                               uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
+                               uint32_t *outMsE, uint32_t *outMsL) {
+  size_t   savedPos;
+  BYTE     savedKey;
+  uint64_t ticks = 0;
+  bool     done = FALSE, haveE = FALSE, haveL = FALSE;
+  uint32_t msE = 0, msL = 0;
+  int      cntE = 0, cntL = 0;
+  BYTE     code, b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+  uint8_t  baseX[MAX_BASES], baseY[MAX_BASES];
+  int      numBases = 0;
+  int      i;
+
+  if (ordE <= 0 || ordL <= 0) return FALSE;
+
+  if (g_lv == NULL || g_lv->loadedLogVersion != LOG_VERSION_V2) return FALSE;
+  savedPos = lv_logGetCurrentPosition();
+  savedKey = lv_blocksGetKey();
+  lv_logSetPosition(s_walkStartPos);
+  lv_blocksSetKey(0);   /* v2 is plaintext (identity de-XOR) */
+
+  /* Seed from the loaded base table (empty on a lobby-started log). */
+  for (i = 0; i < (int)lv_basesGetNumBases(&g_lv->bs) && i < MAX_BASES; i++) {
+    base bi;
+    lv_basesGetBase(&g_lv->bs, &bi, (BYTE)(i + 1));
+    baseX[i] = bi.x;
+    baseY[i] = bi.y;
+    numBases = i + 1;
+  }
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshotBases(baseX, baseY, &numBases, NULL)) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        ticks++;
+        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
+                                baseX, baseY, numBases,
+                                xE, yE, ownerE, ordE, xL, yL, ownerL, ordL,
+                                &cntE, &msE, &haveE,
+                                &cntL, &msL, &haveL)) { done = TRUE; break; }
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        ticks++;
+        if (!walkScanBaseOwners(numEvents, (uint32_t)(ticks * 20),
+                                baseX, baseY, numBases,
+                                xE, yE, ownerE, ordE, xL, yL, ownerL, ordL,
+                                &cntE, &msE, &haveE,
+                                &cntL, &msL, &haveL)) { done = TRUE; break; }
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+  if (haveE && haveL) { *outMsE = msE; *outMsL = msL; return TRUE; }
+  return FALSE;
 }
 
 // Memory size in MB
@@ -1870,6 +2300,10 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     returnValue = FALSE;
   } else {
     returnValue = lv_processSnapshot();
+    /* Latch whether the opening snapshot carried a world, before anything else
+     * can decode another one. That is what tells lv_walkComputeGameStartMs
+     * whether a lobby ran in front of the event stream. */
+    s_openingSnapshotHadWorld = s_lastSnapshotHadWorld;
   }
 
   g_lv->logLoaded = returnValue;
@@ -1894,6 +2328,8 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
+  /* Drop the previous log's names before anything can read them back. */
+  memset(s_slotNames, 0, sizeof(s_slotNames));
   returnValue = lv_logLoad(fileName, memoryBufferSize);
   if (returnValue == TRUE) {
     /* Decompress entire log so we know total size for the seek slider */
@@ -1902,12 +2338,16 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
      * non-linear due to compression and variable event density, so the
      * one-shot walk is the only way to get accurate total/remaining
      * before a player joins. */
+    s_walkStartPos = lv_logGetCurrentPosition();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
+    s_gameStartMs = lv_walkComputeGameStartMs();
+    lv_walkCollectSlotNames();
     /* Set the game information up */
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lv_screenParkAtWindowStart();
   }
   return returnValue;
 }
@@ -2004,6 +2444,10 @@ static bool lv_logLoadCommon(void) {
     returnValue = FALSE;
   } else {
     returnValue = lv_processSnapshot();
+    /* Latch whether the opening snapshot carried a world, before anything else
+     * can decode another one. That is what tells lv_walkComputeGameStartMs
+     * whether a lobby ran in front of the event stream. */
+    s_openingSnapshotHadWorld = s_lastSnapshotHadWorld;
   }
 
   g_lv->logLoaded = returnValue;
@@ -2032,14 +2476,20 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   lv_blocksDestroy();
   lv_screenDestroy();
   lv_screenSetup();
+  /* Drop the previous log's names before anything can read them back. */
+  memset(s_slotNames, 0, sizeof(s_slotNames));
   returnValue = lv_logLoadFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     lv_logDecompressAll();
+    s_walkStartPos = lv_logGetCurrentPosition();
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
+    s_gameStartMs = lv_walkComputeGameStartMs();
+    lv_walkCollectSlotNames();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lv_screenParkAtWindowStart();
   }
   return returnValue;
 }
@@ -2506,20 +2956,15 @@ void lv_messageAdd(messageType msgType, langid topId, langid bodyId,
   }
 }
 
+/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize) {
+  uint32_t start = lv_windowStartMs();
+  uint32_t secs  = ((absMs > start) ? (absMs - start) : 0) / 1000u;
+  snprintf(dest, destSize, "%02u:%02u", secs / 60u, secs % 60u);
+}
+
 void lv_screenGetTime(char *dest) {
-  double mins;
-  double secs;
-
-  secs = g_lv->timeRunning / 1000.00;
-  mins = secs / 60.0;
-  mins = floor(mins);
-  secs = secs - (mins * 60.0);
-  secs = floor(secs);
-
-  snprintf(dest, 6, "%02d:%02d", (int) mins, (int) secs);
-  if (strcmp(dest, "02:09") == FALSE) {
-    mins = 0;
-  }
+  lv_screenFormatTime(g_lv->timeRunning, dest, 6);
 }
 
 
@@ -2538,6 +2983,35 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
   g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
   lv_screenUpdate(redraw);
+}
+
+/* Centre the game view on a map cell, clamped so the offset stays in range
+ * (xOffset/yOffset are unsigned tile indices). */
+void lv_screenCentreOnCell(int mapX, int mapY) {
+  int cx, cy;
+  if (g_lv->logLoaded == FALSE) {
+    return;
+  }
+  cx = mapX - (g_lv->screenSizeX / 2);
+  cy = mapY - (g_lv->screenSizeY / 2);
+  if (cx < 0) cx = 0;
+  if (cy < 0) cy = 0;
+  if (cx > 255) cx = 255;
+  if (cy > 255) cy = 255;
+  g_lv->xOffset = (BYTE)cx;
+  g_lv->yOffset = (BYTE)cy;
+  lv_screenUpdate(redraw);
+}
+
+/* Takes an absolute log time (highlight clip times are absolute) and clamps it
+ * into the presented window. */
+void lv_screenSeekToTimeMs(uint32_t ms) {
+  uint32_t start = lv_windowStartMs();
+  uint32_t len   = lv_windowLenMs();
+  if (len == 0) return;
+  if (ms < start) ms = start;
+  if (ms > start + len) ms = start + len;
+  lv_screenSeekToAbsoluteMs(ms);
 }
 
 void lv_screenMouseInformationClick(int xPos, int yPos) {
@@ -2619,6 +3093,25 @@ void lv_screenTankCentred(int enabled) {
   g_lv->centredTank = enabled;
 }
 
+void lv_screenSetHideLobby(int enabled) {
+  bool want = enabled ? TRUE : FALSE;
+  uint32_t start;
+  if (want == s_hideLobby) return;
+  s_hideLobby = want;
+  /* Ticking it while the playhead sits in the lobby jumps to game start;
+   * anywhere else, and on un-tick, nothing moves — only the scale relabels. */
+  if (want == FALSE) return;
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) return;
+  start = lv_windowStartMs();
+  if (start > 0 && g_lv->timeRunning < start) {
+    lv_screenSeekToAbsoluteMs(start);
+  }
+}
+
+int lv_screenGetHideLobby(void) { return s_hideLobby ? 1 : 0; }
+
+uint32_t lv_screenWindowStartMs(void) { return lv_windowStartMs(); }
+
 void lv_screenRewind() {
   uint32_t currentTime = g_lv->timeRunning;
   size_t wantedPos;
@@ -2635,6 +3128,11 @@ void lv_screenRewind() {
       if (lv_snapshotBackwards(&g_lv->snap, &wantedPos, &currentTime, &key, &pTeams) == FALSE) {
         currentTime = firstTime;
       }
+    }
+    /* A rewind never steps back into the hidden lobby; it parks at game start. */
+    if (currentTime < lv_windowStartMs()) {
+      lv_screenSeekToAbsoluteMs(lv_windowStartMs());
+      return;
     }
     g_lv->timeRunning = currentTime;
     lv_logSetPosition(wantedPos);
@@ -2653,25 +3151,33 @@ void lv_screenRewind() {
 }
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime) {
+  uint32_t start = lv_windowStartMs();
+  uint32_t len   = lv_windowLenMs();
+  uint32_t cur   = g_lv->timeRunning;
   *currentPos = lv_logGetCurrentPosition();
-  *totalSize = lv_logGetTotalSize();
-  *currentTime = g_lv->timeRunning;
-  *totalTime = g_lv->totalTimeMs;
+  *totalSize  = lv_logGetTotalSize();
+  cur = (cur > start) ? (cur - start) : 0;
+  if (cur > len) cur = len;
+  *currentTime = cur;
+  *totalTime   = len;
 }
 
 void lv_screenSeekToPosition(float ratio) {
-  uint32_t totalTime = g_lv->totalTimeMs;
-  uint32_t targetTime;
+  uint32_t start = lv_windowStartMs();
+  uint32_t len   = lv_windowLenMs();
+  if (len == 0) return;
+  if (ratio < 0.0f) ratio = 0.0f;
+  if (ratio > 1.0f) ratio = 1.0f;
+  lv_screenSeekToAbsoluteMs(start + (uint32_t)(ratio * (float)len));
+}
+
+/* Seek playback to an absolute log time: restore the newest snapshot at or
+ * before it, then fast-forward the decoder to the target. */
+static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   size_t snapPos;
   uint32_t snapTime;
   BYTE key;
   BYTE *pTeams = NULL;
-
-  if (totalTime == 0) return;
-  if (ratio < 0.0f) ratio = 0.0f;
-  if (ratio > 1.0f) ratio = 1.0f;
-
-  targetTime = (uint32_t)(ratio * (float)totalTime);
 
   if (lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams)) {
     g_lv->timeRunning = snapTime;
@@ -2757,6 +3263,11 @@ void lv_screenSpecSetLiveMode(bool on) {
   s_specHaveAnchor  = false;
   s_specPaceAccumMs = 0;
   s_specPaceLastMs  = 0;
+  /* A stream is not a round with a lobby in front of it; drop any game-start
+     offset left behind by a file loaded earlier in this session, and the
+     slot names that came with it — a feed has no file to scan for its own. */
+  s_gameStartMs     = 0;
+  memset(s_slotNames, 0, sizeof(s_slotNames));
   if (on) {
     /* The seed left the decoder at the head; play by default. The first
        follow-live frame re-anchors head time once a record tick is known. */
@@ -2877,8 +3388,16 @@ BYTE lv_screenGetNumPlayers() {
   return lv_playersGetNumPlayers();
 }
 
-void lv_screenGetPlayerName(char *name, BYTE playerNum) {
-  lv_playersGetPlayerName(playerNum, name);
+void lv_screenGetPlayerName(char *name, BYTE playerNum, size_t destSize) {
+  lv_playersGetPlayerName(playerNum, name, destSize);
+}
+
+bool lv_screenGetLoggedPlayerName(BYTE slot, char *dest, size_t destSize) {
+  if (dest == NULL || destSize == 0) return FALSE;
+  dest[0] = '\0';
+  if (slot >= MAX_TANKS || s_slotNames[slot][0] == '\0') return FALSE;
+  snprintf(dest, destSize, "%s", s_slotNames[slot]);
+  return TRUE;
 }
 
 void lv_screenGetMapName(char *dest) {

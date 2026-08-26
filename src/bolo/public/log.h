@@ -281,6 +281,23 @@ bool logWriteSnapshot(ServerSim *ssim, bool check);
 void logSetLobbyMode(bool enabled);
 
 /*********************************************************
+*NAME:          logSetPreTickHook
+*PURPOSE:
+* Registers a function to run at the top of every
+* logWriteTick, before the tick's event accounting.
+* logAddEvent drops writes from any thread but the one
+* logWriteTick pinned as the log's owner, so a caller that
+* produces events on another thread queues them and emits
+* them from here instead. Events emitted by the hook land
+* in the tick's LOG_EVENT frame. Pass NULL to clear.
+* Install-only: logCreate does not reset it.
+*
+*ARGUMENTS:
+*  fn - Function to run each tick, or NULL for none
+*********************************************************/
+void logSetPreTickHook(void (*fn)(void));
+
+/*********************************************************
 *NAME:          logCheckTankSame
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/01/05

@@ -341,6 +341,28 @@ typedef struct {
     uint8_t *lobbyChatBacklogBuf;
     uint32_t lobbyChatBacklogTotal;
 
+    /* Last completed round's replay log (BULK_KIND_ROUND_LOG), pulled with
+     * PACKET_ROUND_LOG_REQ. onBegin mallocs roundLogBuf sized to the stream
+     * header and onComplete parks it here; it stays owned by this context
+     * until transportUdpClientTakeRoundLog hands it out. Plain malloc, not
+     * SDL_malloc: the buffer's next owner is lvEmbedBegin, which releases it
+     * with free(). The zip is never parsed here — lvEmbedBegin validates it
+     * and frees it on failure. */
+    uint8_t *roundLogBuf;
+    size_t   roundLogLen;             /* roundLogBuf's size (0 when none)     */
+    int      roundLogState;           /* ClientRoundLogState (client_net.h)   */
+    uint32_t roundLogReqSeq;          /* reqSeq of the outstanding request    */
+    uint32_t roundLogSeqCounter;      /* monotonic source for fresh reqSeqs   */
+    uint32_t roundLogRequestTick;     /* localTick the first-byte clock started */
+    uint32_t roundLogProgressTick;    /* localTick body bytes last advanced   */
+    uint32_t roundLogRetries;         /* re-requests after silence            */
+    uint32_t roundLogTransientRetries;/* re-requests after a "not now" refusal */
+    uint32_t roundLogRetryAtTick;     /* earliest localTick to re-ask after a
+                                       * transient refusal (0 = none parked)  */
+    uint32_t roundLogWatchdogBytes;   /* bodyReceived at the last stall check;
+                                       * a witness for the no-progress timer,
+                                       * never the source of the percentage   */
+
 #ifdef __EMSCRIPTEN__
     /* WS↔UDP relay metadata frame (type 0x01). The relay sends exactly one
      * as the first datagram, before any game traffic. Consumed once at the
@@ -934,7 +956,8 @@ static const char *mpDiagCtrlName(int type) {
  * enough that a new-game event past the live window could fall outside it, the
  * recovery is a retransmit, not a drop — flag that visibility. This event has
  * no sim semantics and must never reach clientSimApplyControl. */
-static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);  /* defined below */
+static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
+static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -976,6 +999,20 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
          * and re-allocates via onBegin. mapDownloadBuf is re-pointed by the next
          * download's onBegin, so nothing to free there. */
         if (ch == CHANNEL_BULK) {
+            /* A round-log body still being filled rides this channel, so it is
+             * abandoned with it. Test that before re-initing the receiver,
+             * while its dst still identifies the partial as ours. A blob that
+             * already completed is not associated with the channel any more —
+             * the transfer is over and a re-base says nothing about it — so it
+             * is left alone, buffer, length and state. */
+            if (c->roundLogBuf != NULL && c->bulkRecv.dst == c->roundLogBuf) {
+                udpClientFreeRoundLogBuf(c);
+                c->roundLogState = CLIENT_ROUND_LOG_IDLE;
+                c->roundLogReqSeq = 0;
+                c->roundLogRetries = 0;
+                c->roundLogTransientRetries = 0;
+                c->roundLogRetryAtTick = 0;
+            }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
                 udpClientFreeResyncBuf(c);
@@ -1179,6 +1216,147 @@ static void udpClientSendMapResyncRequest(TransportUdpClientCtx *c, uint32_t gen
     udpClientSendTo(c, reqBuf, sizeof(reqBuf));
 }
 
+/* ---- Round-log transfer (BULK_KIND_ROUND_LOG). localTick runs at 100/s. ----
+ *
+ * Two independent deadlines, not one total budget. A request has FIRST_BYTE
+ * ticks to produce the head of its stream, which buys one silent re-request
+ * (the request datagram itself can be lost); once bytes are arriving, the
+ * transfer is only abandoned after NO_PROGRESS ticks with nothing further
+ * received — a 4 MB blob on a slow link makes progress the whole way and must
+ * never be killed on elapsed time alone.
+ *
+ * The server stamps its own per-client 2 s interval for every request it
+ * considers, refused ones included, so re-asking sooner than RETRY ticks after
+ * a transient refusal only earns a second refusal.
+ *
+ * A refusal is not silence — it proves the server is alive and answering — so
+ * it restarts the first-byte deadline and is bounded by a count of its own.
+ * That ceiling is sized to outwait the server's concurrency cap: two full-size
+ * transfers can be ahead of this one, and at RETRY ticks apart 16 tries is
+ * about 40 s of asking. */
+#define ROUND_LOG_FIRST_BYTE_TICKS   1000  /* 10s request -> head of stream   */
+#define ROUND_LOG_NO_PROGRESS_TICKS  1000  /* 10s of a stalled transfer       */
+#define ROUND_LOG_RETRY_TICKS        250   /* 2.5s after a transient refusal  */
+#define ROUND_LOG_FIRST_BYTE_RETRIES 1     /* re-requests after silence       */
+#define ROUND_LOG_MAX_TRANSIENT_RETRIES 16 /* re-requests after "not now"     */
+
+/* Drop the round-log blob this context owns — a completed-but-untaken one or a
+ * body still being filled. The bulk receiver holds the buffer as its dst
+ * between onBegin and onComplete: clear that first, and clear it by NULLing
+ * rather than re-initing the receiver, so the rest of the body is consumed and
+ * discarded and the byte stream stays aligned for the next transfer. */
+static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c) {
+    if (c->roundLogBuf != NULL) {
+        if (c->bulkRecv.dst == c->roundLogBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->roundLogBuf);
+        c->roundLogBuf = NULL;
+    }
+    c->roundLogLen = 0;
+    c->roundLogWatchdogBytes = 0;
+}
+
+/* Put PACKET_ROUND_LOG_REQ on the wire under a fresh reqSeq. The server echoes
+ * it as the stream header's gen (and in any refusal), which is what lets a
+ * reply to a superseded request be recognised and dropped. */
+static void udpClientSendRoundLogReq(TransportUdpClientCtx *c) {
+    uint8_t reqBuf[PACKET_HEADER_SIZE + 4];
+    c->roundLogSeqCounter++;
+    if (c->roundLogSeqCounter == 0) c->roundLogSeqCounter = 1;
+    c->roundLogReqSeq = c->roundLogSeqCounter;
+    packHeader(reqBuf, PACKET_ROUND_LOG_REQ, c->outSequence++);
+    packU32(reqBuf + PACKET_HEADER_SIZE, c->roundLogReqSeq);
+    udpClientSendTo(c, reqBuf, sizeof(reqBuf));
+}
+
+/* PACKET_ROUND_LOG_ERR: the server refused. DISABLED / NONE / TOO_LARGE hold
+ * for as long as the round does and each becomes its own state so the caller
+ * can word them apart. BUSY and RATE_LIMITED are the same thing to us — "not
+ * now" — and leave the state at WAITING with a retry parked; an unrecognised
+ * code is treated the same way. Each refusal restarts the first-byte deadline,
+ * which is testing for silence and has just been answered, and counts against
+ * the transient ceiling instead. */
+static void udpClientHandleRoundLogErr(TransportUdpClientCtx *c,
+                                       uint32_t reqSeq, uint8_t code) {
+    if (c->roundLogState != CLIENT_ROUND_LOG_WAITING) return;
+    if (reqSeq != c->roundLogReqSeq) return;   /* answers a superseded request */
+    switch (code) {
+    case ROUND_LOG_ERR_DISABLED:
+        c->roundLogState = CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED;
+        c->roundLogRetryAtTick = 0;
+        break;
+    case ROUND_LOG_ERR_NONE:
+        c->roundLogState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
+        c->roundLogRetryAtTick = 0;
+        break;
+    case ROUND_LOG_ERR_TOO_LARGE:
+        c->roundLogState = CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE;
+        c->roundLogRetryAtTick = 0;
+        break;
+    default:
+        c->roundLogTransientRetries++;
+        if (c->roundLogTransientRetries > ROUND_LOG_MAX_TRANSIENT_RETRIES) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "round log refused %u times running -> unavailable",
+                (unsigned)c->roundLogTransientRetries);
+            c->roundLogState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
+            c->roundLogRetryAtTick = 0;
+            break;
+        }
+        c->roundLogRequestTick = c->localTick;
+        c->roundLogRetryAtTick = c->localTick + ROUND_LOG_RETRY_TICKS;
+        break;
+    }
+}
+
+/* Per-tick deadlines for an outstanding round-log request. */
+static void udpClientRoundLogTick(TransportUdpClientCtx *c) {
+    if (c->roundLogState == CLIENT_ROUND_LOG_WAITING) {
+        if (c->roundLogRetryAtTick != 0 &&
+            c->localTick >= c->roundLogRetryAtTick) {
+            c->roundLogRetryAtTick = 0;
+            udpClientSendRoundLogReq(c);
+            return;   /* one request per tick; the deadline below waits a tick */
+        }
+        if ((uint32_t)(c->localTick - c->roundLogRequestTick) >=
+            ROUND_LOG_FIRST_BYTE_TICKS) {
+            if (c->roundLogRetries < ROUND_LOG_FIRST_BYTE_RETRIES) {
+                c->roundLogRetries++;
+                c->roundLogRequestTick = c->localTick;
+                c->roundLogRetryAtTick = 0;
+                udpClientSendRoundLogReq(c);
+            } else {
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "round log request produced no bytes -> unavailable");
+                c->roundLogState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
+                c->roundLogRetryAtTick = 0;
+            }
+        }
+        return;
+    }
+
+    if (c->roundLogState == CLIENT_ROUND_LOG_DOWNLOADING) {
+        uint32_t have = (c->roundLogBuf != NULL &&
+                         c->bulkRecv.dst == c->roundLogBuf)
+                            ? c->bulkRecv.bodyReceived : 0u;
+        if (have != c->roundLogWatchdogBytes) {
+            c->roundLogWatchdogBytes = have;
+            c->roundLogProgressTick  = c->localTick;
+            return;
+        }
+        if ((uint32_t)(c->localTick - c->roundLogProgressTick) >=
+            ROUND_LOG_NO_PROGRESS_TICKS) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "round log transfer stalled at %u bytes -> abandon",
+                (unsigned)have);
+            udpClientFreeRoundLogBuf(c);
+            c->roundLogState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
+            c->roundLogRetryAtTick = 0;
+        }
+    }
+}
+
 /* Bulk-receiver onBegin (CHANNEL_BULK): a full stream header parsed. Dispatch by
  * kind to the matching receive buffer; return NULL to reject (the body is then
  * consumed and discarded so the stream stays aligned). */
@@ -1271,6 +1449,29 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         if (c->lobbyChatBacklogBuf == NULL) return NULL;
         c->lobbyChatBacklogTotal = h->totalSize;
         return c->lobbyChatBacklogBuf;
+
+    case BULK_KIND_ROUND_LOG:
+        /* The last completed round's .wbv, answering this client's
+         * PACKET_ROUND_LOG_REQ. Accept only while a request is outstanding and
+         * only when the header's gen echoes that request's reqSeq — anything
+         * else answers a superseded ask. totalSize is attacker-controlled (see
+         * the sink contract), so bound it by the wire cap before allocating.
+         * malloc, not SDL_malloc: the buffer leaves through
+         * transportUdpClientTakeRoundLog for lvEmbedBegin, which frees it with
+         * plain free(). h->path is the log's basename and is a label only —
+         * nothing here opens it. */
+        if (c->roundLogState != CLIENT_ROUND_LOG_WAITING) return NULL;
+        if (h->gen != c->roundLogReqSeq) return NULL;
+        if (h->totalSize == 0 || h->totalSize > ROUND_LOG_MAX_BYTES) return NULL;
+        udpClientFreeRoundLogBuf(c);        /* drop anything held for an older ask */
+        c->roundLogBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->roundLogBuf == NULL) return NULL;
+        c->roundLogLen           = (size_t)h->totalSize;
+        c->roundLogState         = CLIENT_ROUND_LOG_DOWNLOADING;
+        c->roundLogProgressTick  = c->localTick;
+        c->roundLogWatchdogBytes = 0;
+        c->roundLogRetryAtTick   = 0;
+        return c->roundLogBuf;
 
     default:
         return NULL;
@@ -1440,6 +1641,19 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         c->lobbyChatBacklogTotal = 0;
         break;
     }
+
+    case BULK_KIND_ROUND_LOG:
+        /* The whole .wbv has landed in roundLogBuf. Park it and stop there:
+         * the zip is neither parsed nor validated here — lvEmbedBegin does
+         * that once the caller takes ownership, and frees the buffer itself if
+         * it refuses. */
+        c->roundLogLen           = (size_t)h->totalSize;
+        c->roundLogState         = CLIENT_ROUND_LOG_READY;
+        c->roundLogWatchdogBytes = 0;
+        c->roundLogRetryAtTick   = 0;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "round log received (%u bytes)", (unsigned)h->totalSize);
+        break;
 
     default:
         break;
@@ -2387,7 +2601,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     char pName[FILENAME_MAX];
                     playersGetPlayerName(&c->clientSim->sim.plyrs,
                                          evt.u.allianceRequest.fromPlayer,
-                                         pName, FALSE);
+                                         pName, sizeof(pName), FALSE);
                     if (windowShowAllianceRequest() == TRUE) {
                         dialogAllianceSetName(pName,
                                               evt.u.allianceRequest.fromPlayer);
@@ -2669,6 +2883,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_LOBBY_MAP_PREVIEW_ERR:
         udpClientHandleLobbyMapPreviewErr(c->clientSim, buf, len);
+        break;
+
+    case PACKET_ROUND_LOG_ERR:
+        /* [header 8] [reqSeq 4 BE] [code 1] — the server turned down a round-log
+         * request. Every refusal is answered, so this is how a "no" is told
+         * apart from a lost request. */
+        if (len < PACKET_HEADER_SIZE + 5) break;
+        udpClientHandleRoundLogErr(c, unpackU32(buf + PACKET_HEADER_SIZE),
+                                   buf[PACKET_HEADER_SIZE + 4]);
         break;
 
     case PACKET_LOBBY_MAP_UPLOAD_ACK: {
@@ -2963,6 +3186,13 @@ static bool udpClientTick(void *ctx) {
          * toward the disconnect cap. */
     }
 
+    /* Deadlines on an outstanding round-log request: a parked retry after a
+     * transient refusal, the first-byte timeout, and the stalled-transfer
+     * watchdog. A no-op unless a request is in flight. */
+    if (c->joinState == UDP_CLIENT_CONNECTED) {
+        udpClientRoundLogTick(c);
+    }
+
     /* Control-event acks now ride the channel-frame trailer (the per-tick
      * standalone PACKET_CHANNEL below, or an input trailer during running),
      * so the dedicated coalesced control-ack emitter is retired. */
@@ -3221,7 +3451,8 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
             evt->u.allianceRequest.toPlayer == c->playerNum) {
             BYTE fromPN = evt->u.allianceRequest.fromPlayer;
             char pName[FILENAME_MAX];
-            playersGetPlayerName(&c->clientSim->sim.plyrs, fromPN, pName, FALSE);
+            playersGetPlayerName(&c->clientSim->sim.plyrs, fromPN, pName,
+                                 sizeof(pName), FALSE);
             if (windowShowAllianceRequest() == TRUE) {
                 dialogAllianceSetName(pName, fromPN);
             } else {
@@ -3560,6 +3791,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->lobbyChatBacklogBuf != NULL) {
         free(c->lobbyChatBacklogBuf);  /* in-flight backlog blob, if teardown mid-transfer */
+    }
+    if (c->roundLogBuf != NULL) {
+        free(c->roundLogBuf);   /* round log nobody took, or a partial one */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);
@@ -3927,6 +4161,75 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     }
     uint32_t pct = (have * 100u) / c->mapDownloadTotal;
     return pct > 100 ? 100 : (uint8_t)pct;
+}
+
+bool transportUdpClientSendRoundLogRequest(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
+    /* A fresh ask supersedes whatever the last one left behind — a blob nobody
+     * took, or a body still arriving. Freeing it here is one of the three
+     * places that keeps it from leaking or dangling (the others are transport
+     * teardown and a CHANNEL_BULK re-base). */
+    udpClientFreeRoundLogBuf(c);
+    c->roundLogState             = CLIENT_ROUND_LOG_WAITING;
+    c->roundLogRequestTick       = c->localTick;
+    c->roundLogProgressTick      = c->localTick;
+    c->roundLogRetries           = 0;
+    c->roundLogTransientRetries  = 0;
+    c->roundLogRetryAtTick       = 0;
+    udpClientSendRoundLogReq(c);
+    return true;
+}
+
+int transportUdpClientGetRoundLogState(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return CLIENT_ROUND_LOG_IDLE;
+    c = (TransportUdpClientCtx *)t->ctx;
+    return c->roundLogState;
+}
+
+uint8_t transportUdpClientGetRoundLogPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint32_t total, pct;
+    if (t == NULL || t->ctx == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->roundLogState != CLIENT_ROUND_LOG_DOWNLOADING) return 0;
+    /* Live from the receiver, the way the map-download percent reads it: the
+     * body counter against the stream header's announced size, both valid only
+     * while this transfer is the one the receiver is filling. */
+    if (c->roundLogBuf == NULL || c->bulkRecv.dst != c->roundLogBuf) return 0;
+    total = c->bulkRecv.hdr.totalSize;
+    if (total == 0) return 0;
+    pct = (c->bulkRecv.bodyReceived * 100u) / total;
+    return pct > 100 ? 100 : (uint8_t)pct;
+}
+
+uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen) {
+    TransportUdpClientCtx *c;
+    uint8_t *blob;
+    if (outLen != NULL) *outLen = 0;
+    if (t == NULL || t->ctx == NULL) return NULL;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->roundLogState != CLIENT_ROUND_LOG_READY ||
+        c->roundLogBuf == NULL) {
+        return NULL;
+    }
+    /* Ownership leaves here. The receiver dropped its dst at completion, so
+     * clearing the pointer is enough to put the buffer out of reach of every
+     * free site and of the progress read. */
+    blob = c->roundLogBuf;
+    if (outLen != NULL) *outLen = c->roundLogLen;
+    c->roundLogBuf              = NULL;
+    c->roundLogLen              = 0;
+    c->roundLogState            = CLIENT_ROUND_LOG_IDLE;
+    c->roundLogReqSeq           = 0;
+    c->roundLogRetries          = 0;
+    c->roundLogTransientRetries = 0;
+    c->roundLogRetryAtTick      = 0;
+    c->roundLogWatchdogBytes    = 0;
+    return blob;
 }
 
 void transportUdpClientSendWbnReauth(Transport *t) {

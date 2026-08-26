@@ -37,6 +37,47 @@
 /* Size of key buffers (32-char hex string + null terminator) */
 #define WINBOLONET_KEY_LEN 33
 
+/*********************************************************
+*NAME:          winbolonetKeyIsValid
+*PURPOSE:
+* Returns TRUE when key is exactly WINBOLONET_KEY_LEN - 1
+* (32) hexadecimal digits of either case — the shape
+* WinBolo.net issues for both server keys and log keys.
+*
+* Anything that pastes a key into an API path must gate on
+* this first, and must do so where the key enters the
+* process rather than at the snprintf. Keys arrive from
+* places the client does not control: a game server's
+* PACKET_ROUND_STATS body, a log file's header. A key
+* holding '/', '.', '?' or '#' would survive into
+* "logs/%s/..." and then into "%s/api/v1/%s", and since
+* those requests carry X-WBN-Signature (and the comment
+* POST the signed-in user's token) with CURLOPT_FOLLOWLOCATION
+* on, a hostile key steers an authenticated, redirect-
+* following request at an endpoint of the sender's choosing.
+* Hex leaves no character that can do any of that.
+*
+*ARGUMENTS:
+* key - NUL-terminated candidate key; NULL is not valid
+*********************************************************/
+static inline bool winbolonetKeyIsValid(const char *key) {
+  int i;
+
+  if (key == NULL) {
+    return FALSE;
+  }
+  for (i = 0; i < WINBOLONET_KEY_LEN - 1; i++) {
+    char c = key[i];
+    /* A short key fails here on its NUL, so no length check is needed
+     * ahead of the loop. */
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+          (c >= 'A' && c <= 'F'))) {
+      return FALSE;
+    }
+  }
+  return key[WINBOLONET_KEY_LEN - 1] == '\0'; /* and a long one fails here */
+}
+
 /* Event Types — values match the JSON API event type field */
 #define WINBOLO_NET_EVENT_ALLY_JOIN 0     /* Player B has joined Alliance A */
 #define WINBOLO_NET_EVENT_ALLY_LEAVE 1    /* Player B has left Alliance A */

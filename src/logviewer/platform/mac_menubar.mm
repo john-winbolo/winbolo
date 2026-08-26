@@ -49,6 +49,7 @@ static NSMenuItem *s_lv_modeInfoItem   = nil;
 static NSMenuItem *s_lv_modeSelectItem = nil;
 static NSMenuItem *s_lv_useTeamColoursItem = nil;
 static NSMenuItem *s_lv_tankCentredItem    = nil;
+static NSMenuItem *s_lv_hideLobbyItem      = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
 static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
@@ -86,6 +87,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onModeSelectTeam:(id)sender;
 - (void)onToggleUseTeamColours:(id)sender;
 - (void)onToggleTankCentred:(id)sender;
+- (void)onToggleHideLobby:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
 - (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
@@ -150,6 +152,7 @@ static void lv_push_sdl_quit(void) {
     }
 }
 - (void)onToggleTankCentred:(id)sender { (void)sender; lv_imgui_toggle_tank_centred(); }
+- (void)onToggleHideLobby:(id)sender { (void)sender; lv_imgui_toggle_hide_lobby(); }
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
@@ -436,6 +439,14 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:tankCentred];
     s_lv_tankCentredItem = tankCentred;
 
+    NSMenuItem *hideLobby = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_HIDE_LOBBY)
+        action:@selector(onToggleHideLobby:)
+        keyEquivalent:@""];
+    [hideLobby setTarget:s_lv_bridge];
+    [optionsMenu addItem:hideLobby];
+    s_lv_hideLobbyItem = hideLobby;
+
     NSMenuItem *soundEffects = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
         action:@selector(onToggleSoundEffects:)
@@ -607,6 +618,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_modeSelectItem = nil;
     s_lv_useTeamColoursItem = nil;
     s_lv_tankCentredItem = nil;
+    s_lv_hideLobbyItem = nil;
     s_lv_soundEffectsItem = nil;
     s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
@@ -639,6 +651,7 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
         [s_lv_useTeamColoursItem setEnabled:(s->gameViewActive ? NO : YES)];
     }
     if (s_lv_tankCentredItem)  [s_lv_tankCentredItem  setState:(s->tankCentred  ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_hideLobbyItem)    [s_lv_hideLobbyItem    setState:(s->hideLobby    ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_volumeMenu) {
         for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {

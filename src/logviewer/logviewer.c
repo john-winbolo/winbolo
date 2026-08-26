@@ -36,6 +36,7 @@
 #include "positions.h"
 #include "tiles.h"
 #include "logviewer.h"
+#include "lv_stats.h"
 
 #include <SDL3/SDL.h>
 
@@ -189,6 +190,14 @@ void lv_windowAddEvent(int eventType, char *msg) {
     lv_imgui_events_add(eventType, msg);
 }
 
+void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
+    lv_imgui_events_add_highlight(msg, seekMs, mapX, mapY);
+}
+
+void lv_windowAddSummary(char *msg) {
+    lv_imgui_events_add_summary(msg);
+}
+
 /* Remove events that are ahead of the given playback time (during rewind/seek). */
 void lv_windowRemoveEventsAfter(uint32_t timeMs) {
     lv_imgui_events_remove_after(timeMs);
@@ -287,6 +296,31 @@ void lv_windowPause(void) {
     }
     g_lv->playIsPlaying = FALSE;
     lv_clientMutexRelease();
+}
+
+/* Jump the scrubber to a highlight moment and centre the view on its cell.
+ * The seek walks the log and rebuilds the world, the same state lv_windowTimer
+ * ticks on the SDL timer thread under lv_clientMutex, so playback is stopped
+ * and the lock held across it exactly as the scrubber and keyboard step do.
+ * Without that, a click during playback lands lv_shellsAddItem and
+ * lv_shellsDestroy on the same list from two threads and corrupts the heap. */
+void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    unsigned char wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_screenCentreOnCell(mapX, mapY);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_imgui_game_view_init_camera(g_lv);
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
 }
 
 void lv_windowStop(int corruptLog) {
@@ -392,6 +426,7 @@ void lv_windowOpenFile(char *cmdLine) {
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
     }
@@ -548,16 +583,16 @@ static void savePreferences(void) {
 }
 
 /* --------------------------------------------------------------------------
- * lvHostSetup -- Shared host bring-up for the log viewer and the spectator.
+ * lvHostSetupCore -- ImGui-free half of the host bring-up.
  *
- * Allocates g_lv, brings up the platform layer / mutex / draw / ImGui / sound,
- * loads preferences and sizes the screen to the window. The window/renderer are
- * borrowed when non-NULL (embedded) or created here when NULL (standalone).
- * Returns TRUE on success; on any failure it unwinds whatever it brought up and
- * returns FALSE with g_lv cleared. Pure extraction from logViewerRun.
+ * Allocates g_lv and brings up the platform layer, mutex, draw module and
+ * dialog window association. Everything here is safe with no ImGui context of
+ * the viewer's own, so the embedded reel shares it with the standalone viewer
+ * and the spectator. Returns TRUE on success; on any failure it unwinds
+ * whatever it brought up and returns FALSE with g_lv cleared.
  * -------------------------------------------------------------------------- */
-static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
-                       bool fromMainMenu) {
+static bool lvHostSetupCore(SDL_Window *window, SDL_Renderer *renderer,
+                            bool fromMainMenu) {
     char line[256];
     int  sizeX, sizeY;
 
@@ -625,6 +660,23 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
     /* macOS trackpad pinch-to-zoom (no-op if already initialised or non-macOS) */
     macOSPinchZoomInit();
 
+    return TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostSetup -- Shared host bring-up for the log viewer and the spectator.
+ *
+ * The ImGui-free half (lvHostSetupCore) plus the viewer's own ImGui context and
+ * panels, sound, preferences, and the screen sizing that fills the window.
+ * Returns TRUE on success; on any failure it unwinds whatever it brought up and
+ * returns FALSE with g_lv cleared.
+ * -------------------------------------------------------------------------- */
+static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
+                       bool fromMainMenu) {
+    if (lvHostSetupCore(window, renderer, fromMainMenu) == FALSE) {
+        return FALSE;
+    }
+
     /* Initialize ImGui */
     if (lv_imgui_context_init(g_lv->window, g_lv->renderer) == 0) {
         lv_drawCleanup();
@@ -691,23 +743,29 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
 }
 
 /* --------------------------------------------------------------------------
- * lvHostTeardown -- Shared host shutdown for the log viewer and the spectator.
+ * lvHostTeardownCommon -- Host shutdown up to (but not including) releasing
+ * g_lv.
  *
- * Stops the decoder, tears down ImGui / draw / sound / mutex / DNS and (when
- * standalone) the platform layer, then frees g_lv. The caller restores any
- * active game view and saves preferences first. Pure extraction.
+ * Stops the decoder, tears down draw / mutex / DNS and (when standalone) the
+ * platform layer. withImGui also tears down the viewer's ImGui context, its
+ * comments panel, the native menu bar and sound — the pieces the embedded reel
+ * never brought up. Ordering matches the standalone shutdown exactly.
  * -------------------------------------------------------------------------- */
-static void lvHostTeardown(void) {
+static void lvHostTeardownCommon(bool withImGui) {
     lv_windowStop(FALSE);
+    if (withImGui) {
 #ifdef __APPLE__
-    /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
-     * empty stub when standalone since the process is exiting). */
-    lv_mac_menubar_uninstall();
+        /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
+         * empty stub when standalone since the process is exiting). */
+        lv_mac_menubar_uninstall();
 #endif
-    lv_imgui_comments_shutdown();
-    lv_imgui_context_shutdown();
+        lv_imgui_comments_shutdown();
+        lv_imgui_context_shutdown();
+    }
     lv_drawCleanupSplash();
-    lv_soundCleanup();
+    if (withImGui) {
+        lv_soundCleanup();
+    }
     {
         bool standalone = g_lv->ownsWindow;
         lv_drawCleanup();
@@ -719,6 +777,17 @@ static void lvHostTeardown(void) {
             lv_platform_dialogs_shutdown();
         }
     }
+}
+
+/* --------------------------------------------------------------------------
+ * lvHostTeardown -- Shared host shutdown for the log viewer and the spectator.
+ *
+ * Stops the decoder, tears down ImGui / draw / sound / mutex / DNS and (when
+ * standalone) the platform layer, then frees g_lv. The caller restores any
+ * active game view and saves preferences first.
+ * -------------------------------------------------------------------------- */
+static void lvHostTeardown(void) {
+    lvHostTeardownCommon(true);
     free(g_lv);
     g_lv = NULL;
 }
@@ -1050,6 +1119,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
         lvms.gameViewActive   = g_lv->gameView ? true : false;
         lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
+        lvms.hideLobby        = lv_screenGetHideLobby() ? true : false;
         lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
         lvms.soundVolume      = g_lv->soundVolume;
         lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
@@ -1188,6 +1258,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
         s_pendingZipData = NULL;
@@ -1300,6 +1371,381 @@ void logViewerRunFromMemory(SDL_Window *window, SDL_Renderer *renderer,
     s_pendingZipData = zipData;
     s_pendingZipLen  = zipLen;
     logViewerRun(window, renderer, NULL, fromMainMenu);
+}
+
+/* --------------------------------------------------------------------------
+ * Embedded reel API
+ *
+ * Drives the decoder and the block-grid render-to-texture for a host that
+ * already owns an ImGui frame, so the round can be drawn as a texture inside
+ * that frame. Only the ImGui-free half of the host is brought up: no viewer
+ * ImGui context, no panels, no sound, no preferences (saving them would
+ * persist the host's panel-sized tile counts as the standalone viewer's
+ * window size). There is one decoder singleton in the process, so an embed
+ * and a full viewer/spectator session can never be live at the same time.
+ *
+ * Signatures carry scalars and void * only: the host hand-declares them
+ * instead of including this header, whose backend types collide with the
+ * client's.
+ * -------------------------------------------------------------------------- */
+static bool s_embedActive = false;
+
+/* Pan latch, in zoom-1 native pixels, taken when the drag starts. */
+static int s_embedPanStartPxX = 0;
+static int s_embedPanStartPxY = 0;
+
+/* Zoom step the embed found on entry, handed back on teardown. Only ever read
+ * after lvEmbedBegin has stored it. */
+static int s_embedSavedZoomStep = 0;
+
+bool lvEmbedBegin(SDL_Window *window, SDL_Renderer *renderer,
+                  uint8_t *zipData, size_t zipLen, int viewW, int viewH) {
+    /* The buffer is ours from the call on (lv_screenLoadMapFromMemory takes
+     * ownership even when it fails), so every refusal here releases it. */
+    if (window == NULL || renderer == NULL || zipData == NULL || zipLen == 0 ||
+        g_lv != NULL) {
+        if (zipData != NULL) {
+            free(zipData);
+        }
+        return false;
+    }
+
+    lv_drawSetEmbedded(1);
+    lv_drawSetEmbedViewport(viewW, viewH);
+    if (lvHostSetupCore(window, renderer, /* fromMainMenu */ false) == FALSE) {
+        lv_drawSetEmbedded(0);
+        free(zipData);
+        return false;
+    }
+    s_embedActive = true;
+
+    /* Defaults the skipped halves would otherwise supply: no sound
+     * (lv_soundSetup never ran), the reel always opens at game start rather
+     * than inheriting the viewer's hide-lobby preference, and a non-zero
+     * timerSleep — lv_decoderCreate callocs it to 0 and lv_windowTimer
+     * cancels its own SDL timer when it returns 0, so playback would stop
+     * after a single tick. */
+    g_lv->isSoundsPlaying = FALSE;
+    lv_screenSetHideLobby(1);
+    lv_updateSpeed(1, FALSE);
+    lv_imgui_events_clear();
+
+    /* Open at the widest zoom step (0.5x) so a panel-sized rect shows a
+     * useful slice of the map, then size the tile grid to that rect. The step
+     * is a process-wide static, so save what was there for the teardown to
+     * put back — otherwise the next full-window viewer session opens at the
+     * reel's zoom. */
+    s_embedSavedZoomStep = lv_drawGetZoomStepIndex();
+    lv_drawSetZoomStep(0, viewW / 2, viewH / 2);
+    lvEmbedSetViewportSize(viewW, viewH);
+
+    if (lv_screenLoadMapFromMemory(zipData, zipLen) == FALSE) {
+        lvEmbedEnd();
+        return false;
+    }
+    g_lv->isLoaded = TRUE;
+    lv_windowNeedRedraw();
+    lv_windowPlay();
+    return true;
+}
+
+void lvEmbedEnd(void) {
+    if (!s_embedActive) {
+        return;
+    }
+    lvHostTeardownCommon(false);
+    /* lv_decoderDestroy rather than the standalone path's bare free(): it
+     * closes the log and clears the decoder's active-state pointer, which
+     * matters when the host tears an embed down every round. */
+    lv_decoderDestroy(g_lv);
+    g_lv = NULL;
+    s_embedActive = false;
+    lv_drawSetEmbedded(0);
+    /* Hand the zoom step back to whatever session runs next. The raw setter,
+     * because the anchored path resizes the tile grid through decoder state
+     * that no longer exists. */
+    lv_drawSetZoomStepIndexRaw(s_embedSavedZoomStep);
+}
+
+bool lvEmbedIsActive(void) {
+    return s_embedActive;
+}
+
+/* Re-fit the tile grid to a host rect that changed size. Mirrors
+ * lvHostHandleResize without the window snap (the host owns the window) and
+ * with no menu bar. The decode timers are live, so the mutation is held under
+ * lv_clientMutex. */
+void lvEmbedSetViewportSize(int viewW, int viewH) {
+    float zoom, tilePxX, tilePxY;
+    int   newTilesX, newTilesY;
+
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    lv_drawSetEmbedViewport(viewW, viewH);
+
+    zoom = lv_drawGetZoomLevel();
+    if (zoom <= 0.0f) zoom = 1.0f;
+    tilePxX = (float)TILE_SIZE_X * zoom;
+    tilePxY = (float)TILE_SIZE_Y * zoom;
+    newTilesX = (int)(((float)viewW + tilePxX * 0.5f) / tilePxX);
+    newTilesY = (int)(((float)viewH + tilePxY * 0.5f) / tilePxY);
+    if (newTilesX < 1) newTilesX = 1;
+    if (newTilesY < 1) newTilesY = 1;
+    if (newTilesX > 255) newTilesX = 255;
+    if (newTilesY > 255) newTilesY = 255;
+
+    if ((BYTE)newTilesX == lv_screenGetSizeX() &&
+        (BYTE)newTilesY == lv_screenGetSizeY()) {
+        return;
+    }
+
+    lv_clientMutexWaitFor();
+    lv_screenSetSizeX((BYTE)newTilesX);
+    lv_screenSetSizeY((BYTE)newTilesY);
+    /* Clamp the scroll offset so the viewport stays inside the 255x255 map,
+     * and reset the sub-pixel pan — a resize carries no in-flight drag. */
+    if (g_lv->isLoaded) {
+        BYTE ox, oy;
+        lv_screenGetOffsets(&ox, &oy);
+        if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
+        if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
+        lv_screenSetOffset(ox, oy);
+        lv_screenSetSubOffset(0, 0);
+    }
+    lv_drawResizeRenderTarget();
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Bring the render target up to date when the decode timers asked for it, and
+ * hand back the texture plus the visible slice within it. Never clears and
+ * never presents — the host's frame owns the framebuffer. */
+bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
+                         int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH) {
+    SDL_Texture *tex;
+    int subX = 0, subY = 0;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return false;
+    }
+
+    if (g_lv->wantScreenUpdate == TRUE) {
+        lv_clientMutexWaitFor();
+        lv_screenUpdate(redraw);
+        lv_clientMutexRelease();
+        g_lv->wantScreenUpdate = FALSE;
+    }
+
+    tex = lv_drawGetGameTexture();
+    if (tex == NULL) {
+        return false;
+    }
+    if (outTexture != NULL) *outTexture = tex;
+    lv_drawGetGameTargetSize(outTexW, outTexH);
+    lv_screenGetSubOffset(&subX, &subY);
+    if (outSrcX != NULL) *outSrcX = subX;
+    if (outSrcY != NULL) *outSrcY = subY;
+    if (outSrcW != NULL) *outSrcW = lv_screenGetSizeX() * TILE_SIZE_X;
+    if (outSrcH != NULL) *outSrcH = lv_screenGetSizeY() * TILE_SIZE_Y;
+    return true;
+}
+
+/* Scale the slice reported by lvEmbedFrameTexture is meant to be drawn at:
+ * one source pixel becomes this many host pixels. 1.0 while no embed is
+ * running, so a host that asks too early still gets a usable number. */
+float lvEmbedGetZoomLevel(void) {
+    float zoom;
+
+    if (!s_embedActive || g_lv == NULL) {
+        return 1.0f;
+    }
+    zoom = lv_drawGetZoomLevel();
+    return (zoom > 0.0f) ? zoom : 1.0f;
+}
+
+void lvEmbedPlay(void) {
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    lv_windowPlay();
+}
+
+void lvEmbedPause(void) {
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    lv_windowPause();
+}
+
+bool lvEmbedIsPlaying(void) {
+    return s_embedActive && g_lv != NULL && g_lv->playIsPlaying == TRUE;
+}
+
+/* Cursor-anchored wheel zoom. Coordinates are image-local; embed mode forces
+ * the menu-bar offset to 0, so they need no adjustment. The zoom reallocates
+ * the screen buffer and the render target, so it takes the mutex. */
+void lvEmbedWheel(int localX, int localY, float wheelY) {
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    if (wheelY > 0.0f) {
+        lv_drawZoomIn(localX, localY);
+    } else if (wheelY < 0.0f) {
+        lv_drawZoomOut(localX, localY);
+    }
+    lv_clientMutexRelease();
+}
+
+void lvEmbedPanBegin(void) {
+    BYTE ox = 0, oy = 0;
+    int  sx = 0, sy = 0;
+
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    lv_screenGetOffsets(&ox, &oy);
+    lv_screenGetSubOffset(&sx, &sy);
+    s_embedPanStartPxX = (int)ox * TILE_SIZE_X + sx;
+    s_embedPanStartPxY = (int)oy * TILE_SIZE_Y + sy;
+}
+
+/* Drag delta in host screen pixels, measured from where lvEmbedPanBegin
+ * latched. Each on-screen pixel is 1/zoom native pixels, and dragging right
+ * reveals more of the map's left, so the delta is subtracted. */
+void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx) {
+    float zoom;
+    int   totalPxX, totalPxY;
+
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    zoom = lv_drawGetZoomLevel();
+    if (zoom <= 0.0f) zoom = 1.0f;
+    totalPxX = s_embedPanStartPxX - (int)(dxScreenPx / zoom);
+    totalPxY = s_embedPanStartPxY - (int)(dyScreenPx / zoom);
+
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenPanToTotalPixels(totalPxX, totalPxY);
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Elapsed and total milliseconds of the presented window. An embed hides the
+ * lobby, so that window is the game portion of the round. Either out-param may
+ * be NULL; both read 0 while no embed is running, so a host can drive its
+ * transport without checking first. */
+void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs) {
+    size_t   pos = 0, size = 0;
+    uint32_t cur = 0, total = 0;
+
+    if (s_embedActive && g_lv != NULL && g_lv->isLoaded == TRUE) {
+        lv_screenGetLogProgress(&pos, &size, &cur, &total);
+    }
+    if (outCurMs != NULL) {
+        *outCurMs = cur;
+    }
+    if (outTotalMs != NULL) {
+        *outTotalMs = total;
+    }
+}
+
+/* The seeks below walk the log and rebuild the world — the same state
+ * lv_windowTimer ticks on the SDL timer thread under lv_clientMutex — so
+ * playback is stopped and the lock held across the seek exactly as the
+ * standalone scrubber does. Without that, a seek during playback lands
+ * lv_shellsAddItem and lv_shellsDestroy on the same list from two threads and
+ * corrupts the heap. wantScreenUpdate is what makes lvEmbedFrameTexture
+ * repaint, so a reel seeked while paused still shows the new moment. */
+void lvEmbedSeekRatio(float ratio) {
+    unsigned char wasPlaying;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToPosition(ratio);
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Jump to a moment measured from the start of the presented window, optionally
+ * centring the view on the cell it happened at. Callers pass a round-relative
+ * time and the window origin is added here, so if the round clock and the log
+ * clock ever turn out to disagree this is the single place that gets the
+ * correction. No camera re-init afterwards: that pans to the camera tank, which
+ * is only wanted in the viewer's game view and would undo the centring. */
+static void lvEmbedSeekWindowMs(uint32_t roundRelMs, bool centreOnCell,
+                                int mapX, int mapY) {
+    unsigned char wasPlaying;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return;
+    }
+    wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
+    }
+    lv_clientMutexWaitFor();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(lv_screenWindowStartMs() + roundRelMs);
+    if (centreOnCell) {
+        lv_screenCentreOnCell(mapX, mapY);
+    }
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* A clip names a place as well as a moment, so the view follows it there. */
+void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY) {
+    lvEmbedSeekWindowMs(roundRelMs, true, mapX, mapY);
+}
+
+/* A timestamp names only a moment — the view stays where the player left it. */
+void lvEmbedSeekToTime(uint32_t roundRelMs) {
+    lvEmbedSeekWindowMs(roundRelMs, false, 0, 0);
+}
+
+/* Walk the log forward by whole ticks with no timer driving it, for a host that
+ * wants the round a fixed step at a time rather than in real time. Same list
+ * lv_windowTimer walks on the SDL timer thread, so the mutex is held across the
+ * whole step exactly as it is there — a caller that paused first still shares
+ * the decode lists with a frame timer that may not have retired yet. Marking
+ * the screen stale is what makes the next lvEmbedFrameTexture repaint, so the
+ * caller sees the moment it stepped to. */
+void lvEmbedStepTicks(int ticks) {
+    int i;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE || ticks <= 0) {
+        return;
+    }
+    lv_clientMutexWaitFor();
+    for (i = 0; i < ticks; i++) {
+        lv_screenLogTick();
+    }
+    lv_clientMutexRelease();
+    g_lv->wantScreenUpdate = TRUE;
 }
 
 /* Apply a decoded seed/keyframe's lobby roster to the viewer's player table:

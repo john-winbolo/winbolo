@@ -21,7 +21,7 @@
 /* External functions from backend - using C types directly */
 extern "C" {
     void lv_screenCentreOnSelectedItem(void);
-    void lv_screenGetPlayerName(char *buffer, unsigned char player);
+    void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
 }
 
 /* Item info state */
@@ -77,8 +77,8 @@ void lv_imgui_item_info_update(unsigned char itemType, unsigned char itemNumber,
             snprintf(s_owner_text, sizeof(s_owner_text), "%s",
                      langGetText(STR_MAPEDIT_OWNER_NEUTRAL));
         } else {
-            char player_name[64];
-            lv_screenGetPlayerName(player_name, owner);
+            char player_name[PLAYER_NAME_LEN];
+            lv_screenGetPlayerName(player_name, owner, sizeof(player_name));
             MessageArgs args = {};
             strncpy(args.string1, player_name, sizeof(args.string1) - 1);
             args.number = owner;

@@ -671,6 +671,7 @@
 #define STR_DLGWBN_LOADERR                  750
 #define STR_DLGWBN_DOWNLOAD_FAILED          751
 #define STR_DLGWBN_NOSAVEPATH               752
+#define STR_DLGWBN_SELECTPROMPT             753
 #define STR_DLGWBN_FETCHERR                 754
 #define STR_DLGWBN_UNKNOWN_ERR              755
 #define STR_DLGWBN_FILEFILTER               756
@@ -713,6 +714,32 @@
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
 
+/* Lobby "Last round" panel — the round's highlight clips. */
+#define STR_DLGLOBBY_HL_HEADER               1922
+#define STR_DLGLOBBY_HL_NONE                 1923
+#define STR_DLGLOBBY_HL_AWARD_FMT            1924
+#define STR_DLGLOBBY_HL_AWARD_VS_FMT         1925
+#define STR_DLGLOBBY_HL_WIPE_FMT             1926
+#define STR_DLGLOBBY_HL_STEAL_FMT            1927
+#define STR_DLGLOBBY_HL_LGM_FMT              1928
+#define STR_DLGLOBBY_HL_FUMBLE_FMT           1929
+#define STR_DLGLOBBY_HL_DROWN_PILLS_FMT      1930
+#define STR_DLGLOBBY_HL_DROWN_FMT            1931
+#define STR_DLGLOBBY_HL_COLLAPSE_FMT         1932
+#define STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT 1933
+#define STR_DLGLOBBY_HL_TURNING_FMT          1934
+#define STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT  1935
+#define STR_DLGLOBBY_HL_GENERIC              1936
+#define STR_DLGLOBBY_HL_PICKUP_FMT           1944
+#define STR_DLGLOBBY_HL_DENSITY_FMT          1945
+
+/* Lobby "Last round" panel — the reel's delivery state. */
+#define STR_DLGLOBBY_REEL_WAITING            1938
+#define STR_DLGLOBBY_REEL_DOWNLOADING        1939
+#define STR_DLGLOBBY_REEL_DISABLED           1940
+#define STR_DLGLOBBY_REEL_NONE               1941
+#define STR_DLGLOBBY_REEL_TOO_LARGE          1942
+
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
 #define STR_DLGSETNAME_WBN_LOCKED           758
@@ -750,6 +777,10 @@
 #define STR_DLGWBN_SIGNINGIN                784
 #define STR_DLGWBN_SIGNIN_OK                785
 #define STR_DLGWBN_NEEDCREDS                786
+
+/* Stands in for the sign in / sign out button while a game is running, where
+ * the account is fixed for the session. */
+#define STR_DLGWBN_ACCOUNT_LOCKED           1943
 
 /* Welcome dialog */
 #define STR_DLGWELCOME_WINTITLE             787
@@ -1539,7 +1570,11 @@
 #define STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE 1916
 #define STR_DLGSETTINGS_HOSTING_ENABLELOG       1917
 #define STR_DLGSETTINGS_HOSTING_LOGDIR          1919
+#define STR_DLGSETTINGS_HOSTING_SERVEREPLAY     1937
 #define STR_DLGSETTINGS_HOSTING_APPLYNOTE       1920
+
+/* Log viewer Options menu */
+#define STR_LV_HIDE_LOBBY                   1921
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820

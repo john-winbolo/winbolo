@@ -382,6 +382,12 @@ struct ClientSim {
     RoundStatsSummary lastRoundStats;
     bool              lastRoundStatsValid;
 
+    /* Bumped on every CTRL_ROUND_RATING_POSTED that names the round
+     * lastRoundStats describes and came from another player. The recap's
+     * WinBolo.net block watches it for movement and re-reads the round's
+     * ratings and comments; the value itself carries no meaning. */
+    uint32_t          ratingPostedSeq;
+
     /* Reassembly of the server's bot-pool catalog, streamed as
      * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
      * arrive in order on the reliable control channel; on the final

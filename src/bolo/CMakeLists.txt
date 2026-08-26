@@ -71,6 +71,7 @@ add_library(bolo_static STATIC
     players.c
     playersrejoin.c
     position_history.c
+    round_stats_derive.c
     rubble.c
     screenbrainmap.c
     screenbullet.c

@@ -225,6 +225,7 @@ bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+bool           gameFrontHostingServeReplays   = TRUE;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -1620,6 +1621,44 @@ bool gameFrontSetDlgState(openingStates newState) {
             spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
             returnValue = FALSE;
           } else {
+            /* Single-player rounds are recorded so the lobby recap can play
+             * the round back. Two paths in the prefs dir, and they have to
+             * stay distinct: singleplayer-recording.wbv is the live
+             * recording, which every lobby entry truncates and reopens, while
+             * singleplayer.wbv holds the last completed round. Three seconds
+             * after game over the sim returns to the lobby and the log module
+             * reopens the recording path — so folding these back into one
+             * name means the lobby the round returns to destroys the round
+             * itself. Both are explicit file paths rather than a directory,
+             * so the path composer uses them verbatim instead of auto-naming
+             * a fresh timestamped file per round. dontSendLog is
+             * unconditionally true; a single-player round is never uploaded
+             * to WinBolo.net. Tutorials are skipped — they set cfg.skipLobby,
+             * so they never reach the lobby that would offer the playback.
+             * Installed before the client-type resolution because the
+             * subscriber's sync replay opens the log immediately, and the
+             * completed path is set after the install, which clears it. */
+            if (!isTutorial) {
+              char spLogPath[FILENAME_MAX];
+              char spRoundPath[FILENAME_MAX];
+              const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+              if (prefDir != NULL) {
+                snprintf(spLogPath, sizeof(spLogPath),
+                         "%ssingleplayer-recording.wbv", prefDir);
+                snprintf(spRoundPath, sizeof(spRoundPath),
+                         "%ssingleplayer.wbv", prefDir);
+                SDL_free((void *)prefDir);
+              } else {
+                snprintf(spLogPath, sizeof(spLogPath),
+                         "singleplayer-recording.wbv");
+                snprintf(spRoundPath, sizeof(spRoundPath), "singleplayer.wbv");
+              }
+              serverSimSetWantLogging(spServerSim, true);
+              serverSimSetUserLogFileName(spServerSim, spLogPath);
+              serverDedicatedLogInstall(spServerSim, true);
+              serverDedicatedLogSetCompletedPath(spRoundPath);
+            }
+
             /* Resolve the self client type / flags. */
             uint8_t selfType  = bolo_detect_client_type();
             uint8_t selfFlags = 0;
@@ -1960,6 +1999,11 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
+void gameFrontSetHostingServeReplays(bool serve) {
+  gameFrontHostingServeReplays = serve;
+  prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -2409,8 +2453,20 @@ void gameFrontShutdownServer(void) {
     httpSetLogUploadTimeout(0);
   }
 
+  /* And let go of the round, after the stash and upload above have had it.
+   * Unconditional, because the server being torn down may never have installed
+   * the writer: hosting installs only when the host has logging on, and a host
+   * that has it off would otherwise leave the previous server's round in place
+   * — a single-player game played earlier in this process — to be served to
+   * whoever joins and named in the host's recap as the last round. */
+  serverDedicatedLogUninstall();
+
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
+}
+
+bool gameFrontHasLocalServer(void) {
+  return spServerSimActive;
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -2628,6 +2684,14 @@ bool gameFrontSetupServer(void) {
     serverSimSetWantLogging(spServerSim, true);
     serverSimSetUserLogFileName(spServerSim, gameFrontHostingLogDir);
     serverDedicatedLogInstall(spServerSim, s_isLanOnly);
+    /* Whether a joined player can pull the finished round's log back for
+     * the recap. The install above resets the mode, so this runs after it.
+     * The host's Yes means AUTO, not ON: AUTO still declines to serve while
+     * WinBolo.net is running, because a WBN round's log is uploaded there
+     * instead. No is the hard off the host asked for. */
+    if (!gameFrontHostingServeReplays) {
+      serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_OFF);
+    }
   }
   return TRUE;
 }
@@ -2747,6 +2811,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
                    FILENAME_MAX);
   }
+  prefsGetString("HOSTING", "Serve Replays", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingServeReplays = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -3110,7 +3176,7 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
-    clientSimGetPlayerName(humanSim, playerName);
+    clientSimGetPlayerName(humanSim, playerName, sizeof(playerName));
     strcpy(gameFrontName, playerName);
     prefsSetString("SETTINGS", "Player Name", playerName);
   } else {
@@ -3147,6 +3213,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+  prefsSetString("HOSTING", "Serve Replays",
+                            TRUEFALSE_TO_STR(gameFrontHostingServeReplays));
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",

@@ -343,12 +343,17 @@ void lv_playersGetLgmStatus(BYTE playerNum, bool *isOut, bool *isDead) {
 *ARGUMENTS:
 *  playerNum  - The player number to set
 *  dest       - Destination string
+*  destSize   - Size of dest in bytes, including the NUL. Longer names
+*               are truncated rather than overrunning the caller.
 *********************************************************/
-void lv_playersGetPlayerName(BYTE playerNum, char *dest) {
+void lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize) {
+  if (destSize == 0) {
+    return;
+  }
   if (plrs.item[playerNum].inUse == TRUE) {
-    snprintf(dest, PLAYER_NAME_LEN, "%s", plrs.item[playerNum].playerName);
+    snprintf(dest, destSize, "%s", plrs.item[playerNum].playerName);
   } else {
-    snprintf(dest, PLAYER_NAME_LEN, "%s", NO_TANK);
+    snprintf(dest, destSize, "%s", NO_TANK);
   }
 }
 

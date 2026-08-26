@@ -434,7 +434,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
-    lv_playersGetPlayerName(returnValue, oldOwner);
+    lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
     snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }

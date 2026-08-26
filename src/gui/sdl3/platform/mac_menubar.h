@@ -26,7 +26,10 @@ struct MacPlayerSlot {
     int  ptype;            /* ClientType enum value */
     int  ping;             /* fresh ping in ms (0 = unknown) */
     int  pingBand;         /* PingBand enum value (0 = PING_BAND_NONE) */
-    char name[33];         /* player name (null-terminated) */
+    /* Must equal PLAYER_NAME_LEN in bolo/public/global.h — the literal is
+     * repeated rather than included so this header keeps its only dependency
+     * on <stdbool.h>. sdl3imgui.cpp asserts the two match. */
+    char name[65];         /* player name (null-terminated) */
     char country[3];       /* ISO 3166-1 alpha-2 (null-terminated) */
 };
 

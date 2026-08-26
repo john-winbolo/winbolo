@@ -374,10 +374,19 @@ int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *siz
 * *cancel_flag to non-zero (treat as volatile/atomic);
 * in that case any partial buffer is freed and -2 returned.
 *
+* maxBytes bounds the buffer. The far end decides how many
+* bytes arrive, so a caller fetching something with a known
+* largest legitimate size should pass it: a response that
+* passes the ceiling stops there and the call fails with -1
+* rather than growing the buffer to whatever was sent.
+* 0 means no ceiling, which is only right where nothing
+* about the response bounds it.
+*
 *ARGUMENTS:
 * path             - API path after /api/v1/
 * data_out         - Receives heap-allocated buffer (caller frees)
 * size_out         - Receives buffer size in bytes
+* maxBytes         - Largest response to accept, or 0 for no limit
 * progressFn       - Progress callback, or NULL
 * progressUserData - Opaque pointer passed to progressFn
 * cancel_flag      - Pointer to an int polled during transfer
@@ -385,6 +394,7 @@ int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *siz
 *********************************************************/
 int wbn_api_download_to_memory_progress(const char *path,
                                         uint8_t **data_out, size_t *size_out,
+                                        size_t maxBytes,
                                         WbnProgressFn progressFn,
                                         void *progressUserData,
                                         volatile int *cancel_flag);

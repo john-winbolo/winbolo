@@ -854,6 +854,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                          win, loc, false);
             }
             ImGui::PopID();
+
+            /* Hand the finished round's log to players who ask for it, so
+             * their post-game recap plays. Nested under logging because
+             * there is nothing to serve without a recording. */
+            bool serveReplays = gameFrontHostingServeReplays;
+            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_SERVEREPLAY),
+                                &serveReplays)) {
+                gameFrontSetHostingServeReplays(serveReplays);
+            }
         }
     }
 

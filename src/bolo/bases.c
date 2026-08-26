@@ -445,7 +445,8 @@ static void basesEmitCaptureMessage(GameSim *sim, struct ClientSim *cs,
   args.playerFlags = playersGetAccountFlags(&sim->plyrs, newOwner);
   playersGetCountryCode(&sim->plyrs, newOwner, args.playerCountry);
   if (prevOwner != NEUTRAL) {
-    playersGetPlayerName(&sim->plyrs, prevOwner, args.otherName, sim->isServer);
+    playersGetPlayerName(&sim->plyrs, prevOwner, args.otherName,
+                         sizeof(args.otherName), sim->isServer);
     args.otherFlags = playersGetAccountFlags(&sim->plyrs, prevOwner);
     playersGetCountryCode(&sim->plyrs, prevOwner, args.otherCountry);
     sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage,

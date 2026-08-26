@@ -29,6 +29,16 @@ void lv_imgui_events_init(void);
  * msg: the event message */
 void lv_imgui_events_add(int eventType, const char *msg);
 
+/* Add a clickable highlight line (no timestamp prefix; msg carries its own
+ * absolute time). Clicking it seeks a few seconds before seekMs and centres the
+ * game view on (mapX,mapY). */
+void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
+                                   int mapY);
+
+/* Add a load-time round-summary line (awards, section headers): no timestamp,
+ * and pinned so the presentation window never hides it. */
+void lv_imgui_events_add_summary(const char *msg);
+
 /* Clear all events */
 void lv_imgui_events_clear(void);
 

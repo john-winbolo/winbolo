@@ -1271,6 +1271,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -1288,6 +1289,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
+    # GIF encoder for the recap's clip export. Client only — no other target
+    # exports clips, and the LogViewer already omits stb_image_write_impl.c.
+    src/third_party/msf_gif/msf_gif_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/third_party/tweetnacl/tweetnacl.c
 )
@@ -1318,6 +1322,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/spec_seed_load.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
+    src/logviewer/lv_stats.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
     src/logviewer/allience.c
@@ -1985,6 +1990,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/dialogs/imgui_keyboard.cpp
@@ -2013,6 +2019,12 @@ add_executable(LogViewer
     # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
     # and no backend.h-conflicting type, so it builds under the runtime_only rules.
     src/bolo/spectator_replay.c
+    # Shared round-stats derivation: roundStatsApplyRecord / computeAwards
+    # rebuild a round's stats, awards, and notable timeline from the parsed
+    # attribution track. Pure C over the public record/stats types (only
+    # round_stats.h / attribution_track.h), so it compiles in directly like
+    # spectator_replay.c — the standalone links no bolo sim.
+    src/bolo/round_stats_derive.c
     # No-op stubs for the spectator_drain.h seam: logviewer.c carries
     # spectatorRun, but the standalone links no bolo sim (the real wrappers
     # live in client_sim.c / bolo_static for the WinBolo client) and never
@@ -2903,6 +2915,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # stays public through both.
     tests/unit/test_vote_surrender_privacy.c
     tests/unit/test_round_stats.c
+    tests/unit/test_lv_stats_time.c
     tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_vote_nolobby_disabled.c
@@ -3105,6 +3118,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
     tests/unit/test_bulk_transfer.c
+    # Round-log transfer: the BULK_KIND_ROUND_LOG stream header at the extremes
+    # the transfer uses, the realignment a rejected stream must leave behind,
+    # and the loopback refusal a server with no RoundLogSource answers with.
+    tests/unit/test_round_log.c
     # Send-side overflow guards on channelStreamSend / bulkSenderBegin: a
     # wrap-prone length is rejected with no state change.
     tests/unit/test_overflow_guards.c
@@ -3172,6 +3189,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
     tests/unit/test_attribution_reader.c
+    # Calibration anchor walk: synthetic v2 logs prove the highlight
+    # clip-time fit resolves base cells from the log's own snapshots
+    # (test_lv_calibration.c).
+    tests/unit/test_lv_calibration.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -3221,6 +3242,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/screen.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
+    src/logviewer/lv_stats.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
@@ -3352,8 +3374,10 @@ set(_unit_test_names
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
     lobby_sync_complete_codec_roundtrip
+    lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
     command_codec_lobby_claim_start
+    command_codec_rating_posted
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
@@ -3417,12 +3441,38 @@ set(_unit_test_names
     awards_omission
     awards_floors
     awards_include_bots
+    awards_subset_basic
+    awards_subset_deterministic
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
+    round_stats_codec_rejects_bad_key
     round_stats_build_summary
+    round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
     round_stats_track_cap
+    round_stats_derive_equivalence
+    highlights_cluster_wipe
+    highlights_wipe_team_bonus
+    highlights_objective_steal
+    highlights_award_anchor
+    highlights_selection
+    highlights_lead_in
+    highlights_empty
+    territory_shift_basic
+    territory_shift_bounded
+    highlights_turning_point
+    territory_recent_damage
+    highlights_front_collapse
+    highlights_award_anchor_density
+    highlights_time_spread
+    highlights_multi_lgm
+    highlights_fumble
+    highlights_rare_death
+    highlights_award_dedup
+    highlights_pickup_spree
+    highlights_action_density
+    lv_stats_clip_time_format
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped
@@ -3537,6 +3587,15 @@ set(_unit_test_names
     attribution_reader_roundtrip
     attribution_reader_rejects_bad
     attribution_reader_old_wbv
+    attribution_reader_clamps_slotcount
+    lv_walk_base_anchor_lobby_log
+    lv_walk_base_anchor_opening_snapshot
+    lv_walk_base_anchor_ordinal
+    lv_hide_lobby_window_mapping
+    lv_hide_lobby_no_lobby_fallback
+    lv_hide_lobby_no_marker_anchor
+    lv_hide_lobby_periodic_snapshot
+    lv_logged_name_from_join_event
     blocks_stream
     stream_load
     stream_pump
@@ -3657,6 +3716,9 @@ set(_unit_test_names
     spectator_lobby_cutover
     loopback_spectator_lobby
     bulk_transfer
+    round_log_header_roundtrip
+    round_log_sink_rejection_realigns
+    round_log_refused_when_unavailable
     overflow_guards
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
