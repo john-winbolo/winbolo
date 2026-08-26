@@ -149,24 +149,8 @@ local function vanish_wave(game)
   return n
 end
 
--- Forward declaration: the body lives further down (with the terrain
--- constants it captures), but spawn_wave below calls it — without this
--- the later `local function` would be invisible here and every wave
--- spawn would die on a nil call (the no-enemies-ever bug).
-local plant_core_forest
-
 local function spawn_wave(game)
   wave = wave + 1
-
-  -- The forest regrows to its target coverage before every wave, so
-  -- the defenders never run out of building material mid-game.
-  game.message(string.format("[forest] wave %d top-up check:", wave))
-  local regrown = plant_core_forest(game)
-  if wave > 1 and regrown > 0 then
-    game.message(string.format(
-      "*** The forest regrows — %d fresh trees inside the ring. ***",
-      regrown))
-  end
 
   -- Every wave opens with the outer ring back in bot hands — whatever
   -- the humans captured since the last one.
@@ -286,6 +270,106 @@ local function deal_center(game)
   return true
 end
 
+-- Terrain codes (engine values; see src/bolo/public/global.h). map_tile
+-- hands back 0..15, or DEEP_SEA for anything outside the mine border.
+local T_BUILDING, T_RIVER, T_ROAD, T_FOREST = 0, 1, 4, 5
+local T_HALFBUILDING, T_BOAT = 8, 9
+local T_MINE_START, T_DEEP_SEA = 10, 0xFF
+
+-- ---------------------------------------------------------------------
+-- The TREE RING: the map's only forest replenishment. A one-tile-thick
+-- circle at the radius of the 6 inner bases, re-seeded a few tiles at a
+-- time forever. Trees therefore come back exactly where the defenders
+-- are dug in — close enough to harvest under fire, far enough out that
+-- the fight for the center decides whether they ever reach them. There
+-- is no coverage target and no round-boundary replant: the cadence
+-- below is the whole system, and it just keeps ticking.
+local TREE_RING_R      = 6     -- same circle the 6 win/loss bases sit on
+local TREE_RING_PERIOD = 1500  -- 30 s at the engine's 50 ticks/s
+local TREE_RING_PICKS  = 6     -- ring spots drawn per replenish
+
+local tree_ring    = {}        -- {x=,y=} ring tiles, permanent blockers cut
+local next_ring_at = nil       -- tick the next replenish fires
+
+-- Rounded radius gives a closed, single-tile-thick circle (a plain
+-- dx*dx+dy*dy == R*R test leaves gaps on the diagonals). |dx| can never
+-- exceed R while the rounded distance is R, so the box is exact.
+-- The 6 inner bases sit ON this circle and can never take a tree, so
+-- they are cut once here instead of being re-tested forever; everything
+-- else that blocks planting can move or be rebuilt, so it is checked
+-- live at plant time.
+local function build_tree_ring(game)
+  local blocked = {}
+  for b = CENTER_FIRST, CENTER_FIRST + 5 do
+    local bi = game.base(b)
+    if bi then blocked[bi.x * 256 + bi.y] = true end
+  end
+  tree_ring = {}
+  for x = 128 - TREE_RING_R, 128 + TREE_RING_R do
+    for y = 128 - TREE_RING_R, 128 + TREE_RING_R do
+      local dx, dy = x - 128, y - 128
+      if math.floor(math.sqrt(dx * dx + dy * dy) + 0.5) == TREE_RING_R
+         and not blocked[x * 256 + y] then
+        tree_ring[#tree_ring + 1] = { x = x, y = y }
+      end
+    end
+  end
+end
+
+-- Ground a tree will take. Walls and water obviously refuse one; a
+-- MINED tile (10..15) is skipped because planting over it would eat the
+-- mine someone laid, and ROAD is skipped for the same reason the old
+-- planter did it — paving the defenders laid themselves must never be
+-- overgrown by the script.
+local function ring_plantable(t)
+  if t == nil or t == T_DEEP_SEA then return false end
+  if t == T_BUILDING or t == T_HALFBUILDING then return false end
+  if t == T_RIVER or t == T_BOAT then return false end
+  if t == T_ROAD then return false end
+  if t >= T_MINE_START then return false end
+  return true
+end
+
+-- Draw TREE_RING_PICKS spots WITH replacement: a duplicate draw simply
+-- lands on the tile the previous one just planted and is counted as
+-- already-forest, which is cheaper than tracking picks and makes the
+-- per-tick yield honestly random rather than guaranteed.
+local function replenish_tree_ring(game)
+  local n = #tree_ring
+  if n == 0 then return end
+
+  -- Structures move: pills get scooped, carried and re-placed, and a
+  -- base or pill standing on a ring tile has to be re-checked every
+  -- time rather than baked into the ring at setup.
+  local occupied = {}
+  for b = 1, game.num_bases() do
+    local bi = game.base(b)
+    if bi then occupied[bi.x * 256 + bi.y] = true end
+  end
+  for p = 1, game.num_pills() do
+    local pi = game.pill(p)
+    if pi and not pi.in_tank then occupied[pi.x * 256 + pi.y] = true end
+  end
+
+  local planted, standing, blocked = 0, 0, 0
+  for _ = 1, TREE_RING_PICKS do
+    local s = tree_ring[math.random(n)]
+    local t = game.map_tile(s.x, s.y)
+    if t == T_FOREST then
+      standing = standing + 1
+    elseif occupied[s.x * 256 + s.y] or not ring_plantable(t) then
+      blocked = blocked + 1
+    else
+      game.set_tile(s.x, s.y, T_FOREST)
+      planted = planted + 1
+    end
+  end
+  game.message(string.format(
+    "[forest] ring r=%d (%d tiles): %d picks -> planted=%d already=%d"
+    .. " blocked=%d",
+    TREE_RING_R, n, TREE_RING_PICKS, planted, standing, blocked))
+end
+
 -- The SILENT pre-snapshot tick: on a lobby server the round's tanks
 -- already exist here, so the deal lands before any client sees the
 -- world — nothing "changes alliance" on the newswire at tick 0.
@@ -312,90 +396,17 @@ function on_setup(game)
   end
 
   dealt = deal_center(game)
-end
 
--- Terrain codes (engine values; see global.h).
-local T_SWAMP, T_CRATER, T_ROAD, T_FOREST, T_GRASS = 2, 3, 4, 5, 7
-
--- Fresh forest every round AND a top-up at every wave start: fill the
--- area INSIDE the ring road to ~50% forest coverage
--- (radius < 10 around the center; the puddle and ALL road tiles are
--- excluded — only grass/crater/swamp convert) with trees, skipping the tiles under
--- bases and pills. Runs from on_start (a RUNNING tick) so every client
--- receives the changes through the normal map-delta stream; a new
--- random layout each round keeps the defenders in building material.
-local FOREST_FRACTION = 0.50
-function plant_core_forest(game)  -- assigns the forward local above
+  -- The ring is fixed geometry, so it is measured once, here, off the
+  -- base positions the map file actually shipped.
   math.randomseed(os.time())
-  local structures = {}
-  for b = 1, game.num_bases() do
-    local bi = game.base(b)
-    if bi then structures[bi.x * 256 + bi.y] = true end
-  end
-  for n = 1, game.num_pills() do
-    local pi = game.pill(n)
-    if pi and not pi.in_tank then structures[pi.x * 256 + pi.y] = true end
-  end
-  -- Inventory the core: existing forest counts toward the target, every
-  -- grass/crater/swamp tile is plantable ground (roads never). Top-up semantics:
-  -- planting stops once forest reaches FOREST_FRACTION of the combined
-  -- ground, so a wave-start call regrows only what the fighting consumed.
-  local eligible = {}
-  local nForest = 0
-  for x = 118, 138 do
-    for y = 118, 138 do
-      local dx, dy = x - 128, y - 128
-      if dx * dx + dy * dy < 93 then          -- strictly inside r=10 ring
-        local t = game.map_tile(x, y)
-        if not structures[x * 256 + y] then
-          if t == T_FOREST then
-            nForest = nForest + 1
-          elseif t == T_GRASS or t == T_CRATER or t == T_SWAMP then
-            -- Roads are deliberately NOT plantable: the ring road's
-            -- rounded tiles dip just inside the fill disc and were
-            -- sprouting trees, and a top-up must never overgrow roads
-            -- the defenders paved themselves.
-            eligible[#eligible + 1] = x * 256 + y
-          end
-        end
-      end
-    end
-  end
-  local want = math.floor(FOREST_FRACTION * (#eligible + nForest)) - nForest
-  local planted = 0
-  local n = #eligible
-  while planted < want and n > 0 do
-    local i = math.random(n)                  -- random tile, no repeats
-    local xy = eligible[i]
-    eligible[i] = eligible[n]
-    n = n - 1
-    game.set_tile(math.floor(xy / 256), xy % 256, T_FOREST)
-    planted = planted + 1
-  end
-  -- Replanting debug: the full inventory arithmetic every time the
-  -- planter runs, so a "why no new trees?" round is diagnosable from
-  -- the newswire / DS console alone.
-  local ground = #eligible + nForest
-  game.message(string.format(
-    "[forest] ground=%d (forest=%d + open=%d) cover=%.0f%% target=%.0f%%"
-    .. " want=%+d planted=%d -> now %d/%d (%.0f%%)",
-    ground, nForest, #eligible,
-    ground > 0 and 100 * nForest / ground or 0,
-    100 * FOREST_FRACTION,
-    want, planted,
-    nForest + planted, ground,
-    ground > 0 and 100 * (nForest + planted) / ground or 0))
-  if want > 0 and planted < want then
-    game.message(string.format(
-      "[forest] WARNING: wanted %d but only %d open tiles were plantable",
-      want, planted))
-  end
-  return planted
+  build_tree_ring(game)
 end
 
+-- Nothing forest-related happens at a round boundary: whatever trees
+-- the map file ships with are the trees the round opens with, and the
+-- ring cadence in on_tick takes it from there.
 function on_start(game)
-  game.message("[forest] round-start planting:")
-  plant_core_forest(game)
   game.message(string.format(
     "*** SURVIVAL: dig in! First of %d waves in %d seconds. ***",
     WAVES, GRACE_TICKS / 50))
@@ -423,6 +434,17 @@ function on_tick(game, tick)
     game.end_round(
       "*** The center has fallen — the attackers take the island! ***")
     return
+  end
+
+  -- Tree ring, on its own steady clock. Deliberately ahead of every
+  -- early return below, so it keeps its cadence through the grace
+  -- period, the live waves and the breathers alike — the trees come
+  -- back at the same rate no matter what the round is doing.
+  if next_ring_at == nil then
+    next_ring_at = tick + TREE_RING_PERIOD
+  elseif tick >= next_ring_at then
+    next_ring_at = tick + TREE_RING_PERIOD
+    replenish_tree_ring(game)
   end
 
   -- Arm wave 1 off the round's first running tick.
