@@ -187,6 +187,20 @@ void wbRoundLogFetchCancel(void);
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
+/* Smallest lobby window a restored size is allowed to shrink to — below
+ * this the two-column layout's own floors stop fitting. */
+static const int DIALOG_MIN_W = 640;
+static const int DIALOG_MIN_H = 480;
+
+/* Players/map column split, as a signed offset off the automatic split, in
+ * logical (UI-scale-independent) pixels — the layout multiplies it by the
+ * scale it computed for the current window, so a scale change carries the
+ * divider along instead of stranding it. Positive widens the left column.
+ * Seeded from WINDOW/Lobby Split on first use rather than at lobby entry:
+ * the in-game seam calls imguiLobbyRenderFrame without going through
+ * imguiLobbyShow, and both paths have to come up on the saved split. */
+static float s_lobbySplitOffset     = 0.0f;
+static bool  s_lobbySplitOffsetInit = false;
 
 /* Per-slot tracking of whether the bot's name was manually overridden
  * by the host typing into the name input field.  Cleared when a bot
@@ -8514,6 +8528,54 @@ static void renderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
  * panel (and the controller Settings tab) call it. */
 static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 
+/* Open state of the settings CollapsingHeader. File-scope rather than a
+ * panel-local static because the lobby's post-game edge handler below
+ * drives it from outside the panel. */
+static bool s_settingsOpen     = true;
+static bool s_settingsOpenInit = false;
+/* Set while the header sits collapsed on the post-game view's initiative,
+ * so the recap clearing knows there is something to put back. */
+static bool s_settingsAutoCollapsed = false;
+static bool s_settingsPreCollapse   = true;
+
+/* Default collapsed on the Steam Deck: its small screen needs the
+ * vertical room for the player list and the Ready button, and the
+ * map / game-type summary is already on the lobby's top status bar.
+ * Desktop keeps it open. Runs from whichever of the panel or the
+ * post-game edge handler comes first, so a first-frame init can't
+ * clobber an auto-collapse that already happened. */
+static void lobbySettingsHeaderInit(void) {
+    if (s_settingsOpenInit) return;
+    s_settingsOpen     = !uiModeIsSteamDeck();
+    s_settingsOpenInit = true;
+}
+
+/* The post-game recap needs the vertical room the settings form takes,
+ * so entering the post-game view folds the header away — once, on the
+ * edge, never re-forced per frame, so the chevron still re-opens it.
+ *
+ * Restore policy on the way out (countdown clears the summary): put back
+ * the pre-collapse state only if the header is still exactly as the
+ * auto-collapse left it. Re-opening it during the recap clears the flag,
+ * so a manual choice outranks the remembered state and survives into the
+ * next round. */
+static void lobbySettingsPostGameEdge(bool showLastRound) {
+    static bool s_prevShowLastRound = false;
+    lobbySettingsHeaderInit();
+    if (showLastRound && !s_prevShowLastRound) {
+        s_settingsPreCollapse   = s_settingsOpen;
+        /* Already collapsed → nothing was taken away, nothing to give back. */
+        s_settingsAutoCollapsed = s_settingsOpen;
+        s_settingsOpen          = false;
+    } else if (showLastRound) {
+        if (s_settingsOpen) s_settingsAutoCollapsed = false;
+    } else if (s_prevShowLastRound) {
+        if (s_settingsAutoCollapsed) s_settingsOpen = s_settingsPreCollapse;
+        s_settingsAutoCollapsed = false;
+    }
+    s_prevShowLastRound = showLastRound;
+}
+
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
@@ -8531,20 +8593,11 @@ static void renderGameSettingsPanel(ClientSim *cs,
     }
 
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
-     * Settings" button at the bottom of the panel can fold it away
-     * once the host is happy with the configuration.
-     *
-     * Default collapsed on the Steam Deck: its small screen needs the
-     * vertical room for the player list and the Ready button, and the
-     * map / game-type summary is already on the lobby's top status bar.
-     * Desktop keeps it open. The chevron / "Hide Settings" button still
-     * toggles it either way. */
-    static bool s_settingsOpen     = true;
-    static bool s_settingsOpenInit = false;
-    if (!s_settingsOpenInit) {
-        s_settingsOpen     = !uiModeIsSteamDeck();
-        s_settingsOpenInit = true;
-    }
+     * Settings" button at the bottom of the panel — and the post-game
+     * auto-collapse — can fold it away once the host is happy with the
+     * configuration. The chevron still toggles it either way; see
+     * lobbySettingsHeaderInit / lobbySettingsPostGameEdge above. */
+    lobbySettingsHeaderInit();
     ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
     /* Capture screen-Y of the header before drawing so the
      * right-aligned openHost control can be overlaid on the same
@@ -9766,6 +9819,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             s_recapShowAllAwards  = false;
             s_recapShowHighlights = false;
         }
+        /* Fold the settings header away for the post-game view and put it
+         * back when the countdown clears the summary. Called every frame,
+         * acts only on the transitions. */
+        lobbySettingsPostGameEdge(lobbyShowLastRound);
 
         /* Settings above the layout is the two-column (mouse) path only; the
          * tabbed layout renders the same form in a dedicated tab, so skip it
@@ -10403,7 +10460,47 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (recapW > roomW) recapW = roomW;
                 if (recapW > mapPanelW) mapPanelW = recapW;
             }
-            float playerPanelW = availW - mapPanelW - 8.0f;
+
+            /* Draggable split. The width above is the automatic split; the
+             * gutter splitter (drawn between the two columns further down)
+             * accumulates a signed offset off it, positive widening the left
+             * column. Kept as an offset in logical pixels rather than as a
+             * fraction so a window resize reflows the automatic part and
+             * leaves the user's adjustment where they put it.
+             *
+             * The drag floors are deliberately looser than the automatic
+             * layout's own (kRecapLeftMinW, the natural preview width): this
+             * is the user overriding the automatic split, so they only need
+             * to be stopped short of squashing either column into nothing.
+             * The offset is re-synced to the clamped result each frame, so
+             * dragging past a floor doesn't build up slack the user has to
+             * drag back out before the split moves again. */
+            const float kSplitterW     = 8.0f;
+            const float kSplitLeftMinW = 180.0f;
+            const float kSplitMapMinW  = 220.0f;
+            if (!s_lobbySplitOffsetInit) {
+                s_lobbySplitOffset     = gameFrontLobbySplit;
+                s_lobbySplitOffsetInit = true;
+            }
+            float autoMapPanelW = mapPanelW;
+            mapPanelW -= s_lobbySplitOffset * s;
+            float maxMapW = availW - kSplitterW - kSplitLeftMinW * s;
+            if (mapPanelW > maxMapW) mapPanelW = maxMapW;
+            /* Map floor last so it wins on a lobby too narrow for both. */
+            if (mapPanelW < kSplitMapMinW * s) mapPanelW = kSplitMapMinW * s;
+            s_lobbySplitOffset = (autoMapPanelW - mapPanelW) / (s > 0.0f ? s : 1.0f);
+
+            /* Persist through the same debounced window-settings path the
+             * position and size use — a drag or a re-clamp is a change, and
+             * gameFrontPumpDirty (already driven per frame below) flushes the
+             * trailing one. The epsilon is coarser than the two decimals the
+             * value is stored at, so a reload can't look like a change. */
+            if (SDL_fabsf(s_lobbySplitOffset - gameFrontLobbySplit) > 0.02f) {
+                gameFrontLobbySplit = s_lobbySplitOffset;
+                gameFrontSaveWindowSettings();
+            }
+
+            float playerPanelW = availW - mapPanelW - kSplitterW;
 
             /* "Allow New Players" row spans the full width above both
              * panels so PlayerPanel and MapPanel top edges align in Y. */
@@ -10720,7 +10817,33 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
             ImGui::EndGroup(); /* /left column */
 
-            ImGui::SameLine(0, 8.0f);
+            /* Vertical splitter, sized to fill the gutter exactly so the two
+             * columns keep landing on availW. SameLine(0,0) on both sides —
+             * the gutter is the button, not item spacing. Hit-tested full
+             * column height; the offset it drives is clamped where the widths
+             * are computed, above. */
+            ImGui::SameLine(0, 0.0f);
+            ImVec2 splitPos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##LobbyColSplitter",
+                                   ImVec2(kSplitterW, leftFillH));
+            bool splitActive = ImGui::IsItemActive();
+            if (splitActive || ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                /* Only visible while the user is on it — the resting lobby
+                 * keeps the plain gap it has always had. */
+                ImGui::GetWindowDrawList()->AddLine(
+                    ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y),
+                    ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y + leftFillH),
+                    ImGui::GetColorU32(splitActive ? ImGuiCol_SeparatorActive
+                                                   : ImGuiCol_SeparatorHovered),
+                    2.0f);
+            }
+            if (splitActive) {
+                /* Mouse delta is real pixels; the offset is logical. */
+                s_lobbySplitOffset +=
+                    ImGui::GetIO().MouseDelta.x / (s > 0.0f ? s : 1.0f);
+            }
+            ImGui::SameLine(0, 0.0f);
 
             /* Right column — MapPanel extends down to just above the
              * Ready/Balance footer, so the map preview's bottom border
@@ -11166,6 +11289,51 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     return LOBBY_FRAME_CONTINUE;
 }
 
+/* Usable bounds of the display a restored lobby window should be fitted
+ * to: the one the saved dialog position lands on, else the one the window
+ * is currently on, else the primary. Mirrors the same fallback chain the
+ * game window's restore uses in winbolo.c. False when SDL can't name a
+ * display at all, in which case the caller skips the clamp rather than
+ * clamping against garbage. */
+static bool lobbyRestoreUsableBounds(SDL_Window *window, SDL_Rect *out) {
+    SDL_DisplayID dispID = 0;
+    if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+        SDL_Point pt = { gameFrontDialogX, gameFrontDialogY };
+        dispID = SDL_GetDisplayForPoint(&pt);
+    }
+    if (!dispID && window) dispID = SDL_GetDisplayForWindow(window);
+    if (!dispID) dispID = SDL_GetPrimaryDisplay();
+    if (!dispID) return false;
+    return SDL_GetDisplayUsableBounds(dispID, out);
+}
+
+/* Record the lobby window's current size and mark the window settings
+ * dirty. Debounced downstream (gameFrontSaveWindowSettings writes at most
+ * once per 500ms, gameFrontPumpDirty flushes the trailing event), so this
+ * is safe to call from every move/resize event of a drag.
+ *
+ * Skipped when the window size isn't the player's to choose: controller
+ * mode leaves the host window alone, and an active device preset forces
+ * its own dimensions — saving either would overwrite the desktop size. */
+static void lobbySaveWindowGeometry(SDL_Window *window) {
+    if (!window) return;
+#if !BOLO_MOBILE
+    if (uiShouldUseControllerMode()) return;
+    if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
+        s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
+        return;
+    }
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window, &w, &h);
+    if (w <= 0 || h <= 0) return;
+    gameFrontLobbyW = w;
+    gameFrontLobbyH = h;
+    gameFrontSaveWindowSettings();
+#else
+    (void)window;
+#endif
+}
+
 /* Blocking desktop modal: owns a private ImGui context + SDL backends and
  * runs its own event/draw loop, calling imguiLobbyRenderFrame() to build
  * each frame. Returns 1 if the game started, 0 if the player left. */
@@ -11192,11 +11360,54 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #endif
 
 #if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    /* Reopen at the size the player last left the lobby at, falling back to
+     * the built-in default when nothing is saved. Clamped to the usable
+     * bounds of the display the restore targets so a size saved on a bigger
+     * monitor that is no longer attached can't come back larger than the
+     * screen. dialogSetWindowSize still owns the controller-mode and
+     * device-preset overrides. */
+    {
+        int lobbyW = DIALOG_W, lobbyH = DIALOG_H;
+        if (gameFrontLobbyW > 0 && gameFrontLobbyH > 0) {
+            lobbyW = gameFrontLobbyW;
+            lobbyH = gameFrontLobbyH;
+        }
+        SDL_Rect usable;
+        if (lobbyRestoreUsableBounds(window, &usable)) {
+            if (lobbyW > usable.w) lobbyW = usable.w;
+            if (lobbyH > usable.h) lobbyH = usable.h;
+        }
+        if (lobbyW < DIALOG_MIN_W) lobbyW = DIALOG_MIN_W;
+        if (lobbyH < DIALOG_MIN_H) lobbyH = DIALOG_MIN_H;
+        dialogSetWindowSize(window, lobbyW, lobbyH);
+    }
     dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
+    /* A saved position from a monitor that has since been unplugged (or one
+     * that no longer fits the restored size) would leave the lobby off-screen
+     * with no way to drag it back, so pull it inside the target display's
+     * usable area. Only writes when it actually moved, so the normal case
+     * leaves the saved position untouched. */
+    {
+        SDL_Rect usable;
+        int px = 0, py = 0, ww = 0, wh = 0;
+        SDL_GetWindowPosition(window, &px, &py);
+        SDL_GetWindowSize(window, &ww, &wh);
+        if (lobbyRestoreUsableBounds(window, &usable) && ww > 0 && wh > 0) {
+            int cx = px, cy = py;
+            if (cx + ww > usable.x + usable.w) cx = usable.x + usable.w - ww;
+            if (cy + wh > usable.y + usable.h) cy = usable.y + usable.h - wh;
+            if (cx < usable.x) cx = usable.x;
+            if (cy < usable.y) cy = usable.y;
+            if (cx != px || cy != py) {
+                SDL_SetWindowPosition(window, cx, cy);
+                dialogSaveCurrentPosition(window);
+                gameFrontSaveWindowSettings();
+            }
+        }
+    }
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -11248,7 +11459,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            /* Position goes to gameFrontDialogX/Y (shared with every other
+             * dialog — it is the one dialog window); the size is the lobby's
+             * own. Both then take the debounced save path. */
             dialogHandleWindowMoveResize(window, &ev);
+            if ((ev.type == SDL_EVENT_WINDOW_MOVED ||
+                 ev.type == SDL_EVENT_WINDOW_RESIZED) &&
+                ev.window.windowID == SDL_GetWindowID(window)) {
+                lobbySaveWindowGeometry(window);
+            }
             if (ev.type == SDL_EVENT_QUIT) {
                 running = false;
             }
@@ -11337,6 +11556,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
     /* Release per-frame state (texture, popup buffers, transient flags). */
     imguiLobbyFrameReset();
+
+    /* The lobby closing is the last chance to write a move / resize / split
+     * drag that landed inside the debounce window — there is no further
+     * per-frame pump to flush it. */
+    gameFrontFlushWindowSettings();
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);

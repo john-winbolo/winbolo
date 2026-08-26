@@ -278,6 +278,19 @@ static WbnStats gameFrontWbnStats;
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
 
+/* Lobby window size and the lobby's players/map column split. The lobby
+ * runs in the shared dialog window, so its position rides on
+ * gameFrontDialogX/Y above and only the size needs its own keys; -1 means
+ * "never saved", so the lobby opens at its built-in default.
+ *
+ * The split offset is stored in logical (UI-scale-independent) pixels —
+ * the lobby multiplies it by the scale it computes for the current
+ * window, so a scale change moves the divider with the rest of the
+ * layout instead of stranding it. */
+int gameFrontLobbyW = -1;
+int gameFrontLobbyH = -1;
+float gameFrontLobbySplit = 0.0f;
+
 /* Dialog states */
 openingStates dlgState = openStart;
 
@@ -3151,6 +3164,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Dialog Y", "-1", buff, FILENAME_MAX);
   gameFrontDialogY = atoi(buff);
 
+  /* Lobby window size and column split */
+  prefsGetString("WINDOW", "Lobby Width", "-1", buff, FILENAME_MAX);
+  gameFrontLobbyW = atoi(buff);
+  prefsGetString("WINDOW", "Lobby Height", "-1", buff, FILENAME_MAX);
+  gameFrontLobbyH = atoi(buff);
+  prefsGetString("WINDOW", "Lobby Split", "0", buff, FILENAME_MAX);
+  gameFrontLobbySplit = (float)atof(buff);
+
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
@@ -3428,6 +3449,16 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Dialog X", buff);
   intToStr(gameFrontDialogY, buff, sizeof(buff));
   prefsSetString("WINDOW", "Dialog Y", buff);
+
+  intToStr(gameFrontLobbyW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Lobby Width", buff);
+  intToStr(gameFrontLobbyH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Lobby Height", buff);
+  /* Two decimals: the lobby's change test uses a 0.02 logical-pixel
+     epsilon, so the stored value must round finer than that or every
+     launch would re-write it. */
+  SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplit);
+  prefsSetString("WINDOW", "Lobby Split", buff);
 
   s_windowSettingsDirty = false;
 }
