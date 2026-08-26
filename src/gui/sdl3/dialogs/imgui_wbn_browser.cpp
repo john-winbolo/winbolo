@@ -1142,6 +1142,8 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 }
                 ImGui::SameLine(0, 20);
                 if (e.num_ratings > 0) {
+                    imguiStarRating(e.rating);
+                    ImGui::SameLine();
                     char ratingBuf[16];
                     SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", e.rating);
                     MessageArgs args = {};
