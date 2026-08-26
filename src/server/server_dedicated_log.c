@@ -620,10 +620,24 @@ void serverDedicatedLogUninstall(void) {
      * anyone who joins. Nothing here is undone by the sim being freed
      * afterwards — it is all module state that outlives it. */
     transportUdpServerSetRoundLogSource(NULL);
+    /* log.c calls the drain at the top of every logWriteTick, and the sims that
+     * tick are not only the one that installed us — the welcome screen's
+     * background game is a real ServerSim and ticks whenever the menu is up.
+     * The drain bails on a NULL sim, and clearing s_logSim below is what makes
+     * that guard mean anything, since until now it was reading a pointer to a
+     * sim serverSimDestroy had already freed. Dropping the hook as well leaves
+     * nothing at all pointing into this module between one server and the next.
+     * logCreate deliberately does not clear the hook — a background sim created
+     * after an install would disarm a live writer — so here is the only place
+     * it comes off. */
+    logSetPreTickHook(NULL);
     s_logSim = NULL;
     s_completedPath[0] = '\0';
     s_lastRoundFile[0] = '\0';
     s_roundRan = FALSE;
+    /* Work the deliver path queued for a drain that will now never come. These
+     * gate the drain's early-out alongside the sim pointer, so a session that
+     * ended with one still set is the case that reached the dereference. */
     s_lobbyEnterPending = FALSE;
     s_gameStartPending = FALSE;
     s_mapMsgPending = FALSE;

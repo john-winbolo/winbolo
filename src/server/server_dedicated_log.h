@@ -34,6 +34,12 @@ void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog);
  * with it. That round is then handed to a client that asks for it and named in
  * the host's own recap: the wrong round, and one the host never chose to share.
  *
+ * It also drops the registrations that outlive the sim: the transport's round
+ * log source and log.c's pre-tick hook. That hook is the one with teeth — the
+ * sims that reach logWriteTick are not only the one that installed us, the
+ * welcome screen's background game among them, and the drain it calls held a
+ * pointer to a sim that had already been freed.
+ *
  * Call it wherever a server is torn down, after any final stash and upload,
  * whether or not that server installed. Idempotent, and safe with nothing
  * installed. */
