@@ -606,6 +606,33 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     transportUdpServerSetRoundLogSource(&s_roundLogSource);
 }
 
+void serverDedicatedLogUninstall(void) {
+    /* The same state install resets, cleared at the other end of the sim's
+     * life. Install alone is not enough: it runs only for a server that logs,
+     * so a host that turned logging off never resets anything and inherits
+     * whatever the last server in this process left behind — its completed
+     * round as the last round, and its serve mode with it.
+     *
+     * The transport's source goes first. Passing NULL is what makes it answer
+     * PACKET_ROUND_LOG_REQ with "nothing here" rather than reading through
+     * this module's now-cleared path, and it is the half that closes the leak
+     * on its own: the recap can only name a file, but this hands the bytes to
+     * anyone who joins. Nothing here is undone by the sim being freed
+     * afterwards — it is all module state that outlives it. */
+    transportUdpServerSetRoundLogSource(NULL);
+    s_logSim = NULL;
+    s_completedPath[0] = '\0';
+    s_lastRoundFile[0] = '\0';
+    s_roundRan = FALSE;
+    s_lobbyEnterPending = FALSE;
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
+    s_serveMode = ROUND_LOG_SERVE_AUTO;
+    /* s_pendingUploadFile is deliberately left alone: a round stashed for
+     * WinBolo.net that could not go out yet (the session was down) is still
+     * owed, and the teardown paths flush it on their own schedule. */
+}
+
 bool serverDedicatedLogIsActive(void) {
     return s_isLogging;
 }

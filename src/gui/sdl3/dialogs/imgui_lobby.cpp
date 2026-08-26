@@ -6696,9 +6696,11 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * A triple gate on the file: only a round this process recorded, published
      * to a file that is actually there. gameFrontHasLocalServer() is the
      * load-bearing one — the accessor describes whatever round this process
-     * last recorded and is only cleared when the log writer is installed, so a
-     * player who hosted, left and then joined someone else's server would
-     * otherwise see a completely different game replayed here. */
+     * last recorded, so a player who hosted, left and then joined someone
+     * else's server would otherwise see a completely different game replayed
+     * here. It does not cover a host that is local but is not the server that
+     * recorded the round; what covers that is gameFrontShutdownServer clearing
+     * the accessor as it tears each server down. */
     const char *replayPath = serverDedicatedLogLastRoundFile();
     SDL_PathInfo replayInfo;
     const bool haveLocalFile = gameFrontHasLocalServer() &&

@@ -26,6 +26,19 @@ struct ServerSim;
  * servermain global. */
 void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog);
 
+/* Drop the sim and forget the round it recorded. Install is the other half of
+ * this and resets the same state, but only the callers that install reach it:
+ * a host with logging turned off never calls install at all, so without this
+ * the previous server in the process — a single-player game, say — leaves its
+ * completed round standing as the last round, and the AUTO serve gate standing
+ * with it. That round is then handed to a client that asks for it and named in
+ * the host's own recap: the wrong round, and one the host never chose to share.
+ *
+ * Call it wherever a server is torn down, after any final stash and upload,
+ * whether or not that server installed. Idempotent, and safe with nothing
+ * installed. */
+void serverDedicatedLogUninstall(void);
+
 /* Teardown query API for servermain's final-round upload. Since the
  * module owns the log state privately, servermain's shutdown reads it
  * back through these instead of the former shared globals. IsActive
