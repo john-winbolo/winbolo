@@ -491,6 +491,16 @@ target_link_options(winbolo PRIVATE
     -lwebsocket.js
 )
 
+# --shell-file above is just a flag string to CMake — it does not parse the
+# path out and register it as an input, so editing shell.html changes no
+# object file and no tracked dependency, and the link is skipped. The build
+# then succeeds while still emitting the previous winbolo.html, and the only
+# symptom is a page whose behaviour does not match the source. Same reason
+# the CJK subset stamp is a link dependency above; APPEND so it composes
+# with that one instead of replacing it.
+set_property(TARGET winbolo APPEND PROPERTY
+             LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shell.html")
+
 set_target_properties(winbolo PROPERTIES
     SUFFIX ".html"
 )
