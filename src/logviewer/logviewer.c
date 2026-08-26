@@ -122,33 +122,6 @@ static void getDef(char *dest, int index) {
 }
 
 /* --------------------------------------------------------------------------
- * lv_updateSpeed -- sets timerSleep for the given speed value.
- * Called from imgui_controls.cpp via extern, and from mainLoadPreferences.
- * -------------------------------------------------------------------------- */
-void lv_updateSpeed(BYTE spd, int updateSlider) {
-    (void)updateSlider; /* ImGui slider reads g_lv->speed directly */
-    int ts;
-    switch (spd) {
-    case 2: ts = 18; break;
-    case 3: ts = 16; break;
-    case 4: ts = 14; break;
-    case 5: ts = 12; break;
-    case 6: ts = 10; break;
-    case 7: ts =  8; break;
-    case 8: ts =  6; break;
-    case 9: ts =  1; break;
-    default:
-        ts = 20;
-        spd = 1;
-        break;
-    }
-    if (g_lv != NULL) {
-        g_lv->speed = spd;
-        g_lv->timerSleep = ts;
-    }
-}
-
-/* --------------------------------------------------------------------------
  * Sound
  * -------------------------------------------------------------------------- */
 void lv_frontEndPlaySound(sndEffects value) {
@@ -218,13 +191,6 @@ void lv_controlsEnable(int state) {
 }
 
 /* --------------------------------------------------------------------------
- * Screen update / redraw
- * -------------------------------------------------------------------------- */
-void lv_windowNeedRedraw(void) {
-    g_lv->wantScreenUpdate = TRUE;
-}
-
-/* --------------------------------------------------------------------------
  * Playback drawing
  * -------------------------------------------------------------------------- */
 void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks,
@@ -235,67 +201,8 @@ void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks
 }
 
 /* --------------------------------------------------------------------------
- * SDL timer callbacks (called on background threads -- only set flags)
- * -------------------------------------------------------------------------- */
-Uint32 SDLCALL lv_windowFrameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
-    (void)userdata; (void)timerID; (void)interval;
-    g_lv->wantScreenUpdate = TRUE;
-    if (g_lv->playIsPlaying == TRUE) {
-        return 50;
-    }
-    return 0;
-}
-
-Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
-    (void)userdata; (void)timerID; (void)interval;
-    lv_clientMutexWaitFor();
-    lv_screenLogTick();
-    if (g_lv->doubleSpeed == TRUE) {
-        lv_screenLogTick();
-        lv_screenLogTick();
-    }
-    lv_clientMutexRelease();
-    if (g_lv->playIsPlaying == TRUE) {
-        return (Uint32)g_lv->timerSleep;
-    }
-    return 0;
-}
-
-/* --------------------------------------------------------------------------
  * Playback control
  * -------------------------------------------------------------------------- */
-void lv_windowPlay(void) {
-    /* Spectator live-DVR runs in the foreground spectatorRun loop, which drives
-       the decoder itself — never start the background replay timer here (it would
-       double-drive lv_screenLogTick and race the live append). playIsPlaying is
-       the orthogonal play/freeze flag the loop reads. */
-    if (lv_screenSpecIsLiveMode()) {
-        g_lv->playIsPlaying = TRUE;
-        return;
-    }
-    if (g_lv->playIsPlaying == FALSE) {
-        g_lv->timerGameID  = SDL_AddTimer(20,  lv_windowTimer,      NULL);
-        g_lv->timerFrameID = SDL_AddTimer(50,  lv_windowFrameTimer, NULL);
-    }
-    g_lv->playIsPlaying = TRUE;
-}
-
-void lv_windowPause(void) {
-    if (lv_screenSpecIsLiveMode()) {
-        g_lv->playIsPlaying = FALSE;
-        return;
-    }
-    lv_clientMutexWaitFor();
-    if (g_lv->playIsPlaying == TRUE) {
-        SDL_RemoveTimer(g_lv->timerGameID);
-        SDL_RemoveTimer(g_lv->timerFrameID);
-        g_lv->timerGameID  = 0;
-        g_lv->timerFrameID = 0;
-    }
-    g_lv->playIsPlaying = FALSE;
-    lv_clientMutexRelease();
-}
-
 /* Jump the scrubber to a highlight moment and centre the view on its cell.
  * The seek walks the log and rebuilds the world, the same state lv_windowTimer
  * ticks on the SDL timer thread under lv_clientMutex, so playback is stopped
@@ -319,29 +226,6 @@ void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
         lv_windowPlay();
     }
     g_lv->wantScreenUpdate = TRUE;
-}
-
-void lv_windowStop(int corruptLog) {
-    /* Spectator: the panel's Stop button freezes the feed rather than closing the
-       live log out from under the foreground host loop. */
-    if (lv_screenSpecIsLiveMode()) {
-        g_lv->playIsPlaying = FALSE;
-        return;
-    }
-    if (corruptLog == TRUE) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
-                                 "Error: Corrupt Log File", NULL);
-    }
-    lv_windowPause();
-    SDL_Delay(500);
-    lv_clientMutexWaitFor();
-    lv_frontEndSetGameInformation(TRUE, 0, 0, 0, NULL, 0, 0, 0, 0, 0, NULL, 0);
-    lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, FALSE);
-    lv_screenCloseLog();
-    g_lv->isLoaded = FALSE;
-    lv_imgui_events_clear();
-    lv_clientMutexRelease();
-    lv_windowNeedRedraw();
 }
 
 void lv_windowFastForward(void) {

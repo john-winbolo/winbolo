@@ -214,6 +214,74 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/lang.c
 )
 
+# Log viewer sources — the .wbv decoder, its block-grid renderer and the
+# embedded reel host (lv_embed.c). The modal viewer, the spectator host and
+# every ImGui panel of the viewer's own are left out; lv_stubs_wasm.c (in
+# WASM_SOURCES below) resolves what the decoder still calls back into.
+#
+# Never add here:
+#   logviewer.c, main.c   - the modal viewer / spectator host and the
+#                           standalone entry point. lv_embed.c is the half of
+#                           the host that every build needs; logviewer.c drags
+#                           in the viewer's menus, dialogs and comments panel.
+#   clientmutex.c, dns.c,
+#   platform/platform_config.c,
+#   platform/platform_dialogs.c
+#                         - desktop drivers, replaced by the wasm variants
+#                           under src/logviewer/wasm listed below.
+#   bolo_shim.c           - maps bolo names onto lv_* bodies for the
+#                           standalone viewer's copy of mapview.c; it would
+#                           collide with src/bolo's own definitions here.
+#   imgui_main_menu.cpp, imgui_dialogs.cpp, imgui_comments.cpp,
+#   imgui_logviewer_menu.cpp
+#                         - reach WinBolo.net through http.c, which carries a
+#                           hard #error under Emscripten because it embeds the
+#                           WBN signing key. Not ported, not stubbed into the
+#                           UI: the web build has no comments panel.
+#
+# src/logviewer/wasm/clientmutex_wasm.c and dns_wasm.c do not collide with
+# src/wasm/clientmutex_wasm.c and dns_wasm.c already in this target: the
+# logviewer pair defines lv_clientMutex* / lv_dns*, the client pair defines
+# clientMutex* / dnsLookups*. Nothing is shared between them.
+set(LOGVIEWER_SOURCES
+    # Host bring-up, replay driver and the embedded reel API
+    ${SRC_ROOT}/logviewer/lv_embed.c
+    # Log container: zip/zlib member access and the snapshot index
+    ${SRC_ROOT}/logviewer/blocks.c
+    ${SRC_ROOT}/logviewer/lv_attribution.c
+    ${SRC_ROOT}/logviewer/snapshot.c
+    # Decode + screen assembly
+    ${SRC_ROOT}/logviewer/screen.c
+    ${SRC_ROOT}/logviewer/screencalc.c
+    ${SRC_ROOT}/logviewer/screentank.c
+    ${SRC_ROOT}/logviewer/screenlgm.c
+    ${SRC_ROOT}/logviewer/screenbullet.c
+    ${SRC_ROOT}/logviewer/spec_seed_load.c
+    # Replayed world model
+    ${SRC_ROOT}/logviewer/players.c
+    ${SRC_ROOT}/logviewer/shells.c
+    ${SRC_ROOT}/logviewer/allience.c
+    ${SRC_ROOT}/logviewer/pillbox.c
+    ${SRC_ROOT}/logviewer/bases.c
+    ${SRC_ROOT}/logviewer/bolo_map.c
+    ${SRC_ROOT}/logviewer/starts.c
+    ${SRC_ROOT}/logviewer/labels.c
+    ${SRC_ROOT}/logviewer/messages.c
+    ${SRC_ROOT}/logviewer/sounddist.c
+    ${SRC_ROOT}/logviewer/global.c
+    ${SRC_ROOT}/logviewer/util.c
+    # Tile renderer. game_view_stubs.c covers the standalone-only game view
+    # that draw.c calls when LogViewerState::gameView is set — never in an
+    # embed, which leaves it FALSE.
+    ${SRC_ROOT}/logviewer/draw.c
+    ${SRC_ROOT}/logviewer/game_view_stubs.c
+    # Platform drivers, wasm variants
+    ${SRC_ROOT}/logviewer/wasm/clientmutex_wasm.c
+    ${SRC_ROOT}/logviewer/wasm/dns_wasm.c
+    ${SRC_ROOT}/logviewer/wasm/platform_config_wasm.c
+    ${SRC_ROOT}/logviewer/wasm/platform_dialogs_wasm.c
+)
+
 # WASM replacement sources
 set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main_wasm.c
@@ -222,6 +290,7 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gui_stubs_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lv_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/prefs_bridge_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
@@ -253,6 +322,7 @@ add_executable(winbolo
     ${WBN_SOURCES}
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}
+    ${LOGVIEWER_SOURCES}
     ${WASM_SOURCES}
 )
 
@@ -265,6 +335,12 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/client_frontend
     ${cjson_SOURCE_DIR}
     ${SRC_ROOT}/third_party/imgui_markdown
+    # Listed after src/gui so a GUI translation unit's "tiles.h" / "positions.h"
+    # still resolves to its own; the log viewer's copies of those names reach
+    # its TUs through the including file's own directory.
+    ${SRC_ROOT}/logviewer
+    ${SRC_ROOT}/logviewer/imgui
+    ${SRC_ROOT}/logviewer/platform
 )
 bolo_apply_include_rules(winbolo gui)
 # bg_game.c reaches into a privatised setTeam setter for the dev-mode
