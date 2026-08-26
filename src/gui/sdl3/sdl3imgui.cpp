@@ -293,7 +293,7 @@ static bool s_closeMenuPopups = false;
  * one). A local define drifting past it would silently render every extra
  * slot grey rather than fail. */
 static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
-static char     s_playerName[MAX_PLAYERS][33] = {};        /* display copy; longer names truncate */
+static char     s_playerName[MAX_PLAYERS][PLAYER_NAME_LEN] = {};  /* display copy */
 static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country code + NUL */
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
 static bool     s_playerChecked[MAX_PLAYERS]  = {};
@@ -368,7 +368,7 @@ static bool s_showChangeName     = false;
 static char s_changeNameBuf[PLAYER_NAME_LEN] = "";
 
 static bool s_showAllianceOpen   = false;
-static char s_alliancePlayerName[33] = "";
+static char s_alliancePlayerName[PLAYER_NAME_LEN] = "";
 static BYTE s_alliancePlayerNum  = 0;
 static bool s_allianceVisible     = false;
 
@@ -4129,6 +4129,11 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
      * unflushed local timing). Stale slot rows in the native menu are
      * cheap (one drawRect per refresh), so we fill all 16 unconditionally
      * and let mac_menubar_refresh() decide between view + numeric title. */
+    /* The copy below takes sizeof p->name bytes out of s_playerName[i].
+     * mac_menubar.h spells the field length as a literal to stay free of
+     * global.h, so a divergence would read past the source array. */
+    static_assert(sizeof(((struct MacPlayerSlot *)0)->name) == PLAYER_NAME_LEN,
+                  "MacPlayerSlot.name must match PLAYER_NAME_LEN");
     for (int i = 0; i < MAX_PLAYERS; i++) {
         struct MacPlayerSlot *p = &s->players[i];
         p->enabled = s_playerEnabled[i];
