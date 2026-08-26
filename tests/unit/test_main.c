@@ -369,6 +369,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbv_reader_v2",                           run_wbv_reader_v2                           },
     { "attribution_reader_roundtrip",            run_attribution_reader_roundtrip            },
     { "attribution_reader_rejects_bad",          run_attribution_reader_rejects_bad          },
+    { "attribution_reader_clamps_slotcount",     run_attribution_reader_clamps_slotcount     },
     { "attribution_reader_old_wbv",              run_attribution_reader_old_wbv              },
     { "lv_walk_base_anchor_lobby_log",           run_lv_walk_base_anchor_lobby_log           },
     { "lv_walk_base_anchor_opening_snapshot",    run_lv_walk_base_anchor_opening_snapshot    },

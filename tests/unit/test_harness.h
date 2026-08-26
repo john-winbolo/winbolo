@@ -654,6 +654,7 @@ int run_wbv_reader_v1(void);
 int run_wbv_reader_v2(void);
 int run_attribution_reader_roundtrip(void);
 int run_attribution_reader_rejects_bad(void);
+int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
 
