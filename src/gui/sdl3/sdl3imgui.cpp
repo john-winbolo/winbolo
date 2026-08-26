@@ -4338,10 +4338,23 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
         if (nowInLobby) {
             if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
-                /* Confirmed Leave: drop the connection. The lobby stops
-                   rendering next frame (clientSimIsInLobby flips false),
-                   which also triggers imguiLobbyFrameReset above. */
+                /* Confirmed Leave: drop the connection, then go wherever
+                   this host goes when a game ends. The disconnect alone
+                   strands the player in a frozen lobby: it tears down the
+                   transport without touching netStat or inLobby, and
+                   inLobby is only
+                   cleared by the CTRL_GAME_PHASE_RUNNING control event,
+                   which cannot arrive once the transport is gone. */
                 clientSimDisconnect(cs);
+#ifdef __EMSCRIPTEN__
+                /* The browser has no welcome screen to fall back to the way
+                   winbolo.c does after imguiLobbyShow returns 0 — the menu is
+                   the hosting page, so navigate back to it. Ordered after the
+                   disconnect so transportUdpClientDestroy still gets its
+                   graceful PACKET_QUIT out over a live socket; the navigation
+                   itself only runs once this frame returns to the browser. */
+                windowLeaveGame();
+#endif
             }
             keyboardUpdate();
             dialogDrawNavOutline();
