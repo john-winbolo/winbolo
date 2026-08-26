@@ -2975,6 +2975,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_pill_repair_load.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
@@ -3616,6 +3617,9 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    pill_repair_tops_up_from_arrival_armour
+    pill_repair_short_load_spends_what_it_has
+    pill_repair_full_load_covers_a_dead_pill
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
