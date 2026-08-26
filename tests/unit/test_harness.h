@@ -163,6 +163,7 @@ int run_awards_include_bots(void);
 int run_awards_subset_basic(void);
 int run_awards_subset_deterministic(void);
 int run_round_stats_codec_roundtrip(void);
+int run_round_stats_codec_rejects_bad_key(void);
 int run_round_stats_codec_worstcase(void);
 int run_round_stats_build_summary(void);
 int run_round_stats_summary_highlights(void);
@@ -179,6 +180,7 @@ int run_highlights_lead_in(void);
 int run_highlights_empty(void);
 int run_territory_shift_basic(void);
 int run_highlights_turning_point(void);
+int run_territory_shift_bounded(void);
 int run_territory_recent_damage(void);
 int run_highlights_front_collapse(void);
 int run_highlights_award_anchor_density(void);
@@ -604,6 +606,14 @@ int run_autolock_released_on_return_to_lobby(void);
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
 
+/* Pillbox repair load (test_pill_repair_load.c). The man carries a full
+ * load and spends it against the armour the pill has when he arrives, so a
+ * pill that took more fire on the way still ends up topped up, and the
+ * trees he didn't need come back to the tank. */
+int run_pill_repair_tops_up_from_arrival_armour(void);
+int run_pill_repair_short_load_spends_what_it_has(void);
+int run_pill_repair_full_load_covers_a_dead_pill(void);
+
 /* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
  * cluster / farthest-first selection that auto-assigns a lobby start on
  * join, shared with startsAssignBatch's distance + validity logic. */
@@ -652,6 +662,7 @@ int run_wbv_reader_v1(void);
 int run_wbv_reader_v2(void);
 int run_attribution_reader_roundtrip(void);
 int run_attribution_reader_rejects_bad(void);
+int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
 

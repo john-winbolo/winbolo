@@ -71,11 +71,16 @@ static bool awardValueIsRatio(uint8_t awardId) {
 /* Write a display name for a slot into out (always NUL-terminated). Slot names
  * from the track are bounded by PACKET_MAX_PLAYER_NAME and may not be
  * NUL-terminated, so print length-bounded; an empty name falls back to the
- * name the log itself recorded for the slot, then to "Slot N". */
+ * name the log itself recorded for the slot, then to "Slot N".
+ *
+ * `slot` is a record or highlight actor byte, so it reaches 255 whatever the
+ * track says. slots[] is MAX_TANKS long, so the index is held to that as well
+ * as to slotCount — the parser clamps slotCount, and this stays correct on its
+ * own if a second reader of these headers ever forgets to. */
 static void formatSlotName(const AttrTrackHeader *header, int slot, char *out,
                            size_t outSize) {
   char fromLog[PLAYER_NAME_LEN];
-  if (slot >= 0 && slot < header->slotCount &&
+  if (slot >= 0 && slot < MAX_TANKS && slot < header->slotCount &&
       header->slots[slot].name[0] != '\0') {
     snprintf(out, outSize, "%.*s", (int)PACKET_MAX_PLAYER_NAME,
              header->slots[slot].name);

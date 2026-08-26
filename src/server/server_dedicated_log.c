@@ -165,27 +165,47 @@ void serverDedicatedLogStashCurrentRound(void) {
      * on the way out of the game must not overwrite the round it followed,
      * nor repoint s_lastRoundFile at itself. */
     if (s_roundRan) {
+        /* True unless a move was wanted and did not happen. A caller that
+         * records to a path it reuses is asking for the round to be taken off
+         * that path, so a move it did not get is the round not surviving. */
+        bool published = TRUE;
+
         if (s_completedPath[0] != '\0' &&
-            strcmp(s_completedPath, s_logFileName) != 0 &&
-            SDL_RenamePath(s_logFileName, s_completedPath)) {
-            strncpy(s_logFileName, s_completedPath, sizeof(s_logFileName) - 1);
-            s_logFileName[sizeof(s_logFileName) - 1] = '\0';
-            /* An upload stashed above named the pre-move path. No caller
-             * both publishes and uploads today (hosting sets no completed
-             * path, single player never uploads), but a stale name here
-             * would be a quiet failure for whoever combines them. */
-            if (s_pendingUploadFile[0] != '\0') {
-                strncpy(s_pendingUploadFile, s_logFileName,
-                        sizeof(s_pendingUploadFile) - 1);
-                s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+            strcmp(s_completedPath, s_logFileName) != 0) {
+            if (SDL_RenamePath(s_logFileName, s_completedPath)) {
+                strncpy(s_logFileName, s_completedPath, sizeof(s_logFileName) - 1);
+                s_logFileName[sizeof(s_logFileName) - 1] = '\0';
+                /* An upload stashed above named the pre-move path. No caller
+                 * both publishes and uploads today (hosting sets no completed
+                 * path, single player never uploads), but a stale name here
+                 * would be a quiet failure for whoever combines them. */
+                if (s_pendingUploadFile[0] != '\0') {
+                    strncpy(s_pendingUploadFile, s_logFileName,
+                            sizeof(s_pendingUploadFile) - 1);
+                    s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+                }
+            } else {
+                published = FALSE;
             }
         }
-        /* s_logFileName names a file that exists either way: the published
-         * copy after a move, the original when there was no completed path
-         * or the move failed. A failed move is not fatal — the round stays
-         * where it was recorded. */
-        strncpy(s_lastRoundFile, s_logFileName, sizeof(s_lastRoundFile) - 1);
-        s_lastRoundFile[sizeof(s_lastRoundFile) - 1] = '\0';
+
+        if (published) {
+            /* s_logFileName names a file that will still be there when someone
+             * comes for it: the published copy after a move, or the original
+             * when no move was wanted — a host's rounds already resolve unique
+             * timestamped names and nothing goes back over them. */
+            strncpy(s_lastRoundFile, s_logFileName, sizeof(s_lastRoundFile) - 1);
+            s_lastRoundFile[sizeof(s_lastRoundFile) - 1] = '\0';
+        } else {
+            /* The move is the whole reason a completed path exists, so a
+             * failed one leaves the round sitting on the path it was recorded
+             * to — which the next lobby entry's logStart truncates a few
+             * seconds later. Naming it would hand the recap a file about to be
+             * emptied under an open zip reader, and leaving the previous value
+             * would offer the round before this one as if it were this one.
+             * No replay for this round is the only honest answer. */
+            s_lastRoundFile[0] = '\0';
+        }
     }
     s_roundRan = FALSE;
 }
@@ -604,6 +624,47 @@ void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
      * symbol in this file — it must stay linkable without the WinBolo.net
      * upload path this module depends on. */
     transportUdpServerSetRoundLogSource(&s_roundLogSource);
+}
+
+void serverDedicatedLogUninstall(void) {
+    /* The same state install resets, cleared at the other end of the sim's
+     * life. Install alone is not enough: it runs only for a server that logs,
+     * so a host that turned logging off never resets anything and inherits
+     * whatever the last server in this process left behind — its completed
+     * round as the last round, and its serve mode with it.
+     *
+     * The transport's source goes first. Passing NULL is what makes it answer
+     * PACKET_ROUND_LOG_REQ with "nothing here" rather than reading through
+     * this module's now-cleared path, and it is the half that closes the leak
+     * on its own: the recap can only name a file, but this hands the bytes to
+     * anyone who joins. Nothing here is undone by the sim being freed
+     * afterwards — it is all module state that outlives it. */
+    transportUdpServerSetRoundLogSource(NULL);
+    /* log.c calls the drain at the top of every logWriteTick, and the sims that
+     * tick are not only the one that installed us — the welcome screen's
+     * background game is a real ServerSim and ticks whenever the menu is up.
+     * The drain bails on a NULL sim, and clearing s_logSim below is what makes
+     * that guard mean anything, since until now it was reading a pointer to a
+     * sim serverSimDestroy had already freed. Dropping the hook as well leaves
+     * nothing at all pointing into this module between one server and the next.
+     * logCreate deliberately does not clear the hook — a background sim created
+     * after an install would disarm a live writer — so here is the only place
+     * it comes off. */
+    logSetPreTickHook(NULL);
+    s_logSim = NULL;
+    s_completedPath[0] = '\0';
+    s_lastRoundFile[0] = '\0';
+    s_roundRan = FALSE;
+    /* Work the deliver path queued for a drain that will now never come. These
+     * gate the drain's early-out alongside the sim pointer, so a session that
+     * ended with one still set is the case that reached the dereference. */
+    s_lobbyEnterPending = FALSE;
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
+    s_serveMode = ROUND_LOG_SERVE_AUTO;
+    /* s_pendingUploadFile is deliberately left alone: a round stashed for
+     * WinBolo.net that could not go out yet (the session was down) is still
+     * owed, and the teardown paths flush it on their own schedule. */
 }
 
 bool serverDedicatedLogIsActive(void) {

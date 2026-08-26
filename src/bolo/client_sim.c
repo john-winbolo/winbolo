@@ -1394,10 +1394,6 @@ void netGetOurAddressStr(ClientSim *cs, char *dest) {
   }
 }
 
-BYTE netGetDownloadPos(void) {
-  return 255; /* complete */
-}
-
 void netSecond(void) {
   /* no-op — old ring protocol timing removed */
 }

@@ -98,13 +98,46 @@ extern "C" {
 #include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
 
-/* Embedded log-viewer reel (src/logviewer/logviewer.c). Hand-declared rather
+/* Parts of the recap that need something a given build does not have, and the
+ * one that has a transport per platform. Named for what they need rather than
+ * for the platform, so the reason each one is out reads at the site as well as
+ * here.
+ *
+ * BOLO_REEL_WBN_FETCH      — the reel's WinBolo.net fallback source, used when
+ *   a WBN-registered host uploads its round log instead of serving it over the
+ *   game socket. On for every build: the retry ladder, the attempt cap, the
+ *   size ceiling and the progress reporting are one copy, and only the
+ *   transport underneath forks.
+ * BOLO_REEL_WBN_FETCH_CURL — which transport that is. Desktop downloads on a
+ *   std::thread through http.c. The browser has neither: http.c refuses to
+ *   build under Emscripten because it embeds the WinBolo.net signing key, and
+ *   the wasm client is single-threaded, so it drives the page's fetch()
+ *   through src/wasm/round_log_fetch_wasm.c instead.
+ * BOLO_RECAP_WBN_RATING    — the round's stars and comments, on the same
+ *   http.c through wbn_comments; neither that nor the star widget is in the
+ *   wasm target's sources.
+ * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
+ *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
+ *   sources, and the save path spins its own SDL event loop waiting on a
+ *   native file dialog, which a browser main loop cannot do. */
+#define BOLO_REEL_WBN_FETCH 1
+#ifdef __EMSCRIPTEN__
+#define BOLO_REEL_WBN_FETCH_CURL 0
+#define BOLO_RECAP_WBN_RATING    0
+#define BOLO_RECAP_CLIP_GIF      0
+#else
+#define BOLO_REEL_WBN_FETCH_CURL 1
+#define BOLO_RECAP_WBN_RATING    1
+#define BOLO_RECAP_CLIP_GIF      1
+#endif
+
+/* Embedded log-viewer reel (src/logviewer/lv_embed.c). Hand-declared rather
  * than included: logviewer.h pulls in backend.h / viewport_types.h, whose
  * screen / screenMines types collide with the client's — the same rule
  * gamefront.c documents. Scalars and void * only, so no viewer type crosses
  * the seam. Must stay inside this extern "C" block or the calls compile and
  * then fail to link on a mangled symbol. */
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
 void lvEmbedEnd(void);
@@ -126,8 +159,20 @@ void lvEmbedSeekToTime(uint32_t roundRelMs);
 bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
 #endif
+#if !BOLO_REEL_WBN_FETCH_CURL
+/* Round-log download for the reel's WinBolo.net source
+ * (src/wasm/round_log_fetch_wasm.c). Start hands the request to the page and
+ * returns; the poll is read once a frame, so nothing here suspends the C stack
+ * inside an ImGui frame. Poll gives 0 while the request is in flight, otherwise
+ * the HTTP status, or -1 when it never completed; on a 200 whose body fits the
+ * ceiling it hands over a malloc'd buffer the caller owns. Hand-declared on the
+ * same terms as the reel above. */
+void wbRoundLogFetchStart(const char *key);
+int  wbRoundLogFetchPoll(uint8_t **outBuf, int *outLen);
+void wbRoundLogFetchCancel(void);
+#endif
 }
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
 /* Single-header GIF encoder behind the recap's clip export; the one
  * implementation TU is src/third_party/msf_gif/msf_gif_impl.c. Carries its own
  * extern "C" guards, so it goes outside the block above. */
@@ -3388,6 +3433,35 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
     clientMapPreviewDestroy(mp);
 }
 
+/* Caption + bar fraction for the map-transfer line the preview panel shows
+ * while the map is not yet in hand. Both places that draw it call this so
+ * they cannot drift apart.
+ *
+ * The percentage on its own cannot say "not started". It is computed from
+ * the transport's byte counters, and those outlive a transfer: after a
+ * mid-lobby map change the client re-JOINs, and until the new JOIN_ACCEPT
+ * re-arms them they still describe the PREVIOUS map — fully received, so
+ * 100%. Reporting that verbatim is what made a wedged re-join look like a
+ * download stuck at the finish line. The connect state is the only thing
+ * that separates the two, so read them together.
+ *
+ * A live-lobby spectator fetching its own copy of the map stays
+ * SPECTATING throughout, so it lands on the waiting caption for the
+ * duration rather than showing a bar. Counting it as downloading would be
+ * worse: a spectator the server sent no map for has no byte total either,
+ * and the percentage answers "nothing to fetch" as 100 — a full bar for a
+ * transfer that never started, which is the exact thing this is undoing.
+ * Telling the two apart needs the transport's spectator-download flag,
+ * which no T1 accessor exposes today. */
+static const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
+    if (clientSimGetConnectState(cs) == CLIENT_CONNECT_DOWNLOADING_MAP) {
+        *outProgress = (float)clientSimGetMapDownloadPercent(cs) / 100.0f;
+        return langGetText(STR_DLGLOBBY_DOWNLOADING);
+    }
+    *outProgress = 0.0f;
+    return langGetText(STR_DLGLOBBY_AWAITING_MAP);
+}
+
 /* Per-start ownership codes (0-based, start index i+1) for the minimap
  * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy. Also returns an FNV-1a
  * signature so the caller can detect when a recolour rebuild is needed
@@ -6401,7 +6475,7 @@ static bool lastRoundDrawSkull(void) {
     return true;
 }
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
 /* ── Embedded replay reel ─────────────────────────────────────────
  * The log viewer decodes on its own timer threads and paints the round
  * into an SDL render target; the recap blits the visible slice of that
@@ -6455,6 +6529,7 @@ static uint8_t s_reelLogPercent = 0;
 static int     s_reelLogStateSeen = -1;
 static int     s_reelLogStepSeen  = -1;
 
+#if BOLO_REEL_WBN_FETCH
 /* Where a round shared through WinBolo.net comes from. A host registered with
  * WinBolo.net uploads its log there rather than serving it over the game
  * connection, so a client that joined fetches the same bytes over HTTP using
@@ -6462,19 +6537,27 @@ static int     s_reelLogStepSeen  = -1;
  * recap opens, so the first GET is expected to miss a round that is about to
  * exist; a bounded ladder covers that lag without becoming a request a frame.
  *
- * The worker writes buf/len/status and then releases s_reelWbnDone; the render
- * thread reads those three only after acquiring it, which is the whole
- * hand-off — one producer, one consumer, no mutex. Every other field here is
- * the render thread's own, s_reelWbnRunning included, so the guards that
- * decide whether to start another attempt never read a field a worker is
- * writing. */
+ * Under the curl transport the worker writes buf/len/status and then releases
+ * s_reelWbnDone; the render thread reads those three only after acquiring it,
+ * which is the whole hand-off — one producer, one consumer, no mutex. Every
+ * other field here is the render thread's own, s_reelWbnRunning included, so
+ * the guards that decide whether to start another attempt never read a field a
+ * worker is writing. The fetch transport has no second thread at all and fills
+ * the same three fields from its poll. */
 static const int    REEL_WBN_RETRY_MAX = 12;
 static const Uint64 REEL_WBN_RETRY_MS  = 5000;
 
 static char                   s_reelWbnKey[ROUND_STATS_LOGKEY_LEN] = "";
+#if BOLO_REEL_WBN_FETCH_CURL
+/* The worker and the two fields that coordinate with it. Nothing outside the
+ * curl transport has a second thread to coordinate with. */
 static std::thread            s_reelWbnThread;
 static std::atomic<bool>      s_reelWbnDone{false};
 static volatile int           s_reelWbnCancel = 0;
+#endif
+/* What the transfer has moved, for the reading below. Curl fills both from its
+ * worker as bytes arrive; fetch resolves the whole body at once and leaves them
+ * at zero, which that reading already treats as "nothing to report yet". */
 static std::atomic<long long> s_reelWbnBytesNow{0};
 static std::atomic<long long> s_reelWbnBytesTotal{0};
 static bool                   s_reelWbnRunning   = false;
@@ -6484,13 +6567,19 @@ static int                    s_reelWbnStatus    = 0;
 static int                    s_reelWbnAttempts  = 0;
 static Uint64                 s_reelWbnRetryAtMs = 0;
 
-/* Stop whatever is in flight and forget the round it belonged to. The worker
- * is joined and never detached: it writes into the statics above, and a lobby
- * that has gone away leaves nothing for it to write into. Cancelling first is
- * what keeps the join short, since curl polls the flag as bytes arrive. */
+/* Stop whatever is in flight and forget the round it belonged to. The curl
+ * worker is joined and never detached: it writes into the statics above, and a
+ * lobby that has gone away leaves nothing for it to write into. Cancelling
+ * first is what keeps the join short, since curl polls the flag as bytes
+ * arrive. The fetch transport aborts its request and drops the slot its reply
+ * would have landed in, which is the same thing without the join. */
 static void lobbyReelWbnAbort(void) {
+#if BOLO_REEL_WBN_FETCH_CURL
     s_reelWbnCancel = 1;
     if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+#else
+    wbRoundLogFetchCancel();
+#endif
     free(s_reelWbnBuf);
     s_reelWbnBuf       = nullptr;
     s_reelWbnLen       = 0;
@@ -6501,8 +6590,10 @@ static void lobbyReelWbnAbort(void) {
     s_reelWbnKey[0]    = '\0';
     s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
     s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+#if BOLO_REEL_WBN_FETCH_CURL
     s_reelWbnDone.store(false, std::memory_order_relaxed);
     s_reelWbnCancel = 0;
+#endif
 }
 
 /* Spend one rung of the ladder, if one is due. Everything that would make a
@@ -6511,11 +6602,17 @@ static void lobbyReelWbnAbort(void) {
 static void lobbyReelWbnKick(void) {
     if (s_reelWbnRunning || s_reelWbnBuf) return;
     if (s_reelWbnKey[0] == '\0') return;
+    /* The key is pasted into the request path below, so it never goes out
+     * unless it is the 32-hex shape WBN issues. The codec already drops a
+     * malformed one off the wire; this is the backstop on the path itself,
+     * the same one wbn_comments_fetch_start applies to its own. */
+    if (!winbolonetKeyIsValid(s_reelWbnKey)) return;
     /* The load below gets one attempt per summary; once it has spent it there
      * is nothing left to play another copy of the same round. */
     if (s_reelTried) return;
     if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) return;
     if (SDL_GetTicks() < s_reelWbnRetryAtMs) return;
+#if BOLO_REEL_WBN_FETCH_CURL
     /* A worker that finished without the poll below seeing it still owns a
      * thread handle; std::thread destructs hard on a joinable one. */
     if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
@@ -6525,10 +6622,12 @@ static void lobbyReelWbnKick(void) {
      * POST paths create lazily. Reentrant, so the browser's own create/destroy
      * pair is unaffected. Once a round is enough. */
     if (s_reelWbnAttempts == 0) httpCreate();
+#endif
 
     char keyCopy[ROUND_STATS_LOGKEY_LEN];
     SDL_strlcpy(keyCopy, s_reelWbnKey, sizeof(keyCopy));
 
+#if BOLO_REEL_WBN_FETCH_CURL
     /* Curl's byte sink, running on the worker. Non-capturing so it converts to
      * the C function pointer, and it keeps the last total it was given, since
      * curl reports zero until it has read a Content-Length. */
@@ -6539,23 +6638,36 @@ static void lobbyReelWbnKick(void) {
             s_reelWbnBytesTotal.store((long long)total, std::memory_order_relaxed);
         }
     };
+#endif
 
     s_reelWbnAttempts++;
     s_reelWbnRunning = true;
     s_reelWbnStatus  = 0;
+#if BOLO_REEL_WBN_FETCH_CURL
     s_reelWbnDone.store(false, std::memory_order_relaxed);
+#endif
     s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
     s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
     WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[REEL] winbolo.net round log attempt %d/%d, key prefix '%.6s'",
                 s_reelWbnAttempts, REEL_WBN_RETRY_MAX, keyCopy);
 
+#if !BOLO_REEL_WBN_FETCH_CURL
+    /* Returns at once; the reply lands in the page and the poll below takes it
+     * on a later frame. The ceiling is applied there, where the bytes are. */
+    wbRoundLogFetchStart(keyCopy);
+#else
     s_reelWbnThread = std::thread([keyCopy, progressFn]() {
         char path[128];
         SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
         uint8_t *data = nullptr;
         size_t   size = 0;
+        /* Held to the same ceiling the server-served path enforces on its own
+         * transfer. Without it this is the one way into the reel that a round
+         * log of any size at all can come through, and the recap opens and
+         * fetches on its own between rounds. */
         int status = wbn_api_download_to_memory_progress(path, &data, &size,
+                                                         ROUND_LOG_MAX_BYTES,
                                                          progressFn, nullptr,
                                                          &s_reelWbnCancel);
         if (status != 200 || size == 0) {
@@ -6569,14 +6681,27 @@ static void lobbyReelWbnKick(void) {
         /* Last, and releasing: the three writes above are published by it. */
         s_reelWbnDone.store(true, std::memory_order_release);
     });
+#endif
 }
 
 /* Collect a finished attempt. A 200 leaves its bytes standing for the load
  * below to take; anything else arms the next rung. */
 static void lobbyReelWbnPoll(void) {
+#if BOLO_REEL_WBN_FETCH_CURL
     if (!s_reelWbnDone.load(std::memory_order_acquire)) return;
     if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
     s_reelWbnDone.store(false, std::memory_order_relaxed);
+#else
+    /* Still in flight reads as 0; any other answer settles the attempt, and
+     * brings the bytes with it when there are any to bring. */
+    uint8_t *fetched = nullptr;
+    int      fetchedLen = 0;
+    int      fetchedStatus = wbRoundLogFetchPoll(&fetched, &fetchedLen);
+    if (fetchedStatus == 0) return;
+    s_reelWbnBuf    = fetched;
+    s_reelWbnLen    = (fetched != nullptr) ? (size_t)fetchedLen : 0;
+    s_reelWbnStatus = fetchedStatus;
+#endif
     s_reelWbnRunning = false;
 
     WB_LOG_INFO(WB_LOG_CAT_GUI,
@@ -6593,6 +6718,7 @@ static void lobbyReelWbnPoll(void) {
                     s_reelWbnAttempts);
     }
 }
+#endif /* BOLO_REEL_WBN_FETCH */
 
 /* Vertical room the recap left unused on the previous frame, accumulated.
  * The reel adds it to its own height, which is what stops the body ending
@@ -6604,16 +6730,22 @@ static void lobbyReelWbnPoll(void) {
  * spent, measure zero, and collapse back the next frame. */
 static float s_recapSlack = 0.0f;
 
+#if BOLO_RECAP_CLIP_GIF
 /* Defined with the clip export below, which needs the reel's own state. */
 static void lobbyClipGifAbort(void);
+#endif
 
 static void lobbyReelEnd(void) {
+#if BOLO_RECAP_CLIP_GIF
     /* An export in flight is holding encoder allocations and a playback
      * position to put back, and the reel it was reading is about to go. */
     lobbyClipGifAbort();
+#endif
+#if BOLO_REEL_WBN_FETCH
     /* And a WinBolo.net fetch is a thread writing into state this is about to
      * zero, so it is cancelled and joined here too. */
     lobbyReelWbnAbort();
+#endif
     if (s_reelActive) {
         lvEmbedEnd();
         s_reelActive = false;
@@ -6836,11 +6968,13 @@ static const float REEL_HEIGHT_MAX_FRAC = 0.85f;
 /* Defined down with the chat input's state, which is declared after this. */
 static void lobbyChatInputAppendTime(uint32_t curMs);
 
+#if BOLO_RECAP_CLIP_GIF
 /* Defined with the clip export below, which needs the reel's own state. The
  * transport bar carries the same control the clip rows do, so both are reached
  * from here. */
 static bool lobbyClipGifButton(const char *id, bool compact);
 static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+#endif
 
 static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                             float s) {
@@ -6850,9 +6984,11 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * A triple gate on the file: only a round this process recorded, published
      * to a file that is actually there. gameFrontHasLocalServer() is the
      * load-bearing one — the accessor describes whatever round this process
-     * last recorded and is only cleared when the log writer is installed, so a
-     * player who hosted, left and then joined someone else's server would
-     * otherwise see a completely different game replayed here. */
+     * last recorded, so a player who hosted, left and then joined someone
+     * else's server would otherwise see a completely different game replayed
+     * here. It does not cover a host that is local but is not the server that
+     * recorded the round; what covers that is gameFrontShutdownServer clearing
+     * the accessor as it tears each server down. */
     const char *replayPath = serverDedicatedLogLastRoundFile();
     SDL_PathInfo replayInfo;
     const bool haveLocalFile = gameFrontHasLocalServer() &&
@@ -7159,6 +7295,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         lobbyChatInputAppendTime(curMs);
     }
 
+#if BOLO_RECAP_CLIP_GIF
     /* Export the next few seconds from wherever the reel is sitting. The view
      * is left as the player framed it — they have already chosen what they are
      * looking at, which is the whole point of exporting from here rather than
@@ -7168,6 +7305,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (lobbyClipGifButton("##reelgif", false)) {
         lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
     }
+#endif
 
     /* Seek slider shares the transport row with Play/Pause and takes the rest
      * of the width. Times are the presented window's, which with the lobby
@@ -7256,6 +7394,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     s_reelDrawn = true;
 }
 
+#if BOLO_RECAP_CLIP_GIF
 /* ── Clip GIF export ──────────────────────────────────────────────
  * A clip row can hand its moment to a GIF the player can post somewhere.
  * The round is not sitting in memory as frames — it has to be replayed to be
@@ -7687,7 +7826,9 @@ static void lobbyClipGifRender(float s) {
         msf_gif_free(finished);
     }
 }
+#endif /* BOLO_RECAP_CLIP_GIF */
 
+#if BOLO_RECAP_WBN_RATING
 /* ── WinBolo.net rating & comments ────────────────────────────────
  * The finished round's own page on WinBolo.net: the aggregate stars it
  * has been given, the comments left on it, and a form to add one. All of
@@ -8021,7 +8162,8 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
         }
     }
 }
-#endif
+#endif /* BOLO_RECAP_WBN_RATING */
+#endif /* !BOLO_MOBILE */
 
 /* Container-less recap body, in reading order: the round's replay reel, its
  * highlight clips, the scoreboard table, then a handful of the round's awards
@@ -8033,13 +8175,13 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
 static void renderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
     if (!st) {
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
         lobbyReelEnd();
 #endif
         return;
     }
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
     /* Height of the container the body is about to fill, and where it starts,
      * so the tail of this function can see how much of it went unused and feed
      * that back into the reel. */
@@ -8088,7 +8230,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                  * carries are the scorer's own units and do not convert at any
                  * rate this side knows. */
                 unsigned secs = (unsigned)(h->startMs / 1000u);
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
                 /* While a reel is up the whole row is a seek target: a selectable
                  * underneath for the hit area and controller focus, with the row's
                  * own two-tone text drawn back over it (text is not interactive,
@@ -8133,7 +8275,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                 ImGui::TextUnformatted(
                     langGetTextFmt(lastRoundHighlightLabel(h), &args));
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
                 /* Export control, right-aligned so the rows keep a column of them
                  * however long the sentences run. Sized to one text line, so the
                  * row stays the height the selectable underneath was given: the
@@ -8492,15 +8634,19 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         }
     }
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
     /* ── WinBolo.net rating & comments ───────────────────────────── */
     lobbyRenderRatingBlock(cs, st, s);
+#endif
 
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
     /* A clip export in progress. Drawn after the rows that start it, and after
      * the rest of the body: it is a popup, so it costs the layout nothing and
      * the slack measurement below still sees what the body really used. */
     lobbyClipGifRender(s);
+#endif
 
+#if !BOLO_MOBILE
     /* What the body did not use goes to the reel next frame. One frame of lag
      * is inherent — the cost of everything below the reel is only known once
      * it has been drawn — so switching between the desktop column and the
@@ -9000,7 +9146,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
  * the render below turns it into something to click.
  * ------------------------------------------------------------------- */
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
 /* Match a timestamp token at p. Returns one past its last digit and fills the
  * out-params on a match, NULL otherwise. Minutes are one or two digits,
  * seconds exactly two and under 60. A third seconds digit rejects the whole
@@ -9123,7 +9269,7 @@ static void lobbyRenderChatHistory(const char *blob) {
         return;
     }
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
     if (lvEmbedIsActive()) {
         const ImGuiStyle &style     = ImGui::GetStyle();
         const char       *runBegin  = NULL;
@@ -9283,7 +9429,7 @@ typedef struct LobbyFrameState {
 
 static LobbyFrameState s_lf = {};
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
 /* Append the reel's position to the chat box as "@mm:ss ", then take the
  * keyboard focus the way a send does so the player types straight after it.
  * Silently does nothing when the whole token will not fit: half a token in
@@ -9389,10 +9535,12 @@ extern "C" void imguiLobbyFrameReset(void) {
     s_recapShowAllAwards        = false;
     s_recapShowHighlights       = false;
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
     /* The reel holds the viewer's decoder singleton — never leave it running
      * past the lobby session. */
     lobbyReelEnd();
+#endif
+#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
     /* Release the rating fetch and everything it filled in. The star textures
      * stay: they belong to the WBN browser as much as to the recap, and the
      * loader rebuilds them on demand. */
@@ -9422,7 +9570,7 @@ extern "C" void imguiLobbyFrameReset(void) {
 extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
     /* Before anything draws, so a round that has ended takes its rating and
      * comments with it whether or not the recap is the view on screen. */
     lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
@@ -10246,9 +10394,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
                     } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
-                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                        float progress = 0.0f;
+                        ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
                         ImGui::Spacing();
-                        float progress = (float)netGetDownloadPos() / 255.0f;
                         ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                     } else {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
@@ -11085,9 +11233,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                         awaitingMapChangePacket)) {
                 /* No texture yet AND we're mid-download — show the
                  * progress bar so the user knows something's coming. */
-                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                float progress = 0.0f;
+                ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
                 ImGui::Spacing();
-                float progress = (float)netGetDownloadPos() / 255.0f;
                 ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                 ImGui::Spacing();
             } else if (showMapPanel) {
@@ -11350,7 +11498,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+#if !BOLO_MOBILE
     /* The reel outlives any single body render. Once the summary is gone (the
      * countdown clears it) drop the reel and the per-summary load latch —
      * unconditionally, since a round whose load failed leaves the latch set

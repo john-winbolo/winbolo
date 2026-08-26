@@ -240,9 +240,11 @@
             <summary>⚠ Beta — known issues</summary>
             <ul>
                 <li><strong>Don't background the tab.</strong> Switching to another tab or minimizing the window can disconnect you: browsers throttle and sleep background tabs, which drops the live game connection. Keep the game tab focused and in front while playing.</li>
-                <li>The web client has no in-game settings/keybinding screen yet. Bindings saved on your account (desktop client) are applied on load.</li>
+                <li>Game popup windows display on top of the main window.</li>
+                <li>Spectator mode is not yet supported in the web client.</li>
+                <li>Post-game comments/ratings is currently disabled in the web client.</li>
             </ul>
-            <p>Found a problem? Let us know on <a href="https://discord.gg/znGR3VMaqd" target="_blank" rel="noopener">Discord</a>.</p>
+            <p>Found a problem? Let us know on <a href="https://discord.gg/znGR3VMaqd" target="_blank" rel="noopener">Discord</a> or the <a href="https://www.winbolo.net/forums/" target="_blank" rel="noopener">forums</a>.</p>
         </details>
         <div class="footlinks">
             <span>WinBolo &copy; 1998&ndash;<span id="year"></span> John Morrison</span>
@@ -264,10 +266,21 @@
                  - production web play: wbMintJoinCode() mints the single-use
                    code and points this at the probed relay just before connect.
                  - ?proxyURL=<wsurl>  : dev/LAN escape hatch, used verbatim.
-               Start with the dev proxy (or empty); the mint fills it in. */
+               Start with the dev proxy (or empty); the mint fills it in.
+
+               subprotocol: null offers no Sec-WebSocket-Protocol at all.
+               Left unset, sockfs falls back to WEBSOCKET_SUBPROTOCOL
+               ("binary"), and RFC 6455 then obliges the browser to fail
+               any handshake whose 101 does not echo that back. The relay
+               does not echo it, which Chrome and Edge treat as fatal
+               (Firefox does not) — and since the relay has already
+               resolved and consumed the single-use join code by then, the
+               retry that follows dies on "join code already used".
+               A literal null makes sockfs pass no protocol list to the
+               WebSocket constructor, so there is nothing to echo. */
             websocket: (function() {
                 var devProxy = new URLSearchParams(window.location.search).get('proxyURL');
-                return { url: devProxy || '' };
+                return { url: devProxy || '', subprotocol: null };
             })(),
             canvas: (function() { return document.getElementById('canvas'); })(),
             print: (function() {
@@ -365,6 +378,32 @@
                 // Session expired mid-game: stop syncing and reflect it in the chip.
                 window.WB_PREFS_AUTH = false;
                 if (window.__wbRenderAccount) { window.__wbRenderAccount({ logged_in: false }); }
+            },
+
+            /* ---- Round-log download (the recap reel's WinBolo.net source) ---
+               Called from round_log_fetch_wasm.c. A round a WinBolo.net-
+               registered host uploaded is served from /logdownload, which needs
+               no authentication and is proxied on this origin beside /api/*, so
+               no signing key and no CORS.
+
+               Unlike the prefs helpers above, body is NOT text: a round log is a
+               zip, and reading it as text would corrupt it. Resolves
+               { status, body } with body a Uint8Array, or null when there is
+               nothing to take — including on a rejected or aborted fetch, which
+               resolves status -1 rather than throwing. The caller passes the
+               AbortSignal it cancels with. */
+            wbRoundLogFetch: function(key, signal) {
+                return fetch('/logdownload?key=' + encodeURIComponent(key), {
+                    credentials: 'same-origin',
+                    signal: signal
+                }).then(function(r) {
+                    if (!r.ok) { return { status: r.status, body: null }; }
+                    return r.arrayBuffer().then(function(b) {
+                        return { status: r.status, body: new Uint8Array(b) };
+                    });
+                }).catch(function() {
+                    return { status: -1, body: null };
+                });
             },
 
             /* ---- Join-code mint (relay routing + WBN token) -----------------

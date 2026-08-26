@@ -504,6 +504,22 @@ int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
 /* Hard cap on buffered damage events; oldest is dropped if it fills. Pruning by
  * tick usually keeps it far below this, so the cap is only a runaway backstop. */
 #define HL_DMG_BUF_MAX         4096
+/* Ceiling on how many objective changes one walk will follow. The record stream
+ * is untrusted — a client loads one straight off a game server or WinBolo.net —
+ * and its only other bound is the 64 MB attribution cap, which is five million
+ * capture records. This holds the pass to that many influence disks and box
+ * diffs however long the stream is, and the per-change cost scales with how
+ * many teams have a grid, so the ceiling is what a 16-team stream runs into.
+ * Set far above any real round: a map holds a couple of dozen pills and bases
+ * between them, and this is more changes of hands than hours of play produce. */
+#define HL_TERR_EVENT_MAX      20000
+
+/* Offset of a cell's per-team influence run in the grids block. The block is
+ * cell-major — every team's value for one cell sits together — because the hot
+ * read is terrDiffControl asking which team leads a cell, which then walks one
+ * short contiguous run instead of touching teamCount pages a full grid apart.
+ * terrStamp pays for it by striding a disk, which is the far rarer access. */
+#define TERR_CELL(cell, teamCount) ((size_t)(cell) * (size_t)(teamCount))
 
 /* One tracked objective: who holds it and where it sits. `known` stays 0 until a
  * record tells us its cell, so an objective nobody has touched stamps nothing. */
@@ -590,8 +606,20 @@ static int terrTeamIndex(const uint8_t *teamIds, int teamCount, uint8_t team) {
 
 /* Stamp a falloff disk of influence centred on (cx,cy) into one team's grid:
  * full strength at the centre, tapering linearly to the rim, nothing outside the
- * Euclidean radius. Stamps accumulate, so two nearby objectives reinforce. */
-static void terrStamp(int16_t *grid, int cx, int cy, int radius, int strength) {
+ * Euclidean radius. Stamps accumulate, so two nearby objectives reinforce.
+ *
+ * sign is +1 to lay a disk down and -1 to take the same disk back off. The
+ * magnitude is computed from the positive strength and only then signed,
+ * because (int)(-x) truncates the other way from -(int)(x) — a remove that did
+ * not cancel its add exactly would leave the grids drifting away from what the
+ * ownership tables say.
+ *
+ * A cell holds at most every objective at once, HL_TERR_OBJ_MAX of each at
+ * HL_INF_BASE_STRENGTH and HL_INF_PILL_STRENGTH, so it stays under 41000. That
+ * is why the grid is int32 and carries no clamp: a clamp is the other thing
+ * that would stop an add and its remove cancelling. */
+static void terrStamp(int32_t *grids, int teamCount, int ti, int cx, int cy,
+                      int radius, int strength, int sign) {
     int r2 = radius * radius;
 
     for (int dy = -radius; dy <= radius; dy++) {
@@ -599,7 +627,7 @@ static void terrStamp(int16_t *grid, int cx, int cy, int radius, int strength) {
         if (ny < 0 || ny >= HL_MAP_DIM) continue;
         for (int dx = -radius; dx <= radius; dx++) {
             int nx = cx + dx;
-            int d2, delta, idx, val;
+            int d2, delta;
             float dist, proximity;
             if (nx < 0 || nx >= HL_MAP_DIM) continue;
             d2 = dx * dx + dy * dy;
@@ -608,39 +636,34 @@ static void terrStamp(int16_t *grid, int cx, int cy, int radius, int strength) {
             proximity = 1.0f - dist / (float)(radius + 1);
             delta = (int)(strength * proximity);
             if (delta == 0) continue;
-            idx = ny * HL_MAP_DIM + nx;
-            val = (int)grid[idx] + delta;
-            if (val > 32767) val = 32767;
-            if (val < -32768) val = -32768;
-            grid[idx] = (int16_t)val;
+            grids[TERR_CELL(ny * HL_MAP_DIM + nx, teamCount) + ti] +=
+                sign * delta;
         }
     }
 }
 
-/* Restamp every held objective into freshly cleared per-team grids. Cheap enough
- * to redo per ownership change (at most a few hundred small disks), and it keeps
- * the grids exactly derivable from the current ownership tables. */
-static void terrRestamp(int16_t *grids, int teamCount, const uint8_t *teamIds,
-                        const TerrObject *pills, const TerrObject *bases,
-                        const AttrSlotIdentity *slots, int slotCount) {
-    memset(grids, 0, (size_t)teamCount * HL_MAP_CELLS * sizeof(int16_t));
+/* Lay one objective's disk into its team's grid (sign +1) or take it back out
+ * (sign -1), reading the owner and cell the object holds at the moment of the
+ * call. Callers bracket every mutation of an object with a remove before and an
+ * add after, which leaves the grids holding exactly what a re-stamp of every
+ * objective from the tables would have produced — for the cost of two disks
+ * rather than a clear of the whole grid and a walk of all HL_TERR_OBJ_MAX
+ * pills and bases, on every record.
+ *
+ * An object that is unknown, neutral, or held by a slot on no team we have a
+ * grid for contributes nothing in either direction, so a bracket around a
+ * change of owner stays balanced whichever side of it is the blank one. */
+static void terrApplyObject(int32_t *grids, int teamCount, const uint8_t *teamIds,
+                            const TerrObject *o, int radius, int strength,
+                            const AttrSlotIdentity *slots, int slotCount,
+                            int sign) {
+    int ti;
 
-    for (int i = 0; i < HL_TERR_OBJ_MAX; i++) {
-        const TerrObject *objs[2];
-        objs[0] = &bases[i];
-        objs[1] = &pills[i];
-        for (int k = 0; k < 2; k++) {
-            const TerrObject *o = objs[k];
-            int ti;
-            if (!o->known || o->owner == NEUTRAL) continue;
-            ti = terrTeamIndex(teamIds, teamCount,
-                               terrTeamOfSlot(slots, slotCount, o->owner));
-            if (ti < 0) continue;
-            terrStamp(grids + (size_t)ti * HL_MAP_CELLS, o->mapX, o->mapY,
-                      k == 0 ? HL_INF_BASE_RADIUS : HL_INF_PILL_RADIUS,
-                      k == 0 ? HL_INF_BASE_STRENGTH : HL_INF_PILL_STRENGTH);
-        }
-    }
+    if (!o->known || o->owner == NEUTRAL) return;
+    ti = terrTeamIndex(teamIds, teamCount,
+                       terrTeamOfSlot(slots, slotCount, o->owner));
+    if (ti < 0) return;
+    terrStamp(grids, teamCount, ti, o->mapX, o->mapY, radius, strength, sign);
 }
 
 /* Re-derive the controlling team of every cell in [x0,x1]x[y0,y1] and return how
@@ -651,7 +674,7 @@ static void terrRestamp(int16_t *grids, int teamCount, const uint8_t *teamIds,
  * leaves it uncontrolled. The control map is updated for every change so it stays
  * accurate, but a first claim of unheld ground (HL_CTRL_NONE -> team) is not
  * counted: that is the round populating an empty map, not ground being contested. */
-static uint32_t terrDiffControl(const int16_t *grids, int teamCount,
+static uint32_t terrDiffControl(const int32_t *grids, int teamCount,
                                 uint8_t *control, int x0, int y0, int x1, int y1) {
     uint32_t flipped = 0;
 
@@ -659,11 +682,12 @@ static uint32_t terrDiffControl(const int16_t *grids, int teamCount,
         for (int x = x0; x <= x1; x++) {
             int cell = y * HL_MAP_DIM + x;
             int bestT = -1;
-            int16_t bestV = 0;
+            int32_t bestV = 0;
             bool tie = false;
             uint8_t now, was;
+            const int32_t *cellInf = grids + TERR_CELL(cell, teamCount);
             for (int t = 0; t < teamCount; t++) {
-                int16_t v = grids[(size_t)t * HL_MAP_CELLS + cell];
+                int32_t v = cellInf[t];
                 if (v <= 0) continue;
                 if (bestT < 0 || v > bestV) { bestT = t; bestV = v; tie = false; }
                 else if (v == bestV)        { tie = true; }
@@ -679,19 +703,39 @@ static uint32_t terrDiffControl(const int16_t *grids, int teamCount,
     return flipped;
 }
 
+/* terrDiffControl over the square of `radius` around one objective's cell,
+ * clamped to the map. Callers diff the cell an objective moved to and the one
+ * it moved from as two of these rather than one box spanning both: influence
+ * changed inside the two disks and nowhere between them, so the counts come out
+ * the same, while a pill that moved across the map costs two disks' worth of
+ * cells instead of the whole grid. Boxes that overlap are safe — the second
+ * pass over a cell finds control already updated and counts nothing. */
+static uint32_t terrDiffControlBox(const int32_t *grids, int teamCount,
+                                   uint8_t *control, int cx, int cy, int radius) {
+    int x0 = cx - radius, y0 = cy - radius;
+    int x1 = cx + radius, y1 = cy + radius;
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= HL_MAP_DIM) x1 = HL_MAP_DIM - 1;
+    if (y1 >= HL_MAP_DIM) y1 = HL_MAP_DIM - 1;
+    return terrDiffControl(grids, teamCount, control, x0, y0, x1, y1);
+}
+
 void computeTerritoryShifts(const uint8_t *records, size_t len,
                             const AttrSlotIdentity slots[MAX_TANKS],
                             int slotCount,
                             TerritoryShift *out, int *outCount, int maxOut) {
     uint8_t teamIds[MAX_TANKS];
     int teamCount = 0;
-    int16_t *grids = NULL;
+    int32_t *grids = NULL;
     uint8_t *control = NULL;
     TerrDmgRing dmg;
     TerrObject pills[HL_TERR_OBJ_MAX];
     TerrObject bases[HL_TERR_OBJ_MAX];
     size_t off = 0;
     int count = 0;
+    long terrEvents = 0;
 
     dmg.buf = NULL;
     dmg.head = 0;
@@ -711,7 +755,7 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
     }
     if (teamCount <= 0) return;
 
-    grids = (int16_t *)calloc((size_t)teamCount * HL_MAP_CELLS, sizeof(int16_t));
+    grids = (int32_t *)calloc((size_t)teamCount * HL_MAP_CELLS, sizeof(int32_t));
     control = (uint8_t *)malloc(HL_MAP_CELLS);
     dmg.buf = (TerrDamage *)malloc(sizeof(TerrDamage) * HL_DMG_BUF_MAX);
     if (grids == NULL || control == NULL || dmg.buf == NULL) {
@@ -738,8 +782,8 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
         uint8_t evX = 0, evY = 0;
         uint32_t evTick = 0;
         int radius = HL_INF_PILL_RADIUS;
+        int strength = HL_INF_PILL_STRENGTH;
         uint32_t flipped;
-        int x0, y0, x1, y1;
 
         if (sz == 0 || off + sz > len) break;
 
@@ -749,6 +793,8 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
                                                    : &pills[r->targetIndex];
             radius = (r->target == ATTR_CAP_TGT_BASE) ? HL_INF_BASE_RADIUS
                                                       : HL_INF_PILL_RADIUS;
+            strength = (r->target == ATTR_CAP_TGT_BASE) ? HL_INF_BASE_STRENGTH
+                                                        : HL_INF_PILL_STRENGTH;
             evTick = r->tick;
             evX = r->mapX;
             evY = r->mapY;
@@ -757,6 +803,10 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
             loseTeam = terrTeamOfSlot(slots, slotCount, obj->owner);
             gainTeam = terrTeamOfSlot(slots, slotCount, r->newOwner);
             oldX = obj->mapX; oldY = obj->mapY; oldKnown = obj->known;
+            /* Off the grid it is on now, before the tables stop saying where
+             * that was; the matching add goes on below, past the guards. */
+            terrApplyObject(grids, teamCount, teamIds, obj, radius, strength,
+                            slots, slotCount, -1);
             obj->owner = r->newOwner;
             obj->mapX = r->mapX;
             obj->mapY = r->mapY;
@@ -772,12 +822,15 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
                  * again; a pill riding in a tank projects no influence either. */
                 obj = &pills[r->targetIndex];
                 radius = HL_INF_PILL_RADIUS;
+                strength = HL_INF_PILL_STRENGTH;
                 evTick = r->tick;
                 evX = r->mapX;
                 evY = r->mapY;
                 loseTeam = terrTeamOfSlot(slots, slotCount, obj->owner);
                 gainTeam = NEUTRAL;
                 oldX = obj->mapX; oldY = obj->mapY; oldKnown = obj->known;
+                terrApplyObject(grids, teamCount, teamIds, obj, radius, strength,
+                                slots, slotCount, -1);
                 obj->owner = NEUTRAL;
                 obj->mapX = r->mapX;
                 obj->mapY = r->mapY;
@@ -788,25 +841,27 @@ void computeTerritoryShifts(const uint8_t *records, size_t len,
         off += sz;
         if (obj == NULL) continue;
 
-        terrRestamp(grids, teamCount, teamIds, pills, bases, slots, slotCount);
+        /* The ceiling on how much work one stream may ask for. Everything from
+         * here down is per-objective-change cost, and the `count < maxOut`
+         * bound on the loop does not cover it: a change that moves no ground
+         * pays in full and never advances count. One objective recaptured in
+         * place is a whole stream of those, and a stream at
+         * ATTRIBUTION_TRACK_CAP_BYTES holds five million capture records, so
+         * the walk needs a bound of its own. */
+        if (++terrEvents > HL_TERR_EVENT_MAX) break;
+
+        /* And back on, at wherever the record just put it. */
+        terrApplyObject(grids, teamCount, teamIds, obj, radius, strength,
+                        slots, slotCount, +1);
 
         /* Control can only have moved within the object's reach — around where it
          * sits now, and around where it sat before if a carried pill was replaced
          * somewhere else. */
-        x0 = (int)evX - radius; x1 = (int)evX + radius;
-        y0 = (int)evY - radius; y1 = (int)evY + radius;
-        if (oldKnown) {
-            if ((int)oldX - radius < x0) x0 = (int)oldX - radius;
-            if ((int)oldX + radius > x1) x1 = (int)oldX + radius;
-            if ((int)oldY - radius < y0) y0 = (int)oldY - radius;
-            if ((int)oldY + radius > y1) y1 = (int)oldY + radius;
+        flipped = terrDiffControlBox(grids, teamCount, control, evX, evY, radius);
+        if (oldKnown && (oldX != evX || oldY != evY)) {
+            flipped += terrDiffControlBox(grids, teamCount, control, oldX, oldY,
+                                          radius);
         }
-        if (x0 < 0) x0 = 0;
-        if (y0 < 0) y0 = 0;
-        if (x1 >= HL_MAP_DIM) x1 = HL_MAP_DIM - 1;
-        if (y1 >= HL_MAP_DIM) y1 = HL_MAP_DIM - 1;
-
-        flipped = terrDiffControl(grids, teamCount, control, x0, y0, x1, y1);
         if (flipped == 0) continue;   /* e.g. a handover inside one team */
 
         out[count].tick = evTick;

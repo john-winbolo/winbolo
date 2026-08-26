@@ -1048,7 +1048,12 @@ extern "C" void imguiSettingsShow(void) {
         present[STAB_GENERAL] = true;
         present[STAB_DISPLAY] = true;
         present[STAB_GAMEHUD] = true;
-        present[STAB_HOSTING] = true;  /* mobile can host too */
+        /* Mobile can host too; a browser tab can't listen for connections. */
+#if defined(__EMSCRIPTEN__)
+        present[STAB_HOSTING] = false;
+#else
+        present[STAB_HOSTING] = true;
+#endif
 #if !BOLO_MOBILE
         present[STAB_CONTROLS] = !uiModeIsTablet();
         present[STAB_LAST]     = true;
@@ -1132,6 +1137,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
+#if !defined(__EMSCRIPTEN__)
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
                     s_pgForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_HOSTING;
@@ -1140,6 +1146,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
+#endif
 #if !BOLO_MOBILE
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {

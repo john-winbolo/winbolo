@@ -310,13 +310,30 @@ static void main_loop_iteration(void) {
     /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
-  /* Render (always — even while frozen, so the error dialog draws over the
-   * last frame instead of a blank screen). */
+  /* Render. Frozen still draws, so the error dialog lands over the last frame
+   * instead of a blank screen; the lobby is the one case that clears instead
+   * of rendering (see below). */
   tick = SDL_GetTicks();
   clientMutexWaitFor();
   if (finishedLoop == FALSE && !s_connFailed) {
-    clientSimRenderPrepare(cs, tick);
-    clientRenderFrame(cs, redraw);
+    if (cs != NULL && clientSimIsInLobby(cs)) {
+      /* In the lobby there is no game to show: clientRenderFrame would take
+       * its netLobby branch and paint the whole download-screen chrome, which
+       * then ghosts through the 97%-opaque ##LobbyBg the ImGui pass draws on
+       * top (and shows outright in its rounded corners). The desktop lobby
+       * runs its own blocking loop and clears to this same colour before
+       * compositing; do the equivalent here. Nothing is lost by skipping the
+       * render: the lobby tick step pumps the transport itself, and its
+       * udpClientTick drains the socket. */
+      SDL_Renderer *ren = sdl3DrawGetRenderer();
+      if (ren) {
+        SDL_SetRenderDrawColor(ren, 30, 30, 30, 255);
+        SDL_RenderClear(ren);
+      }
+    } else {
+      clientSimRenderPrepare(cs, tick);
+      clientRenderFrame(cs, redraw);
+    }
   } else if (s_connFailed) {
     /* Frozen: don't render the (possibly never-connected) game; clear to black
      * so the error dialog draws over a clean background, not garbage. */
