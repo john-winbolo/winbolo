@@ -1031,8 +1031,8 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
      * visible row. Instead the selected map's preview is driven on the
      * main thread by lobbyServerMapsPumpPreview, which requests the
      * bytes via PACKET_LOBBY_MAP_PREVIEW_REQ on select and feeds the
-     * streamed reply into mapChooserSetSelectedFile (mirroring the WBN
-     * tab). So return false here — no per-row thumbnail — but the
+     * streamed reply into mapChooserSetSelectedMapBytes (mirroring the
+     * WBN tab). So return false here — no per-row thumbnail — but the
      * selected-map preview pane still fills in. */
     return false;
 }
@@ -1040,8 +1040,8 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
 /* Main-thread pump for the Server Maps preview pane (MP only). Polls
  * the ClientSim's lobbyMapPreview* accumulator (filled async by the
  * CHANNEL_BULK preview receiver) and, once a full map's bytes have
- * arrived for the path we asked for, spills them to a worker-private
- * temp file and points the chooser at it via mapChooserSetSelectedFile.
+ * arrived for the path we asked for, hands them to the chooser via
+ * mapChooserSetSelectedMapBytes, which rasterises them in memory.
  * No-op for SP / in-process host — there generatePreview already serves
  * the preview synchronously off the local ServerSim. */
 static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
@@ -1062,26 +1062,37 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
         return;
     }
 
-    const char *tmpPath = "data/preview_cache/.sm_preview.map";
-    SDL_CreateDirectory("data/preview_cache");
-    FILE *fp = fopen(tmpPath, "wb");
-    if (fp) {
-        size_t wrote = fwrite(bytes, 1, blen, fp);
-        fclose(fp);
-        if (wrote == blen) {
-            /* Display name = basename minus the .map suffix. */
-            char disp[128];
-            const char *base = SDL_strrchr(path, '/');
-            base = base ? base + 1 : path;
-            SDL_strlcpy(disp, base, sizeof(disp));
-            size_t dl = SDL_strlen(disp);
-            if (dl > 4 && SDL_strcasecmp(disp + dl - 4, ".map") == 0) {
-                disp[dl - 4] = '\0';
-            }
-            mapChooserSetSelectedFile(&s_chooseMapState, renderer,
-                                      tmpPath, disp);
-        }
+    /* Display name = basename minus the .map suffix. */
+    char disp[128];
+    const char *base = SDL_strrchr(path, '/');
+    base = base ? base + 1 : path;
+    SDL_strlcpy(disp, base, sizeof(disp));
+    size_t dl = SDL_strlen(disp);
+    if (dl > 4 && SDL_strcasecmp(disp + dl - 4, ".map") == 0) {
+        disp[dl - 4] = '\0';
     }
+
+    /* Rasterise from memory. This used to spill the blob to
+     * data/preview_cache/.sm_preview.map and have mapChooserSetSelectedFile
+     * read it straight back off disk — a write and a re-read of bytes
+     * already in hand, and the one step here that depends on a writable
+     * filesystem, which the browser build does not really have (data/ is
+     * MEMFS, and the cache directory has to be created at runtime). Both
+     * failure branches were silent — no else on the fopen, none on a short
+     * write — and the clear below runs either way, so a failed write
+     * dropped the blob with nothing left to re-request it: the sole
+     * PREVIEW_REQ goes out on the row click.
+     *
+     * mapChooserSetSelectedMapBytes takes the same raw .map image the WBN
+     * tab feeds it and needs no file at all. It does stamp a synthetic
+     * "wbnmem:" marker over selectedPath for that tab's loading-spinner
+     * check, so preserve the row path the click already put there. */
+    char keepPath[FILENAME_MAX];
+    SDL_strlcpy(keepPath, s_chooseMapState.selectedPath, sizeof(keepPath));
+    mapChooserSetSelectedMapBytes(&s_chooseMapState, renderer,
+                                  bytes, (int)blen, disp);
+    SDL_strlcpy(s_chooseMapState.selectedPath, keepPath,
+                sizeof(s_chooseMapState.selectedPath));
     clientSimClearLobbyMapPreview(cs);
 }
 
