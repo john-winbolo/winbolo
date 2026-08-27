@@ -457,6 +457,12 @@ int lv_playersGetCentredPixelY(void);
  * lobby's slots and the log's players). False when nobody matches or the match
  * has no tank on the map at this point in the replay. */
 bool lv_playersSetViewByName(const char *name);
+
+/* The slot a named player holds in the log right now, or NEUTRAL when nobody
+ * carries that name. Same name-is-the-only-key bridge as the call above, but it
+ * only reports: it moves neither the view nor self, and it does not care where
+ * the tank is, so a player who is dead at this moment still resolves. */
+BYTE lv_playersFindByName(const char *name);
 BYTE lv_playersGetTeamId(BYTE playerNum);
 BYTE lv_playersGetUnusedTeam(BYTE playerNum);
 BYTE lv_playersGetTeamForOwner(BYTE owner);

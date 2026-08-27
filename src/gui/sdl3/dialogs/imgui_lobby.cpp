@@ -158,6 +158,7 @@ void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
 bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
+void lvEmbedSetSelfName(const char *name);
 #endif
 #if !BOLO_REEL_WBN_FETCH_CURL
 /* Round-log download for the reel's WinBolo.net source
@@ -7402,6 +7403,19 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                                             (int)rect.x, (int)rect.y);
             }
         }
+        /* Tell a reel that came up who is watching it, so the round is drawn
+         * from their side: their team's tanks green, the other side's red.
+         * The lobby slot is where that lives — its name is the key the log
+         * shares, and the team alliances the server applied at kickoff are in
+         * the log itself, so the reel needs nothing else. A spectator has no
+         * slot of their own (and myPlayerNum is a stale index for one), so
+         * they are named as nobody and the reel draws as it always did. */
+        const ClientLobbySlot *watcher =
+            clientSimIsSpectator(cs)
+                ? nullptr
+                : clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        lvEmbedSetSelfName(watcher ? watcher->playerName : "");
+
         /* No reel out of the attempt means there is no replay to be had for
          * this round, whichever way it fell short — the file would not open,
          * came up short, would not fit in memory, no bytes were handed over,

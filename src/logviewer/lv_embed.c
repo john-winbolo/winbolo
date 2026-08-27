@@ -24,6 +24,7 @@
  *********************************************************/
 
 #include <stdlib.h>
+#include <string.h>
 #include "backend.h"
 #include "lv_players.h"   /* lv_playersSetViewByName — reel focus-on-player */
 #include "lv_global.h"
@@ -359,6 +360,11 @@ static int s_embedPanStartPxY = 0;
  * after lvEmbedBegin has stored it. */
 static int s_embedSavedZoomStep = 0;
 
+/* The player watching the reel, by name — the only key the host shares with the
+ * log. Empty when the host named nobody (a spectator has no slot of their own),
+ * and the reel then draws exactly as it did before it could be told. */
+static char s_embedSelfName[PLAYER_NAME_LEN];
+
 bool lvEmbedBegin(SDL_Window *window, SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH) {
     /* The buffer is ours from the call on (lv_screenLoadMapFromMemory takes
@@ -390,6 +396,7 @@ bool lvEmbedBegin(SDL_Window *window, SDL_Renderer *renderer,
     lv_screenSetHideLobby(1);
     lv_updateSpeed(1, FALSE);
     lv_imgui_events_clear();
+    s_embedSelfName[0] = '\0';
 
     /* Open at the widest zoom step (0.5x) so a panel-sized rect shows a
      * useful slice of the map, then size the tile grid to that rect. The step
@@ -430,6 +437,29 @@ void lvEmbedEnd(void) {
 
 bool lvEmbedIsActive(void) {
     return s_embedActive;
+}
+
+/* Name the player the reel is being watched by. Everything the decoder bakes
+ * relative to "self" — the tanks' good/evil frames, and the good/evil/neutral
+ * pill and base tiles — then describes that player rather than log slot 0,
+ * whoever that happened to be, and the tanks are drawn green for their allies
+ * and red for their enemies instead of from the team palette the reel loads no
+ * preferences for. An empty name (a spectator, watching a round they had no
+ * slot in) leaves both alone. */
+void lvEmbedSetSelfName(const char *name) {
+    if (!s_embedActive || g_lv == NULL) {
+        return;
+    }
+    if (name == NULL) {
+        name = "";
+    }
+    lv_clientMutexWaitFor();
+    strncpy(s_embedSelfName, name, sizeof(s_embedSelfName) - 1);
+    s_embedSelfName[sizeof(s_embedSelfName) - 1] = '\0';
+    g_lv->allyColours = (s_embedSelfName[0] != '\0');
+    lv_drawDirtyScreen();
+    lv_clientMutexRelease();
+    lv_windowNeedRedraw();
 }
 
 /* Re-fit the tile grid to a host rect that changed size. Mirrors
@@ -515,7 +545,20 @@ bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
      * stale-but-matched is correct, fresh-but-torn is the bug. */
     lv_clientMutexWaitFor();
     if (g_lv->wantScreenUpdate == TRUE) {
+        /* Point self at the watching player for the length of the build, the
+         * way the viewer's game view points it at the camera tank: the tank,
+         * pill and base sprite indices are baked from lv_playersGetSelf here,
+         * so without it they describe log slot 0. Restored straight after
+         * because self doubles as the follow camera's target, which the host
+         * moves with lvEmbedFocusPlayerByName — clicking a name to follow
+         * somebody must not repaint the round from their side. */
+        BYTE savedSelf = lv_playersGetSelf();
+        BYTE watching = lv_playersFindByName(s_embedSelfName);
+        if (watching != NEUTRAL) {
+            lv_playersSetSelf(watching);
+        }
         lv_screenUpdate(redraw);
+        lv_playersSetSelf(savedSelf);
         g_lv->wantScreenUpdate = FALSE;
         lv_screenGetSubOffset(&s_embedSubX, &s_embedSubY);
     }
