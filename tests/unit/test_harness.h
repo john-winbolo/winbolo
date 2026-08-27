@@ -873,6 +873,16 @@ int run_loopback_download_join(void);
 int run_loopback_download_midgame(void);
 int run_loopback_resync(void);
 
+/* Mid-lobby map change + join-download recovery (test_loopback_map_change.c):
+ * a clean map change re-downloads and reconverges; map changes and initial
+ * joins under loss+duplication (seed spreads) must always converge — the
+ * shapes that used to wedge the lobby in DOWNLOADING_MAP when the bulk map
+ * stream raced the JOIN_ACCEPT or a duplicate accept wiped the receiver. */
+int run_loopback_map_change_clean(void);
+int run_loopback_map_change_loss(void);
+int run_loopback_join_accept_loss(void);
+int run_loopback_join_accept_loss_midgame(void);
+
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the
  * listen-server host render-prepare no-op (own tank + recon unchanged). */

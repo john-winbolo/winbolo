@@ -537,6 +537,25 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               event out so the other clients
                                               re-read that page. */
 
+#define PACKET_MAP_DL_READY            213  /* client → server
+                                              { connId 8 } — "my join-download
+                                              buffers are armed; begin the map
+                                              stream". Sent when JOIN_ACCEPT
+                                              arms the download, and re-sent by
+                                              the client's download watchdog.
+                                              A re-ask while a stream is (or
+                                              was) in flight is answered with a
+                                              full restart behind a
+                                              CHANNEL_BULK re-base, so a
+                                              transfer whose head the client
+                                              missed (accept lost, stream
+                                              already flowing) is recoverable.
+                                              connId must match the slot's; a
+                                              mismatch is dropped (an
+                                              address-spoofed READY could
+                                              otherwise reset a healthy
+                                              client's stream). */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

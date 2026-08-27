@@ -3006,6 +3006,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
+    tests/unit/test_loopback_map_change.c
     tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
@@ -3670,6 +3671,10 @@ set(_unit_test_names
     loopback_download_join
     loopback_download_midgame
     loopback_resync
+    loopback_map_change_clean
+    loopback_map_change_loss
+    loopback_join_accept_loss
+    loopback_join_accept_loss_midgame
     gate1_viewtick_loopback
     gate1_host_noop
     interp_jitter_e2e
