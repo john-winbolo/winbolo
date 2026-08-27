@@ -549,7 +549,7 @@ static const LangEntry langTable[] = {
     {1904, "Pill"},
     {1905, "Damage"},
     {1874, "Builds"},
-    {1875, "More awards"},
+    {1947, "Awards"},
     {1876, "(empty)"},
     {1877, "{string1} owned {string2}"},
     {1878, "Most Kills"},

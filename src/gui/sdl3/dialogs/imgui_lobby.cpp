@@ -4692,15 +4692,50 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             if (botCount[teamId] == 1)      botsPart = langGetText(STR_DLGLOBBY_TEAM_1BOT);
             else if (botCount[teamId] > 1)  botsPart = langGetText(STR_DLGLOBBY_TEAM_NBOTS);
             const char *sep = botCount[teamId] > 0 ? " · " : "";
-            ImGui::TextDisabled("%s%s%s", membersStr, sep, botsPart);
+            SDL_snprintf(membersLine, sizeof(membersLine), "%s%s%s",
+                         membersStr, sep, botsPart);
+        }
+
+        /* Header shed. The host's bot controls are pinned to the panel's
+         * right edge, so whatever the left side draws past their left edge
+         * ends up underneath them. Measure both sides against the panel's own
+         * content width and give up the optional pieces widest-first — the
+         * Bot Naming pool, then the member count, then Join Team — so a
+         * narrow players column keeps the header readable instead of piling
+         * it on itself. */
+        {
+            const ImGuiStyle &hs = ImGui::GetStyle();
+            float effBotBtnW = botsAllowed ? botBtnW : 0.0f;
+            float effBotGap  = botsAllowed ? gap     : 0.0f;
+            float groupBaseW = effectiveHost ? (effBotBtnW + effBotGap + xBtnW) : 0.0f;
+            float namingW    = labelW + gap + comboW + namingShift;
+            float countW     = hs.ItemSpacing.x + ImGui::CalcTextSize(membersLine).x;
+            float joinW      = showJoin
+                               ? hs.ItemSpacing.x + hs.FramePadding.x * 2.0f
+                                 + ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_JOIN_TEAM)).x
+                               : 0.0f;
+            float needW = 6.0f * s + ImGui::CalcTextSize(defaultName).x
+                        + groupBaseW + gap;
+            if (showNaming && contentW < needW + namingW + countW + joinW) {
+                showNaming = false;
+            }
+            if (showNaming) needW += namingW;
+            showTeamCount = (contentW >= needW + countW + joinW);
+            if (showTeamCount) needW += countW;
+            if (showJoin && contentW < needW + joinW) showJoin = false;
+        }
+
+        if (showTeamCount) {
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", membersLine);
         }
 
         /* "Join Team" — moves the local player to this team. Available
          * to every client regardless of permissions (you can always
          * move yourself) and only rendered when you're not already on
          * this team. */
-        if (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-            clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId) {
+        if (showJoin) {
             ImGui::SameLine();
             char joinId[64];
             SDL_snprintf(joinId, sizeof(joinId), "%s##j%d", langGetText(STR_DLGLOBBY_JOIN_TEAM), teamId);
@@ -6440,16 +6475,12 @@ static bool lobbyRecapReelVisible(ClientSim *cs) {
 #endif
 }
 
-/* How many of the round's awards the recap shows before the rest go behind the
- * expand. A round can win all eighteen, and a list that long buries the ones
- * worth reading. */
-static const int RECAP_AWARDS_SHOWN = 4;
+/* How many awards the recap draws at random, on top of the ones it always
+ * leads with. A round can win all eighteen, and a list that long buries the
+ * ones worth reading. */
+static const int RECAP_AWARDS_RANDOM = 4;
 
-/* Whether the "More awards" expand is open. Per-summary, like s_recapShowMap:
- * a new round's recap opens on the short list. */
-static bool s_recapShowAllAwards = false;
-
-/* Whether the highlight-clip list is expanded. Per-summary like the two above,
+/* Whether the highlight-clip list is expanded. Per-summary like s_recapShowMap,
  * and closed to begin with: the clips are a place to go looking once something
  * in the round is worth finding again, and the replay above them is what the
  * recap is for. Folded away, the reel gets the rows' height. */
@@ -8454,8 +8485,7 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
 #endif /* !BOLO_MOBILE */
 
 /* Container-less recap body, in reading order: the round's replay reel, its
- * highlight clips, the scoreboard table, then a handful of the round's awards
- * with the rest behind an expand.
+ * highlight clips, the scoreboard table, then a handful of the round's awards.
  * Renders no chrome and decides nothing about visibility — the caller (the
  * desktop lobby's right column / the controller layout's Last round tab)
  * gates it on clientSimGetLastRoundStats and supplies the surrounding
@@ -8505,9 +8535,9 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         char hlHeader[96];
         snprintf(hlHeader, sizeof(hlHeader), "%s (%d)###recapHighlights",
                  langGetText(STR_DLGLOBBY_HL_HEADER), hc);
-        /* Driven from our own flag rather than ImGui's storage, the way the
-         * awards expand below is, so the next round's recap starts closed
-         * again instead of inheriting this one's state. */
+        /* Driven from our own flag rather than ImGui's storage, so the next
+         * round's recap starts closed again instead of inheriting this one's
+         * state. */
         ImGui::SetNextItemOpen(s_recapShowHighlights, ImGuiCond_Always);
         s_recapShowHighlights = ImGui::CollapsingHeader(hlHeader);
         if (s_recapShowHighlights) {
@@ -8877,6 +8907,11 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
     /* ── Awards ribbon ───────────────────────────────────────────── */
+    /* Headed like the clip list above it, so the lines below read as their own
+     * section rather than as a tail on the scoreboard. */
+    ImGui::Separator();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LASTROUND_AWARDS));
+
     /* Renders one award line: label — winner [owned subject] (value). */
     auto renderAward = [&](int idx) {
         const AwardResult *aw = &st->awards[idx];
@@ -8918,29 +8953,28 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         }
     };
 
-    /* A busy round wins most of the eighteen, which reads as a wall of text and
-     * buries the ones worth reading. Show a handful, drawn from the summary's
-     * own bytes so every client shows the same ones, and keep the full list one
-     * click away. */
-    uint8_t picks[RECAP_AWARDS_SHOWN];
-    int pickCount = roundStatsPickAwardSubset(st, picks, RECAP_AWARDS_SHOWN);
-    for (int i = 0; i < pickCount; i++) {
-        renderAward(picks[i]);
+    /* The three the ribbon always leads with: the two objective captures a
+     * round is actually won on, and the builder hunt. A round that did not
+     * award one just does not show that line — the rest keep their order. */
+    static const uint8_t pinnedAwards[] = {
+        AWARD_MOST_BASE_CAPTURES, AWARD_MOST_PILL_CAPTURES, AWARD_LGM_HUNTER
+    };
+    const int pinnedCount = (int)(sizeof(pinnedAwards) / sizeof(pinnedAwards[0]));
+    for (int i = 0; i < pinnedCount; i++) {
+        if (awardIdx[pinnedAwards[i]] >= 0) renderAward(awardIdx[pinnedAwards[i]]);
     }
 
-    /* Nothing was left out when everything fit, so there is no header at all.
-     * Its open state is driven from our own flag rather than ImGui's storage so
-     * the next round's recap starts collapsed. */
-    if (ac > pickCount) {
-        ImGui::SetNextItemOpen(s_recapShowAllAwards, ImGuiCond_Always);
-        s_recapShowAllAwards =
-            ImGui::CollapsingHeader(langGetText(STR_DLGLOBBY_LASTROUND_MORE));
-        if (s_recapShowAllAwards) {
-            /* Every won award, listed in award-id order. */
-            for (int id = 1; id <= AWARD_COUNT; id++) {
-                if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
-            }
-        }
+    /* A busy round wins most of the eighteen, which reads as a wall of text and
+     * buries the ones worth reading. The rest of the ribbon is a fixed handful
+     * of the others, drawn from the summary's own bytes so every client shows
+     * the same ones and a re-render never reshuffles. The three above are held
+     * out of the draw so none of them can come up twice. */
+    uint8_t picks[RECAP_AWARDS_RANDOM];
+    int pickCount = roundStatsPickAwardSubsetExcluding(st, pinnedAwards,
+                                                       pinnedCount, picks,
+                                                       RECAP_AWARDS_RANDOM);
+    for (int i = 0; i < pickCount; i++) {
+        renderAward(picks[i]);
     }
 
 #if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
@@ -9841,7 +9875,6 @@ extern "C" void imguiLobbyFrameReset(void) {
     /* A lobby re-entered with a summary still stored should open on the
      * recap, not on whatever the last session was left looking at. */
     s_recapShowMap              = false;
-    s_recapShowAllAwards        = false;
     s_recapShowHighlights       = false;
 
 #if !BOLO_MOBILE
@@ -10343,12 +10376,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
 #endif
-        /* The countdown clearing the summary also clears the map view and both
-         * expands, so the next round's recap opens on itself rather than on
+        /* The countdown clearing the summary also clears the map view and the
+         * clip expand, so the next round's recap opens on itself rather than on
          * wherever the player left the panel. */
         if (!lobbyShowLastRound) {
             s_recapShowMap        = false;
-            s_recapShowAllAwards  = false;
             s_recapShowHighlights = false;
         }
         /* Fold the settings header away for the post-game view and put it
