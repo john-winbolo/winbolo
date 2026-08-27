@@ -1304,27 +1304,86 @@ bool lv_screenLogTick() {
       lv_playersLgmZero();
       lv_screenProcessLog(len);
       if (g_lv->centredTank == TRUE) {
-        BYTE x = lv_playersGetCentredX();
-        BYTE y = lv_playersGetCentredY();
-        if (x != 0 && y != 0 && x != 255 && y != 255) {
-          int cx = (int)x - (int)(g_lv->screenSizeX / 2);
-          int cy = (int)y - (int)(g_lv->screenSizeY / 2);
-          if (cx < 0) cx = 0;
-          if (cy < 0) cy = 0;
-          if (cx + g_lv->screenSizeX > 255) cx = 255 - g_lv->screenSizeX;
-          if (cy + g_lv->screenSizeY > 255) cy = 255 - g_lv->screenSizeY;
-          BYTE newXOffset = (BYTE)cx;
-          BYTE newYOffset = (BYTE)cy;
-          if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
-            g_lv->xOffset = newXOffset;
-            g_lv->yOffset = newYOffset;
-            g_lv->wantScreenUpdate = TRUE;
-          }
-        }
+        lv_screenFollowCentredTank();
       }
     }
   }
   return returnValue;
+}
+
+/* Put the camera on the followed tank, in native pixels rather than whole
+ * map squares.
+ *
+ * This used to assign xOffset/yOffset straight from lv_playersGetCentredX/Y —
+ * which are BYTE map squares — and never touch subPxX/subPxY, so the view
+ * could only move in 16-pixel steps: the tank drifted a whole tile off centre
+ * and the whole world snapped back the instant it crossed a boundary. One
+ * jump per tile of travel, forever, which is exactly the cyclic one-tile jump
+ * the reel showed while a round played.
+ *
+ * Everything needed for the smooth version was already here: the render target
+ * carries one spare tile (draw.c sizes it (screenSizeX + 1) * TILE_SIZE_X) and
+ * the host already uses subPxX/subPxY as the blit's source origin
+ * (lv_screenGetSubOffset -> lvEmbedFrameTexture). Only the sub-tile part was
+ * missing. Same defect and same fix as viewCamPixelsF in the map preview
+ * widget: derive every value from one un-truncated position.
+ *
+ * Clamps mirror lv_screenPanToTotalPixels — the whole-tile range is
+ * [0, 255 - screenSize] and sub-pixel is forced to zero at the far edge so the
+ * trailing edge has no bleed past the rendered tiles.
+ *
+ * A sub-tile-only move needs no tile re-render: the host re-reads the sub
+ * offset every frame and shifts the source rect. wantScreenUpdate is still set
+ * because the tank sprites inside the target moved. */
+void lv_screenFollowCentredTank(void) {
+  int px, py;
+  int sizeX, sizeY, maxOffX, maxOffY, maxPxX, maxPxY;
+  int camPxX, camPxY, newOffX, newOffY, newSubX, newSubY;
+
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return;
+  }
+  px = lv_playersGetCentredPixelX();
+  py = lv_playersGetCentredPixelY();
+  if (px < 0 || py < 0) {
+    return;
+  }
+
+  sizeX = lv_screenGetSizeX();
+  sizeY = lv_screenGetSizeY();
+  /* Centre the viewport on the tank, in pixels. */
+  camPxX = px - (sizeX * TILE_SIZE_X) / 2;
+  camPxY = py - (sizeY * TILE_SIZE_Y) / 2;
+
+  maxOffX = 255 - sizeX; if (maxOffX < 0) maxOffX = 0;
+  maxOffY = 255 - sizeY; if (maxOffY < 0) maxOffY = 0;
+  maxPxX = maxOffX * TILE_SIZE_X;
+  maxPxY = maxOffY * TILE_SIZE_Y;
+  if (camPxX < 0) camPxX = 0;
+  if (camPxY < 0) camPxY = 0;
+  if (camPxX > maxPxX) camPxX = maxPxX;
+  if (camPxY > maxPxY) camPxY = maxPxY;
+
+  newOffX = camPxX / TILE_SIZE_X;
+  newOffY = camPxY / TILE_SIZE_Y;
+  newSubX = camPxX - newOffX * TILE_SIZE_X;
+  newSubY = camPxY - newOffY * TILE_SIZE_Y;
+
+  /* Compare BEFORE storing, then flag on ANY move, sub-tile included: the
+   * host's blit origin comes from a snapshot taken at render time, so a camera
+   * move that triggers no re-render would never reach the screen. Matters most
+   * for the paused reel, where a focus jump is the only thing moving; during
+   * playback the sprites dirty the screen every tick anyway, so this costs
+   * nothing extra. Skipping the flag when nothing moved keeps a paused,
+   * unfocused reel fully idle. */
+  if ((BYTE)newOffX != g_lv->xOffset || (BYTE)newOffY != g_lv->yOffset ||
+      newSubX != g_lv->subPxX || newSubY != g_lv->subPxY) {
+    g_lv->xOffset = (BYTE)newOffX;
+    g_lv->yOffset = (BYTE)newOffY;
+    g_lv->subPxX  = newSubX;
+    g_lv->subPxY  = newSubY;
+    g_lv->wantScreenUpdate = TRUE;
+  }
 }
 
 void lv_screenCentreOnSelectedItem() {
@@ -1353,7 +1412,10 @@ void lv_screenCentreOnSelectedItem() {
     if (newXOffset != g_lv->xOffset || g_lv->yOffset != newYOffset) {
       g_lv->xOffset = newXOffset;
       g_lv->yOffset = newYOffset;
-      lv_screenUpdate(redraw);
+      /* Defer to the flag — see lv_screenPanToTotalPixels: an inline render
+       * during input pairs new content with the frame's already-recorded
+       * blit offsets (one displaced frame). */
+      g_lv->wantScreenUpdate = TRUE;
     }
   }
 }
@@ -2908,6 +2970,7 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
 
   bool wholeChanged = ((BYTE)newOffX != g_lv->xOffset) ||
                       ((BYTE)newOffY != g_lv->yOffset);
+  bool subChanged   = (newSubX != g_lv->subPxX) || (newSubY != g_lv->subPxY);
 
   g_lv->subPxX = newSubX;
   g_lv->subPxY = newSubY;
@@ -2915,7 +2978,21 @@ void lv_screenPanToTotalPixels(int totalPxX, int totalPxY) {
   if (wholeChanged) {
     g_lv->xOffset = (BYTE)newOffX;
     g_lv->yOffset = (BYTE)newOffY;
-    lv_screenUpdate(redraw);
+  }
+
+  /* Mutate the camera ONLY — never render here. Both hosts consume
+   * wantScreenUpdate at the top of their next frame (lvEmbedFrameTexture for
+   * the embedded reel, the logviewer.c main loop for the standalone app), and
+   * that is the only place a render pairs coherently with the blit-offset
+   * snapshot. Pan input runs AFTER the frame's image was already recorded, so
+   * an inline lv_screenUpdate(redraw) on a whole-tile crossing repainted the
+   * texture for the NEW camera while the frame presented it with the OLD
+   * offsets — one displaced frame at every tile boundary of a drag, the
+   * reel's "flickers every ~16 pixels of pan". Deferring to the flag renders
+   * once, next frame, with matched offsets. Cheap: the redraw is
+   * differential, so an unchanged grid blits nothing. */
+  if (wholeChanged || subChanged) {
+    g_lv->wantScreenUpdate = TRUE;
   }
 }
 
@@ -2982,7 +3059,8 @@ void lv_screenMouseCentreClick(int xPos, int yPos) {
   yClick = (int) (dt.quot);
   g_lv->xOffset = (g_lv->xOffset + xClick) - (g_lv->screenSizeX / 2);
   g_lv->yOffset = (g_lv->yOffset + yClick) - (g_lv->screenSizeY / 2);
-  lv_screenUpdate(redraw);
+  /* Defer to the flag — see lv_screenPanToTotalPixels. */
+  g_lv->wantScreenUpdate = TRUE;
 }
 
 /* Centre the game view on a map cell, clamped so the offset stays in range
@@ -3000,7 +3078,8 @@ void lv_screenCentreOnCell(int mapX, int mapY) {
   if (cy > 255) cy = 255;
   g_lv->xOffset = (BYTE)cx;
   g_lv->yOffset = (BYTE)cy;
-  lv_screenUpdate(redraw);
+  /* Defer to the flag — see lv_screenPanToTotalPixels. */
+  g_lv->wantScreenUpdate = TRUE;
 }
 
 /* Takes an absolute log time (highlight clip times are absolute) and clamps it
@@ -3172,12 +3251,43 @@ void lv_screenSeekToPosition(float ratio) {
 }
 
 /* Seek playback to an absolute log time: restore the newest snapshot at or
- * before it, then fast-forward the decoder to the target. */
+ * before it, then fast-forward the decoder to the target.
+ *
+ * A forward seek skips the restore entirely. The decoder is a sequential state
+ * machine and its current state is already the replay of everything up to
+ * timeRunning, so ticking on to a later target lands in exactly the state a
+ * restore-and-replay would produce, for only the ticks in between. That
+ * matters because a round carries essentially one snapshot, at its start: the
+ * restore path re-decodes the whole round every time, at 20 ms of log per
+ * tick, which is why scrubbing used to be affordable only once on release.
+ * With this, dragging the recap's seek slider forward costs just the ticks the
+ * handle crossed since the last frame. Backward seeks still rewind through the
+ * snapshot — there is no way to un-tick — so callers throttle those. */
 static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
   size_t snapPos;
   uint32_t snapTime;
   BYTE key;
   BYTE *pTeams = NULL;
+
+  if (targetTime >= g_lv->timeRunning && g_lv->logLoaded == TRUE) {
+    /* Already there: nothing to decode, and no state to disturb. */
+    if (targetTime == g_lv->timeRunning) {
+      return;
+    }
+    g_lv->isPlaying = TRUE;
+    /* A user scrub parks the live-DVR view in the past (consumed next frame),
+       exactly as the restore path below does. */
+    s_specSeekPark = true;
+    g_lv->fastForwarding = TRUE;
+    while (g_lv->timeRunning < targetTime && g_lv->isPlaying == TRUE) {
+      lv_screenLogTick();
+    }
+    g_lv->fastForwarding = FALSE;
+    /* Same reason as the restore path: drain what the fast-forward queued so
+       the newswire is not still scrolling out pre-seek text afterwards. */
+    lv_messageDrainQueue();
+    return;
+  }
 
   if (lv_snapshotFindByTime(&g_lv->snap, targetTime, &snapPos, &snapTime, &key, &pTeams)) {
     g_lv->timeRunning = snapTime;

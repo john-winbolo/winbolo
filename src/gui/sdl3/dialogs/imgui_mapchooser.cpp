@@ -2727,7 +2727,10 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * which is now movable, and end up dragging the chooser
              * window itself instead of panning the map. */
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
+            bool nearest = mapPreviewViewWantsNearestSampling(state->previewView);
+            if (nearest) imguiPushNearestSampling();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            if (nearest) imguiPopNearestSampling();
             ImGui::SetCursorScreenPos(imgPos);
             /* Mark the upcoming InvisibleButton as allow-overlap so the
              * maximize icon we draw afterwards (covering a small corner

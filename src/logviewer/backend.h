@@ -595,6 +595,11 @@ void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);
 
 void lv_screenCentreOnSelectedItem();
+
+/* Move the camera onto the followed tank at native-pixel precision (tile
+ * offset plus sub-tile pixel), instead of snapping to whole map squares.
+ * No-op when the followed tank has no position right now. */
+void lv_screenFollowCentredTank(void);
 void lv_screenGetPlayerName(char *name, BYTE playerNum, size_t destSize);
 
 /* Name the log recorded for a slot, from a one-shot scan of its join events at

@@ -128,7 +128,16 @@ struct MapPreviewView {
     /* Offscreen render target. Sized at RenderOffscreen time to match
      * the requested viewport (oversampled when zoom < 1 so the
      * destination Image can downscale for crisp output). */
-    SDL_Texture *offscreen;
+    /* Double-buffered: one is being rendered into while the other is the one
+     * the caller was handed to draw. Rendering into the texture ImGui is
+     * about to sample means the GPU can be reading it while SDL writes it,
+     * which shows up in motion as ghosting between the old and new camera —
+     * exactly what the lobby's own preview rebuild avoids by building the new
+     * texture before releasing the old ("Build the NEW texture before
+     * destroying the OLD one", imgui_lobby.cpp). Same shape, per frame:
+     * render into the back buffer, publish it, flip. */
+    SDL_Texture *offscreen[2];
+    int          offscreenBack;   /* index currently rendered into */
     int          offscreenW;
     int          offscreenH;
 
@@ -188,6 +197,16 @@ struct MapPreviewView {
     /* macOS pinch accumulator. */
     float pinchAccum;
 
+    /* Sub-unit remainder carried between pan steps — see viewPanBy. */
+    float panResidX;
+    float panResidY;
+
+    /* Pan-drag ownership, latched at the press. panDragChecked marks that
+     * this press has already been adjudicated, so the decision is made once
+     * rather than re-made every frame. See mapPreviewViewHandleInput. */
+    bool panDragActive;
+    bool panDragChecked;
+
     /* Transform state snapshot — captured each time viewRenderStarts runs,
      * so world<->screen inverts the same math the starts were drawn with.
      * Valid only in sprite mode (the minimap path doesn't draw starts). */
@@ -223,6 +242,67 @@ static void boatStyleForOwner(const MapPreviewView *v, int startIdx1,
         case 3: *outX = kEvilBoatAtlasX; *outY = kEvilBoatAtlasY; break; /* enemy red */
         default: *outA = 128; break;                  /* unclaimed -> 50% transparent */
     }
+}
+
+/* WORLD units per map square (1 << TANK_SHIFT_MAPSIZE). */
+#define VIEW_WORLD_PER_TILE 256.0f
+
+/* Camera centre in atlas pixels (tileSize px per map square), keeping the
+ * sub-pixel fraction. This was ((int)centre * tileSize) >> 8, which snapped
+ * the camera onto whole atlas pixels — one atlas pixel is `zoom` screen
+ * pixels, so at 16x the view could only move in 16-pixel jumps and panning
+ * read as stepped. The minimap path (viewRenderMinimapToOffscreen) already
+ * did this in float; this brings the sprite path in line. */
+static inline float viewCamPixelsF(WORLD centre, int tileSize) {
+    return (float)centre * (float)tileSize / VIEW_WORLD_PER_TILE;
+}
+
+/* Move the camera by a fractional number of WORLD units, carrying the
+ * remainder into the next call. Mouse deltas convert to fractional units and
+ * the old code truncated each frame's step, so a slow drag lost every
+ * sub-unit move and a fast one fell progressively behind the cursor. The
+ * remainder is dropped at the clamps so it can't build up an invisible debt
+ * the user has to drag back out. */
+static void viewPanBy(MapPreviewView *v, float dxWorld, float dyWorld) {
+    float wantX = (float)v->centerX + dxWorld + v->panResidX;
+    float wantY = (float)v->centerY + dyWorld + v->panResidY;
+    float newX  = floorf(wantX);
+    float newY  = floorf(wantY);
+    v->panResidX = wantX - newX;
+    v->panResidY = wantY - newY;
+    if (newX < 0.0f)     { newX = 0.0f;     v->panResidX = 0.0f; }
+    if (newX > 65280.0f) { newX = 65280.0f; v->panResidX = 0.0f; }
+    if (newY < 0.0f)     { newY = 0.0f;     v->panResidY = 0.0f; }
+    if (newY > 65280.0f) { newY = 65280.0f; v->panResidY = 0.0f; }
+    v->centerX = (WORLD)newX;
+    v->centerY = (WORLD)newY;
+}
+
+/* WORLD units spanned by one displayed pixel at the given zoom — one map
+ * square is TILE_SIZE_X * zoom pixels on screen and 256 WORLD units. */
+static inline float viewPixelsToWorld(float zoom) {
+    if (zoom <= 0.0f) zoom = 1.0f;
+    return VIEW_WORLD_PER_TILE / ((float)TILE_SIZE_X * zoom);
+}
+
+/* Keep the map point under the cursor pinned across a zoom step, so zooming
+ * reads as moving toward what you are looking at rather than re-centring.
+ *
+ * The item rect is the pan InvisibleButton that every caller submits
+ * immediately before mapPreviewViewHandleInput (see the header note), so it
+ * is this frame's displayed map rect. If a caller ever breaks that ordering
+ * the offsets go to zero and zoom falls back to centre-anchored. */
+static void viewZoomAnchorAtCursor(MapPreviewView *v, float oldZoom) {
+    ImVec2 rectMin  = ImGui::GetItemRectMin();
+    ImVec2 rectSize = ImGui::GetItemRectSize();
+    if (rectSize.x < 1.0f || rectSize.y < 1.0f) return;
+    ImVec2 mp = ImGui::GetMousePos();
+    float offX = mp.x - (rectMin.x + rectSize.x * 0.5f);
+    float offY = mp.y - (rectMin.y + rectSize.y * 0.5f);
+    /* The cursor sits at centre + off * pixelsToWorld(zoom); solving for the
+     * centre that keeps that product constant gives the delta below. */
+    float delta = viewPixelsToWorld(oldZoom) - viewPixelsToWorld(v->zoomLevel);
+    viewPanBy(v, offX * delta, offY * delta);
 }
 
 /* ── Adjacency-aware tile calculation (lifted verbatim) ──────────── */
@@ -282,12 +362,12 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
     float scaledTileF = (float)tileSize * tileScale;
     if (scaledTileF < 1.0f) scaledTileF = 1.0f;
 
-    int centerPX = ((int)v->centerX * tileSize) >> 8;
-    int centerPY = ((int)v->centerY * tileSize) >> 8;
+    float centerPXf = viewCamPixelsF(v->centerX, tileSize);
+    float centerPYf = viewCamPixelsF(v->centerY, tileSize);
     float halfX = (float)screenW / (2.0f * tileScale);
     float halfY = (float)screenH / (2.0f * tileScale);
-    float camPXf = (float)centerPX - halfX;
-    float camPYf = (float)centerPY - halfY;
+    float camPXf = centerPXf - halfX;
+    float camPYf = centerPYf - halfY;
 
     /* Snapshot the exact transform inputs so world<->screen helpers
      * invert this frame's math even if pan/zoom changes before they run. */
@@ -328,12 +408,12 @@ extern "C" bool mapPreviewViewWorldToScreen(const MapPreviewView *v,
                                             float *outX, float *outY) {
     if (!v || !v->startsTransformValid) return false;
     int tileSize = TILE_SIZE_X;
-    int centerPX = ((int)v->startsCenterX * tileSize) >> 8;
-    int centerPY = ((int)v->startsCenterY * tileSize) >> 8;
+    float centerPXf = viewCamPixelsF(v->startsCenterX, tileSize);
+    float centerPYf = viewCamPixelsF(v->startsCenterY, tileSize);
     float halfX = (float)v->startsScreenW / (2.0f * v->startsTileScale);
     float halfY = (float)v->startsScreenH / (2.0f * v->startsTileScale);
-    float camPXf = (float)centerPX - halfX;
-    float camPYf = (float)centerPY - halfY;
+    float camPXf = centerPXf - halfX;
+    float camPYf = centerPYf - halfY;
     if (outX) *outX = ((float)(mapSqX * tileSize) - camPXf) * v->startsTileScale;
     if (outY) *outY = ((float)(mapSqY * tileSize) - camPYf) * v->startsTileScale;
     return true;
@@ -344,12 +424,12 @@ extern "C" bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
                                             int *outMapSqX, int *outMapSqY) {
     if (!v || !v->startsTransformValid) return false;
     int tileSize = TILE_SIZE_X;
-    int centerPX = ((int)v->startsCenterX * tileSize) >> 8;
-    int centerPY = ((int)v->startsCenterY * tileSize) >> 8;
+    float centerPXf = viewCamPixelsF(v->startsCenterX, tileSize);
+    float centerPYf = viewCamPixelsF(v->startsCenterY, tileSize);
     float halfX = (float)v->startsScreenW / (2.0f * v->startsTileScale);
     float halfY = (float)v->startsScreenH / (2.0f * v->startsTileScale);
-    float camPXf = (float)centerPX - halfX;
-    float camPYf = (float)centerPY - halfY;
+    float camPXf = centerPXf - halfX;
+    float camPYf = centerPYf - halfY;
     float tileXf = (sx / v->startsTileScale + camPXf) / (float)tileSize;
     float tileYf = (sy / v->startsTileScale + camPYf) / (float)tileSize;
     int mx = (int)floorf(tileXf);
@@ -491,16 +571,16 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
     float scaledTileF = (float)tileSize * tileScale;
     if (scaledTileF < 1.0f) scaledTileF = 1.0f;
 
-    int centerPX = ((int)v->centerX * tileSize) >> 8;
-    int centerPY = ((int)v->centerY * tileSize) >> 8;
+    float centerPXf = viewCamPixelsF(v->centerX, tileSize);
+    float centerPYf = viewCamPixelsF(v->centerY, tileSize);
     /* Camera half-span in tile-pixel units (16 per tile, scale
      * independent). The offscreen carries scaledTileF pixels per
      * tile so half-span = screenW / (2 * scaledTileF) tiles, and
      * each tile = tileSize tile-pixels. */
     float halfX = (float)screenW / (2.0f * tileScale);
     float halfY = (float)screenH / (2.0f * tileScale);
-    float camPXf = (float)centerPX - halfX;
-    float camPYf = (float)centerPY - halfY;
+    float camPXf = centerPXf - halfX;
+    float camPYf = centerPYf - halfY;
 
     int camMX = (int)floorf(camPXf / (float)tileSize);
     int camMY = (int)floorf(camPYf / (float)tileSize);
@@ -670,7 +750,13 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
 /* ── Map data lifecycle ──────────────────────────────────────────── */
 
 static void viewFreeMapData(MapPreviewView *v) {
-    if (v->offscreen) { SDL_DestroyTexture(v->offscreen); v->offscreen = NULL; }
+    for (int i = 0; i < 2; i++) {
+        if (v->offscreen[i]) {
+            SDL_DestroyTexture(v->offscreen[i]);
+            v->offscreen[i] = NULL;
+        }
+    }
+    v->offscreenBack = 0;
     v->offscreenW = 0;
     v->offscreenH = 0;
     if (v->scratch) { SDL_DestroyTexture(v->scratch); v->scratch = NULL; }
@@ -1003,12 +1089,15 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
     if (viewW != v->lastViewW || viewH != v->lastViewH) {
         v->lastViewW = viewW;
         v->lastViewH = viewH;
-        if (v->offscreen) {
-            SDL_DestroyTexture(v->offscreen);
-            v->offscreen  = NULL;
-            v->offscreenW = 0;
-            v->offscreenH = 0;
+        for (int i = 0; i < 2; i++) {
+            if (v->offscreen[i]) {
+                SDL_DestroyTexture(v->offscreen[i]);
+                v->offscreen[i] = NULL;
+            }
         }
+        v->displayTex = NULL;
+        v->offscreenW = 0;
+        v->offscreenH = 0;
     }
 
     /* Sub-1x zoom in sprite mode: render tiles at native 1x scale
@@ -1076,35 +1165,53 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         }
     }
 
-    if (!v->offscreen || v->offscreenW != ofsW || v->offscreenH != ofsH) {
-        if (v->offscreen) SDL_DestroyTexture(v->offscreen);
-        v->offscreen = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
-                                          SDL_TEXTUREACCESS_TARGET, ofsW, ofsH);
-        v->offscreenW = ofsW;
-        v->offscreenH = ofsH;
-        if (v->offscreen) {
-            SDL_SetTextureScaleMode(v->offscreen, SDL_SCALEMODE_LINEAR);
+    /* Display-time filtering for the offscreen. LINEAR belongs ONLY to the
+     * oversampled sub-1x fallback (ofsW > viewW), where ImGui does the
+     * downscale at draw time and the 2x2 average is what keeps identical
+     * tiles looking identical across the map.
+     *
+     * Every other path — zoom >= 1, the pre-downscaled sub-1x cache, and
+     * minimap mode — builds the offscreen at the view size and ImGui draws
+     * it at ~1:1. The Image rect is a float and the offscreen size an int,
+     * so that "1:1" is routinely off by a fraction of a pixel, and LINEAR
+     * then re-blended every pixel of already-crisp art: that sub-pixel
+     * resample is what read as "the zoom is really blurry". NEAREST costs
+     * at most a 1px snap when the rect lands on a half pixel. */
+    SDL_ScaleMode ofsScaleMode = (ofsW > viewW) ? SDL_SCALEMODE_LINEAR
+                                                : SDL_SCALEMODE_NEAREST;
+
+    if (!v->offscreen[0] || !v->offscreen[1] ||
+        v->offscreenW != ofsW || v->offscreenH != ofsH) {
+        for (int i = 0; i < 2; i++) {
+            if (v->offscreen[i]) SDL_DestroyTexture(v->offscreen[i]);
+            v->offscreen[i] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                                SDL_TEXTUREACCESS_TARGET,
+                                                ofsW, ofsH);
+            if (v->offscreen[i]) {
+                SDL_SetTextureScaleMode(v->offscreen[i], ofsScaleMode);
+            }
         }
+        v->displayTex    = NULL;
+        v->offscreenBack = 0;
+        v->offscreenW    = ofsW;
+        v->offscreenH    = ofsH;
     }
 
-    if (v->offscreen) {
-        /* Re-assert scale modes EVERY frame. Offscreen uses LINEAR
-         * so the final sub-1x downscale (ImGui Image draws the
-         * 1.33×-or-more oversampled offscreen into the view rect)
-         * averages each output pixel as a 2×2 weighted blend. With
-         * NEAREST at non-integer downscale ratios (0.75x: 1.33:1)
-         * the per-tile sampling phase drifts and identical grass
-         * tiles end up looking different across the map. LINEAR
-         * costs a touch of softness but is consistent everywhere.
-         * Atlas stays NEAREST so pixel art at zoom >= 1 (where the
-         * offscreen ratio is 1:1 and only the atlas blit upscales)
-         * keeps its crisp tile edges. */
-        SDL_SetTextureScaleMode(v->offscreen, SDL_SCALEMODE_LINEAR);
+    SDL_Texture *back = v->offscreen[v->offscreenBack];
+    if (back) {
+        /* Re-assert scale modes EVERY frame (ofsScaleMode above picks
+         * LINEAR only for the oversampled sub-1x fallback, where NEAREST at
+         * non-integer downscale ratios — 0.75x is 1.33:1 — drifts the
+         * per-tile sampling phase and makes identical grass tiles look
+         * different across the map). The atlas stays NEAREST so pixel art
+         * at zoom >= 1, where only the atlas blit upscales, keeps its crisp
+         * tile edges. */
+        SDL_SetTextureScaleMode(back, ofsScaleMode);
         if (v->tilesTex) {
             SDL_SetTextureScaleMode(v->tilesTex, SDL_SCALEMODE_NEAREST);
         }
 
-        SDL_SetRenderTarget(renderer, v->offscreen);
+        SDL_SetRenderTarget(renderer, back);
         SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
         SDL_RenderClear(renderer);
         /* Below 0.33× game scale, switch to minimap-colour mode —
@@ -1127,15 +1234,20 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
             viewRenderTilesToOffscreen(v, renderer, ofsW, ofsH, tileScale);
         }
         SDL_SetRenderTarget(renderer, NULL);
-        v->displayTex = v->offscreen;
+        /* Publish the finished buffer and flip. The caller's next
+         * mapPreviewViewGetTexture hands out this one, and the following
+         * frame renders into the other, so nothing is ever drawn from a
+         * texture SDL is mid-write into. */
+        v->displayTex    = back;
+        v->offscreenBack ^= 1;
     }
 }
 
 extern "C" SDL_Texture *mapPreviewViewGetTexture(MapPreviewView *v) {
     if (!v) return NULL;
-    /* displayTex is the active "after all downsample passes" texture
-     * — scratch in sub-1x sprite mode, offscreen everywhere else. */
-    return v->displayTex ? v->displayTex : v->offscreen;
+    /* displayTex is the most recently completed offscreen (see the
+     * double-buffer note on the struct); NULL until the first render. */
+    return v->displayTex;
 }
 
 extern "C" void mapPreviewViewGetTextureSize(const MapPreviewView *v,
@@ -1169,6 +1281,40 @@ extern "C" void mapPreviewViewSetStartOwners(MapPreviewView *v,
     v->startOwnerCount = count;
 }
 
+extern "C" void mapPreviewViewCenterOnMapSquare(MapPreviewView *v,
+                                                int mapSqX, int mapSqY,
+                                                float minZoom) {
+    if (!v) return;
+    if (mapSqX < 0) mapSqX = 0;
+    if (mapSqX > 255) mapSqX = 255;
+    if (mapSqY < 0) mapSqY = 0;
+    if (mapSqY > 255) mapSqY = 255;
+    /* +128 puts the camera on the square's centre rather than its corner. */
+    v->centerX = (WORLD)((mapSqX << 8) + 128);
+    v->centerY = (WORLD)((mapSqY << 8) + 128);
+    v->panResidX = 0.0f;
+    v->panResidY = 0.0f;
+    if (minZoom > 0.0f && v->zoomLevel < minZoom) {
+        for (int i = 0; i < ZOOM_STEP_COUNT; i++) {
+            if (kZoomSteps[i] >= minZoom) {
+                v->zoomIndex = i;
+                v->zoomLevel = kZoomSteps[i];
+                break;
+            }
+        }
+    }
+    /* Claim the auto-fit so the first render after a fresh load can't
+     * re-centre on the whole map and throw the requested focus away. */
+    v->autoFitDone = true;
+}
+
+extern "C" bool mapPreviewViewWantsNearestSampling(const MapPreviewView *v) {
+    if (!v) return true;
+    /* Oversampled only on the sub-1x fallback path, where the offscreen is
+     * built larger than the view and the caller's draw does the downscale. */
+    return v->offscreenW <= v->lastViewW;
+}
+
 extern "C" float mapPreviewViewGetZoom(const MapPreviewView *v) {
     return v ? v->zoomLevel : 1.0f;
 }
@@ -1194,30 +1340,61 @@ extern "C" void mapPreviewViewHandleInput(MapPreviewView *v, bool hovered,
     if (!opts) opts = &defaultOpts;
     ImGuiIO &io = ImGui::GetIO();
 
+    /* Who owns this press is decided ONCE, on its first frame, and holds
+     * until the button comes up.
+     *
+     * It used to be re-decided every frame from opts->dragPan and `hovered`,
+     * and both flip mid-drag: the popup recomputes dragPan from "is the
+     * cursor over a grabbable start marker" (startPickerWantsDrag), and
+     * `hovered` blips off at the rect edge. So sweeping the cursor across the
+     * map froze the camera for every frame it passed within a marker's hit
+     * radius — 2.5 tiles, or 40 px, whichever is larger — and those frames'
+     * deltas were dropped outright, never caught up. That is the periodic
+     * "sticks, then is a tile out" pan: the stall repeats at the marker
+     * spacing and the camera ends a sweep many tiles behind the cursor.
+     *
+     * Latching at the press keeps the popup's start-grab veto working (a
+     * press that begins on a movable marker still never becomes a pan) while
+     * making a pan that has started immune to whatever it later sweeps over.
+     * The item is the pan InvisibleButton the caller submits immediately
+     * before this call, so IsItemActive() is exactly "this press is mine". */
+    bool pressHeld = ImGui::IsItemActive();
+    if (!pressHeld) {
+        v->panDragActive  = false;
+        v->panDragChecked = false;
+        /* No partial step to carry between drags — a stale remainder would
+         * show up as a jump on the next press. */
+        v->panResidX = 0.0f;
+        v->panResidY = 0.0f;
+    } else if (!v->panDragChecked) {
+        v->panDragChecked = true;
+        v->panDragActive  = opts->dragPan;
+    }
+
+    /* Deliberately not gated on `hovered`: once the pan owns the press it
+     * keeps tracking the cursor even when the drag leaves the image rect,
+     * which is what every other pannable view does. */
+    if (v->panDragActive) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        viewPanBy(v, -viewPixelsToWorld(v->zoomLevel) * io.MouseDelta.x,
+                     -viewPixelsToWorld(v->zoomLevel) * io.MouseDelta.y);
+    }
+
     if (hovered) {
-        if (opts->dragPan && ImGui::IsMouseDragging(0)) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-            float zf = v->zoomLevel;
-            float tileSize = 16.0f;
-            float dx = io.MouseDelta.x / (zf * tileSize) * 256.0f;
-            float dy = io.MouseDelta.y / (zf * tileSize) * 256.0f;
-            int newCX = (int)v->centerX - (int)dx;
-            int newCY = (int)v->centerY - (int)dy;
-            if (newCX < 0)     newCX = 0;
-            if (newCX > 65280) newCX = 65280;
-            if (newCY < 0)     newCY = 0;
-            if (newCY > 65280) newCY = 65280;
-            v->centerX = (WORLD)newCX;
-            v->centerY = (WORLD)newCY;
-        } else if (opts->dragPan) {
+        if (opts->dragPan && !v->panDragActive) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
         if (opts->wheelZoom && io.MouseWheel != 0) {
+            int prevIndex = v->zoomIndex;
             if (io.MouseWheel > 0 && v->zoomIndex < ZOOM_STEP_COUNT - 1)
                 v->zoomIndex++;
             else if (io.MouseWheel < 0 && v->zoomIndex > 0)
                 v->zoomIndex--;
-            v->zoomLevel = kZoomSteps[v->zoomIndex];
+            if (v->zoomIndex != prevIndex) {
+                float oldZoom = v->zoomLevel;
+                v->zoomLevel  = kZoomSteps[v->zoomIndex];
+                viewZoomAnchorAtCursor(v, oldZoom);
+            }
         }
     }
 

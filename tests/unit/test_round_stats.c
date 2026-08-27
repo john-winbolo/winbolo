@@ -1801,11 +1801,13 @@ int run_highlights_lead_in(void) {
     UT_ASSERT_MSG(w->startTick == 470, "lead-in extends to tick 470, got %u",
                   w->startTick);
 
-    NotableEvent far[2];
-    far[0] = mkEvent(470, 40, 40, NOTABLE_PICKUP, 0, NEUTRAL, 0, 0, 0);
-    far[1] = mkEvent(500, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+    /* Not named "far": windef.h defines that as an empty macro, so the
+     * declaration would vanish and every use below become undeclared. */
+    NotableEvent farTl[2];
+    farTl[0] = mkEvent(470, 40, 40, NOTABLE_PICKUP, 0, NEUTRAL, 0, 0, 0);
+    farTl[1] = mkEvent(500, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
     n = -1;
-    computeHighlights(far, 2, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    computeHighlights(farTl, 2, NULL, NULL, aw, 1, NULL, 0, out, &n, HIGHLIGHTS_MAX);
     w = NULL;
     for (int i = 0; i < n; i++) if (out[i].type == HL_AWARD) w = &out[i];
     UT_ASSERT_MSG(w != NULL, "nemesis award present in radius case");

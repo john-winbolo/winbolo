@@ -156,7 +156,9 @@ void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
 void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
+bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
+void lvEmbedSetSelfName(const char *name);
 #endif
 #if !BOLO_REEL_WBN_FETCH_CURL
 /* Round-log download for the reel's WinBolo.net source
@@ -187,6 +189,27 @@ void wbRoundLogFetchCancel(void);
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
+/* Smallest lobby window a restored size is allowed to shrink to — below
+ * this the two-column layout's own floors stop fitting. */
+static const int DIALOG_MIN_W = 640;
+static const int DIALOG_MIN_H = 480;
+
+/* Players/map column split, as a signed offset off the automatic split, in
+ * logical (UI-scale-independent) pixels — the layout multiplies it by the
+ * scale it computed for the current window, so a scale change carries the
+ * divider along instead of stranding it. Positive widens the left column.
+ * One offset per right-panel view: the post-game replay wants the width and
+ * the map view wants it back for the teams table, so a single remembered
+ * position would have the player re-dragging the divider after every round
+ * and again before the next one. Which view is up picks the offset the
+ * layout applies and the one a drag moves.
+ * Seeded from WINDOW/Lobby Split and WINDOW/Lobby Split Recap on first use
+ * rather than at lobby entry: the in-game seam calls imguiLobbyRenderFrame
+ * without going through imguiLobbyShow, and both paths have to come up on
+ * the saved split. */
+static float s_lobbySplitOffsetMap   = 0.0f;
+static float s_lobbySplitOffsetRecap = 0.0f;
+static bool  s_lobbySplitOffsetInit  = false;
 
 /* Per-slot tracking of whether the bot's name was manually overridden
  * by the host typing into the name input field.  Cleared when a bot
@@ -2574,7 +2597,11 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
         SDL_Texture *tex = mapPreviewViewGetTexture(activeChooser->previewView);
         if (tex) {
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
+            bool nearest =
+                mapPreviewViewWantsNearestSampling(activeChooser->previewView);
+            if (nearest) imguiPushNearestSampling();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            if (nearest) imguiPopNearestSampling();
             ImGui::SetCursorScreenPos(imgPos);
             ImGui::SetNextItemAllowOverlap();
             ImGui::InvisibleButton("##MapPreviewDragMax",
@@ -4425,6 +4452,113 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
     }
 }
 
+/* True when the lobby's right panel is currently showing the replay reel
+ * rather than the map. Defined below, next to the recap view statics it
+ * reads; declared here because the player list is rendered before them. */
+static bool lobbyRecapReelVisible(ClientSim *cs);
+
+/* Clicking a player's name jumps to that player in whichever view is on
+ * screen — the replay reel in the post-game recap, the map preview otherwise.
+ *
+ * Which view: the inline ##MapPanel preview is a fixed fit of the whole map
+ * bounding box and has no camera — every start is already on screen there
+ * and there is nothing to centre — so the jump drives the zoom popup, which
+ * does have a camera and is already what clicking the inline preview opens.
+ * Position data is the lobby slot's claimed start index (1-based, 0xFF when
+ * unclaimed) resolved through the start cache rebuildStartCompassCache
+ * fills from the map bytes, so no extra decompression happens per frame.
+ *
+ * Call immediately after the name text. Hover and click are tested on that
+ * text item instead of an overlaid InvisibleButton, so the trailing tag-pill
+ * SameLine chain and every other control in the row (gear, ping, kick, team
+ * and start dropdowns) keep their own hit areas — a real widget overlapping
+ * the name wins the hover test, which is the behaviour we want.
+ *
+ * The affordance is an underline plus the hand cursor rather than a tooltip:
+ * it needs no new string, so nothing ships untranslated. Players with no
+ * claimed start get no affordance at all, since there is nowhere to go. */
+static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
+    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+    if (!ls || !ls->connected) return;
+
+    /* The jump targets whatever view the player is actually looking at, so
+     * "show me them" always moves the thing on screen. The right panel is
+     * showing the replay reel exactly when the recap is up and its Map tab is
+     * not — the negation of the panel's own showMapPanel — in which case the
+     * reel travels to their tank, the same follow the stats-table rows use.
+     * On the map view (Map tab chosen, or an ordinary pre-game lobby with no
+     * recap at all) it stays the map-preview popup jump to their claimed
+     * start. */
+    const bool reelView = lobbyRecapReelVisible(cs);
+
+    if (reelView) {
+        /* No tank in the replay right now is the reel's existing no-target
+         * case: no affordance, nothing moves. */
+        if (!ls->playerName[0]) return;
+        if (!ImGui::IsItemHovered()) return;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImVec2 rmn = ImGui::GetItemRectMin();
+        ImVec2 rmx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(rmn.x, rmx.y - 1.0f), ImVec2(rmx.x, rmx.y - 1.0f),
+            ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            lvEmbedFocusPlayerByName(ls->playerName);
+        }
+        return;
+    }
+
+    if (!popupCompressedData || popupCompressedLen <= 0) return;
+    int start1 = (int)ls->startIdx;
+    if (start1 < 1 || start1 > (int)s_startCount || start1 > MAX_STARTS) return;
+    if (!ImGui::IsItemHovered()) return;
+
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    ImVec2 mn = ImGui::GetItemRectMin();
+    ImVec2 mx = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(mn.x, mx.y - 1.0f), ImVec2(mx.x, mx.y - 1.0f),
+        ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        int sqX = (int)s_startMapX[start1];
+        int sqY = (int)s_startMapY[start1];
+        /* Bounds are only the pre-parse framing hint; the explicit centre in
+         * mapPreviewPopupFocusMapSquare overrides them once the map parses,
+         * so a tight box around the target is all this needs. */
+        mapPreviewPopupFocusMapSquare(popupCompressedData, popupCompressedLen,
+                                      sqX - 8, sqY - 8, sqX + 8, sqY + 8,
+                                      sqX, sqY);
+    }
+}
+
+/* Clicking a row in the post-game recap's stats table zooms the replay reel
+ * onto that player's tank — the video overview, not the map preview. (The
+ * left-hand player-list name click keeps going to the map preview popup; the
+ * two entry points answer different questions and deliberately differ.)
+ *
+ * Position source: the logviewer's own live player table, which carries every
+ * tank's map square and sub-tile pixel at the current playback moment. That is
+ * strictly better than anything the recap summary has — RoundPlayerSummary is
+ * counters only, no coordinates — and it means the view tracks the player as
+ * playback continues rather than jumping once and going stale.
+ *
+ * The bridge is the player NAME: the lobby's slot numbering and the log's
+ * player numbering are separate spaces, and the name is the only key both
+ * carry. Bots are included; they have tanks in the replay like anyone else.
+ *
+ * No tank at the current replay time (dead, or not yet joined) — the reel is
+ * left exactly where the player had it, rather than being thrown at (0,0) or
+ * at a stale last-known spot that no longer shows anything. Scrubbing to a
+ * moment where they are alive and clicking again then works. */
+static void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
+    (void)isBot;
+    if (slot < 0 || slot >= MAX_TANKS) return;
+    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+    if (!ls || !ls->playerName[0]) return;
+    lvEmbedFocusPlayerByName(ls->playerName);
+}
+
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     const bool spectator = clientSimIsSpectator(cs);
@@ -4544,13 +4678,40 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             args.number = teamId;
             SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
         }
+        /* Header geometry, hoisted out of the host block below because the
+         * shed after the team name has to know how much room the right-hand
+         * controls will take before it decides what the left side may draw. */
+        const float comboW      = 200.0f * s;
+        /* Gap between the Bot Naming combo and the Add Bot button — just a
+         * normal widget-pair spacing so the dropdown sits directly next to
+         * Add Bot rather than being pushed off to the middle of the row. */
+        const float namingShift = 6.0f * s;
+        const float botBtnW     = 95.0f * s;
+        const float xBtnW       = 22.0f * s;
+        const float gap         = 6.0f * s;
+        const float labelW      = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
+        /* Bots are only addable when the server's AI policy allows it
+         * (lobbyAiType != aiNone) AND the server has at least one brain on
+         * disk to assign. Both fields are mirrored from the server
+         * dynamically, so the button and the Bot Naming controls disappear /
+         * reappear without a reconnect when -ai policy or brains/ changes. */
+        bool botsAllowed = (clientSimGetLobbyAiType(cs) != 0) &&
+                           (clientSimGetLobbyBrainList(cs)->count > 0);
+        int  humanCount  = memberCount[teamId] - botCount[teamId];
+        bool showXBtn    = (teamId >= 3) && (humanCount == 0);
+        bool showNaming  = effectiveHost && botsAllowed && botCount[teamId] > 0;
+        bool showJoin    = !spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                           clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId;
+        bool showTeamCount = true;
+
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
         ImGui::Text("%s", defaultName);
         ImGui::PopStyleColor();
 
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
+        /* Built before it is drawn — the shed below measures this line to
+         * decide whether it still clears the buttons. */
+        char membersLine[96];
         {
             char membersStr[64];
             if (memberCount[teamId] == 1) {
@@ -4566,15 +4727,50 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             if (botCount[teamId] == 1)      botsPart = langGetText(STR_DLGLOBBY_TEAM_1BOT);
             else if (botCount[teamId] > 1)  botsPart = langGetText(STR_DLGLOBBY_TEAM_NBOTS);
             const char *sep = botCount[teamId] > 0 ? " · " : "";
-            ImGui::TextDisabled("%s%s%s", membersStr, sep, botsPart);
+            SDL_snprintf(membersLine, sizeof(membersLine), "%s%s%s",
+                         membersStr, sep, botsPart);
+        }
+
+        /* Header shed. The host's bot controls are pinned to the panel's
+         * right edge, so whatever the left side draws past their left edge
+         * ends up underneath them. Measure both sides against the panel's own
+         * content width and give up the optional pieces widest-first — the
+         * Bot Naming pool, then the member count, then Join Team — so a
+         * narrow players column keeps the header readable instead of piling
+         * it on itself. */
+        {
+            const ImGuiStyle &hs = ImGui::GetStyle();
+            float effBotBtnW = botsAllowed ? botBtnW : 0.0f;
+            float effBotGap  = botsAllowed ? gap     : 0.0f;
+            float groupBaseW = effectiveHost ? (effBotBtnW + effBotGap + xBtnW) : 0.0f;
+            float namingW    = labelW + gap + comboW + namingShift;
+            float countW     = hs.ItemSpacing.x + ImGui::CalcTextSize(membersLine).x;
+            float joinW      = showJoin
+                               ? hs.ItemSpacing.x + hs.FramePadding.x * 2.0f
+                                 + ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_JOIN_TEAM)).x
+                               : 0.0f;
+            float needW = 6.0f * s + ImGui::CalcTextSize(defaultName).x
+                        + groupBaseW + gap;
+            if (showNaming && contentW < needW + namingW + countW + joinW) {
+                showNaming = false;
+            }
+            if (showNaming) needW += namingW;
+            showTeamCount = (contentW >= needW + countW + joinW);
+            if (showTeamCount) needW += countW;
+            if (showJoin && contentW < needW + joinW) showJoin = false;
+        }
+
+        if (showTeamCount) {
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", membersLine);
         }
 
         /* "Join Team" — moves the local player to this team. Available
          * to every client regardless of permissions (you can always
          * move yourself) and only rendered when you're not already on
          * this team. */
-        if (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-            clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId) {
+        if (showJoin) {
             ImGui::SameLine();
             char joinId[64];
             SDL_snprintf(joinId, sizeof(joinId), "%s##j%d", langGetText(STR_DLGLOBBY_JOIN_TEAM), teamId);
@@ -4602,27 +4798,6 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * "+ Bot" button stays at the same X coordinate across teams
          * that do/don't render an X. */
         if (effectiveHost) {
-            const float comboW   = 200.0f * s;
-            /* Gap between the Bot Naming combo and the Add Bot button —
-             * just a normal widget-pair spacing so the dropdown sits
-             * directly next to Add Bot rather than being pushed off to
-             * the middle of the row. */
-            const float namingShift = 6.0f * s;
-            const float botBtnW  = 95.0f * s;
-            const float xBtnW    = 22.0f * s;
-            const float labelW   = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
-            const float gap      = 6.0f * s;
-            /* Bots are only addable when the server's AI policy allows
-             * it (lobbyAiType != aiNone) AND the server has at least
-             * one brain on disk to assign. Both fields are mirrored
-             * from the server dynamically, so the button and the
-             * Bot Naming controls disappear / reappear without a
-             * reconnect when -ai policy or brains/ changes. */
-            bool botsAllowed = (clientSimGetLobbyAiType(cs) != 0) &&
-                               (clientSimGetLobbyBrainList(cs)->count > 0);
-            bool showNaming = botsAllowed && botCount[teamId] > 0;
-            int humanCount = memberCount[teamId] - botCount[teamId];
-            bool showXBtn   = (teamId >= 3) && (humanCount == 0);
             /* Always reserve the X width so "+ Bot" sits at the same
              * X position across teams with/without an X. */
             /* When showing the Bot Naming controls, leave a wider
@@ -4813,6 +4988,57 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                          ? clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber : 0;
         char tableId[32];
         SDL_snprintf(tableId, sizeof(tableId), "##members%d", teamId);
+
+        /* Column shed. The fixed columns keep their width under
+         * SizingStretchProp, so once the players column is narrower than they
+         * add up to they start landing on each other — give them up one at a
+         * time instead, in order of what a lobby can most do without: the
+         * identity icons, the start picker, ping/gear, the tank badge, the
+         * name tags, then the kick X. The floor is the player name and the
+         * ready pill, which stay at every width.
+         *
+         * Each threshold is the running total of what is still kept at that
+         * point plus the name column's own floor, built from the same widths
+         * TableSetupColumn uses below so a column resize carries them along.
+         * Measured against the panel's real content width rather than the
+         * divider's offset, so a small lobby window sheds the same way a
+         * divider dragged left does, and scaled by s throughout so it lands
+         * the same at any DPI. */
+        const float kColTankW    = 60.0f * s;
+        const float kColIconsW   = 96.0f * s;
+        const float kColPingW    = 50.0f * s;
+        const float kColReadyW   = 80.0f * s;
+        const float kColXW       = 44.0f * s;
+        /* The spacer column exists to hold the start dropdown, so what it
+         * needs is that dropdown plus the clearance kept around it. */
+        const float kColStartW   = 96.0f * s + 8.0f * s;
+        /* About eight characters and an ellipsis — the least a name can say
+         * and still tell two players apart. */
+        const float kColNameMinW = 64.0f * s;
+        /* What lobbyTruncateName already reserves for a HOST/ADMIN/BOT pill;
+         * the pill shares the name's cell, so at the floor it is the name's
+         * own room it would be taking. */
+        const float kNameTagW    = 56.0f * s;
+        const float cellPadW     = ImGui::GetStyle().CellPadding.x * 2.0f;
+        const float needXCol     = kColNameMinW + kColReadyW + kColXW + cellPadW * 3.0f;
+        const float needNameTags = needXCol  + kNameTagW;
+        const float needTankCol  = needXCol  + kColTankW  + cellPadW;
+        const float needPingCol  = needTankCol + kColPingW  + cellPadW;
+        const float needStartCol = needPingCol + kColStartW + cellPadW;
+        const float needIconsCol = needStartCol + kColIconsW + cellPadW;
+        const bool showXCol      = contentW >= needXCol;
+        const bool showNameTags  = contentW >= needNameTags;
+        const bool showTankCol   = contentW >= needTankCol;
+        const bool showPingCol   = contentW >= needPingCol;
+        const bool showStartCol  = contentW >= needStartCol;
+        const bool showIconsCol  = contentW >= needIconsCol;
+        /* Disabled is the master hide flag — the column takes no width and
+         * ImGui skips every widget submitted into it, so the remaining
+         * columns get the room back. The row blocks below still guard their
+         * own content: the direct draw-list work (tags, pills, gear, promote
+         * glyph) is not covered by that skip. */
+        const ImGuiTableColumnFlags kShedCol = ImGuiTableColumnFlags_Disabled;
+
         ImGuiTableFlags tableFlags = ImGuiTableFlags_BordersInnerH
                                    | ImGuiTableFlags_RowBg
                                    | ImGuiTableFlags_SizingStretchProp
@@ -4836,17 +5062,22 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
              * Two stretch columns (name + spacer) with weights 3:1
              * park the ping/gear column at roughly 3/4 across the
              * row instead of flush against the ready/X cluster. */
-            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed |
+                                                (showTankCol ? 0 : kShedCol), kColTankW);
             /* Wide enough for the worst case: country flag + platform +
              * WBN-verified shield + Steam badge (16 + 3×14 px plus
              * inter-icon spacing), so the verified badge can't spill into
              * the name column. */
-            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed |
+                                                (showIconsCol ? 0 : kShedCol), kColIconsW);
             ImGui::TableSetupColumn("##name",   ImGuiTableColumnFlags_WidthStretch, 3.0f);
-            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
-            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
-            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 44.0f * s);
+            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed |
+                                                (showPingCol ? 0 : kShedCol), kColPingW);
+            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch |
+                                                (showStartCol ? 0 : kShedCol), 1.0f);
+            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, kColReadyW);
+            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed |
+                                                (showXCol ? 0 : kShedCol), kColXW);
 
             /* Drive striping ourselves (per-player, not per-table-row)
              * so the bot's expanded AiConfig sub-row inherits the same
@@ -4932,7 +5163,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * Server re-validates on PACKET_LOBBY_TEAM_SET.
                  * Rendered as a 4-arrow "move" cross centered in the
                  * row, before the tank icon. */
-                bool canDragThis = effectiveHost;
+                bool canDragThis = effectiveHost && showTankCol;
                 if (canDragThis) {
                     const float handleS = 14.0f * s;
                     cyAbs(handleS);
@@ -5002,7 +5233,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             tankTex = getTankEvil04Texture(r);  /* red enemy */
                         }
                     }
-                    if (tankTex) {
+                    if (tankTex && showTankCol) {
                         /* Indent the tank inside its cell so it
                          * doesn't sit flush with the team panel's
                          * left edge. */
@@ -5023,7 +5254,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 /* ── Column 1: identity icons (flag/platform/bot) ── */
                 ImGui::TableSetColumnIndex(1);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot) {
+                if (isBot && showIconsCol) {
                     /* Green for bots on the local player's team (incl.
                      * the local player's own bots), red for bots on
                      * any other team. Fall back to the neutral
@@ -5041,7 +5272,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::Image((ImTextureID)botTex,
                                      ImVec2(tankSz, tankSz));
                     }
-                } else {
+                } else if (!isBot && showIconsCol) {
                     /* Same 2px upward nudge applied to text / tank /
                      * chip / gear — keeps every glyph in the row
                      * landing on a consistent optical center. */
@@ -5083,11 +5314,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * a HOST/ADMIN/BOT tag) so it can't overflow and push the start
                  * dropdown into the Ready button on small windows. */
                 {
-                    bool rowHasTag = (i == clientSimGetLobbyHostSlot(cs)) || isBot ||
-                        (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
-                                    & PLAYER_FLAG_ADMIN));
+                    bool rowHasTag = showNameTags &&
+                        ((i == clientSimGetLobbyHostSlot(cs)) || isBot ||
+                         (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
+                                     & PLAYER_FLAG_ADMIN)));
                     float nameAvail  = ImGui::GetContentRegionAvail().x;
-                    float tagReserve = rowHasTag ? 56.0f * s : 0.0f;
+                    float tagReserve = rowHasTag ? kNameTagW : 0.0f;
                     char nameBuf[64];
                     lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
                                       nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
@@ -5101,6 +5333,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     } else {
                         ImGui::Text("%s", nameBuf);
                     }
+                    lobbyNameJumpToPlayer(cs, i);
                 }
 
 
@@ -5143,7 +5376,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 fg, lbl);
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 };
-                if (i == clientSimGetLobbyHostSlot(cs)) {
+                if (showNameTags && i == clientSimGetLobbyHostSlot(cs)) {
                     /* Badge follows the current host slot. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_HOST),
@@ -5151,7 +5384,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 g_theme->hostTagText,
                                 g_theme->hostTagBorder);
                 }
-                if (!isBot && i != clientSimGetLobbyHostSlot(cs) &&
+                if (showNameTags && !isBot && i != clientSimGetLobbyHostSlot(cs) &&
                     (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags & PLAYER_FLAG_ADMIN)) {
                     /* IP-matched admin (server -admins). Shown beside the
                      * name like HOST but in a distinct teal so it reads
@@ -5160,7 +5393,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 IM_COL32(70, 160, 175, 255),
                                 IM_COL32(10, 30, 35, 255));
                 }
-                if (isBot) {
+                if (showNameTags && isBot) {
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_BOT),
                                 g_theme->botTagBg,
                                 g_theme->botTagText,
@@ -5185,7 +5418,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * a focus ring — A expands the AiConfig sub-row, whose
                  * widgets (name, Bot Code combo, difficulty) are then
                  * navigable like any other dialog control. */
-                if (isBot && effectiveHost) {
+                if (showPingCol && isBot && effectiveHost) {
                     if (s_iconSettings && !uiShouldUseControllerMode()) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
@@ -5233,7 +5466,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             lobbyGearTooltip(cs, i, s);
                         }
                     }
-                } else if (!isBot) {
+                } else if (showPingCol && !isBot) {
                     if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs > 0) {
                         cyTextAbs();
                         ImVec4 pingColor;
@@ -5259,10 +5492,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * column. Used as a floor for the dropdown's left bound so
                  * it never overlaps the ping text / bot gear when names are
                  * short. Constant across rows; capture once. */
-                if (startColPingRightX == 0.0f) {
+                if (showStartCol && startColPingRightX == 0.0f) {
                     startColPingRightX = ImGui::GetCursorScreenPos().x;
                 }
-                {
+                if (showStartCol) {
                     const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
                     uint8_t sIdx = cslot->startIdx;
                     /* A host edits any connected row; a non-host edits only
@@ -5420,7 +5653,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * admin / openHost — server re-validates either way. */
                 ImGui::TableSetColumnIndex(6);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot && effectiveHost) {
+                if (showXCol && isBot && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 closePos = ImGui::GetCursorScreenPos();
                     char rbStr[24];
@@ -5433,7 +5666,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
                     }
-                } else if (!isBot && !isMe && i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
+                } else if (showXCol && !isBot && !isMe &&
+                           i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 basePos = ImGui::GetCursorScreenPos();
                     /* Host-only "Make host" promote button, drawn to the
@@ -5551,9 +5785,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * right — the widest name(+tag) or the ping/gear column — plus a small
      * pad, so the dropdown is centered in the clear gap before Ready and
      * never collides with the ping text / bot gear. Guarded so a degenerate
-     * frame (no rows, or no room) leaves the previous value untouched
-     * rather than snapping the column. */
-    if (startColReadyLeftX > 0.0f) {
+     * frame (no rows, or no room, or the start column shed on a narrow
+     * players column) leaves the previous value untouched rather than
+     * snapping the column. */
+    if (startColReadyLeftX > 0.0f && startColPingRightX > 0.0f) {
         float startColLeftBound =
             ImMax(startColNameMaxRight, startColPingRightX) + 8.0f * s;
         if (startColReadyLeftX > startColLeftBound) {
@@ -6298,26 +6533,31 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
  * of the panel flips it. */
 static bool s_recapShowMap = false;
 
-/* How many of the round's awards the recap shows before the rest go behind the
- * expand. A round can win all eighteen, and a list that long buries the ones
- * worth reading. */
-static const int RECAP_AWARDS_SHOWN = 4;
+/* Is the right panel showing the replay reel right now? Exactly the negation
+ * of the panel's own showMapPanel test (`!lobbyShowLastRound || s_recapShowMap`
+ * at the ##MapPanel render): the reel is up when a last-round summary exists
+ * AND the panel has not been flipped to its Map tab. With the recap withheld
+ * at build level there is no reel, so this is constant false — matching the
+ * same #if the lobby uses to compute lobbyShowLastRound. */
+static bool lobbyRecapReelVisible(ClientSim *cs) {
+#if POSTGAME_STATS_ENABLED
+    return (clientSimGetLastRoundStats(cs) != NULL) && !s_recapShowMap;
+#else
+    (void)cs;
+    return false;
+#endif
+}
 
-/* Whether the "More awards" expand is open. Per-summary, like s_recapShowMap:
- * a new round's recap opens on the short list. */
-static bool s_recapShowAllAwards = false;
+/* How many awards the recap draws at random, on top of the ones it always
+ * leads with. A round can win all eighteen, and a list that long buries the
+ * ones worth reading. */
+static const int RECAP_AWARDS_RANDOM = 4;
 
-/* Whether the highlight-clip list is expanded. Per-summary like the two above,
+/* Whether the highlight-clip list is expanded. Per-summary like s_recapShowMap,
  * and closed to begin with: the clips are a place to go looking once something
  * in the round is worth finding again, and the replay above them is what the
  * recap is for. Folded away, the reel gets the rows' height. */
 static bool s_recapShowHighlights = false;
-
-/* Which scoreboard column the table is sorted on, mirrored out of the table's
- * own sort specs. Columns are sized before the specs can be read, so the
- * sorted column — the one that has to leave room for the sort arrow — is known
- * here a frame late, which is a frame nobody can see. */
-static int s_recapSortCol = -1;
 
 /* Skull for the scoreboard's death columns, drawn square at text height and
  * tinted to the text colour so it sits with the other header art rather than
@@ -6355,9 +6595,51 @@ static float s_reelViewW      = 0.0f;
 static float s_reelViewH      = 0.0f;
 /* Where the seek slider sits, and whether the player is dragging it. Held
  * apart from the playhead so a drag is not fought by the reel advancing under
- * it; the seek itself lands once, on release. */
+ * it. The reel follows the handle live while it is dragged — see the scrub
+ * block in the transport row for what each direction costs. */
 static float s_reelSeekRatio  = 0.0f;
 static bool  s_reelSeeking    = false;
+/* Last ratio actually handed to the decoder, and when. Tracks the playhead
+ * while idle so a drag starts from the truth. */
+static float  s_reelSeekApplied    = 0.0f;
+static Uint64 s_reelSeekAppliedMs  = 0;
+/* Playing state latched when a drag began, restored when it ends: a scrub
+ * pauses the reel for its duration rather than letting every applied seek
+ * tear down and rebuild the two SDL playback timers. */
+static bool  s_reelSeekWasPlaying  = false;
+
+#if BOLO_RECAP_CLIP_GIF
+/* Crop frame: an optional rectangle over the reel that an export takes instead
+ * of the whole visible view, so a clip can be posted without the map around it.
+ * Off by default, and off is the untouched full-view path.
+ *
+ * Held normalized to the displayed image rather than in pixels, so resizing the
+ * lobby or zooming the reel keeps the same framing rather than leaving the box
+ * pointing at a different part of the map. Session-only, by design — a crop is
+ * chosen for the clip being taken, not kept as a preference. */
+static bool  s_reelCropOn = false;
+static float s_reelCropX0 = 0.25f;
+static float s_reelCropY0 = 0.25f;
+static float s_reelCropX1 = 0.75f;
+static float s_reelCropY1 = 0.75f;
+
+/* The slice the reel last blitted, in render-target pixels: origin plus the
+ * whole-pixel visible extent the draw computed. The crop frame is normalized
+ * against this extent, so a capture can map the frame back onto exactly the
+ * pixels the outline was drawn over rather than re-deriving the mapping and
+ * risking a different answer. */
+static SDL_Rect s_reelLastSlice = { 0, 0, 0, 0 };
+
+/* Smallest crop the frame will shrink to, in displayed pixels. */
+static const float REEL_CROP_MIN_PX = 16.0f;
+/* Grab margin either side of an edge, in displayed pixels. */
+static const float REEL_CROP_GRAB_PX = 6.0f;
+#endif
+
+/* A backward scrub cannot continue the decode — it has to restore the round's
+ * snapshot and replay from there — so only the newest one in a burst is paid
+ * for. Forward scrubs are incremental and run every frame. */
+#define RECAP_SCRUB_BACK_MS 90
 
 /* Where a client that did not record the round stands in getting it from the
  * server that did: the transfer's state as a ClientRoundLogState, the percent
@@ -6600,6 +6882,9 @@ static void lobbyReelEnd(void) {
     s_reelAutoPaused = false;
     s_reelSeekRatio  = 0.0f;
     s_reelSeeking    = false;
+    s_reelSeekApplied   = 0.0f;
+    s_reelSeekAppliedMs = 0;
+    s_reelSeekWasPlaying = false;
     s_recapSlack     = 0.0f;
     /* The next summary asks for its own round's log, and reports nothing about
      * a transfer until it has one. */
@@ -6815,6 +7100,201 @@ static void lobbyChatInputAppendTime(uint32_t curMs);
  * from here. */
 static bool lobbyClipGifButton(const char *id, bool compact);
 static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+/* Whether an export is running. The crop frame reads it to hold still: the
+ * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
+ * so letting it be dragged mid-capture would show a box the recording is not
+ * following. */
+static bool lobbyClipGifActive(void);
+
+/* The crop control, sitting with the export it crops. Names the frame rather
+ * than describing it — the same rule the GIF control's caption follows, and
+ * the reason both ship a word rather than a sentence. */
+static const char *const REEL_CROP_TITLE = "Crop";
+
+/* Toggle button carrying a drawn square-frame glyph. Drawn with the draw list
+ * rather than loaded, so the control needs no new art asset and follows the
+ * text colour and UI scale the way the icons beside it do. Stays pressed while
+ * the frame is up, which is how the file's other state buttons read. */
+static bool lobbyReelCropButton(const char *id) {
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float lineH = ImGui::GetTextLineHeight();
+    const bool  on    = s_reelCropOn;
+
+    if (on) {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    }
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::Button(id, ImVec2(lineH + sty.FramePadding.x * 2.0f,
+                                            lineH + sty.FramePadding.y * 2.0f));
+    if (on) {
+        ImGui::PopStyleColor();
+    }
+
+    /* The glyph: a square outline inset in the button, with the corners drawn
+     * heavier so it reads as a crop frame rather than an empty box. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    ImVec2 a(p.x + sty.FramePadding.x + 1.0f, p.y + sty.FramePadding.y + 1.0f);
+    ImVec2 b(a.x + lineH - 2.0f, a.y + lineH - 2.0f);
+    dl->AddRect(a, b, col, 0.0f, 0, 1.0f);
+    float tick = (b.x - a.x) * 0.32f;
+    dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x + tick, a.y), col, 2.0f);
+    dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x, a.y + tick), col, 2.0f);
+    dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x - tick, b.y), col, 2.0f);
+    dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x, b.y - tick), col, 2.0f);
+
+    imguiHelpTooltip(REEL_CROP_TITLE);
+    return clicked;
+}
+
+/* Draw the crop frame over the reel and let it be moved and resized. Returns
+ * true when the frame owns this frame's mouse, so the caller sits its pan out.
+ *
+ * Precedence: while the frame is up, its interior and its handles win over the
+ * reel's drag-pan. The handles are submitted after the reel's own overlay
+ * button, which is marked allow-overlap, so ImGui's hit test hands them the
+ * hover; the caller additionally gates the pan on the return value so the press
+ * frame cannot slip through. The wheel is left alone entirely — zooming still
+ * works with the cursor anywhere over the reel, frame included.
+ *
+ * Everything is computed in displayed pixels and stored back normalized, and
+ * every edge is clamped inside the image, so the frame can neither leave the
+ * view nor invert. */
+static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
+                                 bool panHoldsMouse) {
+    if (!s_reelCropOn || imgSize.x < 1.0f || imgSize.y < 1.0f) {
+        return false;
+    }
+    const bool locked = lobbyClipGifActive();
+
+    float x0 = imgMin.x + s_reelCropX0 * imgSize.x;
+    float y0 = imgMin.y + s_reelCropY0 * imgSize.y;
+    float x1 = imgMin.x + s_reelCropX1 * imgSize.x;
+    float y1 = imgMin.y + s_reelCropY1 * imgSize.y;
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    /* Dim the frame while a capture is running: it is showing what the GIF is
+     * taking, and it is not going to answer a drag. */
+    ImU32 line = locked ? IM_COL32(255, 255, 255, 110) : IM_COL32(255, 255, 255, 230);
+    ImU32 shade = IM_COL32(0, 0, 0, 90);
+    /* Shade everything the export will drop, so the kept area reads at a
+     * glance rather than having to be traced along the outline. */
+    dl->AddRectFilled(imgMin, ImVec2(imgMin.x + imgSize.x, y0), shade);
+    dl->AddRectFilled(ImVec2(imgMin.x, y1),
+                      ImVec2(imgMin.x + imgSize.x, imgMin.y + imgSize.y), shade);
+    dl->AddRectFilled(ImVec2(imgMin.x, y0), ImVec2(x0, y1), shade);
+    dl->AddRectFilled(ImVec2(x1, y0),
+                      ImVec2(imgMin.x + imgSize.x, y1), shade);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(0, 0, 0, 160), 0.0f, 0, 3.0f);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), line, 0.0f, 0, 1.0f);
+
+    if (locked) {
+        return false;
+    }
+
+    /* Which part of the frame a press took hold of. Latched, so a drag that
+     * wanders off the handle keeps resizing the edge it started on. */
+    static int  s_grab = 0;   /* bit 1 left, 2 right, 4 top, 8 bottom, 16 move */
+    static bool s_dragging = false;
+
+    /* A pan already holding the mouse keeps it. Ownership is decided at the
+     * press and not re-decided per frame, so dragging the reel across the
+     * frame does not hand the drag over halfway and stall the pan — the same
+     * mistake the map preview's start markers used to make. */
+    if (panHoldsMouse && !s_dragging) {
+        return false;
+    }
+
+    const float g = REEL_CROP_GRAB_PX;
+    ImVec2 mp = ImGui::GetMousePos();
+    int hot = 0;
+    bool overFrame = (mp.x >= x0 - g && mp.x <= x1 + g &&
+                      mp.y >= y0 - g && mp.y <= y1 + g);
+    if (overFrame) {
+        if (mp.x >= x0 - g && mp.x <= x0 + g) hot |= 1;
+        if (mp.x >= x1 - g && mp.x <= x1 + g) hot |= 2;
+        if (mp.y >= y0 - g && mp.y <= y0 + g) hot |= 4;
+        if (mp.y >= y1 - g && mp.y <= y1 + g) hot |= 8;
+        if (hot == 0 && mp.x > x0 && mp.x < x1 && mp.y > y0 && mp.y < y1) {
+            hot = 16;
+        }
+    }
+
+    /* One invisible item over the whole frame plus its grab margin, so ImGui
+     * knows the press belongs here and the reel's pan button does not take it.
+     * Submitted after the reel's overlay (which allows overlap), which is what
+     * puts it in front for hit-testing. */
+    bool takesMouse = false;
+    if (hot != 0 || s_dragging) {
+        ImGui::SetCursorScreenPos(ImVec2(x0 - g, y0 - g));
+        ImGui::InvisibleButton("##ReelCropGrab",
+                               ImVec2((x1 - x0) + g * 2.0f, (y1 - y0) + g * 2.0f));
+        takesMouse = ImGui::IsItemHovered() || ImGui::IsItemActive() || s_dragging;
+        if (ImGui::IsItemActivated()) {
+            s_grab = hot;
+            s_dragging = true;
+        }
+    }
+
+    int shape = s_dragging ? s_grab : hot;
+    if (shape != 0) {
+        ImGuiMouseCursor cur = ImGuiMouseCursor_ResizeAll;
+        switch (shape & 15) {
+            case 1: case 2:            cur = ImGuiMouseCursor_ResizeEW; break;
+            case 4: case 8:            cur = ImGuiMouseCursor_ResizeNS; break;
+            case 1 | 4: case 2 | 8:    cur = ImGuiMouseCursor_ResizeNWSE; break;
+            case 2 | 4: case 1 | 8:    cur = ImGuiMouseCursor_ResizeNESW; break;
+            default:                   break;   /* move */
+        }
+        ImGui::SetMouseCursor(cur);
+    }
+
+    if (s_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImVec2 d = ImGui::GetIO().MouseDelta;
+        const float minW = REEL_CROP_MIN_PX;
+        if (s_grab & 16) {
+            /* Move: both edges together, stopped by the image rather than
+             * squashed against it. */
+            float w = x1 - x0, h = y1 - y0;
+            x0 += d.x; y0 += d.y;
+            if (x0 < imgMin.x) x0 = imgMin.x;
+            if (y0 < imgMin.y) y0 = imgMin.y;
+            if (x0 + w > imgMin.x + imgSize.x) x0 = imgMin.x + imgSize.x - w;
+            if (y0 + h > imgMin.y + imgSize.y) y0 = imgMin.y + imgSize.y - h;
+            x1 = x0 + w; y1 = y0 + h;
+        } else {
+            if (s_grab & 1) x0 += d.x;
+            if (s_grab & 2) x1 += d.x;
+            if (s_grab & 4) y0 += d.y;
+            if (s_grab & 8) y1 += d.y;
+            if (x0 < imgMin.x) x0 = imgMin.x;
+            if (y0 < imgMin.y) y0 = imgMin.y;
+            if (x1 > imgMin.x + imgSize.x) x1 = imgMin.x + imgSize.x;
+            if (y1 > imgMin.y + imgSize.y) y1 = imgMin.y + imgSize.y;
+            /* No inverting: the dragged edge stops a minimum short of its
+             * opposite instead of crossing it. */
+            if (x1 - x0 < minW) {
+                if (s_grab & 1) x0 = x1 - minW; else x1 = x0 + minW;
+            }
+            if (y1 - y0 < minW) {
+                if (s_grab & 4) y0 = y1 - minW; else y1 = y0 + minW;
+            }
+            /* The min-size correction can push an edge back out of the image
+             * on a very small view; clamp once more so it never does. */
+            if (x0 < imgMin.x) { x0 = imgMin.x; if (x1 < x0 + minW) x1 = x0 + minW; }
+            if (y0 < imgMin.y) { y0 = imgMin.y; if (y1 < y0 + minW) y1 = y0 + minW; }
+        }
+        s_reelCropX0 = (x0 - imgMin.x) / imgSize.x;
+        s_reelCropY0 = (y0 - imgMin.y) / imgSize.y;
+        s_reelCropX1 = (x1 - imgMin.x) / imgSize.x;
+        s_reelCropY1 = (y1 - imgMin.y) / imgSize.y;
+    } else if (s_dragging) {
+        s_dragging = false;
+        s_grab = 0;
+    }
+    return takesMouse;
+}
 #endif
 
 static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
@@ -6995,6 +7475,19 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                                             (int)rect.x, (int)rect.y);
             }
         }
+        /* Tell a reel that came up who is watching it, so the round is drawn
+         * from their side: their team's tanks green, the other side's red.
+         * The lobby slot is where that lives — its name is the key the log
+         * shares, and the team alliances the server applied at kickoff are in
+         * the log itself, so the reel needs nothing else. A spectator has no
+         * slot of their own (and myPlayerNum is a stale index for one), so
+         * they are named as nobody and the reel draws as it always did. */
+        const ClientLobbySlot *watcher =
+            clientSimIsSpectator(cs)
+                ? nullptr
+                : clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        lvEmbedSetSelfName(watcher ? watcher->playerName : "");
+
         /* No reel out of the attempt means there is no replay to be had for
          * this round, whichever way it fell short — the file would not open,
          * came up short, would not fit in memory, no bytes were handed over,
@@ -7050,7 +7543,23 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         ImVec2 uv0((float)srcX / (float)texW, (float)srcY / (float)texH);
         ImVec2 uv1((float)(srcX + visW) / (float)texW,
                    (float)(srcY + visH) / (float)texH);
+        /* The reel is game pixel art magnified `zoom` times. Drawn through
+         * ImGui the SDL_Renderer backend forces LINEAR on every texture it
+         * binds, which is what made the replay look soft — the same defect the
+         * lobby's inline map preview had. Point-sample it for the blit and put
+         * LINEAR back for the surrounding UI. */
+        imguiPushNearestSampling();
         ImGui::Image((ImTextureID)tex, imgSize, uv0, uv1);
+        imguiPopNearestSampling();
+#if BOLO_RECAP_CLIP_GIF
+        /* Publish the exact slice this blit used. The crop frame is normalized
+         * against it, so an export maps the frame back through the same
+         * numbers the picture was drawn with. */
+        s_reelLastSlice.x = srcX;
+        s_reelLastSlice.y = srcY;
+        s_reelLastSlice.w = visW;
+        s_reelLastSlice.h = visH;
+#endif
     } else {
         ImGui::Dummy(rect);
     }
@@ -7074,12 +7583,26 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
             lvEmbedWheel((int)(mp.x - imgMin.x), (int)(mp.y - imgMin.y), wheel);
         }
     }
-    if (ImGui::IsItemActivated()) {
-        lvEmbedPanBegin();
-    }
-    if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-        lvEmbedPanDelta(drag.x, drag.y);
+    const bool reelPanActivated = ImGui::IsItemActivated();
+    const bool reelPanActive =
+        ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    ImVec2 reelPanDrag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+
+    /* The crop frame goes on after the reel's own overlay so its handles win
+     * the hit test, and it reports back whether it took the mouse — the pan
+     * below sits out the frames it did. */
+    bool cropTookMouse = false;
+#if BOLO_RECAP_CLIP_GIF
+    cropTookMouse = lobbyReelCropOverlay(imgMin, imgSize, reelPanActive);
+#endif
+
+    if (!cropTookMouse) {
+        if (reelPanActivated) {
+            lvEmbedPanBegin();
+        }
+        if (reelPanActive) {
+            lvEmbedPanDelta(reelPanDrag.x, reelPanDrag.y);
+        }
     }
 
     /* Claim the whole rect whatever the image came out at, so zooming does
@@ -7139,6 +7662,13 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (lobbyClipGifButton("##reelgif", false)) {
         lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
     }
+
+    /* Crop frame, next to the export it crops: with it up, that export takes
+     * the framed rectangle instead of the whole visible view. */
+    ImGui::SameLine();
+    if (lobbyReelCropButton("##reelcrop")) {
+        s_reelCropOn = !s_reelCropOn;
+    }
 #endif
 
     /* Seek slider shares the transport row with Play/Pause and takes the rest
@@ -7148,6 +7678,9 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (!s_reelSeeking) {
         s_reelSeekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
         if (s_reelSeekRatio > 1.0f) s_reelSeekRatio = 1.0f;
+        /* Idle: the applied value is wherever the reel actually is, so the
+         * next drag measures its first step from the truth. */
+        s_reelSeekApplied = s_reelSeekRatio;
     }
     unsigned curSecs = (unsigned)(curMs / 1000u);
     char seekLabel[48];
@@ -7166,13 +7699,59 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * parses back to 0 and pins every seek to the start of the log. */
     if (ImGui::SliderFloat("##ReelSeek", &s_reelSeekRatio, 0.0f, 1.0f, seekLabel,
                            ImGuiSliderFlags_NoRoundToFormat)) {
-        s_reelSeeking = true;
+        if (!s_reelSeeking) {
+            /* Freeze playback for the scrub instead of letting every applied
+             * seek pause and resume it — lvEmbedSeekRatio does that by
+             * removing and re-adding the two SDL playback timers, which is
+             * not something to do sixty times a second. */
+            s_reelSeeking        = true;
+            s_reelSeekWasPlaying = lvEmbedIsPlaying();
+            if (s_reelSeekWasPlaying) lvEmbedPause();
+            s_reelSeekAppliedMs  = 0;
+        }
     }
-    /* One seek, on release: every frame of the drag would rebuild the world
-     * from a snapshot and stall the whole lobby. */
-    if (s_reelSeeking && ImGui::IsItemDeactivatedAfterEdit()) {
+    /* Live scrub: the tanks follow the handle as it is dragged, not only when
+     * it is dropped.
+     *
+     * The two directions cost very different amounts. A seek restores the
+     * newest snapshot at or before the target and re-decodes forward to it at
+     * 20 ms of log per tick, and a round carries essentially one snapshot — at
+     * its start — so a naive per-frame seek re-decoded the whole round every
+     * frame, which is what made this release-only. Forward seeks no longer pay
+     * that: lv_screenSeekToAbsoluteMs now continues the decode from where it
+     * already stands, so dragging right costs only the ticks the handle
+     * crossed since the last frame and can run every frame. Dragging left
+     * still has to rewind through the snapshot, so it is throttled and only
+     * the newest seek in a burst is paid for.
+     *
+     * The release below always applies the exact dropped value, so where it
+     * lands is never a throttled approximation. */
+    if (s_reelSeeking && ImGui::IsItemActive()) {
+        Uint64 nowMs = SDL_GetTicks();
+        bool   apply = false;
+        if (s_reelSeekRatio > s_reelSeekApplied) {
+            apply = true;                       /* forward: incremental */
+        } else if (s_reelSeekRatio < s_reelSeekApplied) {
+            apply = (nowMs - s_reelSeekAppliedMs >= RECAP_SCRUB_BACK_MS);
+        }
+        if (apply) {
+            lvEmbedSeekRatio(s_reelSeekRatio);
+            s_reelSeekApplied   = s_reelSeekRatio;
+            s_reelSeekAppliedMs = nowMs;
+        }
+    }
+    /* IsItemDeactivated, not ...AfterEdit: this also has to un-pause, and a
+     * release that ImGui does not count as an edit would otherwise leave the
+     * reel frozen for good. */
+    if (s_reelSeeking && ImGui::IsItemDeactivated()) {
         s_reelSeeking = false;
+        /* Land exactly on the dropped value. A no-op when the last live apply
+         * already got there — a forward seek to the current time decodes
+         * nothing. */
         lvEmbedSeekRatio(s_reelSeekRatio);
+        s_reelSeekApplied = s_reelSeekRatio;
+        if (s_reelSeekWasPlaying) lvEmbedPlay();
+        s_reelSeekWasPlaying = false;
     }
     ImGui::PopItemWidth();
 
@@ -7285,6 +7864,10 @@ static void lobbyClipGifAbort(void) {
     }
 }
 
+static bool lobbyClipGifActive(void) {
+    return s_clipGif.active;
+}
+
 /* Park the reel on the moment and open the encoder at the size every frame of
  * this capture will be. Takes a time and a length rather than a clip: the
  * transport's button has neither a clip nor a cell, only where the playhead is.
@@ -7324,19 +7907,56 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
         lobbyClipGifRestoreReel();
         return;
     }
-    int cropW = srcW;
-    int cropH = srcH;
-    if (cropW > CLIP_GIF_MAX_WIDTH) {
-        cropW = CLIP_GIF_MAX_WIDTH;
-        cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+    int cropW, cropH;
+    if (s_reelCropOn && s_reelLastSlice.w > 0 && s_reelLastSlice.h > 0) {
+        /* The frame the player drew is what this takes. It is normalized
+         * against the slice the reel blitted, so mapping it back is that same
+         * slice's extent times the fractions — the identical arithmetic the
+         * Image's uv0/uv1 used, which is what makes the GIF exactly the
+         * rectangle the outline showed.
+         *
+         * The extent comes from the last draw (an on-screen size a seek cannot
+         * change) while the origin is the fresh one read above, because the
+         * seek this export just did may have moved the camera and the frame
+         * names a place on the view, not on the map. */
+        int visW = s_reelLastSlice.w;
+        int visH = s_reelLastSlice.h;
+        if (visW > srcW) visW = srcW;
+        if (visH > srcH) visH = srcH;
+        int fx0 = (int)(s_reelCropX0 * (float)visW + 0.5f);
+        int fy0 = (int)(s_reelCropY0 * (float)visH + 0.5f);
+        int fx1 = (int)(s_reelCropX1 * (float)visW + 0.5f);
+        int fy1 = (int)(s_reelCropY1 * (float)visH + 0.5f);
+        if (fx0 < 0) fx0 = 0;
+        if (fy0 < 0) fy0 = 0;
+        if (fx1 > visW) fx1 = visW;
+        if (fy1 > visH) fy1 = visH;
+        cropW = fx1 - fx0;
+        cropH = fy1 - fy0;
+        if (cropW < 1) cropW = 1;
+        if (cropH < 1) cropH = 1;
+        s_clipGif.crop.x = srcX + fx0;
+        s_clipGif.crop.y = srcY + fy0;
+        s_clipGif.crop.w = cropW;
+        s_clipGif.crop.h = cropH;
+        /* No CLIP_GIF_MAX_WIDTH here: that cap trims an uncropped view down to
+         * something worth posting, and a frame is the player saying what to
+         * take instead. */
+    } else {
+        cropW = srcW;
+        cropH = srcH;
+        if (cropW > CLIP_GIF_MAX_WIDTH) {
+            cropW = CLIP_GIF_MAX_WIDTH;
+            cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+        }
+        if (cropW < 1) cropW = 1;
+        if (cropH < 1) cropH = 1;
+        if (cropH > srcH) cropH = srcH;
+        s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
+        s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
+        s_clipGif.crop.w = cropW;
+        s_clipGif.crop.h = cropH;
     }
-    if (cropW < 1) cropW = 1;
-    if (cropH < 1) cropH = 1;
-    if (cropH > srcH) cropH = srcH;
-    s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
-    s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
-    s_clipGif.crop.w = cropW;
-    s_clipGif.crop.h = cropH;
 
     /* From the length in ms, not in ticks: the reel steps a log clock and a
      * clip is measured in sim ticks, and the two do not share a rate. */
@@ -7951,8 +8571,7 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
 #endif /* !BOLO_MOBILE */
 
 /* Container-less recap body, in reading order: the round's replay reel, its
- * highlight clips, the scoreboard table, then a handful of the round's awards
- * with the rest behind an expand.
+ * highlight clips, the scoreboard table, then a handful of the round's awards.
  * Renders no chrome and decides nothing about visibility — the caller (the
  * desktop lobby's right column / the controller layout's Last round tab)
  * gates it on clientSimGetLastRoundStats and supplies the surrounding
@@ -8002,9 +8621,9 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         char hlHeader[96];
         snprintf(hlHeader, sizeof(hlHeader), "%s (%d)###recapHighlights",
                  langGetText(STR_DLGLOBBY_HL_HEADER), hc);
-        /* Driven from our own flag rather than ImGui's storage, the way the
-         * awards expand below is, so the next round's recap starts closed
-         * again instead of inheriting this one's state. */
+        /* Driven from our own flag rather than ImGui's storage, so the next
+         * round's recap starts closed again instead of inheriting this one's
+         * state. */
         ImGui::SetNextItemOpen(s_recapShowHighlights, ImGuiCond_Always);
         s_recapShowHighlights = ImGui::CollapsingHeader(hlHeader);
         if (s_recapShowHighlights) {
@@ -8157,15 +8776,37 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
      * icon's own pixels, so the sorted column asks for the arrow as well. */
     const float arrowW =
         SDL_truncf(ImGui::GetFontSize() * 0.65f + sty.FramePadding.x);
+
+    /* A stat column's static width, and the floor the stretchy Name column is
+     * not allowed to fall below — scaled like every other width here.
+     *
+     * "If there's room": eight static columns plus a readable Name column is
+     * wider than the recap panel at the default lobby size, so the static width
+     * is taken only when the panel can pay for it, and the content-derived
+     * width below is used when it cannot. Neither depends on which column is
+     * sorted, so the choice only ever changes when the lobby is resized. */
+    const float kRecapStatColW = 75.0f * s;
+    const float kRecapNameMinW = 120.0f * s;
+    const bool  statColsStatic =
+        ImGui::GetContentRegionAvail().x >= kRecapNameMinW + kRecapStatColW * 8.0f;
+
     auto iconColWidth = [&](int col, float iconExtent) {
         char buf[16];
         SDL_snprintf(buf, sizeof(buf), "%u", colMax[col]);
         float w = ImGui::CalcTextSize(buf).x;
         if (iconExtent > w) w = iconExtent;
-        if (col == s_recapSortCol) w += arrowW;
+        /* Charged to EVERY stat column, not just the sorted one. ImGui draws
+         * the arrow hard against the right edge of the sorted cell, so paying
+         * for it only there made the sorted column wider than its neighbours:
+         * moving the sort grew one column, shrank another, and slid every
+         * column between them sideways. Reserving it everywhere costs one
+         * arrow's width per column and holds the layout still. */
+        w += arrowW;
         /* One pixel of slop: an icon sized to exactly fill the cell would
          * otherwise be at the mercy of rounding at the clip edge. */
-        return w + sty.CellPadding.x * 2.0f + 1.0f;
+        w += sty.CellPadding.x * 2.0f + 1.0f;
+        if (statColsStatic && w < kRecapStatColW) w = kRecapStatColW;
+        return w;
     };
 
     /* Sortable: a click sorts on that column, a second click reverses it. The
@@ -8279,7 +8920,6 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             }
             specs->SpecsDirty = false;
         }
-        s_recapSortCol = sortCol;
 
         auto rowBefore = [&](const RoundPlayerSummary *a,
                              const RoundPlayerSummary *b) {
@@ -8317,6 +8957,28 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                                        ImGui::GetColorU32(mine));
             }
             ImGui::TableSetColumnIndex(0);
+            /* Row hit area. The previous attempt hand-rolled a hover band from
+             * GetWindowContentRegionMin/Max plus IsWindowHovered, and never
+             * fired — inside a table those are the wrong window and the wrong
+             * coordinate space. This is the canonical ImGui table row-click
+             * recipe instead: a label-less Selectable spanning every column,
+             * submitted first so the cells draw on top of it, with
+             * AllowOverlap so they keep their own hit-testing. It also brings
+             * its own hover highlight, which is the affordance. */
+            ImGui::PushID(r);
+            bool rowClicked = ImGui::Selectable(
+                "##recapRow", false,
+                ImGuiSelectableFlags_SpanAllColumns |
+                    ImGuiSelectableFlags_AllowOverlap,
+                ImVec2(0.0f, 0.0f));
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            ImGui::PopID();
+            if (rowClicked) {
+                lobbyRecapRowJump(cs, (int)p->slot, p->isBot != 0);
+            }
+            ImGui::SameLine(0.0f, 0.0f);
             lastRoundRenderName(cs, p->slot, p->isBot != 0);
             ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
             ImGui::TableSetColumnIndex(2); ImGui::Text("%u", (unsigned)p->deaths);
@@ -8331,6 +8993,11 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
     /* ── Awards ribbon ───────────────────────────────────────────── */
+    /* Headed like the clip list above it, so the lines below read as their own
+     * section rather than as a tail on the scoreboard. */
+    ImGui::Separator();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LASTROUND_AWARDS));
+
     /* Renders one award line: label — winner [owned subject] (value). */
     auto renderAward = [&](int idx) {
         const AwardResult *aw = &st->awards[idx];
@@ -8372,29 +9039,28 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         }
     };
 
-    /* A busy round wins most of the eighteen, which reads as a wall of text and
-     * buries the ones worth reading. Show a handful, drawn from the summary's
-     * own bytes so every client shows the same ones, and keep the full list one
-     * click away. */
-    uint8_t picks[RECAP_AWARDS_SHOWN];
-    int pickCount = roundStatsPickAwardSubset(st, picks, RECAP_AWARDS_SHOWN);
-    for (int i = 0; i < pickCount; i++) {
-        renderAward(picks[i]);
+    /* The three the ribbon always leads with: the two objective captures a
+     * round is actually won on, and the builder hunt. A round that did not
+     * award one just does not show that line — the rest keep their order. */
+    static const uint8_t pinnedAwards[] = {
+        AWARD_MOST_BASE_CAPTURES, AWARD_MOST_PILL_CAPTURES, AWARD_LGM_HUNTER
+    };
+    const int pinnedCount = (int)(sizeof(pinnedAwards) / sizeof(pinnedAwards[0]));
+    for (int i = 0; i < pinnedCount; i++) {
+        if (awardIdx[pinnedAwards[i]] >= 0) renderAward(awardIdx[pinnedAwards[i]]);
     }
 
-    /* Nothing was left out when everything fit, so there is no header at all.
-     * Its open state is driven from our own flag rather than ImGui's storage so
-     * the next round's recap starts collapsed. */
-    if (ac > pickCount) {
-        ImGui::SetNextItemOpen(s_recapShowAllAwards, ImGuiCond_Always);
-        s_recapShowAllAwards =
-            ImGui::CollapsingHeader(langGetText(STR_DLGLOBBY_LASTROUND_MORE));
-        if (s_recapShowAllAwards) {
-            /* Every won award, listed in award-id order. */
-            for (int id = 1; id <= AWARD_COUNT; id++) {
-                if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
-            }
-        }
+    /* A busy round wins most of the eighteen, which reads as a wall of text and
+     * buries the ones worth reading. The rest of the ribbon is a fixed handful
+     * of the others, drawn from the summary's own bytes so every client shows
+     * the same ones and a re-render never reshuffles. The three above are held
+     * out of the draw so none of them can come up twice. */
+    uint8_t picks[RECAP_AWARDS_RANDOM];
+    int pickCount = roundStatsPickAwardSubsetExcluding(st, pinnedAwards,
+                                                       pinnedCount, picks,
+                                                       RECAP_AWARDS_RANDOM);
+    for (int i = 0; i < pickCount; i++) {
+        renderAward(picks[i]);
     }
 
 #if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
@@ -8514,6 +9180,54 @@ static void renderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
  * panel (and the controller Settings tab) call it. */
 static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 
+/* Open state of the settings CollapsingHeader. File-scope rather than a
+ * panel-local static because the lobby's post-game edge handler below
+ * drives it from outside the panel. */
+static bool s_settingsOpen     = true;
+static bool s_settingsOpenInit = false;
+/* Set while the header sits collapsed on the post-game view's initiative,
+ * so the recap clearing knows there is something to put back. */
+static bool s_settingsAutoCollapsed = false;
+static bool s_settingsPreCollapse   = true;
+
+/* Default collapsed on the Steam Deck: its small screen needs the
+ * vertical room for the player list and the Ready button, and the
+ * map / game-type summary is already on the lobby's top status bar.
+ * Desktop keeps it open. Runs from whichever of the panel or the
+ * post-game edge handler comes first, so a first-frame init can't
+ * clobber an auto-collapse that already happened. */
+static void lobbySettingsHeaderInit(void) {
+    if (s_settingsOpenInit) return;
+    s_settingsOpen     = !uiModeIsSteamDeck();
+    s_settingsOpenInit = true;
+}
+
+/* The post-game recap needs the vertical room the settings form takes,
+ * so entering the post-game view folds the header away — once, on the
+ * edge, never re-forced per frame, so the chevron still re-opens it.
+ *
+ * Restore policy on the way out (countdown clears the summary): put back
+ * the pre-collapse state only if the header is still exactly as the
+ * auto-collapse left it. Re-opening it during the recap clears the flag,
+ * so a manual choice outranks the remembered state and survives into the
+ * next round. */
+static void lobbySettingsPostGameEdge(bool showLastRound) {
+    static bool s_prevShowLastRound = false;
+    lobbySettingsHeaderInit();
+    if (showLastRound && !s_prevShowLastRound) {
+        s_settingsPreCollapse   = s_settingsOpen;
+        /* Already collapsed → nothing was taken away, nothing to give back. */
+        s_settingsAutoCollapsed = s_settingsOpen;
+        s_settingsOpen          = false;
+    } else if (showLastRound) {
+        if (s_settingsOpen) s_settingsAutoCollapsed = false;
+    } else if (s_prevShowLastRound) {
+        if (s_settingsAutoCollapsed) s_settingsOpen = s_settingsPreCollapse;
+        s_settingsAutoCollapsed = false;
+    }
+    s_prevShowLastRound = showLastRound;
+}
+
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
@@ -8531,20 +9245,11 @@ static void renderGameSettingsPanel(ClientSim *cs,
     }
 
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
-     * Settings" button at the bottom of the panel can fold it away
-     * once the host is happy with the configuration.
-     *
-     * Default collapsed on the Steam Deck: its small screen needs the
-     * vertical room for the player list and the Ready button, and the
-     * map / game-type summary is already on the lobby's top status bar.
-     * Desktop keeps it open. The chevron / "Hide Settings" button still
-     * toggles it either way. */
-    static bool s_settingsOpen     = true;
-    static bool s_settingsOpenInit = false;
-    if (!s_settingsOpenInit) {
-        s_settingsOpen     = !uiModeIsSteamDeck();
-        s_settingsOpenInit = true;
-    }
+     * Settings" button at the bottom of the panel — and the post-game
+     * auto-collapse — can fold it away once the host is happy with the
+     * configuration. The chevron still toggles it either way; see
+     * lobbySettingsHeaderInit / lobbySettingsPostGameEdge above. */
+    lobbySettingsHeaderInit();
     ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
     /* Capture screen-Y of the header before drawing so the
      * right-aligned openHost control can be overlaid on the same
@@ -9256,7 +9961,6 @@ extern "C" void imguiLobbyFrameReset(void) {
     /* A lobby re-entered with a summary still stored should open on the
      * recap, not on whatever the last session was left looking at. */
     s_recapShowMap              = false;
-    s_recapShowAllAwards        = false;
     s_recapShowHighlights       = false;
 
 #if !BOLO_MOBILE
@@ -9758,14 +10462,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
 #endif
-        /* The countdown clearing the summary also clears the map view and both
-         * expands, so the next round's recap opens on itself rather than on
+        /* The countdown clearing the summary also clears the map view and the
+         * clip expand, so the next round's recap opens on itself rather than on
          * wherever the player left the panel. */
         if (!lobbyShowLastRound) {
             s_recapShowMap        = false;
-            s_recapShowAllAwards  = false;
             s_recapShowHighlights = false;
         }
+        /* Fold the settings header away for the post-game view and put it
+         * back when the countdown clears the summary. Called every frame,
+         * acts only on the transitions. */
+        lobbySettingsPostGameEdge(lobbyShowLastRound);
 
         /* Settings above the layout is the two-column (mouse) path only; the
          * tabbed layout renders the same form in a dedicated tab, so skip it
@@ -10076,7 +10783,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
                             ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
                             IM_COL32(0, 0, 80, 255));
+                        /* Same magnified 1-px-per-square art as the
+                         * two-column path — point-sample it. */
+                        imguiPushNearestSampling();
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                        imguiPopNearestSampling();
                         ImVec2 miniMin = ImGui::GetItemRectMin();
                         bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                                 effHostMap, miniMin, innerSize,
@@ -10403,7 +11114,59 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (recapW > roomW) recapW = roomW;
                 if (recapW > mapPanelW) mapPanelW = recapW;
             }
-            float playerPanelW = availW - mapPanelW - 8.0f;
+
+            /* Draggable split. The width above is the automatic split; the
+             * gutter splitter (drawn between the two columns further down)
+             * accumulates a signed offset off it, positive widening the left
+             * column. Kept as an offset in logical pixels rather than as a
+             * fraction so a window resize reflows the automatic part and
+             * leaves the user's adjustment where they put it.
+             *
+             * The drag floors are deliberately looser than the automatic
+             * layout's own (kRecapLeftMinW, the natural preview width): this
+             * is the user overriding the automatic split, so they only need
+             * to be stopped short of squashing either column into nothing.
+             * The offset is re-synced to the clamped result each frame, so
+             * dragging past a floor doesn't build up slack the user has to
+             * drag back out before the split moves again. */
+            const float kSplitterW     = 8.0f;
+            const float kSplitLeftMinW = 180.0f;
+            const float kSplitMapMinW  = 220.0f;
+            if (!s_lobbySplitOffsetInit) {
+                s_lobbySplitOffsetMap   = gameFrontLobbySplit;
+                s_lobbySplitOffsetRecap = gameFrontLobbySplitRecap;
+                s_lobbySplitOffsetInit  = true;
+            }
+            /* Pick the showing view's offset before any width is computed —
+             * the panel flips on the next frame (see the ##MapPanel button),
+             * so reading it here draws the frame the view changes on at that
+             * view's width instead of a frame of the old one. */
+            bool   splitOnRecap = lobbyRecapReelVisible(cs);
+            float *splitOffset  = splitOnRecap ? &s_lobbySplitOffsetRecap
+                                               : &s_lobbySplitOffsetMap;
+            float *splitSaved   = splitOnRecap ? &gameFrontLobbySplitRecap
+                                               : &gameFrontLobbySplit;
+            float autoMapPanelW = mapPanelW;
+            mapPanelW -= *splitOffset * s;
+            float maxMapW = availW - kSplitterW - kSplitLeftMinW * s;
+            if (mapPanelW > maxMapW) mapPanelW = maxMapW;
+            /* Map floor last so it wins on a lobby too narrow for both. */
+            if (mapPanelW < kSplitMapMinW * s) mapPanelW = kSplitMapMinW * s;
+            *splitOffset = (autoMapPanelW - mapPanelW) / (s > 0.0f ? s : 1.0f);
+
+            /* Persist through the same debounced window-settings path the
+             * position and size use — a drag or a re-clamp is a change, and
+             * gameFrontPumpDirty (already driven per frame below) flushes the
+             * trailing one. Only the showing view's value moves; the other
+             * keeps whatever it was left at. The epsilon is coarser than the
+             * two decimals the value is stored at, so a reload can't look
+             * like a change. */
+            if (SDL_fabsf(*splitOffset - *splitSaved) > 0.02f) {
+                *splitSaved = *splitOffset;
+                gameFrontSaveWindowSettings();
+            }
+
+            float playerPanelW = availW - mapPanelW - kSplitterW;
 
             /* "Allow New Players" row spans the full width above both
              * panels so PlayerPanel and MapPanel top edges align in Y. */
@@ -10720,7 +11483,34 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
             ImGui::EndGroup(); /* /left column */
 
-            ImGui::SameLine(0, 8.0f);
+            /* Vertical splitter, sized to fill the gutter exactly so the two
+             * columns keep landing on availW. SameLine(0,0) on both sides —
+             * the gutter is the button, not item spacing. Hit-tested full
+             * column height; the offset it drives is clamped where the widths
+             * are computed, above. */
+            ImGui::SameLine(0, 0.0f);
+            ImVec2 splitPos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##LobbyColSplitter",
+                                   ImVec2(kSplitterW, leftFillH));
+            bool splitActive = ImGui::IsItemActive();
+            if (splitActive || ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                /* Only visible while the user is on it — the resting lobby
+                 * keeps the plain gap it has always had. */
+                ImGui::GetWindowDrawList()->AddLine(
+                    ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y),
+                    ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y + leftFillH),
+                    ImGui::GetColorU32(splitActive ? ImGuiCol_SeparatorActive
+                                                   : ImGuiCol_SeparatorHovered),
+                    2.0f);
+            }
+            if (splitActive) {
+                /* Mouse delta is real pixels; the offset is logical. Moves
+                 * only the showing view's offset. */
+                *splitOffset +=
+                    ImGui::GetIO().MouseDelta.x / (s > 0.0f ? s : 1.0f);
+            }
+            ImGui::SameLine(0, 0.0f);
 
             /* Right column — MapPanel extends down to just above the
              * Ready/Balance footer, so the map preview's bottom border
@@ -10844,7 +11634,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
                     ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
                     IM_COL32(0, 0, 80, 255));
+                /* 1 px per map square cropped to the bounding box and blown
+                 * up over the panel — a 5-7x magnification that bilinear
+                 * turns to mush. Point-sample it; the surrounding UI goes
+                 * back to LINEAR straight after. */
+                imguiPushNearestSampling();
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                imguiPopNearestSampling();
                 ImVec2 miniMin = ImGui::GetItemRectMin();
                 bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                         effHostMap, miniMin, innerSize,
@@ -11166,6 +11962,51 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     return LOBBY_FRAME_CONTINUE;
 }
 
+/* Usable bounds of the display a restored lobby window should be fitted
+ * to: the one the saved dialog position lands on, else the one the window
+ * is currently on, else the primary. Mirrors the same fallback chain the
+ * game window's restore uses in winbolo.c. False when SDL can't name a
+ * display at all, in which case the caller skips the clamp rather than
+ * clamping against garbage. */
+static bool lobbyRestoreUsableBounds(SDL_Window *window, SDL_Rect *out) {
+    SDL_DisplayID dispID = 0;
+    if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+        SDL_Point pt = { gameFrontDialogX, gameFrontDialogY };
+        dispID = SDL_GetDisplayForPoint(&pt);
+    }
+    if (!dispID && window) dispID = SDL_GetDisplayForWindow(window);
+    if (!dispID) dispID = SDL_GetPrimaryDisplay();
+    if (!dispID) return false;
+    return SDL_GetDisplayUsableBounds(dispID, out);
+}
+
+/* Record the lobby window's current size and mark the window settings
+ * dirty. Debounced downstream (gameFrontSaveWindowSettings writes at most
+ * once per 500ms, gameFrontPumpDirty flushes the trailing event), so this
+ * is safe to call from every move/resize event of a drag.
+ *
+ * Skipped when the window size isn't the player's to choose: controller
+ * mode leaves the host window alone, and an active device preset forces
+ * its own dimensions — saving either would overwrite the desktop size. */
+static void lobbySaveWindowGeometry(SDL_Window *window) {
+    if (!window) return;
+#if !BOLO_MOBILE
+    if (uiShouldUseControllerMode()) return;
+    if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
+        s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
+        return;
+    }
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window, &w, &h);
+    if (w <= 0 || h <= 0) return;
+    gameFrontLobbyW = w;
+    gameFrontLobbyH = h;
+    gameFrontSaveWindowSettings();
+#else
+    (void)window;
+#endif
+}
+
 /* Blocking desktop modal: owns a private ImGui context + SDL backends and
  * runs its own event/draw loop, calling imguiLobbyRenderFrame() to build
  * each frame. Returns 1 if the game started, 0 if the player left. */
@@ -11192,11 +12033,54 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #endif
 
 #if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    /* Reopen at the size the player last left the lobby at, falling back to
+     * the built-in default when nothing is saved. Clamped to the usable
+     * bounds of the display the restore targets so a size saved on a bigger
+     * monitor that is no longer attached can't come back larger than the
+     * screen. dialogSetWindowSize still owns the controller-mode and
+     * device-preset overrides. */
+    {
+        int lobbyW = DIALOG_W, lobbyH = DIALOG_H;
+        if (gameFrontLobbyW > 0 && gameFrontLobbyH > 0) {
+            lobbyW = gameFrontLobbyW;
+            lobbyH = gameFrontLobbyH;
+        }
+        SDL_Rect usable;
+        if (lobbyRestoreUsableBounds(window, &usable)) {
+            if (lobbyW > usable.w) lobbyW = usable.w;
+            if (lobbyH > usable.h) lobbyH = usable.h;
+        }
+        if (lobbyW < DIALOG_MIN_W) lobbyW = DIALOG_MIN_W;
+        if (lobbyH < DIALOG_MIN_H) lobbyH = DIALOG_MIN_H;
+        dialogSetWindowSize(window, lobbyW, lobbyH);
+    }
     dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
+    /* A saved position from a monitor that has since been unplugged (or one
+     * that no longer fits the restored size) would leave the lobby off-screen
+     * with no way to drag it back, so pull it inside the target display's
+     * usable area. Only writes when it actually moved, so the normal case
+     * leaves the saved position untouched. */
+    {
+        SDL_Rect usable;
+        int px = 0, py = 0, ww = 0, wh = 0;
+        SDL_GetWindowPosition(window, &px, &py);
+        SDL_GetWindowSize(window, &ww, &wh);
+        if (lobbyRestoreUsableBounds(window, &usable) && ww > 0 && wh > 0) {
+            int cx = px, cy = py;
+            if (cx + ww > usable.x + usable.w) cx = usable.x + usable.w - ww;
+            if (cy + wh > usable.y + usable.h) cy = usable.y + usable.h - wh;
+            if (cx < usable.x) cx = usable.x;
+            if (cy < usable.y) cy = usable.y;
+            if (cx != px || cy != py) {
+                SDL_SetWindowPosition(window, cx, cy);
+                dialogSaveCurrentPosition(window);
+                gameFrontSaveWindowSettings();
+            }
+        }
+    }
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -11248,7 +12132,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            /* Position goes to gameFrontDialogX/Y (shared with every other
+             * dialog — it is the one dialog window); the size is the lobby's
+             * own. Both then take the debounced save path. */
             dialogHandleWindowMoveResize(window, &ev);
+            if ((ev.type == SDL_EVENT_WINDOW_MOVED ||
+                 ev.type == SDL_EVENT_WINDOW_RESIZED) &&
+                ev.window.windowID == SDL_GetWindowID(window)) {
+                lobbySaveWindowGeometry(window);
+            }
             if (ev.type == SDL_EVENT_QUIT) {
                 running = false;
             }
@@ -11337,6 +12229,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
     /* Release per-frame state (texture, popup buffers, transient flags). */
     imguiLobbyFrameReset();
+
+    /* The lobby closing is the last chance to write a move / resize / split
+     * drag that landed inside the debounce window — there is no further
+     * per-frame pump to flush it. */
+    gameFrontFlushWindowSettings();
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);

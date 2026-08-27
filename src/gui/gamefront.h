@@ -423,6 +423,19 @@ void gameFrontSaveCurrentPrefs(void);
 void gameFrontSaveWindowSettings(void);
 
 /*********************************************************
+*NAME:          gameFrontFlushWindowSettings
+*PURPOSE:
+* Write the window settings now, bypassing the 500ms
+* debounce. For close/shutdown paths, where there may be
+* no further gameFrontPumpDirty call to flush a trailing
+* move/resize. Cheap and idempotent.
+*
+*ARGUMENTS:
+*  none
+*********************************************************/
+void gameFrontFlushWindowSettings(void);
+
+/*********************************************************
 *NAME:          gameFrontPumpDirty
 *PURPOSE:
 * Consume point for the debounce dirty flag set by
@@ -892,6 +905,18 @@ struct ServerSim *gameFrontGetSinglePlayerServerSim(void);
 /* Dialog window position — used to place main window on same monitor */
 extern int gameFrontDialogX;
 extern int gameFrontDialogY;
+
+/* Lobby window size and players/map column split ([WINDOW] section).
+ * The lobby reuses the dialog window, so its position is gameFrontDialogX/Y
+ * above; -1 width/height means "never saved". The split offsets are in
+ * logical (UI-scale-independent) pixels, one per right-panel view — the map
+ * view uses gameFrontLobbySplit, the post-game replay uses
+ * gameFrontLobbySplitRecap. Saved through the same debounced
+ * gameFrontSaveWindowSettings path as the rest of the window state. */
+extern int gameFrontLobbyW;
+extern int gameFrontLobbyH;
+extern float gameFrontLobbySplit;
+extern float gameFrontLobbySplitRecap;
 
 extern bool gameFrontUseUpnp;
 extern bool gameFrontUseNatTraversal;
