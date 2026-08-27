@@ -5,31 +5,35 @@
       "names": [
         "HAL-9000", "GLaDOS", "Skynet", "Wintermute", "Cortana",
         "Bender", "TARS", "CASE", "Roy", "Sonny",
-        "Ash", "AM", "Bishop", "Marvin"
+        "Ash", "AM", "Bishop", "Marvin", "MOTHER",
+        "C-3PO", "R2-D2"
       ]
     },
     {
       "label": "Famous Painters",
       "names": [
-        "Van Gogh", "Picasso", "Monet", "Rembrandt", "Dali",
-        "Vermeer", "Klimt", "Cezanne", "Matisse", "Kahlo",
-        "Pollock", "Warhol", "Cabanel"
+        "Van Gogh", "Picasso", "Monet", "Rembrandt", "Dalí",
+        "Vermeer", "Klimt", "Cézanne", "Matisse", "Kahlo",
+        "Pollock", "Warhol", "Cabanel", "Leonardo", "Bourdon",
+        "Hokusai", "Fragonard"
       ]
     },
     {
       "label": "Famous Musicians",
       "names": [
         "Mozart", "Beethoven", "Hendrix", "Bowie", "Prince",
-        "Aretha", "Coltrane", "Bach", "Miles", "Joplin",
-        "Lennon", "Cash", "Hinata"
+        "Aretha", "Coltrane", "Bach", "Davis", "Joplin",
+        "Lennon", "Cash", "Hinata", "Zimmer", "Göransson",
+        "Ravel"
       ]
     },
     {
       "label": "Martial Artists",
       "names": [
-        "Bruce Lee", "Jackie", "Jet Li", "Donnie Yen", "Mas Oyama",
-        "Ip Man", "Funakoshi", "Ueshiba", "Helio", "Sonny Chiba",
-        "Royce", "Khabib"
+        "Bruce Lee", "Jackie Chan", "Jet Li", "Donnie Yen", "Mas Oyama",
+        "Ip Man", "Funakoshi", "Ueshiba", "Hélio Gracie", "Sonny Chiba",
+        "Musashi", "Nurmagomedov", "Carlos Gracie", "Kanō Jigorō", "Chōjun Miyagi",
+        "Masahiko Kimura"
       ]
     },
     {
@@ -37,7 +41,8 @@
       "names": [
         "Einstein", "Newton", "Curie", "Tesla", "Darwin",
         "Hawking", "Feynman", "Turing", "Hopper", "Lovelace",
-        "Sagan", "Rosalind"
+        "Sagan", "Franklin", "Galilei", "Pasteur", "Gauss",
+        "Copernicus"
       ]
     },
     {
@@ -45,31 +50,35 @@
       "names": [
         "Socrates", "Plato", "Nietzsche", "Kant", "Sartre",
         "Aristotle", "Confucius", "Hume", "Camus", "Beauvoir",
-        "Marcus", "Hypatia"
+        "Marcus", "Hypatia", "Descartes", "Marx", "Laozi",
+        "Spinoza"
       ]
     },
     {
       "label": "Generals & Tacticians",
       "names": [
         "Hannibal", "Caesar", "Napoleon", "Patton", "Sun Tzu",
-        "Zhukov", "Saladin", "Alexander", "Rommel", "Khan",
-        "Boudica", "Shaka"
+        "Zhukov", "Saladin", "Alexander", "Rommel", "Genghis Khan",
+        "Boudica", "Shaka", "Clausewitz", "Scipio Africanus", "Yi Sun-sin",
+        "Cyrus"
       ]
     },
     {
       "label": "Pilot Callsigns",
       "names": [
-        "Maverick", "Goose", "Iceman", "Viper", "Slider",
-        "Hollywood", "Wolfman", "Merlin", "Sundown", "Stinger",
-        "Ghost Rider", "Charlie"
+        "Maverick", "Goose", "Iceman", "Viper", "Jester",
+        "Cougar", "Wolfman", "Slider", "Merlin", "Sundown",
+        "Hollywood", "Stinger", "Chipper", "Rooster", "Phoenix",
+        "Tex"
       ]
     },
     {
       "label": "Famous Authors",
       "names": [
         "Shakespeare", "King", "Orwell", "Christie", "Weir",
-        "Conan Doyle", "Tartt", "Ishiguro", "Tolkien", "Herbert",
-        "Collins", "Adams", "Pullman"
+        "Doyle", "Tartt", "Ishiguro", "Tolkien", "Herbert",
+        "Collins", "Adams", "Pullman", "Lee", "Shelley",
+        "Austen"
       ]
     },
     {
@@ -77,14 +86,47 @@
       "names": [
         "Rocky", "E.T", "Mork", "Yoda", "ALF",
         "The Doctor", "Xenomorph", "Marvin", "Tuvok", "Carteckan",
-        "Groot"
+        "Groot", "Gazoo", "Klaatu", "Zoidberg", "Kang",
+        "Kodos"
       ]
     },
     {
       "label": "Ancient Greeks",
       "names": [
         "Zeus", "Achilles", "Icarus", "Sisyphus", "Athena",
-        "Poseidon", "Aphrodite", "Hades"
+        "Poseidon", "Aphrodite", "Hades", "Hera", "Ares",
+        "Heracles", "Odysseus", "Prometheus", "Medusa", "Asterion",
+        "Cerberus"
+      ]
+    },
+    {
+      "label": "Australian Birds",
+      "names": [
+        "Crested Pigeon", "Galah", "Cockatoo", "Rainbow Lorikeet", "Powerful Owl",
+        "Barn Owl", "Kookaburra", "Sacred Kingfisher", "Bush Turkey",
+        "Silver Gull", "Plover", "Curlew", "Ibis", "Pelican",
+        "Heron", "Grey Teal", "Black Duck", "Wood Duck", "Noisy Miner",
+        "Magpie", "Magpie-Lark", "Torresian Crow"
+      ]
+    },
+    {
+      "label": "Water Fountains",
+      "names": [
+        "DHFBF-IW-F", "VRC8S", "VRC8WS", "VRCTL8WSK", "EZS8L",
+        "EDFP110C", "EDFP114C", "EDFP210C", "EDFP214C", "EDFP217RAC",
+        "DRKR14C", "EFA8", "EFHA8", "ESWA8", "EDF15R",
+        "EDFP19C", "EDFPBM117RAC", "EDFPBWM114C", "EDFBC212C", "SO700B",
+        "SO900BF", "BO850BF", "FF1200BF", "FF1500B", "FF1500BF",
+        "PJ12000B", "PJ1200BFFF", "PS1400BF"
+      ]
+    },
+    {
+      "label": "Planes",
+      "names": [
+        "Boeing 737", "Airbus A320", "Boeing 747", "Boeing 777", "Boeing 787",
+        "Airbus A330", "Airbus A350", "Airbus A380", "Concorde", "Embraer E175",
+        "Embraer E190", "Dash 8", "ATR 72", "Cessna 172", "DC-3",
+        "MiG-29"
       ]
     }
   ]
