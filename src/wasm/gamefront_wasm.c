@@ -181,6 +181,12 @@ openingStates dlgState = openStart;
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
 
+/* Lobby players/map divider offsets ([WINDOW] section on desktop). The wasm
+ * build never persists window settings, but the shared lobby dialog code
+ * (imgui_lobby.cpp) references the symbols. */
+float gameFrontLobbySplit = 0.0f;
+float gameFrontLobbySplitRecap = 0.0f;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;
