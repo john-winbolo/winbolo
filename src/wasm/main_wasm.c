@@ -450,8 +450,8 @@ int main(int argc, char *argv[]) {
   fflush(stderr);
 
   if (started) {
-    /* Start the shared tick cadence from a known state (first step is a keys
-     * step with a zeroed sub-tick counter), mirroring the desktop run-start. */
+    /* Start the shared tick cadence from a known state (first step is a game
+     * step on tick 0), mirroring the desktop run-start. */
     clientFrontTickReset();
     /* Pull the account's cloud prefs and apply them. This runs AFTER
      * gameFrontStart (which seeds defaults and creates humanSim) so

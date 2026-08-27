@@ -147,8 +147,8 @@ static bool         s_didTtfInit    = false;
 
 /* Scrolling-marquee tick. The live game advances the marquee every
  * MESSAGE_SCROLL_TIME (4) display ticks. Display ticks run every OTHER
- * GAME_TICK_LENGTH iteration of the live client's main loop (the
- * justKeysFlag alternation in winbolo.c — only the "game tick" branch
+ * GAME_TICK_LENGTH iteration of the live client's main loop (the keys/game
+ * alternation in client_frontend_tick.c — only the "game tick" branch
  * calls clientSimDisplayTick), so they fire every 20ms wall, not 10ms.
  * That gives one column shift per 4 × 20ms = 80ms wall-clock at 1×
  * speed. Anchored to SDL_GetTicks (NOT timeRunning) so fast-forward /
