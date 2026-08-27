@@ -283,13 +283,17 @@ int gameFrontDialogY = -1;
  * gameFrontDialogX/Y above and only the size needs its own keys; -1 means
  * "never saved", so the lobby opens at its built-in default.
  *
- * The split offset is stored in logical (UI-scale-independent) pixels —
- * the lobby multiplies it by the scale it computes for the current
+ * The split offsets are stored in logical (UI-scale-independent) pixels —
+ * the lobby multiplies them by the scale it computes for the current
  * window, so a scale change moves the divider with the rest of the
- * layout instead of stranding it. */
+ * layout instead of stranding it. There are two: the post-game view wants
+ * the right column wide for the replay, the map view wants it back for the
+ * teams table, and a player who shared one would re-drag the divider after
+ * every round. */
 int gameFrontLobbyW = -1;
 int gameFrontLobbyH = -1;
 float gameFrontLobbySplit = 0.0f;
+float gameFrontLobbySplitRecap = 0.0f;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -3171,6 +3175,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontLobbyH = atoi(buff);
   prefsGetString("WINDOW", "Lobby Split", "0", buff, FILENAME_MAX);
   gameFrontLobbySplit = (float)atof(buff);
+  {
+    /* The post-game split defaults to the map one, so a WinBolo.json written
+       before the two views had separate keys comes up on the width the player
+       already set and neither view jumps on the first launch. */
+    char splitDefault[FILENAME_MAX];
+    strcpy(splitDefault, buff);
+    prefsGetString("WINDOW", "Lobby Split Recap", splitDefault, buff, FILENAME_MAX);
+    gameFrontLobbySplitRecap = (float)atof(buff);
+  }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -3459,6 +3472,8 @@ void gameFrontFlushWindowSettings(void) {
      launch would re-write it. */
   SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplit);
   prefsSetString("WINDOW", "Lobby Split", buff);
+  SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplitRecap);
+  prefsSetString("WINDOW", "Lobby Split Recap", buff);
 
   s_windowSettingsDirty = false;
 }
