@@ -789,45 +789,11 @@ function M.update(state, world, info)
   -- (changed tile + 4 cardinal neighbors), so one call per change tile
   -- is enough. Cost is ~5 raw_tt + write per change, all C-side.
   local tc = changes.terrain
-  local _tell_r = C.DEFEND_LGM_NEAR_RADIUS or 6
   for idx = 1, #tc do
     local key = tc[idx]
     local tx = key % 256
     local ty = __idiv(key, 256)
     gh_threat.terrain_update_around(tx, ty)
-    -- Wall-construction setup tell: a wall/halfwall APPEARING near a team
-    -- pill is the signature of an attack build (wall-shield prep — the
-    -- same tell as seeing the enemy LGM itself). Stamp nearby deployed
-    -- team pills' _lgm_near_tick so defend's setup tier fires — unless
-    -- the builder is ours or an ally: a friendly LGM must stand AT its
-    -- build site, so any friendly LGM within 3 tiles means team work.
-    local ntt = raw_tt(tx, ty)
-    if ntt == C.T_BUILDING or ntt == C.T_HALFBUILD then
-      local ours = false
-      if info and info.man_status ~= C.LGM_INTANK then
-        local lmx = bit.rshift(info.man_x or 0, 8)
-        local lmy = bit.rshift(info.man_y or 0, 8)
-        if math.abs(lmx - tx) <= 3 and math.abs(lmy - ty) <= 3 then ours = true end
-      end
-      if not ours and state.perc and state.perc.allied_lgm_positions then
-        for _, al in ipairs(state.perc.allied_lgm_positions) do
-          if math.abs(al.mx - tx) <= 3 and math.abs(al.my - ty) <= 3 then
-            ours = true
-            break
-          end
-        end
-      end
-      if not ours then
-        for _, pw in pairs(world.pills) do
-          if pw.owner == "friendly" and (pw.health or 0) > 0
-             and not (pw.in_tank or pw.carrier or pw._synth_carry)
-             and math.abs(pw.mx - tx) <= _tell_r
-             and math.abs(pw.my - ty) <= _tell_r then
-            pw._lgm_near_tick = state.tick or 0
-          end
-        end
-      end
-    end
   end
   for idx = #tc, 1, -1 do tc[idx] = nil end
 

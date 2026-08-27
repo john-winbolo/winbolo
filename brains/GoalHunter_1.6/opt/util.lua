@@ -78,50 +78,6 @@ function M.set_blocked(state, key, until_tick, src)
   state.blocked[key] = until_tick
 end
 
--- ── Goal-shape blacklist ──
--- Written by init.lua's tick-budget kill catch-all, read by goal selection in
--- goals.lua. Lives here so both sides build the key identically: a goal whose
--- shape budget-killed the think THINK_KILL_TRIES ticks running is held off the
--- pool, otherwise pick_goal re-selects the exact shape that was killing us and
--- the bot livelocks (kills unwind the whole think, so nothing ever completes).
--- Keyed on (kind, target): target_id when the goal has one, else its tile.
-function M.goal_blacklist_key(kind, target_id, mx, my)
-  if kind == nil then return nil end
-  if target_id ~= nil then return kind .. ":#" .. tostring(target_id) end
-  return kind .. ":" .. tostring(mx or 0) .. "," .. tostring(my or 0)
-end
-
--- Add a (kind,target) pair, purging expired entries on the way through — the
--- map only grows on budget kills, so this is the natural (and cheap) place.
-function M.goal_blacklist_add(state, kind, target_id, mx, my, until_tick)
-  local key = M.goal_blacklist_key(kind, target_id, mx, my)
-  if not key then return nil end
-  local bl = state._goal_blacklist
-  if bl then
-    local now = state.tick or 0
-    for k, exp in pairs(bl) do
-      if exp <= now then bl[k] = nil end
-    end
-  else
-    bl = {}
-    state._goal_blacklist = bl
-  end
-  bl[key] = until_tick
-  return key
-end
-
-function M.goal_blacklisted(state, goal, now)
-  local bl = state and state._goal_blacklist
-  if not bl or not goal then return false end
-  local key = M.goal_blacklist_key(goal.kind, goal.target_id, goal.mx, goal.my)
-  if not key then return false end
-  local exp = bl[key]
-  if not exp then return false end
-  if exp > (now or state.tick or 0) then return true end
-  bl[key] = nil
-  return false
-end
-
 function M.mdist(mx1, my1, mx2, my2)
   return math.abs(mx1 - mx2) + math.abs(my1 - my2)
 end
@@ -372,43 +328,6 @@ function M.los_coverage(mx, my, num_dirs, max_range)
     end
   end
   return total
-end
-
--- How many HUMAN players are on our team right now.
---
--- Both inputs are engine-authoritative, so this needs no broadcast heuristic
--- and has no join-lag window:
---   * info.allies      — the alliance bitmap over IN-USE slots. It INCLUDES
---                        our own bit (players.c playersGetAlliesBitMap sets
---                        the bit when count == playerNum).
---   * info.player_bots — per-slot PLAYER_FLAG_BOT bitmap. The flag is
---                        server-set at bot creation (server_sim.c stamps it
---                        BEFORE the join is published, so it arrives with the
---                        player), is documented "server-set, trusted — never
---                        honour from a client packet" (player_flags.h), and is
---                        deliberately kept OUT of client_snapshot.c's
---                        snapshotMask so it survives every snapshot tick
---                        instead of being clobbered to 0 by out-of-view stubs.
--- So allied humans = allies & ~player_bots — the same idiom init.lua already
--- uses to address the human-only chat path.
---
--- Our own bit is cleared FIRST. A brain always carries the BOT flag, so the
--- mask would drop us anyway; but if it ever failed to (a brain driven in a slot
--- the server never flagged), we would classify OURSELVES as a human ally, and
--- every human-ally-gated behaviour would silently flip for a lone bot. Being
--- explicit costs one operation.
-function M.human_ally_count(info)
-  if not info then return 0 end
-  local allies = info.allies or 0
-  local me     = info.player_number
-  if me then allies = bit.band(allies, bit.bnot(bit.lshift(1, me))) end
-  local mask   = bit.band(allies, bit.bnot(info.player_bots or 0))
-  local n = 0
-  while mask ~= 0 do
-    if bit.band(mask, 1) ~= 0 then n = n + 1 end
-    mask = bit.rshift(mask, 1)
-  end
-  return n
 end
 
 return M

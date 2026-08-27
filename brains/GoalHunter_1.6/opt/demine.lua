@@ -206,20 +206,6 @@ local function find_repair_target(state, world, info)
             if not ok and U.in_map(mx2 + 1, my2) and not U.is_water(U.ttype(mx2 + 1, my2)) then ok = true end
             if not ok and U.in_map(mx2, my2 - 1) and not U.is_water(U.ttype(mx2, my2 - 1)) then ok = true end
             if not ok and U.in_map(mx2, my2 + 1) and not U.is_water(U.ttype(mx2, my2 + 1)) then ok = true end
-            -- Shallow water touching DEEP sea in ANY of its 8 neighbours
-            -- is coastline (or a deliberate moat), not a flooded mine
-            -- crater — craters flood at inland river/land seams, never
-            -- on the deep-sea edge. Leave the shoreline unpaved.
-            if ok then
-              for ny = my2 - 1, my2 + 1 do
-                for nx = mx2 - 1, mx2 + 1 do
-                  if (nx ~= mx2 or ny ~= my2) and U.in_map(nx, ny)
-                     and U.ttype(nx, ny) == C.T_DEEPSEA then
-                    ok = false
-                  end
-                end
-              end
-            end
           end
           if infl <= 0 then rej = "not our ground"
           elseif cd and cd[k] and cd[k] > now then rej = "cooldown"

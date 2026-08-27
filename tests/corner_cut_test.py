@@ -33,7 +33,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
-BRAIN = REPO / "brains" / "GoalHunter_1.6" / "init.lua"
+BRAIN = REPO / "brains" / "GoalHunter_1.7" / "init.lua"
 MAP = HERE / "corner_cut.map"
 LABEL = "_corner_cut_test"
 

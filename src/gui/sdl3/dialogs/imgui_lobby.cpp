@@ -152,7 +152,7 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
  * the lobby brain catalogue. Process-scoped. */
 static uint8_t s_lastChosenBrainIdx = 0xFF;
 
-/* Catalogue index of the default add-bot brain — prefer "GoalHunter_1.6", else
+/* Catalogue index of the default add-bot brain — prefer "GoalHunter_1.7", else
  * the first entry (the catalogue is sorted newest-version-first). -1 if empty. */
 static int lobbyDefaultBrainIdx(const BrainList *bl) {
     if (!bl || bl->count <= 0) return -1;
@@ -165,7 +165,7 @@ static int lobbyDefaultBrainIdx(const BrainList *bl) {
         }
     }
     for (int i = 0; i < bl->count; i++) {
-        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.6") == 0) return i;
+        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.7") == 0) return i;
     }
     return 0;  /* sorted newest-first → entry 0 is the newest GoalHunter */
 }
@@ -251,7 +251,7 @@ static void lobbySendAddBot(ClientSim *cs,
     /* Validate the sticky brain pick against the current catalogue:
      * an out-of-range sticky (e.g. catalogue shrunk between picks)
      * falls back to the server-default sentinel. */
-    /* First add: default to GoalHunter_1.6 (newest), not the server CLI default;
+    /* First add: default to GoalHunter_1.7 (newest), not the server CLI default;
      * then stay sticky (the per-bot Bot Code dropdown updates s_lastChosenBrainIdx). */
     if (s_lastChosenBrainIdx == 0xFF && cs) {
         int def = lobbyDefaultBrainIdx(clientSimGetLobbyBrainList(cs));

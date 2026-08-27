@@ -189,25 +189,6 @@ function M.is_harasser(pns, self_pn, state)
   return self_idx > (n - n_har)
 end
 
--- Pillbox-suicider map opt-in. On a map listed in C.PILL_SUICIDER_MAPS the
--- harasser slate is repurposed wholesale: the SAME bots is_harasser would have
--- picked become pill_suiciders instead, and nobody is a harasser. The count is
--- still governed by HARASSER_FRAC / the dynamic ramp — this only decides which
--- of the two roles the picked bots get.
---
--- Identity string: info.gameinfo.mapname, pushed each tick by braincore.c from
--- ClientSim's mapName. That is the map file's BASENAME with the directory AND
--- the ".map" extension stripped (server_sim.c does the stripping before it goes
--- out over CTRL_LOBBY_SETTINGS), so "data/maps/Survival.map" arrives as
--- "Survival". Table keys must match that exact form.
-function M.is_pill_suicider_map(info)
-  local t = C.PILL_SUICIDER_MAPS
-  if not t then return false end
-  local name = info and info.gameinfo and info.gameinfo.mapname
-  if not name or name == "" then return false end
-  return t[name] == true
-end
-
 -- Per-tick update: recompute self's role and stash it on state. The broadcast
 -- block in init.lua copies state.squad_role into bsi.role.
 -- (Hysteresis / spawn-settle is a TODO — for now the set stabilises within ~1s
@@ -574,16 +555,8 @@ function M.update(state, info, now, world)
   -- membership — a harasser commands/joins blitzes like any other bot. It only
   -- biases goal costs (see goals.lua is_harasser checks).
   state._harasser_frac = harasser_frac(state)
-  -- One designation, two possible roles. is_harasser picks the slate; the map
-  -- decides whether that slate is harassers (normal maps) or pill_suiciders
-  -- (C.PILL_SUICIDER_MAPS). The two flags are mutually exclusive — a suicider
-  -- must NOT also carry the harasser cost biases (×5 pill / ×0.2 travel), which
-  -- are the opposite of what a suicider wants.
-  local _designated = M.is_harasser(pns, self_pn, state)
-  state._pill_suicider_map = M.is_pill_suicider_map(info)
-  state.is_pill_suicider = _designated and state._pill_suicider_map or false
-  state.is_harasser = _designated and not state._pill_suicider_map
-  if BRAIN_DEBUG_MODE and state._harasser_frac > (C.HARASSER_FRAC or 0.20) + 0.001 then print2(string.format("[harass] t=%d frac=%.2f base=%.2f pill=%.2f n_har=%d/%d role=%s", state.tick or 0, state._harasser_frac, state.base_strength or 0, state.strength or 0, math.floor(state._harasser_frac * #pns), #pns, state._pill_suicider_map and "pill_suicider" or "harasser")) end
+  state.is_harasser = M.is_harasser(pns, self_pn, state)
+  if BRAIN_DEBUG_MODE and state._harasser_frac > (C.HARASSER_FRAC or 0.20) + 0.001 then print2(string.format("[harass] t=%d frac=%.2f base=%.2f pill=%.2f n_har=%d/%d", state.tick or 0, state._harasser_frac, state.base_strength or 0, state.strength or 0, math.floor(state._harasser_frac * #pns), #pns)) end
   -- R0 (dynamic commanders, flag-gated): commander status is EMERGENT — you are a
   -- commander only while leading a HARD pill take (your attack_pill target has HP
   -- >= HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
@@ -1100,10 +1073,6 @@ local ROLE_COLOR = {
   [M.ROLE_SOLDIER]   = { 50,  100, 235 },  -- blue (deeper royal — was too pale)
   [M.ROLE_HARASSER]  = { 255, 220, 60  },  -- yellow
 }
--- pill_suicider row tint (orange) — distinct from the harasser yellow so the
--- two never read as the same role at a glance. Not a ROLE_COLOR entry: the
--- suicider is a FLAG on top of a commander/soldier role, exactly like harasser.
-local SUICIDER_COLOR = { 255, 140, 30 }
 -- Sort order in the panel: commanders, soldiers, harassers, then by pn.
 local ROLE_ORDER = { [M.ROLE_COMMANDER] = 0, [M.ROLE_SOLDIER] = 1, [M.ROLE_HARASSER] = 2 }
 
@@ -1162,7 +1131,6 @@ function M.draw_roster(state, info, now)
     status   = self_status,
     target   = self_target,
     harasser = state.is_harasser or false,
-    suicider = state.is_pill_suicider or false,
     me       = true,
   }
   for pn in ally_state.iter_active(now, max_age) do
@@ -1191,7 +1159,6 @@ function M.draw_roster(state, info, now)
         status   = a_status,
         target   = a_target,
         harasser = ally_state.get_key(pn, "har") == "1",
-        suicider = ally_state.get_key(pn, "psu") == "1",
       }
     end
   end
@@ -1262,12 +1229,10 @@ function M.draw_roster(state, info, now)
     -- Harassers carry large goal-cost biases (pill ×2, travel ×0.5), so make them
     -- pop: tint the whole row the harasser color. The C/S letter + "h" suffix
     -- still convey the actual squad role and harasser status.
-    local col = (b.suicider and SUICIDER_COLOR)
-                or (b.harasser and ROLE_COLOR[M.ROLE_HARASSER])
+    local col = (b.harasser and ROLE_COLOR[M.ROLE_HARASSER])
                 or ROLE_COLOR[disp_role] or { 180, 180, 180 }
     local num = string.upper(tostring(disp_role or "?")) .. tostring(pn)
                 .. (b.harasser and "h" or "")   -- harasser flag (e.g. "S5h"), decoupled from role
-                .. (b.suicider and "x" or "")   -- pill_suicider flag (e.g. "S5x"), same slate as h, map-selected
                 .. (inferred and "!" or "")
     -- Self (the followed bot): a box around the whole row instead of a "*" tag.
     -- topright hud_rect: x = right-edge offset, w extends leftward (see blitz_roster).
