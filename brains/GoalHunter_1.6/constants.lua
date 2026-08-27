@@ -2001,6 +2001,46 @@ M.HARASSER_PILL_COST_MULT = 5.0
 -- per-tile + far-preempt) is multiplied by this, so harassers roam far to fight
 -- instead of being pinned near home. 1.0 = no discount; lower = ranges farther.
 M.HARASSER_TRAVEL_MULT = 0.2
+-- ── Pillbox suiciders (map opt-in) ────────────────────────────────────────
+-- On a map listed here the harasser slate is REPURPOSED: every bot the harasser
+-- assignment would have flagged (same HARASSER_FRAC / dynamic-ramp machinery,
+-- so this table changes WHICH role they get, never HOW MANY) becomes a
+-- "pill_suicider" instead, and nobody on that map is a harasser. A suicider is
+-- an ordinary GoalHunter bot with three differences:
+--   * a goal-cost surcharge on everything EXCEPT hitting pills and refuelling
+--     (PILL_SUICIDER_OTHER_MULT / _DEFEND_MULT below),
+--   * it NEVER enters the defensive swerve (no dodging the pill it is taking —
+--     it charges straight in and keeps firing; the pill-DEAD "kill" swerve
+--     still runs, that one is the capture/exit handoff, not a dodge),
+--   * it never builds shield walls / blockers (forced non-PPT, shield.scan
+--     skipped entirely — which also saves that scan's tick budget).
+-- Everything else — squad membership, blitz calls/joins/standoff slots,
+-- commanding a blitz — is unchanged.
+-- KEY FORMAT: exactly what the engine reports as info.gameinfo.mapname, i.e.
+-- the map file's BASENAME with no directory and no ".map" extension
+-- (server_sim.c strips both), e.g. "data/maps/Survival.map" -> "Survival".
+M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
+-- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
+-- attack_pill 0.33, do everything but refuel 3x cost" — plus the addendum
+-- "defend_pill specifically is x6, not x3". Applied at ONE choke point
+-- (goal_selection's pool loop in goals.lua), keyed on goal.kind, so every pool
+-- is covered:
+--
+--   attack_pill                     x1  (EXEMPT — the one job)
+--   refuel_at_base / flee_to_base   x1  (EXEMPT — the whole "refuel" GOAL_GROUP;
+--                                        a suicider still keeps itself fuelled)
+--   defend_pill                     x6  PILL_SUICIDER_DEFEND_MULT
+--   everything else                 x3  PILL_SUICIDER_OTHER_MULT
+--     (capture_base, capture_pill, repair_pill, attack_base, attack_tank,
+--      place_pill_strategic, kill_lgm, wait_for_lgm, reposition, explore, ...)
+--
+-- attack_pill is exempted rather than tripled along with the rest because
+-- tripling EVERY pool including attack_pill would leave all relative
+-- preferences unchanged (a no-op); the intent the earlier 0.333 expressed is
+-- attack_pill-favoured, and exempting it is the multiplicative equivalent.
+-- Net: a suicider is unwilling to do anything but hit pills and stay fuelled.
+M.PILL_SUICIDER_OTHER_MULT  = 3.0  -- x3 on every non-exempt goal kind
+M.PILL_SUICIDER_DEFEND_MULT = 6.0  -- x6 on defend_pill specifically (parking on a pill is the LAST thing it should do)
 -- Recruitment (slice 2): a soldier answers a nearby commander's pill take when
 -- it's in a follow-the-call state and not too low on resources.
 M.SQUAD_MIN_HELP_SHELLS  = 3   -- below this shells a soldier won't answer (hard decline)

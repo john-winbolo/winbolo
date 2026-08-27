@@ -498,6 +498,34 @@ local function goal_group(kind)
 end
 
 -- =========================================================================
+-- Pillbox-suicider goal-cost shaping (see C.PILL_SUICIDER_* in constants).
+-- A suicider is only willing to do two things: kill pills, and keep itself
+-- fuelled. Everything else is priced out of reach with a flat multiplier
+-- applied at ONE choke point ─ goal_selection's pool loop, where every pool's
+-- assembled cost passes through ─ rather than inside each pool's evaluator.
+--
+--   attack_pill                    x1  exempt (the one job)
+--   refuel_at_base / flee_to_base  x1  exempt (the whole "refuel" GOAL_GROUP)
+--   defend_pill                    x PILL_SUICIDER_DEFEND_MULT  (6)
+--   everything else                x PILL_SUICIDER_OTHER_MULT   (3)
+--
+-- Keyed on goal.kind (not pool index) so kinds with no numbered pool ─ explore,
+-- reposition, rescue_lgm, def_build ─ are covered by the same rule. Returns
+-- 1.0 for every non-suicider, so this is a no-op on a normal map.
+-- =========================================================================
+local SUICIDER_EXEMPT_KINDS = {
+  attack_pill    = true,   -- the role's entire purpose
+  refuel_at_base = true,   -- the "refuel" GOAL_GROUP, both members: a suicider
+  flee_to_base   = true,   -- still resupplies (and still flees at critical armour)
+}
+local function suicider_cost_mult(state, kind)
+  if not (state and state.is_pill_suicider) then return 1.0 end
+  if not kind or SUICIDER_EXEMPT_KINDS[kind] then return 1.0 end
+  if kind == "defend_pill" then return C.PILL_SUICIDER_DEFEND_MULT or 1.0 end
+  return C.PILL_SUICIDER_OTHER_MULT or 1.0
+end
+
+-- =========================================================================
 -- Resolve an attack pill winner into a concrete goal: always the unified
 -- plan_position (PPT) take with standoff positioning. Wall-shield vs. hardline
 -- vs. pillbox-as-blocker is decided later inside the attack_pill substate
@@ -3951,6 +3979,17 @@ local KIND_TO_POOL = {
   place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
   kill_lgm = 13,
 }
+
+-- Pool DISPLAY name -> goal.kind, for the two labels that differ (see the
+-- KIND_TO_POOL note above). Lets the panel/grid renderers ask
+-- suicider_cost_mult the same question goal_selection asked, so a suicider's
+-- displayed `weighted` cost and row ordering match the cost actually competed.
+local POOL_NAME_TO_KIND = {
+  refuel = "refuel_at_base", place_strategic = "place_pill_strategic",
+}
+local function suicider_mult_for_pool(state, pname)
+  return suicider_cost_mult(state, POOL_NAME_TO_KIND[pname] or pname)
+end
 
 -- (LOCK_SUBS defined above eval_attack_tank.)
 
@@ -8977,6 +9016,26 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Pillbox-suicider cost shaping ──
+    -- THE choke point for the suicider role's goal preferences: one pass over
+    -- the assembled pool, same layer as the influence scaling above (a whole-
+    -- cost multiplier applied after the phase weight, before hysteresis).
+    -- attack_pill and the refuel group ride at x1; defend_pill pays
+    -- PILL_SUICIDER_DEFEND_MULT, everything else PILL_SUICIDER_OTHER_MULT.
+    -- No-op for every bot that isn't a suicider (suicider_cost_mult -> 1.0),
+    -- and unconditional on phase ─ unlike influence, this is who the bot IS,
+    -- not where the goal sits. _suicider_mult is stashed for the WINNERS-row
+    -- reconciliation exactly like _inf_mult.
+    if state.is_pill_suicider then
+      for _, c in ipairs(pool) do
+        local sm = suicider_cost_mult(state, c.goal and c.goal.kind)
+        if sm ~= 1.0 and c.cost and c.cost > 0 then
+          c.cost = c.cost * sm
+          c._suicider_mult = sm
+        end
+      end
+    end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -9282,8 +9341,15 @@ local function goal_selection(state, world, info, quiet)
                and pce.goal.kind == state.goal.kind
                and pce.goal.mx == state.goal.mx
                and pce.goal.my == state.goal.my then
-              cur_entry = { cost = pce.cost, goal = state.goal,
+              -- Carried-forward costs come straight from pool_cache, which is
+              -- PRE-selection ─ so the suicider multiplier (applied in the pool
+              -- pass above, which this entry missed) has to be re-applied here
+              -- or a suicider's stickiness bar would be 3-6x too low and every
+              -- challenger would win by walkover.
+              local _cf_sui = suicider_cost_mult(state, state.goal.kind)
+              cur_entry = { cost = pce.cost * _cf_sui, goal = state.goal,
                             desc = "(carried forward: pool mid-requeue)",
+                            _suicider_mult = (_cf_sui ~= 1.0) and _cf_sui or nil,
                             _carried_forward = true }
               pool[#pool + 1] = cur_entry
               if BRAIN_DEBUG_MODE then
@@ -9894,9 +9960,15 @@ function M.get_queue_status(state)
     local formula = cached and get_formula(cached) or ""
     local raw_val = cached and cached.raw or -1
 
-    -- Look up phase weight for this pool
+    -- Look up phase weight for this pool. `weighted` must match the number
+    -- goal_selection actually competes, so a suicider's surcharge rides here
+    -- alongside the phase weight (1.0 for everyone else).
     local pw = phase_weights and pname and phase_weights[pname] or 1.0
-    local weighted = cost_val >= 0 and (cost_val * pw) or -1
+    local sui = suicider_mult_for_pool(state, pname)
+    local weighted = cost_val >= 0 and (cost_val * pw * sui) or -1
+    if sui ~= 1.0 and formula ~= "" then
+      formula = formula .. string.format(" * suicider{%.1f}", sui)
+    end
 
     -- Check if this goal is on abandon cooldown or blocked
     local flags = ""
@@ -9936,13 +10008,16 @@ function M.get_queue_status(state)
     local pname = POOL_NAMES[idx] or ("pool" .. idx)
     local cost = entry.cost or -1
     local pw = phase_weights and phase_weights[pname] or 1.0
-    local weighted = cost >= 0 and (cost * pw) or -1
+    local sui = suicider_mult_for_pool(state, pname)
+    local weighted = cost >= 0 and (cost * pw * sui) or -1
+    local fdesc = entry.desc or ""
+    if sui ~= 1.0 then fdesc = fdesc .. string.format(" * suicider{%.1f}", sui) end
     entries[#entries+1] = {
       pool = idx, pname = pname, id = 0,
       mx = goal.mx or 0, my = goal.my or 0,
       cost = cost, weighted = weighted, raw = cost,
       pw = pw, age = 0, status = "done",
-      formula = entry.desc or "", flags = "",
+      formula = fdesc, flags = "",
     }
   end
   append_finalize(2)  -- defend_pill
@@ -10344,10 +10419,15 @@ function M.get_pool_breakdown_json(state)
   local function build_section(idx)
     local pname = POOL_NAMES[idx] or ("p"..idx)
     local pw = (phase_weights and phase_weights[pname]) or 1.0  -- PHASE_WEIGHTS is name-keyed, not idx-keyed
+    -- Suicider surcharge shares the phase weight's role here: it is a
+    -- selection-layer multiplier on this whole pool, so it belongs in
+    -- `weighted` (and therefore in the row ordering). 1.0 for non-suiciders.
+    local sui = suicider_mult_for_pool(state, pname)
+    local pwx = pw * sui
     local rows_raw = by_pool[idx] or {}
     table.sort(rows_raw, function(a, b)
-      local ac = (a.cost >= 0) and a.cost * pw or math.huge
-      local bc = (b.cost >= 0) and b.cost * pw or math.huge
+      local ac = (a.cost >= 0) and a.cost * pwx or math.huge
+      local bc = (b.cost >= 0) and b.cost * pwx or math.huge
       return ac < bc
     end)
     local rows = {}
@@ -10355,13 +10435,15 @@ function M.get_pool_breakdown_json(state)
       rows[i] = {
         id = r.id, mx = r.mx, my = r.my,
         cost = r.cost,
-        weighted = (r.cost >= 0) and (r.cost * pw) or -1,
+        weighted = (r.cost >= 0) and (r.cost * pwx) or -1,
         is_winner = false,   -- assigned below from pool_cache (the real winner)
         active_goal = (active_pool == idx
                        and ((active_id and active_id >= 0 and active_id == r.id)
                             or (active_mx ~= nil and r.mx == active_mx and r.my == active_my))),
         stale = r.stale,
-        formula = r.formula,
+        formula = (sui ~= 1.0 and r.formula)
+                  and (r.formula .. string.format(" * suicider{%.1f}", sui))
+                  or r.formula,
         reject = r.reject,
         reject_remaining = r.reject_remaining,
         stealing = r.stealing or false,
@@ -10511,6 +10593,18 @@ function M.get_pool_breakdown_json(state)
         base_cost, w.cost or 0, pw,
         state.phase or "unknown")
 
+      -- Pillbox-suicider surcharge, applied at selection alongside the phase
+      -- weight / influence scale. Rendered whenever it isn't 1.0 so the row's
+      -- numbers still reconcile (base x pw x inf x suicider + penalties = total).
+      local suicider_mult = (gc and gc.suicider_mult) or 1.0
+      if suicider_mult ~= 1.0 then
+        detail_formula = string.format("%s * suicider{%.1f}", detail_formula, suicider_mult)
+        detail_map[#detail_map + 1] = string.format(
+          "suicider:pill_suicider role -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
+          tostring(w.kind or (gc and gc.kind) or pname), suicider_mult,
+          C.PILL_SUICIDER_DEFEND_MULT or 1.0, C.PILL_SUICIDER_OTHER_MULT or 1.0)
+      end
+
       if w.imminent then
         detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
       end
@@ -10586,6 +10680,9 @@ function M.get_pool_breakdown_json(state)
         pname, raw_base, phase_abbrev, eff_pw)
       if inf_mult ~= 1.0 then
         row_summary = row_summary .. string.format(" x inf@%.1f", inf_mult)
+      end
+      if suicider_mult ~= 1.0 then
+        row_summary = row_summary .. string.format(" x suicider{%.1f}", suicider_mult)
       end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then
@@ -10669,6 +10766,12 @@ function M.get_pool_breakdown_json(state)
       local raw_base = (pw and pw ~= 0) and (sw.cost / pw) or sw.cost
       local row_summary = string.format("%s %.0f x %s@%.2f",
         pname, raw_base, phase_abbrev, pw)
+      -- Suicider surcharge (reposition / def_build / wait_for_lgm / kill_lgm
+      -- are all non-exempt kinds, so these strips DO pay it).
+      local _strip_sui = suicider_mult_for_pool(state, pname)
+      if _strip_sui ~= 1.0 then
+        row_summary = row_summary .. string.format(" x suicider{%.1f}", _strip_sui)
+      end
       -- Prefer the cost_cache formula (full base + breakdown + detail
       -- map) over sw.desc (one-line tagline).  Both kill_lgm and
       -- wait_for_lgm stamp cost_cache under "<idx>:<target_id>" so we

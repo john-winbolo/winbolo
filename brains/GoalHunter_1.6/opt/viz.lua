@@ -73,7 +73,7 @@ M.IDS = {
                      long  = "Right-side HUD list of every ongoing blitz call this bot knows about (the blitz-call registry) with per-call join status: JOINABLE (in help range, free slot, current goal interruptible), far, FULL, busy(reason), or pill gone. Columns: cmdr/pill/dist/slots; '>'=committed, '~'=negotiating. Also rings each known pill on the map (green=joinable, grey=known)." },
 
   squad_roster = { short = "HUD: squad roster",
-                   long  = "Right-side per-bot squad roster (role + status, \"-- SQUADS --\"). Drawn via hud_text so it's draggable/labelable like other HUD overlays.",
+                   long  = "Right-side per-bot squad roster (role + status, \"-- SQUADS --\"). Role letter + pn, suffixed \"h\" for a harasser (row tinted yellow) or \"x\" for a pill_suicider (row tinted orange — the same slate as harassers, selected instead of them on a C.PILL_SUICIDER_MAPS map). Drawn via hud_text so it's draggable/labelable like other HUD overlays.",
                    default_on = true },
 
   label_hud_overlays = { short = "Label HUD overlays",

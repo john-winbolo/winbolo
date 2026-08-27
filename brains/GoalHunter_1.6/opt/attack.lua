@@ -3338,6 +3338,13 @@ function M.update_attack_substate(goal, state, world, info)
       -- we committed with). Until then, hold the line and keep firing.
       local blitz_hold = goal._blitz_committed
                          and (info.armour or 0) >= (goal._blitz_start_armour or 0)
+      -- Pill-suicider: never peels off a take it is already firing on, so a
+      -- defender LGM arriving is not a reason to swerve OR abort — it holds
+      -- exactly like a committed blitz and keeps shooting. (Same fall-through
+      -- branch, so nothing else in this block changes.)
+      if not blitz_hold and state.is_pill_suicider and FIRING_SUBS[cur_sub] then
+        blitz_hold = true
+      end
       if FIRING_SUBS[cur_sub] and not blitz_hold then
         print(string.format(TAG ..
           " ATTACK: LGM@(%d,%d) within %dt of pill@(%d,%d) — entering swerve from %s",
@@ -3716,6 +3723,16 @@ function M.update_attack_substate(goal, state, world, info)
                         or string.format("ANGRY_PILL(%.2f)", pill and pill.anger or 0)
           end
         end
+        -- Pill-suicider: never a protected take. PPT is the wall-shielded
+        -- build-then-fire mode, and a suicider builds no blockers at all, so
+        -- force it OFF here (after the force_* overrides, which would otherwise
+        -- reinstate it) — that alone routes the whole take down the plain
+        -- standoff/charge path: the gather_trees pre-flight and the build_walls
+        -- entry are both gated on _is_ppt + _shield_scan. The shield.scan
+        -- itself is skipped below (its ~20 ms of tick budget goes unspent).
+        if state.is_pill_suicider and goal._is_ppt then
+          goal._is_ppt = false
+        end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                             or C.ATTACK_PILL_STANDOFF
         -- For PPT, pull the chosen standoff in from 7.4 to 7.0 along
@@ -3751,7 +3768,11 @@ function M.update_attack_substate(goal, state, world, info)
         -- (cached chunk, fresh greens/best) without losing the shield
         -- step.
         goal.scan_spots = spots
-        goal._shield_scan_pending = true
+        -- A pill_suicider never builds blockers, so the shield scan has nothing
+        -- to plan: skip it outright (leaving _shield_scan nil, exactly the state
+        -- the existing DEMOTED(no-shield) path produces) and keep the standoff
+        -- the spot-selection pass just chose. Also saves the scan's tick budget.
+        goal._shield_scan_pending = (not state.is_pill_suicider) or nil
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
@@ -5116,7 +5137,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- charging through the hits instead of defensive-swerving. The pill-dead
     -- swerve above (kill mode) still fires the moment the pill dies, so the
     -- dead-pill handoff (rush / capture / exit) runs exactly as normal.
-    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 and not state.ammo_deprived then
+    -- A pill_suicider is excluded on the same line as the ammo-deprived decoy,
+    -- and for the same reason: its job is to stay on the pill. It charges
+    -- through the return fire instead of peeling off. (The pill-DEAD swerve
+    -- above is untouched — that one is the capture/exit handoff, not a dodge.)
+    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0
+       and not state.ammo_deprived and not state.is_pill_suicider then
       local _soak_ok = commit_soak_finish(goal, state, info)
       local _tank_finish = _soak_ok and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
@@ -5675,6 +5701,12 @@ function M.update_attack_substate(goal, state, world, info)
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS and not tank_finish then
       should_swerve = true
     end
+    -- Pill-suicider: cancel every DEFENSIVE swerve (pill still alive — the
+    -- kill-locked and hits-taken exits above). The pill-dead branch keeps its
+    -- swerve: that is the rush-to-capture handoff, not a dodge.
+    if should_swerve and not pill_dead and state.is_pill_suicider then
+      should_swerve = false
+    end
 
     if should_swerve then
       enter_swerve(goal, world, state, info, pmx, pmy,
@@ -5727,6 +5759,15 @@ function M.update_attack_substate(goal, state, world, info)
                            and pill_hp > 0 and not _tank_finish
       local should_swerve = (goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS or _kill_locked)
                             and not _tank_finish
+      -- Pill-suicider: hits taken and a locked kill are NOT reasons to peel off
+      -- — it stands in the fire and keeps shooting until the pill dies (the
+      -- pill_hp<=0 branch above then runs the normal kill swerve / capture
+      -- handoff). The crosshairs_off exit below is left alone: that one isn't a
+      -- dodge, it means we can no longer hit anything from here, and a suicider
+      -- with no shot has nothing to be brave about.
+      if should_swerve and state.is_pill_suicider then
+        should_swerve = false
+      end
 
       -- Also check if crosshairs off pill (knocked out of range)
       -- Float angle so the displayed crosshair matches the engine's
@@ -5739,7 +5780,10 @@ function M.update_attack_substate(goal, state, world, info)
 
       if should_swerve or crosshairs_off then
         local pill_anger = pill and pill.anger or 0
-        if pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked then
+        -- (suicider: should_swerve is already false above, so we only get here
+        -- on crosshairs_off — route that to post_engage, never to a swerve.)
+        if (pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked)
+           and not state.is_pill_suicider then
           -- Pill angry, OR the kill is already locked (last sure shot fired) —
           -- swerve to dodge (defensive, so a diverging shell re-engages). The
           -- kill-locked case dodges regardless of anger instead of falling to

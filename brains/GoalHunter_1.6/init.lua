@@ -7572,6 +7572,7 @@ function Brain.think(info)
     attack.blitz_negotiate(state, world, info, now)
     if state.squad_role then bsi.role = state.squad_role end
     if state.is_harasser then bsi.har = "1" end   -- harasser flag (decoupled from role)
+    if state.is_pill_suicider then bsi.psu = "1" end  -- pill_suicider flag (same slate as har, map-selected; mutually exclusive with it)
     if state.squad_cmdr then bsi.cmdr = tostring(state.squad_cmdr) end
     if state.squad_status and state.squad_status ~= "-" then bsi.sqst = state.squad_status end
     -- Blitz engage standoff claim (`be`): a soldier broadcasts its claimed
