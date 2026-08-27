@@ -123,10 +123,11 @@
     {
       "label": "Planes",
       "names": [
-        "Boeing 737", "Airbus A320", "Boeing 747", "Boeing 777", "Boeing 787",
-        "Airbus A330", "Airbus A350", "Airbus A380", "Concorde", "Embraer E175",
-        "Embraer E190", "Dash 8", "ATR 72", "Cessna 172", "DC-3",
-        "MiG-29"
+        "Spitfire", "Mustang", "Hurricane", "Lancaster", "Mosquito",
+        "Zero", "Sopwith Camel", "Wright Flyer", "Avro Arrow", "Vulcan",
+        "Blackbird", "Tomcat", "Harrier", "MiG-29", "Hercules",
+        "Catalina", "Beaver", "Dash 8", "Spruce Goose", "Concorde",
+        "Boeing 747", "DC-3", "Cessna 172"
       ]
     }
   ]
