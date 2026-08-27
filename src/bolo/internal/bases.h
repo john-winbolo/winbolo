@@ -291,6 +291,27 @@ void basesTickMessageQueue(struct GameSim *sim, struct ClientSim *cs);
 void basesUpdateStock(struct GameSim *sim, BYTE baseNum);
 
 /*********************************************************
+*NAME:          basesSetStock
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 26/8/26
+*LAST MODIFIED: 26/8/26
+*PURPOSE:
+*  Sets a base's stock outright, clamped to the engine
+*  maxima. Scripted-scenario seam: basesSetBaseOwner drains a
+*  base it moves between two non-neutral owners, so a map that
+*  re-deals ownership needs a way to restock. Returns FALSE for
+*  an out-of-range base number.
+*
+*ARGUMENTS:
+*  sim     - The game sim
+*  baseNum - The base to set (1-based)
+*  armour  - Armour to set (clamped to BASE_FULL_ARMOUR)
+*  shells  - Shells to set (clamped to BASE_FULL_SHELLS)
+*  mines   - Mines to set (clamped to BASE_FULL_MINES)
+*********************************************************/
+bool basesSetStock(struct GameSim *sim, BYTE baseNum, BYTE armour, BYTE shells, BYTE mines);
+
+/*********************************************************
 *NAME:          basesAmOwner
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99

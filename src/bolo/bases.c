@@ -594,6 +594,48 @@ void basesUpdateStock(GameSim *sim, BYTE baseNum) {
 }
 
 /*********************************************************
+*NAME:          basesSetStock
+*AUTHOR:        Andrew Roth
+*CREATION DATE: 26/8/26
+*LAST MODIFIED: 26/8/26
+*PURPOSE:
+*  Sets a base's stock outright, clamped to the engine
+*  maxima. The scripted-scenario seam (game.set_base_stock)
+*  behind maps that re-deal base ownership: basesSetBaseOwner
+*  zeroes armour/shells/mines whenever it moves a base between
+*  two non-neutral owners, so a scenario that re-deals its
+*  bases needs a way to put the stock back.
+*
+*  Propagation matches basesUpdateStock exactly: the fields are
+*  read live out of the bases structure by the periodic full
+*  base/pill sync in the snapshot builder, so a plain write is
+*  all clients need - there is no per-change stock event.
+*
+*ARGUMENTS:
+*  sim     - The game sim
+*  baseNum - The base to set (1-based)
+*  armour  - Armour to set (clamped to BASE_FULL_ARMOUR)
+*  shells  - Shells to set (clamped to BASE_FULL_SHELLS)
+*  mines   - Mines to set (clamped to BASE_FULL_MINES)
+*********************************************************/
+bool basesSetStock(GameSim *sim, BYTE baseNum, BYTE armour, BYTE shells, BYTE mines) {
+  bases *value = &sim->bs;
+
+  if (baseNum == 0 || baseNum > (*value)->numBases) {
+    return FALSE;
+  }
+  baseNum--;
+  if (armour > BASE_FULL_ARMOUR) armour = BASE_FULL_ARMOUR;
+  if (shells > BASE_FULL_SHELLS) shells = BASE_FULL_SHELLS;
+  if (mines  > BASE_FULL_MINES)  mines  = BASE_FULL_MINES;
+  (*value)->item[baseNum].armour = armour;
+  (*value)->item[baseNum].shells = shells;
+  (*value)->item[baseNum].mines  = mines;
+  logAddEvent(log_BaseSetStock, baseNum, shells, mines, armour, 0, NULL);
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          basesAmOwner
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99

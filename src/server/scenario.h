@@ -27,9 +27,11 @@
  *                                force that start, nil for engine pick
  *
  *  The `game` API table exposes reads (tiles, pills, bases, tanks and
- *  their stats), writes (pill/base allegiance), bot spawning at valid
- *  start positions, team assignment, broadcast messages, and a
- *  programmatic round-end (win condition). The script may also declare
+ *  their stats), writes (pill/base allegiance and base stock), bot
+ *  spawning at valid start positions, team assignment, broadcast
+ *  messages, and a programmatic round-end (win condition). The full
+ *  per-call reference lives at the top of scenario.c. The script may
+ *  also declare
  *
  *    scenario = { max_players = 6 }
  *

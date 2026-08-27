@@ -120,6 +120,36 @@ local function outer_base_slot(k)   -- base 1 -> slot 15 ... base 10 -> slot 6
   return 16 - k
 end
 
+-- Every re-deal below has to be followed by one of these.
+--
+-- game.set_base_owner DRAINS a base whenever it moves it from one
+-- non-neutral owner to another — armour, shells and mines all to zero,
+-- that is the engine's capture rule and it does not care that the
+-- "capture" came from a script. This map re-deals ownership constantly
+-- (the center at setup, the outer ring at setup AND at the top of every
+-- wave), so without this the round opened on empty bases and the horde's
+-- ring was wiped clean again every five minutes.
+--
+-- BASE_FULL is deliberately past the engine's 90: game.set_base_stock
+-- clamps each value to the real maximum, so "a big number" means "full"
+-- without this file having to track the engine's constant.
+local BASE_FULL = 255
+
+local function restock(game, first, last, what)
+  local n = 0
+  for b = first, last do
+    if game.set_base_stock(b, BASE_FULL, BASE_FULL, BASE_FULL) then
+      n = n + 1
+    end
+  end
+  -- Read one back rather than quoting BASE_FULL: the log then shows the
+  -- engine's real ceiling (90/90/90) instead of what we asked for.
+  local bi = game.base(first)
+  game.message(string.format("[bases] %s restocked %d bases to %d/%d/%d",
+    what, n, bi and bi.armour or 0, bi and bi.shells or 0,
+    bi and bi.mines or 0))
+end
+
 -- Wave bots respawn like normal Bolo play — a dead one is merely
 -- between lives, so nobody is removed here. This just prunes slots
 -- that vanished outside our control (kicks) and reports how many of
@@ -149,14 +179,100 @@ local function vanish_wave(game)
   return n
 end
 
+-- A wave pill this script is still allowed to move around: one of
+-- pills 7..16, DEAD on the ground (armour 0 — the scoopable state), not
+-- being carried, and not flying defender colours. A built pill stays
+-- where it stands (it is a manned gun now, whoever's it is) and a pill
+-- the defenders captured during the break stays theirs.
+local function wave_pill_free(pi)
+  if pi == nil or pi.in_tank then return false end
+  if pi.armour ~= 0 then return false end
+  local o = pi.owner
+  if o ~= nil and o <= 5 then return false end
+  return true
+end
+
+-- ONE claimable pill per attacker, and not a crumb more.
+--
+-- The map parks 10 dead pills out on the ring, but the wave is only as
+-- big as Team 2's roster: at WAVE_SIZE 6 the other four just lie there
+-- in no-man's land, and defenders were driving out mid-wave to scoop
+-- free pillboxes that were never meant for them. So the wave's dead
+-- pills are dealt like a hand of cards the moment the tanks exist:
+--   * CLAIM — each attacker, in spawn order, takes the nearest free
+--     pill still on the table. It stays ON THE GROUND: the bot's own
+--     brain sees a dead pill under its nose and goes and gets it, which
+--     is the emergent field engineering this map wants.
+--   * DISTRIBUTE — everything left over after every attacker has one is
+--     loaded straight INTO the tanks (round-robin, so the surplus
+--     spreads evenly), off the ground and out of defender reach.
+-- With more attackers than pills the claim pass simply runs dry and
+-- there is nothing to distribute.
+--
+-- Timing: this runs in the SAME tick as the spawn, right after the
+-- spawn loop. game.spawn_bot creates the tank synchronously (the engine
+-- fires on_choose_start during the call), so game.tank(p).mx/my is
+-- already the tank's real start tile here — no deferred pass needed.
+local function deal_wave_pills(game, spawned)
+  if #spawned == 0 then return end
+
+  local pool = {}
+  for n = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+    local pi = game.pill(n)
+    if wave_pill_free(pi) then
+      pool[#pool + 1] = { n = n, x = pi.x, y = pi.y }
+    end
+  end
+
+  local claimed = 0
+  for _, p in ipairs(spawned) do
+    if #pool == 0 then break end
+    local t = game.tank(p)
+    if t ~= nil then
+      local best, best_d = nil, nil
+      for i, e in ipairs(pool) do
+        local dx, dy = e.x - t.mx, e.y - t.my
+        local d = dx * dx + dy * dy        -- squared: ordering is all we need
+        if best_d == nil or d < best_d then best, best_d = i, d end
+      end
+      table.remove(pool, best)
+      claimed = claimed + 1
+    end
+  end
+
+  local loaded, turn = 0, 0
+  for _, e in ipairs(pool) do
+    local p = spawned[(turn % #spawned) + 1]
+    turn = turn + 1                        -- advance even if the load is
+    if game.give_pill(p, e.n) then         -- refused, so the spread stays even
+      loaded = loaded + 1
+    end
+  end
+
+  game.message(string.format(
+    "[pills] wave %d: %d claimed on ground, %d loaded into tanks",
+    wave, claimed, loaded))
+end
+
 local function spawn_wave(game)
   wave = wave + 1
 
   -- Every wave opens with the outer ring back in bot hands — whatever
-  -- the humans captured since the last one.
+  -- the humans captured since the last one. Clamp into the slots this
+  -- wave actually fields (same rule as the pill pass below): with a
+  -- shrunken roster the natural owner slot may be EMPTY, and a base
+  -- owned by a nonexistent player reads hostile to BOTH sides — the
+  -- ring must stay horde no matter how few attackers spawn.
+  local lowest_slot = 16 - WAVE_SIZE
   for k = 1, OUTER_BASES do
-    game.set_base_owner(k, outer_base_slot(k))
+    local s = outer_base_slot(k)
+    if s < lowest_slot then s = lowest_slot end
+    game.set_base_owner(k, s)
   end
+  -- ...and undo the drain that re-deal just caused. A wave arriving to
+  -- an empty ring had nothing to rearm from, which is not the fight
+  -- this map is supposed to be.
+  restock(game, 1, OUTER_BASES, "outer ring")
 
   -- Same for the wave's pills: any of pills 7..16 the DEFENDERS didn't
   -- claim (still built somewhere from a previous wave, or dropped
@@ -193,10 +309,12 @@ local function spawn_wave(game)
   -- their map spots between the enemy bases. The wave-start ownership
   -- pass above stamps them to the wave's slots, so the attackers'
   -- brains treat them as their own dead pills — scoop, carry, place,
-  -- repair, at the AI's discretion instead of pre-loaded into tanks.
-  -- (An earlier design give_pill'd one into each wave-1 tank; kept out
-  -- deliberately so field engineering is emergent.) Defenders that
-  -- capture them keep them.
+  -- repair, at the AI's discretion. One per tank is deliberately left
+  -- lying there for exactly that reason; the SURPLUS (a short roster
+  -- can't cover 10) is loaded into tanks instead of being left as
+  -- defender loot. Ownership is fresh above, so the free/defender test
+  -- inside reads this wave's state.
+  deal_wave_pills(game, spawned)
 
   wave_ends_at = game.tick() + WAVE_LIMIT
   last_min_mark = nil
@@ -266,6 +384,25 @@ local function deal_center(game)
     end
     game.set_base_owner(b, owner)
     game.set_pill_owner(pill, owner)
+  end
+  -- The deal above drains every base it moved between two seated
+  -- players, so the defenders would open the round on empty bases —
+  -- no armour to repair with, no shells, no mines, in a map whose
+  -- entire premise is digging in. Put it all back.
+  restock(game, CENTER_FIRST, CENTER_FIRST + 5, "center")
+  -- Deal the OUTER ring to the horde immediately too — spawn_wave
+  -- re-deals it every wave, but until wave 1 lands the map-file owners
+  -- rule, and with a shrunken roster (WAVE_SIZE < 10) the natural
+  -- owners of the tail bases are EMPTY slots: red to both sides from
+  -- tick 1. Same clamp as spawn_wave's pass.
+  do
+    local lowest_slot = 16 - WAVE_SIZE
+    for k = 1, OUTER_BASES do
+      local s = outer_base_slot(k)
+      if s < lowest_slot then s = lowest_slot end
+      game.set_base_owner(k, s)
+    end
+    restock(game, 1, OUTER_BASES, "outer ring")
   end
   return true
 end
@@ -370,6 +507,77 @@ local function replenish_tree_ring(game)
     TREE_RING_R, n, TREE_RING_PICKS, planted, standing, blocked))
 end
 
+-- ---------------------------------------------------------------------
+-- The SHALLOW RIM: one tile of river all the way around the island's
+-- coast. Driving off the edge of a circular island is far too easy —
+-- and DEEP_SEA drowns a tank outright, which is a stupid way to lose a
+-- defender in the middle of a wave. A one-tile shallow lip turns that
+-- mistake into a swim back ashore.
+--
+-- The rim is derived from TILE CONTENTS, never from the island's
+-- radius: every deep tile that touches a non-deep one (8-adjacency)
+-- becomes river. The map file is hand-edited, so a hardcoded circle
+-- would drift off the real coastline the first time someone carves a
+-- bay; the adjacency test follows whatever shape the map actually has.
+--
+-- EXCLUDED: the little deep puddle at the middle of the map. The six
+-- human starts sit in it on boats by design, and lining it with
+-- shallows would open a swimmable lane straight into the sanctuary. It
+-- is the only deep water inside RIM_EXCLUDE_R of the center, so a plain
+-- radius cut is enough to spare it.
+--
+-- The bot starts sit at r=33, three tiles clear of the r~29 coast and
+-- touching no land at all, so they stay deep — the wave still arrives
+-- by boat.
+local RIM_EXCLUDE_R = 6        -- keep the center puddle deep (it is r~2.5)
+
+-- Two passes on purpose, and RIVER never counts as coast. A converted
+-- tile is no longer deep, so writing during the scan would let the rim
+-- seed itself one tile further out on every scan step; collecting first
+-- keeps every test against the map as it stands. And because the rim
+-- this lays down is river, skipping river as a seed is what makes a
+-- second setup a genuine no-op instead of another tile of shallows.
+-- (On the shipped map the only pre-existing river is the hand-cut
+-- shallow lip inside the center puddle, which the radius cut below
+-- spares anyway — both rules agree on all 240 coast tiles.)
+local function build_shallow_rim(game)
+  local conv, seen, spared = {}, {}, 0
+  local excl2 = RIM_EXCLUDE_R * RIM_EXCLUDE_R
+  for x = 0, 255 do
+    for y = 0, 255 do
+      local t = game.map_tile(x, y)
+      -- Walk out from the LAND (~2.6k tiles) instead of testing every
+      -- ocean tile's neighbours (~63k of them): same rim, a fraction of
+      -- the lookups on a one-shot setup pass.
+      if t ~= nil and t ~= T_DEEP_SEA and t ~= T_RIVER then
+        for ox = -1, 1 do
+          for oy = -1, 1 do
+            local nx, ny = x + ox, y + oy
+            if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255
+               and not seen[nx * 256 + ny] then
+              seen[nx * 256 + ny] = true
+              if game.map_tile(nx, ny) == T_DEEP_SEA then
+                local dx, dy = nx - 128, ny - 128
+                if dx * dx + dy * dy <= excl2 then
+                  spared = spared + 1
+                else
+                  conv[#conv + 1] = { x = nx, y = ny }
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  for _, c in ipairs(conv) do
+    game.set_tile(c.x, c.y, T_RIVER)
+  end
+  game.message(string.format(
+    "[terrain] shallow rim: %d coast tiles deep->river, %d spared"
+    .. " within r=%d of center", #conv, spared, RIM_EXCLUDE_R))
+end
+
 -- The SILENT pre-snapshot tick: on a lobby server the round's tanks
 -- already exist here, so the deal lands before any client sees the
 -- world — nothing "changes alliance" on the newswire at tick 0.
@@ -401,6 +609,11 @@ function on_setup(game)
   -- base positions the map file actually shipped.
   math.randomseed(os.time())
   build_tree_ring(game)
+
+  -- Shallows around the coast, laid before anyone sees the map: the
+  -- terrain edit rides the baseline snapshot instead of arriving as a
+  -- map-change event, so the island simply HAS a beach from tick 0.
+  build_shallow_rim(game)
 end
 
 -- Nothing forest-related happens at a round boundary: whatever trees

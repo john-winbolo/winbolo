@@ -52,7 +52,14 @@
  *                                         shells,mines,trees,dir,boat,
  *                                         dead,name,bot}
  *    game.set_pill_owner(n, p|nil)     -- nil/-1 = neutral
- *    game.set_base_owner(n, p|nil)
+ *    game.set_base_owner(n, p|nil)     -- NOTE: a non-neutral -> other
+ *                                         non-neutral change DRAINS the
+ *                                         base's stock (engine rule)
+ *    game.set_base_stock(n, armour, shells, mines)
+ *                                      -- set stock outright; each
+ *                                         value clamped to the engine
+ *                                         max (90), so pass anything
+ *                                         big for "full"
  *    game.spawn_bot([name][, brain][, team][, mode])
  *                                      -> playerNum | nil, err; mode
  *                                         "open"/"tournament"/"strict"
@@ -353,6 +360,41 @@ static int l_set_base_owner(lua_State *L) {
     }
     basesSetBaseOwner(gs, (BYTE)n, owner, FALSE);
     lua_pushboolean(L, TRUE);
+    return 1;
+}
+
+/* game.set_base_stock(n, armour, shells, mines): set base n's stock
+ * outright. Each value is CLAMPED to the engine maximum rather than
+ * refused, so a script can just ask for "full" with a big number.
+ *
+ * This exists because set_base_owner DRAINS a base: basesSetBaseOwner
+ * zeroes armour/shells/mines whenever it moves a base from one
+ * non-neutral owner to another, which is exactly what a scenario that
+ * re-deals its bases every round (or every wave) does. Returns true, or
+ * false for an unknown base.
+ *
+ * Nothing else to publish: base stock rides the periodic full base/pill
+ * sync in the snapshot builder, which reads the bases structure live -
+ * the same way the engine's own refuel timer's writes reach clients. */
+static int l_set_base_stock(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    GameSim *gs = serverSimGetGameSim(st->sim);
+    int n = (int)luaL_checkinteger(L, 1);          /* 1-based */
+    lua_Integer armour = luaL_checkinteger(L, 2);
+    lua_Integer shells = luaL_checkinteger(L, 3);
+    lua_Integer mines  = luaL_checkinteger(L, 4);
+    if (armour < 0) armour = 0;
+    if (shells < 0) shells = 0;
+    if (mines  < 0) mines  = 0;
+    if (armour > BASE_FULL_ARMOUR) armour = BASE_FULL_ARMOUR;
+    if (shells > BASE_FULL_SHELLS) shells = BASE_FULL_SHELLS;
+    if (mines  > BASE_FULL_MINES)  mines  = BASE_FULL_MINES;
+    if (n < 1 || n > basesGetNumBases(&gs->bs)) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    lua_pushboolean(L, basesSetStock(gs, (BYTE)n, (BYTE)armour,
+                                     (BYTE)shells, (BYTE)mines));
     return 1;
 }
 
@@ -747,6 +789,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "tank",           l_tank);
     scRegister(L, st, "set_pill_owner", l_set_pill_owner);
     scRegister(L, st, "set_base_owner", l_set_base_owner);
+    scRegister(L, st, "set_base_stock", l_set_base_stock);
     scRegister(L, st, "set_tile",       l_set_tile);
     scRegister(L, st, "spawn_bot",      l_spawn_bot);
     scRegister(L, st, "remove_bot",     l_remove_bot);
