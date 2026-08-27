@@ -198,11 +198,18 @@ static const int DIALOG_MIN_H = 480;
  * logical (UI-scale-independent) pixels — the layout multiplies it by the
  * scale it computed for the current window, so a scale change carries the
  * divider along instead of stranding it. Positive widens the left column.
- * Seeded from WINDOW/Lobby Split on first use rather than at lobby entry:
- * the in-game seam calls imguiLobbyRenderFrame without going through
- * imguiLobbyShow, and both paths have to come up on the saved split. */
-static float s_lobbySplitOffset     = 0.0f;
-static bool  s_lobbySplitOffsetInit = false;
+ * One offset per right-panel view: the post-game replay wants the width and
+ * the map view wants it back for the teams table, so a single remembered
+ * position would have the player re-dragging the divider after every round
+ * and again before the next one. Which view is up picks the offset the
+ * layout applies and the one a drag moves.
+ * Seeded from WINDOW/Lobby Split and WINDOW/Lobby Split Recap on first use
+ * rather than at lobby entry: the in-game seam calls imguiLobbyRenderFrame
+ * without going through imguiLobbyShow, and both paths have to come up on
+ * the saved split. */
+static float s_lobbySplitOffsetMap   = 0.0f;
+static float s_lobbySplitOffsetRecap = 0.0f;
+static bool  s_lobbySplitOffsetInit  = false;
 
 /* Per-slot tracking of whether the bot's name was manually overridden
  * by the host typing into the name input field.  Cleared when a bot
@@ -4671,13 +4678,40 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             args.number = teamId;
             SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
         }
+        /* Header geometry, hoisted out of the host block below because the
+         * shed after the team name has to know how much room the right-hand
+         * controls will take before it decides what the left side may draw. */
+        const float comboW      = 200.0f * s;
+        /* Gap between the Bot Naming combo and the Add Bot button — just a
+         * normal widget-pair spacing so the dropdown sits directly next to
+         * Add Bot rather than being pushed off to the middle of the row. */
+        const float namingShift = 6.0f * s;
+        const float botBtnW     = 95.0f * s;
+        const float xBtnW       = 22.0f * s;
+        const float gap         = 6.0f * s;
+        const float labelW      = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
+        /* Bots are only addable when the server's AI policy allows it
+         * (lobbyAiType != aiNone) AND the server has at least one brain on
+         * disk to assign. Both fields are mirrored from the server
+         * dynamically, so the button and the Bot Naming controls disappear /
+         * reappear without a reconnect when -ai policy or brains/ changes. */
+        bool botsAllowed = (clientSimGetLobbyAiType(cs) != 0) &&
+                           (clientSimGetLobbyBrainList(cs)->count > 0);
+        int  humanCount  = memberCount[teamId] - botCount[teamId];
+        bool showXBtn    = (teamId >= 3) && (humanCount == 0);
+        bool showNaming  = effectiveHost && botsAllowed && botCount[teamId] > 0;
+        bool showJoin    = !spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                           clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId;
+        bool showTeamCount = true;
+
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
         ImGui::Text("%s", defaultName);
         ImGui::PopStyleColor();
 
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
+        /* Built before it is drawn — the shed below measures this line to
+         * decide whether it still clears the buttons. */
+        char membersLine[96];
         {
             char membersStr[64];
             if (memberCount[teamId] == 1) {
@@ -4764,27 +4798,6 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * "+ Bot" button stays at the same X coordinate across teams
          * that do/don't render an X. */
         if (effectiveHost) {
-            const float comboW   = 200.0f * s;
-            /* Gap between the Bot Naming combo and the Add Bot button —
-             * just a normal widget-pair spacing so the dropdown sits
-             * directly next to Add Bot rather than being pushed off to
-             * the middle of the row. */
-            const float namingShift = 6.0f * s;
-            const float botBtnW  = 95.0f * s;
-            const float xBtnW    = 22.0f * s;
-            const float labelW   = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
-            const float gap      = 6.0f * s;
-            /* Bots are only addable when the server's AI policy allows
-             * it (lobbyAiType != aiNone) AND the server has at least
-             * one brain on disk to assign. Both fields are mirrored
-             * from the server dynamically, so the button and the
-             * Bot Naming controls disappear / reappear without a
-             * reconnect when -ai policy or brains/ changes. */
-            bool botsAllowed = (clientSimGetLobbyAiType(cs) != 0) &&
-                               (clientSimGetLobbyBrainList(cs)->count > 0);
-            bool showNaming = botsAllowed && botCount[teamId] > 0;
-            int humanCount = memberCount[teamId] - botCount[teamId];
-            bool showXBtn   = (teamId >= 3) && (humanCount == 0);
             /* Always reserve the X width so "+ Bot" sits at the same
              * X position across teams with/without an X. */
             /* When showing the Bot Naming controls, leave a wider
@@ -4975,6 +4988,57 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                          ? clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber : 0;
         char tableId[32];
         SDL_snprintf(tableId, sizeof(tableId), "##members%d", teamId);
+
+        /* Column shed. The fixed columns keep their width under
+         * SizingStretchProp, so once the players column is narrower than they
+         * add up to they start landing on each other — give them up one at a
+         * time instead, in order of what a lobby can most do without: the
+         * identity icons, the start picker, ping/gear, the tank badge, the
+         * name tags, then the kick X. The floor is the player name and the
+         * ready pill, which stay at every width.
+         *
+         * Each threshold is the running total of what is still kept at that
+         * point plus the name column's own floor, built from the same widths
+         * TableSetupColumn uses below so a column resize carries them along.
+         * Measured against the panel's real content width rather than the
+         * divider's offset, so a small lobby window sheds the same way a
+         * divider dragged left does, and scaled by s throughout so it lands
+         * the same at any DPI. */
+        const float kColTankW    = 60.0f * s;
+        const float kColIconsW   = 96.0f * s;
+        const float kColPingW    = 50.0f * s;
+        const float kColReadyW   = 80.0f * s;
+        const float kColXW       = 44.0f * s;
+        /* The spacer column exists to hold the start dropdown, so what it
+         * needs is that dropdown plus the clearance kept around it. */
+        const float kColStartW   = 96.0f * s + 8.0f * s;
+        /* About eight characters and an ellipsis — the least a name can say
+         * and still tell two players apart. */
+        const float kColNameMinW = 64.0f * s;
+        /* What lobbyTruncateName already reserves for a HOST/ADMIN/BOT pill;
+         * the pill shares the name's cell, so at the floor it is the name's
+         * own room it would be taking. */
+        const float kNameTagW    = 56.0f * s;
+        const float cellPadW     = ImGui::GetStyle().CellPadding.x * 2.0f;
+        const float needXCol     = kColNameMinW + kColReadyW + kColXW + cellPadW * 3.0f;
+        const float needNameTags = needXCol  + kNameTagW;
+        const float needTankCol  = needXCol  + kColTankW  + cellPadW;
+        const float needPingCol  = needTankCol + kColPingW  + cellPadW;
+        const float needStartCol = needPingCol + kColStartW + cellPadW;
+        const float needIconsCol = needStartCol + kColIconsW + cellPadW;
+        const bool showXCol      = contentW >= needXCol;
+        const bool showNameTags  = contentW >= needNameTags;
+        const bool showTankCol   = contentW >= needTankCol;
+        const bool showPingCol   = contentW >= needPingCol;
+        const bool showStartCol  = contentW >= needStartCol;
+        const bool showIconsCol  = contentW >= needIconsCol;
+        /* Disabled is the master hide flag — the column takes no width and
+         * ImGui skips every widget submitted into it, so the remaining
+         * columns get the room back. The row blocks below still guard their
+         * own content: the direct draw-list work (tags, pills, gear, promote
+         * glyph) is not covered by that skip. */
+        const ImGuiTableColumnFlags kShedCol = ImGuiTableColumnFlags_Disabled;
+
         ImGuiTableFlags tableFlags = ImGuiTableFlags_BordersInnerH
                                    | ImGuiTableFlags_RowBg
                                    | ImGuiTableFlags_SizingStretchProp
@@ -4998,17 +5062,22 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
              * Two stretch columns (name + spacer) with weights 3:1
              * park the ping/gear column at roughly 3/4 across the
              * row instead of flush against the ready/X cluster. */
-            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed |
+                                                (showTankCol ? 0 : kShedCol), kColTankW);
             /* Wide enough for the worst case: country flag + platform +
              * WBN-verified shield + Steam badge (16 + 3×14 px plus
              * inter-icon spacing), so the verified badge can't spill into
              * the name column. */
-            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed |
+                                                (showIconsCol ? 0 : kShedCol), kColIconsW);
             ImGui::TableSetupColumn("##name",   ImGuiTableColumnFlags_WidthStretch, 3.0f);
-            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
-            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
-            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 44.0f * s);
+            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed |
+                                                (showPingCol ? 0 : kShedCol), kColPingW);
+            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch |
+                                                (showStartCol ? 0 : kShedCol), 1.0f);
+            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, kColReadyW);
+            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed |
+                                                (showXCol ? 0 : kShedCol), kColXW);
 
             /* Drive striping ourselves (per-player, not per-table-row)
              * so the bot's expanded AiConfig sub-row inherits the same
@@ -5094,7 +5163,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * Server re-validates on PACKET_LOBBY_TEAM_SET.
                  * Rendered as a 4-arrow "move" cross centered in the
                  * row, before the tank icon. */
-                bool canDragThis = effectiveHost;
+                bool canDragThis = effectiveHost && showTankCol;
                 if (canDragThis) {
                     const float handleS = 14.0f * s;
                     cyAbs(handleS);
@@ -5164,7 +5233,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             tankTex = getTankEvil04Texture(r);  /* red enemy */
                         }
                     }
-                    if (tankTex) {
+                    if (tankTex && showTankCol) {
                         /* Indent the tank inside its cell so it
                          * doesn't sit flush with the team panel's
                          * left edge. */
@@ -5185,7 +5254,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 /* ── Column 1: identity icons (flag/platform/bot) ── */
                 ImGui::TableSetColumnIndex(1);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot) {
+                if (isBot && showIconsCol) {
                     /* Green for bots on the local player's team (incl.
                      * the local player's own bots), red for bots on
                      * any other team. Fall back to the neutral
@@ -5203,7 +5272,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::Image((ImTextureID)botTex,
                                      ImVec2(tankSz, tankSz));
                     }
-                } else {
+                } else if (!isBot && showIconsCol) {
                     /* Same 2px upward nudge applied to text / tank /
                      * chip / gear — keeps every glyph in the row
                      * landing on a consistent optical center. */
@@ -5245,11 +5314,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * a HOST/ADMIN/BOT tag) so it can't overflow and push the start
                  * dropdown into the Ready button on small windows. */
                 {
-                    bool rowHasTag = (i == clientSimGetLobbyHostSlot(cs)) || isBot ||
-                        (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
-                                    & PLAYER_FLAG_ADMIN));
+                    bool rowHasTag = showNameTags &&
+                        ((i == clientSimGetLobbyHostSlot(cs)) || isBot ||
+                         (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
+                                     & PLAYER_FLAG_ADMIN)));
                     float nameAvail  = ImGui::GetContentRegionAvail().x;
-                    float tagReserve = rowHasTag ? 56.0f * s : 0.0f;
+                    float tagReserve = rowHasTag ? kNameTagW : 0.0f;
                     char nameBuf[64];
                     lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
                                       nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
@@ -5306,7 +5376,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 fg, lbl);
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 };
-                if (i == clientSimGetLobbyHostSlot(cs)) {
+                if (showNameTags && i == clientSimGetLobbyHostSlot(cs)) {
                     /* Badge follows the current host slot. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_HOST),
@@ -5314,7 +5384,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 g_theme->hostTagText,
                                 g_theme->hostTagBorder);
                 }
-                if (!isBot && i != clientSimGetLobbyHostSlot(cs) &&
+                if (showNameTags && !isBot && i != clientSimGetLobbyHostSlot(cs) &&
                     (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags & PLAYER_FLAG_ADMIN)) {
                     /* IP-matched admin (server -admins). Shown beside the
                      * name like HOST but in a distinct teal so it reads
@@ -5323,7 +5393,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 IM_COL32(70, 160, 175, 255),
                                 IM_COL32(10, 30, 35, 255));
                 }
-                if (isBot) {
+                if (showNameTags && isBot) {
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_BOT),
                                 g_theme->botTagBg,
                                 g_theme->botTagText,
@@ -5348,7 +5418,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * a focus ring — A expands the AiConfig sub-row, whose
                  * widgets (name, Bot Code combo, difficulty) are then
                  * navigable like any other dialog control. */
-                if (isBot && effectiveHost) {
+                if (showPingCol && isBot && effectiveHost) {
                     if (s_iconSettings && !uiShouldUseControllerMode()) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
@@ -5396,7 +5466,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             lobbyGearTooltip(cs, i, s);
                         }
                     }
-                } else if (!isBot) {
+                } else if (showPingCol && !isBot) {
                     if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs > 0) {
                         cyTextAbs();
                         ImVec4 pingColor;
@@ -5422,10 +5492,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * column. Used as a floor for the dropdown's left bound so
                  * it never overlaps the ping text / bot gear when names are
                  * short. Constant across rows; capture once. */
-                if (startColPingRightX == 0.0f) {
+                if (showStartCol && startColPingRightX == 0.0f) {
                     startColPingRightX = ImGui::GetCursorScreenPos().x;
                 }
-                {
+                if (showStartCol) {
                     const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
                     uint8_t sIdx = cslot->startIdx;
                     /* A host edits any connected row; a non-host edits only
@@ -5583,7 +5653,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * admin / openHost — server re-validates either way. */
                 ImGui::TableSetColumnIndex(6);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot && effectiveHost) {
+                if (showXCol && isBot && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 closePos = ImGui::GetCursorScreenPos();
                     char rbStr[24];
@@ -5596,7 +5666,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
                     }
-                } else if (!isBot && !isMe && i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
+                } else if (showXCol && !isBot && !isMe &&
+                           i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 basePos = ImGui::GetCursorScreenPos();
                     /* Host-only "Make host" promote button, drawn to the
@@ -5714,9 +5785,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * right — the widest name(+tag) or the ping/gear column — plus a small
      * pad, so the dropdown is centered in the clear gap before Ready and
      * never collides with the ping text / bot gear. Guarded so a degenerate
-     * frame (no rows, or no room) leaves the previous value untouched
-     * rather than snapping the column. */
-    if (startColReadyLeftX > 0.0f) {
+     * frame (no rows, or no room, or the start column shed on a narrow
+     * players column) leaves the previous value untouched rather than
+     * snapping the column. */
+    if (startColReadyLeftX > 0.0f && startColPingRightX > 0.0f) {
         float startColLeftBound =
             ImMax(startColNameMaxRight, startColPingRightX) + 8.0f * s;
         if (startColReadyLeftX > startColLeftBound) {
@@ -11061,24 +11133,36 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             const float kSplitLeftMinW = 180.0f;
             const float kSplitMapMinW  = 220.0f;
             if (!s_lobbySplitOffsetInit) {
-                s_lobbySplitOffset     = gameFrontLobbySplit;
-                s_lobbySplitOffsetInit = true;
+                s_lobbySplitOffsetMap   = gameFrontLobbySplit;
+                s_lobbySplitOffsetRecap = gameFrontLobbySplitRecap;
+                s_lobbySplitOffsetInit  = true;
             }
+            /* Pick the showing view's offset before any width is computed —
+             * the panel flips on the next frame (see the ##MapPanel button),
+             * so reading it here draws the frame the view changes on at that
+             * view's width instead of a frame of the old one. */
+            bool   splitOnRecap = lobbyRecapReelVisible(cs);
+            float *splitOffset  = splitOnRecap ? &s_lobbySplitOffsetRecap
+                                               : &s_lobbySplitOffsetMap;
+            float *splitSaved   = splitOnRecap ? &gameFrontLobbySplitRecap
+                                               : &gameFrontLobbySplit;
             float autoMapPanelW = mapPanelW;
-            mapPanelW -= s_lobbySplitOffset * s;
+            mapPanelW -= *splitOffset * s;
             float maxMapW = availW - kSplitterW - kSplitLeftMinW * s;
             if (mapPanelW > maxMapW) mapPanelW = maxMapW;
             /* Map floor last so it wins on a lobby too narrow for both. */
             if (mapPanelW < kSplitMapMinW * s) mapPanelW = kSplitMapMinW * s;
-            s_lobbySplitOffset = (autoMapPanelW - mapPanelW) / (s > 0.0f ? s : 1.0f);
+            *splitOffset = (autoMapPanelW - mapPanelW) / (s > 0.0f ? s : 1.0f);
 
             /* Persist through the same debounced window-settings path the
              * position and size use — a drag or a re-clamp is a change, and
              * gameFrontPumpDirty (already driven per frame below) flushes the
-             * trailing one. The epsilon is coarser than the two decimals the
-             * value is stored at, so a reload can't look like a change. */
-            if (SDL_fabsf(s_lobbySplitOffset - gameFrontLobbySplit) > 0.02f) {
-                gameFrontLobbySplit = s_lobbySplitOffset;
+             * trailing one. Only the showing view's value moves; the other
+             * keeps whatever it was left at. The epsilon is coarser than the
+             * two decimals the value is stored at, so a reload can't look
+             * like a change. */
+            if (SDL_fabsf(*splitOffset - *splitSaved) > 0.02f) {
+                *splitSaved = *splitOffset;
                 gameFrontSaveWindowSettings();
             }
 
@@ -11421,8 +11505,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     2.0f);
             }
             if (splitActive) {
-                /* Mouse delta is real pixels; the offset is logical. */
-                s_lobbySplitOffset +=
+                /* Mouse delta is real pixels; the offset is logical. Moves
+                 * only the showing view's offset. */
+                *splitOffset +=
                     ImGui::GetIO().MouseDelta.x / (s > 0.0f ? s : 1.0f);
             }
             ImGui::SameLine(0, 0.0f);
