@@ -375,6 +375,101 @@ static uint32_t pickRand(uint32_t *state) {
     return x;
 }
 
+/* The seed folds the summary's own content and reads nothing else — no
+ * clock, no call counter, no address — because two clients showing the same
+ * summary have to land on the same picks. FNV-1a over each won
+ * award's id and value plus each highlight's start tick; whole integers go
+ * into the mix rather than their bytes, so the fold is endian-independent.
+ * Every won award goes into the fold, including any a caller then holds out of
+ * the draw, so which awards are pinned cannot move the seed. */
+static uint32_t awardSubsetSeed(const RoundStatsSummary *summary, int n) {
+    uint32_t seed = 2166136261u;   /* FNV-1a offset basis */
+    for (int i = 0; i < n; i++) {
+        seed = (seed ^ summary->awards[i].awardId) * 16777619u;
+        seed = (seed ^ summary->awards[i].value)   * 16777619u;
+    }
+    int hc = summary->highlightCount;
+    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) {
+        hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+    }
+    for (int i = 0; i < hc; i++) {
+        seed = (seed ^ summary->highlights[i].startTick) * 16777619u;
+    }
+    if (seed == 0) {
+        seed = 2654435769u;   /* xorshift32 would never leave zero */
+    }
+    return seed;
+}
+
+/* The draw itself, over cand[0..candCount-1] — positions in summary->awards[].
+ * Both entry points share it so a caller that holds some awards back still
+ * draws the same way, and from the same sequence, as one that does not.
+ * Entered only with candCount > maxOut. */
+static int drawAwardSubset(const RoundStatsSummary *summary,
+                           const int *cand, int candCount, uint32_t seed,
+                           uint8_t *outIdx, int maxOut) {
+    bool taken[AWARD_COUNT];
+    for (int i = 0; i < AWARD_COUNT; i++) {
+        taken[i] = false;
+    }
+    int picked = 0;
+
+    /* One negative award first, drawn from those the round actually won; the
+     * rest of the slots then fill from everything still unpicked, which is what
+     * keeps the guarantee from costing more than a single slot. */
+    int fun[AWARD_COUNT];
+    int funCount = 0;
+    for (int i = 0; i < candCount; i++) {
+        if (awardIsFun(summary->awards[cand[i]].awardId)) {
+            fun[funCount++] = i;
+        }
+    }
+    if (funCount > 0) {
+        int f = (int)(pickRand(&seed) % (uint32_t)funCount);
+        taken[fun[f]] = true;
+        outIdx[picked++] = (uint8_t)cand[fun[f]];
+    }
+
+    /* Without replacement: each draw walks to the k'th award still untaken, so
+     * an index can never come up twice. candCount > maxOut here, so there is
+     * always one left to take and the modulus never sees zero. */
+    while (picked < maxOut && picked < candCount) {
+        int k = (int)(pickRand(&seed) % (uint32_t)(candCount - picked));
+        int chosen = -1;
+        for (int i = 0; i < candCount; i++) {
+            if (taken[i]) {
+                continue;
+            }
+            if (k == 0) {
+                chosen = i;
+                break;
+            }
+            k--;
+        }
+        if (chosen < 0) {
+            break;   /* unreachable while any award is untaken; bounds the loop */
+        }
+        taken[chosen] = true;
+        outIdx[picked++] = (uint8_t)cand[chosen];
+    }
+
+    /* Sorted by award id so the shown picks read in the same order the full list
+     * does, and so the order is a property of the summary rather than of the
+     * order the draw happened to visit them in. */
+    for (int i = 1; i < picked; i++) {
+        uint8_t v = outIdx[i];
+        uint8_t vid = summary->awards[v].awardId;
+        int j = i;
+        while (j > 0 && summary->awards[outIdx[j - 1]].awardId > vid) {
+            outIdx[j] = outIdx[j - 1];
+            j--;
+        }
+        outIdx[j] = v;
+    }
+
+    return picked;
+}
+
 int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
                               uint8_t *outIdx, int maxOut) {
     if (summary == NULL || outIdx == NULL || maxOut <= 0) {
@@ -396,87 +491,61 @@ int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
         return n;
     }
 
-    /* The seed folds the summary's own content and reads nothing else — no
-     * clock, no call counter, no address — because two clients showing the same
-     * summary have to land on the same picks. FNV-1a over each won
-     * award's id and value plus each highlight's start tick; whole integers go
-     * into the mix rather than their bytes, so the fold is endian-independent. */
-    uint32_t seed = 2166136261u;   /* FNV-1a offset basis */
+    int cand[AWARD_COUNT];
     for (int i = 0; i < n; i++) {
-        seed = (seed ^ summary->awards[i].awardId) * 16777619u;
-        seed = (seed ^ summary->awards[i].value)   * 16777619u;
+        cand[i] = i;
     }
-    int hc = summary->highlightCount;
-    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) {
-        hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+    return drawAwardSubset(summary, cand, n, awardSubsetSeed(summary, n),
+                           outIdx, maxOut);
+}
+
+int roundStatsPickAwardSubsetExcluding(const RoundStatsSummary *summary,
+                                       const uint8_t *pinnedIds, int pinnedCount,
+                                       uint8_t *outIdx, int maxOut) {
+    if (summary == NULL || outIdx == NULL || maxOut <= 0) {
+        return 0;
     }
-    for (int i = 0; i < hc; i++) {
-        seed = (seed ^ summary->highlights[i].startTick) * 16777619u;
-    }
-    if (seed == 0) {
-        seed = 2654435769u;   /* xorshift32 would never leave zero */
+    if (pinnedIds == NULL) {
+        pinnedCount = 0;
     }
 
-    bool taken[AWARD_COUNT];
-    for (int i = 0; i < AWARD_COUNT; i++) {
-        taken[i] = false;
+    int n = summary->awardCount;
+    if (n > AWARD_COUNT) {
+        n = AWARD_COUNT;
     }
-    int picked = 0;
+    if (n <= 0) {
+        return 0;
+    }
 
-    /* One negative award first, drawn from those the round actually won; the
-     * rest of the slots then fill from everything still unpicked, which is what
-     * keeps the guarantee from costing more than a single slot. */
-    int fun[AWARD_COUNT];
-    int funCount = 0;
+    /* Everything the round won that the caller is not already showing. A caller
+     * that pins an award the round never won simply has one fewer to hold out. */
+    int cand[AWARD_COUNT];
+    int candCount = 0;
     for (int i = 0; i < n; i++) {
-        if (awardIsFun(summary->awards[i].awardId)) {
-            fun[funCount++] = i;
-        }
-    }
-    if (funCount > 0) {
-        int f = (int)(pickRand(&seed) % (uint32_t)funCount);
-        taken[fun[f]] = true;
-        outIdx[picked++] = (uint8_t)fun[f];
-    }
-
-    /* Without replacement: each draw walks to the k'th award still untaken, so
-     * an index can never come up twice. n > maxOut here, so there is always one
-     * left to take. */
-    while (picked < maxOut) {
-        int k = (int)(pickRand(&seed) % (uint32_t)(n - picked));
-        int chosen = -1;
-        for (int i = 0; i < n; i++) {
-            if (taken[i]) {
-                continue;
-            }
-            if (k == 0) {
-                chosen = i;
+        bool pinned = false;
+        for (int p = 0; p < pinnedCount; p++) {
+            if (summary->awards[i].awardId == pinnedIds[p]) {
+                pinned = true;
                 break;
             }
-            k--;
         }
-        if (chosen < 0) {
-            break;   /* unreachable while any award is untaken; bounds the loop */
+        if (!pinned) {
+            cand[candCount++] = i;
         }
-        taken[chosen] = true;
-        outIdx[picked++] = (uint8_t)chosen;
+    }
+    if (candCount <= 0) {
+        return 0;
+    }
+    if (candCount <= maxOut) {
+        /* What is left fits: nothing to choose, so nothing is drawn. */
+        for (int i = 0; i < candCount; i++) {
+            outIdx[i] = (uint8_t)cand[i];
+        }
+        return candCount;
     }
 
-    /* Sorted by award id so the shown picks read in the same order the full list
-     * does, and so the order is a property of the summary rather than of the
-     * order the draw happened to visit them in. */
-    for (int i = 1; i < picked; i++) {
-        uint8_t v = outIdx[i];
-        uint8_t vid = summary->awards[v].awardId;
-        int j = i;
-        while (j > 0 && summary->awards[outIdx[j - 1]].awardId > vid) {
-            outIdx[j] = outIdx[j - 1];
-            j--;
-        }
-        outIdx[j] = v;
-    }
-
-    return picked;
+    return drawAwardSubset(summary, cand, candCount,
+                           awardSubsetSeed(summary, n), outIdx, maxOut);
 }
 
 /* ---- Territory influence pre-pass ---------------------------------------- */

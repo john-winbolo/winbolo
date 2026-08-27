@@ -109,6 +109,17 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
 int roundStatsPickAwardSubset(const RoundStatsSummary *summary,
                               uint8_t *outIdx, int maxOut);
 
+/* Same draw, over everything except the awards whose ids are in pinnedIds[] —
+ * for a caller that already shows some awards outright and wants the rest of
+ * its room filled without any of them coming up twice. pinnedIds may be NULL
+ * when pinnedCount is 0. Seeded from the whole summary exactly as the plain
+ * draw is, so the pinned set cannot change which of the rest are chosen. A
+ * round with maxOut or fewer left over gets all of them, in order, with no draw
+ * at all; one with none left over returns 0. */
+int roundStatsPickAwardSubsetExcluding(const RoundStatsSummary *summary,
+                                       const uint8_t *pinnedIds, int pinnedCount,
+                                       uint8_t *outIdx, int maxOut);
+
 /* Score a round's notable timeline into a ranked, non-overlapping top-N set of
  * highlight windows. Pure: no sim, no globals. `team[s]` is slot s's team (for
  * wipe weighting). `shifts` is the territory series from computeTerritoryShifts
