@@ -43,7 +43,7 @@ REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
 # Absolute (forward-slash) paths — the runner sets cwd=build_dir, so relative
 # brain paths would resolve under build/ and silently fall back to the default.
-SHOOTER_BRAIN = (REPO / "brains/GoalHunter_1.6/init.lua").as_posix()
+SHOOTER_BRAIN = (REPO / "brains/GoalHunter_1.7/init.lua").as_posix()
 VICTIM_BRAIN  = (REPO / "tests/brains/drive_east.lua").as_posix()
 MAP = HERE / "aim_arena.map"
 

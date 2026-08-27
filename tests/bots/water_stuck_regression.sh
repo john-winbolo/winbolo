@@ -99,7 +99,7 @@ echo "Running $BIN_NAME on Wild Bleeding Chickens for ${DURATION}s (6 bots, labe
   cd "$BIN_DIR" || exit 2
   WINBOLO_BRAINDBG_LABEL="$LABEL" "./$BIN_NAME" \
     -map "$MAP" -port 27599 -gametype Open \
-    -bots 6 -brain "Brains/GoalHunter_1.6/init.lua" -ai yes \
+    -bots 6 -brain "Brains/GoalHunter_1.7/init.lua" -ai yes \
     -nolobby -notracker -brain-debug -bd-nopool -bd-noviz \
     > /dev/null 2>&1
 ) &

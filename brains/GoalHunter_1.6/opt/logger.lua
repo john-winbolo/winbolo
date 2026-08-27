@@ -14,39 +14,6 @@ local current_filename = nil  -- track path for cleanup on reopen
 local events  = {}   -- accumulated during a tick, flushed on log_tick()
 local reasons = {}   -- decision reasoning accumulated during a tick
 
--- Backstop caps. No single tick may grow an unbounded record: past
--- C.LOGGER_TICK_MAX_ENTRIES new entries are dropped and merely counted, and
--- one summary entry ("dropped N ...") is emitted when the tick serializes.
-local MAX_ENTRIES     = C.LOGGER_TICK_MAX_ENTRIES or 256
-local events_dropped  = 0
-local reasons_dropped = 0
-
--- Current tick number, stamped by Brain.think via M.set_tick (and refreshed
--- from state.tick in log_tick as a fallback). Only used to label the record
--- M.flush_killed emits — that runs on a tick log_tick never reached, so it
--- has no `state` to read the tick number from.
-local cur_tick = 0
-
---- Stamp the current tick number. Called once per Brain.think, next to
---- opt.set_tick. Deliberately trivial so it costs nothing in release runs.
-function M.set_tick(t)
-  cur_tick = t or 0
-end
-
--- Detach the per-tick accumulators and hand the captured set back to the
--- caller. EVERY serialization path calls this BEFORE doing any work, so that
--- a tick-budget kill (or any other error) part-way through a write can never
--- leave the module-level tables populated. If it did, the next tick would
--- re-serialize the whole backlog plus its own new entries — growing
--- monotonically and budget-killing the bot every tick from then on.
-local function take_accumulators()
-  local ev,  rs  = events, reasons
-  local evd, rsd = events_dropped, reasons_dropped
-  events,         reasons         = {}, {}
-  events_dropped, reasons_dropped = 0, 0
-  return ev, rs, evd, rsd
-end
-
 -- =========================================================================
 -- Open / Close
 -- =========================================================================
@@ -75,7 +42,7 @@ function M.open(filename)
   else
     print(TAG .. " LOG: FAILED to open " .. filename)
   end
-  take_accumulators()
+  events = {}
   return file ~= nil
 end
 
@@ -84,8 +51,8 @@ function M.close()
     file:close()
     print(TAG .. " LOG: closed")
   end
-  file = nil
-  take_accumulators()
+  file   = nil
+  events = {}
 end
 
 function M.is_open()
@@ -195,10 +162,6 @@ end
 
 function M.event(name, detail)
   if not file then return end
-  if #events >= MAX_ENTRIES then
-    events_dropped = events_dropped + 1
-    return
-  end
   if detail then
     events[#events + 1] = name .. ":" .. tostring(detail)
   else
@@ -215,10 +178,6 @@ end
 
 function M.reason(category, data)
   if not file then return end
-  if #reasons >= MAX_ENTRIES then
-    reasons_dropped = reasons_dropped + 1
-    return
-  end
   reasons[#reasons + 1] = { cat = category, data = data }
 end
 
@@ -268,71 +227,11 @@ local function to_json_array(arr)
   return "[" .. table.concat(parts, ",") .. "]"
 end
 
--- Serialize one captured events set (as handed back by take_accumulators).
--- A non-zero `dropped` appends one summary entry so a truncated tick is
--- visible in the log rather than silently short.
-local function events_json(ev, dropped)
-  if #ev == 0 and dropped == 0 then return "[]" end
-  local parts = {}
-  for _, e in ipairs(ev) do
-    parts[#parts + 1] = '"' .. e:gsub('"', '\\"') .. '"'
-  end
-  if dropped > 0 then
-    parts[#parts + 1] = string.format('"logger:dropped %d events (cap %d)"',
-                                      dropped, MAX_ENTRIES)
-  end
-  return "[" .. table.concat(parts, ",") .. "]"
-end
-
--- Serialize one captured reasons set, same contract as events_json.
-local function reasons_json(rs, dropped)
-  if #rs == 0 and dropped == 0 then return "[]" end
-  local parts = {}
-  for _, r in ipairs(rs) do
-    parts[#parts + 1] = string.format('{"cat":"%s","d":%s}',
-      r.cat, to_json_obj(r.data))
-  end
-  if dropped > 0 then
-    parts[#parts + 1] = string.format(
-      '{"cat":"logger","d":{"dropped":%d,"cap":%d}}', dropped, MAX_ENTRIES)
-  end
-  return "[" .. table.concat(parts, ",") .. "]"
-end
-
--- Single write path for every per-tick record this module emits. Flushes
--- every line so the log is always current for live reading. Wrapped in pcall
--- (no closure — pcall the method directly) so a failing write can never
--- propagate into the brain: by the time we get here the caller has already
--- detached its accumulators, so a failure costs one record instead of
--- leaking the backlog into the next tick.
-local function write_line(line)
-  if not file then return false end
-  local ok = pcall(file.write, file, line)
-  if ok then pcall(file.flush, file) end
-  return ok
-end
-
 function M.log_tick(state, info, goal, keys, taps, build_cmd)
   -- Runtime gate: skip writes when the JSONL logger flag is off.
   -- The C side toggles _G._JSONL_LOGGER_ENABLED whenever the user
   -- changes the checkbox in the BrainTest debug modules panel.
-  if not _G._JSONL_LOGGER_ENABLED then
-    -- The gate can flip off mid-session with `file` still open. M.event /
-    -- M.reason key off `file`, not off this flag, so they keep appending
-    -- with nothing left to drain them. Drop this tick's entries rather
-    -- than let them accumulate forever.
-    if #events > 0 or #reasons > 0 then take_accumulators() end
-    return
-  end
-
-  cur_tick = state.tick or cur_tick
-
-  -- Swap the accumulators out BEFORE any serialization work (belt-and-braces
-  -- alongside M.flush_killed): a budget kill — or any future error — inside
-  -- the serialize/write below then cannot poison the next tick. Worst case
-  -- this tick's records are lost, and only if the kill lands before the
-  -- flush hook runs; the hook drains whatever is left anyway.
-  local ev_t, rs_t, ev_drop, rs_drop = take_accumulators()
+  if not _G._JSONL_LOGGER_ENABLED then return end
 
   -- Lazy open: if the user enabled the flag mid-session and there's
   -- no open file yet, open one now using the standard naming scheme.
@@ -357,9 +256,26 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     cg = string.format('"%s#%d@%d,%d"', c.kind, c.id, c.mx, c.my)
   end
 
-  -- Events + reasoning arrays (from the detached copies taken above)
-  local ev  = events_json(ev_t, ev_drop)
-  local rsn = reasons_json(rs_t, rs_drop)
+  -- Events array
+  local ev = "[]"
+  if #events > 0 then
+    local parts = {}
+    for _, e in ipairs(events) do
+      parts[#parts + 1] = '"' .. e:gsub('"', '\\"') .. '"'
+    end
+    ev = "[" .. table.concat(parts, ",") .. "]"
+  end
+
+  -- Reasoning array
+  local rsn = "[]"
+  if #reasons > 0 then
+    local parts = {}
+    for _, r in ipairs(reasons) do
+      parts[#parts + 1] = string.format('{"cat":"%s","d":%s}',
+        r.cat, to_json_obj(r.data))
+    end
+    rsn = "[" .. table.concat(parts, ",") .. "]"
+  end
 
   -- Visible objects summary (tanks, shots — compact)
   local objs = {}
@@ -408,7 +324,7 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     path_str = "[[" .. table.concat(parts, "],[") .. "]]"
   end
 
-  write_line(string.format(
+  file:write(string.format(
     '{"type":"tick","t":%d,'
     .. '"tx":%d,"ty":%d,"mx":%d,"my":%d,"dir":%d,"spd":%d,'
     .. '"boat":%s,"arm":%d,"sh":%d,"mi":%d,"tr":%d,"cpill":%d,'
@@ -418,7 +334,7 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     .. '"path":%s,'
     .. '"cmd":%s,'
     .. '"keys":%d,"taps":%d,"bld":%s,"bmode":"%s",'
-    .. '"phase":"%s","str":%.2f,"bstr":%.2f,"ct":%d,'
+    .. '"phase":"%s","str":%.2f,"bstr":%.2f,'
     .. '%s'
     .. '"stuck":%d,"ev":%s,"rsn":%s,"objs":%s}\n',
     state.tick,
@@ -434,51 +350,16 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
     path_str,
     cg,
     keys, taps, bld, bmode,
-    -- ct: capacity tier (1..10) this tick ran at. Small int so a replay can
-    -- correlate degraded behaviour with the tier the controller had settled on.
-    phase, strength, base_strength, state._capacity_tier or 0,
+    phase, strength, base_strength,
     front_str,
     state.stuck_for, ev, rsn, obj_str))
-  -- No clear needed here: take_accumulators() at the top of this function
-  -- already handed us a detached copy and reset the module-level tables.
-end
 
--- =========================================================================
--- Kill-path flush
--- =========================================================================
--- braincore.c's killed branch reaches this through the _G.brain_flush_killed
--- global (published in init.lua Brain.open). The tick-budget hook longjmps
--- out of Brain.think, so log_tick() never ran and this tick's accumulated
--- events/reasons are still sitting in the module-level tables.
---
--- We write them out as a killed-tick record and then clear UNCONDITIONALLY.
--- The clear is the actual leak fix: without it every following tick
--- re-serializes an ever-growing backlog, blows the budget in turn, and the
--- bot is killed every tick forever.
---
--- braincore.c disarms the budget hook before pcalling this, so the work here
--- is unbudgeted and safe. Cheap no-op when the logger is off or nothing
--- accumulated, so opt/ and non-debug runs pay one global lookup.
---
--- Record shape (its own `type` so readers that index the fixed tick fields
--- aren't handed a partial "tick" line; a killed tick has no `state`, so the
--- positional tick data simply doesn't exist):
---   {"type":"tick_killed","t":N,"killed":"<site>","ev":[...],"rsn":[...]}
-function M.flush_killed(site)
-  if not _G._JSONL_LOGGER_ENABLED then return end
-  if #events == 0 and #reasons == 0
-     and events_dropped == 0 and reasons_dropped == 0 then
-    return
-  end
-  -- Swap out FIRST — whatever happens below, the next tick starts empty.
-  local ev_t, rs_t, ev_drop, rs_drop = take_accumulators()
-  if not file then return end
-  local where = (site and site ~= "") and tostring(site) or "?"
-  local esc   = where:gsub('\\', '\\\\'):gsub('"', '\\"')
-  write_line(string.format(
-    '{"type":"tick_killed","t":%d,"killed":"%s","ev":%s,"rsn":%s}\n',
-    cur_tick, esc,
-    events_json(ev_t, ev_drop), reasons_json(rs_t, rs_drop)))
+  -- Flush every tick so the log is always up-to-date for live reading
+  file:flush()
+
+  -- Clear events and reasons for next tick
+  events  = {}
+  reasons = {}
 end
 
 return M

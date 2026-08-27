@@ -54,25 +54,6 @@ end
 
 local function mkey(mx, my) return my * 256 + mx end
 
--- Hostile-pill setup tell: a hostile pill NEWLY APPEARING at (or moving
--- to) a tile within DEFEND_LGM_NEAR_RADIUS of a deployed team pill is an
--- offensive plant — the same attack-setup signature as seeing the enemy
--- LGM building. Stamp the nearby team pills' _lgm_near_tick so defend's
--- setup tier fires. (First-sighting false positives are rare: team pill
--- view keeps our pills' surroundings continuously observed, so a hostile
--- pill near one genuinely IS new.)
-local function stamp_hostile_plant_tell(world, mx, my, owner_str, tick)
-  if owner_str ~= "hostile" then return end
-  local r = C.DEFEND_LGM_NEAR_RADIUS or 6
-  for _, tp in pairs(world.pills) do
-    if tp.owner == "friendly" and (tp.health or 0) > 0
-       and not (tp.in_tank or tp.carrier or tp._synth_carry)
-       and math.abs(tp.mx - mx) <= r and math.abs(tp.my - my) <= r then
-      tp._lgm_near_tick = tick
-    end
-  end
-end
-
 -- Incremental pill_at maintenance. Multiple pills can share a tile (pickup /
 -- replace transients), so pill_at[k] is a list. Invariant: a pill is indexed at
 -- EXACTLY its current (mx,my) iff DEPLOYED (not in_tank) — a carried pill holds
@@ -268,15 +249,12 @@ function M.update(world, info, tick)
           attack_damage = 0,
         }
         world.pills[obj.idnum] = p
-        stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
       else
         -- Read old state BEFORE writing new — damage detection, anger bump,
-        -- the index move and the placement stamp all need the previous tick's
-        -- values.
-        local old_health  = p.health
-        local old_mx      = p.mx
-        local old_my      = p.my
-        local old_in_tank = p.in_tank
+        -- and the index move all need the previous tick's values.
+        local old_health = p.health
+        local old_mx     = p.mx
+        local old_my     = p.my
 
         -- Anger: each fresh damage hit adds C.PILL_ANGER_BUMP, capped at
         -- 1.0. Three hits saturate. Otherwise decays linearly from the
@@ -293,23 +271,8 @@ function M.update(world, info, tick)
           p.anger_tick = tick
         end
 
-        -- Under-attack tracking for friendly AND allied pills (defend_pill
-        -- lists the whole team's built pills, so allied rows need real
-        -- damage info too). Suppressed within HEAT_SELF_STAMP_TICKS of our
-        -- own heat shots (defend_pill_steer stamps _heat_shot_tick while
-        -- firing) — deliberately tickling our own pill must not read as an
-        -- enemy siege. last_hit_tick/anger still stamp above, which is what
-        -- blocks immediate re-heat (taking_damage / already_hot gates).
-        local _hs_win = C.HEAT_SELF_STAMP_TICKS or 150
-        local _hs_self = p._heat_shot_tick and (tick - p._heat_shot_tick) < _hs_win
-        local _hs_ally = p._ally_heat_tick and (tick - p._ally_heat_tick) < _hs_win
-        if (owner_str == "friendly" or owner_str == "allied")
-           and new_health < old_health and new_health > 0
-           and (_hs_self or _hs_ally) then
-        end
-        if (owner_str == "friendly" or owner_str == "allied")
-           and new_health < old_health and new_health > 0
-           and not _hs_self and not _hs_ally then
+        -- Under-attack tracking for friendly pills.
+        if owner_str == "friendly" and new_health < old_health and new_health > 0 then
           local damage = old_health - new_health
           p.attack_damage = p.attack_damage + damage
           p.under_attack  = true
@@ -322,28 +285,9 @@ function M.update(world, info, tick)
           p.attack_damage = 0
         end
 
-        local _moved = (old_mx ~= new_mx or old_my ~= new_my)
-        if _moved then
+        if old_mx ~= new_mx or old_my ~= new_my then
           p.mx = new_mx
           p.my = new_my
-          stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
-        end
-        -- Placement stamp (read by PILL_JUST_BUILT_TICKS consumers — the
-        -- reposition vote's just_built gate and eval_reposition_pill's
-        -- candidate filter). This is the tick the pill became a NEWLY placed
-        -- deployed pill, and only two things here qualify:
-        --   * it was CARRIED and is now on the map — an LGM just dropped it
-        --   * it is alive on a tile it wasn't on before — built/rebuilt
-        --     somewhere new (covers the case where we never saw the carry)
-        -- A dead pill repaired back to life ON THE SAME TILE is deliberately
-        -- NOT a placement: nothing was sited, it was just healed. Neither is a
-        -- plain re-sighting of an unmoved pill (no transition, no move).
-        -- Also deliberately not stamped when the record is first created
-        -- (p == nil above): first contact with a pill is DISCOVERY, not
-        -- construction — stamping there would freeze every pill on the map for
-        -- the first minute of the game.
-        if new_health > 0 and (old_in_tank or _moved) then
-          p.placed_tick = tick
         end
         p.health    = new_health
         p.owner     = owner_str
@@ -455,18 +399,14 @@ function M.process_events(world, info, state)
             attack_damage = 0,
           }
           world.pills[idx] = p
-          if not in_tank then
-            stamp_hostile_plant_tell(world, p.mx, p.my, owner_str, tick)
-          end
         else
-          -- Read old state BEFORE writing new — index move, damage detection
-          -- and the placement stamp all need the previous tick's values.
-          local old_health  = p.health
-          local old_mx      = p.mx
-          local old_my      = p.my
-          local old_in_tank = p.in_tank
-          local new_mx      = d[2] or old_mx
-          local new_my      = d[3] or old_my
+          -- Read old state BEFORE writing new — index move and damage
+          -- detection both need the previous tick's values.
+          local old_health = p.health
+          local old_mx     = p.mx
+          local old_my     = p.my
+          local new_mx     = d[2] or old_mx
+          local new_my     = d[3] or old_my
 
           if new_health < old_health and new_health > 0 then
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
@@ -474,16 +414,7 @@ function M.process_events(world, info, state)
             p.last_hit_tick = tick   -- only on REAL damage (never on decay)
           end
 
-          local _hs_win = C.HEAT_SELF_STAMP_TICKS or 150
-          local _hs_self = p._heat_shot_tick and (tick - p._heat_shot_tick) < _hs_win
-          local _hs_ally = p._ally_heat_tick and (tick - p._ally_heat_tick) < _hs_win
-          if (owner_str == "friendly" or owner_str == "allied")
-             and new_health < old_health and new_health > 0
-             and (_hs_self or _hs_ally) then
-          end
-          if (owner_str == "friendly" or owner_str == "allied")
-             and new_health < old_health and new_health > 0
-             and not _hs_self and not _hs_ally then
+          if owner_str == "friendly" and new_health < old_health and new_health > 0 then
             local damage = old_health - new_health
             p.attack_damage = p.attack_damage + damage
             p.under_attack  = true
@@ -496,21 +427,9 @@ function M.process_events(world, info, state)
             p.attack_damage = 0
           end
 
-          local _moved = (old_mx ~= new_mx or old_my ~= new_my)
-          if _moved then
+          if old_mx ~= new_mx or old_my ~= new_my then
             p.mx = new_mx
             p.my = new_my
-            if not in_tank then
-              stamp_hostile_plant_tell(world, new_mx, new_my, owner_str, tick)
-            end
-          end
-          -- Placement stamp — same rule as the object-scan path above (see the
-          -- long note there), but this is the AUTHORITATIVE one: an LGM drop
-          -- fires EVENT_PILL_UPDATE with in_tank flipping true -> false, which
-          -- is exactly "a pill was just built here". Must be DEPLOYED and alive
-          -- now, and either freshly un-carried or standing on a new tile.
-          if not in_tank and new_health > 0 and (old_in_tank or _moved) then
-            p.placed_tick = tick
           end
           p.health       = new_health
           p.owner        = owner_str

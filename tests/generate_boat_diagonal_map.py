@@ -143,7 +143,7 @@ def main():
     print(f"Wrote {output} ({Path(output).stat().st_size} bytes)")
     print(f"  channel: {len(chan)} deep-water tiles, {START_X},{START_Y} -> {end_x},{end_y} (up-right x{STEPS})")
     print(f"  dead pill (armour 0, owner 0) at ({end_x},{end_y}); bot start at ({START_X},{START_Y})")
-    print(f"  Run with: -bots 1 -brain brains/GoalHunter_1.6/init.lua")
+    print(f"  Run with: -bots 1 -brain brains/GoalHunter_1.7/init.lua")
 
 
 if __name__ == '__main__':

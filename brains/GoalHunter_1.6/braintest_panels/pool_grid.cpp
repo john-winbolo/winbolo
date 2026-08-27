@@ -41,7 +41,7 @@ static const TermDoc kTermDocs[] = {
     {"base",    "Fixed base constant added to every candidate of this goal type"},
     {"danger",  "Danger at destination × weight — hostile pills/tanks in firing range"},
     {"stale",   "Staleness penalty — target not seen recently; info may be wrong"},
-    {"contest", "Contested penalty (ADDITIVE) — MOVING enemy tanks (speed>0) near this refuel base, since sitting still to resupply next to one is how you die. Each qualifying tank within CONTESTED_BASE_RANGE(15 tiles, Manhattan) adds CONTESTED_BASE_PENALTY(120) x (1 - dist/RANGE): the full 120 for a tank parked ON the base, fading linearly to 0 at the range edge — so a tank 14 tiles out is nearly free and one at 7.5 costs 60. Per-tank terms simply SUM (two at 7.5 = 120 total); there is deliberately NO outnumbering multiplier, which priced refuelling out of reach. A tank that an ALLY is already broadcasting an attack_tank goal against is SKIPPED entirely — that threat is someone else's job and shouldn't also scare us off the pumps. The REFUEL_CAND log prints CONTESTED{n=<counted> handled=<skipped> pen=<sum>}."},
+    {"contest", "Contested penalty — an enemy tank is near this base"},
     {"hyst",    "Switch penalty (ADDITIVE) — GOAL_SWITCH_PENALTY(30) or GOAL_TARGET_SWITCH_PENALTY(15) + commitment(ticks*0.5, cap 75); negative in Pool 1 means already on this target. Flat cost units, NOT a percent."},
     {"x0.7",    "Active-goal switch bar (MULTIPLICATIVE hysteresis, GOAL_SWITCH_RATIO=0.7) — shown on the '>' current-goal row as its cost x0.7. A challenger only takes over if its (post-'hyst') cost falls BELOW this bar, i.e. it must be >=30% cheaper than the current goal. Separate from and stacked on top of the additive 'hyst' penalty."},
     {"deplete", "Depletion penalty — base observed to have low shells or armour stock"},
@@ -57,7 +57,6 @@ static const TermDoc kTermDocs[] = {
     {"xfire",   "Crossfire penalty from other pills that can fire on your engage spot. attack_tank/kill_lgm: escalating per NEW pill whose range covers the engage spot but NOT your current tile (40, 90, 150, ...) — pills already covering you don't count (A* already prices the travel). attack_pill: per-pill proximity at the standoff."},
     {"intcpt",  "Intercept risk — enemy tank may reach this pill before you do"},
     {"spike",   "Spiking-pill discount (MULTIPLIER on the combat block, SPIKE_PILL_DISCOUNT) — this pill sits within PILL_FIRE_RANGE of a friendly base, denying us refuel there until cleared. Scaled by decisiveness (1/cover of its least-contested base) AND breadth (each EXTRA denied base strengthens the pull by SPIKE_BASES_BONUS; floored at SPIKE_DISCOUNT_FLOOR). Small on purpose: the pool tilts toward the spike without beating attack_tank/kill_lgm/refuel cross-pool."},
-    {"suicider", "Pillbox-suicider surcharge (MULTIPLIER on this candidate's WHOLE cost, applied at selection alongside the phase weight and the influence scale). This bot holds the pill_suicider role, so it is unwilling to do anything but hit pills and keep itself fuelled: attack_pill x1 (EXEMPT — the one job), refuel_at_base / flee_to_base x1 (EXEMPT — the whole refuel group), capture_pill / place_pill_strategic / def_build / wait_for_lgm x1 (EXEMPT — scooping and fielding what it kills is the job, panic drops are survival, and a tank must never abandon its own LGM to the x3), defend_pill x PILL_SUICIDER_DEFEND_MULT = 6.0, and EVERYTHING else (capture_base, repair_pill, attack_base, attack_tank, kill_lgm, reposition, rescue_lgm, explore) x PILL_SUICIDER_OTHER_MULT = 3.0. The role is assigned on a map listed in C.PILL_SUICIDER_MAPS (matched against info.gameinfo.mapname — the map file's basename with no directory and no '.map', e.g. 'Survival'), where the harasser slate is repurposed: the same bots HARASSER_FRAC would have made harassers become suiciders instead and carry NONE of the harasser biases. The role also never enters a DEFENSIVE swerve (it charges straight in and keeps firing; the pill-dead 'kill' swerve still runs) and never builds shield walls (forced non-PPT, shield.scan skipped)."},
     {"spike_pen", "Spike cross-penalty (ADDITIVE, SPIKE_OTHER_PENALTY) — a spiking pill exists elsewhere, so every NON-spiking pill pays this flat surcharge (applied once, regardless of spike count) to steer the pool toward clearing the spike first."},
     {"hp",      "Health multiplier — lower pill HP = lower cost (easier kill)"},
     {"wound",   "Wounded discount — heavily damaged pill is a very high-value target"},
@@ -100,24 +99,6 @@ static const TermDoc kTermDocs[] = {
     { "ally_claimed", "Ally-contention penalty when an ally bot is broadcasting the same goal (matched by kind + target_id, or kind + tile). refuel_at_base (pool 1): SOFT +ALLY_CLAIMED_REFUEL_PENALTY(100) per ally already targeting the SAME base — additive, NO reject, so a closer/more-urgent bot can still take a crowded base (then brakes beside it via wait_for_ally). place_strategic (pool 8): hard +10000. Pools 2-7 use the ally_claimed REJECT + steal band instead of this term. attack_tank/kill_lgm exempt." },
     { "tankpen",   "Combat-zone penalty on a NON-emergency strategic pill placement: flat +30 when an enemy tank is within 10 tiles (euclidean) of the chosen spot, +60 within 7. Discourages dropping a pill next to enemy tanks. The def_build emergency drop is exempt." },
     { "blitz_discount", "Multiplier (<=1) on any open blitz-call pill we could join, pulling it into our winners. Distance-scaled to the standoff: ~0.25x at 7 tiles, 1.0x (none) by 20. REF base used for reject/sentinel entries." },
-    /* ── defend_pill (pool 2) formula terms ── */
-    { "base",   "DEFEND_PILL_BASE_COST (250) — flat defend base; (base+dij) is the pre-multiplier travel bid. LIVE TIERS ONLY (siege/setup/sight): a quiet pill prints quiet_dmg{} in place of base{} and m{}." },
-    { "dij",    "Dijkstra travel cost from THIS tank to the pill (per-bot pathfinding, so it doubles as the closeness signal for the defend steal band)." },
-    { "m",      "Winning threat-tier multiplier on (base+dij) — min of the live siege/setup/sight tiers, times the cover multiplier. Lower = more urgent. Only printed for LIVE tiers; a quiet row has no m{} at all (the quiet_dmg curve replaces base x m outright)." },
-    { "quiet_dmg", "QUIET-tier damage curve — REPLACES (base+dij)*m entirely when NO threat tier is live (no fresh damage / siege, no setup tell, no sighting). DEFEND_QUIET_DMG_COST indexed by HITS TAKEN = PILLS_MAX_HEALTH - health (printed as 'N hits'; NOT pill.attack_damage, which world.lua zeroes PILL_ATTACK_COOLDOWN ticks after the last hit and so reads 0 on every quiet pill): 0->1500, 1->1000, 2->800, 3->500, 4->300; past the table each further hit eases HALFWAY toward DEFEND_QUIET_DMG_FLOOR(250) — 5->275, 6->262, 7->256. Rationale: an untouched pill is barely worth leaving your post for, and each hit it has taken raises the urgency of going back. Quiet cost = (quiet_dmg + dij) x rdy, then the WELLDEF clamp and the tb sliver. The two-tier floor (100/200) does NOT apply to quiet bids — this curve supersedes it." },
-    { "tb",     "Flat-cost tiebreaker sliver, ADDED after a floor{} or WELLDEF{} clamp flattened the bid: dij x 0.01 + (rdy - 1.00) x 2.0. Flat clamps erase the travel AND readiness ordering, so this folds both back in at ~0.5% scale; the defend steal band (ALLY_CLAIMED_STEAL_FRAC_DEFEND) then hands the job to the closer and better-equipped responder instead of whoever re-scored first." },
-    { "siege",  "Siege tier: pill hit within DEFEND_DMG_FRESH_TICKS — someone is shelling it NOW. Savability-scaled: 1-(1-DEFEND_SIEGE_MULT)x(hp/max), so a healthy pill pulls hardest and an almost-dead one decays toward 1." },
-    { "setup",  "Setup tier: hostile LGM seen near the pill (a wall/pill-block is going up -> a take is incoming). DEFEND_SETUP_MULT at fresh sighting, decaying linearly to 1 over DEFEND_SIGHT_FRESH_TICKS." },
-    { "sight",  "Sight tier: hostile tank seen near the pill. DEFEND_SIGHT_MULT at fresh sighting, decaying to 1 over DEFEND_SIGHT_FRESH_TICKS. Sight-ONLY bids (no siege, no setup) floor at DEFEND_SIGHT_MIN_COST(200) — precaution never outbids real work." },
-    { "cover",  "Coverage multiplier: DEFEND_COVERAGE_MULT^n for n other alive team pills whose fire reaches this one — arriving into friendly cover is cheaper. Threat-gated (only applies while a tier is live)." },
-    { "late",   "Lateness/feasibility (siege only, but ALWAYS printed on a live-tier row so nothing is implied — 1.00 = on time): ETA(dij x DEFEND_ETA_PER_COST) vs TTL(hp x DEFEND_ASSUMED_TICKS_PER_HP); arriving after the pill would die scales cost up toward DEFEND_FUTILITY_MAX. Quiet rows have no late{} — the curve has no lateness term." },
-    { "rdy",    "Readiness multiplier (>=1), ALWAYS printed (1.00 = fully equipped): 1 + shells deficit below DEFEND_READY_SHELLS + armour deficit below DEFEND_READY_ARMOUR, capped at DEFEND_READY_MAX_MULT. An under-equipped responder bids worse, so of equally distant allies the best-equipped wins the steal. Applies to BOTH the live-tier product and the quiet curve; it does NOT apply to an ARRIVED heat{} bid." },
-    { "floor",  "The bid product came in under the floor and was clamped UP to this value — LIVE TIERS ONLY. DEFEND_MIN_COST(100) for live siege/setup; DEFEND_SIGHT_MIN_COST(200) for sight-only precaution. Quiet bids are never floored here: the quiet_dmg curve supersedes the floor and carries its own DEFEND_QUIET_DMG_FLOOR(250). Floored (and WELLDEF) bids then add the tb{} sliver so the defend steal band still orders equals by distance/equipment." },
-    { "WELLDEF","Well-defended gate: allies already at the pill (visible allied tanks within DEFEND_WELL_DEFENDED_RADIUS, or allies claiming defend/repair there) cover the enemies present at R=ceil(their_team/our_team) — so any bid BELOW DEFEND_WELL_DEFENDED_COST(500) is RAISED to it and nobody else swarms in. Shown as ally count vs foe count, the ratio, and the value clamped to; the tb{} sliver is then added on top. A quiet bid above 500 (e.g. an undamaged 1500 pill) is left untouched — the gate only ever raises." },
-    { "heat",   "ARRIVED handoff: within DEFEND_ARRIVE_RADIUS the travel bid is done; this flat DEFEND_HEAT_COST bids only the heat-up action (put HEAT_PILL_SHOTS shells in to anger the pill)." },
-    { "sel",    "Selection preview: what THIS row's cost becomes after goal_selection's deterministic scaling — cost x ph (phase weight, distance-attenuated toward 1.0 by PHASE_WEIGHT_DIST_FALLOFF) x inf (territory influence: x0.5 in friendly ground, x2 in hostile). ALWAYS printed with both factors, even when both are neutral, so the row's end score is computable from the row alone. Switch/commit penalties are state-dependent and added on top at selection; see the WINNERS row for the full chain." },
-    { "xph",    "Phase-weight factor inside sel{}: PHASE_WEIGHTS[phase][pool], lerped toward 1.0 with distance (a far goal doesn't inherit the local phase bias)." },
-    { "xinf",   "Influence factor inside sel{}: 0.5 when the target sits in friendly territory (influence > 50), 2.0 in hostile (< -50), else 1.0." },
     { NULL, NULL }
     };
 
@@ -720,22 +701,16 @@ static void renderDetailPopup(PanelState &st, int winW, int winH,
             ImGui::TableHeadersRow();
 
             for (int ti = 0; ti < nTerms; ti++) {
-                /* The term scanner walks back over '*' as part of the name,
-                 * so a multiplied chip parses as "*m" / "*rdy" / "*late".
-                 * Strip the operator before looking the term up, or every
-                 * multiplicative factor renders "(no description)". */
-                const char *tname = terms[ti].name;
-                while (*tname == '*') tname++;
                 const char *docStr = NULL;
                 for (int di = 0; kTermDocs[di].term; di++) {
-                    if (strcmp(tname, kTermDocs[di].term) == 0) {
+                    if (strcmp(terms[ti].name, kTermDocs[di].term) == 0) {
                         docStr = kTermDocs[di].desc;
                         break;
                     }
                 }
                 const char *compStr = NULL;
                 for (int ci = 0; ci < nComputes; ci++) {
-                    if (strcmp(tname, computes[ci].name) == 0) {
+                    if (strcmp(terms[ti].name, computes[ci].name) == 0) {
                         compStr = computes[ci].compute;
                         break;
                     }

@@ -578,38 +578,14 @@ function M.decide(state, world, info, now)
     -- Bless the pill tile (destination): the LGM walks onto the damaged pill to
     -- repair it, so the live-pill stamp must not block its own target. Path
     -- pills/bases still block.
-    -- Enemy-near hold: a hostile tank was seen near this pill within
-    -- REPAIR_HOLD_ENEMY_NEAR_TICKS (perception's _enemy_near_tick, fed by
-    -- team pill view) — sending the LGM out now walks him into fire. Hold
-    -- the dispatch (tank keeps closing / guarding) until the sighting
-    -- ages out. This is the honest replacement for pricing alone: the
-    -- pool's contested x3 already de-prioritizes the repair; this stops
-    -- the LGM leaving the tank while the threat is CURRENT.
-    local enemy_hold = false
-    -- Flag-gated (REPAIR_HOLD_ENEMY_NEAR_ENABLED, default OFF): with the
-    -- hold disabled, a committed repair_pill SENDS the LGM even with a
-    -- recent enemy sighting — the pool already priced the contest; a
-    -- repairer that always waits repairs nothing (and the waiting tank
-    -- used to get stuck-blocked on top: 20260825_200837 bot9 t=6218).
-    if C.REPAIR_HOLD_ENEMY_NEAR_ENABLED then
-      local lst = world.pill_at and world.pill_at[py * 256 + px]
-      local tp = lst and lst[1] and lst[1].pill
-      if tp and tp._enemy_near_tick
-         and ((state.tick or 0) - tp._enemy_near_tick) < (C.REPAIR_HOLD_ENEMY_NEAR_TICKS or 400) then
-        enemy_hold = true
-      end
-    end
-    local ticks = (in_range and has_trees and not enemy_hold)
+    local ticks = (in_range and has_trees)
       and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, px, py, 2000, 150)
       or -1
-    local can_dispatch = in_range and has_trees and not enemy_hold and ticks > 0
+    local can_dispatch = in_range and has_trees and ticks > 0
 
 
     if can_dispatch then
       state._repair_dispatched = true
-      -- Precise walk-sim ETA for the lgmd dispatch advert (init.lua's
-      -- dispatch funnel falls back to mdist x ticks/tile without it).
-      state._repair_dispatch_eta = ticks
       return { x = px, y = py, action = BUILDMODE_PBOX }
     end
   end

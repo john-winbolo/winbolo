@@ -143,9 +143,9 @@ extern void sdl3MessageHandler(const char *message, const char *title);
 /* Find the brain script — try several paths */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter_1.6/init.lua",
-        "brains/GoalHunter_1.6/init.lua",
-        "data/Brains/GoalHunter_1.6/init.lua",
+        "Brains/GoalHunter_1.7/init.lua",
+        "brains/GoalHunter_1.7/init.lua",
+        "data/Brains/GoalHunter_1.7/init.lua",
     };
     for (int i = 0; i < 3; i++) {
         FILE *f = fopen(candidates[i], "r");
@@ -159,7 +159,7 @@ static bool findBrainPath(char *out, size_t outLen) {
 }
 
 /* Single-player default-bot skill guess. Returns the brain dir name for an
- * auto-seeded SP bot: the harder "GoalHunter_1.6" only when the player is
+ * auto-seeded SP bot: the harder "GoalHunter_1.7" only when the player is
  * signed in to WinBolo.net with more than 5 games on record; otherwise the
  * gentler "GoalHunter_1.0" (the default for everyone not signed in). */
 static const char *gameFrontGuessSpBotBrain(void) {
@@ -177,7 +177,7 @@ static const char *gameFrontGuessSpBotBrain(void) {
         for (int i = 0; i < 3; i++) {
             if (modes[i]->numGames > 0) games += modes[i]->numGames;
         }
-        if (games > 5) return "GoalHunter_1.6";
+        if (games > 5) return "GoalHunter_1.7";
     }
     return "GoalHunter_1.0";
 }
@@ -1742,7 +1742,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * lobby Bot Code dropdown renders "(none)". Resolve the index
                  * from the path (case-insensitive exact match, else the
                  * version-suffixed dir name as a substring) so the dropdown
-                 * shows the actual brain — GoalHunter_1.6 by default. */
+                 * shows the actual brain — GoalHunter_1.7 by default. */
                 const BrainList *spbl = serverSimGetBrainList(spServerSim);
                 if (spbl) {
                   for (int k = 0; k < spbl->count; k++) {

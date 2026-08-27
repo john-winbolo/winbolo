@@ -119,67 +119,8 @@ function M.pill_shots_clear(spot_wx, spot_wy, pill, world,
   return false, nil
 end
 
--- Solid-for-driving test for the escape beeline: walls and pill tiles
--- stop a tank dead. T_PILLBOX is conservative (a dead pill is passable)
--- but a live one is another permanent pin, so route around both.
--- T_DEEPSEA blocks too: escape steering beelines at full throttle with
--- the cliff brake exempted, so a line crossing deep sea is a drowning,
--- not a pin. Safe because beeline_clear excludes endpoints — a tank
--- standing IN water never blocks its own escape line, and river
--- intermediates stay passable (that's how you drive out of a channel).
-local function escape_solid(tx, ty)
-  if not U.in_map(tx, ty) then return true end
-  local tt = U.ttype(tx, ty)
-  return tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX
-         or tt == C.T_DEEPSEA
-end
-
--- True when the straight tile-line from (x0,y0) to (x1,y1) crosses no
--- solid tile. Endpoints excluded (the tank stands on x0,y0; the caller
--- already vetted the destination). Diagonal steps are blocked when
--- EITHER orthogonal neighbour is solid — the on-foot rule from the C
--- pathfinder (brain_pathfinder.c corner-cut check): a full-tile tank
--- cannot squeeze diagonally past ANY solid corner. (Requiring BOTH
--- corners solid is the boat rule; using it here let the beeline clip
--- corners at channel bends and re-create the very pin this fixes.)
-local function beeline_clear(x0, y0, x1, y1)
-  local dx, dy = math.abs(x1 - x0), math.abs(y1 - y0)
-  local sx = x0 < x1 and 1 or -1
-  local sy = y0 < y1 and 1 or -1
-  local err = dx - dy
-  local cx, cy = x0, y0
-  while cx ~= x1 or cy ~= y1 do
-    local e2 = 2 * err
-    local step_x = e2 > -dy
-    local step_y = e2 < dx
-    if step_x and step_y
-       and (escape_solid(cx + sx, cy) or escape_solid(cx, cy + sy)) then
-      return false
-    end
-    if step_x then err = err - dy; cx = cx + sx end
-    if step_y then err = err + dx; cy = cy + sy end
-    if (cx ~= x1 or cy ~= y1) and escape_solid(cx, cy) then return false end
-  end
-  return true
-end
-
--- Water escape: scan outward for the nearest dry square the tank can
--- actually DRIVE to. escape_water steering beelines at the result with
--- no A*, so a candidate only counts when the straight line is clear of
--- walls/pills (beeline_clear) — otherwise the tank pins against the
--- wall and idles until something knocks it down (observed 5-8 minute
--- stalls on river-maze maps like Wild Bleeding Chickens). Candidates
--- the stuck handler recently blocked (state.blocked, the same store the
--- goal pickers consult) are skipped, so a failed escape target rotates
--- to the next-best tile instead of being re-picked every tick forever.
--- state/now are optional: omitted -> no blocked filtering (old shape).
-function M.find_dry_land(cur_mx, cur_my, state, now)
-  local blocked = state and state.blocked or nil
-  -- Nearest dry tile ignoring line-of-drive, kept as a fallback when
-  -- nothing within 8 rings is beeline-reachable: pushing toward it can
-  -- still slide the tank along walls, and each 3-second stuck cycle
-  -- blocks it so the next call rotates to a different target.
-  local any_d, any_x, any_y = math.huge, nil, nil
+-- Water escape: scan outward for the nearest dry square
+function M.find_dry_land(cur_mx, cur_my)
   for r = 1, 8 do
     local best_d, best_x, best_y = math.huge, nil, nil
     for dy = -r, r do
@@ -190,16 +131,9 @@ function M.find_dry_land(cur_mx, cur_my, state, now)
             local ct = U.ttype(cx, cy)
             if ct ~= C.T_RIVER and ct ~= C.T_DEEPSEA
                and ct ~= C.T_BUILDING and ct ~= C.T_HALFBUILD then
-              local bk = cy * C.MAP_W + cx
-              if not (blocked and blocked[bk] and now and now < blocked[bk]) then
-                local d = U.mdist(cur_mx, cur_my, cx, cy)
-                if d < any_d then
-                  any_d = d; any_x = cx; any_y = cy
-                end
-                if d < best_d and ct ~= C.T_PILLBOX
-                   and beeline_clear(cur_mx, cur_my, cx, cy) then
-                  best_d = d; best_x = cx; best_y = cy
-                end
+              local d = U.mdist(cur_mx, cur_my, cx, cy)
+              if d < best_d then
+                best_d = d; best_x = cx; best_y = cy
               end
             end
           end
@@ -208,7 +142,7 @@ function M.find_dry_land(cur_mx, cur_my, state, now)
     end
     if best_x then return best_x, best_y end
   end
-  return any_x, any_y
+  return nil, nil
 end
 
 return M
