@@ -73,7 +73,7 @@ M.IDS = {
                      long  = "Right-side HUD list of every ongoing blitz call this bot knows about (the blitz-call registry) with per-call join status: JOINABLE (in help range, free slot, current goal interruptible), far, FULL, busy(reason), or pill gone. Columns: cmdr/pill/dist/slots; '>'=committed, '~'=negotiating. Also rings each known pill on the map (green=joinable, grey=known)." },
 
   squad_roster = { short = "HUD: squad roster",
-                   long  = "Right-side per-bot squad roster (role + status, \"-- SQUADS --\"). Drawn via hud_text so it's draggable/labelable like other HUD overlays.",
+                   long  = "Right-side per-bot squad roster (role + status, \"-- SQUADS --\"). Role letter + pn, suffixed \"h\" for a harasser (row tinted yellow) or \"x\" for a pill_suicider (row tinted orange — the same slate as harassers, selected instead of them on a C.PILL_SUICIDER_MAPS map). Drawn via hud_text so it's draggable/labelable like other HUD overlays.",
                    default_on = true },
 
   label_hud_overlays = { short = "Label HUD overlays",
@@ -166,7 +166,7 @@ M.IDS = {
   pill_id_label     = { short = "Pill/base IDs",
                         long  = "Numeric ID labels overlaid on every pill/base tile" },
   defend_pill_viz   = { short = "Defend pill tiers",
-                        long  = "Per team pill: ring + label colored by the defend threat tier that priced it (red=siege, orange=setup tell, yellow=sighting, blue=worn/damaged-quiet, grey=quiet no-bid, green=HEAT bid, dark=arrived no-bid) with the pool cost. On the ACTIVE defend goal's pill: the Euclidean DEFEND_ARRIVE_RADIUS circle where the travel phase hands off to the heat gate. Mirrors eval_defend_pill's actual tiers/radius." },
+                        long  = "Per team pill: ring + label colored by the defend threat tier that priced it (red=siege, orange=setup tell, yellow=sighting, blue=worn/damaged-quiet, grey=quiet undamaged, green=HEAT bid, dark=arrived no-bid) with the pool cost. Quiet/worn pills are priced by the DEFEND_QUIET_DMG_COST curve on hits taken (0 hits ~1500, easing to the 250 floor as the pill gets chewed up), not by base+travel. On the ACTIVE defend goal's pill: the Euclidean DEFEND_ARRIVE_RADIUS circle where the travel phase hands off to the heat gate. Mirrors eval_defend_pill's actual tiers/radius." },
   heat_pill_viz     = { short = "Heat pill action",
                         long  = "While executing a heat win: line tank->pill, circle on the pill, and fired-count label (heat_pill_position/aim/shoot -> heat_done). Matches defend_pill_steer's sequence." },
 
@@ -195,12 +195,14 @@ M.IDS = {
   -- Pill take / shield system.
   plan_trace             = { short = "Plan-pos trace",
                              long  = "Always-on multiline label above tank showing each plan_position gate state: chunk status, spots/los/greens counts, best pick, shield scan result. Lets you see at a glance where the chain breaks." },
-  shield_scan_candidates = { short = "Shield: candidates",
-                             long  = "Per-candidate score boxes for the 8 ring positions + standoff" },
+  shield_scan_candidates = { short = "Shield: candidates (lua version)",
+                             long  = "Per-candidate score boxes for the 8 ring positions + standoff. ON forces the slow lua version of shield.scan (it keeps the per-candidate data this draws); OFF uses the fast c version, which discards it. Default OFF so unattended -braindebug hosts (winbolods recording) keep the c version.",
+                             default_on = false },
   shield_scan_blockers   = { short = "Shield: blockers",
                              long  = "Winner's per-aim blocker borders + colored fills" },
-  shield_blocker_union   = { short = "Shield: considered blockers (union)",
-                             long  = "Union across all candidate standoff angles. BLACK = every tile a pillbox bullet crosses (raw, NO gating — was even considered, incl. tiles our own shot crosses). On top: green=actual wall/pill, yellow=potential buildable, grey=LGM-unreachable (these passed every gate). So black-only = on a shot path but REJECTED (too close/behind/unbuildable); no box = never considered. Debug-only, no live-game cost." },
+  shield_blocker_union   = { short = "Shield: blockers union (lua version)",
+                             long  = "Union across all candidate standoff angles. BLACK = every tile a pillbox bullet crosses (raw, NO gating — was even considered, incl. tiles our own shot crosses). On top: green=actual wall/pill, yellow=potential buildable, grey=LGM-unreachable (these passed every gate). So black-only = on a shot path but REJECTED (too close/behind/unbuildable); no box = never considered. ON forces the slow lua version of shield.scan; OFF uses the fast c version. Default OFF so unattended -braindebug hosts keep the c version.",
+                             default_on = false },
   shield_scan_trajectory = { short = "Shield: trajectories",
                              long  = "Green circles on outgoing tiles + red squares on return-fire path + colored aim line" },
   shield_scan_legend     = { short = "Shield: legend",

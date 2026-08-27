@@ -94,6 +94,15 @@ typedef struct {
      * t0 + sim->botMgr.lastTargetMs * SDL_GetPerformanceFrequency() / 1000
      * so the count hook does one cheap compare against `now`. */
     Uint64          thinkDeadlineCounter;
+    /* Where in Lua the budget ran out, as "<short_src>:<line>", captured
+     * allocation-free by brainBudgetHook immediately before it raises
+     * tick_budget_exceeded. Read by braincore.c's killed branch (to label
+     * the partial print2 flush) via botManagerLastKillSite(), and by
+     * botLogKill() for the killbot.log line. Rewritten on every kill, so
+     * it always describes the most recent one; "" before the first kill.
+     * Written by the worker thread, read by the producer under the same
+     * done-semaphore visibility model as lastThinkMs. */
+    char            killSite[128];
     /* One-tick edge signal set by the producer when the previous tick
      * was aborted by the budget hook. Surfaced to the brain via
      * brain.wasKilled; reset to false immediately after being passed,
@@ -162,6 +171,14 @@ typedef struct BotManager {
 
     BotContext   bots[MAX_TANKS];
     int          numBots;
+
+    /* Slot+1 of the bot currently mid-teardown in botManagerRemoveBot
+     * (0 = none). The teardown deactivates the context BEFORE calling
+     * serverSimRemovePlayer, so botManagerIsBot alone would misread the
+     * departing bot as a human — which used to trip the last-human-left
+     * lobby reset on every seeded-bot removal (and with scenario
+     * re-seeding, loop the server to death). */
+    BYTE         removingBotSlot;
 
     /* Total concurrent brain-tick runners including the producer thread.
      * Saved by botManagerInit after validation; read by the budget formula
@@ -734,6 +751,19 @@ bool botManagerToggleAllBrainDebugMode(struct ServerSim *sim);
  *  outside the worker pool stay unbounded.
  *********************************************************/
 bool botManagerShouldAbort(struct lua_State *L);
+
+/*********************************************************
+ *NAME:          botManagerLastKillSite
+ *PURPOSE:
+ *  Returns the "<short_src>:<line>" captured by the count
+ *  hook the last time it killed this bot's think, or "" if
+ *  the lua_State has no associated bot / has never been
+ *  killed. Never returns NULL. Points at BotContext storage
+ *  that outlives the call within the tick — braincore.c uses
+ *  it to label the partial print2 flush it performs on the
+ *  kill path.
+ *********************************************************/
+const char *botManagerLastKillSite(struct lua_State *L);
 
 /*********************************************************
  *NAME:          botManagerGetGoalInfo

@@ -1863,7 +1863,12 @@ int main(int argc, char **argv) {
    * cfg block above; the loop below only needs to spawn the configured
    * bot count (numBots / brainPath resolved earlier). */
   {
-    if (numBots > 0 && brainPath[0] != '\0') {
+    /* Runs whenever a brain is available — NOT gated on -bots N. The debug/
+     * profile flag handling inside must also cover servers whose bots come
+     * from elsewhere (hosts adding lobby bots): -brain-debug used to be
+     * silently ignored without -bots. With numBots == 0 the spawn/team
+     * loops below are natural no-ops. */
+    if (brainPath[0] != '\0') {
       int i;
       /* Brain debug / profiling flags. Canonical names are -brain-debug and
        * -brain-profile-log; -braindebug and -profile-log are kept as legacy
@@ -2143,7 +2148,10 @@ int main(int argc, char **argv) {
           serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
         }
       }
-      if (numTeamSizes > 0) {
+      if (numBots <= 0) {
+        /* No -bots requested — this pass only processed the debug/profile
+         * flags above; nothing was spawned, so skip the summary prints. */
+      } else if (numTeamSizes > 0) {
         /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
          * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
          * total stay on team 0 (FFA). */

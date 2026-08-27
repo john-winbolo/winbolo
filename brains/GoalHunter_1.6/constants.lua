@@ -567,6 +567,8 @@ M.PPT_BLOCKERS_ENOUGH_MIN_INWAIT = 1  -- the one-blocker early-success also appl
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
+M.SHIELD_SCAN_BLACKLIST_TRIES = 2    -- a shield.scan that starts but never completes (per-tick budget kill unwinds the whole think) leaves its attempt marker behind; after this many incomplete attempts on the SAME scan key, skip the scan and attack with the no-shield plan instead of livelocking on a scan that can't fit the budget
+M.SHIELD_SCAN_BLACKLIST_TICKS = 250  -- blacklist expiry (~5 s): after this long the marker is dropped and the scan may be retried (the key changing — pill hp, our armour, standoff — also resets it immediately)
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
 -- Last-wall early end: once the FINAL wall blocker is dispatched (LGM out
 -- building it) and the estimated LGM round-trip — go to the slot + LGM_BUILD_TIME
@@ -814,6 +816,13 @@ M.GOAL_HISTORY_SIZE        = 10
 M.GOAL_HISTORY_EXP         = 1.4  -- penalty = BASE * (EXP^count - 1)
 M.GOAL_HISTORY_TARGET_BASE = 25   -- per-(kind,mx,my) repeat
 M.GOAL_HISTORY_KIND_BASE   = 8    -- per-kind any-target repeat
+-- Ceiling on the COMBINED (target + kind) history penalty. BASE*(EXP^n - 1)
+-- is unbounded: with EXP=1.4 a goal that recurred 7× already carried ~+147 and
+-- 15× carries ~+3.4k, so late in a match a goal the bot legitimately keeps
+-- needing (refuel above all) becomes permanently unreachable no matter how
+-- cheap it really is. Anti-thrash is meant to break ties, not to remove goals
+-- from the game. 150 still dwarfs the switch fee (30) + commitment cap (25).
+M.GOAL_HISTORY_PEN_CAP     = 150
 M.GOAL_MIN_COMMIT_TICKS    = 25    -- suppress non-urgent replan for this many ticks after a switch
 M.GOAL_ABANDON_COOLDOWN    = 0     -- ticks before an abandoned goal can be picked again (0=disabled)
 M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield attack is in progress
@@ -830,6 +839,17 @@ M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
+-- Critical-armour need floor, expressed in the "need" convention used across
+-- the brain: 0..1, HIGHER = more badly needed. The refuel evaluators carry the
+-- INVERSE of it (`urgency`, a cost multiplier where LOWER = more urgent, see
+-- eval_refuel / the pool-1 finalize path), so this maps to
+-- urgency = min(urgency, 1 - REFUEL_CRITICAL_NEED_MIN) = 0.10.
+-- Why: REFUEL_URGENCY_MIN floors urgency at 0.37, so armour=0 with full shells
+-- priced refuel identically to armour=14 — the shells term is what the min()
+-- was clamping against and armour could never speak louder. That left refuel
+-- unable to out-bid the anti-thrash stack it had accumulated (switch fee +
+-- commitment + the repeat-goal ratchet) and the bot cycled at 0 armour.
+M.REFUEL_CRITICAL_NEED_MIN = 0.9   -- at/below ARMOUR_LOW, refuel need is at least this
 M.REFUEL_MIN_COST          = 25    -- routine-refuel cost floor: an on-base top-off otherwise collapses to ~4 and outbids free-pill grabs (20260703_210207 t=5747). Bypassed at ARMOUR_CRITICAL — survival refuel may enter the reserved <20 band.
                                    -- (with squared urgency: floor cost at
                                    -- bscore × 0.37; e.g. bscore=60 → ~22)
@@ -933,7 +953,7 @@ M.GOAL_CROSSFIRE_PENALTY   = 100   -- goal cost per nearby hostile pill that can
 M.GOAL_CROSSFIRE_NEW_PILL_BASE = 40  -- attack_tank/kill_lgm: cost for the 1st pill whose fire-range covers the engage spot but NOT our current tile (NEW exposure only)
 M.GOAL_CROSSFIRE_NEW_PILL_STEP = 10  -- ...and +this for each additional new-exposure pill (so 40, 90, 150, 230, ...)
 M.BASE_PILL_COVER_PEN      = 3     -- capture_base/attack_base: flat cost per enemy pill whose fire-range covers the base tile (clear LOS) but does NOT already cover our current tile. Small per-base nudge toward safer bases; affects which base wins.
-M.EXPLORE_BASE_COST        = 500   -- base cost for exploration fallback
+M.EXPLORE_BASE_COST        = 2000  -- base cost for exploration fallback (500 let explore outbid real goals far too easily — a goal has to be truly unaffordable before wandering wins)
 
 -- Exploration
 M.MIN_EXPLORE_DIST = 3  -- don't target frontier squares within this range
@@ -1017,7 +1037,7 @@ M.LGM_GATHER_RETRIES    = 5   -- how many nearby forest candidates (nearest firs
 -- -------------------------------------------------------------------------
 -- Anticipatory reasoning: enemy intercept (TTK vs TTI)
 -- -------------------------------------------------------------------------
-M.INTERCEPT_PENALTY        = 120   -- cost added when enemy tank may arrive before we finish
+M.INTERCEPT_PENALTY        = 30    -- cost added when enemy tank may arrive before we finish (was 120: with the ratio cap of 2 it fired as +240 on nearly every take with any enemy inside INTERCEPT_MAX_RANGE — far too harsh; 30 caps the effect at +60)
 M.INTERCEPT_SAFETY_MARGIN  = 0.8   -- TTK must be < TTI × this to avoid penalty
 M.TTK_TICKS_PER_HIT        = 8     -- conservative: ticks per effective shell hit on pill
 M.INTERCEPT_MAX_RANGE      = 20    -- only consider enemy tanks within this range of pill
@@ -1045,8 +1065,18 @@ M.DRAIN_ARMOUR_MARGIN      = 3     -- extra armour buffer above flee threshold
 -- -------------------------------------------------------------------------
 -- Anticipatory reasoning: contested base avoidance
 -- -------------------------------------------------------------------------
-M.CONTESTED_BASE_PENALTY   = 120   -- cost added to bases with approaching enemy
-M.CONTESTED_BASE_RANGE     = 15    -- enemy must be within this range of base (tiles)
+-- Contested refuel base: MOVING enemy tanks near a base make it a bad place to
+-- sit and resupply. Cost is a SUM over qualifying tanks of
+--   PENALTY x (1 - dist/RANGE)
+-- so a tank parked on the base costs the full PENALTY and one at the range edge
+-- costs nothing (was a flat step that treated 14 tiles like 0). Distance is
+-- Manhattan (U.mdist), matching the range test. A tank an ALLY is already
+-- broadcasting an attack_tank goal against is skipped entirely — that threat is
+-- someone else's job and shouldn't also scare us off the pumps. The terms just
+-- add: no outnumbering multiplier (scaling by head count priced refuelling out
+-- of reach). See goals.contested_penalty; both refuel paths share it.
+M.CONTESTED_BASE_PENALTY   = 120   -- cost of ONE moving enemy tank sitting exactly on the base; scales linearly to 0 at CONTESTED_BASE_RANGE
+M.CONTESTED_BASE_RANGE     = 15    -- enemy must be within this range of base (tiles); also the distance over which the penalty fades to 0
 M.CONTESTED_BASE_HEADING   = 32    -- heading tolerance (bolo angle units, ~45°)
 
 -- -------------------------------------------------------------------------
@@ -1182,6 +1212,15 @@ M.STRATEGIC_PLACE_COVERAGE_BASE_WEIGHT = 15
 -- Base guardian: every friendly base should have >=1 pill in shooting range.
 -- Big bonus per currently-unguarded base a candidate spot would cover.
 M.STRATEGIC_PLACE_GUARDIAN_BONUS = 150
+-- Guardian surplus cap: the guardian bonus is withheld when the spot's
+-- category already holds >= CAP x its portfolio target (back 4/1 with
+-- CAP=3 -> no more guard-placed back pills; 2/1 still guards).
+M.STRATEGIC_PLACE_GUARDIAN_SURPLUS_CAP = 3
+-- Hardcore balance: non-panic strategic placement fills ONLY the single
+-- most-needed category (see the hard gate in the placement scan);
+-- classification drift with a moving front line otherwise bleeds the
+-- portfolio out of balance. false reverts to any-under-target.
+M.STRATEGIC_PLACE_STRICT_NEED = true
 -- Minimum spot SCORE to deploy a carried pill (eval_place_pill_strategic). The
 -- carry / util-surplus cost discounts make placement EAGER (win the goal); this
 -- keeps the QUALITY bar on WHERE it goes so an eager bot doesn't dump a pill at a
@@ -1557,10 +1596,49 @@ M.REPOSITION_VOTE_WINDOW_TICKS          = 25   -- HARD timeout cap (~0.5s @ 50Hz
 -- move via a different proposer is spam; the NO reasons haven't changed).
 -- (Replaces the imbalance-scaled INITIATE_COOLDOWN model.)
 M.REPOSITION_VOTE_FAIL_COOLDOWN         = 1500 -- ~30s @ 50Hz: team-wide proposal hold after ANY failed vote (own or observed)
+M.REPOSITION_VOTE_BID_TIMEOUT_MARGIN    = 15   -- ticks ON TOP of WINDOW_TICKS: a capture_pill+reposition BID that never gets approved inside this budget (proposal lost, vote never opened, ballots never came back) is abandoned instead of parking in `approach` forever. The drop reuses the FAIL_COOLDOWN hold so the pool doesn't re-select the same reposition next replan
 M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 1500 -- ~30s @ 50Hz: a bot votes NO (and won't propose) if it remembers a reposition EXECUTING within this window
 M.REPOSITION_URGENT_SCORE               = 0    -- candidates scoring below this are URGENT (actively harmful position): the proposer bypasses the recent-memory blackout and voters skip the recent_repo NO. Safety NOs (blocker / enemy near / better candidate) and the fail cooldown still apply.
-M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- vote NO if an enemy tank is within this many tiles of the pill AND nothing else covers it
-M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- vote NO if the pill IS covered by >=1 other pill but an enemy tank is within this many tiles
+M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- BASE range: vote NO if ANY enemy tank is within this many tiles of the pill AND nothing else covers it
+M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- BASE range: vote NO if the pill IS covered by >=1 other pill but ANY enemy tank is within this many tiles
+-- Gate relaxation. The two proximity gates above are the main reason a vote
+-- fails, and at full range they can hold the back line frozen forever. Two
+-- inputs relax them.
+--
+-- (1) LOCAL STRENGTH ladder. Count allied and enemy tanks within the gate's
+-- BASE range of the pill, with the VOTER COUNTING ITSELF whenever its own tank
+-- is inside that range (info.objects omits our own tank, so the vote adds it
+-- explicitly). Equal numbers buys nothing:
+--   * allies >  enemies      — range x STALE_RANGE_SCALE (15->12, 10->8): the
+--                              enemy has to be closer before it matters
+--   * allies >= 2 * enemies  — the distance gates are SKIPPED entirely: at 2:1
+--                              the team can cover the pill's downtime, so enemy
+--                              presence is no reason to veto at all. (>=2x
+--                              implies >, so this tier also carries the scale.)
+-- The skip touches ONLY the two distance gates — blocker, just_built,
+-- recent_repo and better_candidate all still apply.
+--
+-- (2) STALE — the shared "last reposition" clock (state._repo_last_seen_tick,
+-- stamped on approved/executing/executed moves) is older than STALE_TICKS. No
+-- move on record at all (clock nil) counts as stale: nothing has happened yet,
+-- so be brave. Worth the same STALE_RANGE_SCALE.
+--
+-- Staleness and strength are ALTERNATIVES, not cumulative: the range floors at
+-- one 0.8 application even when both hold (never 0.64).
+M.REPOSITION_STALE_TICKS                = 3000 -- ~2 minutes of brain ticks (brains think 25/s) with no team reposition = stale
+M.REPOSITION_STALE_RANGE_SCALE          = 0.8  -- range multiplier when stale AND/OR our side outnumbers theirs nearby (never squared; 2:1 skips the gates outright)
+-- USER-TUNABLE FLAG: with any HUMAN player on our team, don't reposition at
+-- all, ever. Repositioning takes a pill offline for a while and rearranges a
+-- back line a human teammate is reading and relying on; a human hasn't opted
+-- into the bots' consensus and can't vote in it. Set this to FALSE to re-enable
+-- repositioning in mixed human/bot teams.
+-- Detection is engine-authoritative, not a broadcast heuristic — see
+-- util.human_ally_count (info.allies & ~info.player_bots). Enforced in three
+-- places so one bot mis-detecting can't carry a move: eval_reposition_pill
+-- produces no candidate, the vote never OPENs, and any voter that does see a
+-- human vetoes with reason "human_allies".
+M.REPOSITION_DISABLE_WITH_HUMAN_ALLIES  = true
+M.PILL_JUST_BUILT_TICKS                 = 1500 -- 1 minute — freshly placed pills settle before anyone may propose moving them. Voters NO with reason "just_built" and eval_reposition_pill won't even offer such a pill as a candidate. Age comes from world.pills[].placed_tick, stamped in world.lua on a REAL placement (carried->deployed, or alive at a tile it wasn't at before) — never on a plain re-sighting
 M.REPOSITION_VOTE_APPROVAL_TTL          = 1500 -- ~30s @ 50Hz of ACTIONABLE time: the TTL burns only on ticks the initiator can actually act (can_carry_now — LGM in tank, hands free, shells); busy stretches pause it, with a hard wall-clock cap at 3× TTL. While an approval is held, luxury LGM dispatches (opportunistic farm / road_ahead / trepair) are suppressed so the window isn't wasted
 M.REPOSITION_APPROVED_COST              = 80   -- fixed reposition cost for the initiator on the pill its team vote APPROVED; beats routine goals (capture/base/place) so the move actually wins the pool, while sub-80 survival/refuel goals can still preempt
 M.REPOSITION_VOTE_RESULT_LATCH_TICKS    = 120  -- keep the vote-result panel on screen this long after resolve so it's readable
@@ -1605,7 +1683,8 @@ M.DEFEND_PILL_BASE_COST      = 250   -- intrinsic commitment cost of a defense t
                                      -- adds on top, threat multipliers scale the sum DOWN
 
 -- Defend formula (eval_defend_pill): cost = (base+travel) * threat_mult
--- * lateness (quiet pills bid nothing at all). Threat evidence only ever
+-- * lateness * readiness for the LIVE tiers (siege/setup/sight); quiet
+-- pills use the DEFEND_QUIET_DMG_COST curve below instead. Threat evidence only ever
 -- LOWERS the cost (multiplier < 1, strongest live tier wins); lateness
 -- only ever RAISES it. Multiplicative on a ~250 base so common threatened
 -- cases land naturally around 100-300 instead of clipping the MIN floor —
@@ -1625,13 +1704,56 @@ M.DEFEND_SIEGE_MULT          = 0.30  -- fresh damage on a FULL-health pill; scal
                                      -- capture/rebuild territory)
 M.DEFEND_SIGHT_MULT          = 0.50  -- hostile tank seen near the pill (prevention tier)
 M.DEFEND_COVERAGE_MULT       = 0.95  -- per covering friendly pill (heat-up potential); threat-gated
--- Quiet pills (no threat evidence) place NO bid at all: explore is the
--- fallback that fires only when nothing bids, so any finite quiet cost
--- would glue idle bots to garrison duty. Rows stay listed for visibility.
+-- QUIET-PILL DAMAGE CURVE. A pill with NO activity around it — no fresh
+-- damage (siege), no setup tell (hostile LGM), no sighting — is NOT priced
+-- off the (base+travel)*mult product at all. It is priced ONLY by how
+-- chewed-up it already is. Rationale: an untouched pill is barely worth
+-- leaving your post for; each hit it has taken raises the urgency of going
+-- back and standing on it.
+-- Indexed by HITS TAKEN = PILLS_MAX_HEALTH - health (the persistent wear,
+-- NOT pill.attack_damage, which is a recent-burst accumulator that world.lua
+-- zeroes PILL_ATTACK_COOLDOWN ticks after the last hit — always 0 on a quiet
+-- pill). Above the top index the cost eases HALFWAY toward
+-- DEFEND_QUIET_DMG_FLOOR per extra hit (5 -> 275, 6 -> 262, 7 -> 256 ...),
+-- so 5+ converges on the floor instead of stepping off a cliff.
+-- Final quiet cost = (curve + dij_travel) * readiness, then the
+-- well-defended clamp (which RAISES bids under DEFEND_WELL_DEFENDED_COST up
+-- to it) and the flat-cost tiebreaker sliver. The two-tier floor
+-- (DEFEND_MIN_COST / DEFEND_SIGHT_MIN_COST) does NOT apply to quiet bids —
+-- the curve supersedes it; that floor stays for sight-only precaution bids.
+M.DEFEND_QUIET_DMG_COST  = { [0] = 1500, [1] = 1000, [2] = 800, [3] = 500, [4] = 300 }
+M.DEFEND_QUIET_DMG_FLOOR = 250
 M.DEFEND_ASSUMED_TICKS_PER_HP = 80   -- assumed siege damage rate: 15 HP ~ 60 s (TTL = hp x this)
 M.DEFEND_ETA_PER_COST        = 6     -- rough ticks of travel per dij cost unit (ETA estimate)
 M.DEFEND_FUTILITY_MAX        = 3.0   -- cap on the late-arrival cost multiplier during a siege
 M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the multipliers above.
+-- Precaution floor: a defend bid with NO fresh damage and NO setup tell
+-- (no "a pill block is being built -> take incoming" LGM sighting) is
+-- responding to a mere drive-by — floor it here instead of
+-- DEFEND_MIN_COST so sight-only defends don't outbid real work.
+M.DEFEND_SIGHT_MIN_COST      = 200
+-- Well-defended gate: when allied tanks ALREADY at the pill cover the
+-- enemies there in proportion to the overall team sizes, the bid jumps
+-- straight to this cost so the rest of the team doesn't swarm one pill.
+-- Required coverage rounds in the defenders' favour:
+--   R = ceil(their_team / our_team); well-defended when
+--   foes_near <= allies_near * R (allies exclude the bidder itself).
+-- Ex: teams 5v10 -> R=2 -> one defender holding vs two attackers is
+-- enough; teams 3v4 -> R=2 as well; equal teams -> 1v1 covers it.
+M.DEFEND_WELL_DEFENDED_COST   = 500
+M.DEFEND_WELL_DEFENDED_RADIUS = 10   -- Euclidean tiles around the pill
+-- defend_pill steal band: distance decides (defend costs are base-
+-- dominated + flat-clamped, with a travel*0.01 tiebreaker restoring the
+-- ordering) — the closer responder's sliver-cheaper bid takes the claim
+-- from a farther ally that merely re-scored first.
+M.ALLY_CLAIMED_STEAL_FRAC_DEFEND = 0.005
+-- Readiness scaling: an under-equipped responder is a WORSE defender —
+-- each of shells-below-SHELLS_LOW and armour-below-ARMOUR_LOW adds up
+-- to +1.0x to the bid (linear in the deficit, capped). Feeds the total-
+-- score steal: of equally distant allies, the best-equipped goes.
+M.DEFEND_READY_SHELLS   = 20    -- full weight at/above (= SHELLS_LOW)
+M.DEFEND_READY_ARMOUR   = 15    -- full weight at/above (= ARMOUR_LOW)
+M.DEFEND_READY_MAX_MULT = 2.5
                                      -- Sits ABOVE attack_tank engage (~11) and mid-take
                                      -- attack_pill locks (10-50), so on arrival the fight
                                      -- takes over from the drive; below explore (500) and
@@ -1643,6 +1765,9 @@ M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the mult
 -- repair_pill) and the pill's bid becomes the heat-up action alone.
 M.DEFEND_ARRIVE_RADIUS       = 10
 M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill to anger it".
+M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
+                                     -- euclidean range of the pill (and not actively
+                                     -- shelling it — taking_damage blocks first).
                                      -- Loses to attack_tank (~11) and close repair (<100);
                                      -- beats explore (500) when nothing else is pressing.
 M.HEAT_PILL_SHOTS            = 3     -- shells per heat sequence
@@ -1658,6 +1783,11 @@ M.HEAT_SEQUENCE_TICKS        = 150   -- estimated heat volley length: aim + 3 re
 M.HEAT_REPAIR_OVERLAP_MARGIN = 100   -- safety margin on the timed ally-repair overlap check: block
                                      -- heating only when their repair ETA lands within
                                      -- HEAT_SEQUENCE_TICKS + this of now
+-- Enemy-near repair hold: OFF by default. When the pool has committed to
+-- repair_pill, the LGM goes — holding him in the tank while the pill dies
+-- (then getting stuck-blocked for waiting) defends nothing. Flip on to
+-- restore the old "never walk the LGM toward a seen enemy" caution.
+M.REPAIR_HOLD_ENEMY_NEAR_ENABLED = false
 M.REPAIR_HOLD_ENEMY_NEAR_TICKS = 400 -- hold the repair LGM dispatch while a hostile tank was seen
                                      -- near the pill this recently (~8 s) — don't walk the little
                                      -- guy into a live fight; the pool's contested x3 already
@@ -1784,6 +1914,44 @@ M.BRAIN_CAPACITY_LEVELS = {
   [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5 },
 }
 
+-- Hard ceiling on the angles ONE advance_pill_eval_chunk call may sweep,
+-- regardless of what pp_spread asks for. The chunk cursor only advances AFTER
+-- evaluate_pill_difficulty returns, so a chunk too big to fit the per-tick
+-- budget makes ZERO progress and re-runs identically every tick — a livelock.
+-- Tier 10 (pp_spread=1) asked for all 72 angles (~9 ms) in one call; capped at
+-- 12 it needs 6 ticks per sweep, which fits any budget the host hands out.
+M.PP_ANGLES_PER_TICK_CAP    = 12
+-- Escape hatch for a chunk that STILL can't fit (mirrors the shield-scan
+-- blacklist): the budget kill unwinds the whole think, so kills are counted by
+-- a marker written BEFORE the call. After this many kills at the same cursor,
+-- the sweep is abandoned and the pill is held off the attack pool for
+-- PP_BLACKLIST_TICKS so pick_goal doesn't instantly re-adopt the same take.
+M.PP_CHUNK_KILL_TRIES       = 3
+M.PP_CHUNK_ATTEMPT_TTL      = 250   -- ticks (~5 s): stale attempt markers are dropped, so isolated kills never accumulate into a blacklist
+M.PP_BLACKLIST_TICKS        = 500   -- ticks (~10 s) the pill stays out of attack_pill / plan_position after its sweep is abandoned
+
+-- ── Replan rate control ──
+-- A replan tick is the most expensive shape the brain runs (build/finalize
+-- pools + pick_goal). Several urgent-replan triggers are LEVEL conditions
+-- rather than edges, so they re-fire every tick for as long as the condition
+-- holds; when base cost plus drift pushes such a tick past the per-bot budget
+-- the bot budget-kills forever (the goal is re-selected identically each tick
+-- and the only exit is completing a think). These bound how often the
+-- level-ish triggers may pay for a full replan.
+M.REPLAN_MIN_INTERVAL       = 5     -- ticks: floor between soft/level-triggered full replans (hard events bypass it)
+M.ATK_PREEMPT_MIN_INTERVAL  = 10    -- ticks: floor between attack_pill "tank preempt" replans specifically
+M.ATK_PREEMPT_NEAR_TILES    = 8     -- tiles: nearest enemy crossing INTO this radius counts as a change worth replanning for
+
+-- ── Tick-budget kill catch-all ──
+-- Last-resort guard above the per-call blacklists (PP_* above, the shield
+-- scan): those only count kills that land inside the one call they guard, and
+-- a kill landing in the replan path touches neither. This one counts kills at
+-- the granularity of the whole think, keyed on the goal shape that was running.
+M.THINK_KILL_TRIES          = 5     -- consecutive budget-killed thinks in the same (kind,substate,target) before the goal is abandoned
+M.THINK_KILL_TTL            = 50    -- ticks: a stale attempt marker is dropped, so isolated kills never accumulate
+M.GOAL_BLACKLIST_TICKS      = 750   -- ticks (~15 s) the (kind,target) pair stays out of goal selection
+M.REPLAN_LOG_MIN_TIER       = 3     -- capacity tier below which the per-candidate replan dumps (FINAL_SCORES / pool[] / gc:) are skipped
+
 -- Tier control: per-tier ms history corroborates raise decisions; drops
 -- are aggressive (multi-tier on bigger overruns + on host-killed ticks).
 M.CAPACITY_EWMA_ALPHA       = 0.20  -- EWMA blend on think/target ratio AND per-tier ms.
@@ -1792,6 +1960,7 @@ M.CAPACITY_DROP_BIG_RATIO   = 1.50  -- drop 2 tiers when smoothed ratio > 1.5.
 M.CAPACITY_RAISE_RATIO      = 0.70  -- raise 1 tier (with corroboration) when ratio < 0.7.
 M.CAPACITY_RAISE_FREE_RATIO = 0.40  -- raise 1 tier (skip corroboration) when ratio < 0.4.
 M.CAPACITY_KILLED_CUT       = 3     -- tiers to drop when wasKilled (host force-killed last tick).
+M.CAPACITY_KILLED_COST_MULT = 1.5   -- a killed tick reports lastThinkMs ≈ the budget (the kill fires AT the cap), so both EWMAs would learn "we fit, barely" from a tick that did NOT fit — and the per-tier history then corroborates raising straight back into the kill. Charge a kill at least target × this instead.
 M.CAPACITY_KILLED_AVOID     = 200   -- ticks to avoid a tier that just got killed at.
 M.CAPACITY_RAISE_HEADROOM   = 0.90  -- raise only if next-tier history < target * this.
 M.CAPACITY_DEFAULT_TIER     = 10    -- start at full quality; throttle on observed pressure.
@@ -1801,6 +1970,14 @@ M.CAPACITY_DEFAULT_TIER     = 10    -- start at full quality; throttle on observ
 -- into low tiers and verify the levers actually fire. nil = use host's
 -- published targetMs (production behavior).
 M.CAPACITY_FORCED_TARGET_MS = nil
+
+-- ── Profiling lite (debug brain only) ─────────────────────────────────────
+-- Fraction of the per-tick budget above which the debug brain's end-of-tick
+-- NEAR_BUDGET line prints its stage breakdown (see init.lua "profiling
+-- lite"). Only ever read from inside `if BRAIN_DEBUG_MODE` blocks, so opt/
+-- never touches it — but the constants twins are kept byte-identical by
+-- convention, hence the same line lives in opt/constants.lua.
+M.PROFILE_LITE_NEAR_FRAC = 0.85
 
 -- ── Squad coordination (Phase 1: pill blitz) ──────────────────────────────
 M.HARASSER_FRAC       = 0.20   -- fraction of the protocol-bot set that are harassers (floor)
@@ -1834,6 +2011,49 @@ M.HARASSER_PILL_COST_MULT = 5.0
 -- per-tile + far-preempt) is multiplied by this, so harassers roam far to fight
 -- instead of being pinned near home. 1.0 = no discount; lower = ranges farther.
 M.HARASSER_TRAVEL_MULT = 0.2
+-- ── Pillbox suiciders (map opt-in) ────────────────────────────────────────
+-- On a map listed here the harasser slate is REPURPOSED: every bot the harasser
+-- assignment would have flagged (same HARASSER_FRAC / dynamic-ramp machinery,
+-- so this table changes WHICH role they get, never HOW MANY) becomes a
+-- "pill_suicider" instead, and nobody on that map is a harasser. A suicider is
+-- an ordinary GoalHunter bot with three differences:
+--   * a goal-cost surcharge on everything EXCEPT hitting pills and refuelling
+--     (PILL_SUICIDER_OTHER_MULT / _DEFEND_MULT below),
+--   * it NEVER enters the defensive swerve (no dodging the pill it is taking —
+--     it charges straight in and keeps firing; the pill-DEAD "kill" swerve
+--     still runs, that one is the capture/exit handoff, not a dodge),
+--   * it never builds shield walls / blockers (forced non-PPT, shield.scan
+--     skipped entirely — which also saves that scan's tick budget).
+-- Everything else — squad membership, blitz calls/joins/standoff slots,
+-- commanding a blitz — is unchanged.
+-- KEY FORMAT: exactly what the engine reports as info.gameinfo.mapname, i.e.
+-- the map file's BASENAME with no directory and no ".map" extension
+-- (server_sim.c strips both), e.g. "data/maps/Survival.map" -> "Survival".
+M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
+-- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
+-- attack_pill 0.33, do everything but refuel 3x cost" — plus the addendum
+-- "defend_pill specifically is x6, not x3". Applied at ONE choke point
+-- (goal_selection's pool loop in goals.lua), keyed on goal.kind, so every pool
+-- is covered:
+--
+--   attack_pill                     x1  (EXEMPT — the one job)
+--   refuel_at_base / flee_to_base   x1  (EXEMPT — the whole "refuel" GOAL_GROUP;
+--                                        a suicider still keeps itself fuelled)
+--   defend_pill                     x6  PILL_SUICIDER_DEFEND_MULT
+--   capture_pill / place_pill_strategic / def_build / wait_for_lgm x1 (EXEMPT:
+--     scooping and fielding the pills it kills IS the job; panic drops are
+--     survival; and waiting for its own LGM must never lose to the x3)
+--   everything else                 x3  PILL_SUICIDER_OTHER_MULT
+--     (capture_base, repair_pill, attack_base, attack_tank, kill_lgm,
+--      reposition, rescue_lgm, explore, ...)
+--
+-- attack_pill is exempted rather than tripled along with the rest because
+-- tripling EVERY pool including attack_pill would leave all relative
+-- preferences unchanged (a no-op); the intent the earlier 0.333 expressed is
+-- attack_pill-favoured, and exempting it is the multiplicative equivalent.
+-- Net: a suicider is unwilling to do anything but hit pills and stay fuelled.
+M.PILL_SUICIDER_OTHER_MULT  = 3.0  -- x3 on every non-exempt goal kind
+M.PILL_SUICIDER_DEFEND_MULT = 6.0  -- x6 on defend_pill specifically (parking on a pill is the LAST thing it should do)
 -- Recruitment (slice 2): a soldier answers a nearby commander's pill take when
 -- it's in a follow-the-call state and not too low on resources.
 M.SQUAD_MIN_HELP_SHELLS  = 3   -- below this shells a soldier won't answer (hard decline)
@@ -1908,4 +2128,14 @@ M.BLITZ_COMM_LATCH_TICKS       = 18
 -- dead teammate dropped; with nothing to grab it only churned a live goal to none.
 M.TANK_DEATH_REPLAN_ALLY_RANGE = 20
 M.TANK_DEATH_REPLAN_PILL_RANGE = 12
+
+-- JSONL logger (logger.lua) per-tick accumulator cap. logger.event /
+-- logger.reason append all through a tick and the whole set is serialized
+-- into that tick's record. This caps how many of each a single tick may
+-- carry: past the cap new entries are dropped and counted, and one summary
+-- entry ("logger:dropped N events (cap M)") lands in the record instead.
+-- Backstop only — a tick that legitimately wants more than this is already
+-- producing a log line nobody can read, and an uncapped tick record is how
+-- a serialization overrun becomes a permanent per-tick budget kill.
+M.LOGGER_TICK_MAX_ENTRIES = 256
 return M

@@ -50,6 +50,10 @@
 #include "util.h"
 #include "braincore.h"
 #include "brain_pathfinder.h"
+/* botManagerLastKillSite() — the budget hook's captured "<src>:<line>",
+ * used to label the partial print2 flush on the kill path below. Same
+ * static lib (bolo_static), so no new link dependency. */
+#include "bot_manager.h"
 
 /* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
@@ -1037,6 +1041,32 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
                    strstr(errMsg, "tick_budget_exceeded") != NULL);
     if (killed) {
       *out_killed = true;
+      /* The budget hook is STILL ARMED here: bot_manager.c's
+       * runBotThinkJob() uninstalls it only after this function returns
+       * (its "single uninstall point" sits after runBotThinkJobImpl).
+       * Running any more Lua with a hook whose deadline is already in the
+       * past would re-fire and kill us mid-flush, so disarm first. The
+       * wrapper's own lua_sethook(L, NULL, 0, 0) then runs as a harmless
+       * idempotent repeat, and states without a hook (BrainTest's
+       * singleton brain) are unaffected. */
+      lua_sethook(L, NULL, 0, 0);
+      lua_settop(L, top);
+      /* Flush the killed tick's buffered print2 lines. Without this the
+       * whole tick's log — exactly the lines needed to see WHY it blew
+       * the budget — is discarded by the next tick's print2.set_tick().
+       * The brain publishes _G.brain_flush_killed in Brain.open; it's a
+       * no-op when the buffer is empty, so opt/ and non-debug runs cost
+       * one global lookup. Errors here are swallowed: a broken flush must
+       * never turn a recoverable budget kill into a crash. */
+      lua_getglobal(L, "brain_flush_killed");
+      if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, botManagerLastKillSite(L));
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+          lua_pop(L, 1); /* discard the error object */
+        }
+      } else {
+        lua_pop(L, 1);
+      }
       lua_settop(L, top);
       return false;
     }

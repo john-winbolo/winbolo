@@ -161,6 +161,17 @@ struct ServerSim {
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
     uint32_t specDelayTicks;       /* spectator view delay in ticks (50 ticks/s) */
+    bool     startInProgress;      /* TRUE while serverSimStartGame /
+                                    * serverSimStartGameInPlace is running.
+                                    * Guards serverSimLobbyCheckAllReady:
+                                    * roster edits DURING a start re-enter
+                                    * the all-ready check via
+                                    * serverSimRemovePlayer, and with the
+                                    * state still Lobby that recursively
+                                    * started a second game mid-teardown
+                                    * (the Ready-click crash:
+                                    * botManagerOnGameStart walked a
+                                    * half-removed bot). */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from
                                     * serverSimCreate*; FALSE after the first
                                     * serverSimResetGameWorld. Drives the

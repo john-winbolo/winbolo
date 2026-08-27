@@ -419,6 +419,22 @@ function Brain.open(info)
   -- immediately for reading. No-op in opt/non-debug runs (force_flush
   -- early-returns when _PRINT2_ENABLED is false).
   _G.__brain_flush_logs = function() print2.force_flush() end
+  -- Kill-path partial flush. braincore.c's killed branch pcalls this global
+  -- when the per-tick budget hook aborts think(), passing the Lua
+  -- "source:line" where the budget ran out. Without it the killed tick's
+  -- buffered print2 lines — exactly the ones needed to diagnose the overrun —
+  -- are dropped by the next tick's set_tick(). No-op on an empty buffer, so
+  -- opt/ and non-debug runs pay nothing.
+  -- Chained: print2's partial buffer FIRST (unchanged behavior), then the
+  -- jsonl logger's per-tick accumulators. logger.event/reason append all
+  -- tick and are drained only by log_tick — which a kill skips entirely, so
+  -- without this drain they carry into the next tick, make its record bigger,
+  -- and the bot is budget-killed every tick from then on. Each leg is pcall'd
+  -- so a logger fault can't lose the print2 flush (and vice versa).
+  _G.brain_flush_killed = function(site)
+    pcall(print2.flush_killed, site)
+    if log.flush_killed then pcall(log.flush_killed, site) end
+  end
   opt("BEGIN Brain.open player=", info.player_number)
   local t_open0 = clock_us()
   -- Diagnostic: emit a SELF_DR line per pool-6 candidate per replan
@@ -822,6 +838,173 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
+  -- ── Tick-budget kill catch-all ──
+  -- The per-call blacklists (the plan_position angle-sweep chunk, the shield
+  -- scan) only notice kills that land inside the one call they guard; a kill
+  -- landing anywhere else — the replan path above all — is invisible to them.
+  -- This marker counts kills at the granularity of the WHOLE think.
+  --
+  -- Mechanics: a budget kill unwinds the think, so nothing after the kill point
+  -- runs — including the clear at the bottom. A marker still present here
+  -- therefore means "last tick did not finish". state.goal is persistent, so
+  -- the shape we read now is the same shape that was running when we were
+  -- killed. THINK_KILL_TRIES kills in a row on one shape means no reachable
+  -- capacity tier makes it fit: abandon that goal instead of re-selecting it
+  -- forever (three bots livelocked exactly this way).
+  --
+  -- Set when this tick's catch-all abandons the current goal. The killed-tick
+  -- rollback just below then leaves state.goal alone: the abandonment is a
+  -- decision THIS (unkilled, so far) tick deliberately made, and restoring the
+  -- abandoned goal over it would resurrect the livelock the catch-all exists
+  -- to break.
+  local _think_abandoned = false
+  do
+    local g  = state.goal
+    local gk = g and g.kind
+    local gs = g and g.substate
+    local gt = g and g.target_id
+    local m  = state._think_attempt
+    if m and (m.kind ~= gk or m.sub ~= gs or m.target ~= gt
+              or (now - (m.tick or 0)) > (C.THINK_KILL_TTL or 50)) then
+      m = nil                                  -- different shape / stale: fresh count
+    end
+    if m and (m.count or 0) >= (C.THINK_KILL_TRIES or 5) then
+      -- Survival exemption (write side): never blacklist resupply while we're
+      -- at/below ARMOUR_LOW. Benching the only goal that restores armour for
+      -- GOAL_BLACKLIST_TICKS (~15 s) at 0 armour is a worse outcome than
+      -- re-attempting an expensive think. We still drop to goal=none so the
+      -- forced replan gets a clean shot at a DIFFERENT base, and the kill
+      -- counter still resets, so the catch-all keeps working for every other
+      -- goal kind. (goals.lua's pool consult exempts the same case on read.)
+      local survival = (gk == "refuel_at_base" or gk == "flee_to_base")
+                       and (info.armour or 99) <= C.ARMOUR_LOW
+      if not survival then
+        U.goal_blacklist_add(state, gk, gt, g and g.mx, g and g.my,
+                             now + (C.GOAL_BLACKLIST_TICKS or 750))
+      end
+      -- Drop to goal=none; the (rate-limited) goal=none replan then picks
+      -- something else, because selection consults _goal_blacklist.
+      state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+      state._think_attempt = nil
+      _think_abandoned = true
+    else
+      state._think_attempt = { kind = gk, sub = gs, target = gt, tick = now,
+                               count = m and ((m.count or 0) + 1) or 1 }
+    end
+  end
+
+  -- ── Killed-tick decision rollback ────────────────────────────────────────
+  -- A tick-budget kill unwinds Brain.think from wherever it happened to be,
+  -- but every mutation the tick already made to `state` survives. A replan
+  -- that got as far as writing a goal switch therefore "wins" even though the
+  -- tick that decided it never finished — and the bot then has to BUY ITS WAY
+  -- BACK to the goal it was already on: switch fee (GOAL_SWITCH_PENALTY) plus
+  -- commitment plus a rung on the exponential goal-history ratchet, since all
+  -- three only charge NON-current goals. Repeat that a few times and a goal
+  -- the bot genuinely needs becomes unaffordable. The 20260822 refuel↔repair
+  -- cycle at 0 armour was exactly this: a killed tick had written
+  -- refuel_at_base → repair_pill, and refuel could never re-take the seat.
+  --
+  -- Fix: at the top of every tick that starts CLEAN, snapshot a small
+  -- allowlist of decision fields; at the top of every tick that follows a
+  -- kill, put them back and leave the snapshot alone (so a run of consecutive
+  -- kills all roll back to the same last-known-good decision state).
+  --
+  -- ALLOWLIST CRITERION: a field belongs here iff a half-finished tick writing
+  -- it changes what the bot DECIDES later. Recompute-on-next-tick fields (the
+  -- pools, cost_cache, perception, pathfinder status, steering) stay out —
+  -- restoring them buys nothing. Kill-survival markers and chunked-progress
+  -- bookmarks stay out for a stronger reason: they EXIST to carry information
+  -- across a kill, so restoring them would erase the very evidence the kill
+  -- produced. Explicitly NOT restored: _think_attempt, _goal_blacklist,
+  -- _pp_chunk_attempt, _pp_blacklist, the shield-scan attempt/cache,
+  -- _pill_eval_progress, _pill_eval_cache, pool/cost caches, _capacity_*,
+  -- _plite_*, wsim_kill_until, perception and comms/ally state. Anything not
+  -- named below is simply left alone.
+  do
+    local snap = state._decision_snapshot
+    if (_G.brain and _G.brain.wasKilled) and snap then
+      -- ── restore ──
+      if not _think_abandoned then
+        -- state.goal is REPLACED (not mutated) on a real switch — see the
+        -- `state.goal = new_goal` in the goal-change path below — while the
+        -- same-target branch deliberately keeps the live table and mutates it
+        -- in place. So the table IDENTITY is the decision and the in-place
+        -- writes (substate, standoff_*, _shield_scan bookmarks, wait_*) are
+        -- PROGRESS. Restoring the reference therefore undoes exactly the
+        -- switch and keeps every bit of progress the old goal had accrued.
+        state.goal          = snap.goal
+        state.goal_set_tick = snap.goal_set_tick
+        -- The switch path stamps GOAL_ABANDON_COOLDOWN on the goal it leaves,
+        -- and goal_selection skips pooled goals still on cooldown — so a
+        -- killed switch would bench the goal we just restored. Only the
+        -- current goal's own entry can be written that way, so we undo that
+        -- one key instead of copying the (unbounded) cooldown table.
+        if snap.cd_key and state.goal_cooldowns then
+          state.goal_cooldowns[snap.cd_key] = snap.cd_val
+        end
+      end
+      -- goal_history is the ratchet's input: every switch appends one entry
+      -- and the penalty is BASE*(EXP^count - 1), so a killed tick's append is
+      -- a permanent rung. Rewritten in place (<= GOAL_HISTORY_SIZE entries) so
+      -- the snapshot's copy stays pristine for the next kill in the run.
+      local hsrc = snap.goal_history
+      local hdst = state.goal_history
+      if hsrc and hdst then
+        for i = #hdst, 1, -1 do hdst[i] = nil end
+        for i = 1, #hsrc do hdst[i] = hsrc[i] end
+      end
+      -- Replan gating that a killed tick can spend without deciding anything:
+      -- the replan rate floor, the attack_pill TANK PREEMPT edge stamp and its
+      -- rate limiter, the one-shot warmup exit, the consumed blitz-call and
+      -- force-replan flags, and the reposition bid clock. Each of these is
+      -- read-then-consumed on the replan path, so a kill after the consume
+      -- silently swallows the event that would have driven the next decision.
+      state._last_full_replan_tick = snap.last_full_replan_tick
+      state._atk_interrupt_stamp   = snap.atk_interrupt_stamp
+      state._last_atk_preempt_tick = snap.last_atk_preempt_tick
+      state._warm_exit_done        = snap.warm_exit_done
+      state._blitz_new_call        = snap.blitz_new_call
+      state._force_replan_reason   = snap.force_replan_reason
+      state._repo_bid_tick         = snap.repo_bid_tick
+      state._repo_bid_pid          = snap.repo_bid_pid
+    else
+      -- ── snapshot ──
+      -- Only on a tick that starts clean, so the snapshot always describes the
+      -- last tick that actually FINISHED. Tables are reused to keep this off
+      -- the per-tick allocation path.
+      if not snap then snap = {}; state._decision_snapshot = snap end
+      snap.goal          = state.goal
+      snap.goal_set_tick = state.goal_set_tick
+      local g = state.goal
+      if g and g.kind and g.kind ~= "none" then
+        -- Key format must match the goal-change path's cd_key exactly.
+        snap.cd_key = g.kind .. ":" .. (g.mx or 0) .. "," .. (g.my or 0)
+        snap.cd_val = state.goal_cooldowns and state.goal_cooldowns[snap.cd_key]
+      else
+        snap.cd_key, snap.cd_val = nil, nil
+      end
+      local hsrc = state.goal_history
+      if hsrc then
+        local hdst = snap.goal_history
+        if not hdst then hdst = {}; snap.goal_history = hdst end
+        for i = #hdst, 1, -1 do hdst[i] = nil end
+        -- Entry tables are written once and never mutated afterwards, so
+        -- sharing the entry references is safe and one level of copy is enough.
+        for i = 1, #hsrc do hdst[i] = hsrc[i] end
+      end
+      snap.last_full_replan_tick = state._last_full_replan_tick
+      snap.atk_interrupt_stamp   = state._atk_interrupt_stamp
+      snap.last_atk_preempt_tick = state._last_atk_preempt_tick
+      snap.warm_exit_done        = state._warm_exit_done
+      snap.blitz_new_call        = state._blitz_new_call
+      snap.force_replan_reason   = state._force_replan_reason
+      snap.repo_bid_tick         = state._repo_bid_tick
+      snap.repo_bid_pid          = state._repo_bid_pid
+    end
+  end
+  -- ── end killed-tick decision rollback ────────────────────────────────────
+
   -- TEST AID: per-bot config from -bot-init [arg] (the BRAIN_INIT_ARG Lua
   -- global), parsed once. Comma-separated tokens:
   --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
@@ -924,6 +1107,10 @@ function Brain.think(info)
   -- optimize.lua tick_start was previously set ~200 lines later, which
   -- left the prelude as unaccounted gap in the time-bar.
   opt.set_tick(now)
+  -- Stamp the jsonl logger with the tick number too. log_tick() normally
+  -- reads it from `state`, but logger.flush_killed runs on a tick where
+  -- log_tick never got there — this is how its record knows which tick died.
+  log.set_tick(now)
   -- Real tick-start clock used by every later phase timer (t_early,
   -- t_world, etc. all forward to this value). Captures from the actual
   -- top of Brain.think, not after the prelude work.
@@ -958,6 +1145,14 @@ function Brain.think(info)
     local killed  = (_G.brain and _G.brain.wasKilled)   or false
     local prev_tier = state._capacity_tier or C.CAPACITY_DEFAULT_TIER
 
+    -- A budget-killed tick reports lastThinkMs ≈ targetMs (the hook fires AT the
+    -- cap), so unadjusted it teaches both EWMAs below that the tier "fit" — the
+    -- ratio stays under DROP_RATIO and the per-tier history then corroborates
+    -- raising straight back into the kill. Charge a kill an inflated cost.
+    if killed and last_ms > 0 and tgt_ms > 0 then
+      last_ms = math.max(last_ms, tgt_ms * (C.CAPACITY_KILLED_COST_MULT or 1.5))
+    end
+
     -- Per-tier ms history (records the tier we just ran at).
     state._tier_ms = state._tier_ms or {}
     if last_ms > 0 then
@@ -969,15 +1164,22 @@ function Brain.think(info)
 
     state._tier_killed = state._tier_killed or {}
 
+    -- Smoothed cost ratio, fed EVERY tick INCLUDING kills (with the inflated
+    -- cost above). Killed ticks used to skip this feed entirely, so a bot that
+    -- was being killed repeatedly kept a low ratio and climbed back up the
+    -- moment CAPACITY_KILLED_AVOID expired.
+    if tgt_ms > 0 and last_ms > 0 then
+      local ratio = last_ms / tgt_ms
+      state._capacity_ratio_ewma = (state._capacity_ratio_ewma or ratio)
+                                 * (1 - C.CAPACITY_EWMA_ALPHA)
+                                 + ratio * C.CAPACITY_EWMA_ALPHA
+    end
+
     local cur = prev_tier
     if killed then
       cur = math.max(1, prev_tier - C.CAPACITY_KILLED_CUT)
       state._tier_killed[prev_tier] = state.tick
     elseif tgt_ms > 0 and last_ms > 0 then
-      local ratio = last_ms / tgt_ms
-      state._capacity_ratio_ewma = (state._capacity_ratio_ewma or ratio)
-                                 * (1 - C.CAPACITY_EWMA_ALPHA)
-                                 + ratio * C.CAPACITY_EWMA_ALPHA
       local sm = state._capacity_ratio_ewma
       if sm > C.CAPACITY_DROP_BIG_RATIO and cur > 1 then
         cur = math.max(1, cur - 2)
@@ -1109,6 +1311,7 @@ function Brain.think(info)
       cpf.dijkstra_start(2, now, 0, 0, 0, 0, 0, 0, 0, mc_l, ex, 1.0, 0, 1)
       cpf.dijkstra_start(3, now, 0, 0, 0, 0, 0, 0, 0, mc_l, ex, 1.0, 0, 1)
     end
+    state._think_attempt = nil   -- reached an exit: this think was not killed
     return { holdkeys = 0, tapkeys = 0, build = nil,
              wantallies = info.allies, messagedest = 0, sendmessage = nil }
   end
@@ -1226,6 +1429,7 @@ function Brain.think(info)
 
     -- STARTUP_HOLD_TICKS already prevents driving during this window,
     -- so we just return zero keys. No steering, no builder, no log.
+    state._think_attempt = nil   -- reached an exit: this think was not killed
     return {
       holdkeys    = 0,
       tapkeys     = 0,
@@ -1279,6 +1483,7 @@ function Brain.think(info)
     -- LGM build; clear it so it doesn't repeat. build=-1 means "no build" otherwise.
     local mbuild = manual_pending_build or -1
     manual_pending_build = nil
+    state._think_attempt = nil   -- reached an exit: this think was not killed
     return { holdkeys = manual_keys, tapkeys = 0, build = mbuild, wantallies = info.allies, messagedest = 0, sendmessage = "" }
   end
 
@@ -2262,6 +2467,7 @@ function Brain.think(info)
   if state.paused then
     log.log_tick(state, info, state.goal, 0, 0, nil)
     if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
+    state._think_attempt = nil   -- reached an exit: this think was not killed
     return {
       holdkeys    = 0,
       tapkeys     = 0,
@@ -3327,7 +3533,10 @@ function Brain.think(info)
     -- time-based reposition discount (eval_reposition_pill) is 0 and the team
     -- doesn't pile on; it then grows the longer it's been since the last move.
     do
-      local repositioning = (state.goal.kind == "capture_pill" and state.goal.reposition) and true or false
+      -- APPROVED/in-flight only — a capture_pill+reposition goal that is still
+      -- just a BID must not reset the team discount (nor, via self_repos below,
+      -- arm the per-bot cooldown). Same gate as the repos=1 broadcast.
+      local repositioning = reposition_vote.is_reposition_active(state, world)
       -- Per-bot reposition cooldown: capture OUR OWN reposition state (before the
       -- ally-broadcast OR below folds teammates in) and stamp the tick it ENDS, so
       -- eval_reposition_pill can hold off starting another for a while.
@@ -3457,6 +3666,17 @@ function Brain.think(info)
       state._reposition_lock_tick = nil
       state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
       state._force_replan_reason = "ally_blocker"
+    end
+
+    -- Unapproved reposition BID watchdog. steering refuses to demolish until the
+    -- vote approves the pill, so a bid whose approval never lands parks in
+    -- `approach` indefinitely. reposition_vote bounds it at WINDOW + margin and
+    -- stamps the fail cooldown; we drop the goal here (before goal selection, so
+    -- the replan lands this tick) exactly like the ally_blocker yield above.
+    if reposition_vote.check_bid_timeout(state, world, now) then
+      state._reposition_lock_tick = nil
+      state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+      state._force_replan_reason = "repo_bid_timeout"
     end
 
     -- blocker_pills viz: every _in_use (blocker/utility, reposition-protected)
@@ -3648,10 +3868,54 @@ function Brain.think(info)
     -- attack_pill in disengage / plan_position is non-committed: if an enemy
     -- tank is in range, replan now so attack_tank (HYST-exempt in these
     -- substates) can preempt immediately instead of finishing the maneuver.
-    local atk_pill_interruptible = state.goal.kind == "attack_pill"
-        and (state.goal.substate == "disengage" or state.goal.substate == "plan_position")
-        and state.perc and state.perc.enemy_tanks
-        and #state.perc.enemy_tanks > 0
+    --
+    -- EDGE-triggered, not level-triggered. As a level condition this fired a
+    -- full replan EVERY tick for as long as any enemy stayed visible while we
+    -- sat in plan_position — and a replan tick is the brain's most expensive
+    -- shape, so on a loaded map it budget-killed every tick, re-selected the
+    -- same goal, and livelocked (a kill unwinds the think, so the only exit is
+    -- completing one; no capacity tier reaches the replan path to rescue it).
+    -- Now it fires only when the enemy picture actually CHANGES: the count
+    -- rose, a different tank became the nearest, or the nearest crossed INTO
+    -- ATK_PREEMPT_NEAR_TILES — and at most once per ATK_PREEMPT_MIN_INTERVAL.
+    local atk_pill_interruptible = false
+    if state.goal.kind == "attack_pill"
+       and (state.goal.substate == "disengage" or state.goal.substate == "plan_position")
+       and state.perc and state.perc.enemy_tanks
+       and #state.perc.enemy_tanks > 0 then
+      local ets = state.perc.enemy_tanks
+      local n_et = #ets
+      local near_id, near_d = nil, math.huge
+      for i = 1, n_et do
+        local e = ets[i]
+        local d = e.dist or math.huge     -- perception stores dist in TILES (U.mdist)
+        if d < near_d then near_d, near_id = d, e.id end
+      end
+      local st  = state._atk_interrupt_stamp
+      local thr = C.ATK_PREEMPT_NEAR_TILES or 8
+      local changed = (st == nil)
+                   or (n_et > (st.n or 0))
+                   or (near_id ~= st.nearest_id)
+                   or (near_d < thr and (st.nearest_d or math.huge) >= thr)
+      if changed then
+        -- Rate-limit. When the floor blocks a real edge we deliberately do NOT
+        -- refresh the stamp, so the pending edge re-fires the moment it clears
+        -- instead of being silently swallowed.
+        if (now - (state._last_atk_preempt_tick or -1e9)) >= (C.ATK_PREEMPT_MIN_INTERVAL or 10) then
+          atk_pill_interruptible = true
+          state._last_atk_preempt_tick = now
+          state._atk_interrupt_stamp = { tick = now, n = n_et,
+                                         nearest_id = near_id, nearest_d = near_d }
+        end
+      else
+        -- No edge: track the current picture so an approach that later crosses
+        -- the threshold is seen as a crossing rather than a steady state.
+        state._atk_interrupt_stamp = { tick = now, n = n_et,
+                                       nearest_id = near_id, nearest_d = near_d }
+      end
+    else
+      state._atk_interrupt_stamp = nil   -- left attack_pill (or no enemies): re-arm
+    end
 
     -- goal=none always forces an immediate replan (else the bot idles up to a
     -- full GOAL_REPLAN_INTERVAL — the "sit on a base for a second" bug).
@@ -3667,13 +3931,24 @@ function Brain.think(info)
     -- can compete immediately (doesn't force the join; just lets it be evaluated).
     local blitz_call_new = state._blitz_new_call or false
     state._blitz_new_call = nil
-    local urgent_replan = state.goal.kind == "none"
-                       or warm_exit
-                       or tank_appeared or new_tank_seen or dead_pill_appeared
-                       or new_base_appeared or lgm_appeared
-                       or shot_by_tank or atk_pill_interruptible
-                       or blitz_call_new or tank_died_seen
-                       or panic_tank_appeared or pill_picked_up
+    -- Hard events are all edges or one-shots (a tank/base/LGM first appearing,
+    -- a pill dying or being picked up, taking a hit, a blitz call): they can't
+    -- repeat tick after tick, so they bypass the rate floor and replan now.
+    local urgent_hard = warm_exit
+                     or tank_appeared or new_tank_seen or dead_pill_appeared
+                     or new_base_appeared or lgm_appeared
+                     or shot_by_tank
+                     or blitz_call_new or tank_died_seen
+                     or panic_tank_appeared or pill_picked_up
+    -- Soft reasons are level conditions that hold for as long as the world
+    -- stays put: goal=none (which persists until a replan finds something) and
+    -- the attack_pill tank preempt. Unbounded, either one turns every tick into
+    -- a replan tick — the shape that budget-kills a loaded bot forever. Both
+    -- tolerate a few ticks of delay, so they wait out REPLAN_MIN_INTERVAL.
+    local urgent_soft = (state.goal.kind == "none") or atk_pill_interruptible
+    local replan_floor_ok =
+      (now - (state._last_full_replan_tick or -1e9)) >= (C.REPLAN_MIN_INTERVAL or 5)
+    local urgent_replan = urgent_hard or (urgent_soft and replan_floor_ok)
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -3819,6 +4094,15 @@ function Brain.think(info)
         if need_armour and (info.base.armour or 0) >= LOW then getting_something = true end
         if need_shells and (info.base.shells or 0) >= LOW then getting_something = true end
         if need_mines  and (info.base.mines or 0) >= LOW then getting_something = true end
+        -- Survival override: at/below ARMOUR_LOW, ANY armour left in the base
+        -- is worth staying for — the LOW=4 "is this trip worth it" threshold is
+        -- a convenience rule for a healthy tank, and applying it at 0 armour
+        -- makes the bot walk away from the 3 armour that would let it survive.
+        -- A base that is genuinely EMPTY of armour still releases us: waiting
+        -- forever at a dry base is worse than replanning.
+        if (info.armour or 99) <= C.ARMOUR_LOW and (info.base.armour or 0) > 0 then
+          getting_something = true
+        end
         if not getting_something then
           local bk = U.mkey(state.goal.mx, state.goal.my)
           U.set_blocked(state, bk, now + 200, "refuel_base_depleted")
@@ -3859,6 +4143,10 @@ function Brain.think(info)
 
     state.replan_this_tick = replan
     if replan then
+      -- Stamp BEFORE the work: a replan that overruns and gets budget-killed
+      -- still counted as a replan attempt, and must not be free to retry next
+      -- tick. (The kill unwinds everything after this point.)
+      state._last_full_replan_tick = now
       -- Always use cached/partial data — never run the expensive
       -- fill_pool_cache.  The rolling queue refines over ~14 ticks.
       -- At tick 0 the cache is empty so pick_goal returns nil and
@@ -5359,6 +5647,7 @@ function Brain.think(info)
     attack.blitz_negotiate(state, world, info, now)
     if state.squad_role then bsi.role = state.squad_role end
     if state.is_harasser then bsi.har = "1" end   -- harasser flag (decoupled from role)
+    if state.is_pill_suicider then bsi.psu = "1" end  -- pill_suicider flag (same slate as har, map-selected; mutually exclusive with it)
     if state.squad_cmdr then bsi.cmdr = tostring(state.squad_cmdr) end
     if state.squad_status and state.squad_status ~= "-" then bsi.sqst = state.squad_status end
     -- Blitz engage standoff claim (`be`): a soldier broadcasts its claimed
@@ -5426,7 +5715,12 @@ function Brain.think(info)
       end
       -- Reposition marker: tells the team someone is repositioning a pill, so
       -- everyone resets the time-based reposition discount (don't pile on).
-      if state.goal.kind == "capture_pill" and state.goal.reposition then
+      -- APPROVED/in-flight moves only (reposition_vote.is_reposition_active): a
+      -- merely-bidding goal is not a reposition, and advertising it self-vetoed
+      -- our own proposal — the bid's repos=1 and the /info rvo ride the same
+      -- packet, so every voter stamped its recent-memory and NO'd us as
+      -- recent_repo before the ballot was cast.
+      if reposition_vote.is_reposition_active(state, world) then
         bsi.repos = "1"
       end
       -- Blocker TILES: ships on its OWN /info pblk verb (NOT the state slate) —
@@ -5440,8 +5734,11 @@ function Brain.think(info)
       -- reads mx/my but is gated on repos=="1" (capture_pill reposition).
       -- For every other goal — capture_base, attack_pill, capture_pill
       -- non-repos — `target` covers it, so mx/my would never be consulted.
+      -- Keyed off the flag we actually sent, not the goal shape: with repos
+      -- gated on an in-flight move, an unapproved reposition BID has no reader
+      -- for mx/my and the bytes would be wasted against the 128-byte cap.
       local _need_mxmy = not (state.goal.target_id and state.goal.target_id >= 0)
-                         or (state.goal.kind == "capture_pill" and state.goal.reposition)
+                         or bsi.repos == "1"
       if _need_mxmy and state.goal.mx and state.goal.my then
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
@@ -5969,6 +6266,10 @@ function Brain.think(info)
   -- Paired stop for the sampling profiler armed after the early-out gates.
   -- Every armed tick reaches here, keeping start/stop balanced.
   if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
+
+  -- Normal completion: clear the tick-budget kill marker written at the top.
+  -- Anything still set at the next think's top means that think was killed.
+  state._think_attempt = nil
 
   -- Output
   return {

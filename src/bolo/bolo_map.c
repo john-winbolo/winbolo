@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include "global.h"
 #include "bolo_map.h"
+#include "../common/wb_log.h"
 #include "crc.h"
 #include "pillbox.h"
 #include "starts.h"
@@ -1531,6 +1532,23 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
    * passes a full compressed map; only short/garbage input is rejected here. */
   if (input == NULL ||
       inputLen < (int)(SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)) {
+    return FALSE;
+  }
+
+  /* Structure handles must be live too — a caller racing a teardown
+   * (or handing over a destroyed sim's world) used to crash on a null
+   * handle deref inside the copy loops below. Refuse instead. */
+  /* A caller handing over a NULL GameSim produces handle pointers that
+   * are its small field offsets (0/8/16/24) — non-null but garbage, so
+   * only dereference after checking BOTH levels, and log the outer
+   * pointers only (dereferencing them here is how the first version of
+   * this guard itself crashed). */
+  if (value == NULL || *value == NULL || pb == NULL || *pb == NULL ||
+      bs == NULL || *bs == NULL || ss == NULL || *ss == NULL) {
+    WB_LOG_ERROR(WB_LOG_CAT_SIM,
+        "mapLoadCompressedMap: null world handle (map@%p pills@%p "
+        "bases@%p starts@%p) — load refused",
+        (void *)value, (void *)pb, (void *)bs, (void *)ss);
     return FALSE;
   }
 

@@ -1752,6 +1752,20 @@ end
 -- "in_progress" when the sweep advanced but isn't done yet, "done"
 -- when the final chunk just landed (caller can read
 -- state._pill_eval_cache[pid].spots).
+-- Is this pill's angle sweep currently abandoned (budget-killed too many
+-- times)? Read by plan_position and by goals.eval_attack_pill's candidate
+-- filter so pick_goal can't re-adopt the take we just gave up on.
+function M.pp_blacklisted(state, pid, now)
+  local bl = state and state._pp_blacklist
+  if not bl or pid == nil then return false end
+  local untl = bl[pid]
+  if not untl then return false end
+  now = now or (state.tick or 0)
+  if untl > now then return true end
+  bl[pid] = nil
+  return false
+end
+
 function M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
   if state == nil or pill == nil or pid == nil or pid < 0 then
     return "cached"
@@ -1759,6 +1773,7 @@ function M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
   state._pill_eval_cache    = state._pill_eval_cache    or {}
   state._pill_eval_progress = state._pill_eval_progress or {}
   local now = state.tick or 0
+  if M.pp_blacklisted(state, pid, now) then return "blacklisted" end
   local sweep = state._pill_eval_progress[pid]
   -- "done" lingers up to 50 ticks (1 s) so the visualizer can show the
   -- completed bar; after that, drop it and let the cache TTL govern.
@@ -1784,10 +1799,42 @@ function M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
   local spread = (state._capacity and state._capacity.pp_spread) or 1
   if spread < 1 then spread = 1 end
   local angles_per_tick = math.ceil(72 / spread)
+  -- Never schedule a chunk that can't fit the per-tick budget: deg_cursor only
+  -- advances AFTER the call returns, so a chunk killed mid-call makes zero
+  -- progress and the identical call re-runs next tick — forever. Tier 10 asked
+  -- for all 72 angles (~9 ms) in one call; capped it takes 6 ticks per sweep.
+  local cap = C.PP_ANGLES_PER_TICK_CAP or 12
+  if angles_per_tick > cap then angles_per_tick = cap end
   local end_deg = sweep.deg_cursor + (angles_per_tick - 1) * 5
   if end_deg > 355 then end_deg = 355 end
+  -- Budget-kill escape hatch (mirrors the shield-scan blacklist in
+  -- plan_position): a kill unwinds the whole think, so nothing after the call
+  -- runs — the only way to notice repeated kills is a marker written BEFORE it.
+  -- Keyed on pid + cursor, so it counts kills on THE SAME chunk; a completed
+  -- chunk clears it. After PP_CHUNK_KILL_TRIES the sweep is unfittable at any
+  -- cursor we can reach, so abandon it and hold the pill off the pool.
+  local att = state._pp_chunk_attempt
+  if att and (att.pid ~= pid or att.deg ~= sweep.deg_cursor
+              or (now - (att.tick or 0)) > (C.PP_CHUNK_ATTEMPT_TTL or 250)) then
+    att = nil
+    state._pp_chunk_attempt = nil
+  end
+  if att and (att.count or 0) >= (C.PP_CHUNK_KILL_TRIES or 3) then
+    state._pp_blacklist = state._pp_blacklist or {}
+    state._pp_blacklist[pid] = now + (C.PP_BLACKLIST_TICKS or 500)
+    state._pill_eval_progress[pid] = nil
+    state._pp_chunk_attempt = nil
+    return "blacklisted"
+  end
+  if att then
+    att.count = (att.count or 0) + 1
+    att.tick  = now
+  else
+    state._pp_chunk_attempt = { pid = pid, deg = sweep.deg_cursor, count = 1, tick = now }
+  end
   M.evaluate_pill_difficulty(pill, world, true, nil, state.phase, state, tmx, tmy,
                               sweep.deg_cursor, end_deg, sweep.acc)
+  state._pp_chunk_attempt = nil   -- returned normally: this chunk was not killed
   sweep.deg_cursor = end_deg + 5
   if sweep.deg_cursor > 355 then
     local best_score, spots, best_spot = M.finalize_pill_eval(sweep.acc, tmx, tmy)
@@ -1822,6 +1869,18 @@ function M.purge_dead_pill_eval_entries(state, world)
       if not p or not p.health or p.health <= 0
          or (p.owner ~= "hostile" and p.owner ~= "neutral") then
         state._pill_eval_progress[pid] = nil
+      end
+    end
+  end
+  -- Sweep-abandon blacklist: drop expired entries and any pill that stopped
+  -- being an attack target, so the map can't grow across a long game.
+  if state._pp_blacklist then
+    local now = state.tick or 0
+    for pid, untl in pairs(state._pp_blacklist) do
+      local p = pills[pid]
+      if untl <= now or not p or not p.health or p.health <= 0
+         or (p.owner ~= "hostile" and p.owner ~= "neutral") then
+        state._pp_blacklist[pid] = nil
       end
     end
   end
@@ -1911,7 +1970,9 @@ function M.draw_plan_trace(viz, state, info)
   if t.no_best_fallback then
     push(lines, "  best: NONE -- fell to pick_standoff (no shield.scan)")
   end
-  if t.shield_err then
+  if t.shield_blacklisted then
+    push(lines, "  shield: BLACKLISTED -- scan budget-killed repeatedly; shieldless plan")
+  elseif t.shield_err then
     push(lines, "  shield: CRASHED")
     -- Print first 3 lines of the traceback (err msg + first 2 frames).
     local first_lines = {}
@@ -2004,11 +2065,14 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
               or (step_deg == 45) and ELLIPSE_STAMPS_45DEG
               or nil
 
-  -- Bind to accumulator. In chunked mode acc was passed in (may already
-  -- have spots/all_valid populated from prior chunks); single-shot calls
-  -- created a fresh acc above so these start empty.
-  local spots      = acc.spots
-  local all_valid  = acc.all_valid
+  -- Abort-safe accumulation: this chunk's spots go into SCRATCH tables and are
+  -- merged into acc only at the write-back below. The per-tick budget hook kills
+  -- a chunk by unwinding the whole think, so appending straight into acc.spots /
+  -- acc.all_valid (which is what binding to them did — they're the same table
+  -- objects) left the killed chunk's partial results behind; the identical
+  -- retry then appended them again, every tick, forever.
+  local spots      = detailed and {} or nil
+  local all_valid  = {}
   local best_score = acc.best_score
   local best_spot  = acc.best_spot
   -- Hoist diagnostic locals out of acc so the inner-loop body can still
@@ -2315,9 +2379,28 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   end
 
   -- Write the diagnostic + accumulator state back to acc so the next
-  -- chunk (and the legacy single-shot post-loop) sees the latest.
-  acc.spots         = spots
-  acc.all_valid     = all_valid
+  -- chunk (and the legacy single-shot post-loop) sees the latest. Everything
+  -- from here down is append-only bookkeeping — nothing above this point
+  -- mutated acc, so a budget kill mid-loop leaves acc exactly as it arrived and
+  -- the retry re-does the chunk cleanly instead of duplicating it.
+  if spots then
+    local dst = acc.spots
+    if dst then
+      local n = #dst
+      for i = 1, #spots do dst[n + i] = spots[i] end
+    else
+      acc.spots = spots
+    end
+  end
+  do
+    local dst = acc.all_valid
+    if dst then
+      local n = #dst
+      for i = 1, #all_valid do dst[n + i] = all_valid[i] end
+    else
+      acc.all_valid = all_valid
+    end
+  end
   acc.best_score    = best_score
   acc.best_spot     = best_spot
   acc._angles_total = _angles_total
@@ -2332,9 +2415,11 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   acc._t_total_us   = (acc._t_total_us or 0) + (clock_us() - _t_func0)
 
   -- Chunked mode skips the post-loop two-pass selection; caller invokes
-  -- M.finalize_pill_eval(acc, tmx, tmy) once all chunks are done.
+  -- M.finalize_pill_eval(acc, tmx, tmy) once all chunks are done. Returns the
+  -- MERGED list (acc.spots), not this chunk's scratch — same contract as before
+  -- the scratch tables were introduced.
   if chunked then
-    return nil, spots, nil
+    return nil, acc.spots, nil
   end
 
   -- Single-shot mode: run the two-pass selection now (writes best_score,
@@ -3253,6 +3338,13 @@ function M.update_attack_substate(goal, state, world, info)
       -- we committed with). Until then, hold the line and keep firing.
       local blitz_hold = goal._blitz_committed
                          and (info.armour or 0) >= (goal._blitz_start_armour or 0)
+      -- Pill-suicider: never peels off a take it is already firing on, so a
+      -- defender LGM arriving is not a reason to swerve OR abort — it holds
+      -- exactly like a committed blitz and keeps shooting. (Same fall-through
+      -- branch, so nothing else in this block changes.)
+      if not blitz_hold and state.is_pill_suicider and FIRING_SUBS[cur_sub] then
+        blitz_hold = true
+      end
       if FIRING_SUBS[cur_sub] and not blitz_hold then
         print(string.format(TAG ..
           " ATTACK: LGM@(%d,%d) within %dt of pill@(%d,%d) — entering swerve from %s",
@@ -3435,6 +3527,16 @@ function M.update_attack_substate(goal, state, world, info)
       local pid = goal.target_id
       local best_score, spots
       local status = M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
+      -- Sweep abandoned (chunk budget-killed PP_CHUNK_KILL_TRIES times, or the
+      -- pill is still inside its blacklist window): there is no plan to be had
+      -- for this take, so drop the goal instead of re-entering plan_position
+      -- every tick. eval_attack_pill skips the pill while the window lasts, so
+      -- pick_goal moves on to another target.
+      if status == "blacklisted" then
+        clear_attack_goal(state, string.format(
+          "plan_position: pill#%s angle sweep abandoned (tick-budget kills)", tostring(pid)))
+        return
+      end
       -- Plan-trace overlay: stamp every gate so the screen can show
       -- exactly where the chain falls off. Reset at substate entry.
       if status == "cached" or status == "done" then
@@ -3621,6 +3723,16 @@ function M.update_attack_substate(goal, state, world, info)
                         or string.format("ANGRY_PILL(%.2f)", pill and pill.anger or 0)
           end
         end
+        -- Pill-suicider: never a protected take. PPT is the wall-shielded
+        -- build-then-fire mode, and a suicider builds no blockers at all, so
+        -- force it OFF here (after the force_* overrides, which would otherwise
+        -- reinstate it) — that alone routes the whole take down the plain
+        -- standoff/charge path: the gather_trees pre-flight and the build_walls
+        -- entry are both gated on _is_ppt + _shield_scan. The shield.scan
+        -- itself is skipped below (its ~20 ms of tick budget goes unspent).
+        if state.is_pill_suicider and goal._is_ppt then
+          goal._is_ppt = false
+        end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                             or C.ATTACK_PILL_STANDOFF
         -- For PPT, pull the chosen standoff in from 7.4 to 7.0 along
@@ -3656,7 +3768,11 @@ function M.update_attack_substate(goal, state, world, info)
         -- (cached chunk, fresh greens/best) without losing the shield
         -- step.
         goal.scan_spots = spots
-        goal._shield_scan_pending = true
+        -- A pill_suicider never builds blockers, so the shield scan has nothing
+        -- to plan: skip it outright (leaving _shield_scan nil, exactly the state
+        -- the existing DEMOTED(no-shield) path produces) and keep the standoff
+        -- the spot-selection pass just chose. Also saves the scan's tick budget.
+        goal._shield_scan_pending = (not state.is_pill_suicider) or nil
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
@@ -3724,10 +3840,32 @@ function M.update_attack_substate(goal, state, world, info)
         _num_pill_blockers)
       local sscan
       local _sc = state._shield_scan_cache
+      -- Budget-kill blacklist. A scan the budget hook kills mid-run unwinds
+      -- the WHOLE think -- no code after the call site executes, so the only
+      -- way to notice repeated kills is a marker written BEFORE the call.
+      -- After SHIELD_SCAN_BLACKLIST_TRIES incomplete attempts on the same
+      -- scan key, stop retrying and take the no-shield plan (sscan = nil is
+      -- the existing DEMOTED path) instead of livelocking on a scan that
+      -- can't fit the budget. Marker resets when the key changes (pill hp /
+      -- our armour / standoff moved) or after SHIELD_SCAN_BLACKLIST_TICKS.
+      local _att = state._shield_scan_attempt
+      if _att and (_att.key ~= _scan_key
+                   or (_now - (_att.tick or 0)) > (C.SHIELD_SCAN_BLACKLIST_TICKS or 250)) then
+        _att = nil
+        state._shield_scan_attempt = nil
+      end
       if _sc and _sc.key == _scan_key
          and (_now - (_sc.tick or -1000000)) < (C.SHIELD_SCAN_CACHE_TICKS or 25) then
         sscan = _sc.result
+      elseif _att and (_att.count or 0) >= (C.SHIELD_SCAN_BLACKLIST_TRIES or 2) then
+        sscan = nil
       else
+        if _att then
+          _att.count = (_att.count or 0) + 1
+          _att.tick  = _now
+        else
+          state._shield_scan_attempt = { key = _scan_key, count = 1, tick = _now }
+        end
         local _ok, sscan_or_err = xpcall(function()
           return shield.scan(pill, world,
                              goal.standoff_mx, goal.standoff_my,
@@ -3737,6 +3875,7 @@ function M.update_attack_substate(goal, state, world, info)
                              _sb_pos, _sb_step, _num_pill_blockers)
         end, debug.traceback)
         if _ok then
+          state._shield_scan_attempt = nil
           sscan = sscan_or_err
           state._shield_scan_cache = { key = _scan_key, result = sscan, tick = _now }
         else
@@ -3747,6 +3886,9 @@ function M.update_attack_substate(goal, state, world, info)
           if msg:find("tick_budget_exceeded", 1, true) then
             error(sscan_or_err)
           end
+          -- Genuine crash, not a budget kill: clear the marker so the
+          -- blacklist stays a budget-kill detector only.
+          state._shield_scan_attempt = nil
           print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
           sscan = nil
         end
@@ -4995,7 +5137,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- charging through the hits instead of defensive-swerving. The pill-dead
     -- swerve above (kill mode) still fires the moment the pill dies, so the
     -- dead-pill handoff (rush / capture / exit) runs exactly as normal.
-    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 and not state.ammo_deprived then
+    -- A pill_suicider is excluded on the same line as the ammo-deprived decoy,
+    -- and for the same reason: its job is to stay on the pill. It charges
+    -- through the return fire instead of peeling off. (The pill-DEAD swerve
+    -- above is untouched — that one is the capture/exit handoff, not a dodge.)
+    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0
+       and not state.ammo_deprived and not state.is_pill_suicider then
       local _soak_ok = commit_soak_finish(goal, state, info)
       local _tank_finish = _soak_ok and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
@@ -5554,6 +5701,12 @@ function M.update_attack_substate(goal, state, world, info)
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS and not tank_finish then
       should_swerve = true
     end
+    -- Pill-suicider: cancel every DEFENSIVE swerve (pill still alive — the
+    -- kill-locked and hits-taken exits above). The pill-dead branch keeps its
+    -- swerve: that is the rush-to-capture handoff, not a dodge.
+    if should_swerve and not pill_dead and state.is_pill_suicider then
+      should_swerve = false
+    end
 
     if should_swerve then
       enter_swerve(goal, world, state, info, pmx, pmy,
@@ -5606,6 +5759,15 @@ function M.update_attack_substate(goal, state, world, info)
                            and pill_hp > 0 and not _tank_finish
       local should_swerve = (goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS or _kill_locked)
                             and not _tank_finish
+      -- Pill-suicider: hits taken and a locked kill are NOT reasons to peel off
+      -- — it stands in the fire and keeps shooting until the pill dies (the
+      -- pill_hp<=0 branch above then runs the normal kill swerve / capture
+      -- handoff). The crosshairs_off exit below is left alone: that one isn't a
+      -- dodge, it means we can no longer hit anything from here, and a suicider
+      -- with no shot has nothing to be brave about.
+      if should_swerve and state.is_pill_suicider then
+        should_swerve = false
+      end
 
       -- Also check if crosshairs off pill (knocked out of range)
       -- Float angle so the displayed crosshair matches the engine's
@@ -5618,7 +5780,10 @@ function M.update_attack_substate(goal, state, world, info)
 
       if should_swerve or crosshairs_off then
         local pill_anger = pill and pill.anger or 0
-        if pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked then
+        -- (suicider: should_swerve is already false above, so we only get here
+        -- on crosshairs_off — route that to post_engage, never to a swerve.)
+        if (pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked)
+           and not state.is_pill_suicider then
           -- Pill angry, OR the kill is already locked (last sure shot fired) —
           -- swerve to dodge (defensive, so a diverging shell re-engages). The
           -- kill-locked case dodges regardless of anger instead of falling to

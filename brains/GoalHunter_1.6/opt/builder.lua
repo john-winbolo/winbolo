@@ -586,7 +586,12 @@ function M.decide(state, world, info, now)
     -- pool's contested x3 already de-prioritizes the repair; this stops
     -- the LGM leaving the tank while the threat is CURRENT.
     local enemy_hold = false
-    do
+    -- Flag-gated (REPAIR_HOLD_ENEMY_NEAR_ENABLED, default OFF): with the
+    -- hold disabled, a committed repair_pill SENDS the LGM even with a
+    -- recent enemy sighting — the pool already priced the contest; a
+    -- repairer that always waits repairs nothing (and the waiting tank
+    -- used to get stuck-blocked on top: 20260825_200837 bot9 t=6218).
+    if C.REPAIR_HOLD_ENEMY_NEAR_ENABLED then
       local lst = world.pill_at and world.pill_at[py * 256 + px]
       local tp = lst and lst[1] and lst[1].pill
       if tp and tp._enemy_near_tick

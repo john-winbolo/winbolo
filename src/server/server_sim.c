@@ -583,6 +583,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->specDelayTicks      = 0;
     sim->specRosterEnum      = NULL;
     sim->specRosterEnumCtx   = NULL;
+    sim->startInProgress     = FALSE;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -2220,7 +2221,13 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * tell a human departure from a bot one. Bot removals run through this
      * same path (botManagerRemoveBot), and the reset itself removes bots —
      * gating on a human leaver keeps that from re-entering. */
-    wasBot = botManagerIsBot(sim, playerNum);
+    /* ...and the removingBotSlot fallback: botManagerRemoveBot now
+     * deactivates the context BEFORE calling in here (so re-entrant
+     * walkers can't see a half-torn-down bot), which means
+     * botManagerIsBot alone would misread the departing bot as a human
+     * and trip the last-human-left lobby reset on every bot removal. */
+    wasBot = botManagerIsBot(sim, playerNum) ||
+             sim->botMgr.removingBotSlot == (BYTE)(playerNum + 1);
     {
         char nm[PLAYER_NAME_LEN];
         playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, TRUE);
@@ -2230,6 +2237,10 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
+
+    /* A spawn-loadout override armed for this slot must not leak to the
+     * slot's next occupant. */
+    sim->sim.spawnLoadout[playerNum] = 0;
 
     /* Publish before clearing the slot — the filler reads the player's
      * name and country out of sim->sim.plyrs->item[playerNum], which is
@@ -4221,6 +4232,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     BYTE i;
 
     if (sim->state != serverStateLobby) return;
+    /* A start is already running (state flips to Running only at its
+     * end): roster edits inside it must not recursively start a second
+     * game on top of a half-built one. */
+    if (sim->startInProgress) return;
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
@@ -4490,6 +4505,8 @@ static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
+    sim->startInProgress = TRUE;
+
     /* Fresh round — the last-human-left return-to-lobby check arms only
      * once a human is seen this round. */
     sim->roundHadHuman = false;
@@ -4559,6 +4576,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    sim->startInProgress = FALSE;
 
     serverSimApplyAutoLockOnGameStart(sim);
 
@@ -4585,6 +4603,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 }
 
 void serverSimStartGame(ServerSim *sim) {
+    sim->startInProgress = TRUE;
+
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
        playerConnected[], but we need it to create tanks below. Player
@@ -4695,6 +4715,7 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    sim->startInProgress = FALSE;
     serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 

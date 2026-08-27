@@ -728,7 +728,8 @@ static float    bt_gz_f32(gzFile g){ float v=0;    gzread(g,&v,4); return v; }
 /* Peek a session header (+ first frame) to learn the map name and how many
  * bot slots it used — needed BEFORE the sim/bots are created at startup.
  * Returns true on a valid, version-matching brainrec.btr. */
-static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut) {
+static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut,
+                          bool deepScan) {
     gzFile g = gzopen(path, "rb");
     if (!g) return false;
     BrainRecHeader hdr;
@@ -738,9 +739,15 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
     if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
     uint32_t llen = bt_gz_u32(g);
     if (llen) gzseek(g, llen, SEEK_CUR);
+    /* Bot roster: shallow scan reads the FIRST frame only (cheap — good
+     * enough for the session browser's count column). deepScan walks
+     * EVERY frame and unions the slots: bots that only exist mid-game
+     * (a scenario's spawn_bot waves) are invisible in frame 0, and
+     * sizing playback off the first frame locked the followed-bot cycle
+     * out of the enemy team entirely. */
     int maxSlot = -1;
     uint32_t fm = bt_gz_u32(g);
-    if (fm == BRAINREC_FRAME_MAGIC) {
+    while (fm == BRAINREC_FRAME_MAGIC) {
         bt_gz_u32(g); /* tick */
         uint8_t tc = bt_gz_u8(g); gzseek(g, (z_off_t)tc * (int)sizeof(TankSnapshot),  SEEK_CUR);
         uint8_t sc = bt_gz_u8(g); gzseek(g, (z_off_t)sc * (int)sizeof(ShellSnapshot), SEEK_CUR);
@@ -764,6 +771,9 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
             }
             uint32_t pl = bt_gz_u32(g); if (pl) gzseek(g, pl, SEEK_CUR);
         }
+        gzseek(g, MAX_TANKS * 4, SEEK_CUR);   /* v5 per-player alliance words */
+        if (!deepScan) break;
+        fm = bt_gz_u32(g);
     }
     gzclose(g);
     if (numBotsOut) *numBotsOut = (maxSlot >= 0) ? maxSlot + 1 : 1;
@@ -1205,7 +1215,7 @@ static void scanSessions(void) {
             SDL_strlcpy(e->note, "no brainrec.btr", sizeof e->note);
         } else {
             e->sizeMB = (double)bi.size / 1.0e6;
-            if (btPeekSession(btr, e->map, &e->bots)) {
+            if (btPeekSession(btr, e->map, &e->bots, false)) {
                 e->loadable = true;
                 int start = btParseDirTime(entries[i]);
                 if (start >= 0) {
@@ -5877,7 +5887,7 @@ int main(int argc, char *argv[]) {
         SDL_snprintf(loadSessionBtr, sizeof(loadSessionBtr), "%s/%s",
                      optLoadSession, BRAINREC_FILENAME);
         char mapName[64] = ""; int recBots = 1;
-        if (btPeekSession(loadSessionBtr, mapName, &recBots)) {
+        if (btPeekSession(loadSessionBtr, mapName, &recBots, true)) {
             if (!optMap[0] && mapName[0])
                 SDL_snprintf(optMap, sizeof(optMap), "data/maps/%s.map", mapName);
             if (recBots > 0) optNumPlayers = recBots;

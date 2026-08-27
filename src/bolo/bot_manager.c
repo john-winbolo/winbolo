@@ -212,6 +212,20 @@ static void brainBudgetHook(lua_State *L, lua_Debug *ar) {
     Uint64 now = SDL_GetPerformanceCounter();
     if (now >= bot->thinkDeadlineCounter) {
         SDL_SetAtomicInt(&bot->abort_flag, 1);
+        /* Record where the budget ran out, allocation-free, into per-bot
+         * storage. braincore.c's killed branch reads it back via
+         * botManagerLastKillSite() to head the partial print2 flush, and
+         * botLogKill() appends it to the killbot.log line. Only ever runs
+         * on the kill path, so normal ticks pay nothing. */
+        {
+            lua_Debug loc;
+            if (lua_getstack(L, 0, &loc) && lua_getinfo(L, "Sl", &loc)) {
+                SDL_snprintf(bot->killSite, sizeof(bot->killSite), "%s:%d",
+                             loc.short_src, loc.currentline);
+            } else {
+                bot->killSite[0] = '\0';
+            }
+        }
         /* Raise. Longjmps unwind to the lua_pcall in brainCoreCallThink,
          * which detects the suffix and reports "killed" rather than the
          * real-error removal path. */
@@ -271,16 +285,21 @@ static void botLogKill(ServerSim *sim, int botIndex) {
     char ts[32];
     strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm_local);
 
+    /* Kill site captured by brainBudgetHook ("<short_src>:<line>"). Empty
+     * when the hook couldn't resolve a frame — suppress the " at " then. */
+    const char *killSite = bot->killSite;
+
     fprintf(f,
             "[%s] tick=%u bot=%d KILLED: took=%.2fms budget=%.2fms "
-            "over=%.2fms (%.0f%% of budget) overruns=%u\n",
+            "over=%.2fms (%.0f%% of budget) overruns=%u%s%s\n",
             ts, (unsigned)serverSimGetTick(sim), botIndex,
             bot->lastThinkMs, sim->botMgr.lastTargetMs,
             bot->lastThinkMs - sim->botMgr.lastTargetMs,
             sim->botMgr.lastTargetMs > 0.0
                 ? (bot->lastThinkMs / sim->botMgr.lastTargetMs) * 100.0
                 : 0.0,
-            (unsigned)bot->overrunCount);
+            (unsigned)bot->overrunCount,
+            killSite[0] ? " at " : "", killSite);
     fclose(f);
 }
 
@@ -288,6 +307,12 @@ bool botManagerShouldAbort(struct lua_State *L) {
     BotContext *bot = botFromLua((lua_State *)L);
     if (bot == NULL) return false;
     return SDL_GetAtomicInt(&bot->abort_flag) != 0;
+}
+
+const char *botManagerLastKillSite(struct lua_State *L) {
+    BotContext *bot = botFromLua((lua_State *)L);
+    if (bot == NULL) return "";
+    return bot->killSite;
 }
 
 int botManagerActiveBotCountForLua(struct lua_State *L) {
@@ -353,6 +378,8 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
     BYTE *buf;
     int len;
     bool ok;
+
+    if (bot->cs == NULL) return false;   /* mid-teardown / never built */
 
     buf = (BYTE *)malloc(65536);
     if (buf == NULL) {
@@ -568,6 +595,7 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     }
     SDL_SetAtomicInt(&bot->abort_flag, 0);
     bot->thinkDeadlineCounter = 0;
+    bot->killSite[0] = '\0';
     bot->wasKilled = false;
     if (bot->brain.pathfinder != NULL) {
         brainPathfinderSetAbortFlag(bot->brain.pathfinder, &bot->abort_flag);
@@ -737,6 +765,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     }
     SDL_SetAtomicInt(&bot->abort_flag, 0);
     bot->thinkDeadlineCounter = 0;
+    bot->killSite[0] = '\0';
     bot->wasKilled = false;
 
     /* Wire the abort flag through to the C pathfinder/worldsim so their
@@ -752,6 +781,25 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
 
     bot->active = true;
     sim->botMgr.numBots++;
+
+    /* A recording block may already be open (server_lifecycle publishes
+     * DEBUG_SESSION_DIR to every bot when the block OPENS) — a bot born
+     * mid-round (scenario spawn_bot waves, host mid-game adds) missed
+     * that publish and would scatter its print2/jsonl debug files into
+     * the cwd instead of the session dir, invisible to BrainTest's
+     * session browser. Hand the newborn the live session dir directly. */
+    if (brainRecordIsEnabled() && bot->brain.L != NULL) {
+        const char *sdir = brainRecordGetSessionDir();
+        if (sdir != NULL && sdir[0] != '\0') {
+            char setSession[600];
+            snprintf(setSession, sizeof(setSession),
+                     "_G.DEBUG_SESSION_DIR=\"%s\"", sdir);
+            botManagerExecLua(sim, playerNum, setSession);
+            botManagerExecLua(sim, playerNum,
+                "local ok,p=pcall(require,'print2'); "
+                "if ok and p.reset_log then p.reset_log() end");
+        }
+    }
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d started with brain '%s'",
             playerNum, brainName);
@@ -1288,6 +1336,13 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     bot = &sim->botMgr.bots[playerNum];
     if (!bot->active) return;
 
+    /* Deactivate FIRST: serverSimRemovePlayer below publishes and can
+     * re-enter walkers (all-ready checks, scenario hooks) that iterate
+     * active bots — none of them may see this half-torn-down context
+     * (active with cs == NULL was the Ready-click start crash). */
+    bot->active = false;
+    sim->botMgr.numBots--;
+
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -1298,10 +1353,12 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
      * and would double-free. */
     clientSimDestroy(bot->cs);
     bot->cs = NULL;
+    /* The context is already deactivated, so serverSimRemovePlayer's
+     * botManagerIsBot check can no longer see this leaver was a bot —
+     * flag the slot for the duration of the call. */
+    sim->botMgr.removingBotSlot = (BYTE)(playerNum + 1);
     serverSimRemovePlayer(sim, playerNum);
-
-    bot->active = false;
-    sim->botMgr.numBots--;
+    sim->botMgr.removingBotSlot = 0;
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d removed", playerNum);
 }
@@ -1385,6 +1442,7 @@ uint32_t botManagerGetClientAllieRow(const ServerSim *sim, BYTE botPlayer, BYTE 
  * clients — this direct sync makes the in-process bots deterministic
  * regardless of control-event timing/processing at startup. */
 void botManagerSyncClientAlliances(ServerSim *sim) {
+    int synced = 0;
     if (sim == NULL) return;
     players srv = sim->sim.plyrs;
     if (srv == NULL) return;
@@ -1394,9 +1452,24 @@ void botManagerSyncClientAlliances(ServerSim *sim) {
         players cli = bot->cs->sim.plyrs;
         if (cli == NULL) continue;
         for (int i = 0; i < MAX_TANKS; i++) {
-            cli->item[i].allie = srv->item[i].allie;
+            /* DEEP copy. allie is a heap list — assigning the pointer
+             * aliased the server's live lists into every bot ClientSim,
+             * and the next playersLeaveAlliance (scenario on_setup
+             * removing its seeded bots, any mid-game leaver) then
+             * destroyed/mutated the shared nodes from both sides:
+             * double-frees, and every bot's matrix silently emptied
+             * (teammates rendered/treated as enemies all round). */
+            allienceDestroy(&cli->item[i].allie);
+            cli->item[i].allie = allienceCreate();
+            for (int j = 0; j < MAX_TANKS; j++) {
+                if (j != i && allienceExist(&srv->item[i].allie, (BYTE)j)) {
+                    allienceAdd(&cli->item[i].allie, (BYTE)j);
+                }
+            }
         }
+        synced++;
     }
+    (void)synced;
 }
 
 bool botManagerGetBotInfo(const ServerSim *sim, BYTE playerNum, BotInfo *out) {

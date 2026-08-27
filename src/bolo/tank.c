@@ -353,6 +353,22 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 *  value  - Pointer to the tank structure
 *  sts    - Pointer to player starts structure
 *********************************************************/
+
+/* The game type whose starting items THIS tank loads. A host can arm a
+ * per-slot override (GameSim::spawnLoadout, e.g. open-mode bots inside a
+ * tournament round); it must apply on EVERY path that hands out a fresh
+ * loadout — first create AND death respawns — or an overridden slot's
+ * first life arrives armed and every later life arrives empty
+ * (tournament start = zero shells/mines/trees). 0 = no override, use the
+ * sim-wide rules, which is every slot unless something sets it. */
+static gameType tankLoadoutType(GameSim *sim, tank *value) {
+  BYTE plr = gameSimGetTankPlayer(sim, value);
+  if (plr < MAX_TANKS && sim->spawnLoadout[plr] != 0) {
+    return (gameType)sim->spawnLoadout[plr];
+  }
+  return sim->game;
+}
+
 void tankCreate(GameSim *sim, tank *value) {
   starts *sts = &sim->ss;
   BYTE minesAmount; /* Stuff the new tank is to start with */
@@ -368,7 +384,10 @@ void tankCreate(GameSim *sim, tank *value) {
   New(*value);
   (*value)->x = 0;
   (*value)->y = 0;
-  gameTypeGetItems(sim, &sim->game, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
+  {
+    gameType loadoutType = tankLoadoutType(sim, value);
+    gameTypeGetItems(sim, &loadoutType, &shellsAmount, &minesAmount, &armourAmount, &treesAmount);
+  }
   (*value)->armour = armourAmount;
   (*value)->shells = shellsAmount;
   (*value)->mines = minesAmount;
@@ -1144,7 +1163,8 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   (*value)->y = y;
   (*value)->angle = angle;
   if (setResources == TRUE) {
-    gameTypeGetItems(sim, &sim->game, &shells, &mines, &armour, &trees);
+    gameType loadoutType = tankLoadoutType(sim, value);
+    gameTypeGetItems(sim, &loadoutType, &shells, &mines, &armour, &trees);
     (*value)->shells = shells;
     (*value)->mines = mines;
     (*value)->armour = armour;
@@ -1413,9 +1433,16 @@ void tankDeath(GameSim *sim, tank *value) {
       frontEndKillsDeaths(clientSimFromSim(sim), (*value)->numKills, (*value)->numDeaths);
     }
   } else if (isServer) {
-    /* Server-authoritative respawn: pick a new start and reset resources */
+    /* Server-authoritative respawn: pick a new start and reset resources.
+     * tankLoadoutType, not sim->game: this is the path that would hand a
+     * slot carrying an open-mode loadout override a TOURNAMENT (empty)
+     * loadout on every death — first life armed, every respawn with
+     * zero shells. */
     lgmTankDied(&sim->lgmen[gameSimGetTankPlayer(sim, value)]);
-    gameTypeGetItems(sim, &sim->game, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
+    {
+      gameType loadoutType = tankLoadoutType(sim, value);
+      gameTypeGetItems(sim, &loadoutType, &shellAmount, &minesAmount, &armourAmount, &treesAmount);
+    }
     (*value)->armour = armourAmount;
     (*value)->tankHitCount = 0;
     (*value)->shells = shellAmount;
