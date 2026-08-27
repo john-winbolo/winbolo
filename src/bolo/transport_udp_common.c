@@ -157,7 +157,8 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_COMMAND_TICK, "COMMAND_TICK") \
     X(PACKET_COMMAND_ACK, "COMMAND_ACK") \
     X(PACKET_COMMAND_REJECTED, "COMMAND_REJECTED") \
-    X(PACKET_BALANCE_FAILED, "BALANCE_FAILED")
+    X(PACKET_BALANCE_FAILED, "BALANCE_FAILED") \
+    X(PACKET_MAP_DL_READY, "MAP_DL_READY")
 
 const char *packetTypeName(uint8_t type) {
     switch (type) {

@@ -222,6 +222,11 @@ typedef struct {
     bool     xferBegun;        /* bulkSenderBegin has been issued               */
     uint32_t xferStartSeq;     /* CHANNEL_BULK nextSeq captured at begin         */
     uint32_t xferEndSeq;       /* startSeq + segment count; done when ackedSeq>= */
+    bool     readySeen;        /* client's PACKET_MAP_DL_READY arrived — a join
+                                * download begins only after it, so the stream
+                                * can never race the JOIN_ACCEPT that sizes the
+                                * client's buffers. Resync transfers ignore it
+                                * (their request is the readiness signal). */
 } ClientMapDownload;
 
 #define UPLOAD_MAX_BYTES (64u * 1024u)
@@ -2019,9 +2024,10 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
  * correct endSeq needs the stream truly idle: no pending staging bytes and the
  * send window fully acked. startSeq is captured before any byte is staged, so
  * endSeq = startSeq + segment count is exact (channelStreamRefill only ever
- * forms a short final segment for a contiguous blob). No readiness round-trip
- * gates this: the join cookie already proved the address (serverHandleJoinRequest),
- * and a resync targets an already-established slot. */
+ * forms a short final segment for a contiguous blob). A join download is
+ * additionally gated on the client's PACKET_MAP_DL_READY (readySeen below);
+ * a resync targets an already-established slot and its request is the
+ * readiness signal. */
 static void serverBeginMapTransferIfReady(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
     ChannelMux *m = &udpServer.channelMux[slot];
@@ -2030,6 +2036,11 @@ static void serverBeginMapTransferIfReady(int slot) {
     uint32_t headerLen, totalBytes, segs;
 
     if (dl->xferKind == MAP_XFER_NONE || dl->xferBegun) return;
+    /* A join download waits for the client's PACKET_MAP_DL_READY — proof the
+     * accept landed and the receive buffers exist — so the stream head can
+     * never arrive at a client that has nowhere to put it. A resync needs no
+     * such gate: its own request is the readiness signal. */
+    if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->readySeen) return;
     if (bulkSenderBusy(&udpServer.bulkSend[slot])) return;  /* preview draining */
     if (m->streamCount != 0) return;                        /* staging not empty  */
     if (bulk->ackedSeq != bulk->nextSeq) return;            /* window not drained */
@@ -2473,6 +2484,48 @@ static void serverInitMapDownload(int slot) {
     dl->xferBegun = false;
     dl->xferStartSeq = 0;
     dl->xferEndSeq = 0;
+    dl->readySeen = false;
+}
+
+/* Drop any in-flight map transfer for `slot` and re-base CHANNEL_BULK so the
+ * next stream starts clean on both ends: bulkSenderReset drops the old staged
+ * blob, channelResetSend(CHANNEL_BULK) collapses the send window and clears
+ * the staging tail, and a CTRL_CHANNEL_RESET carries the new bulk baseline so
+ * the client lifts its receive baseline and abandons any old partial. Without
+ * this the old transfer's stragglers would segmentize into the new stream and
+ * the client's single BulkReceiver would misparse it. Then arm a fresh join
+ * download from the current blob (re-gates snapshots). The download begins
+ * once the client's PACKET_MAP_DL_READY arrives (serverBeginMapTransferIfReady). */
+static void serverRebaseBulkAndRearmDownload(int i) {
+    bulkSenderReset(&udpServer.bulkSend[i]);
+    {
+        uint32_t b3 = channelResetSend(&udpServer.channelMux[i], CHANNEL_BULK);
+        ControlEvent resetEvt;
+        ControlEncodeBodyFn enc =
+            transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+        memset(&resetEvt, 0, sizeof(resetEvt));
+        resetEvt.type = CTRL_CHANNEL_RESET;
+        resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
+        resetEvt.u.channelReset.ch3Baseline = b3;
+        if (enc != NULL &&
+            enc(&resetEvt, &udpServer.clients[i], msg + 3,
+                sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+            msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+            packU16(msg + 1, (uint16_t)bodyLen);
+            if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
+                             msg, (uint16_t)(3 + bodyLen))) {
+                if (!udpServer.pendingSimRemove[i]) {
+                    WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                 "control channel overflow sending bulk reset "
+                                 "for slot %d, deferring disconnect", i);
+                    udpServer.pendingSimRemove[i] = true;
+                }
+            }
+        }
+    }
+    serverInitMapDownload(i);
 }
 
 /* Clean up map download tracking for a client */
@@ -2485,6 +2538,7 @@ static void serverCleanupMapDownload(int slot) {
     dl->downloadComplete = FALSE;
     dl->xferKind = MAP_XFER_NONE;
     dl->xferBegun = false;
+    dl->readySeen = false;
 }
 
 static void serverSendServerMessage(ServerSim *sim, langid id, int argCount,
@@ -2661,7 +2715,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
          * a wbnServerKey until the next return-to-lobby rotation. */
         transportUdpServerSendWbnRekey(&udpServer.clients[slot]);
         /* No map re-poke needed: an incomplete download is still armed/in-flight
-         * on CHANNEL_BULK and the channel retransmits its own unacked segments. */
+         * on CHANNEL_BULK and the channel retransmits its own unacked segments.
+         * A download this client can no longer complete (it missed the stream's
+         * head, or the transfer already finished into a wiped receiver) is
+         * recovered by its PACKET_MAP_DL_READY re-ask, not here. */
         return;
     }
 
@@ -4620,44 +4677,12 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         /* Re-send JOIN_ACCEPT so the client picks up the new compressed
          * map size. */
         serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
-        /* Drop any in-flight map transfer and re-base CHANNEL_BULK so the new
-         * map's stream starts clean on both ends: bulkSenderReset drops the old
-         * staged blob, channelResetSend(CHANNEL_BULK) collapses the send window
-         * and clears the staging tail, and a CTRL_CHANNEL_RESET carries the new
-         * bulk baseline so the client lifts its receive baseline and abandons
-         * the old partial. Without this the old transfer's stragglers would
-         * segmentize into the new stream and the single BulkReceiver would
-         * misparse it. */
-        bulkSenderReset(&udpServer.bulkSend[i]);
-        {
-            uint32_t b3 = channelResetSend(&udpServer.channelMux[i], CHANNEL_BULK);
-            ControlEvent resetEvt;
-            ControlEncodeBodyFn enc =
-                transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
-            uint8_t msg[CHANNEL_CONTROL_SEG];
-            size_t bodyLen = 0;
-            memset(&resetEvt, 0, sizeof(resetEvt));
-            resetEvt.type = CTRL_CHANNEL_RESET;
-            resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
-            resetEvt.u.channelReset.ch3Baseline = b3;
-            if (enc != NULL &&
-                enc(&resetEvt, &udpServer.clients[i], msg + 3,
-                    sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
-                msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
-                packU16(msg + 1, (uint16_t)bodyLen);
-                if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
-                                 msg, (uint16_t)(3 + bodyLen))) {
-                    if (!udpServer.pendingSimRemove[i]) {
-                        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                     "control channel overflow sending bulk reset "
-                                     "for slot %d, deferring disconnect", i);
-                        udpServer.pendingSimRemove[i] = true;
-                    }
-                }
-            }
-        }
-        /* Arm a fresh join download from the new blob (re-gates snapshots). */
-        serverInitMapDownload(i);
+        /* Re-base CHANNEL_BULK and arm a fresh join download from the new
+         * blob (re-gates snapshots). It streams once the client's
+         * PACKET_MAP_DL_READY confirms its buffers were re-armed for the new
+         * size — the accept above (or the one re-sent for the client's forced
+         * re-JOIN) triggers that. */
+        serverRebaseBulkAndRearmDownload(i);
     }
 
     /* Live-lobby spectators: mirror the player loop — re-send the accept (new map
@@ -5370,6 +5395,44 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (serverSimIsLobbyEnabled(sim) &&
                     (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
                     serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
+                }
+            }
+            break;
+        }
+        case PACKET_MAP_DL_READY: {
+            /* Client's join-download buffers are armed (its JOIN_ACCEPT
+             * landed). Body: [connId u64]. First ask for an armed-but-unbegun
+             * download simply releases it (serverBeginMapTransferIfReady).
+             * A re-ask while a stream is — or already was — in flight means
+             * the client cannot complete that stream (its head was consumed
+             * before the buffers existed, or the transfer finished into a
+             * receiver that had been reset mid-body): the channel has acked
+             * those bytes, so only a full restart behind a CHANNEL_BULK
+             * re-base can deliver the map again. connId must match the slot's
+             * so an address-spoofed READY can't reset a healthy client's
+             * transfer or re-gate its snapshots. A resync in flight is left
+             * alone — it owns the channel, and its own request/stall machinery
+             * recovers it. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 8) {
+                uint64_t reqConnId = unpackConnId(buf + PACKET_HEADER_SIZE);
+                UdpServerClient *cl = &udpServer.clients[clientIdx];
+                ClientMapDownload *dl = &udpServer.mapDownload[clientIdx];
+                if (cl->connId != 0 && reqConnId != cl->connId) break;
+                cl->lastReceivedTick = udpServer.tickCount;
+                if (dl->xferKind == MAP_XFER_RESYNC || dl->resyncInProgress) {
+                    break;
+                }
+                if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->xferBegun) {
+                    dl->readySeen = TRUE;
+                } else {
+                    WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "MAP_DL_READY re-ask slot=%d (kind=%d begun=%d "
+                        "complete=%d) -> restarting download",
+                        clientIdx, (int)dl->xferKind, (int)dl->xferBegun,
+                        (int)dl->downloadComplete);
+                    serverRebaseBulkAndRearmDownload(clientIdx);
+                    dl->readySeen = TRUE;
                 }
             }
             break;

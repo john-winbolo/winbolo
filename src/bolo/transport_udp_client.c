@@ -175,6 +175,18 @@ typedef struct {
      * installed. */
     bool     mapInstalled;
 
+    /* Join-download readiness/watchdog. The server streams the map only after
+     * this client's PACKET_MAP_DL_READY (sent when JOIN_ACCEPT arms the
+     * buffers), so the stream can never race the accept. The watchdog re-sends
+     * the READY when the stream doesn't start (the ask was lost) or stops
+     * making progress (the in-flight transfer's head was missed — e.g. a
+     * duplicate accept was processed mid-stream); the server answers a re-ask
+     * with a full restart behind a CHANNEL_BULK re-base. */
+    uint32_t dlProgressBytes;    /* bulk bytes observed at the last watchdog check */
+    uint32_t dlProgressTick;     /* localTick when dlProgressBytes last advanced
+                                  * (also re-armed by each READY send) */
+    uint8_t  dlReadyResends;     /* restart asks this download; capped → ERROR */
+
     /* Map desync recovery (resync) — a parallel download that runs while the
      * client keeps playing (joinState stays CONNECTED) and hot-swaps the map
      * in on completion. Mirrors the join-download fields above. */
@@ -1216,6 +1228,33 @@ static void udpClientSendMapResyncRequest(TransportUdpClientCtx *c, uint32_t gen
     udpClientSendTo(c, reqBuf, sizeof(reqBuf));
 }
 
+/* ---- Join-download readiness/watchdog. localTick runs at 100/s. ----
+ *
+ * Two thresholds, matching the round-log transfer's shape: a READY that drew
+ * no stream at all is re-asked quickly (the datagram is cheap and the server
+ * treats a pre-stream re-ask as a plain re-arm), while a stream that started
+ * and then went silent gets the longer stall window first — the channel's own
+ * retransmits recover ordinary loss well inside it, so a stall this long means
+ * the transfer is unrecoverable at the channel level (its head was consumed
+ * before the buffers were armed, or the server already finished sending) and
+ * only a restart re-ask can complete it. */
+#define MAP_DL_READY_RESEND_TICKS 100  /* ~1s: no stream yet — re-ask */
+#define MAP_DL_STALL_TICKS        500  /* ~5s of zero stream progress — restart */
+#define MAP_DL_MAX_RESTARTS        10  /* give up + ERROR after this many re-asks */
+
+/* Tell the server this client's download buffers are armed. The server begins
+ * (or, for a re-ask, restarts behind a CHANNEL_BULK re-base) the map stream.
+ * connId lets the server drop an address-spoofed READY, which could otherwise
+ * reset a healthy client's in-flight transfer. Also re-arms the watchdog's
+ * quiet timer so the next threshold measures from this ask. */
+static void udpClientSendMapDlReady(TransportUdpClientCtx *c) {
+    uint8_t reqBuf[PACKET_HEADER_SIZE + 8];
+    packHeader(reqBuf, PACKET_MAP_DL_READY, c->outSequence++);
+    packConnId(reqBuf + PACKET_HEADER_SIZE, c->connId);
+    udpClientSendTo(c, reqBuf, sizeof(reqBuf));
+    c->dlProgressTick = c->localTick;
+}
+
 /* ---- Round-log transfer (BULK_KIND_ROUND_LOG). localTick runs at 100/s. ----
  *
  * Two independent deadlines, not one total budget. A request has FIRST_BYTE
@@ -1828,6 +1867,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * re-accept with a CTRL_CHANNEL_RESET, so the bulk receiver re-bases
                  * cleanly. mapInstalled goes false until the new map lands, which
                  * holds the preview on its prior frame (no half-map). */
+                /* Duplicate spectator accept for the lobby-map fetch already in
+                 * flight: same wipe hazard as the player dup-accept guard — a
+                 * mid-stream bulkReceiverInit loses the body framing and the
+                 * rest of the stream is swallowed. Same size while still
+                 * downloading means this accept describes the fetch we are
+                 * already receiving; keep the armed state. A finished fetch
+                 * (specLobbyMapDownloading false) re-arms below as before —
+                 * that is the mid-lobby map-change re-accept. */
+                if (specMapSize != 0 &&
+                    c->joinState == UDP_CLIENT_SPECTATING &&
+                    c->specLobbyMapDownloading &&
+                    c->mapDownloadBuf != NULL &&
+                    specMapSize == c->mapDownloadTotal) {
+                    break;
+                }
                 if (specMapSize != 0 && specMapSize <= MAP_DOWNLOAD_MAX_SIZE) {
                     if (c->mapDownloadBuf != NULL) {
                         free(c->mapDownloadBuf);
@@ -1856,6 +1910,26 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
              * throughout the client — reject the join instead. */
             if (assignedSlot >= MAX_TANKS) {
                 c->joinState = UDP_CLIENT_ERROR;
+                break;
+            }
+
+            /* Duplicate accept for the download already in flight. The server
+             * re-sends the accept for every JOIN it hears from a connected
+             * address, and the client's JOIN retries make a second accept
+             * routine under lag. Re-running the re-arm below mid-stream would
+             * reset the bulk receiver's framing in the middle of a body — the
+             * remaining stream bytes would then parse as a garbage stream
+             * header and every byte after them would be silently swallowed,
+             * wedging the download with no recovery (the channel has already
+             * acked the bytes, so the server never re-sends them). Same slot
+             * and same size mean the accept describes the download we are
+             * already receiving; drop it. A different size falls through — the
+             * map changed under us, and the full re-arm (plus the READY-driven
+             * restart) is exactly what recovers that. */
+            if (c->joinState == UDP_CLIENT_DOWNLOADING_MAP &&
+                c->mapDownloadBuf != NULL &&
+                assignedSlot == c->playerNum &&
+                unpackU32(buf + pos + 4) == c->mapDownloadTotal) {
                 break;
             }
             c->playerNum = assignedSlot;
@@ -1925,11 +1999,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             c->joinState = UDP_CLIENT_DOWNLOADING_MAP;
 
-            /* No "ready for map" round-trip is sent: the map streams on
-             * CHANNEL_BULK and the per-tick standalone PACKET_CHANNEL (now sent
-             * during DOWNLOADING_MAP) acks it as it arrives. Address ownership
-             * was already proven by the join cookie, so the server begins
-             * streaming right after this accept. */
+            /* Readiness round-trip: the server holds the map stream until this
+             * client's PACKET_MAP_DL_READY, so the stream head can never arrive
+             * before the buffers above exist (an unsolicited stream drained
+             * while still JOINING was consumed with nowhere to put it, and the
+             * channel's acks meant the server never re-sent it — the wedged
+             * "Downloading map…" lobby). The per-tick standalone PACKET_CHANNEL
+             * (sent during DOWNLOADING_MAP) acks the stream as it arrives, and
+             * the watchdog in transportUdpClientTick re-asks if the READY is
+             * lost or the stream stalls. */
+            c->dlProgressBytes = 0;
+            c->dlReadyResends = 0;
+            udpClientSendMapDlReady(c);
         }
         break;
 
@@ -3196,6 +3277,48 @@ static bool udpClientTick(void *ctx) {
     /* Control-event acks now ride the channel-frame trailer (the per-tick
      * standalone PACKET_CHANNEL below, or an input trailer during running),
      * so the dedicated coalesced control-ack emitter is retired. */
+
+    /* Join-download watchdog. Progress is read the same way the percent
+     * accessor reads it: the reassembled count, or the bulk receiver's live
+     * body counter while its dst is our buffer. While the ask is unanswered
+     * (no stream started) the READY is re-sent on the short threshold; once
+     * the stream is visibly ours, only a hard stall (the channel's own
+     * retransmits exhausted their reach) re-asks, which the server answers
+     * with a restart behind a CHANNEL_BULK re-base. Capped so a server that
+     * can never complete the transfer surfaces as a connect error instead of
+     * an endless silent restart loop. */
+    if (c->joinState == UDP_CLIENT_DOWNLOADING_MAP) {
+        uint32_t have = c->mapDownloadReceived;
+        bool streaming = (c->mapDownloadBuf != NULL &&
+                          c->bulkRecv.dst == c->mapDownloadBuf);
+        if (streaming && c->bulkRecv.bodyReceived > have) {
+            have = c->bulkRecv.bodyReceived;
+        }
+        if (have != c->dlProgressBytes) {
+            c->dlProgressBytes = have;
+            c->dlProgressTick  = c->localTick;
+        } else if (c->localTick - c->dlProgressTick >=
+                   (streaming ? (uint32_t)MAP_DL_STALL_TICKS
+                              : (uint32_t)MAP_DL_READY_RESEND_TICKS)) {
+            if (c->dlReadyResends >= MAP_DL_MAX_RESTARTS) {
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "map download unrecoverable: %u restart asks, "
+                    "%u/%u bytes -> ERROR",
+                    (unsigned)c->dlReadyResends, (unsigned)have,
+                    (unsigned)c->mapDownloadTotal);
+                c->joinState = UDP_CLIENT_ERROR;
+            } else {
+                c->dlReadyResends++;
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "map download quiet (%u/%u bytes, streaming=%d) -> "
+                    "re-sending READY (ask %u/%u)",
+                    (unsigned)have, (unsigned)c->mapDownloadTotal,
+                    (int)streaming, (unsigned)c->dlReadyResends,
+                    (unsigned)MAP_DL_MAX_RESTARTS);
+                udpClientSendMapDlReady(c);
+            }
+        }
+    }
 
     /* Handle join handshake — send/resend join requests */
     if (c->joinState == UDP_CLIENT_JOINING) {
