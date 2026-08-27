@@ -115,19 +115,13 @@
         .beta summary::-webkit-details-marker { display: none; }
         .beta ul { margin: .5rem 0 .25rem 1.1rem; }
         .beta li { margin-bottom: .35rem; }
+        .foot-cta { display: flex; }
         .footlinks {
             display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; align-items: center;
         }
         .footlinks a { color: var(--muted); }
         .footlinks a:hover { color: var(--text); }
         .footlinks .sep { opacity: .4; }
-        .log summary { cursor: pointer; color: var(--muted); list-style: none; user-select: none; }
-        .log summary::-webkit-details-marker { display: none; }
-        #output {
-            max-height: 140px; overflow-y: auto;
-            font-family: "Courier New", monospace; color: var(--muted);
-            padding: .4rem 0 0; white-space: pre-wrap;
-        }
     </style>
     <script>
     /* Clean-URL support. The game reads its mode from window.location.search,
@@ -246,16 +240,16 @@
             </ul>
             <p>Found a problem? Let us know on <a href="https://discord.gg/znGR3VMaqd" target="_blank" rel="noopener">Discord</a> or the <a href="https://www.winbolo.net/forums/" target="_blank" rel="noopener">forums</a>.</p>
         </details>
+        <div class="foot-cta">
+            <a class="chip chip-accent" href="https://store.steampowered.com/app/4672140/WinBolo/"
+               target="_blank" rel="noopener">Download &amp; play free on Steam</a>
+        </div>
         <div class="footlinks">
             <span>WinBolo &copy; 1998&ndash;<span id="year"></span> John Morrison</span>
             <span class="sep">&middot;</span>
             <a href="https://www.winbolo.com/" target="_blank" rel="noopener">winbolo.com</a>
             <a href="https://www.winbolo.net/" target="_blank" rel="noopener">winbolo.net</a>
         </div>
-        <details class="log">
-            <summary>Show log</summary>
-            <div id="output"></div>
-        </details>
     </footer>
 
     <script>
@@ -283,17 +277,13 @@
                 return { url: devProxy || '', subprotocol: null };
             })(),
             canvas: (function() { return document.getElementById('canvas'); })(),
-            print: (function() {
-                var outputElement = document.getElementById('output');
-                return function(text) {
-                    if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
-                    console.log(text);
-                    if (outputElement) {
-                        outputElement.textContent += text + '\n';
-                        outputElement.scrollTop = outputElement.scrollHeight;
-                    }
-                };
-            })(),
+            print: function(text) {
+                /* Console only. The on-page log panel this used to append to is
+                   gone; devtools is where anyone who wants this will look, and
+                   printErr below has always gone there and nowhere else. */
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.log(text);
+            },
             printErr: function(text) {
                 if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
                 console.error(text);
