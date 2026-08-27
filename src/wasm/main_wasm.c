@@ -229,6 +229,9 @@ static void windowRunGameTick(ClientSim *cs) {
 void frontEndTutorialNotePresentedFrame(void);
 static void tutorialRespawnPoll(void);
 
+/* Defined further down with the other winbolo.h entry points. */
+void windowLeaveGame(void);
+
 /* Cloud-prefs bridge (prefs_bridge_wasm.c). */
 void wbPrefsSyncNow(void);
 void wbPrefsPumpUpload(uint64_t nowMs);
@@ -262,11 +265,18 @@ static void main_loop_iteration(void) {
   }
 
   /* On the first frame after a terminal failure, raise the error dialog. The
-   * frozen state below keeps rendering it without ticking or sending. */
+   * frozen state below keeps rendering without ticking or sending for the few
+   * frames that run before the browser unloads the page.
+   *
+   * Dismissing it navigates back to the page the game launched from: there is
+   * no welcome screen to fall back to in the browser build, so without this the
+   * player is left on the cleared frame with only the menu bar over it. The
+   * latch stops this branch re-arming while the navigation completes. */
   if (s_connFailed && !s_connErrorShown) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
     s_connErrorShown = TRUE;
+    windowLeaveGame();
   }
 
   /* Game tick accumulation (replaces SDL_AddTimer).
@@ -969,6 +979,11 @@ void frontEndGameOver(ClientSim *cs) {
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
+  /* Dismissing the dialog goes back to the page the game launched from: the
+   * browser build has no welcome screen to rebuild through the way the desktop
+   * loop does, so the launching page is the destination. finishedLoop stops the
+   * tick for the frames that run before the browser unloads the page. */
+  windowLeaveGame();
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
