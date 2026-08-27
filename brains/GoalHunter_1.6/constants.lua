@@ -1065,8 +1065,18 @@ M.DRAIN_ARMOUR_MARGIN      = 3     -- extra armour buffer above flee threshold
 -- -------------------------------------------------------------------------
 -- Anticipatory reasoning: contested base avoidance
 -- -------------------------------------------------------------------------
-M.CONTESTED_BASE_PENALTY   = 120   -- cost added to bases with approaching enemy
-M.CONTESTED_BASE_RANGE     = 15    -- enemy must be within this range of base (tiles)
+-- Contested refuel base: MOVING enemy tanks near a base make it a bad place to
+-- sit and resupply. Cost is a SUM over qualifying tanks of
+--   PENALTY x (1 - dist/RANGE)
+-- so a tank parked on the base costs the full PENALTY and one at the range edge
+-- costs nothing (was a flat step that treated 14 tiles like 0). Distance is
+-- Manhattan (U.mdist), matching the range test. A tank an ALLY is already
+-- broadcasting an attack_tank goal against is skipped entirely — that threat is
+-- someone else's job and shouldn't also scare us off the pumps. The terms just
+-- add: no outnumbering multiplier (scaling by head count priced refuelling out
+-- of reach). See goals.contested_penalty; both refuel paths share it.
+M.CONTESTED_BASE_PENALTY   = 120   -- cost of ONE moving enemy tank sitting exactly on the base; scales linearly to 0 at CONTESTED_BASE_RANGE
+M.CONTESTED_BASE_RANGE     = 15    -- enemy must be within this range of base (tiles); also the distance over which the penalty fades to 0
 M.CONTESTED_BASE_HEADING   = 32    -- heading tolerance (bolo angle units, ~45°)
 
 -- -------------------------------------------------------------------------
@@ -2030,9 +2040,12 @@ M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
 --   refuel_at_base / flee_to_base   x1  (EXEMPT — the whole "refuel" GOAL_GROUP;
 --                                        a suicider still keeps itself fuelled)
 --   defend_pill                     x6  PILL_SUICIDER_DEFEND_MULT
+--   capture_pill / place_pill_strategic / def_build / wait_for_lgm x1 (EXEMPT:
+--     scooping and fielding the pills it kills IS the job; panic drops are
+--     survival; and waiting for its own LGM must never lose to the x3)
 --   everything else                 x3  PILL_SUICIDER_OTHER_MULT
---     (capture_base, capture_pill, repair_pill, attack_base, attack_tank,
---      place_pill_strategic, kill_lgm, wait_for_lgm, reposition, explore, ...)
+--     (capture_base, repair_pill, attack_base, attack_tank, kill_lgm,
+--      reposition, rescue_lgm, explore, ...)
 --
 -- attack_pill is exempted rather than tripled along with the rest because
 -- tripling EVERY pool including attack_pill would leave all relative

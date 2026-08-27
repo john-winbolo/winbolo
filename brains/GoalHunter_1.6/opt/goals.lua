@@ -517,6 +517,11 @@ local SUICIDER_EXEMPT_KINDS = {
   attack_pill    = true,   -- the role's entire purpose
   refuel_at_base = true,   -- the "refuel" GOAL_GROUP, both members: a suicider
   flee_to_base   = true,   -- still resupplies (and still flees at critical armour)
+  capture_pill   = true,   -- scooping the pills it kills is part of the job
+  place_pill_strategic = true, -- and so is fielding what it carries
+  def_build      = true,   -- panic drop under fire: survival, not a side quest
+  wait_for_lgm   = true,   -- companion to place/capture — x3 here would let the
+                           -- pool yank the tank away while its LGM is still out
 }
 local function suicider_cost_mult(state, kind)
   if not (state and state.is_pill_suicider) then return 1.0 end
@@ -1267,7 +1272,8 @@ local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
   -- Lower armour threshold for wounded pills (few shots needed)
   local min_armour = C.ATTACK_PILL_MIN_ARMOUR
   if state.wounded_pill then min_armour = 15 end
-  if info.armour < min_armour then return nil end
+  -- pill_suicider: no armour floor — see the live pool-6 gate for rationale.
+  if info.armour < min_armour and not state.is_pill_suicider then return nil end
   -- attack.pp_blacklisted: a pill whose plan_position angle sweep was abandoned
   -- (its chunk kept getting killed by the tick budget) stays out of the pool for
   -- PP_BLACKLIST_TICKS — otherwise pick_goal re-adopts the same take and the
@@ -6743,7 +6749,12 @@ local function sync_ally_claimed_rejects(state, info)
       local pill_hp = e._hpv
       if pill_hp >= C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
          and cur_armour < C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR
-         and not ammoless_helper then
+         and not ammoless_helper
+         -- A pill_suicider attacks regardless of armour — dying on the pill
+         -- is an accepted outcome, so the safety gate does not apply. An
+         -- existing reject clears via the elseif below the moment the role
+         -- (or armour) makes this condition false.
+         and not state.is_pill_suicider then
         if e._reject ~= "armour_too_low" then
           e._reject = "armour_too_low"
           e._reject_remaining = 0
