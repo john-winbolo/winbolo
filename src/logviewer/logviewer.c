@@ -223,7 +223,11 @@ void lv_windowFastForward(void) {
     lv_drawDirtyScreen();
     lv_screenFastForward();
     lv_drawDirtyScreen();
-    lv_screenUpdate(redraw);
+    /* Defer the render to the flag consumer (embed: lvEmbedFrameTexture;
+     * standalone: the main loop) so the repaint pairs with a fresh
+     * blit-offset snapshot instead of tearing one frame — see
+     * lv_screenPanToTotalPixels. */
+    g_lv->wantScreenUpdate = TRUE;
     lv_clientMutexRelease();
 }
 
@@ -233,7 +237,8 @@ void lv_windowRewind(void) {
     lv_drawDirtyScreen();
     lv_screenRewind();
     lv_drawDirtyScreen();
-    lv_screenUpdate(redraw);
+    /* Defer to the flag — see lv_windowFastForward. */
+    g_lv->wantScreenUpdate = TRUE;
     lv_screenGetTime(line);
     lv_clientMutexRelease();
     if (g_lv->playIsPlaying == TRUE) {

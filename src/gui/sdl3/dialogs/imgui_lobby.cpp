@@ -156,6 +156,7 @@ void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
 void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
+bool lvEmbedFocusPlayerByName(const char *name);
 void lvEmbedStepTicks(int ticks);
 #endif
 #if !BOLO_REEL_WBN_FETCH_CURL
@@ -2588,7 +2589,11 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
         SDL_Texture *tex = mapPreviewViewGetTexture(activeChooser->previewView);
         if (tex) {
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
+            bool nearest =
+                mapPreviewViewWantsNearestSampling(activeChooser->previewView);
+            if (nearest) imguiPushNearestSampling();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            if (nearest) imguiPopNearestSampling();
             ImGui::SetCursorScreenPos(imgPos);
             ImGui::SetNextItemAllowOverlap();
             ImGui::InvisibleButton("##MapPreviewDragMax",
@@ -4439,6 +4444,113 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
     }
 }
 
+/* True when the lobby's right panel is currently showing the replay reel
+ * rather than the map. Defined below, next to the recap view statics it
+ * reads; declared here because the player list is rendered before them. */
+static bool lobbyRecapReelVisible(ClientSim *cs);
+
+/* Clicking a player's name jumps to that player in whichever view is on
+ * screen — the replay reel in the post-game recap, the map preview otherwise.
+ *
+ * Which view: the inline ##MapPanel preview is a fixed fit of the whole map
+ * bounding box and has no camera — every start is already on screen there
+ * and there is nothing to centre — so the jump drives the zoom popup, which
+ * does have a camera and is already what clicking the inline preview opens.
+ * Position data is the lobby slot's claimed start index (1-based, 0xFF when
+ * unclaimed) resolved through the start cache rebuildStartCompassCache
+ * fills from the map bytes, so no extra decompression happens per frame.
+ *
+ * Call immediately after the name text. Hover and click are tested on that
+ * text item instead of an overlaid InvisibleButton, so the trailing tag-pill
+ * SameLine chain and every other control in the row (gear, ping, kick, team
+ * and start dropdowns) keep their own hit areas — a real widget overlapping
+ * the name wins the hover test, which is the behaviour we want.
+ *
+ * The affordance is an underline plus the hand cursor rather than a tooltip:
+ * it needs no new string, so nothing ships untranslated. Players with no
+ * claimed start get no affordance at all, since there is nowhere to go. */
+static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
+    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+    if (!ls || !ls->connected) return;
+
+    /* The jump targets whatever view the player is actually looking at, so
+     * "show me them" always moves the thing on screen. The right panel is
+     * showing the replay reel exactly when the recap is up and its Map tab is
+     * not — the negation of the panel's own showMapPanel — in which case the
+     * reel travels to their tank, the same follow the stats-table rows use.
+     * On the map view (Map tab chosen, or an ordinary pre-game lobby with no
+     * recap at all) it stays the map-preview popup jump to their claimed
+     * start. */
+    const bool reelView = lobbyRecapReelVisible(cs);
+
+    if (reelView) {
+        /* No tank in the replay right now is the reel's existing no-target
+         * case: no affordance, nothing moves. */
+        if (!ls->playerName[0]) return;
+        if (!ImGui::IsItemHovered()) return;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImVec2 rmn = ImGui::GetItemRectMin();
+        ImVec2 rmx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(rmn.x, rmx.y - 1.0f), ImVec2(rmx.x, rmx.y - 1.0f),
+            ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            lvEmbedFocusPlayerByName(ls->playerName);
+        }
+        return;
+    }
+
+    if (!popupCompressedData || popupCompressedLen <= 0) return;
+    int start1 = (int)ls->startIdx;
+    if (start1 < 1 || start1 > (int)s_startCount || start1 > MAX_STARTS) return;
+    if (!ImGui::IsItemHovered()) return;
+
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    ImVec2 mn = ImGui::GetItemRectMin();
+    ImVec2 mx = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(mn.x, mx.y - 1.0f), ImVec2(mx.x, mx.y - 1.0f),
+        ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        int sqX = (int)s_startMapX[start1];
+        int sqY = (int)s_startMapY[start1];
+        /* Bounds are only the pre-parse framing hint; the explicit centre in
+         * mapPreviewPopupFocusMapSquare overrides them once the map parses,
+         * so a tight box around the target is all this needs. */
+        mapPreviewPopupFocusMapSquare(popupCompressedData, popupCompressedLen,
+                                      sqX - 8, sqY - 8, sqX + 8, sqY + 8,
+                                      sqX, sqY);
+    }
+}
+
+/* Clicking a row in the post-game recap's stats table zooms the replay reel
+ * onto that player's tank — the video overview, not the map preview. (The
+ * left-hand player-list name click keeps going to the map preview popup; the
+ * two entry points answer different questions and deliberately differ.)
+ *
+ * Position source: the logviewer's own live player table, which carries every
+ * tank's map square and sub-tile pixel at the current playback moment. That is
+ * strictly better than anything the recap summary has — RoundPlayerSummary is
+ * counters only, no coordinates — and it means the view tracks the player as
+ * playback continues rather than jumping once and going stale.
+ *
+ * The bridge is the player NAME: the lobby's slot numbering and the log's
+ * player numbering are separate spaces, and the name is the only key both
+ * carry. Bots are included; they have tanks in the replay like anyone else.
+ *
+ * No tank at the current replay time (dead, or not yet joined) — the reel is
+ * left exactly where the player had it, rather than being thrown at (0,0) or
+ * at a stale last-known spot that no longer shows anything. Scrubbing to a
+ * moment where they are alive and clicking again then works. */
+static void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
+    (void)isBot;
+    if (slot < 0 || slot >= MAX_TANKS) return;
+    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+    if (!ls || !ls->playerName[0]) return;
+    lvEmbedFocusPlayerByName(ls->playerName);
+}
+
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     const bool spectator = clientSimIsSpectator(cs);
@@ -5115,6 +5227,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     } else {
                         ImGui::Text("%s", nameBuf);
                     }
+                    lobbyNameJumpToPlayer(cs, i);
                 }
 
 
@@ -6312,6 +6425,21 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
  * of the panel flips it. */
 static bool s_recapShowMap = false;
 
+/* Is the right panel showing the replay reel right now? Exactly the negation
+ * of the panel's own showMapPanel test (`!lobbyShowLastRound || s_recapShowMap`
+ * at the ##MapPanel render): the reel is up when a last-round summary exists
+ * AND the panel has not been flipped to its Map tab. With the recap withheld
+ * at build level there is no reel, so this is constant false — matching the
+ * same #if the lobby uses to compute lobbyShowLastRound. */
+static bool lobbyRecapReelVisible(ClientSim *cs) {
+#if POSTGAME_STATS_ENABLED
+    return (clientSimGetLastRoundStats(cs) != NULL) && !s_recapShowMap;
+#else
+    (void)cs;
+    return false;
+#endif
+}
+
 /* How many of the round's awards the recap shows before the rest go behind the
  * expand. A round can win all eighteen, and a list that long buries the ones
  * worth reading. */
@@ -6369,9 +6497,23 @@ static float s_reelViewW      = 0.0f;
 static float s_reelViewH      = 0.0f;
 /* Where the seek slider sits, and whether the player is dragging it. Held
  * apart from the playhead so a drag is not fought by the reel advancing under
- * it; the seek itself lands once, on release. */
+ * it. The reel follows the handle live while it is dragged — see the scrub
+ * block in the transport row for what each direction costs. */
 static float s_reelSeekRatio  = 0.0f;
 static bool  s_reelSeeking    = false;
+/* Last ratio actually handed to the decoder, and when. Tracks the playhead
+ * while idle so a drag starts from the truth. */
+static float  s_reelSeekApplied    = 0.0f;
+static Uint64 s_reelSeekAppliedMs  = 0;
+/* Playing state latched when a drag began, restored when it ends: a scrub
+ * pauses the reel for its duration rather than letting every applied seek
+ * tear down and rebuild the two SDL playback timers. */
+static bool  s_reelSeekWasPlaying  = false;
+
+/* A backward scrub cannot continue the decode — it has to restore the round's
+ * snapshot and replay from there — so only the newest one in a burst is paid
+ * for. Forward scrubs are incremental and run every frame. */
+#define RECAP_SCRUB_BACK_MS 90
 
 /* Where a client that did not record the round stands in getting it from the
  * server that did: the transfer's state as a ClientRoundLogState, the percent
@@ -6614,6 +6756,9 @@ static void lobbyReelEnd(void) {
     s_reelAutoPaused = false;
     s_reelSeekRatio  = 0.0f;
     s_reelSeeking    = false;
+    s_reelSeekApplied   = 0.0f;
+    s_reelSeekAppliedMs = 0;
+    s_reelSeekWasPlaying = false;
     s_recapSlack     = 0.0f;
     /* The next summary asks for its own round's log, and reports nothing about
      * a transfer until it has one. */
@@ -7064,7 +7209,14 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         ImVec2 uv0((float)srcX / (float)texW, (float)srcY / (float)texH);
         ImVec2 uv1((float)(srcX + visW) / (float)texW,
                    (float)(srcY + visH) / (float)texH);
+        /* The reel is game pixel art magnified `zoom` times. Drawn through
+         * ImGui the SDL_Renderer backend forces LINEAR on every texture it
+         * binds, which is what made the replay look soft — the same defect the
+         * lobby's inline map preview had. Point-sample it for the blit and put
+         * LINEAR back for the surrounding UI. */
+        imguiPushNearestSampling();
         ImGui::Image((ImTextureID)tex, imgSize, uv0, uv1);
+        imguiPopNearestSampling();
     } else {
         ImGui::Dummy(rect);
     }
@@ -7162,6 +7314,9 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (!s_reelSeeking) {
         s_reelSeekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
         if (s_reelSeekRatio > 1.0f) s_reelSeekRatio = 1.0f;
+        /* Idle: the applied value is wherever the reel actually is, so the
+         * next drag measures its first step from the truth. */
+        s_reelSeekApplied = s_reelSeekRatio;
     }
     unsigned curSecs = (unsigned)(curMs / 1000u);
     char seekLabel[48];
@@ -7180,13 +7335,59 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * parses back to 0 and pins every seek to the start of the log. */
     if (ImGui::SliderFloat("##ReelSeek", &s_reelSeekRatio, 0.0f, 1.0f, seekLabel,
                            ImGuiSliderFlags_NoRoundToFormat)) {
-        s_reelSeeking = true;
+        if (!s_reelSeeking) {
+            /* Freeze playback for the scrub instead of letting every applied
+             * seek pause and resume it — lvEmbedSeekRatio does that by
+             * removing and re-adding the two SDL playback timers, which is
+             * not something to do sixty times a second. */
+            s_reelSeeking        = true;
+            s_reelSeekWasPlaying = lvEmbedIsPlaying();
+            if (s_reelSeekWasPlaying) lvEmbedPause();
+            s_reelSeekAppliedMs  = 0;
+        }
     }
-    /* One seek, on release: every frame of the drag would rebuild the world
-     * from a snapshot and stall the whole lobby. */
-    if (s_reelSeeking && ImGui::IsItemDeactivatedAfterEdit()) {
+    /* Live scrub: the tanks follow the handle as it is dragged, not only when
+     * it is dropped.
+     *
+     * The two directions cost very different amounts. A seek restores the
+     * newest snapshot at or before the target and re-decodes forward to it at
+     * 20 ms of log per tick, and a round carries essentially one snapshot — at
+     * its start — so a naive per-frame seek re-decoded the whole round every
+     * frame, which is what made this release-only. Forward seeks no longer pay
+     * that: lv_screenSeekToAbsoluteMs now continues the decode from where it
+     * already stands, so dragging right costs only the ticks the handle
+     * crossed since the last frame and can run every frame. Dragging left
+     * still has to rewind through the snapshot, so it is throttled and only
+     * the newest seek in a burst is paid for.
+     *
+     * The release below always applies the exact dropped value, so where it
+     * lands is never a throttled approximation. */
+    if (s_reelSeeking && ImGui::IsItemActive()) {
+        Uint64 nowMs = SDL_GetTicks();
+        bool   apply = false;
+        if (s_reelSeekRatio > s_reelSeekApplied) {
+            apply = true;                       /* forward: incremental */
+        } else if (s_reelSeekRatio < s_reelSeekApplied) {
+            apply = (nowMs - s_reelSeekAppliedMs >= RECAP_SCRUB_BACK_MS);
+        }
+        if (apply) {
+            lvEmbedSeekRatio(s_reelSeekRatio);
+            s_reelSeekApplied   = s_reelSeekRatio;
+            s_reelSeekAppliedMs = nowMs;
+        }
+    }
+    /* IsItemDeactivated, not ...AfterEdit: this also has to un-pause, and a
+     * release that ImGui does not count as an edit would otherwise leave the
+     * reel frozen for good. */
+    if (s_reelSeeking && ImGui::IsItemDeactivated()) {
         s_reelSeeking = false;
+        /* Land exactly on the dropped value. A no-op when the last live apply
+         * already got there — a forward seek to the current time decodes
+         * nothing. */
         lvEmbedSeekRatio(s_reelSeekRatio);
+        s_reelSeekApplied = s_reelSeekRatio;
+        if (s_reelSeekWasPlaying) lvEmbedPlay();
+        s_reelSeekWasPlaying = false;
     }
     ImGui::PopItemWidth();
 
@@ -8331,6 +8532,28 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                                        ImGui::GetColorU32(mine));
             }
             ImGui::TableSetColumnIndex(0);
+            /* Row hit area. The previous attempt hand-rolled a hover band from
+             * GetWindowContentRegionMin/Max plus IsWindowHovered, and never
+             * fired — inside a table those are the wrong window and the wrong
+             * coordinate space. This is the canonical ImGui table row-click
+             * recipe instead: a label-less Selectable spanning every column,
+             * submitted first so the cells draw on top of it, with
+             * AllowOverlap so they keep their own hit-testing. It also brings
+             * its own hover highlight, which is the affordance. */
+            ImGui::PushID(r);
+            bool rowClicked = ImGui::Selectable(
+                "##recapRow", false,
+                ImGuiSelectableFlags_SpanAllColumns |
+                    ImGuiSelectableFlags_AllowOverlap,
+                ImVec2(0.0f, 0.0f));
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            ImGui::PopID();
+            if (rowClicked) {
+                lobbyRecapRowJump(cs, (int)p->slot, p->isBot != 0);
+            }
+            ImGui::SameLine(0.0f, 0.0f);
             lastRoundRenderName(cs, p->slot, p->isBot != 0);
             ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
             ImGui::TableSetColumnIndex(2); ImGui::Text("%u", (unsigned)p->deaths);
@@ -10133,7 +10356,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
                             ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
                             IM_COL32(0, 0, 80, 255));
+                        /* Same magnified 1-px-per-square art as the
+                         * two-column path — point-sample it. */
+                        imguiPushNearestSampling();
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                        imguiPopNearestSampling();
                         ImVec2 miniMin = ImGui::GetItemRectMin();
                         bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                                 effHostMap, miniMin, innerSize,
@@ -10967,7 +11194,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
                     ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
                     IM_COL32(0, 0, 80, 255));
+                /* 1 px per map square cropped to the bounding box and blown
+                 * up over the panel — a 5-7x magnification that bilinear
+                 * turns to mush. Point-sample it; the surrounding UI goes
+                 * back to LINEAR straight after. */
+                imguiPushNearestSampling();
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                imguiPopNearestSampling();
                 ImVec2 miniMin = ImGui::GetItemRectMin();
                 bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                         effHostMap, miniMin, innerSize,

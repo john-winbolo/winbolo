@@ -32,7 +32,8 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
-#include "dialogs/dialog_footer.h"   /* C++ (namespace WBUI) — outside extern "C" */
+#include "dialogs/dialog_footer.h"        /* C++ (namespace WBUI) — outside extern "C" */
+#include "dialogs/imgui_dialog_utils.h"   /* imguiPush/PopNearestSampling */
 
 extern "C" {
 #include "global.h"
@@ -118,6 +119,28 @@ void mapPreviewPopupOnClickFile(const char *mapPath,
     if (!ImGui::IsItemClicked()) return;
     mapPreviewPopupOpenFile(mapPath, boundsMinX, boundsMinY,
                             boundsMaxX, boundsMaxY);
+}
+
+/* Zoom level a "jump to this square" lands on. 2x is the same step
+ * mapPreviewViewSetInitialBounds opens at, so a jump looks like a normal
+ * open that happens to be somewhere specific. Only ever raises the zoom —
+ * a user already zoomed in further keeps their level. */
+#define POPUP_FOCUS_MIN_ZOOM 2.0f
+
+void mapPreviewPopupFocusMapSquare(const BYTE *compressedData, int compressedLen,
+                                   int boundsMinX, int boundsMinY,
+                                   int boundsMaxX, int boundsMaxY,
+                                   int mapSqX, int mapSqY) {
+    /* Already open: keep the loaded map (and the user's zoom) and just
+     * travel — reloading would flash the whole view for no reason. */
+    if (!g_popupOpen) {
+        mapPreviewPopupOpenCompressed(compressedData, compressedLen,
+                                      boundsMinX, boundsMinY,
+                                      boundsMaxX, boundsMaxY);
+    }
+    if (!g_popupOpen || !g_popupView) return;
+    mapPreviewViewCenterOnMapSquare(g_popupView, mapSqX, mapSqY,
+                                    POPUP_FOCUS_MIN_ZOOM);
 }
 
 void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH) {
@@ -544,11 +567,21 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                 ImGui::EndChild();
                 ImGui::SameLine();
                 ImVec2 imgMin = ImGui::GetCursorScreenPos();
+                bool nearest = mapPreviewViewWantsNearestSampling(g_popupView);
+                if (nearest) imguiPushNearestSampling();
                 ImGui::Image((ImTextureID)tex, mapSize);
+                if (nearest) imguiPopNearestSampling();
                 highlightStartOnMap(imgMin, mapSize, focusedStart);
             } else if (tex) {
                 ImVec2 imgMin = ImGui::GetCursorScreenPos();
+                /* Point-sample the zoomed map: the widget's offscreen is
+                 * already built at the display size, so bilinear here only
+                 * re-blended crisp tile art across the sub-pixel gap between
+                 * the integer texture and the float Image rect. */
+                bool nearest = mapPreviewViewWantsNearestSampling(g_popupView);
+                if (nearest) imguiPushNearestSampling();
                 ImGui::Image((ImTextureID)tex, contentSize);
+                if (nearest) imguiPopNearestSampling();
                 /* Overlay an InvisibleButton on the image rect so a
                  * click-drag pans the map instead of dragging the whole
                  * popup window around the lobby. The button takes the

@@ -25,6 +25,7 @@
 
 #include <stdlib.h>
 #include "backend.h"
+#include "lv_players.h"   /* lv_playersSetViewByName — reel focus-on-player */
 #include "lv_global.h"
 #include "clientmutex.h"
 #include "draw.h"
@@ -482,6 +483,12 @@ void lvEmbedSetViewportSize(int viewW, int viewH) {
 /* Bring the render target up to date when the decode timers asked for it, and
  * hand back the texture plus the visible slice within it. Never clears and
  * never presents — the host's frame owns the framebuffer. */
+/* Sub-tile blit origin latched at the moment the render target was last
+ * painted — see the note in lvEmbedFrameTexture. Only ever written under
+ * lv_clientMutex. */
+static int s_embedSubX = 0;
+static int s_embedSubY = 0;
+
 bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
                          int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH) {
     SDL_Texture *tex;
@@ -491,12 +498,30 @@ bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
         return false;
     }
 
+    /* Latch the sub-tile offset WITH the render, under the same lock.
+     *
+     * lv_screenLogTick runs on the SDL timer thread (lv_windowTimer, 20 ms)
+     * and moves the camera there — lv_screenFollowCentredTank writes xOffset
+     * and subPxX/subPxY every tick. Reading subPx after releasing the mutex
+     * could therefore pick up a camera one or more ticks newer than the tile
+     * grid baked into the render target: when the camera crossed a tile
+     * boundary in that gap, xOffset had advanced a tile while the texture
+     * still held the old grid, so the blit's source origin jumped a whole tile
+     * the wrong way and corrected on the next frame — the reel's flicker.
+     *
+     * Latching inside the lock makes the offset handed out always describe the
+     * content actually in the texture. On frames that do not re-render, the
+     * previous latch still matches the texture, which is exactly right:
+     * stale-but-matched is correct, fresh-but-torn is the bug. */
+    lv_clientMutexWaitFor();
     if (g_lv->wantScreenUpdate == TRUE) {
-        lv_clientMutexWaitFor();
         lv_screenUpdate(redraw);
-        lv_clientMutexRelease();
         g_lv->wantScreenUpdate = FALSE;
+        lv_screenGetSubOffset(&s_embedSubX, &s_embedSubY);
     }
+    subX = s_embedSubX;
+    subY = s_embedSubY;
+    lv_clientMutexRelease();
 
     tex = lv_drawGetGameTexture();
     if (tex == NULL) {
@@ -504,7 +529,6 @@ bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
     }
     if (outTexture != NULL) *outTexture = tex;
     lv_drawGetGameTargetSize(outTexW, outTexH);
-    lv_screenGetSubOffset(&subX, &subY);
     if (outSrcX != NULL) *outSrcX = subX;
     if (outSrcY != NULL) *outSrcY = subY;
     if (outSrcW != NULL) *outSrcW = lv_screenGetSizeX() * TILE_SIZE_X;
@@ -566,8 +590,18 @@ void lvEmbedPanBegin(void) {
     if (!s_embedActive || g_lv == NULL) {
         return;
     }
+    /* Both halves of the camera under one lock. A replay tick on the SDL timer
+     * thread can land between the two reads, and the pair is exactly where
+     * that hurts: at a tile crossing the tile index advances while subPx wraps
+     * 15 -> 0, so a torn pair anchors the drag a full tile away from where the
+     * view actually is and the whole drag is offset by 16 px.
+     *
+     * Live values, not the render-time snapshot: a drag anchors to where the
+     * camera IS, not to what the last painted texture shows. */
+    lv_clientMutexWaitFor();
     lv_screenGetOffsets(&ox, &oy);
     lv_screenGetSubOffset(&sx, &sy);
+    lv_clientMutexRelease();
     s_embedPanStartPxX = (int)ox * TILE_SIZE_X + sx;
     s_embedPanStartPxY = (int)oy * TILE_SIZE_Y + sy;
 }
@@ -675,6 +709,36 @@ static void lvEmbedSeekWindowMs(uint32_t roundRelMs, bool centreOnCell,
         lv_windowPlay();
     }
     g_lv->wantScreenUpdate = TRUE;
+}
+
+/* Point the reel at a named player: adopt them as the followed tank, turn the
+ * follow camera on, and move to them now rather than waiting for the next
+ * decoded tick (a paused reel would otherwise not move at all).
+ *
+ * Name is the key because the lobby's slot numbering and the log's player
+ * numbering are separate spaces and the name is what both carry. False when
+ * nobody matches or the match has no tank on the map at this point in the
+ * replay — dead, or not yet joined — and the caller leaves the view where the
+ * player had it rather than jumping somewhere arbitrary. */
+bool lvEmbedFocusPlayerByName(const char *name) {
+    bool found;
+
+    if (!s_embedActive || g_lv == NULL || g_lv->isLoaded == FALSE) {
+        return false;
+    }
+    lv_clientMutexWaitFor();
+    found = lv_playersSetViewByName(name);
+    if (found) {
+        g_lv->centredTank = TRUE;
+        lv_screenFollowCentredTank();
+        lv_drawDirtyScreen();
+    }
+    lv_clientMutexRelease();
+    if (found) {
+        lv_windowNeedRedraw();
+        g_lv->wantScreenUpdate = TRUE;
+    }
+    return found;
 }
 
 /* A clip names a place as well as a moment, so the view follows it there. */
