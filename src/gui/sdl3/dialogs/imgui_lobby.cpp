@@ -6455,12 +6455,6 @@ static bool s_recapShowAllAwards = false;
  * recap is for. Folded away, the reel gets the rows' height. */
 static bool s_recapShowHighlights = false;
 
-/* Which scoreboard column the table is sorted on, mirrored out of the table's
- * own sort specs. Columns are sized before the specs can be read, so the
- * sorted column — the one that has to leave room for the sort arrow — is known
- * here a frame late, which is a frame nobody can see. */
-static int s_recapSortCol = -1;
-
 /* Skull for the scoreboard's death columns, drawn square at text height and
  * tinted to the text colour so it sits with the other header art rather than
  * shouting. Returns false when the asset is missing, which is the caller's
@@ -6509,6 +6503,34 @@ static Uint64 s_reelSeekAppliedMs  = 0;
  * pauses the reel for its duration rather than letting every applied seek
  * tear down and rebuild the two SDL playback timers. */
 static bool  s_reelSeekWasPlaying  = false;
+
+#if BOLO_RECAP_CLIP_GIF
+/* Crop frame: an optional rectangle over the reel that an export takes instead
+ * of the whole visible view, so a clip can be posted without the map around it.
+ * Off by default, and off is the untouched full-view path.
+ *
+ * Held normalized to the displayed image rather than in pixels, so resizing the
+ * lobby or zooming the reel keeps the same framing rather than leaving the box
+ * pointing at a different part of the map. Session-only, by design — a crop is
+ * chosen for the clip being taken, not kept as a preference. */
+static bool  s_reelCropOn = false;
+static float s_reelCropX0 = 0.25f;
+static float s_reelCropY0 = 0.25f;
+static float s_reelCropX1 = 0.75f;
+static float s_reelCropY1 = 0.75f;
+
+/* The slice the reel last blitted, in render-target pixels: origin plus the
+ * whole-pixel visible extent the draw computed. The crop frame is normalized
+ * against this extent, so a capture can map the frame back onto exactly the
+ * pixels the outline was drawn over rather than re-deriving the mapping and
+ * risking a different answer. */
+static SDL_Rect s_reelLastSlice = { 0, 0, 0, 0 };
+
+/* Smallest crop the frame will shrink to, in displayed pixels. */
+static const float REEL_CROP_MIN_PX = 16.0f;
+/* Grab margin either side of an edge, in displayed pixels. */
+static const float REEL_CROP_GRAB_PX = 6.0f;
+#endif
 
 /* A backward scrub cannot continue the decode — it has to restore the round's
  * snapshot and replay from there — so only the newest one in a burst is paid
@@ -6974,6 +6996,201 @@ static void lobbyChatInputAppendTime(uint32_t curMs);
  * from here. */
 static bool lobbyClipGifButton(const char *id, bool compact);
 static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+/* Whether an export is running. The crop frame reads it to hold still: the
+ * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
+ * so letting it be dragged mid-capture would show a box the recording is not
+ * following. */
+static bool lobbyClipGifActive(void);
+
+/* The crop control, sitting with the export it crops. Names the frame rather
+ * than describing it — the same rule the GIF control's caption follows, and
+ * the reason both ship a word rather than a sentence. */
+static const char *const REEL_CROP_TITLE = "Crop";
+
+/* Toggle button carrying a drawn square-frame glyph. Drawn with the draw list
+ * rather than loaded, so the control needs no new art asset and follows the
+ * text colour and UI scale the way the icons beside it do. Stays pressed while
+ * the frame is up, which is how the file's other state buttons read. */
+static bool lobbyReelCropButton(const char *id) {
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float lineH = ImGui::GetTextLineHeight();
+    const bool  on    = s_reelCropOn;
+
+    if (on) {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    }
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::Button(id, ImVec2(lineH + sty.FramePadding.x * 2.0f,
+                                            lineH + sty.FramePadding.y * 2.0f));
+    if (on) {
+        ImGui::PopStyleColor();
+    }
+
+    /* The glyph: a square outline inset in the button, with the corners drawn
+     * heavier so it reads as a crop frame rather than an empty box. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    ImVec2 a(p.x + sty.FramePadding.x + 1.0f, p.y + sty.FramePadding.y + 1.0f);
+    ImVec2 b(a.x + lineH - 2.0f, a.y + lineH - 2.0f);
+    dl->AddRect(a, b, col, 0.0f, 0, 1.0f);
+    float tick = (b.x - a.x) * 0.32f;
+    dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x + tick, a.y), col, 2.0f);
+    dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x, a.y + tick), col, 2.0f);
+    dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x - tick, b.y), col, 2.0f);
+    dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x, b.y - tick), col, 2.0f);
+
+    imguiHelpTooltip(REEL_CROP_TITLE);
+    return clicked;
+}
+
+/* Draw the crop frame over the reel and let it be moved and resized. Returns
+ * true when the frame owns this frame's mouse, so the caller sits its pan out.
+ *
+ * Precedence: while the frame is up, its interior and its handles win over the
+ * reel's drag-pan. The handles are submitted after the reel's own overlay
+ * button, which is marked allow-overlap, so ImGui's hit test hands them the
+ * hover; the caller additionally gates the pan on the return value so the press
+ * frame cannot slip through. The wheel is left alone entirely — zooming still
+ * works with the cursor anywhere over the reel, frame included.
+ *
+ * Everything is computed in displayed pixels and stored back normalized, and
+ * every edge is clamped inside the image, so the frame can neither leave the
+ * view nor invert. */
+static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
+                                 bool panHoldsMouse) {
+    if (!s_reelCropOn || imgSize.x < 1.0f || imgSize.y < 1.0f) {
+        return false;
+    }
+    const bool locked = lobbyClipGifActive();
+
+    float x0 = imgMin.x + s_reelCropX0 * imgSize.x;
+    float y0 = imgMin.y + s_reelCropY0 * imgSize.y;
+    float x1 = imgMin.x + s_reelCropX1 * imgSize.x;
+    float y1 = imgMin.y + s_reelCropY1 * imgSize.y;
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    /* Dim the frame while a capture is running: it is showing what the GIF is
+     * taking, and it is not going to answer a drag. */
+    ImU32 line = locked ? IM_COL32(255, 255, 255, 110) : IM_COL32(255, 255, 255, 230);
+    ImU32 shade = IM_COL32(0, 0, 0, 90);
+    /* Shade everything the export will drop, so the kept area reads at a
+     * glance rather than having to be traced along the outline. */
+    dl->AddRectFilled(imgMin, ImVec2(imgMin.x + imgSize.x, y0), shade);
+    dl->AddRectFilled(ImVec2(imgMin.x, y1),
+                      ImVec2(imgMin.x + imgSize.x, imgMin.y + imgSize.y), shade);
+    dl->AddRectFilled(ImVec2(imgMin.x, y0), ImVec2(x0, y1), shade);
+    dl->AddRectFilled(ImVec2(x1, y0),
+                      ImVec2(imgMin.x + imgSize.x, y1), shade);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(0, 0, 0, 160), 0.0f, 0, 3.0f);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), line, 0.0f, 0, 1.0f);
+
+    if (locked) {
+        return false;
+    }
+
+    /* Which part of the frame a press took hold of. Latched, so a drag that
+     * wanders off the handle keeps resizing the edge it started on. */
+    static int  s_grab = 0;   /* bit 1 left, 2 right, 4 top, 8 bottom, 16 move */
+    static bool s_dragging = false;
+
+    /* A pan already holding the mouse keeps it. Ownership is decided at the
+     * press and not re-decided per frame, so dragging the reel across the
+     * frame does not hand the drag over halfway and stall the pan — the same
+     * mistake the map preview's start markers used to make. */
+    if (panHoldsMouse && !s_dragging) {
+        return false;
+    }
+
+    const float g = REEL_CROP_GRAB_PX;
+    ImVec2 mp = ImGui::GetMousePos();
+    int hot = 0;
+    bool overFrame = (mp.x >= x0 - g && mp.x <= x1 + g &&
+                      mp.y >= y0 - g && mp.y <= y1 + g);
+    if (overFrame) {
+        if (mp.x >= x0 - g && mp.x <= x0 + g) hot |= 1;
+        if (mp.x >= x1 - g && mp.x <= x1 + g) hot |= 2;
+        if (mp.y >= y0 - g && mp.y <= y0 + g) hot |= 4;
+        if (mp.y >= y1 - g && mp.y <= y1 + g) hot |= 8;
+        if (hot == 0 && mp.x > x0 && mp.x < x1 && mp.y > y0 && mp.y < y1) {
+            hot = 16;
+        }
+    }
+
+    /* One invisible item over the whole frame plus its grab margin, so ImGui
+     * knows the press belongs here and the reel's pan button does not take it.
+     * Submitted after the reel's overlay (which allows overlap), which is what
+     * puts it in front for hit-testing. */
+    bool takesMouse = false;
+    if (hot != 0 || s_dragging) {
+        ImGui::SetCursorScreenPos(ImVec2(x0 - g, y0 - g));
+        ImGui::InvisibleButton("##ReelCropGrab",
+                               ImVec2((x1 - x0) + g * 2.0f, (y1 - y0) + g * 2.0f));
+        takesMouse = ImGui::IsItemHovered() || ImGui::IsItemActive() || s_dragging;
+        if (ImGui::IsItemActivated()) {
+            s_grab = hot;
+            s_dragging = true;
+        }
+    }
+
+    int shape = s_dragging ? s_grab : hot;
+    if (shape != 0) {
+        ImGuiMouseCursor cur = ImGuiMouseCursor_ResizeAll;
+        switch (shape & 15) {
+            case 1: case 2:            cur = ImGuiMouseCursor_ResizeEW; break;
+            case 4: case 8:            cur = ImGuiMouseCursor_ResizeNS; break;
+            case 1 | 4: case 2 | 8:    cur = ImGuiMouseCursor_ResizeNWSE; break;
+            case 2 | 4: case 1 | 8:    cur = ImGuiMouseCursor_ResizeNESW; break;
+            default:                   break;   /* move */
+        }
+        ImGui::SetMouseCursor(cur);
+    }
+
+    if (s_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImVec2 d = ImGui::GetIO().MouseDelta;
+        const float minW = REEL_CROP_MIN_PX;
+        if (s_grab & 16) {
+            /* Move: both edges together, stopped by the image rather than
+             * squashed against it. */
+            float w = x1 - x0, h = y1 - y0;
+            x0 += d.x; y0 += d.y;
+            if (x0 < imgMin.x) x0 = imgMin.x;
+            if (y0 < imgMin.y) y0 = imgMin.y;
+            if (x0 + w > imgMin.x + imgSize.x) x0 = imgMin.x + imgSize.x - w;
+            if (y0 + h > imgMin.y + imgSize.y) y0 = imgMin.y + imgSize.y - h;
+            x1 = x0 + w; y1 = y0 + h;
+        } else {
+            if (s_grab & 1) x0 += d.x;
+            if (s_grab & 2) x1 += d.x;
+            if (s_grab & 4) y0 += d.y;
+            if (s_grab & 8) y1 += d.y;
+            if (x0 < imgMin.x) x0 = imgMin.x;
+            if (y0 < imgMin.y) y0 = imgMin.y;
+            if (x1 > imgMin.x + imgSize.x) x1 = imgMin.x + imgSize.x;
+            if (y1 > imgMin.y + imgSize.y) y1 = imgMin.y + imgSize.y;
+            /* No inverting: the dragged edge stops a minimum short of its
+             * opposite instead of crossing it. */
+            if (x1 - x0 < minW) {
+                if (s_grab & 1) x0 = x1 - minW; else x1 = x0 + minW;
+            }
+            if (y1 - y0 < minW) {
+                if (s_grab & 4) y0 = y1 - minW; else y1 = y0 + minW;
+            }
+            /* The min-size correction can push an edge back out of the image
+             * on a very small view; clamp once more so it never does. */
+            if (x0 < imgMin.x) { x0 = imgMin.x; if (x1 < x0 + minW) x1 = x0 + minW; }
+            if (y0 < imgMin.y) { y0 = imgMin.y; if (y1 < y0 + minW) y1 = y0 + minW; }
+        }
+        s_reelCropX0 = (x0 - imgMin.x) / imgSize.x;
+        s_reelCropY0 = (y0 - imgMin.y) / imgSize.y;
+        s_reelCropX1 = (x1 - imgMin.x) / imgSize.x;
+        s_reelCropY1 = (y1 - imgMin.y) / imgSize.y;
+    } else if (s_dragging) {
+        s_dragging = false;
+        s_grab = 0;
+    }
+    return takesMouse;
+}
 #endif
 
 static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
@@ -7217,6 +7434,15 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         imguiPushNearestSampling();
         ImGui::Image((ImTextureID)tex, imgSize, uv0, uv1);
         imguiPopNearestSampling();
+#if BOLO_RECAP_CLIP_GIF
+        /* Publish the exact slice this blit used. The crop frame is normalized
+         * against it, so an export maps the frame back through the same
+         * numbers the picture was drawn with. */
+        s_reelLastSlice.x = srcX;
+        s_reelLastSlice.y = srcY;
+        s_reelLastSlice.w = visW;
+        s_reelLastSlice.h = visH;
+#endif
     } else {
         ImGui::Dummy(rect);
     }
@@ -7240,12 +7466,26 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
             lvEmbedWheel((int)(mp.x - imgMin.x), (int)(mp.y - imgMin.y), wheel);
         }
     }
-    if (ImGui::IsItemActivated()) {
-        lvEmbedPanBegin();
-    }
-    if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-        lvEmbedPanDelta(drag.x, drag.y);
+    const bool reelPanActivated = ImGui::IsItemActivated();
+    const bool reelPanActive =
+        ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    ImVec2 reelPanDrag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+
+    /* The crop frame goes on after the reel's own overlay so its handles win
+     * the hit test, and it reports back whether it took the mouse — the pan
+     * below sits out the frames it did. */
+    bool cropTookMouse = false;
+#if BOLO_RECAP_CLIP_GIF
+    cropTookMouse = lobbyReelCropOverlay(imgMin, imgSize, reelPanActive);
+#endif
+
+    if (!cropTookMouse) {
+        if (reelPanActivated) {
+            lvEmbedPanBegin();
+        }
+        if (reelPanActive) {
+            lvEmbedPanDelta(reelPanDrag.x, reelPanDrag.y);
+        }
     }
 
     /* Claim the whole rect whatever the image came out at, so zooming does
@@ -7304,6 +7544,13 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     ImGui::SameLine();
     if (lobbyClipGifButton("##reelgif", false)) {
         lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
+    }
+
+    /* Crop frame, next to the export it crops: with it up, that export takes
+     * the framed rectangle instead of the whole visible view. */
+    ImGui::SameLine();
+    if (lobbyReelCropButton("##reelcrop")) {
+        s_reelCropOn = !s_reelCropOn;
     }
 #endif
 
@@ -7500,6 +7747,10 @@ static void lobbyClipGifAbort(void) {
     }
 }
 
+static bool lobbyClipGifActive(void) {
+    return s_clipGif.active;
+}
+
 /* Park the reel on the moment and open the encoder at the size every frame of
  * this capture will be. Takes a time and a length rather than a clip: the
  * transport's button has neither a clip nor a cell, only where the playhead is.
@@ -7539,19 +7790,56 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
         lobbyClipGifRestoreReel();
         return;
     }
-    int cropW = srcW;
-    int cropH = srcH;
-    if (cropW > CLIP_GIF_MAX_WIDTH) {
-        cropW = CLIP_GIF_MAX_WIDTH;
-        cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+    int cropW, cropH;
+    if (s_reelCropOn && s_reelLastSlice.w > 0 && s_reelLastSlice.h > 0) {
+        /* The frame the player drew is what this takes. It is normalized
+         * against the slice the reel blitted, so mapping it back is that same
+         * slice's extent times the fractions — the identical arithmetic the
+         * Image's uv0/uv1 used, which is what makes the GIF exactly the
+         * rectangle the outline showed.
+         *
+         * The extent comes from the last draw (an on-screen size a seek cannot
+         * change) while the origin is the fresh one read above, because the
+         * seek this export just did may have moved the camera and the frame
+         * names a place on the view, not on the map. */
+        int visW = s_reelLastSlice.w;
+        int visH = s_reelLastSlice.h;
+        if (visW > srcW) visW = srcW;
+        if (visH > srcH) visH = srcH;
+        int fx0 = (int)(s_reelCropX0 * (float)visW + 0.5f);
+        int fy0 = (int)(s_reelCropY0 * (float)visH + 0.5f);
+        int fx1 = (int)(s_reelCropX1 * (float)visW + 0.5f);
+        int fy1 = (int)(s_reelCropY1 * (float)visH + 0.5f);
+        if (fx0 < 0) fx0 = 0;
+        if (fy0 < 0) fy0 = 0;
+        if (fx1 > visW) fx1 = visW;
+        if (fy1 > visH) fy1 = visH;
+        cropW = fx1 - fx0;
+        cropH = fy1 - fy0;
+        if (cropW < 1) cropW = 1;
+        if (cropH < 1) cropH = 1;
+        s_clipGif.crop.x = srcX + fx0;
+        s_clipGif.crop.y = srcY + fy0;
+        s_clipGif.crop.w = cropW;
+        s_clipGif.crop.h = cropH;
+        /* No CLIP_GIF_MAX_WIDTH here: that cap trims an uncropped view down to
+         * something worth posting, and a frame is the player saying what to
+         * take instead. */
+    } else {
+        cropW = srcW;
+        cropH = srcH;
+        if (cropW > CLIP_GIF_MAX_WIDTH) {
+            cropW = CLIP_GIF_MAX_WIDTH;
+            cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+        }
+        if (cropW < 1) cropW = 1;
+        if (cropH < 1) cropH = 1;
+        if (cropH > srcH) cropH = srcH;
+        s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
+        s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
+        s_clipGif.crop.w = cropW;
+        s_clipGif.crop.h = cropH;
     }
-    if (cropW < 1) cropW = 1;
-    if (cropH < 1) cropH = 1;
-    if (cropH > srcH) cropH = srcH;
-    s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
-    s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
-    s_clipGif.crop.w = cropW;
-    s_clipGif.crop.h = cropH;
 
     /* From the length in ms, not in ticks: the reel steps a log clock and a
      * clip is measured in sim ticks, and the two do not share a rate. */
@@ -8372,15 +8660,37 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
      * icon's own pixels, so the sorted column asks for the arrow as well. */
     const float arrowW =
         SDL_truncf(ImGui::GetFontSize() * 0.65f + sty.FramePadding.x);
+
+    /* A stat column's static width, and the floor the stretchy Name column is
+     * not allowed to fall below — scaled like every other width here.
+     *
+     * "If there's room": eight static columns plus a readable Name column is
+     * wider than the recap panel at the default lobby size, so the static width
+     * is taken only when the panel can pay for it, and the content-derived
+     * width below is used when it cannot. Neither depends on which column is
+     * sorted, so the choice only ever changes when the lobby is resized. */
+    const float kRecapStatColW = 75.0f * s;
+    const float kRecapNameMinW = 120.0f * s;
+    const bool  statColsStatic =
+        ImGui::GetContentRegionAvail().x >= kRecapNameMinW + kRecapStatColW * 8.0f;
+
     auto iconColWidth = [&](int col, float iconExtent) {
         char buf[16];
         SDL_snprintf(buf, sizeof(buf), "%u", colMax[col]);
         float w = ImGui::CalcTextSize(buf).x;
         if (iconExtent > w) w = iconExtent;
-        if (col == s_recapSortCol) w += arrowW;
+        /* Charged to EVERY stat column, not just the sorted one. ImGui draws
+         * the arrow hard against the right edge of the sorted cell, so paying
+         * for it only there made the sorted column wider than its neighbours:
+         * moving the sort grew one column, shrank another, and slid every
+         * column between them sideways. Reserving it everywhere costs one
+         * arrow's width per column and holds the layout still. */
+        w += arrowW;
         /* One pixel of slop: an icon sized to exactly fill the cell would
          * otherwise be at the mercy of rounding at the clip edge. */
-        return w + sty.CellPadding.x * 2.0f + 1.0f;
+        w += sty.CellPadding.x * 2.0f + 1.0f;
+        if (statColsStatic && w < kRecapStatColW) w = kRecapStatColW;
+        return w;
     };
 
     /* Sortable: a click sorts on that column, a second click reverses it. The
@@ -8494,7 +8804,6 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             }
             specs->SpecsDirty = false;
         }
-        s_recapSortCol = sortCol;
 
         auto rowBefore = [&](const RoundPlayerSummary *a,
                              const RoundPlayerSummary *b) {
