@@ -267,7 +267,7 @@ int run_proxy_meta_parse_oversized_name(void);
 int run_proxy_meta_parse_prefs_clamps(void);
 int run_tick_core_active_local_no_double_step(void);
 int run_tick_core_passive_local_pumps_keys_half(void);
-int run_tick_core_lobby_flips_cadence(void);
+int run_tick_core_lobby_preserves_parity(void);
 int run_transport_ticks_server_lifecycle(void);
 int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);

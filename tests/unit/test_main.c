@@ -227,7 +227,7 @@ static const UnitTestEntry s_tests[] = {
     { "proxy_meta_parse_prefs_clamps",           run_proxy_meta_parse_prefs_clamps           },
     { "tick_core_active_local_no_double_step",   run_tick_core_active_local_no_double_step   },
     { "tick_core_passive_local_pumps_keys_half", run_tick_core_passive_local_pumps_keys_half },
-    { "tick_core_lobby_flips_cadence",           run_tick_core_lobby_flips_cadence           },
+    { "tick_core_lobby_preserves_parity",        run_tick_core_lobby_preserves_parity        },
     { "transport_ticks_server_lifecycle",        run_transport_ticks_server_lifecycle        },
     { "await_join_connected_immediate",          run_await_join_connected_immediate          },
     { "await_join_lobby_latch",                  run_await_join_lobby_latch                  },

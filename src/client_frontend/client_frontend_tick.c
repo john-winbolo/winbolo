@@ -14,11 +14,17 @@
 extern keyItems keys;
 extern bool isInMenu;
 
-static bool justKeysFlag = false;
+/* Tick number stamped on outgoing InputPackets. Its parity is the wire
+ * contract for intent — even = game tick, odd = keys tick (the server routes
+ * each input by tick % 2, server_sim.c) — so the keys/game cadence below is
+ * derived from this counter instead of tracked in a separate flag. A separate
+ * flag can drift out of phase with the counter (the wasm in-canvas lobby used
+ * to flip it without advancing the counter), after which every game-intent
+ * packet carries an odd tick and the server silently ignores the fire action
+ * for the rest of the game. */
 static uint32_t simTickCounter = 0;
 
 void clientFrontTickReset(void) {
-  justKeysFlag = false;
   simTickCounter = 0;
 }
 
@@ -28,14 +34,15 @@ bool clientFrontRunTickStep(ClientSim *cs) {
   netStatus ns = clientSimGetNetStatus(cs);
 
   if (ns == netLobby || ns == netLobbyCountdown) {
-    /* Lobby/countdown: just tick the transport to receive packets. Keep the
-     * cadence flipping so the first running step lands on a keys tick. */
+    /* Lobby/countdown: just tick the transport to receive packets. The
+     * counter does not advance here, so the first running step is always a
+     * game step on an even tick number — same state as after
+     * clientFrontTickReset. */
     clientSimNetTick(cs);
-    justKeysFlag = !justKeysFlag;
     return false;
   }
 
-  if (justKeysFlag) {
+  if ((simTickCounter % 2) == 1) {
     /* Keys tick */
     tankButton tb = 0;
     if (!brainRunning) {
@@ -66,7 +73,6 @@ bool clientFrontRunTickStep(ClientSim *cs) {
       clientSimNetTick(cs);
     }
     simTickCounter++;
-    justKeysFlag = false;
     return false;
   }
 
@@ -97,6 +103,5 @@ bool clientFrontRunTickStep(ClientSim *cs) {
   clientSimDisplayTick(cs, brainRunning);
   clientMutexRelease();
   simTickCounter++;
-  justKeysFlag = true;
   return true;
 }
