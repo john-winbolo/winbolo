@@ -22,7 +22,7 @@
       "label": "Famous Musicians",
       "names": [
         "Mozart", "Beethoven", "Hendrix", "Bowie", "Prince",
-        "Aretha", "Coltrane", "Bach", "Davis", "Joplin",
+        "Aretha", "Coltrane", "Bach", "Miles", "Joplin",
         "Lennon", "Cash", "Hinata", "Zimmer", "Göransson",
         "Ravel"
       ]
@@ -32,8 +32,8 @@
       "names": [
         "Bruce Lee", "Jackie Chan", "Jet Li", "Donnie Yen", "Mas Oyama",
         "Ip Man", "Funakoshi", "Ueshiba", "Hélio Gracie", "Sonny Chiba",
-        "Musashi", "Nurmagomedov", "Carlos Gracie", "Kanō Jigorō", "Chōjun Miyagi",
-        "Masahiko Kimura"
+        "Musashi", "Khabib", "Carlos Gracie", "Kanō Jigorō", "Chōjun Miyagi",
+        "Masahiko Kimura", "Royce", "Georges St-Pierre"
       ]
     },
     {
@@ -41,7 +41,7 @@
       "names": [
         "Einstein", "Newton", "Curie", "Tesla", "Darwin",
         "Hawking", "Feynman", "Turing", "Hopper", "Lovelace",
-        "Sagan", "Franklin", "Galilei", "Pasteur", "Gauss",
+        "Sagan", "Rosalind", "Galilei", "Pasteur", "Gauss",
         "Copernicus"
       ]
     },
@@ -69,14 +69,14 @@
         "Maverick", "Goose", "Iceman", "Viper", "Jester",
         "Cougar", "Wolfman", "Slider", "Merlin", "Sundown",
         "Hollywood", "Stinger", "Chipper", "Rooster", "Phoenix",
-        "Tex"
+        "Tex", "Ghost Rider", "Charlie"
       ]
     },
     {
       "label": "Famous Authors",
       "names": [
         "Shakespeare", "King", "Orwell", "Christie", "Weir",
-        "Doyle", "Tartt", "Ishiguro", "Tolkien", "Herbert",
+        "Conan Doyle", "Tartt", "Ishiguro", "Tolkien", "Herbert",
         "Collins", "Adams", "Pullman", "Lee", "Shelley",
         "Austen"
       ]
