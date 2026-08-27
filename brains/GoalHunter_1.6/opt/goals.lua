@@ -313,6 +313,76 @@ end
 -- danger_reject: if non-nil, skip bases with pill danger above this value.
 -- Used when fleeing at critical armour — sitting at a dangerous base = death.
 -- Returns best, best_id, best_score, candidates
+-- =========================================================================
+-- Contested-base penalty for a refuel base at (bmx,bmy).
+-- Returns pen, n_unhandled, n_handled — shared by BOTH refuel scoring paths
+-- (nearest_resupply_base's candidate loop and the pool-1 cost_cache builder)
+-- so the two can never drift apart.
+--
+--   * QUALIFY — a MOVING enemy tank (speed > 0, straight off TankSnapshot)
+--     within CONTESTED_BASE_RANGE of the base. Distance is U.mdist
+--     (Manhattan), matching the range test this replaced.
+--   * HANDLED — skip a tank entirely when an ALLY is already broadcasting an
+--     attack_tank goal against THAT tank id: someone owns that threat, and it
+--     shouldn't also scare us off our refuel. Ally goals arrive on the /info
+--     state slate as goal=attack_tank + target=<tank id>; attack_tank sets
+--     target_id = best_tank.id, and perc.enemy_tanks[].id is the object idnum,
+--     which for a tank IS the player number — so the two are the same id space
+--     (target is the STRING form, hence the tostring compare).
+--   * PROXIMITY — each remaining tank costs
+--     CONTESTED_BASE_PENALTY * (1 - dist/RANGE): the full penalty sitting on
+--     the base, fading linearly to nothing at the range edge. Replaces a flat
+--     step that treated a tank 14 tiles out like one parked on the pumps.
+--   * SUM — the per-tank terms simply ADD. Deliberately no outnumbering
+--     multiplier: two tanks at half range already cost a full 120 between
+--     them, and scaling that by the head count priced refuelling out of
+--     reach entirely.
+-- =========================================================================
+local function contested_penalty(state, bmx, bmy, info, now)
+  local ets = state and state.perc and state.perc.enemy_tanks
+  if not ets or #ets == 0 then return 0, 0, 0 end
+  local R = C.CONTESTED_BASE_RANGE or 15
+  if R <= 0 then return 0, 0, 0 end
+
+  -- Ally-claimed tank ids, built LAZILY: most bases have no qualifying tank at
+  -- all, so the ally_state sweep only runs when it could change the answer.
+  local claimed, claimed_built = nil, false
+  local function ally_handling(id)
+    if id == nil then return false end
+    if not claimed_built then
+      claimed_built = true
+      local self_pn = info and info.player_number
+      if ally_state.iter_active then
+        for apn, slot in ally_state.iter_active(now or (state and state.tick) or 0, 1750) do
+          local h = slot.info
+          if apn ~= self_pn and h and h.goal == "attack_tank" and h.target then
+            claimed = claimed or {}
+            claimed[h.target] = true
+          end
+        end
+      end
+    end
+    return (claimed ~= nil) and (claimed[tostring(id)] or false) or false
+  end
+
+  local sum, n, handled = 0, 0, 0
+  for _, et in ipairs(ets) do
+    if (et.speed or 0) > 0 then
+      local d = U.mdist(et.mx, et.my, bmx, bmy)
+      if d <= R then
+        if ally_handling(et.id) then
+          handled = handled + 1
+        else
+          n   = n + 1
+          sum = sum + (C.CONTESTED_BASE_PENALTY or 120) * (1 - d / R)
+        end
+      end
+    end
+  end
+  return sum, n, handled
+end
+
+
 local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info,
                                      danger_weight, cur_mx, cur_my, danger_reject)
   danger_weight = danger_weight or C.REFUEL_DANGER_WEIGHT
@@ -405,19 +475,13 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
             score = score + (age - C.STALE_PENALTY_START) * C.STALE_PENALTY_PER_TICK
           end
         end
-        -- Feature 4: contested base avoidance — penalise bases with an
-        -- enemy tank nearby and heading roughly toward the base
-        local contested = false
-        local enemy_tanks = state and state.perc and state.perc.enemy_tanks or {}
-        for _, et in ipairs(enemy_tanks) do
-          local et_base_dist = U.mdist(et.mx, et.my, b.mx, b.my)
-          if et_base_dist <= C.CONTESTED_BASE_RANGE and et.speed > 0 then
-            -- Enemy tank is near our base and moving — treat as contested.
-            -- (Speed comes directly from TankSnapshot, > 0 means moving.)
-            score = score + C.CONTESTED_BASE_PENALTY
-            contested = true
-          end
-        end
+        -- Feature 4: contested base avoidance — penalise bases with moving
+        -- enemy tanks nearby, scaled by how close they are, discounting any
+        -- tank an ally is already attacking. See contested_penalty.
+        local contest_pen, contest_n, contest_h =
+          contested_penalty(state, b.mx, b.my, info, now)
+        local contested = contest_pen > 0
+        score = score + contest_pen
 
         -- Anti-base-hop (mirrors the cost_cache path): while standing ON a refuel
         -- base, every OTHER base costs more so we finish here instead of bouncing
@@ -465,6 +529,7 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           id = id, mx = b.mx, my = b.my, own = b.owner,
           travel = travel, danger = danger, dw = danger_weight,
           score = score, hyst = hysteresis, contested = contested,
+          contest_pen = contest_pen, contest_n = contest_n, contest_h = contest_h,
           stale = b.last_seen and (now - b.last_seen) or 0,
         }
         if score < best_score then
@@ -5041,11 +5106,26 @@ local function get_formula_inner(e)
         e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
     end
     local _d_stale   = fmt_stale_detail(e._age, e._stale)
-    local _d_contest = e._contest > 0
-      and string.format("enemy tank within %.0f[CONTESTED_BASE_RANGE] tiles → %.0f[CONTESTED_BASE_PENALTY]",
-            C.CONTESTED_BASE_RANGE, C.CONTESTED_BASE_PENALTY)
-      or  string.format("no enemy tank within %.0f[CONTESTED_BASE_RANGE] tiles → 0",
+    -- Contested: sum over MOVING enemy tanks inside the range of
+    -- PENALTY x (1 - dist/RANGE), skipping any tank an ally's attack_tank
+    -- already owns. Show the head counts so the number reconciles.
+    local _ct_n = e._contest_n or 0
+    local _ct_h = e._contest_h or 0
+    local _d_contest
+    if e._contest > 0 then
+      _d_contest = string.format(
+        "%d moving enemy tank(s) within %.0f[CONTESTED_BASE_RANGE] tiles, "
+        .. "sum of %.0f[CONTESTED_BASE_PENALTY] x (1 - dist/%.0f) = %.0f%s",
+        _ct_n, C.CONTESTED_BASE_RANGE, C.CONTESTED_BASE_PENALTY,
+        C.CONTESTED_BASE_RANGE, e._contest,
+        _ct_h > 0 and string.format(" (%d more skipped — ally attack_tank on them)", _ct_h) or "")
+    elseif _ct_h > 0 then
+      _d_contest = string.format(
+        "all %d enemy tank(s) in range handled by an ally's attack_tank → 0", _ct_h)
+    else
+      _d_contest = string.format("no moving enemy tank within %.0f[CONTESTED_BASE_RANGE] tiles → 0",
             C.CONTESTED_BASE_RANGE)
+    end
     local _d_deplete = e._ratio >= 1.0
       and string.format("supply_ratio=%.2f (fully stocked) → 0", e._ratio)
       or  string.format("(1 - %.2f[supply_ratio]) x %.0f[REFUEL_DEPLETION_PENALTY] = %.0f",
@@ -5708,14 +5788,11 @@ function M.step_eval_queue(state, world, info)
       if _p1_age > C.STALE_PENALTY_START then
         stale_cost = (_p1_age - C.STALE_PENALTY_START) * C.STALE_PENALTY_PER_TICK
       end
-      local contested_cost = 0
-      local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
-      for _, et in ipairs(enemy_tanks) do
-        if U.mdist(et.mx, et.my, obj.mx, obj.my) <= C.CONTESTED_BASE_RANGE and et.speed > 0 then
-          contested_cost = C.CONTESTED_BASE_PENALTY
-          break
-        end
-      end
+      -- Same contested shape as nearest_resupply_base (shared helper): moving
+      -- enemies inside the range, proximity-scaled and summed, minus any tank
+      -- an ally's attack_tank goal already owns.
+      local contested_cost, _contest_n, _contest_h =
+        contested_penalty(state, obj.mx, obj.my, info, now)
       -- Angry-pill-near-base: don't refuel here if a hostile pill is mad and
       -- in range to shoot us while we sit (replaces the old Override 2 skip).
       local pill_threats_p1 = state.perc and state.perc.pill_threats or {}
@@ -5820,6 +5897,7 @@ function M.step_eval_queue(state, world, info)
         _id = id, _mx = obj.mx, _my = obj.my,
         _dv=danger_val, _dang=danger_cost, _age=_p1_age,
         _stale=stale_cost, _contest=contested_cost,
+        _contest_n=_contest_n, _contest_h=_contest_h,
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
         _lgm_mult = _lgm_mult,
         _safe_refuel = _safe_refuel or nil,
