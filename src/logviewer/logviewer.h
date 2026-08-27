@@ -160,6 +160,15 @@ typedef struct LogViewerState {
   BYTE         prevBaseArmour[MAX_BASES];
   bool         prevBaseStockValid[MAX_BASES];
 
+  /* --- Embedded reel (post-game recap) state --- */
+  /* Colour tanks by their alliance to the local player -- green allies, red
+   * enemies -- instead of by the viewer's per-team palette. The reel is
+   * watched by one of the players, so that is the reading it wants; it also
+   * brings up no preferences, so tc[] is all zeros there and every team would
+   * otherwise index the sheet's uncoloured row. Only the reel sets it, so the
+   * standalone viewer, the spectator and the game view keep the team palette. */
+  bool         allyColours;
+
   /* --- FROM draw.c (SDL handles) --- */
   struct SDL_Window   *window;
   struct SDL_Renderer *renderer;
@@ -215,6 +224,9 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  * lvEmbedStepTicks walks the log forward by whole ticks with no timer driving
  * it, for a host stepping the round a fixed amount at a time; the next
  * lvEmbedFrameTexture repaints to the moment it stepped to.
+ * lvEmbedSetSelfName names the player watching, so the round is drawn from
+ * their side — green allies, red enemies — rather than from log slot 0's; an
+ * empty name leaves the reel drawing as it does with nobody named.
  * lvEmbedEnd is safe to call twice or while inactive. */
 bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   uint8_t *zipData, size_t zipLen, int viewW, int viewH);
@@ -235,6 +247,7 @@ void lvEmbedSeekRatio(float ratio);
 void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
 void lvEmbedSeekToTime(uint32_t roundRelMs);
 void lvEmbedStepTicks(int ticks);
+void lvEmbedSetSelfName(const char *name);
 
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world

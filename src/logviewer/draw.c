@@ -822,9 +822,30 @@ void lv_drawShells(screenBullets *sBullets) {
     }
 }
 
+/* Rows of tanks.bmp / boats.bmp the ally colouring draws from. The sheets carry
+   17 rows of team colours; row 2 is the same green and row 11 the same red the
+   game's own good and evil tank sprites use, and row 0 is the uncoloured tank
+   an unloaded tc[] already lands every team on. */
+#define TANK_ROW_SELF 0
+#define TANK_ROW_GOOD 2
+#define TANK_ROW_EVIL 11
+
+/* lv_playersMakeScreenTanks adds TANK_GOOD_ADD / TANK_EVIL_ADD on top of the
+   direction and boat frames, so the alliance to whoever was "self" when the
+   screen was built is the top of the frame number. */
+static BYTE lv_drawTankAllyRow(BYTE frame) {
+    if (frame >= TANK_EVIL_ADD) {
+        return TANK_ROW_EVIL;
+    }
+    if (frame >= TANK_GOOD_ADD) {
+        return TANK_ROW_GOOD;
+    }
+    return TANK_ROW_SELF;
+}
+
 void lv_drawTanks(screenTanks *tks) {
     int x, y, srcX, srcY;
-    BYTE count, total, px, py, mx, my, team, zoomFactor, dir;
+    BYTE count, total, px, py, mx, my, team, zoomFactor, dir, frame;
     bool onBoat;
     char playerName[PLAYER_NAME_LEN];
     LogViewerState *lv = lv_screenGetState();
@@ -833,12 +854,16 @@ void lv_drawTanks(screenTanks *tks) {
     zoomFactor = lv_windowGetZoomFactor();
 
     for (count = 1; count <= total; count++) {
-        lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, NULL, &team, &dir, &onBoat, playerName);
+        lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
         px += 2; py += 2;
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
 
-        if (lv->useTeamColours) {
+        if (lv->allyColours) {
+            srcX = zoomFactor * TILE_SIZE_X * dir;
+            srcY = zoomFactor * TILE_SIZE_Y * lv_drawTankAllyRow(frame);
+            drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
+        } else if (lv->useTeamColours) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);

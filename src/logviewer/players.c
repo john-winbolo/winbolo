@@ -1036,6 +1036,23 @@ bool lv_playersSetViewByName(const char *name) {
     return FALSE;
 }
 
+/* Report the slot a named player holds without touching the view or self. The
+ * position test lv_playersSetViewByName makes is deliberately absent: a caller
+ * asking who someone is still wants an answer while they are dead. */
+BYTE lv_playersFindByName(const char *name) {
+    BYTE count;
+    if (name == NULL || name[0] == '\0') {
+        return NEUTRAL;
+    }
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (plrs.item[count].inUse == TRUE &&
+            strcmp(plrs.item[count].playerName, name) == 0) {
+            return count;
+        }
+    }
+    return NEUTRAL;
+}
+
 BYTE lv_playersGetTeamId(BYTE playerNum) {
   return plrs.item[playerNum].team;
 }
