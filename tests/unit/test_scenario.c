@@ -872,7 +872,7 @@ int run_scenario_seeded_round_start(void) {
     UT_ASSERT(sc_write_map_file(SC_MAP));
     UT_ASSERT(sc_write_sidecar(
         "scenario = { max_players = 6,\n"
-        "  default_brain = 'Brains/GoalHunter_1.6/init.lua' }\n"
+        "  default_brain = 'Brains/GoalHunter_1.7/init.lua' }\n"
         "function enemy_bots(game) return 10 end\n"
         "names = {}\n"
         "function on_setup(game)\n"

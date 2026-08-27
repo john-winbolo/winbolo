@@ -42,7 +42,7 @@ scenario = {
     .. "grab the dead pillboxes, fort up in the forest — win by keeping "
     .. "the enemy from taking over all 6 inner bases.",
   max_players = 6,     -- humans; 10 slots stay free for the wave (6+10=16)
-  default_brain = "brains/GoalHunter_1.6/init.lua",  -- wave bot AI
+  default_brain = "brains/GoalHunter_1.7/init.lua",  -- wave bot AI
   game = "tournament", -- humans farm; bots override per-spawn below
 }
 
