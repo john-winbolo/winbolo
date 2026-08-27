@@ -29,6 +29,8 @@
  *      run joins and then changes the map twice; every run must reconverge.
  *   3. Join under loss+duplication, across a spread of seeds: the initial
  *      accept is frequently dropped or duplicated; every run must connect.
+ *      Run against both a lobby server and a running one — a mid-game
+ *      joiner walks the identical accept/download path.
  *
  * Impairment draws come from the seeded bolo_rand stream, but the server's
  * recv thread adds scheduling variance, so (per the harness contract) the
@@ -169,12 +171,15 @@ int run_loopback_map_change_loss(void) {
     return 0;
 }
 
-/* Case 3: initial joins under loss + duplication across a seed spread. A
- * dropped first accept previously meant the unsolicited stream drained while
- * the client was still JOINING and the join wedged in DOWNLOADING_MAP; with
- * the readiness round-trip the stream only ever starts after the client is
- * armed, and the watchdog re-asks if anything is lost mid-way. */
-int run_loopback_join_accept_loss(void) {
+/* Cases 3+4: initial joins under loss + duplication across a seed spread,
+ * against a lobby server and against a running one. A dropped first accept
+ * previously meant the unsolicited stream drained while the client was still
+ * JOINING and the join wedged in DOWNLOADING_MAP; with the readiness
+ * round-trip the stream only ever starts after the client is armed, and the
+ * watchdog re-asks if anything is lost mid-way. The running-server sweep also
+ * exercises the standalone bulk carrier that feeds a not-yet-complete joiner
+ * while snapshots to it are still held. */
+static int join_accept_loss_sweep(bool lobbyMode, const char *label) {
     static const uint64_t kSeeds[] = {
         0x1111u, 0x2222u, 0x3333u, 0x4444u, 0x5555u,
         0x6666u, 0x7777u, 0x8888u, 0x9999u, 0xAAAAu,
@@ -183,23 +188,32 @@ int run_loopback_join_accept_loss(void) {
         LoopbackHarness h;
         int connectedAt;
 
-        UT_ASSERT_MSG(loopbackHarnessStart(&h, "AccLoss", /*lobbyMode*/ true,
+        UT_ASSERT_MSG(loopbackHarnessStart(&h, "AccLoss", lobbyMode,
                                            /*impairSpec*/ "loss=15,dup=15",
                                            kSeeds[s]),
-                      "harness start (accept loss, seed %zu) failed", s);
+                      "harness start (%s accept loss, seed %zu) failed",
+                      label, s);
         connectedAt = loopbackHarnessPumpUntil(&h, MC_CONNECT_MAX,
                                                pred_connected, NULL);
         fprintf(stderr,
-                "  join under loss=15,dup=15 (seed %zu): connected@%d\n",
-                s, connectedAt);
+                "  %s join under loss=15,dup=15 (seed %zu): connected@%d\n",
+                label, s, connectedAt);
         if (connectedAt < 0) {
             ClientConnectState st = clientSimGetConnectState(h.cs);
             loopbackHarnessStop(&h);
-            UT_FAIL("seed %zu: never reached CONNECTED within %d pumps "
+            UT_FAIL("%s seed %zu: never reached CONNECTED within %d pumps "
                     "(final state=%d — wedged join download?)",
-                    s, MC_CONNECT_MAX, (int)st);
+                    label, s, MC_CONNECT_MAX, (int)st);
         }
         loopbackHarnessStop(&h);
     }
     return 0;
+}
+
+int run_loopback_join_accept_loss(void) {
+    return join_accept_loss_sweep(/*lobbyMode*/ true, "lobby");
+}
+
+int run_loopback_join_accept_loss_midgame(void) {
+    return join_accept_loss_sweep(/*lobbyMode*/ false, "mid-game");
 }

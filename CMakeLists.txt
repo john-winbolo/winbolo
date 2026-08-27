@@ -3674,6 +3674,7 @@ set(_unit_test_names
     loopback_map_change_clean
     loopback_map_change_loss
     loopback_join_accept_loss
+    loopback_join_accept_loss_midgame
     gate1_viewtick_loopback
     gate1_host_noop
     interp_jitter_e2e

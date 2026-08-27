@@ -459,6 +459,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_map_change_clean",               run_loopback_map_change_clean               },
     { "loopback_map_change_loss",                run_loopback_map_change_loss                },
     { "loopback_join_accept_loss",               run_loopback_join_accept_loss               },
+    { "loopback_join_accept_loss_midgame",       run_loopback_join_accept_loss_midgame       },
     { "gate1_viewtick_loopback",                 run_gate1_viewtick_loopback                 },
     { "gate1_host_noop",                         run_gate1_host_noop                         },
     { "interp_jitter_e2e",                       run_interp_jitter_e2e                       },

@@ -881,6 +881,7 @@ int run_loopback_resync(void);
 int run_loopback_map_change_clean(void);
 int run_loopback_map_change_loss(void);
 int run_loopback_join_accept_loss(void);
+int run_loopback_join_accept_loss_midgame(void);
 
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the
