@@ -87,6 +87,7 @@ extern "C" {
     void stbi_image_free(void *);
 }
 #include "../map_preview_popup.h"
+#include "../macos_pinch.h"  /* macOSPinchZoomConsume — trackpad pinch over the reel */
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
@@ -7308,6 +7309,93 @@ static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
 }
 #endif
 
+/* One zoom step per notch of travel, from either gesture a trackpad offers.
+ *
+ * The wheel arrives as whatever SDL had from the device: a mouse notch is a
+ * clean 1.0, but a macOS trackpad scrolls with precise deltas, which SDL passes
+ * on as fractions and the ImGui backend forwards unscaled. Stepping on every
+ * frame that carried anything at all therefore ran the whole 0.5x..4x ladder
+ * in the first few frames of a two-finger flick and sat at whichever end it
+ * reached, which reads as a reel that will not zoom rather than one that zooms
+ * too eagerly. Banking the deltas and spending them a whole notch at a time
+ * leaves a mouse feeling exactly as it did and gives the trackpad the same
+ * distance-per-step.
+ *
+ * Pinch is the gesture that never arrived at all: macOS sends magnification as
+ * its own NSEvent and SDL does not turn it into a wheel, so the reel — alone
+ * among the map views — could not answer the one gesture a laptop user reaches
+ * for first. macos_pinch.m has been collecting it all along for the map
+ * preview, the map editor and the standalone log viewer; the reel now spends it
+ * on the same 0.15 threshold, so a pinch travels the same in all four.
+ *
+ * Both banks are dropped whenever the reel goes a frame without the cursor:
+ * the pinch monitor is process-wide and keeps filling wherever the cursor is
+ * (and the reel is not even drawn while the panel's Map tab is up), so a
+ * gesture aimed at something else must not arrive here as a jump the moment
+ * the reel is hovered again. Continuity is judged on the ImGui frame counter
+ * rather than a hovered/not flag, which covers the frames the reel is not
+ * drawn at all as well as the ones where the cursor is simply elsewhere. */
+#define REEL_WHEEL_STEP 1.0f  /* a mouse notch, the unit the wheel reports in */
+#define REEL_PINCH_STEP 0.15f /* magnification per step; matches the map views */
+
+static float s_reelWheelAccum = 0.0f;
+static float s_reelPinchAccum = 0.0f;
+static int   s_reelZoomFrame  = -1;
+
+static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
+    if (!hovered) {
+        return;
+    }
+
+    /* Anything banked before a gap belongs to a gesture that has ended. */
+    const int frame = ImGui::GetFrameCount();
+    const bool continuing = (s_reelZoomFrame == frame - 1);
+    s_reelZoomFrame = frame;
+    if (!continuing) {
+        s_reelWheelAccum = 0.0f;
+        s_reelPinchAccum = 0.0f;
+    }
+
+    const ImVec2 mp = ImGui::GetMousePos();
+    const int localX = (int)(mp.x - imgMin.x);
+    const int localY = (int)(mp.y - imgMin.y);
+
+    float wheel = ImGui::GetIO().MouseWheel;
+    if (wheel != 0.0f) {
+        /* A reversal is a new gesture, not a continuation of the old one: drop
+         * what the other direction had banked so turning around answers on the
+         * next notch instead of paying the leftover back first. */
+        if ((wheel > 0.0f) != (s_reelWheelAccum > 0.0f)) {
+            s_reelWheelAccum = 0.0f;
+        }
+        s_reelWheelAccum += wheel;
+        while (s_reelWheelAccum >= REEL_WHEEL_STEP) {
+            lvEmbedWheel(localX, localY, 1.0f);
+            s_reelWheelAccum -= REEL_WHEEL_STEP;
+        }
+        while (s_reelWheelAccum <= -REEL_WHEEL_STEP) {
+            lvEmbedWheel(localX, localY, -1.0f);
+            s_reelWheelAccum += REEL_WHEEL_STEP;
+        }
+    }
+
+    /* Consumed on every hovered frame, gap or not: the accumulator is shared
+     * with the other views, so the backlog has to be taken off it either way —
+     * what a gap changes is that it is thrown away rather than spent. */
+    const float pinch = macOSPinchZoomConsume();
+    if (pinch != 0.0f && continuing) {
+        s_reelPinchAccum += pinch;
+        while (s_reelPinchAccum >= REEL_PINCH_STEP) {
+            lvEmbedWheel(localX, localY, 1.0f);
+            s_reelPinchAccum -= REEL_PINCH_STEP;
+        }
+        while (s_reelPinchAccum <= -REEL_PINCH_STEP) {
+            lvEmbedWheel(localX, localY, -1.0f);
+            s_reelPinchAccum += REEL_PINCH_STEP;
+        }
+    }
+}
+
 static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                             float s) {
     /* Source, in order: the file this process wrote, else the copy the server
@@ -7582,18 +7670,15 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     ImGui::SetCursorScreenPos(imgMin);
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##ReelView", imgSize);
-    if (ImGui::IsItemHovered()) {
+    const bool reelHovered = ImGui::IsItemHovered();
+    if (reelHovered) {
         /* Claim the wheel on every hovered frame, not just the ones that
          * carry a notch: the ownership set here is what ImGui reads at the
          * start of the next frame, and it is what stops the enclosing recap
          * window from scrolling under the reel as it zooms. */
         ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGui::GetItemID());
-        float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f) {
-            ImVec2 mp = ImGui::GetMousePos();
-            lvEmbedWheel((int)(mp.x - imgMin.x), (int)(mp.y - imgMin.y), wheel);
-        }
     }
+    lobbyReelZoomInput(reelHovered, imgMin);
     const bool reelPanActivated = ImGui::IsItemActivated();
     const bool reelPanActive =
         ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
