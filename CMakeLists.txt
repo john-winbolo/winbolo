@@ -2356,6 +2356,25 @@ if(WIN32)
 endif()
 
 # ---------------------------------------------------------------------------
+# brainrec_split — cuts one -braindebug session into smaller sessions that
+# BrainTest can load one at a time. A long full-pool recording is gigabytes
+# on disk, and btLoadSession materialises every frame, so loading a whole
+# game can cost more RAM than the machine has; halving the frames halves it.
+# Links brain_record_walk.c (the shared brainrec.btr frame walker) rather
+# than bolo_static, so the tool doesn't drag in the sim, Lua or SDL's
+# runtime — SDL3 is here for its filesystem calls and for the headers the
+# format structs live behind.
+# ---------------------------------------------------------------------------
+add_executable(brainrec_split
+    src/tools/brainrec_split.c
+    src/bolo/brain_record_walk.c)
+bolo_apply_include_rules(brainrec_split runtime_only)
+target_link_libraries(brainrec_split PRIVATE SDL3::SDL3 zlibstatic)
+if(WIN32)
+    target_link_libraries(brainrec_split PRIVATE psapi)
+endif()
+
+# ---------------------------------------------------------------------------
 # BrainTest (standalone brain debug viewer with overlays)
 # ---------------------------------------------------------------------------
 
