@@ -390,6 +390,8 @@ BrainPathfinder *brainPathfinderCreate(void) {
   pf->turn_cost = 2.0f;
   pf->wall_shoot_cost = 30.0f;
   pf->wall_shoot_shells = 5.0f;
+  pf->wall_escalate_free = 1.0f;   /* only the first wall is charged plain cost */
+  pf->wall_escalate_factor = 2.0f; /* wall #2 = 2x, #3 = 4x, #4 = 8x ... */
   pf->shell_reserve = 10.0f;
   pf->road_build_cost = 12.0f;
   pf->tree_reserve = 4.0f;
@@ -610,6 +612,8 @@ void brainPathfinderSetConfig(BrainPathfinder *pf, const char *key, float value)
   if (strcmp(key, "turn_cost") == 0)              pf->turn_cost = value;
   else if (strcmp(key, "wall_shoot_cost") == 0)   pf->wall_shoot_cost = value;
   else if (strcmp(key, "wall_shoot_shells") == 0) pf->wall_shoot_shells = value;
+  else if (strcmp(key, "wall_escalate_free") == 0)   pf->wall_escalate_free = value;
+  else if (strcmp(key, "wall_escalate_factor") == 0) pf->wall_escalate_factor = value;
   else if (strcmp(key, "shell_reserve") == 0)     pf->shell_reserve = value;
   else if (strcmp(key, "road_build_cost") == 0)   pf->road_build_cost = value;
   else if (strcmp(key, "tree_reserve") == 0)      pf->tree_reserve = value;
@@ -868,6 +872,38 @@ float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y) {
 /* ------------------------------------------------------------------ */
 /* Cost computation (inner loop)                                       */
 /* ------------------------------------------------------------------ */
+
+/* Escalating wall-break penalty.
+ *
+ * Shooting a single wall down to cut a corner is a fair move. Digging
+ * through a THICK wall almost never is -- it burns 5 shells per tile,
+ * leaves the tank parked in the open while it fires, and there is
+ * normally a way round. So only the first wall_escalate_free walls are
+ * charged the plain wall_shoot_cost; every wall after that multiplies
+ * the whole tile cost by wall_escalate_factor again.
+ *
+ * walls_so_far is the number of walls already broken on this route
+ * BEFORE the one being priced. With the defaults (free = 1, factor = 2):
+ *   wall #1 = 1x, #2 = 2x, #3 = 4x, #4 = 8x ...
+ *
+ * Both the A* compute_cost path and the Dijkstra slate expansion call
+ * this, so a route prices the same whichever search answered it --
+ * smart_cost() in cpathfinder.lua takes a slate cost when one exists and
+ * falls back to A*, and the two disagreeing would make goal ranking
+ * jitter from tick to tick. */
+static float wall_escalation_mult(const BrainPathfinder *pf, int walls_so_far) {
+  int free_walls = (int)pf->wall_escalate_free;
+  float factor = pf->wall_escalate_factor;
+  float mult;
+  if (free_walls < 0) free_walls = 0;
+  if (factor < 1.0f) factor = 1.0f; /* never discount a wall */
+  if (walls_so_far < free_walls) return 1.0f;
+  mult = powf(factor, (float)(walls_so_far - free_walls + 1));
+  /* Keep a mis-set factor from producing a cost that rivals COST_INF and
+   * upsets the search's blocked/passable comparisons. */
+  if (mult > 1e6f) mult = 1e6f;
+  return mult;
+}
 
 /* Compute the cost to enter tile (nx, ny) given the current boat state.
  * Returns the movement cost, fills resource usage outputs and new_boat.
@@ -1243,18 +1279,15 @@ do_search:
                          &onBoat);
       if (tc >= COST_INF) continue;
 
-      /* Escalating wall-break penalty:
-       *   walls 1-2: normal cost
-       *   wall 3+: cost doubles for each additional wall
-       * Makes thick walls exponentially more expensive. */
+      /* Escalating wall-break penalty -- see wall_escalation_mult().
+       * Only the first wall_escalate_free walls are charged plain cost;
+       * every wall past that multiplies again, so thick walls get
+       * expensive fast and the search prefers going round. */
       if (shells_used > 0) {
         int initial_shells = pf->shells_at[node_idx(pf->src_x, pf->src_y, pf->in_boat)];
         int walls_so_far = (initial_shells > 0 && pf->wall_shoot_shells > 0)
                          ? (initial_shells - cur_shells) / (int)pf->wall_shoot_shells : 0;
-        if (walls_so_far >= 2) {
-          int extra = walls_so_far - 2;
-          tc *= (float)(1 << (extra + 1)); /* 2x, 4x, 8x, 16x... */
-        }
+        tc *= wall_escalation_mult(pf, walls_so_far);
       }
 
       ni = node_idx(nx, ny, onBoat);
@@ -2023,15 +2056,11 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
         if (exact) {
           new_shells = cur_shells - wall_shoot_shells;
           if (new_shells < min_shells) continue; /* not enough shells */
-          /* Escalating wall-break penalty:
-           *   walls 1-2: normal cost
-           *   wall 3+: cost doubles for each additional wall
-           * Makes thick walls exponentially more expensive. */
+          /* Escalating wall-break penalty -- see wall_escalation_mult().
+           * Same helper the A* path uses, so a route prices identically
+           * whichever search smart_cost() ended up asking. */
           int walls_broken = (s->src_shells - cur_shells) / (wall_shoot_shells > 0 ? wall_shoot_shells : 1);
-          if (walls_broken >= 2) {
-            int extra = walls_broken - 2; /* 0 for wall #3, 1 for #4, etc */
-            tc *= (float)(1 << (extra + 1)); /* 2x, 4x, 8x, 16x... */
-          }
+          tc *= wall_escalation_mult(pf, walls_broken);
         }
       } else {
         /* Normal tile: add danger * scale * (16/speed) + overlay +
@@ -2315,6 +2344,10 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
     float p = pcontrib_lookup(user, tile_key);
     int d = dval & 0x07;
     int parent_boat = (dval & 0x08) ? 1 : 0;
+    int px = cx - DX8[d];
+    int py = cy - DY8[d];
+    int p_in_bounds = (px >= 0 && px <= 255 && py >= 0 && py <= 255);
+    int pnode = p_in_bounds ? node_idx(px, py, parent_boat) : -1;
     if (p > 0.0f) {
       int tt = pf->map[tile_key] & 0x0F;
       /* Mirror the three slate-expansion branches exactly so the
@@ -2330,6 +2363,17 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
          * Per-pill contribution to that danger term is the same
          * formula with pcontrib in place of total danger. */
         p_term = p * dscale * (16.0f / 3.0f);
+        /* The escalating wall-break penalty multiplies the WHOLE tile
+         * cost, danger term included, so the pill's share is multiplied
+         * too. Rebuild walls_broken the way the slate did -- from the
+         * shells left at the PARENT node, which is what cur_shells held
+         * when that edge was priced. Only exact slates escalate. */
+        if (chosen->exact && chosen->shells_at && pnode >= 0) {
+          int wss = (int)pf->wall_shoot_shells;
+          int walls_broken = (chosen->src_shells - chosen->shells_at[pnode])
+                           / (wss > 0 ? wss : 1);
+          p_term *= wall_escalation_mult(pf, walls_broken);
+        }
       } else {
         /* Normal tile: tc = ec + danger*dscale*inv_spd + overlay + mine_pen.
          * Per-pill contribution: p*dscale*inv_spd. */
@@ -2379,10 +2423,8 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
       }
       subtract += p_term * DMUL8[d];
     }
-    int px = cx - DX8[d];
-    int py = cy - DY8[d];
-    if (px < 0 || px > 255 || py < 0 || py > 255) break;
-    cur = node_idx(px, py, parent_boat);
+    if (!p_in_bounds) break;
+    cur = pnode;
     cur_boat = parent_boat;
   }
 
