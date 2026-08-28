@@ -114,6 +114,14 @@ static ServerSim *serverSim = NULL;
  * reaches a terminal game-over (as -ticks produces). See serverEmitFinalJson. */
 static char optFinalJson[512] = "";
 
+/* -snapjson / -snapinterval: periodic JSONL time series of the same global
+ * snapshot -finaljson writes once. optSnapJson is the destination ("" =
+ * disabled, "-" = stdout, else a file path opened in append mode so each
+ * snapshot is one line); optSnapInterval is the period in running ticks
+ * (0 = disabled). Both must be set for anything to be emitted. */
+static char optSnapJson[512] = "";
+static int32_t optSnapInterval = 0;
+
 /* Shutdown handshake for the game-tick timer.
  *
  * serverGameTimer runs on a separate thread (Win32 multimedia timer or the
@@ -763,6 +771,12 @@ void printArgs() {
   fprintf(stderr, "-finaljson <F> - On terminal game-over (as -ticks produces), write a single\n");
   fprintf(stderr, "                JSON snapshot of the final global game state (all tanks,\n");
   fprintf(stderr, "                pillboxes, bases, winner). \"-\" writes to stdout, else a file.\n");
+  fprintf(stderr, "-snapjson <F> - Append the same global snapshot periodically, one JSON object\n");
+  fprintf(stderr, "                per line (JSONL), with \"reason\":\"snapshot\". Requires\n");
+  fprintf(stderr, "                -snapinterval. The file is truncated at startup, and a final\n");
+  fprintf(stderr, "                \"reason\":\"final\" line is appended on terminal game-over.\n");
+  fprintf(stderr, "-snapinterval <N> - Emit a -snapjson snapshot every N game-ticks of running\n");
+  fprintf(stderr, "                play (same tick units as -ticks). 0/omitted disables.\n");
 
   fprintf(stderr, "\nLogging & diagnostics:\n");
   fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
@@ -1042,15 +1056,19 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 *  player-centric: fog-of-war viewport around "self"), the
 *  dedicated server has no ClientSim/brain view, so this is a
 *  global snapshot: every connected tank, every pillbox, every
-*  base, plus the winner (if any). Emitted once at end-of-game.
+*  base, plus the winner (if any). Emitted once at end-of-game
+*  for -finaljson, and repeatedly for -snapjson (append mode,
+*  one object per line = JSONL).
 *
 *ARGUMENTS:
 *  sim    - The server sim (must still hold final state).
-*  dest   - "-" for stdout, otherwise a file path (truncated).
+*  dest   - "-" for stdout, otherwise a file path.
 *  reason - Short machine tag for why the game ended.
+*  append - FALSE truncates the file (the -finaljson contract,
+*           unchanged); TRUE appends one line (-snapjson).
 *********************************************************/
 static void serverEmitFinalJson(ServerSim *sim, const char *dest,
-                                const char *reason) {
+                                const char *reason, bool append) {
   cJSON *root;
   cJSON *tanks;
   cJSON *pills;
@@ -1091,11 +1109,18 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
     if (!serverSimGetTankInfo(sim, i, &ti)) {
       continue;
     }
+    /* Kills come from serverSimGetPlayerKills, NOT ti.kills: TankInfo.kills
+     * reads tank->numKills, which only tankAddKill writes, and tankAddKill
+     * is called solely from the client snapshot path (client_snapshot.c,
+     * EVENT_TANK_KILLED for the local player). A dedicated server has no
+     * client, so ti.kills is permanently 0 here. Deaths are credited
+     * server-side, so ti.deaths is left alone. */
     t = cJSON_CreateObject();
     cJSON_AddNumberToObject(t, "player", (double)i);
     cJSON_AddStringToObject(t, "name", ti.name);
     cJSON_AddBoolToObject(t, "alive", ti.alive);
-    cJSON_AddNumberToObject(t, "kills", (double)ti.kills);
+    cJSON_AddNumberToObject(t, "kills",
+                            (double)serverSimGetPlayerKills(sim, i));
     cJSON_AddNumberToObject(t, "deaths", (double)ti.deaths);
     if (ti.has_tank) {
       cJSON_AddNumberToObject(t, "x", (double)ti.world_x / 256.0);
@@ -1157,9 +1182,10 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
   if (strcmp(dest, "-") == 0) {
     f = stdout;
   } else {
-    f = fopen(dest, "w");
+    f = fopen(dest, append ? "a" : "w");
     if (f == NULL) {
-      fprintf(stderr, "Error: cannot open -finaljson file '%s'\n", dest);
+      fprintf(stderr, "Error: cannot open %s file '%s'\n",
+              append ? "-snapjson" : "-finaljson", dest);
       cJSON_free(out);
       return;
     }
@@ -1171,6 +1197,19 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
     fclose(f);
   }
   cJSON_free(out);
+}
+
+/*********************************************************
+*NAME:          serverSnapshotTick
+*PURPOSE:
+*  serverSimSetSnapshotHook callback: appends one -snapjson
+*  line every -snapinterval running ticks. Called from inside
+*  the sim step (game-timer thread) before that step does any
+*  work, so the state written is settled, not half-applied.
+*  Read-only with respect to the sim.
+*********************************************************/
+static void serverSnapshotTick(ServerSim *sim) {
+  serverEmitFinalJson(sim, optSnapJson, "snapshot", TRUE);
 }
 
 int main(int argc, char **argv) {
@@ -1521,6 +1560,43 @@ int main(int argc, char **argv) {
     if (argNum != ARG_NOT_FOUND) {
       strncpy(optFinalJson, (char *)argv[argNum], sizeof(optFinalJson) - 1);
       optFinalJson[sizeof(optFinalJson) - 1] = '\0';
+    }
+  }
+  {
+    int argNum = findArg(argc, argv, "snapjson");
+    if (argNum != ARG_NOT_FOUND) {
+      strncpy(optSnapJson, (char *)argv[argNum], sizeof(optSnapJson) - 1);
+      optSnapJson[sizeof(optSnapJson) - 1] = '\0';
+    }
+    argNum = findArg(argc, argv, "snapinterval");
+    if (argNum != ARG_NOT_FOUND) {
+      optSnapInterval = (int32_t)strtol((char *)argv[argNum], NULL, 0);
+      if (optSnapInterval < 0) {
+        optSnapInterval = 0;
+      }
+    }
+    if (optSnapJson[0] != '\0' && optSnapInterval > 0) {
+      /* Start a fresh series: the emit path appends, so an existing file
+       * from a previous run would otherwise be extended. "-" is stdout. */
+      if (strcmp(optSnapJson, "-") != 0) {
+        FILE *snapTrunc = fopen(optSnapJson, "w");
+        if (snapTrunc == NULL) {
+          fprintf(stderr, "Error: cannot open -snapjson file '%s'\n",
+                  optSnapJson);
+          optSnapJson[0] = '\0';
+        } else {
+          fclose(snapTrunc);
+        }
+      }
+      if (optSnapJson[0] != '\0') {
+        serverSimSetSnapshotHook(serverSim, serverSnapshotTick,
+                                 optSnapInterval);
+      }
+    } else if (optSnapJson[0] != '\0') {
+      fprintf(stderr,
+              "Warning: -snapjson given without a positive -snapinterval; "
+              "no snapshots will be written\n");
+      optSnapJson[0] = '\0';
     }
   }
 
@@ -2263,7 +2339,13 @@ int main(int argc, char **argv) {
    * timer is drained above, so the sim is quiescent and still fully
    * populated here (destroy happens further down). */
   if (optFinalJson[0] != '\0' && serverSimIsTerminalGameOver(serverSim)) {
-    serverEmitFinalJson(serverSim, optFinalJson, "tick_limit");
+    serverEmitFinalJson(serverSim, optFinalJson, "tick_limit", FALSE);
+  }
+  /* -snapjson: close the series with the true final state, so the last row
+   * is the terminal one rather than the last interval boundary. Same
+   * terminal-only gate as -finaljson. */
+  if (optSnapJson[0] != '\0' && serverSimIsTerminalGameOver(serverSim)) {
+    serverEmitFinalJson(serverSim, optSnapJson, "final", TRUE);
   }
   botWorkerPoolDestroy();
   brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */

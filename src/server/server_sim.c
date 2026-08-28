@@ -530,6 +530,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ticksRun = 0;
     sim->gameTickLimit = 0;
     sim->gameTicksRun = 0;
+    sim->snapshotCb = NULL;
+    sim->snapshotInterval = 0;
+    sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -1394,6 +1397,18 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->tick++;
         mapSetChangeCallback(NULL);
         return;
+    }
+
+    /* Periodic state snapshot (-snapjson). Counted over exactly the same
+     * running half-steps as ticksRun below — placed ahead of the limit
+     * checks on purpose, so the last interval boundary still fires on the
+     * tick that then trips the tick limit and returns. Runs before this
+     * half-step touches anything, i.e. on fully settled state. */
+    if (sim->snapshotInterval > 0 && sim->snapshotCb != NULL) {
+        sim->snapshotTicks++;
+        if ((sim->snapshotTicks % sim->snapshotInterval) == 0) {
+            sim->snapshotCb(sim);
+        }
     }
 
     if (sim->gameLength > 0) {
@@ -3049,6 +3064,21 @@ void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
     sim->gameTicksRun = 0;
 }
 
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks) {
+    if (sim == NULL) {
+        return;
+    }
+    if (cb == NULL || intervalTicks <= 0) {
+        sim->snapshotCb = NULL;
+        sim->snapshotInterval = 0;
+    } else {
+        sim->snapshotCb = cb;
+        sim->snapshotInterval = intervalTicks;
+    }
+    sim->snapshotTicks = 0;
+}
+
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
     if (name == NULL || name[0] == '\0') {
         sim->userLogFileName[0] = '\0';
@@ -3290,6 +3320,11 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;
     }
+}
+
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return 0;
+    return (uint16_t)sim->roundStats[slot].kills;
 }
 
 const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) {
