@@ -1,8 +1,15 @@
 """Generate 'Survival' — circular co-op survival scenario map.
 
+WARNING: data/maps/Survival.map is NOT byte-reproducible from this
+script any more — the shipped file carries later hand edits (a few
+extra ring-road tiles, some swamp turned back to grass, river inside
+the puddle). Running this OVERWRITES those. It is kept as the readable
+statement of the layout and as the starting point for a from-scratch
+rebuild; incremental changes are made against the shipped file.
+
 Rings (center 128,128), sized to sit near Schism Toy III's ~55x55
-footprint (the spawn-tiering rules put a floor on the bot ring: 10
-bases must be >9 Chebyshev apart, so the island can't get much
+footprint (the spawn-tiering rules put a floor on the ocean start ring:
+starts must be >9 Chebyshev from any base, so the island can't get much
 smaller than this ~67x67):
   r <= 2.5         inner deep-sea puddle (5 tiles across), 6 human starts
                    at r=2 (60 deg apart) — the scenario's on_choose_start
@@ -14,11 +21,18 @@ smaller than this ~67x67):
                    - 6 DEAD pills at r=8, one just beyond each human base,
                      owners = slots 0..5 (the defenders' starting pills —
                      dead, so they must be scooped, placed and repaired)
-                   - 10 DEAD neutral pills parked between the bot bases;
-                     the scenario loads one into each wave-1 tank
-                   - 10 bot bases at r=26 (36 deg apart, owners 15..6 -> each
-                     wave bot is pulled to the outer start at its angle)
-  r > 29           open sea; 10 bot starts at r=33 (one per bot base angle)
+                   - 10 DEAD neutral pills parked out at r=26, the ring
+                     the horde's bases used to sit on; the scenario deals
+                     one to each wave-1 tank
+                   - 4 bot bases at r=13, just outside the ring road, on
+                     the 0/72/180/252 deg spokes (owners 15/13/10/8 — the
+                     slot whose ocean start shares the spoke). The horde
+                     used to hold a full ring of 10 out at r=26; those
+                     never got fought over, so the ring was cut down to
+                     the two that had been pushed forward plus a matching
+                     pair due east and due west.
+  r > 29           open sea; 10 bot starts at r=33 (one per 36 deg spoke —
+                   still one per wave slot, four of which own a base)
 
 Everything stays inside the unmined 21..235 zone (max extent 128+33=161).
 Run-encoding follows mapProcessRun exactly (nibble 0-7 = that many+1
@@ -39,7 +53,7 @@ C = 128
 R_LAKE = 2.5
 R_LAND = 29
 R_HSTART, R_HBASE = 2, 6
-R_BBASE, R_BSTART = 26, 33
+R_BBASE, R_BSTART = 13, 33   # horde bases sit forward, just past the road
 R_PILL = 8               # 6 dead defender pills, one beyond each base
 R_PILL_OUT = 26          # 10 dead neutral pills for the wave-1 tanks
 
@@ -52,14 +66,18 @@ bot_angles   = [k * 36 for k in range(10)]
 
 human_starts = [pol(R_HSTART, a) for a in human_angles]
 human_bases  = [pol(R_HBASE,  a) for a in human_angles]      # owners 0..5
-bot_bases    = [pol(R_BBASE,  a) for a in bot_angles]        # owners 15..6
-# Two of the enemy bases push in close — just outside the ring road —
-# so their bots treat the collision zone with the core as home turf.
-FORWARD_BASES = {2: 13, 7: 13}          # zero-based index -> radius
-for _i, _r in FORWARD_BASES.items():
-    bot_bases[_i] = pol(_r, bot_angles[_i])
+# The horde's bases all push in close — just outside the ring road — so
+# their bots treat the collision zone with the core as home turf. Only
+# four spokes carry one: 0 (east), 72, 180 (west), 252. Point-symmetric
+# through the island center, and mirror-symmetric about the 36/216 spoke.
+# Each is owned by the slot whose ocean start sits on the SAME spoke
+# (on_choose_start pins slot p to start 22-p, and slot 15-i starts on
+# spoke i), so its bot comes ashore aimed at its own base.
+FORWARD_SPOKES = [0, 2, 5, 7]           # zero-based index into bot_angles
+bot_bases  = [pol(R_BBASE, bot_angles[i]) for i in FORWARD_SPOKES]
+bot_owners = [15 - i for i in FORWARD_SPOKES]                # 15, 13, 10, 8
 bot_starts   = [pol(R_BSTART, a) for a in bot_angles]
-pills = ([pol(R_PILL, a) for a in human_angles] +        # 1..6: base 10+k's pill
+pills = ([pol(R_PILL, a) for a in human_angles] +        # 1..6: base 4+k's pill
          [pol(R_PILL_OUT, a + 18) for a in bot_angles])  # 7..16: wave-1 carry
 
 # --- terrain -----------------------------------------------------------
@@ -120,7 +138,7 @@ for (px, py) in human_bases + bot_bases + pills:
 def cheb(a, b):
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
-all_bases = bot_bases + human_bases   # file order: outer 1..10, center 11..16
+all_bases = bot_bases + human_bases   # file order: horde 1..4, center 5..10
 for i, s in enumerate(human_starts + bot_starts):
     assert grid[s[0]][s[1]] == DEEP, f"start {i} not in deep sea: {s}"
     near = [bi for bi, b in enumerate(all_bases) if cheb(s, b) <= 9]
@@ -128,16 +146,13 @@ for i, s in enumerate(human_starts + bot_starts):
         # Humans are pinned to the puddle by on_choose_start; with the
         # base ring hugging the puddle every human start sees several
         # CENTER bases (harmless — the hook decides placement), but it
-        # must never see an OUTER base.
-        assert all(bi >= 10 for bi in near), f"human start {i} sees outer bases {near}"
-    elif (i - 6) in FORWARD_BASES:
-        # A forward base sits far inland from its ocean start — the
-        # start pairs with nothing (placement is hook-driven anyway).
-        assert near == [], f"forward-base start {i} sees bases {near}"
+        # must never see a HORDE base.
+        assert all(bi >= 4 for bi in near), f"human start {i} sees horde bases {near}"
     else:
-        # Each bot start pairs with exactly its own base so the engine
-        # fallback stays correct for bots.
-        assert near == [i - 6], f"bot start {i} sees bases {near}, want {[i-6]}"
+        # Every horde base is forward now, far inland from every ocean
+        # start, so no bot start pairs with one. Placement is hook-driven
+        # (on_choose_start), so the engine fallback is never consulted.
+        assert near == [], f"bot start {i} sees bases {near}"
 for b in all_bases + pills:
     assert grid[b[0]][b[1]] != DEEP, f"structure in water: {b}"
 
@@ -180,7 +195,8 @@ for i, (x, y) in enumerate(pills):
     owner = i if i < 6 else 0xFF                      # center: slot i; outer: neutral
     out += bytes([x, y, owner, 0, 50])                # DEAD, default speed
 for i, (x, y) in enumerate(all_bases):
-    owner = (15 - i) if i < 10 else (i - 10)          # outer 15..6, center 0..5
+    n_bot = len(bot_bases)
+    owner = bot_owners[i] if i < n_bot else (i - n_bot)  # horde spokes, center 0..5
     out += bytes([x, y, owner, 90, 90, 90])
 def out_dir(x, y, inward):
     # Map-file start dirs count COUNTERclockwise from east in y-UP map

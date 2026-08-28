@@ -22,7 +22,7 @@ setlocal
 set PORT=27500
 set WINBOLO_BRAINDBG_LABEL=survival
 cd /d "%~dp0"
-WinBoloDS.exe -map "data/maps/Survival.map" -port %PORT% -gametype scripted -ai yes -brain-debug -firstjoinhost -nowinbolonet
+WinBoloDS.exe -map "data/maps/Survival.map" -port %PORT% -gametype scripted -ai yes -brain-debug -firstjoinhost -nowinbolonet -log
 rem Keep the window open if the server exited with an error (port in use,
 rem bad map, ...) so the message is readable instead of flashing away.
 if errorlevel 1 pause
