@@ -3641,6 +3641,21 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Meta/Cmd release — re-sync held keys. macOS does not deliver KEY_UP
+           for a non-modifier key that is released while Cmd is held (browsers
+           on macOS inherit this), so tapping Cmd mid-turn and letting go of a
+           movement key under it leaves that key reading as held in
+           SDL_GetKeyboardState, with no focus transition to clear it — the
+           tank turns forever with nothing pressed. Take the modifier's own
+           release as the cue that any key-ups issued under it were swallowed.
+           A player still physically holding a key re-presses it; that beats an
+           unbounded spin. */
+        if (ev.type == SDL_EVENT_KEY_UP &&
+            (ev.key.scancode == SDL_SCANCODE_LGUI ||
+             ev.key.scancode == SDL_SCANCODE_RGUI)) {
+            inputResetHeldKeys();
+        }
+
         /* Suspend / resume — Steam Deck Verified requirement.  Fires on
            sleep, home-button overlay, and other backgrounding.  In a
            network game, resume drops back to menu via the standard
