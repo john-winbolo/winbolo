@@ -6136,6 +6136,11 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
+        /* Redo the start placement now the roster and its teams are final.
+         * The batch pass at round start ran before any bot was added, so
+         * every one of them fell back to the team-blind per-player pick and
+         * rivals could land on adjacent squares. No-op unless running. */
+        serverSimReassignStarts(app.sim);
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so

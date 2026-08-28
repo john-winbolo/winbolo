@@ -2185,6 +2185,18 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
       }
+      /* Now that the roster and its teams are final, redo the start
+       * placement. -nolobby has already started the game inside
+       * serverInstanceStartup, so the batch pass in serverSimStartGame ran
+       * over an empty roster and every bot added since fell back to the
+       * team-blind per-player pick — which is how two rivals ended up two
+       * squares apart in the same corner. Same tech debt as the
+       * serverSimReapplyTeamAlliances calls above, and it goes away with
+       * them once the roster is built before the game starts. No-op outside
+       * the running state, so the lobby path is untouched. */
+      if (numBots > 0) {
+        serverSimReassignStarts(serverSim);
+      }
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }

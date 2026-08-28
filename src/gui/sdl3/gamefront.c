@@ -1771,6 +1771,12 @@ bool gameFrontSetDlgState(openingStates newState) {
                * human and bots hadn't been added yet) and found no
                * pairs. Re-run it now that the lobby is populated. */
               serverSimReapplyTeamAlliances(spServerSim);
+              /* Same story for the start placement: the batch pass at round
+               * start ran over an empty lobby, so every player added since
+               * fell back to the team-blind per-player pick and rivals could
+               * end up on adjacent squares. Redo it now the roster and its
+               * teams are final. */
+              serverSimReassignStarts(spServerSim);
             }
             threadsReleaseMutex();
             gameFrontUpdateSteamPresence(humanSim);

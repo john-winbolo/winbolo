@@ -615,6 +615,9 @@ int run_starts_batch_null_reservations_place_normally(void);
 int run_starts_batch_solo_random_seed(void);
 int run_starts_batch_teams_cluster_and_separate(void);
 int run_starts_batch_team_anchor_jitter_varies(void);
+/* Spread before cluster: on a four-corner-pair map a 2v2 gets a corner
+ * each, and only the overflow of a 4v4 doubles up — with teammates. */
+int run_starts_batch_spread_before_cluster(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).

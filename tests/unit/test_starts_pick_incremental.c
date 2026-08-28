@@ -2,12 +2,14 @@
  * Incremental start-picker tests (test_starts_pick_incremental.c).
  *
  * startsPickIncremental reserves one free start for a single joiner,
- * sharing startsMapDistance and the deep-sea validity guard with
- * startsAssignBatch. These tests pin the two selection modes and the
- * exhausted-pool fallback:
+ * sharing startsMapDistance, the region grouping and the deep-sea
+ * validity guard with startsAssignBatch. These tests pin the priority
+ * order and the exhausted-pool fallback:
  *
- *   (a) with teammate reservations, the free start nearest a teammate
- *       wins (cluster);
+ *   (a) with teammate reservations, the joiner still spreads while a
+ *       region nobody has reserved holds a free start, and only clusters
+ *       onto the free start nearest a teammate once every region is
+ *       spoken for;
  *   (b) with none, the free start farthest from every taken start wins
  *       (farthest-first);
  *   (c) when every start is taken, it returns MAX_STARTS.
@@ -32,10 +34,14 @@
 
 /* Start layout shared by all three cases. Distances are Chebyshev
  * (startsMapDistance), so from start 0 at (100,100):
- *   1 (102,100) = 2, 2 (200,200) = 100, 3 (130,100) = 30, 4 (50,50) = 50 */
-static const BYTE k_sx[5] = {100, 102, 200, 130, 50};
-static const BYTE k_sy[5] = {100, 100, 200, 100, 50};
-#define K_NUM_STARTS 5
+ *   1 (102,100) = 2, 2 (200,200) = 100, 3 (130,100) = 30, 4 (50,50) = 50,
+ *   5 (132,100) = 32
+ * Within START_REGION_RADIUS that gives four regions: {0,1}, {2}, {3,5},
+ * {4} — two of them a close pair, which is what the spread-then-cluster
+ * order needs to be visible. */
+static const BYTE k_sx[6] = {100, 102, 200, 130, 50, 132};
+static const BYTE k_sy[6] = {100, 100, 200, 100, 50, 100};
+#define K_NUM_STARTS 6
 
 /* Build the 5-start layout on the sim's map, forcing each square to deep
  * sea with no mine so startsIsValidSquare accepts it. */
@@ -50,7 +56,10 @@ static void build_starts(GameSim *gs) {
     gs->ss->numStarts = K_NUM_STARTS;
 }
 
-/* (a) Cluster: a teammate holds start 0; the nearest free start (1) wins. */
+/* (a) A teammate holds start 0. While regions {2}, {3,5} and {4} are still
+ *     free the joiner spreads into the farthest of them (2) rather than
+ *     taking start 1 next to his teammate; once those regions are taken he
+ *     clusters onto start 1 after all. */
 int run_starts_pick_cluster_nearest_teammate(void) {
     ServerSim *sim = ut_make_running_sim("Cluster");
     UT_ASSERT(sim != NULL);
@@ -62,6 +71,16 @@ int run_starts_pick_cluster_nearest_teammate(void) {
     taken[0] = true;                 /* teammate sits on start 0 */
     BYTE teammates[1] = {0};         /* 0-based teammate reservation */
     BYTE picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1);
+
+    UT_ASSERT_MSG(picked == 2,
+                  "spread should pick start 2 (farthest unused region), got %u",
+                  (unsigned)picked);
+
+    /* Every region but the teammate's now spoken for — cluster takes over. */
+    taken[2] = true;
+    taken[3] = true;
+    taken[4] = true;
+    picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1);
 
     UT_ASSERT_MSG(picked == 1,
                   "cluster should pick start 1 (nearest to teammate), got %u",

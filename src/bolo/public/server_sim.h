@@ -965,6 +965,26 @@ void serverSimClearBalanceProposal(ServerSim *sim);
 void serverSimReapplyTeamAlliances(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimReassignStarts
+ *PURPOSE:
+ *  Re-runs the batch start placement over the currently
+ *  connected players and re-creates their tanks at the new
+ *  positions. No-op unless the sim is running.
+ *
+ *  TECH DEBT: the twin of serverSimReapplyTeamAlliances
+ *  above, and there for the same reason. -nolobby (and the
+ *  SP-host flow) call serverSimStartGame before the bots
+ *  have been added and their team numbers set, so the batch
+ *  pass inside it sees an empty roster; every bot added
+ *  afterwards then falls back to the team-blind per-player
+ *  pick, which put two rivals two squares apart in the same
+ *  corner. Call this once the roster and teams are final.
+ *  It goes away with the alliance pass when players are
+ *  added before serverSimStartGame is called.
+ *********************************************************/
+void serverSimReassignStarts(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimResetGameWorld
  *PURPOSE:
  *  Resets the game world using cached map data. Destroys

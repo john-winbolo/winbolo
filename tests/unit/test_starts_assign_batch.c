@@ -340,3 +340,106 @@ int run_starts_batch_team_anchor_jitter_varies(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Four corner pairs, two squares apart within a pair and 128 apart between
+ * pairs — the DH-Oil Rig shape that started this. Each pair is one region to
+ * startsAssignBatch, so there are four regions and eight starts. Two slots
+ * within K_SAME_CORNER of each other landed in the same corner; the gap is
+ * 2 within a pair against 128 across, so the exact threshold doesn't matter
+ * as long as it sits between them. */
+#define K_SAME_CORNER 10
+static void build_four_corner_pairs(GameSim *gs) {
+    static const BYTE cx[8] = { 60,  62, 190, 188,  60,  62, 190, 188};
+    static const BYTE cy[8] = { 60,  62,  60,  62, 190, 188, 190, 188};
+    int i;
+    gs->pb->numPills = 0;   /* no pills near the synthetic starts */
+    gs->bs->numBases = 0;   /* no owned bases to steer anchors */
+    for (i = 0; i < 8; i++) {
+        mapSetPos(gs, &gs->mp, cx[i], cy[i], DEEP_SEA, FALSE, TRUE);
+        gs->ss->item[i].x = cx[i];
+        gs->ss->item[i].y = cy[i];
+        gs->ss->item[i].dir = 0;
+    }
+    gs->ss->numStarts = 8;
+}
+
+/* Chebyshev distance between the starts two slots landed on. */
+static int out_distance(GameSim *gs, const BYTE *out, int a, int b) {
+    int dx = (int)gs->ss->item[out[a]].x - (int)gs->ss->item[out[b]].x;
+    int dy = (int)gs->ss->item[out[a]].y - (int)gs->ss->item[out[b]].y;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    return (dx > dy) ? dx : dy;
+}
+
+/* (i) Spread first, cluster only on the overflow. A 2v2 on the four-corner
+ *     map puts one player in each corner — no two players share a corner,
+ *     rivals least of all. A 4v4 has to double up, and when it does the
+ *     pairs are teammates, never rivals. */
+int run_starts_batch_spread_before_cluster(void) {
+    ServerSim *sim = ut_make_running_sim("Spread");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    build_four_corner_pairs(gs);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE out[MAX_TANKS];
+    int seed;
+    int i;
+    int j;
+
+    /* 2v2: four players, four corners, one each. */
+    for (seed = 1; seed <= 16; seed++) {
+        reset_inputs(connected, team, reserved);
+        connected[0] = connected[1] = connected[2] = connected[3] = true;
+        team[0] = team[1] = 1;
+        team[2] = team[3] = 2;
+        bolo_srand((uint64_t)seed);
+        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+        for (i = 0; i < 4; i++) {
+            UT_ASSERT_MSG(out[i] < 8, "seed %d: slot %d unplaced (%u)",
+                          seed, i, (unsigned)out[i]);
+        }
+        for (i = 0; i < 4; i++) {
+            for (j = i + 1; j < 4; j++) {
+                UT_ASSERT_MSG(out_distance(gs, out, i, j) > K_SAME_CORNER,
+                              "seed %d: slots %d and %d share a corner (%d,%d)/(%d,%d)",
+                              seed, i, j,
+                              (int)gs->ss->item[out[i]].x, (int)gs->ss->item[out[i]].y,
+                              (int)gs->ss->item[out[j]].x, (int)gs->ss->item[out[j]].y);
+            }
+        }
+    }
+
+    /* 4v4: eight players, four corners — every corner ends up shared, and
+     * the two slots sharing one must be on the same team. */
+    for (seed = 1; seed <= 16; seed++) {
+        reset_inputs(connected, team, reserved);
+        for (i = 0; i < 8; i++) {
+            connected[i] = true;
+            team[i] = (BYTE)((i < 4) ? 1 : 2);
+        }
+        bolo_srand((uint64_t)seed);
+        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+        for (i = 0; i < 8; i++) {
+            UT_ASSERT_MSG(out[i] < 8, "seed %d: slot %d unplaced (%u)",
+                          seed, i, (unsigned)out[i]);
+        }
+        for (i = 0; i < 8; i++) {
+            for (j = i + 1; j < 8; j++) {
+                if (out_distance(gs, out, i, j) > K_SAME_CORNER) continue;
+                UT_ASSERT_MSG(team[i] == team[j],
+                              "seed %d: rivals %d and %d share a corner (%d,%d)/(%d,%d)",
+                              seed, i, j,
+                              (int)gs->ss->item[out[i]].x, (int)gs->ss->item[out[i]].y,
+                              (int)gs->ss->item[out[j]].x, (int)gs->ss->item[out[j]].y);
+            }
+        }
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}

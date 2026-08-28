@@ -392,6 +392,7 @@ static const UnitTestEntry s_tests[] = {
     { "starts_batch_solo_random_seed",           run_starts_batch_solo_random_seed           },
     { "starts_batch_teams_cluster_and_separate", run_starts_batch_teams_cluster_and_separate },
     { "starts_batch_team_anchor_jitter_varies",  run_starts_batch_team_anchor_jitter_varies  },
+    { "starts_batch_spread_before_cluster",      run_starts_batch_spread_before_cluster      },
     { "starts_open_ideal_friendly_pill_eligible",
                                                  run_starts_open_ideal_friendly_pill_eligible },
     { "input_redundancy",                        run_input_redundancy                        },
