@@ -335,6 +335,19 @@
                         catch (_) {}
                     }, { passive: false });
                 }
+                /* Held-key safety reset. A browser can stop delivering keyup
+                   without any SDL focus event (tab hidden, window blurred),
+                   leaving a movement key latched in SDL's polled keyboard
+                   state and the tank turning with nothing pressed. Clear it
+                   from the DOM side on both paths. */
+                var wbResetHeldKeys = function() {
+                    try { Module.ccall('wbWasmResetHeldKeys', null, [], []); }
+                    catch (_) {}
+                };
+                document.addEventListener('visibilitychange', function() {
+                    if (document.hidden) wbResetHeldKeys();
+                });
+                window.addEventListener('blur', wbResetHeldKeys);
             },
 
             /* ---- WinBolo.net preferences bridge -----------------------------

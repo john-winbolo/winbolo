@@ -480,7 +480,7 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.6@/Brains/GoalHunter_1.6"
     # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
     # EM_ASYNC_JS fetch transport to hand response bodies back to C.
-    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel']"
+    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel','_wbWasmResetHeldKeys']"
     "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','lengthBytesUTF8','stringToUTF8','UTF8ToString','setValue']"
     -sALLOW_MEMORY_GROWTH=1
     "-sINITIAL_MEMORY=67108864"
