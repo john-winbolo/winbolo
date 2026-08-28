@@ -4077,6 +4077,9 @@ function Brain.think(info)
     local refuel_needed = false
     local refuel_complete = false
     local refuel_hold = false
+    -- Set when refuel_complete is true but we're deliberately parked on the
+    -- base waiting for our LGM to come home (see the release block below).
+    local refuel_lgm_hold = false
     if state.goal.kind == "refuel_at_base" then
       local need_armour = info.armour < state.armour_target
       local need_shells = info.shells < state.shell_target
@@ -4206,10 +4209,66 @@ function Brain.think(info)
         -- Not on base yet, lock-in mode: hold position-based replans
         refuel_hold = true
       end
+
+      -- ── Refuel finished: RELEASE the goal, don't just flag a replan ──
+      -- refuel_done below forces a replan every tick while refuel_at_base
+      -- is still installed, but goals.lua's pool-1 shaping deliberately
+      -- skips the refuel entry once we're at armour_target/shell_target
+      -- ("at dynamic target: don't compete"). That leaves the competition
+      -- with NO pool entry for the current goal, so the walkover guard in
+      -- goal_competition resurrects it from pool_cache at its last
+      -- finalized cost — which then beats every real contender, because
+      -- challengers pay the switch + commitment penalties and the
+      -- carried-forward incumbent pays nothing.
+      --
+      -- Result: a livelock. 20260828_111758 bot2 sat on base #13 at
+      -- (143,115) with arm=40 for 114 straight ticks (t=2807-2920), every
+      -- tick logging "refuel_done=true", "hysteresis(carry): current
+      -- refuel_at_base@143,115 had no pool entry this cycle — carried at
+      -- last cost 48" and "winner attack_pill cost=133 > current 48 * 0.7
+      -- — sticking with current". Six such runs on that bot alone; the
+      -- loop only broke when the base finally ran dry. Cost-tuning can't
+      -- fix it (the incumbent's cost is whatever it last was, and the
+      -- guard reinstates it unconditionally) — the goal has to stop being
+      -- the incumbent. Same treatment the depleted-base branch above
+      -- already gives its sibling case.
+      --
+      -- Stay-for-LGM exemption: goals.lua keeps refuel competing (clamped
+      -- to the LGM_WAIT_COST floor) when we're parked ON the base and our
+      -- LGM is still inbound — there, sitting still IS the job and "fully
+      -- stocked" is not "finished". Releasing the goal in that case would
+      -- just have the pool re-pick refuel next tick, trading one every-
+      -- tick replan for another while also resetting goal_set_tick so
+      -- commitment and cur_group hysteresis could never build up. Mirrors
+      -- the lgm_wait_here test in goals.lua's pool-1 block; it also keeps
+      -- build_eval_queue's "queue refuel while refuel_at_base is active"
+      -- clause alive so pool 1 still has candidates to clamp.
+      if refuel_complete then
+        local on_goal_base = state.goal.mx and state.goal.my
+          and (bit.rshift(info.tankx, 8)) == state.goal.mx
+          and (bit.rshift(info.tanky, 8)) == state.goal.my
+        local lgm_eta = state.builder and state.builder.lgm_eta
+        local lgm_wait_here = on_goal_base and lgm_eta
+          and lgm_eta > now + C.LGM_ETA_DEPART_BUFFER
+        refuel_lgm_hold = lgm_wait_here and true or false
+        if not lgm_wait_here then
+          attack.clear_attack_goal(state, "refuel: complete (fully stocked)")
+        elseif BRAIN_DEBUG_MODE then
+        end
+      end
     end
     -- Fully stocked at refuel target: replan immediately instead of
     -- waiting for the next timer fire.
-    local refuel_done = refuel_complete
+    --
+    -- NOT during a stay-for-LGM hold. There the goal is still live and
+    -- correctly re-wins the pool every tick (at the LGM_WAIT_COST floor),
+    -- so "done" would mean a full replan every tick for the whole wait
+    -- with a foregone conclusion — 20260828_164532 bot2 t=4623-4692, 70
+    -- straight ticks of replan=true → pick_goal → refuel_at_base while
+    -- lgm_eta slid forward one tick at a time. Waiting is an ordinary
+    -- committed goal, so let it ride the normal replan timer; urgent
+    -- replans still interrupt it if something real happens.
+    local refuel_done = refuel_complete and not refuel_lgm_hold
     local timer_fire = (now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL == 0
     -- Minimum commitment: suppress timer-based replans shortly after a switch
     local min_commit_met = (now - (state.goal_set_tick or 0)) >= C.GOAL_MIN_COMMIT_TICKS

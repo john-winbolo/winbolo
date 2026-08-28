@@ -9782,6 +9782,24 @@ local function goal_selection(state, world, info, quiet)
 
           if info.armour >= state.armour_target and info.shells >= state.shell_target
              and not lgm_wait_here then
+            -- COMPLETION decline, not a mid-requeue gap. Flag it for the
+            -- walkover guard below: this pool DID produce an entry this
+            -- cycle and we are dropping it on purpose because the refuel
+            -- is finished. Without the flag the guard reads "no entry for
+            -- the current goal" and resurrects refuel_at_base from
+            -- pool_cache at its last finalized cost, which then wins on
+            -- stickiness forever — the livelock in 20260828_111758 bot2
+            -- (114 straight ticks parked at arm=40 on base (143,115)).
+            --
+            -- Flagged by goal KIND, not by this entry's base: the test
+            -- above is a property of the TANK (armour/shells vs target),
+            -- so EVERY refuel candidate is declined for the same reason,
+            -- including one at a base that isn't the one we're sitting on.
+            -- Keyed on the tick so a stale flag can never suppress a
+            -- legitimate carry-forward on a later cycle.
+            if state.goal and state.goal.kind == "refuel_at_base" then
+              state._pool_decline_complete = { tick = now, kind = "refuel_at_base" }
+            end
             goto continue_pool   -- at dynamic target and no LGM waiting: don't compete
           end
           -- Reuse the live shape computed above (also stashed on cost_cache
@@ -10249,7 +10267,27 @@ local function goal_selection(state, world, info, quiet)
         -- defend purely because repair was mid-requeue). Fall back to
         -- the pool_cache's last finalized cost for the current goal and
         -- fabricate its entry so the ratio test still applies.
-        if not cur_entry and state.pool_cache then
+        --
+        -- ...but a goal that FINISHED is not mid-requeue. Its pool ran and
+        -- deliberately declined to bid (see the "COMPLETION decline" flag
+        -- set in the pool-1 at-target skip above). Carrying it forward
+        -- reinstalls a completed goal as the incumbent, and since the
+        -- incumbent pays no switch/commitment penalty it then wins every
+        -- tick until something external breaks the tie — the parked-at-
+        -- full-armour livelock. The flag distinguishes the two cases
+        -- without touching the mid-requeue protection: it is only set on
+        -- ticks where the pool produced an entry and threw it away for a
+        -- completion reason, which is exactly the case the carry-forward
+        -- must NOT cover.
+        local _dc = state._pool_decline_complete
+        local _declined_complete = _dc and _dc.tick == now
+                                   and _dc.kind == state.goal.kind
+        if _declined_complete and not cur_entry and BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "  hysteresis(carry): SKIPPED for %s@%d,%d — its pool declined for COMPLETION, not requeue",
+            state.goal.kind, state.goal.mx or -1, state.goal.my or -1))
+        end
+        if not cur_entry and not _declined_complete and state.pool_cache then
           for pi = 0, 12 do
             local pce = state.pool_cache[pi]
             if pce and pce.goal and pce.cost

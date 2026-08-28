@@ -2313,4 +2313,5 @@ M.TANK_DEATH_REPLAN_PILL_RANGE = 12
 -- producing a log line nobody can read, and an uncapped tick record is how
 -- a serialization overrun becomes a permanent per-tick budget kill.
 M.LOGGER_TICK_MAX_ENTRIES = 256
+
 return M
