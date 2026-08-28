@@ -2312,6 +2312,16 @@ static int l_wsim_set_lgm(lua_State *L) {
   return 0;
 }
 
+/* wsim_set_dwell(ticks) — keep simulating for `ticks` after the tank
+ * reaches the end of its path, standing still on the destination tile.
+ * 0 (the default, restored by wsim_clear) = stop on arrival. */
+static int l_wsim_set_dwell(lua_State *L) {
+  WSIM_GET(L);
+  int dwell_ticks = (int)luaL_optinteger(L, 1, 0);
+  brainWorldSimSetDwell(ws, dwell_ticks);
+  return 0;
+}
+
 static int l_wsim_run(lua_State *L) {
   WSimResult r;
   int i;
@@ -2329,6 +2339,11 @@ static int l_wsim_run(lua_State *L) {
   lua_pushinteger(L, r.damage_taken);
   lua_setfield(L, -2, "damage");
 
+  /* Subset of `damage` taken while parked at the destination, so Lua can
+   * tell drive damage from dwell damage. 0 when no dwell was requested. */
+  lua_pushinteger(L, r.damage_during_dwell);
+  lua_setfield(L, -2, "dwell_damage");
+
   lua_pushinteger(L, r.ticks_simulated);
   lua_setfield(L, -2, "ticks");
 
@@ -2337,6 +2352,11 @@ static int l_wsim_run(lua_State *L) {
 
   lua_pushboolean(L, r.killed);
   lua_setfield(L, -2, "killed");
+
+  /* Ran out of ticks rather than reaching a natural end. A truncated run
+   * is UNKNOWN, not SAFE — a low `damage` here proves nothing. */
+  lua_pushboolean(L, r.truncated);
+  lua_setfield(L, -2, "truncated");
 
   /* LGM fields: only present if LGM was dispatched */
   if (r.lgm_survived > 0) {
@@ -2399,6 +2419,7 @@ void brainCoreRegisterWorldSim(lua_State *L, BrainWorldSim **wsPtr) {
     { "wsim_set_path",          l_wsim_set_path },
     { "wsim_set_attack_target", l_wsim_set_attack_target },
     { "wsim_set_lgm",           l_wsim_set_lgm },
+    { "wsim_set_dwell",         l_wsim_set_dwell },
     { "wsim_run",               l_wsim_run },
     { NULL, NULL }
   };

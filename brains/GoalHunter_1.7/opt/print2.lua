@@ -68,6 +68,15 @@ function M.set_tick(t)
   for i = #buffer, 1, -1 do buffer[i] = nil end
 end
 
+-- PROFILING LITE: cumulative ms since this tick's set_tick — the exact same
+-- clock and origin that produces each line's "[x.xxms]" prefix. Exposed so
+-- the brain's TICK_COST / NEAR_BUDGET instrumentation reports numbers that
+-- line up with the prefixes in the same log instead of a second, unrelated
+-- timer. Returns 0 before the first set_tick.
+function M.elapsed_ms()
+  return (clock() - tick_start) * 1000
+end
+
 -- Stamp this Lua state with its owning bot index. Call once at brain
 -- startup (Brain.think tick 1) — the file path uses this to route
 -- each bot's lines to its own print2_bot<N>.log.

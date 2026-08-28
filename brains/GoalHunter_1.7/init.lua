@@ -3455,7 +3455,29 @@ function Brain.think(info)
                           and info.shells < state.last_shells
   state.last_shells = info.shells
 
-  if fired_this_tick then
+  -- ...with one exception. A place_pill_strategic sitting on its drop spot
+  -- while builder.decide()'s LGM gate keeps refusing (place_gate_fails is
+  -- running) is NOT working by shooting back — it is the park-and-die stall:
+  -- the tank can't place, the 50-tick replan re-picks the same spot at an
+  -- ever-lower cost, and every returned shell used to zero the one timer that
+  -- could have broken it (20260827_115304 bot3, t=12523 to death at t=12678).
+  -- Scoped to that goal kind so a tank genuinely fighting from cover on any
+  -- other goal still counts firing as progress. The counter is written later in
+  -- the tick by builder.decide(), so this reads last tick's value — one tick of
+  -- lag on a 100+ tick condition, which doesn't matter.
+  -- The stamp check matters: builder.decide() can return before the gate branch
+  -- (drowning / slow-terrain road builds), which leaves place_gate_fails frozen
+  -- non-zero. Without the freshness test a stale count would keep this true and
+  -- strip the firing-is-progress exemption from a tank that has moved off the
+  -- drop spot and is genuinely fighting — wrongly tripping stuck-flee.
+  local _bld = state.builder
+  local gate_stalled = state.goal.kind == "place_pill_strategic"
+                       and _bld ~= nil
+                       and (_bld.place_gate_fails or 0) > 0
+                       and _bld.place_gate_tick ~= nil
+                       and (now - _bld.place_gate_tick) <= (C.PLACE_GATE_STALE_TICKS or 2)
+  local fire_is_progress = fired_this_tick and not gate_stalled
+  if fire_is_progress then
     -- Active firing is progress — reset the timer so a planted bot
     -- shooting defenders doesn't trip stuck-flee mid-take.
     state.stuck_for = 0
@@ -3464,7 +3486,7 @@ function Brain.think(info)
      and state.goal.kind ~= "none"
      and not attack_at_standoff
      and not state.wall_clearing
-     and not fired_this_tick then
+     and not fire_is_progress then
     state.stuck_for = state.stuck_for + 1
     -- In water the tank turns at 0.25 brad/tick (a 90-deg turn alone is
     -- ~256 ticks) and drives 3-4 WU/tick, so the 150-tick same-tile test
@@ -3733,6 +3755,26 @@ function Brain.think(info)
       return (t ~= nil and (_pf_dc[cat] or 0) >= t), cat
     end
 
+    -- Blocked-tile test for the same two drops. A spot the place_pill gate
+    -- breaker (builder.decide) or the stuck detector gave up on is held in
+    -- state.blocked for PLACE_GATE_BLOCK_TICKS. pick_goal enforces that on pool
+    -- candidates and the strategic scan skips them, but BOTH drops below elect a
+    -- tile from U.is_placeable + danger alone, neither of which reads
+    -- state.blocked — so they hand the breaker straight back the tile it just
+    -- abandoned. On the emergency path that is an endless loop: it re-runs every
+    -- tick with no cooldown, and because it re-picks the lowest-danger neighbour
+    -- while shell stamps expire, the winner can flip between tiles and reset the
+    -- breaker's consecutive counter, so the breaker may never reach its
+    -- threshold at all. The antitank drop has ANTITANK_DROP_COOLDOWN (200t) to
+    -- slow it, but the block runs 600t, so it too can re-elect a blocked tile
+    -- twice inside one block window. One hash lookup; both get the test.
+    local function drop_tile_blocked(mx, my)
+      local bl = state.blocked
+      if not bl then return false end
+      local until_t = bl[U.mkey(mx, my)]
+      return until_t ~= nil and now < until_t
+    end
+
     -- Anti-tank opportunistic pill drop: if carrying a pill and an enemy
     -- tank is close, place the pill between us and the threat.
     if C.ANTITANK_DROP_ENABLED
@@ -3751,11 +3793,25 @@ function Brain.think(info)
         if mid_mx ~= cur_mx or mid_my ~= cur_my then  -- don't place on self
           -- Opportunistic, not life-critical: skip if the spot's role is already
           -- in surplus so we don't overfill (e.g. a 3rd back pill at 2/0).
-          if U.is_placeable(mid_mx, mid_my, world) and not drop_role_surplus(mid_mx, mid_my) then
+          if U.is_placeable(mid_mx, mid_my, world) and not drop_role_surplus(mid_mx, mid_my)
+             and not drop_tile_blocked(mid_mx, mid_my) then
+            -- Build-gate urgency: this goal bypasses the placement pool, so it
+            -- has to stamp the fields itself or builder.decide() gates it at the
+            -- flat LGM_DANGER_HIGH. No portfolio figure here (drop_role_surplus
+            -- only answers a yes/no per tile), so the deficit term is 0. NOT an
+            -- emergency: the comment above says it — opportunistic, not
+            -- life-critical — so it does not get the panic term, and it keeps
+            -- the strict pdist<=1 dispatch. The midpoint is TOWARD the enemy
+            -- tank; sending the LGM 6 tiles into that is a different decision
+            -- than the one this drop is making.
+            local _au, _auc, _aud, _aue =
+              builder.place_urgency(info.carried_pills, 0, false)
             state.goal = {
               kind = "place_pill_strategic", mx = mid_mx, my = mid_my,
               wx = U.m2w(mid_mx), wy = U.m2w(mid_my),
               antitank = true,
+              _urgency = _au, _urg_carry = _auc, _urg_deficit = _aud,
+              _urg_emerg = _aue,
             }
             state.pf.status = "idle"
             state.antitank_drop_cooldown = now + C.ANTITANK_DROP_COOLDOWN
@@ -3809,7 +3865,12 @@ function Brain.think(info)
           local dx = math.floor(math.sin(angle) + 0.5)
           local dy = math.floor(-math.cos(angle) + 0.5)
           local px, py = cur_mx + dx, cur_my + dy
-          if U.in_map(px, py) and U.is_placeable(px, py, world) then
+          -- drop_tile_blocked: never re-elect a tile the gate breaker or the
+          -- stuck detector just abandoned (see the helper above) — this search
+          -- runs every tick with no cooldown, so without it the park resumes
+          -- immediately and the breaker loops forever.
+          if U.in_map(px, py) and U.is_placeable(px, py, world)
+             and not drop_tile_blocked(px, py) then
             -- Prefer tiles away from where we're heading (behind us)
             local aim_to_drop = U.aim_at(info.tankx, info.tanky, U.m2w(px), U.m2w(py))
             local angle_from_front = math.abs(U.adiff(tank_dir, aim_to_drop))
@@ -3832,10 +3893,31 @@ function Brain.think(info)
           print2(string.format("EMERGENCY_DROP t=%d only surplus-role tiles reachable — dropping at (%d,%d) to save pill anyway", now, surp_mx, surp_my))
         end
         if best_drop_mx then
+          -- Build-gate urgency: this goal bypasses the placement pool, so it
+          -- stamps the fields itself. No portfolio figure here, so the deficit
+          -- term is 0 — the flat emergency term is what buys the raise, which is
+          -- right: we are at/below EMERGENCY_DROP_ARMOUR with enemy tanks on us,
+          -- and the alternative to a risky LGM walk is dying and handing the
+          -- pills over.
+          local _eu, _euc, _eud, _eue =
+            builder.place_urgency(info.carried_pills, 0, true)
           state.goal = {
             kind = "place_pill_strategic", mx = best_drop_mx, my = best_drop_my,
             wx = U.m2w(best_drop_mx), wy = U.m2w(best_drop_my),
             emergency = true,
+            -- _place_emergency is the field the rest of the brain actually
+            -- reads (builder.set_mode's PLACE_EMERGENCY_MAX_DIST relaxation,
+            -- and the pool's hysteresis / attack_tank exemptions). `emergency`
+            -- above is write-only — nothing in the brain has ever read it — so
+            -- this drop never got its dispatch relaxation. That mattered: the
+            -- search below picks one of EMERGENCY_DROP_SEARCH_DIRS neighbours,
+            -- and a DIAGONAL neighbour is Manhattan distance 2, which the
+            -- pdist<=1 test rejects outright. Half the candidate spots could
+            -- never dispatch. Keeping `emergency` for anything outside the
+            -- brain that may inspect the goal.
+            _place_emergency = true,
+            _urgency = _eu, _urg_carry = _euc, _urg_deficit = _eud,
+            _urg_emerg = _eue,
           }
           state.pf.status = "idle"
           if BRAIN_DEBUG_MODE then

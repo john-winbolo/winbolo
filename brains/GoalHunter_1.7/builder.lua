@@ -28,6 +28,10 @@ local bit = require('bitcompat')
 
 local C      = require("constants")
 local U      = require("util")
+-- attack.clear_attack_goal is the standard "drop whatever goal is active"
+-- helper (it wipes ANY kind, not just attacks); the place_pill gate breaker
+-- below uses it. No cycle: attack.lua requires neither builder nor goals.
+local attack = require("attack")
 local danger = require("danger")
 local log    = require("logger")
 local PF     = require("pathfinder")
@@ -35,6 +39,34 @@ local print2 = require("print2")
 local viz    = require("viz")
 
 local M = {}
+
+-- -------------------------------------------------------------------------
+-- place_urgency: how far a placement may raise the LGM build-danger gate.
+-- -------------------------------------------------------------------------
+-- Shared by EVERY creator of a place_pill_strategic goal — the normal
+-- placement scan and def_build in goals.lua, and the antitank / emergency
+-- drops in init.lua — so the arithmetic lives in exactly one place and the
+-- PLACE_PILL_GATE log line is reproducible from the constants alone. Creators
+-- stamp all four returned values onto the goal (_urgency + the three
+-- components); a goal that stamps nothing reads 0 and gets the plain
+-- LGM_DANGER_HIGH, which is the correct default for a non-placement goal.
+--   carried   — info.carried_pills
+--   deficit   — pf_max_deficit; pass 0 when the caller has no portfolio figure
+--               (def_build and the init.lua drops return before/without one,
+--               and the term honestly contributes nothing for them)
+--   emergency — true for a panic / about-to-die drop (goal._place_emergency)
+-- Returns: total (capped), carry term, deficit term, emergency term.
+-- See the LGM_GATE_URGENCY_* block in constants.lua for the sizing rationale.
+function M.place_urgency(carried, deficit, emergency)
+  local c = math.min(C.LGM_GATE_URGENCY_PILL_MAX or 0,
+                     math.max(0, (carried or 0) - 1)
+                       * (C.LGM_GATE_URGENCY_PER_PILL or 0))
+  local d = math.min(C.LGM_GATE_URGENCY_DEFICIT_MAX or 0,
+                     math.max(0, deficit or 0)
+                       * (C.LGM_GATE_URGENCY_PER_DEFICIT or 0))
+  local e = emergency and (C.LGM_GATE_URGENCY_EMERGENCY or 0) or 0
+  return math.min(C.LGM_GATE_URGENCY_CAP or 0, c + d + e), c, d, e
+end
 
 -- Panic guard-pill spot search. Shared by builder's in-combat guard drop AND
 -- goals.lua's def_build (eval_place_pill_strategic) so the two can't drift —
@@ -46,11 +78,22 @@ local M = {}
 -- to the closest tier-2 only if no grass/road is reachable in range.
 -- Returns best_mx, best_my, best_tier (nil if none) + cands (every spot
 -- considered: { mx, my, dist, aoff, rej, tier }) for the panic_build viz.
-function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my)
+-- `state` is optional and used only for the blocked-tile skip: a spot the
+-- place_pill gate breaker (decide() below) gave up on is held in state.blocked
+-- for PLACE_GATE_BLOCK_TICKS, and pick_goal drops any pool candidate sitting on
+-- one. def_build FIREs its goal before the strategic scan can offer an
+-- alternative, so without this check it keeps electing the abandoned tile,
+-- pick_goal throws away the only pool-8 candidate, and placement offers NOTHING
+-- for the whole 600-tick block — where the scan path would just take the
+-- next-best spot. Rejecting it here lets the spiral fall through to its next
+-- candidate (and to tier 2) the same way any other rejection does.
+function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   local aim = U.aim_at(info.tankx, info.tanky, U.m2w(threat_mx), U.m2w(threat_my))
   local best_cx, best_cy, best_tier = nil, nil, 99
   local t2_cx, t2_cy
   local cands = {}
+  local blocked = state and state.blocked or nil
+  local now_blk = state and state.tick or 0
   for dist = C.DEFENSIVE_BUILD_MIN_DIST, C.DEFENSIVE_BUILD_MAX_DIST do
     for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
       local angle = (aim + aoff) % 256
@@ -59,7 +102,10 @@ function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my)
       local cx = U.mclamp(math.floor(tmx + dx * dist + 0.5))
       local cy = U.mclamp(math.floor(tmy + dy * dist + 0.5))
       local rej, tier = nil, nil
-      if not U.is_placeable(cx, cy, world) then
+      local blk_until = blocked and blocked[cy * C.MAP_W + cx] or nil
+      if blk_until and now_blk < blk_until then
+        rej = "blocked"
+      elseif not U.is_placeable(cx, cy, world) then
         rej = "not_placeable"
       else
         local tt = U.ttype(cx, cy)
@@ -269,7 +315,7 @@ function M.set_mode(state, world, info, goal)
         -- def_build uses — no more farthest-first drift). Returns the spot + all
         -- considered tiles for the panic_build overlay.
         local found_mx, found_my, found_tier, cands =
-          M.panic_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my)
+          M.panic_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my, state)
         if BRAIN_DEBUG_MODE then state._panic_build_viz = { tick = state.tick or 0, spots = cands, best_cx = found_mx, best_cy = found_my, threat_mx = closest_et.mx, threat_my = closest_et.my, tank_mx = tmx, tank_my = tmy } end
         if found_mx then
           b.mode       = "place_pill"
@@ -309,6 +355,21 @@ function M.set_mode(state, world, info, goal)
   elseif kind == "capture_pill" then
     -- Dead pill: no trees needed to pick it up; may need some to repair after placing
     b.target = { mx = goal.mx, my = goal.my }
+  end
+
+  -- The place_pill gate-failure count is only meaningful while decide() is
+  -- actually evaluating that gate every tick, so drop it the moment the mode
+  -- stops being place_pill. This runs last, after every branch above has had its
+  -- say about b.mode, and covers more than a goal-kind change: the common case
+  -- is the tank drifting outside dispatch range so _pp_ok goes false and the
+  -- mode reverts while the SAME placement goal is still active. A count frozen
+  -- non-zero would (a) keep init.lua's gate_stalled true, costing a tank that is
+  -- genuinely fighting from a different tile its firing-is-progress exemption
+  -- and letting it wrongly trip stuck-flee, and (b) resume mid-count when the
+  -- tank returns, tripping the breaker early. decide() keys the count on the
+  -- drop tile as well, which is what catches a moved target.
+  if b.mode ~= "place_pill" then
+    b.place_gate_fails, b.place_gate_key, b.place_gate_tick = nil, nil, nil
   end
 end
 
@@ -824,12 +885,80 @@ function M.decide(state, world, info, now)
     -- seek-trees redirect in goals sends the tank to harvest instead.
     local have_trees = (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4)
     local can_reach  = have_pill and have_trees and lgm_can_reach(info, px, py)
-    local path_safe  = can_reach and danger.lgm_path_safe_enhanced(info, px, py, C.LGM_DANGER_HIGH, now, world)
-    print2(string.format("PLACE_PILL_GATE t=%d target=(%d,%d) carried=%d trees=%d/%d reach=%s safe=%s", now, px, py, info.carried_pills or 0, info.trees or 0, C.PILL_PLACE_TREE_COST or 4, tostring(can_reach), tostring(path_safe)))
-    if have_pill and have_trees and can_reach and path_safe then
+    -- Urgency-raised danger gate. A flat LGM_DANGER_HIGH (80) can never pass a
+    -- cell a predicted shell crosses (DANGER_SHELL_IMPACT = 100), so being shot
+    -- at closed this gate permanently — and being shot at is exactly when a
+    -- guard pill on the ground pays. Every creator of a place_pill_strategic
+    -- goal stamps goal._urgency via M.place_urgency above (carry + portfolio
+    -- deficit + a flat emergency term for panic drops); the cap keeps the raise
+    -- bounded so a shell over a hot pill still refuses. Re-clamped here so a
+    -- creator that forgets to cap can't blow past the ceiling. A goal with no
+    -- _urgency (any non-placement goal reaching this branch) keeps the plain 80.
+    local g          = state.goal
+    local urgency    = math.min(C.LGM_GATE_URGENCY_CAP or 0,
+                                math.max(0, (g and g._urgency) or 0))
+    local threshold  = (C.LGM_DANGER_HIGH or 80) + urgency
+    local path_safe  = can_reach and danger.lgm_path_safe_enhanced(info, px, py, threshold, now, world)
+    local gate_ok    = have_pill and have_trees and can_reach and path_safe
+
+    -- Gate-failure breaker (see PLACE_GATE_* in constants.lua). Count
+    -- CONSECUTIVE refusals of one drop spot so a permanently-refused gate stops
+    -- being a silent infinite park. Two scoping rules:
+    --   * only counted once we materially could build (pill in hand, wood on
+    --     board) — a short-on-trees gate is the seek-trees redirect doing its
+    --     job, not a stall, and must not get a good spot blocked;
+    --   * only for a real place_pill_strategic GOAL. The def_build panic drop
+    --     in set_mode also flips b.mode to place_pill while the goal is an
+    --     attack — abandoning that spot would abort the attack the tank is
+    --     actually committed to.
+    local is_place_goal = g ~= nil and g.kind == "place_pill_strategic"
+    local gate_stall = is_place_goal and have_pill and have_trees and not gate_ok
+    local gkey       = U.mkey(px, py)
+    -- Staleness stamp. set_mode clears the count whenever the mode stops being
+    -- place_pill, but decide() can also return BEFORE this branch on a tick when
+    -- the mode is unchanged — the drowning water_build (Priority 1) and the
+    -- slow-terrain road build (Priority 1b) both do. That freezes the count
+    -- rather than clearing it. A gap means the refusals are no longer
+    -- consecutive, so restart from 1 instead of resuming mid-count. init.lua
+    -- reads the same stamp for gate_stalled, so a frozen count can't keep
+    -- costing a tank its firing-is-progress exemption while it fights from
+    -- somewhere else. Cheap and needs no list of early-return sites.
+    local fresh = b.place_gate_tick ~= nil
+                  and (now - b.place_gate_tick) <= (C.PLACE_GATE_STALE_TICKS or 2)
+    b.place_gate_tick = now
+    if not gate_stall then
+      b.place_gate_fails, b.place_gate_key = 0, nil
+    elseif fresh and b.place_gate_key == gkey then
+      b.place_gate_fails = (b.place_gate_fails or 0) + 1
+    else
+      b.place_gate_key, b.place_gate_fails = gkey, 1
+    end
+
+    print2(string.format("PLACE_PILL_GATE t=%d target=(%d,%d) carried=%d trees=%d/%d reach=%s safe=%s thresh=%d = base{%d} + urgency{%d} = min(cap{%d}, carry{%d} + deficit{%d} + emerg{%d}) emergency=%s fails=%d/%d",
+      now, px, py, info.carried_pills or 0, info.trees or 0, C.PILL_PLACE_TREE_COST or 4,
+      tostring(can_reach), tostring(path_safe), threshold, C.LGM_DANGER_HIGH or 80, urgency,
+      C.LGM_GATE_URGENCY_CAP or 0, (g and g._urg_carry) or 0, (g and g._urg_deficit) or 0,
+      (g and g._urg_emerg) or 0, tostring((g and g._place_emergency) or false),
+      b.place_gate_fails or 0, C.PLACE_GATE_FAIL_TICKS or 100))
+
+    if gate_ok then
       log.reason("build", { mode = "place_pill", why = "placing pill",
                              pill_mx = px, pill_my = py })
       return { x = px, y = py, action = BUILDMODE_PBOX }
+    end
+
+    if (b.place_gate_fails or 0) >= (C.PLACE_GATE_FAIL_TICKS or 100) then
+      -- Give the spot up. Block the tile first — the placement scan, def_build's
+      -- panic search and init.lua's two carried-pill drops all consult
+      -- state.blocked, so none of them can hand the same winner straight back —
+      -- then clear the goal. decide() runs AFTER goal selection, so clearing
+      -- takes effect via the urgent replan on the NEXT tick, not this one.
+      U.set_blocked(state, gkey, now + (C.PLACE_GATE_BLOCK_TICKS or 600),
+                    "place_gate_refused")
+      attack.clear_attack_goal(state, string.format(
+        "place_pill gate refused %dt at (%d,%d) — abandoning spot",
+        b.place_gate_fails or 0, px, py))
+      b.place_gate_fails, b.place_gate_key = 0, nil
     end
     return nil
   end
