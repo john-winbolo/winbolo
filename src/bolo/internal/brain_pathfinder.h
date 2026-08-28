@@ -114,6 +114,8 @@ struct BrainPathfinder {
   float turn_cost;
   float wall_shoot_cost;
   float wall_shoot_shells;
+  float wall_escalate_free;    /* walls charged plain wall_shoot_cost (default 1) */
+  float wall_escalate_factor;  /* cost multiplier per wall past that (default 2) */
   float shell_reserve;
   float road_build_cost;
   float tree_reserve;

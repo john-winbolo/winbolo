@@ -299,6 +299,62 @@ local function mark_kill_pickup(state, id, mx, my, now)
   state.kill_pickup = { id = id, mx = mx, my = my, kill_tick = now, created_tick = now }
 end
 M.mark_kill_pickup = mark_kill_pickup
+
+-- Post-kill handoff. The pill we were taking is dead and the swerve has run its
+-- course, so hand the goal STRAIGHT to capture_pill on that same pill instead of
+-- dropping to goal=none and trusting the next replan to re-derive it. The gap
+-- was real: goal=none only replans once REPLAN_MIN_INTERVAL is up, and refuel /
+-- flee can win that competition and walk us off a free body we just paid shells
+-- for. Installing the goal here costs nothing and closes the gap.
+--
+-- This does NOT take the decision away from goal_selection: we also raise
+-- _force_replan_reason, so the very next tick runs a full replan and Override 3b
+-- re-derives the claim with its ally handoff (lowest capture_pill score grabs),
+-- its TTL, and its unreachable way-out. This just decides what we do MEANWHILE.
+--
+-- Refuses, leaving goal=none and the normal selector to sort it out, when:
+--   * mark_kill_pickup declined the claim (no target id, or feature off), so
+--     Override 3b has nothing to continue with,
+--   * the pill is gone from world.pills, alive again, or already in a tank —
+--     a carried pill is not capturable and its (mx,my) is stale,
+--   * an ally is already broadcasting capture_pill on this pill id: they are
+--     driving in on it, and we don't contest a take already under way.
+-- The pill_suicider role needs no special case — capture_pill is in
+-- goals.lua's SUICIDER_EXEMPT_KINDS (x1), so scooping the pills it kills is
+-- part of the job and carries no role multiplier.
+local function handoff_to_capture_pill(state, world, info, pid, now)
+  if not C.KILL_PICKUP_ENABLED then return false end
+  if not pid or pid < 0 then return false end
+  local kp = state.kill_pickup
+  if not (kp and kp.id == pid) then return false end
+  local p = world.pills and world.pills[pid]
+  if not p or (p.health or 0) ~= 0 or p.in_tank or p.carrier or p._synth_carry then
+    return false
+  end
+  local self_pn = info.player_number
+  for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if apn ~= self_pn then
+      local si = slot.info
+      if si and si.goal == "capture_pill" and tonumber(si.target) == pid then
+        return false
+      end
+    end
+  end
+  -- clear_attack_goal keeps the CORE goal fields (kind/mx/my/wx/wy/target_id)
+  -- and wipes everything else, so the table is already the right shape and we
+  -- mutate it in place — the decision-snapshot rollback in init.lua treats goal
+  -- table IDENTITY as the decision, so we must not swap the table here.
+  local g = state.goal
+  g.kind      = "capture_pill"
+  g.mx, g.my  = p.mx, p.my
+  g.wx, g.wy  = U.m2w(p.mx), U.m2w(p.my)
+  g.target_id = pid
+  g.race_mode = C.CAPTURE_RACE_MODE_CAPTURE
+  g.kill_grab = true
+  state.goal_set_tick = now
+  state._force_replan_reason = state._force_replan_reason or "kill_handoff"
+  return true
+end
 M.enter_swerve      = enter_swerve
 
 local _EMPTY = {}
@@ -1820,8 +1876,9 @@ function M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
     state._pp_chunk_attempt = nil
   end
   if att and (att.count or 0) >= (C.PP_CHUNK_KILL_TRIES or 3) then
+    local until_t = now + (C.PP_BLACKLIST_TICKS or 500)
     state._pp_blacklist = state._pp_blacklist or {}
-    state._pp_blacklist[pid] = now + (C.PP_BLACKLIST_TICKS or 500)
+    state._pp_blacklist[pid] = until_t
     state._pill_eval_progress[pid] = nil
     state._pp_chunk_attempt = nil
     return "blacklisted"
@@ -3841,7 +3898,7 @@ function M.update_attack_substate(goal, state, world, info)
       local sscan
       local _sc = state._shield_scan_cache
       -- Budget-kill blacklist. A scan the budget hook kills mid-run unwinds
-      -- the WHOLE think -- no code after the call site executes, so the only
+      -- the WHOLE think — no code after the call site executes, so the only
       -- way to notice repeated kills is a marker written BEFORE the call.
       -- After SHIELD_SCAN_BLACKLIST_TRIES incomplete attempts on the same
       -- scan key, stop retrying and take the no-shield plan (sscan = nil is
@@ -3881,13 +3938,15 @@ function M.update_attack_substate(goal, state, world, info)
         else
           local msg = tostring(sscan_or_err)
           -- Re-raise budget abort so the brain runtime sees its own signal
-          -- and aborts the tick properly. Only catch genuine shield-scan
-          -- bugs (everything else).
+          -- and aborts the tick properly (the attempt marker survives —
+          -- that's the blacklist counting the kill). Only catch genuine
+          -- shield-scan bugs (everything else).
           if msg:find("tick_budget_exceeded", 1, true) then
             error(sscan_or_err)
           end
-          -- Genuine crash, not a budget kill: clear the marker so the
-          -- blacklist stays a budget-kill detector only.
+          -- Genuine crash, not a budget kill: the attempt DID complete
+          -- (just badly) — clear the marker so the blacklist stays a
+          -- budget-kill detector only.
           state._shield_scan_attempt = nil
           print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
           sscan = nil
@@ -5927,17 +5986,23 @@ function M.update_attack_substate(goal, state, world, info)
       -- Detailed diagnostic logged BEFORE the dead-check so we can see
       -- exactly which state drove the decision. BRAIN_LOG_SWERVE gate.
       if not pill or pill.health <= 0 then
-        -- Drop the attack_pill goal entirely. The dead pill will
-        -- pop into pool 11 (capture_pill) on the next replan, win
-        -- via normal hysteresis (it's the natural follow-on so the
-        -- goal-group lock favors it), and the tank will drive in
-        -- to grab it through standard nav. Going through the goal
-        -- selector lets a genuinely higher-priority goal (flee,
-        -- urgent rescue) interrupt — the old "rush" substate
-        -- locked us to this pill no matter what.
-        mark_kill_pickup(state, goal.target_id, goal.mx, goal.my, now)
+        -- Drop the attack_pill goal, then hand it straight to capture_pill on
+        -- the pill we just killed. The old behaviour left goal=none and waited
+        -- for the next replan to pick the body out of the pool — a gap refuel
+        -- or flee could win. handoff_to_capture_pill installs the goal now AND
+        -- raises _force_replan_reason, so the selector (Override 3b, with its
+        -- ally handoff and reachability way-out) still gets its say next tick;
+        -- it just never sees a tick where we have no goal at all. If the
+        -- handoff refuses (ally already capturing, pill carried/gone), we fall
+        -- back to the old release-to-the-selector behaviour.
+        local _pid = goal.target_id
+        mark_kill_pickup(state, _pid, goal.mx, goal.my, now)
         clear_attack_goal(state, "swerve done, pill dead")
-        print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
+        if handoff_to_capture_pill(state, world, info, _pid, now) then
+          print(TAG .. " ATTACK: swerve done, pill dead — taking capture_pill on it")
+        else
+          print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
+        end
       elseif (goal._on_target_in_flight or 0) >= pill.health then
         -- Pill still alive but enough on-target shells are in flight
         -- to expect a kill. Don't drop into post_engage yet (it'd

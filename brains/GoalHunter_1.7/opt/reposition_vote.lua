@@ -443,6 +443,7 @@ function M.update(state, world, info, now)
     local et = rx_exec.exec_tick or now
     if not state._repo_last_seen_tick or et > state._repo_last_seen_tick then
       state._repo_last_seen_tick = et
+      state._repo_last_seen_src  = rx_exec.from   -- who executed (NO-vote logging)
     end
     if not state.last_team_reposition_tick or et > state.last_team_reposition_tick then
       state.last_team_reposition_tick = et
@@ -492,6 +493,7 @@ function M.update(state, world, info, now)
       if apn ~= self_pn and slot.info and slot.info.repos == "1" then
         if not (proposers and proposers[apn]) then
           state._repo_last_seen_tick = now
+          state._repo_last_seen_src  = apn   -- who stamped it (NO-vote logging)
         end
         guard_mark(tonumber(slot.info.mx), tonumber(slot.info.my))
       end
@@ -539,11 +541,44 @@ function M.update(state, world, info, now)
            and (op.from or 99) < (self_pn or 0) then
           state._repo_my_vote = nil
         end
-        local is_no, reason = evaluate_vote(state, world, info, now, op)
+        local is_no, reason, gate = evaluate_vote(state, world, info, now, op)
         tx(is_no and ("/info rvn " .. op.pid) or ("/info rvy " .. op.pid))
         -- Remember our own ballot + WHY (we never receive our own vote back, so the
         -- votes visualizer reads our reason from here).
         state._repo_my_ballot = { pid = op.pid, no = is_no, reason = reason, tick = now }
+        -- Score + urgent flag on every ballot; for the pacing NO also WHOSE flag
+        -- set the recent-memory and how stale it is — that's the pair you need to
+        -- tell a real team-wide pacing veto from a self-inflicted one.
+        local _why = ""
+        if reason == "recent_repo" then
+          _why = string.format(" src=p%s age=%d",
+                               tostring(state._repo_last_seen_src),
+                               now - (state._repo_last_seen_tick or now))
+        elseif reason == "human_allies" and gate then
+          _why = string.format(" humans=%d", gate.humans)
+        elseif reason == "just_built" and gate then
+          _why = string.format(" placed_age=%d limit=%d", gate.age, gate.limit)
+        elseif gate then
+          -- The proximity gates ran: show the census that decided them AND
+          -- what it bought (0.8 range, or a full skip), so a veto and a
+          -- strength-relaxed pass are both readable off one line.
+          local _en = tostring(gate.ne)
+          if gate.neb ~= gate.ne then
+            _en = string.format("%d(base %d)", gate.ne, gate.neb)
+          end
+          local _al = string.format("%d%s", gate.na, gate.self_in and "(+self)" or "")
+          local _rng
+          if gate.skip then
+            _rng = "skip(2:1)"
+          elseif gate.scale ~= 1 then
+            local _f = (gate.stale and gate.allies) and "stale+allies"
+                       or (gate.stale and "stale" or "allies")
+            _rng = string.format("%.4g(%s x%.4g)", gate.R, _f, gate.scale)
+          else
+            _rng = string.format("%.4g", gate.R)
+          end
+          _why = string.format(" enemies=%s allies=%s R=%s", _en, _al, _rng)
+        end
       end
     end
     state._repo_rx_open = nil
@@ -627,6 +662,7 @@ function M.update(state, world, info, now)
       -- (e.g. reposition it a second time right after it was just re-built).
       -- THIS is when the recent-reposition memory starts: a move happened.
       state._repo_last_seen_tick      = now
+      state._repo_last_seen_src       = info.player_number   -- us (NO-vote logging)
       state.last_team_reposition_tick = now   -- feed the existing team time-discount
       -- Broadcast the completion so every ally stamps the SAME recent-memory tick
       -- (rvx: reposition executed). Reliable via the retrying batcher — closes the

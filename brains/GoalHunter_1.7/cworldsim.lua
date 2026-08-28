@@ -103,8 +103,12 @@ end
 
 --- Run the simulation.
 --- @param max_ticks number|nil  Maximum ticks to simulate (default 300)
---- @return table  Result with fields: armour, damage, ticks, arrival, killed,
----                lgm_survived, lgm_arrival, lgm_death, pills
+--- @return table  Result with fields: armour, damage, dwell_damage, ticks,
+---                arrival, killed, truncated, lgm_survived, lgm_arrival,
+---                lgm_death, pills
+---                `truncated` = the sim ran out of ticks instead of reaching
+---                a natural end. That means UNKNOWN, not safe: a low
+---                `damage` on a truncated run proves nothing.
 function M.run(max_ticks)
   return wsim_run(max_ticks or 300)
 end
@@ -133,6 +137,18 @@ end
 
 function M.set_lgm(dispatch_tick, dest_mx, dest_my, speed)
   wsim_set_lgm(dispatch_tick, dest_mx, dest_my, speed or 4)
+end
+
+--- Keep simulating for `ticks` after the tank reaches the end of its path,
+--- with the tank standing still on the destination tile and taking FULL
+--- shell damage (no moving-target discount). Answers "can I survive the
+--- drive AND the job I drove there to do?".
+---
+--- Must be called AFTER M.snapshot() -- snapshot clears the sim, which
+--- resets the dwell back to 0. 0 = stop on arrival (the default).
+--- @param ticks number|nil  Ticks to stand at the destination
+function M.set_dwell(ticks)
+  wsim_set_dwell(ticks or 0)
 end
 
 function M.set_terrain_speed(type, speed)

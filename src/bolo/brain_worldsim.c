@@ -179,6 +179,7 @@ BrainWorldSim *brainWorldSimCreate(void) {
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
   sim->shell_damage = WSIM_SHELL_DAMAGE;
+  sim->dwell_ticks = 0;
 
   /* Default terrain speeds (matching cpathfinder.lua defaults) */
   sim->terrain_speed[0]  =  0; /* BUILDING */
@@ -217,6 +218,7 @@ void brainWorldSimClear(BrainWorldSim *sim) {
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
   sim->shell_damage = WSIM_SHELL_DAMAGE;
+  sim->dwell_ticks = 0;
 
   memset(&sim->lgm, 0, sizeof(sim->lgm));
   sim->lgm.dispatch_tick = -1;
@@ -314,6 +316,12 @@ void brainWorldSimSetLGM(BrainWorldSim *sim, int dispatch_tick,
   sim->lgm.wy = 0;
 }
 
+void brainWorldSimSetDwell(BrainWorldSim *sim, int dwell_ticks) {
+  if (!sim) return;
+  if (dwell_ticks < 0) dwell_ticks = 0;
+  sim->dwell_ticks = dwell_ticks;
+}
+
 /* ------------------------------------------------------------------ */
 /* Simulation loop                                                     */
 /* ------------------------------------------------------------------ */
@@ -325,6 +333,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
   WSimTank *our;
   int our_shoot_timer = 0;
   int initial_armour;
+  int dwell_damage = 0;   /* damage our tank took while parked at the dest */
 
   memset(&result, 0, sizeof(result));
   result.arrival_tick = -1;
@@ -341,6 +350,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
   for (tick = 1; tick <= max_ticks; tick++) {
     int i;
     int our_wx, our_wy;
+    int our_parked;   /* tank stationary at its destination this tick */
 
     /* Cooperative abort. Per-tick header is the natural checkpoint —
      * the rest of the body assumes a complete tick. Jumping to `done`
@@ -348,9 +358,12 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
      * pill_final_health from whatever state we already simulated; the
      * brain sees a shorter prediction (smaller ticks_simulated, no
      * arrival_tick) which is exactly the existing "ran out of budget"
-     * shape callers already handle. */
+     * shape callers already handle. A dwell window makes runs longer,
+     * so this checkpoint is what keeps a big dwell_ticks from eating the
+     * brain's per-tick budget — it just degrades to a truncated result. */
     if (sim->abort_flag &&
         SDL_GetAtomicInt((SDL_AtomicInt *)sim->abort_flag)) {
+      result.truncated = 1;  /* aborted early == unknown, not safe */
       goto done;
     }
 
@@ -376,9 +389,13 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
           path_idx++;
           if (path_idx >= sim->num_path && result.arrival_tick < 0) {
             result.arrival_tick = (int16_t)tick;
-            /* Stop simulating — wsim only evaluates travel survivability,
-             * not prolonged combat at the destination. */
-            goto done;
+            /* With no dwell requested, stop simulating — wsim then only
+             * evaluates travel survivability, not prolonged combat at the
+             * destination. With a dwell, fall through and keep running:
+             * the tank now stands on the spot and the pills keep firing,
+             * which is the part of the trip that actually kills bots that
+             * park next to a hostile pillbox. */
+            if (sim->dwell_ticks <= 0) goto done;
           }
         } else {
           our->wx += (int)(dx * move / dist);
@@ -387,6 +404,32 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       } else if (spd <= 0) {
         /* Impassable terrain — skip to next waypoint */
         path_idx++;
+      }
+    } else if (sim->dwell_ticks > 0 && result.arrival_tick >= 0 &&
+               path_idx >= sim->num_path && sim->num_path > 0 &&
+               our->slide_vx == 0.0f && our->slide_vy == 0.0f) {
+      /* Dwell hold. The tank has arrived and is standing on the spot, but
+       * pill knockback keeps shoving it off the tile. A real parked bot
+       * drives back onto its spot, so pull the tank home at terrain speed
+       * once the slide has decayed. Without this, repeated knockback would
+       * walk the tank out of pill range over a long dwell and standing
+       * still would read far safer than it is. */
+      int hold_wx = (sim->path[sim->num_path - 1].mx << 8) + 128;
+      int hold_wy = (sim->path[sim->num_path - 1].my << 8) + 128;
+      int terrain = wsim_terrain_at(sim->map, our->wx, our->wy);
+      float spd = sim->terrain_speed[terrain];
+      int dx = hold_wx - our->wx;
+      int dy = hold_wy - our->wy;
+      int dist_sq = dx * dx + dy * dy;
+      if (spd > 0 && dist_sq > 0) {
+        float dist = sqrtf((float)dist_sq);
+        if (spd >= dist) {
+          our->wx = hold_wx;
+          our->wy = hold_wy;
+        } else {
+          our->wx += (int)(dx * spd / dist);
+          our->wy += (int)(dy * spd / dist);
+        }
       }
     }
 
@@ -406,7 +449,11 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       int fdy = final_wy - our->wy;
       if (fdx * fdx + fdy * fdy <= 128 * 128) {
         result.arrival_tick = (int16_t)tick;
-        goto done;
+        if (sim->dwell_ticks <= 0) goto done;
+        /* Dwelling: retire the rest of the path so the tank stops
+         * advancing and holds here (section 1's dwell-hold branch keys
+         * off path_idx >= num_path). Close enough is arrived. */
+        path_idx = sim->num_path;
       }
     }
 
@@ -430,6 +477,28 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
 
     our_wx = our->wx;
     our_wy = our->wy;
+
+    /* Are we standing still at the end of the path this tick? Used below to
+     * drop the moving-target damage discount and to attribute damage to the
+     * dwell rather than the drive.
+     *
+     * All three terms are load-bearing, and dwell_ticks > 0 most of all: it
+     * is what makes a no-dwell run bit-identical to the pre-dwell code on
+     * EVERY route. Without it, `path_idx >= num_path` is also true when the
+     * path was exhausted by the impassable-terrain skip above without the
+     * tank ever arriving — that tick would fire pills at full damage and
+     * credit it to damage_during_dwell, contradicting the documented
+     * contract that dwell damage is 0 when no dwell was asked for. Worse, it
+     * is unbounded rather than one tick: section 8 does not break while an
+     * LGM is still pending, so a tank stranded mid-route would take full
+     * undiscounted damage for the rest of max_ticks.
+     *
+     * arrival_tick >= 0 alone would imply path_idx >= num_path today (both
+     * arrival sites retire the path), but the pair is stated explicitly so
+     * "parked" cannot drift away from "at the end of the path". */
+    our_parked = (sim->dwell_ticks > 0 &&
+                  result.arrival_tick >= 0 &&
+                  path_idx >= sim->num_path);
 
     /* ============================================================= */
     /* 4. DISPATCH LGM                                               */
@@ -507,7 +576,19 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
         }
       }
 
-      /* Check LGM as target */
+      /* Check LGM as target.
+       *
+       * WARNING — THIS DOES NOT MATCH THE GAME. Real pillboxes never shoot
+       * at LGMs: pillsUpdate (pillbox.c:358) picks "the closest non-allied
+       * TANK in range" and pillbox.c never mentions LGMs at all. Real
+       * builders die only to explosion splash, via lgmDeathCheck (called
+       * from shells.c:397,402,481,486, minesexp.c:248, tankexp.c:320).
+       *
+       * So result.lgm_survived / lgm_death_tick from this branch are NOT a
+       * real signal — do not build decisions on them. Kept as-is on purpose:
+       * removing it is a separate call, and nothing calls
+       * brainWorldSimSetLGM today (lgm.dispatch_tick stays -1), so in
+       * practice this branch is dead. */
       if (sim->lgm.active == 1) {
         int dsq = wsim_dist_sq(pill_wx, pill_wy,
                                sim->lgm.wx, sim->lgm.wy);
@@ -568,17 +649,31 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
              * duck the shot. Scale damage by 1 - dist/range so close shots
              * still do full damage but far-range shots contribute less.
              * TODO: proper shell-flight model (option B) for better fidelity.
-             */
+             *
+             * The discount is bought by movement, so it expires the moment
+             * we stop moving. A tank parked on its drop spot ducks nothing:
+             * every shell the pill leads onto that tile lands, at whatever
+             * range. Give our tank full shell_damage while parked. Enemy
+             * tanks keep the discount — we don't track where they're headed,
+             * so we can't tell whether they're stationary. */
             WSimTank *t = &sim->tanks[best_target];
             int dsq = wsim_dist_sq(pill_wx, pill_wy, t->wx, t->wy);
-            float dist_frac = sqrtf((float)dsq) / (float)WSIM_PILL_RANGE;
-            if (dist_frac > 1.0f) dist_frac = 1.0f;
-            int scaled = (int)(sim->shell_damage * (1.0f - dist_frac) + 0.5f);
-            if (scaled < 1 && dsq <= (WSIM_PILL_RANGE/2) * (WSIM_PILL_RANGE/2)) {
-              /* floor: very close shots always do at least 1 dmg */
-              scaled = 1;
+            int scaled;
+            if (is_our_tank && our_parked) {
+              scaled = sim->shell_damage;
+            } else {
+              float dist_frac = sqrtf((float)dsq) / (float)WSIM_PILL_RANGE;
+              if (dist_frac > 1.0f) dist_frac = 1.0f;
+              scaled = (int)(sim->shell_damage * (1.0f - dist_frac) + 0.5f);
+              if (scaled < 1 && dsq <= (WSIM_PILL_RANGE/2) * (WSIM_PILL_RANGE/2)) {
+                /* floor: very close shots always do at least 1 dmg */
+                scaled = 1;
+              }
             }
             t->armour -= scaled;
+            if (is_our_tank && our_parked) {
+              dwell_damage += scaled;
+            }
 
             /* Record hit position if this is our tank */
             if (t->is_ours && result.num_hits < WSIM_MAX_HITS) {
@@ -655,14 +750,33 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
       break;
     }
 
-    /* Path complete and no pending LGM */
+    /* Path complete, dwell served, and no pending LGM.
+     * The dwell test is skipped when arrival_tick is unset — that means the
+     * path ran out under us (impassable-terrain skips) rather than being
+     * walked to its end, and there is no arrival to count a dwell from.
+     *
+     * The `+ 1` makes a dwell of N simulate exactly N parked ticks. The
+     * arrival tick is itself a parked tick — the tank is already standing on
+     * the spot when section 6 runs that tick — so the parked ticks are
+     * arrival_tick .. arrival_tick + N - 1. Without it, N would buy N+1.
+     * With dwell_ticks == 0 the test stays the tautology `tick - arrival
+     * + 1 >= 0`, so the no-dwell condition is unchanged. */
     if (path_idx >= sim->num_path &&
+        (result.arrival_tick < 0 ||
+         tick - result.arrival_tick + 1 >= sim->dwell_ticks) &&
         (sim->lgm.dispatch_tick < 0 || sim->lgm.active >= 2)) {
       result.ticks_simulated = (int16_t)tick;
       break;
     }
 
     result.ticks_simulated = (int16_t)tick;
+  }
+
+  /* Ran the clock out instead of reaching a natural end (death, or
+   * arrival + dwell). `break` leaves tick <= max_ticks; only loop
+   * exhaustion gets here with tick > max_ticks. Truncated == unknown. */
+  if (tick > max_ticks) {
+    result.truncated = 1;
   }
 
 done:
@@ -672,6 +786,7 @@ done:
   }
   result.armour_remaining = our->armour;
   result.damage_taken = (int16_t)(initial_armour - our->armour);
+  result.damage_during_dwell = (int16_t)dwell_damage;
 
   /* LGM outcome */
   if (sim->lgm.dispatch_tick < 0) {

@@ -1034,6 +1034,108 @@ M.LGM_DANGER_HIGH = 80   -- emergency wall / refuel: only heavy fire (angry pill
 M.LGM_GATHER_MAX_DANGER = 20  -- pre-flight tree gather: mild pill danger on the LGM's harvest path is acceptable (don't refuse trees over a little danger). If the nearest tree's path is too hot, try the next-nearest up to LGM_GATHER_RETRIES.
 M.LGM_GATHER_RETRIES    = 5   -- how many nearby forest candidates (nearest first) the gather tries before giving up
 
+-- Urgency-raised LGM gate — place_pill_strategic only (builder.lua's
+-- place_pill branch). LGM_DANGER_HIGH is a fixed 80 while ONE predicted shell
+-- path stamps DANGER_SHELL_IMPACT (100) on every cell it crosses, so a tank
+-- that is being shot at can NEVER dispatch its builder — which is exactly when
+-- a guard pill in the ground is worth most. (20260827_115304 bot3:
+-- PLACE_PILL_GATE reach=true safe=false from t=12523 until it died at t=12678,
+-- still holding 4 pills; the DEF_BUILD PANIC and EMERGENCY_DROP retries hit the
+-- same wall.) Every creator of a place_pill_strategic goal stamps it with a
+-- _urgency scalar (builder.place_urgency builds all of them, so the arithmetic
+-- lives in one place), and the gate uses
+--   threshold = LGM_DANGER_HIGH + min(LGM_GATE_URGENCY_CAP, goal._urgency)
+--   _urgency  = carry term + deficit term + emergency term
+--
+-- CARRY and DEFICIT are the two signals the placement scorer already measures
+-- to DISCOUNT the goal's cost — pills stacked in THIS tank, and how far the
+-- pill portfolio is out of its back/front/aggro ratio. Each is capped on its
+-- own so neither buys the raise alone: a full carry (3+ extras) is worth 15 →
+-- threshold 95, which still refuses a bare shell path. Adding an out-of-ratio
+-- portfolio (2+ pills short) reaches 25 → threshold 105, which clears one shell
+-- path (100) and nothing heavier.
+--
+-- EMERGENCY is the panic / about-to-die drop (goal._place_emergency: def_build's
+-- threat-reactive build, and init.lua's EMERGENCY_DROP). It is a DISTINCT, flat
+-- term and it dominates the other two, because a panic build is worth more than
+-- a routine one, not less — the whole point of dropping a pill at 10 armour with
+-- an enemy tank on you is that the alternative is dying and gifting the pills
+-- away. In the 9k-tick verification run 24 of 25 gate lines came from this path
+-- and every one of them read urgency{0}, so without its own term the raise never
+-- reached the goals that needed it.
+--
+-- Sizing, in danger_at units. danger_at = DANGER_SHELL_IMPACT (a flat 100 on
+-- every cell a predicted shell crosses) + threat.at. The pill part of threat.at
+-- is stamped by gh_threat.c's stamp_pill as
+--     (PILL_DANGER_BASE 8 + PILL_DANGER_ANGER 200 x anger)   -- LINEAR in anger
+--       x hp_mult (0.60 at 0 hp .. 1.00 at PILLS_MAX_HEALTH)
+--       x proximity (1.00 on the pill .. 0.50 at the PILL_RANGE_MAP 9 rim)
+--       x tree hide (reduces)  x terrain (up to 1.5x)
+-- so with PILL_ANGER_BUMP = 0.3333 (three hits saturate at anger 1.0) a healthy
+-- pill contributes roughly:
+--     calm  (anger 0.00)  ~4..8      (up to ~12 on bad terrain)
+--     1 hit (anger 0.33)  ~37..75    (up to ~112)
+--     angry (anger 1.00)  ~104..208  (up to ~312)
+-- It does NOT top out near 95 — the "0..~95" figure in the LGM_DANGER_* comment
+-- above is wrong and predates the current stamp. What the raise actually buys:
+--   emergency alone            = 40 → threshold 120: clears a bare shell path
+--                                     (100), and a shell over a CALM pill
+--                                     (100 + ~8 = ~108).
+--   emergency + full carry
+--     + full deficit (capped)  = 60 → threshold 140: same, plus a shell over the
+--                                     outer rim of a once-hit pill (100 + ~37).
+--   what it does NOT clear          : a shell over a pill that has been hit even
+--                                     once and is anywhere near the LGM's route
+--                                     (100 + ~75 = ~175 > 140), and any angry
+--                                     pill at all (>= ~204).
+-- That last line is the incident's own configuration — a pill actively shooting
+-- our tank has anger >= 0.33 by definition — so the raise did NOT open the gate
+-- there and was never going to. What fixed that case was the emergency term
+-- clearing the far commoner shell-over-open-ground refusals plus the gate-
+-- failure breaker below (measured: consecutive refusals on one spot went from
+-- 178/185 with a 91-tick stall to 5/113 with a 5-tick stall).
+--
+-- DELIBERATELY NOT RAISING THE CAP FURTHER. Clearing a shell-over-angry-pill
+-- would need ~+130 over the base, at which point the gate can no longer refuse
+-- anything and stops being a gate. The real problem is that pill danger is the
+-- wrong measure for a BUILDER: pillboxes never target LGMs (pillbox.c:358 picks
+-- "the closest non-allied tank in range"), and an LGM only dies to explosion
+-- splash, so pill danger is a tank-centric proxy that systematically overstates
+-- the risk to a walking builder. The fix is a builder-specific danger term
+-- (enemy tanks with line of sight to the corridor, splash sources) — that is a
+-- later part of the plan. Inflating a threshold against a proxy that measures
+-- the wrong thing would make that real fix harder to tune, and there is no
+-- evidence of remaining harm to justify it: in the 60k-tick match the breaker
+-- never had to fire.
+-- Note the original plan's "clears a shell but not an angry pill" pairing is
+-- unachievable for a different reason than first recorded here: a pill's
+-- contribution spans both sides of the shell's flat 100 depending on anger and
+-- range, so no single threshold separates the two cleanly.
+M.LGM_GATE_URGENCY_PER_PILL    = 5   -- per carried pill beyond the first
+M.LGM_GATE_URGENCY_PILL_MAX    = 15  -- cap on the carry half (3 extras = 4 pills)
+M.LGM_GATE_URGENCY_PER_DEFICIT = 5   -- per pill of biggest portfolio shortfall (pf_max_deficit)
+M.LGM_GATE_URGENCY_DEFICIT_MAX = 10  -- cap on the imbalance half (2 pills short)
+M.LGM_GATE_URGENCY_EMERGENCY   = 40  -- flat term for a _place_emergency (panic / about-to-die) drop
+M.LGM_GATE_URGENCY_CAP         = 60  -- hard ceiling on the raise; threshold never exceeds 140
+
+-- Gate-failure breaker (builder.lua's place_pill branch). A refused build gate
+-- used to be silent AND permanent: the tank sits on the drop spot, the 50-tick
+-- replan re-picks the same goal at a LOWER cost each time (carry_discount keeps
+-- growing), and the generic stuck detector is reset by every shell we fire back
+-- (init.lua's fired_this_tick). Nothing breaks the loop, so the bot bleeds out
+-- in place. Count consecutive refusals for one drop spot; past FAIL_TICKS give
+-- the spot up — block the tile so the placement scan cannot hand it straight
+-- back, and clear the goal so pick_goal has to look elsewhere.
+M.PLACE_GATE_FAIL_TICKS  = 100  -- consecutive ticks (~2 s @ 50 Hz) of a refused gate before abandoning the spot
+M.PLACE_GATE_BLOCK_TICKS = 600  -- how long the abandoned drop spot stays blocked (~12 s); matches the stuck-detector block
+-- How old the gate-failure stamp may be and still count as "consecutive".
+-- builder.decide() evaluates the gate once per tick, and init.lua's stuck check
+-- runs BEFORE decide() so it necessarily reads last tick's value — 2 ticks
+-- covers that lag with one to spare. Anything older means decide() returned
+-- early past the gate branch (drowning/slow-terrain road builds) or the tank
+-- left and came back, neither of which is a consecutive run of refusals.
+M.PLACE_GATE_STALE_TICKS = 2
+
 -- -------------------------------------------------------------------------
 -- Anticipatory reasoning: enemy intercept (TTK vs TTI)
 -- -------------------------------------------------------------------------
@@ -1342,6 +1444,35 @@ M.CAPTURE_FREE_PILL_DANGER_FALLOFF = 16 -- danger (≈ 2 calm pills) → bonus g
 M.CAPTURE_THREAT_WEIGHT      = 0.3    -- danger_scale override on capture A* fallback (default ~1.0)
 M.CAPTURE_RACE_MODE_CAPTURE  = true   -- tag every capture_* goal with race_mode
 M.CAPTURE_RACE_MODE_IMMINENT = true   -- also tag race_mode whenever imminent-capture fires
+
+-- ── capture_pill DIRECT-ROUTE probe ──
+-- The pill we are going to pick up is DEAD: it radiates no danger of its own,
+-- so the danger-weighted Dijkstra slate routes us the long way round OTHER
+-- pills' fire fields that we may well be able to drive straight through. For
+-- the ONE pill we are actually going for, ask the direct question instead:
+-- A* with danger switched OFF, then the wsim "do I die driving that?".
+--   survive → keep the direct route and its cost
+--   die     → re-ask A* with danger ON and use that route and cost
+-- COST CONTROL: an A* is ~7-10 ms against a ~12 ms per-bot think budget, so
+-- the probe only ever runs for the FOCUS pill (the one we hold a capture_pill
+-- goal / kill_pickup claim on, else the current pool-4 leader), never per
+-- candidate, and never more than one A* in a single think — the "die → re-ask
+-- with danger" half runs on the NEXT tick. Every other capture_pill candidate
+-- keeps the cheap Dijkstra lookup for the ranking pass.
+M.CAPTURE_ROUTE_DIRECT       = true  -- master switch for the probe
+M.CAPTURE_ROUTE_ASTAR_BUDGET = 4000  -- A* node budget; matches compute_pool4_cost's land-only probe
+M.CAPTURE_ROUTE_TTL          = 100   -- ticks (~2 s) a verdict stays good before we re-probe
+M.CAPTURE_ROUTE_MOVE_TILES   = 6     -- re-probe once the tank is this far (Manhattan) from where we probed
+M.CAPTURE_ROUTE_MIN_TIER     = 6     -- skip the probe below this capacity tier — the CPU is already hot
+-- Only probe once we are reasonably CLOSE (tank→pill Manhattan tiles, the same
+-- measure the pool-4 intercept and free-pill terms use). A far body is not worth
+-- an A* and a wsim: most of that route is ground we have not seen, the verdict
+-- goes stale long before the tank arrives (the tank crosses MOVE_TILES and we
+-- re-probe anyway), and trace_last_search only hands back 64 waypoints — so on a
+-- long path the wsim answers "do I die?" about the first fraction of it and calls
+-- that the whole route. Beyond this the cheap Dijkstra slate cost stands, exactly
+-- as it did before the probe existed.
+M.CAPTURE_ROUTE_MAX_TILES    = 10    -- tank→pill Manhattan tiles; farther pills are never probed
 
 -- Imminent-capture priority. A capturable (health==0) pill/base a few steps
 -- away is essentially a free pickup. Collapse its cost to a small positive
@@ -1878,6 +2009,50 @@ M.SWEEP_KILL_WINDOW        = 300    -- ticks (~6s) the sweep incentive lasts aft
 M.SWEEP_KILL_WSIM_MULT     = 0.3    -- damp the wsim danger penalty to this fraction during the window
 M.WSIM_OPENING_ENABLED     = false  -- run wsim AT ALL during the opening phase. Default false: same reasoning — taking bases early is so important that we'd rather be reckless and risk dying than have wsim's damage-cost shaping pull us off an opportunity.
 M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
+
+-- Dwell: how long the tank has to STAND STILL at the destination once it
+-- gets there. The sim keeps running for this many ticks after arrival, with
+-- the tank parked and taking full (undiscounted) shell damage — that window
+-- is where a bot that drives up next to a hostile pillbox actually dies, and
+-- before this existed the sim stopped dead on arrival and never priced it.
+--
+-- For a pill placement the dwell is the LGM round trip: walk out to the drop
+-- spot, build, walk back. LGM walk speed on grass is MAN_SPEED = 16 WU/tick
+-- over a 256 WU tile = 16 ticks/tile (forest is 2x slower, swamp/crater/
+-- rubble 4x — we deliberately assume grass rather than simulating terrain).
+-- LGM_BUILD_TIME is 20 ticks (lgm.h:79). So:
+--   dwell = 2 * tiles * WSIM_DWELL_TICKS_PER_TILE + WSIM_DWELL_BUILD_TICKS
+-- ~340 ticks for 10 tiles, ~500 for 15.
+M.WSIM_DWELL_TICKS_PER_TILE = 16    -- LGM walk ticks per tile on grass
+M.WSIM_DWELL_BUILD_TICKS    = 20    -- LGM_BUILD_TIME
+-- Floor: even placing under our own tracks, the LGM has to step off the
+-- tank, build and step back — roughly a 2-tile round trip plus the build.
+M.WSIM_DWELL_MIN_TICKS      = 80
+-- Ceiling: past this the prediction is guesswork anyway, and every dwell
+-- tick is sim time inside the brain's per-tick budget.
+M.WSIM_DWELL_MAX_TICKS      = 600
+-- Tick budget for placement goals specifically. WSIM_MAX_TICKS (300) at
+-- ~21 sim-ticks/tile only reaches ~14 tiles, so a 15-tile drive was being
+-- cut off before the dangerous part — and now the dwell has to fit after it
+-- too. 15 tiles (~315 ticks) + a 500-tick dwell needs ~815; 1000 leaves room.
+-- The sim is cooperatively abortable, so overrunning degrades to a
+-- `truncated` result rather than blowing the tick budget.
+M.WSIM_PLACE_MAX_TICKS      = 1000
+
+-- Flat cost added when a sim run comes back `truncated` -- it ran out of
+-- ticks instead of reaching a natural end (arrival, or death). Truncation
+-- means UNKNOWN, and without this the pool reads the low damage number off
+-- the simulated prefix as evidence the trip is SAFE, which is backwards: the
+-- part that was never simulated is the far end of the route, which is
+-- exactly where a bot driving into a defended area gets killed.
+--
+-- Sized deliberately small. A truncated run is unknown, not lethal, and
+-- over-pricing it would push the bot off long-but-fine routes. At
+-- WSIM_DAMAGE_COST_WEIGHT = 10 this is 2.5 armour points -- about half a
+-- shell hit of caution. Enough to lose a tie against an equivalent route
+-- that was simulated all the way through; nowhere near WSIM_LGM_DEATH_PENALTY
+-- (200) and nothing like the +99999 kill reject.
+M.WSIM_TRUNCATED_COST       = 25
 
 -- =========================================================================
 -- BRAIN_CAPACITY_LEVELS[1..10]: 1=10%, 10=100%. Levers per tier:

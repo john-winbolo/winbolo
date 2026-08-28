@@ -151,17 +151,90 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local _tw0 = clock_us()
   wsim.snapshot(world, info, path, nil)
   local _tw1 = clock_us()
-  local r = wsim.run(C.WSIM_MAX_TICKS)
+
+  -- Dwell + tick budget. Default for every goal kind is the old behaviour:
+  -- stop the sim on arrival, 300 ticks. snapshot() clears the sim, which
+  -- resets the dwell to 0, so nothing has to opt out.
+  --
+  -- A pill placement isn't over when the tank arrives. The tank then sits
+  -- on the spot while the LGM walks out, builds and walks back, and that
+  -- stationary window is where a bot parked next to a hostile pillbox
+  -- actually dies -- the sim used to stop dead on arrival and never price
+  -- it at all. So: dwell = LGM round trip, and enough ticks that a long
+  -- drive plus its dwell doesn't get cut off.
+  local max_ticks = C.WSIM_MAX_TICKS
+  local dwell = 0
+  if goal.kind == "place_pill_strategic" then
+    -- Walk distance is from where the TANK ends up (the path endpoint) to
+    -- the drop spot, not from where it stands now -- the drive itself is
+    -- already simulated. Driving right onto the spot makes these the same
+    -- tile and the floor applies; parking short of it costs the walk.
+    local walk = 0
+    local np = __idiv(#path, 2)
+    if np > 0 then
+      local ex, ey = path[2*np - 1], path[2*np]
+      walk = math.max(math.abs(gmx - ex), math.abs(gmy - ey))
+    end
+    dwell = 2 * walk * C.WSIM_DWELL_TICKS_PER_TILE + C.WSIM_DWELL_BUILD_TICKS
+    if dwell < C.WSIM_DWELL_MIN_TICKS then dwell = C.WSIM_DWELL_MIN_TICKS end
+    if dwell > C.WSIM_DWELL_MAX_TICKS then dwell = C.WSIM_DWELL_MAX_TICKS end
+    wsim.set_dwell(dwell)
+    max_ticks = C.WSIM_PLACE_MAX_TICKS
+  end
+
+  local r = wsim.run(max_ticks)
   local _tw2 = clock_us()
   if BRAIN_PROFILE_LOG and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
       goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, __idiv(#path, 2)))
   end
+  -- PROFILING LITE: same _tw0/_tw1/_tw2 clocks, but reported into print2 so a
+  -- slow wsim shows up in the debug brain (BRAIN_PROFILE_LOG forces the opt
+  -- brain, so the two can't be combined). Threshold 1.0 ms = 1000 us; nothing
+  -- formats on a normal wsim. No `state` param here — the tick comes from the
+  -- _BRAIN_TICK global init.lua publishes each think.
 
   local extra_cost = r.damage * C.WSIM_DAMAGE_COST_WEIGHT
   local sim_desc = string.format(" wsim:%ddmg %.1fs arm=%d->%d",
     r.damage, r.ticks / 50.0, info.armour, r.armour)
+  if dwell > 0 then
+    -- How much of that damage was taken standing still at the destination,
+    -- and over how long a dwell we asked for.
+    sim_desc = sim_desc .. string.format(" dwell:%dt/%ddmg",
+      dwell, r.dwell_damage or 0)
+  end
+  if r.truncated then
+    -- Ran out of sim ticks instead of reaching a natural end, so the damage
+    -- number above only covers a PREFIX of the trip. Price the unknown as a
+    -- risk. Left inert it reads as safety, which is backwards -- the part
+    -- that never got simulated is the far end of the route, and that is
+    -- where a bot driving into a defended area dies.
+    --
+    -- Flat, not a multiplier on r.damage: a truncated run that saw zero
+    -- damage is the case most in need of the nudge, and a multiplier gives
+    -- it nothing. Scaling the observed damage up by the fraction of the
+    -- route we actually covered would be the more honest correction, but
+    -- the result carries no path-progress field, so recovering that
+    -- fraction would mean guessing a terrain-dependent ticks-per-tile --
+    -- more machinery than an unknown deserves.
+    --
+    -- SCOPED TO PLACEMENTS on purpose. Truncation also shows up on attack and
+    -- capture goals -- they keep the 300-tick WSIM_MAX_TICKS while only place
+    -- goals got the raised cap, so a long approach hits it -- and pricing
+    -- those is very likely right too. But that mis-pricing pre-dates the
+    -- dwell work (the flag only made it visible), and their costs have been
+    -- tuned for years against the current, unpriced behaviour. Charging them
+    -- here would shift attack/capture goal selection as a side effect of a
+    -- pill-placement change. Drop the `is_place` term to apply it everywhere;
+    -- do that as its own change, with its own match to measure it.
+    if goal.kind == "place_pill_strategic" then
+      extra_cost = extra_cost + C.WSIM_TRUNCATED_COST
+      sim_desc = sim_desc .. string.format(" TRUNC(+%d)", C.WSIM_TRUNCATED_COST)
+    else
+      sim_desc = sim_desc .. " TRUNC(unpriced)"
+    end
+  end
   if r.killed then
     sim_desc = sim_desc .. " KILL"
   end
@@ -182,6 +255,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
     goal_kind = goal.kind, dest_mx = gmx, dest_my = gmy,
     damage = r.damage, ticks = r.ticks, killed = r.killed,
     armour_remaining = r.armour,
+    dwell = dwell, dwell_damage = r.dwell_damage, truncated = r.truncated,
   })
 
   return extra_cost, r.killed, sim_desc, path, r
@@ -206,10 +280,10 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
   -- Per-call danger_scale override (affects smart_cost A* fallback; the
   -- dijkstra fast-path uses each slate's baked-in scale). Restore to 1.0 after.
   if danger_scale_override then cpf.set_config("danger_scale", danger_scale_override) end
+  -- filter(obj, id): the id is passed so a filter can consult per-object
+  -- state keyed by id (e.g. the plan_position sweep blacklist in
+  -- eval_attack_pill). Filters that don't care just ignore the extra arg.
   for id, obj in pairs(collection) do
-    -- filter(obj, id): the id is passed so a filter can consult per-object
-    -- state keyed by id (e.g. the plan_position sweep blacklist in
-    -- eval_attack_pill). Filters that don't care just ignore the extra arg.
     if filter(obj, id) then
       -- Skip blocked destinations
       if state and state.blocked then
@@ -312,7 +386,6 @@ end
 --               there is a genuinely better option (prevents oscillation).
 -- danger_reject: if non-nil, skip bases with pill danger above this value.
 -- Used when fleeing at critical armour — sitting at a dangerous base = death.
--- Returns best, best_id, best_score, candidates
 -- =========================================================================
 -- Contested-base penalty for a refuel base at (bmx,bmy).
 -- Returns pen, n_unhandled, n_handled — shared by BOTH refuel scoring paths
@@ -382,7 +455,7 @@ local function contested_penalty(state, bmx, bmy, info, now)
   return sum, n, handled
 end
 
-
+-- Returns best, best_id, best_score, candidates
 local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info,
                                      danger_weight, cur_mx, cur_my, danger_reject)
   danger_weight = danger_weight or C.REFUEL_DANGER_WEIGHT
@@ -477,7 +550,8 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
         end
         -- Feature 4: contested base avoidance — penalise bases with moving
         -- enemy tanks nearby, scaled by how close they are, discounting any
-        -- tank an ally is already attacking. See contested_penalty.
+        -- tank an ally is already attacking, and amplified when they
+        -- outnumber us. See contested_penalty for the full shape.
         local contest_pen, contest_n, contest_h =
           contested_penalty(state, b.mx, b.my, info, now)
         local contested = contest_pen > 0
@@ -532,6 +606,14 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           contest_pen = contest_pen, contest_n = contest_n, contest_h = contest_h,
           stale = b.last_seen and (now - b.last_seen) or 0,
         }
+        -- Contested chip carries the whole computation: how many moving
+        -- enemies counted, how many were dropped as already-handled by an
+        -- ally, and the summed proximity-scaled cost they added.
+        local _c_tok = ""
+        if contest_n > 0 or contest_h > 0 then
+          _c_tok = string.format(" CONTESTED{n=%d handled=%d pen=%.0f}",
+                                 contest_n, contest_h, contest_pen)
+        end
         if score < best_score then
           best_score = score; best_id = id; best = b
         end
@@ -566,16 +648,16 @@ end
 -- Pillbox-suicider goal-cost shaping (see C.PILL_SUICIDER_* in constants).
 -- A suicider is only willing to do two things: kill pills, and keep itself
 -- fuelled. Everything else is priced out of reach with a flat multiplier
--- applied at ONE choke point ─ goal_selection's pool loop, where every pool's
--- assembled cost passes through ─ rather than inside each pool's evaluator.
+-- applied at ONE choke point — goal_selection's pool loop, where every pool's
+-- assembled cost passes through — rather than inside each pool's evaluator.
 --
 --   attack_pill                    x1  exempt (the one job)
 --   refuel_at_base / flee_to_base  x1  exempt (the whole "refuel" GOAL_GROUP)
 --   defend_pill                    x PILL_SUICIDER_DEFEND_MULT  (6)
 --   everything else                x PILL_SUICIDER_OTHER_MULT   (3)
 --
--- Keyed on goal.kind (not pool index) so kinds with no numbered pool ─ explore,
--- reposition, rescue_lgm, def_build ─ are covered by the same rule. Returns
+-- Keyed on goal.kind (not pool index) so kinds with no numbered pool — explore,
+-- reposition, rescue_lgm, def_build — are covered by the same rule. Returns
 -- 1.0 for every non-suicider, so this is a no-op on a normal map.
 -- =========================================================================
 local SUICIDER_EXEMPT_KINDS = {
@@ -2169,7 +2251,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       -- LGM-reachable, nearest tier-2 fallback. Returns the spot + all considered
       -- tiles (dcands) for the panic_build overlay.
       local best_cx, best_cy, best_tier, dcands =
-        builder.panic_build_spot(world, info, tmx, tmy, _thr_mx, _thr_my)
+        builder.panic_build_spot(world, info, tmx, tmy, _thr_mx, _thr_my, state)
       if best_cx then
         local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_cx, best_cy, 0,
                            info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
@@ -2178,12 +2260,25 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- Desperate or panic: floor the cost so the plant decisively wins.
         if _desperate or _panic then cost = 1 end
         local cands = {}
+        -- Build-gate urgency for the panic drop. This return happens BEFORE the
+        -- portfolio block below runs, so there is no pf_max_deficit to pass —
+        -- deficit 0 is the honest answer here, and the flat emergency term is
+        -- what actually buys the raise. Without this the path that most needs a
+        -- raised gate was the one path getting urgency 0: in the 9k-tick check,
+        -- 24 of 25 PLACE_PILL_GATE lines came from here, all reading urgency{0}
+        -- while the tank sat at 10 armour holding 2 pills.
+        local _du, _duc, _dud, _due =
+          builder.place_urgency(info.carried_pills, 0, true)
         return {
           cost = cost,
           -- _place_emergency: this is the threat-reactive "build while fighting"
-          -- drop — exempt from the "place must lose to attack_tank" rule.
+          -- drop — exempt from the "place must lose to attack_tank" rule, and
+          -- the flag builder.set_mode reads for the PLACE_EMERGENCY_MAX_DIST
+          -- dispatch relaxation.
           goal = { kind = "place_pill_strategic", mx = best_cx, my = best_cy,
-                   wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_emergency = true },
+                   wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_emergency = true,
+                   _urgency = _du, _urg_carry = _duc, _urg_deficit = _dud,
+                   _urg_emerg = _due },
           desc = BRAIN_POOL_VIZ and string.format("def_build@(%d,%d) cost=%.0f thr@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
                  best_cx, best_cy, cost, _thr_mx, _thr_my,
                  path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_discount, C.STRATEGIC_PLACE_COST_MULT) or "",
@@ -2307,6 +2402,23 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
 
+  -- LGM build-gate urgency, hung on the goal below as _urgency and read by
+  -- builder.decide()'s place_pill branch. The inputs are the ones already
+  -- computed here to DISCOUNT the goal's cost — carried pills (multi_carry_mult)
+  -- and pf_max_deficit (imbalance_mult) — because they say the same thing about
+  -- the BUILD as they do about the choice: this pill needs to be in the ground.
+  -- Without it the gate is a fixed LGM_DANGER_HIGH (80) that a single predicted
+  -- shell path (DANGER_SHELL_IMPACT = 100) closes for good, so the tank most in
+  -- need of a guard pill is the one that can never place it. Not an emergency:
+  -- this is the routine, chosen-from-the-pool placement, so it gets no
+  -- emergency term (see the LGM_GATE_URGENCY_* comment in constants.lua).
+  -- Two clamped multiplies of integers we already have: no extra scanning, O(1).
+  -- NOT the same thing as state._place_urgency further down — that one is a
+  -- 0..1 scalar from carry TIME that only widens the search radius. This is a
+  -- danger-threshold raise in danger_at units.
+  local place_urgency, urg_carry, urg_deficit, urg_emerg =
+      builder.place_urgency(info.carried_pills, pf_max_deficit, false)
+
   -- Aggro builds sit deeper in enemy influence than the default radius reaches:
   -- the scan is tank-centric and the tank usually sits behind the front, so a
   -- good aggro tile (negative influence, beyond the line) can be >8 tiles out.
@@ -2402,12 +2514,27 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     return false
   end
 
+  -- Abandoned-spot exclusion. builder.decide() set_blocks a drop spot whose LGM
+  -- build gate refused PLACE_GATE_FAIL_TICKS in a row, and pick_goal already
+  -- drops any pool entry sitting on a blocked tile. Honour the block HERE too:
+  -- without it the scan keeps electing the same abandoned tile as the winner,
+  -- pick_goal throws the whole candidate away, and placement offers NOTHING for
+  -- the block's duration instead of simply taking the next-best spot. One hash
+  -- lookup per cell, hoisted out of the loop.
+  local blocked_tiles = state.blocked
+  local blk_now       = state.tick or 0
+  local MAPW          = C.MAP_W
+
   for dy = -R, R do
     for dx = -R, R do
       local cx = U.mclamp(tmx + dx)   -- TANK-centric: scan around our position
       local cy = U.mclamp(tmy + dy)
       if U.is_placeable(cx, cy, world) then
         if near_repos_origin(cx, cy) then goto skip_cell end
+        if blocked_tiles then
+          local _blk_until = blocked_tiles[cy * MAPW + cx]
+          if _blk_until and blk_now < _blk_until then goto skip_cell end
+        end
         -- Surplus skip: never overfill a category already at/over its projected
         -- target (e.g. another BACK pill when back is 2/1). Unlike the old hard
         -- "only the most-needed type" gate, any category with room is allowed;
@@ -2689,11 +2816,23 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
   return {
     cost = cost,
+    -- _urgency: how badly this pill wants to be in the ground — builder.decide()
+    -- raises the LGM danger gate by it. The three _urg_* components ride along
+    -- purely so the PLACE_PILL_GATE log line prints every term and the threshold
+    -- stays hand-computable from that one line.
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
-             wx = U.m2w(best_mx), wy = U.m2w(best_my) },
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*bal{%.2f}+tankpen{%.0f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
+             wx = U.m2w(best_mx), wy = U.m2w(best_my),
+             _urgency = place_urgency, _urg_carry = urg_carry,
+             _urg_deficit = urg_deficit, _urg_emerg = urg_emerg },
+    -- Every multiplier that actually shapes `cost` has to appear here — this
+    -- desc is what FINAL_SCORES prints, and lastpill/surplus/multi were missing,
+    -- so the printed formula did not reproduce the printed number. Order matches
+    -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
+    -- x bal x surplus x multi, then + tankpen.
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}+tankpen{%.0f} = cost{%.1f} urgency{%d} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
-           C.STRATEGIC_PLACE_COST_MULT, imbalance_mult, tank_pen, search_reason, best_score,
+           C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
+           multi_carry_mult, tank_pen, cost, place_urgency, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
     cands = cands,
@@ -3055,7 +3194,8 @@ end
 --           Threat-gated: coverage alone is no reason to drive anywhere.
 --   quiet : no evidence at all -> the DEFEND_QUIET_DMG_COST curve on
 --           HITS TAKEN (PILLS_MAX_HEALTH - health) REPLACES the whole
---           (base+travel)*mult product: 0 hits ~1500 easing down to the
+--           (base+travel)*mult product: 0 hits ~1500 (an untouched pill
+--           is barely worth leaving your post for) easing down to the
 --           250 floor as the pill gets chewed up. Travel is added on
 --           top (small) and readiness still multiplies. NOTE this now
 --           makes every quiet pill a finite bidder, where the old code
@@ -3075,15 +3215,20 @@ end
 --   already_hot   — anger >= HEAT_PILL_MAX_ANGER (3 hits saturate)
 --   low_hp        — hp < HEAT_PILL_MIN_HP (each shell costs ~1 HP)
 --   low_shells    — shells < HEAT_PILL_SHOTS + SHELL_RESERVE
---   no_evidence   — nobody seen/felt near the pill within the sight
---                   window (recent hostile damage counts as evidence)
+--   no_live_enemy — no hostile tank VISIBLE within
+--                   HEAT_REQUIRE_ENEMY_RANGE of the pill right now
+--                   (stale sightings justify the drive, never the
+--                   self-shelling — heat needs a present target)
 --   lgm_out       — our LGM is walking (possibly repairing this pill);
 --                   never shell over our own man
 --   ally_repair   — a teammate advertises repair_pill on this pill
 -- Returns (cost, bd) — bd carries the per-term breakdown for the panel.
 -- Quiet-tier price of a pill by HITS TAKEN (PILLS_MAX_HEALTH - health).
--- Beyond the table's top index the cost eases HALFWAY toward
--- DEFEND_QUIET_DMG_FLOOR per extra hit (5 -> 275, 6 -> 262, ...).
+-- Straight table lookup up to the table's top index; beyond it the cost
+-- eases HALFWAY toward DEFEND_QUIET_DMG_FLOOR per extra hit, so 5+ hits
+-- converge on the floor (5 -> 275, 6 -> 262, 7 -> 256 ...) instead of
+-- stepping off a cliff. Pure function of hits — travel and readiness are
+-- applied by the caller.
 local function quiet_dmg_cost(hits)
   local tbl = C.DEFEND_QUIET_DMG_COST or { [0] = 1500 }
   local flr = C.DEFEND_QUIET_DMG_FLOOR or 250
@@ -3230,12 +3375,17 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   -- NOT by the (base+travel)*mult product. An untouched pill is barely
   -- worth leaving your post for (~1500); each hit it has already taken
   -- raises urgency (1 -> 1000, 2 -> 800, 3 -> 500, 4 -> 300, 5+ easing to
-  -- the 250 floor). Travel rides along additively so the closer responder
-  -- still wins; readiness still scales it; and the bid then flows through
-  -- the SAME well-defended clamp + tiebreaker as the live tiers. The
-  -- two-tier floor is NOT applied to quiet bids — the curve supersedes it.
-  -- hits comes from HEALTH, not p.attack_damage (a recent-burst
-  -- accumulator that reads 0 on every quiet pill however worn).
+  -- the 250 floor). Travel rides along additively (small next to the
+  -- curve) so the closer responder still wins; readiness still scales it
+  -- (an empty tank defending is still bad); and the bid then flows
+  -- through the SAME well-defended clamp + tiebreaker as the live tiers,
+  -- so a cheap worn-pill bid that allies already cover gets RAISED to
+  -- DEFEND_WELL_DEFENDED_COST while an expensive quiet dmg-0 bid (1500)
+  -- is left alone. The two-tier floor is NOT applied to quiet bids — the
+  -- curve supersedes it (see the live-tier branch below).
+  -- hits comes from HEALTH, not p.attack_damage: that field is a
+  -- recent-burst accumulator world.lua zeroes PILL_ATTACK_COOLDOWN ticks
+  -- after the last hit, so it reads 0 on every quiet pill however worn.
   -- Readiness: low shells/armour makes THIS bot's defend costlier, so
   -- the total-score steal hands the pill to the best-equipped responder
   -- among comparable distances (an empty tank arriving first defends
@@ -3292,9 +3442,11 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
     cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas * ready
     -- Two-tier floor — LIVE TIERS ONLY (the quiet curve above supersedes
     -- it; its own 250 floor is the quiet backstop). With NO fresh damage
-    -- (siege) and NO setup tell, the evidence is a mere enemy drive-by —
+    -- (siege) and NO setup tell (the "pill block going up -> take
+    -- incoming" LGM sighting), the evidence is a mere enemy drive-by —
     -- precaution bids floor at the higher DEFEND_SIGHT_MIN_COST (~200) so
-    -- they never outbid real rescues. Siege/setup keep the low floor.
+    -- they never outbid real rescues or productive work. Siege/setup keep
+    -- the low floor: those are live.
     local floor_c = C.DEFEND_MIN_COST or 100
     if not siege and setup_f <= 0 then
       floor_c = C.DEFEND_SIGHT_MIN_COST or 200
@@ -3592,6 +3744,9 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
       best_desc = string.format(
         "defend#%d@(%d,%d) %s*rdy{%.2f}%s%s%s = %.0f hits=%d dmg=%d",
         best_id, best.mx, best.my, head, b.ready or 1.0,
+        -- Post-product clamps, in application order, so the printed
+        -- formula multiplies out to the final number instead of
+        -- silently jumping (the "=500 but the parts say 253" report).
         b.floored and string.format(" floor{%.0f}", b.floored) or "",
         b.welldef and string.format(" WELLDEF{%d ally vs %d foe R=%d -> %.0f}",
             b.welldef.ours, b.welldef.foes, b.welldef.ratio,
@@ -4051,7 +4206,7 @@ local KIND_TO_POOL = {
   kill_lgm = 13,
 }
 
--- Pool DISPLAY name -> goal.kind, for the two labels that differ (see the
+-- Pool DISPLAY name → goal.kind, for the two labels that differ (see the
 -- KIND_TO_POOL note above). Lets the panel/grid renderers ask
 -- suicider_cost_mult the same question goal_selection asked, so a suicider's
 -- displayed `weighted` cost and row ordering match the cost actually competed.
@@ -4469,6 +4624,154 @@ local POOL_FILTERS = {
 }
 
 -- =========================================================================
+-- capture_pill DIRECT-ROUTE probe
+--
+-- The pill we are going for is DEAD, so it radiates no danger of its own.
+-- The danger-weighted slate still routes us around every OTHER pill's fire
+-- field, which on a body two tiles behind a hot pill means a long detour for
+-- a drive we would have survived. So for the pill we are actually going for,
+-- ask the direct question:
+--   1. A* with danger_scale = 0 → the true DIRECT route and its cost.
+--   2. wsim that path → "do I die driving it?"
+--   3. survived → keep the direct route and its cost.
+--      killed   → re-ask A* with danger ON and use that route and cost.
+--
+-- COST CONTROL. An A* is ~7-10 ms and the per-bot think budget is ~12 ms, so
+-- this can never be a per-candidate-per-tick cost. The bounds, in order:
+--   * only the FOCUS pill is probed (see the caller in step_eval_queue) —
+--     every other candidate keeps the cheap Dijkstra lookup for ranking.
+--   * at most ONE A* per bot per tick. Step 3's danger re-ask runs on the
+--     NEXT tick; the entry sits at mode="pending_danger" until then and the
+--     slate cost stands in the meantime.
+--   * the verdict is cached per pill TILE and reused until it goes stale:
+--     older than CAPTURE_ROUTE_TTL, the tank moved CAPTURE_ROUTE_MOVE_TILES,
+--     or threat rebuilt the danger grid underneath it.
+--   * skipped entirely below CAPTURE_ROUTE_MIN_TIER.
+-- Worst case per bot per tick: 1 A* + 1 wsim.
+-- =========================================================================
+local function capture_route_stale(ent, now, tmx, tmy)
+  if not ent then return true end
+  if (now - (ent.tick or 0)) > (C.CAPTURE_ROUTE_TTL or 100) then return true end
+  -- A threat rebuild moves the danger grid both A* runs were measured against.
+  if (threat.last_rebuild_tick or 0) > (ent.tick or 0) then return true end
+  local moved = math.abs(tmx - (ent.tmx or tmx)) + math.abs(tmy - (ent.tmy or tmy))
+  if moved >= (C.CAPTURE_ROUTE_MOVE_TILES or 6) then return true end
+  return false
+end
+
+-- One strict-A* run at the given danger weighting. danger_scale is a GLOBAL
+-- knob, so it is set / used / restored to 1.0 on EVERY exit including an error
+-- — the same discipline nearest_where and attack.lua use. Leaving it set would
+-- silently rescale every other cost query for the rest of the tick.
+-- Returns (cost, path) with path a flat {x1,y1,x2,y2,...} tile list, or nil.
+local function capture_route_astar(tmx, tmy, dx, dy, info, danger_scale)
+  local boat = info.inboat and 1 or 0
+  cpf.set_config("danger_scale", danger_scale)
+  local ok, cost = pcall(cpf.cost_to_astar, tmx, tmy, dx, dy, boat,
+                         info.shells or 32, info.trees or 0, info.mines or 0,
+                         info.armour or 40, C.CAPTURE_ROUTE_ASTAR_BUDGET or 4000,
+                         false)
+  local path
+  if ok and cost and cost < 1e29 then
+    -- trace_last_search reads the parent chain the cost_to call just left
+    -- behind; it must run before anything else touches the pathfinder.
+    local ok2, p = pcall(cpf.trace_last_search, dx, dy)
+    if ok2 then path = p end
+  end
+  cpf.set_config("danger_scale", 1.0)
+  if not ok or not cost then return nil end
+  return cost, path
+end
+
+-- Trim the leading waypoint when it is the tile we are standing on (the A*
+-- trace starts AT the source), matching what wsim_evaluate_goal does to the
+-- Dijkstra path before handing it to the sim.
+local function capture_route_trim(path, tmx, tmy)
+  if not path or #path < 2 then return path end
+  if path[1] ~= tmx or path[2] ~= tmy then return path end
+  local t = {}
+  for i = 3, #path do t[i - 2] = path[i] end
+  return t
+end
+
+local function capture_route_probe(state, world, info, pill, pid, tmx, tmy)
+  if not C.CAPTURE_ROUTE_DIRECT then return end
+  if (state._capacity_tier or 10) < (C.CAPTURE_ROUTE_MIN_TIER or 6) then return end
+  local now = state.tick or 0
+  if not state.capture_route then state.capture_route = {} end
+  local key = pill.my * 256 + pill.mx
+  -- RANGE GATE, before any A* work: only probe once we're reasonably close.
+  -- Same tank→pill Manhattan measure the intercept and free-pill terms below
+  -- use, so "10 tiles" means the same thing everywhere in pool 4. We DELETE any
+  -- verdict instead of caching a "too far" one — both because a verdict earned
+  -- while we were close must stop overriding the slate the moment we drive away,
+  -- and because leaving nothing behind is what lets a pill that comes back into
+  -- range get probed the same tick it crosses (capture_route_stale(nil) is true,
+  -- so the probe runs immediately instead of honouring a cached refusal).
+  local gate_dist = U.mdist(tmx, tmy, pill.mx, pill.my)
+  if gate_dist > (C.CAPTURE_ROUTE_MAX_TILES or 10) then
+    if state.capture_route[key] then
+      state.capture_route[key] = nil
+    end
+    return
+  end
+  local ent = state.capture_route[key]
+  local fresh = not capture_route_stale(ent, now, tmx, tmy)
+
+  -- Destination: the same cheapest-adjacent tile compute_pool4_cost measures
+  -- to, so the A* number is comparable with the slate numbers the other
+  -- candidates carry. Falls back to the pill tile (a dead pill carries no
+  -- impassable overlay, so its own tile is a legal destination).
+  local dx, dy = pill.mx, pill.my
+  local _, ax, ay = cpf.cheapest_adjacent_dij(KIND_NORMAL, pill.mx, pill.my,
+                                              info.inboat and 1 or 0)
+  if ax then dx, dy = ax, ay end
+
+  -- Second half of a split probe: the direct route was lethal last tick, so
+  -- this tick buys the danger-weighted A*. One A* per think, never two.
+  if fresh and ent.mode == "pending_danger" then
+    local cost, path = capture_route_astar(tmx, tmy, dx, dy, info, 1.0)
+    ent.mode = "danger"
+    ent.cost = (cost and cost < 1e29) and cost or nil
+    ent.npath = path and __idiv(#path, 2) or 0
+    if not ent.cost then ent.mode = "none" end
+    return
+  end
+  if fresh then return end
+
+  -- Step 1+2: the DIRECT run (danger off) and the survivability question.
+  local cost, path = capture_route_astar(tmx, tmy, dx, dy, info, 0)
+  if not cost or cost >= 1e29 or not path or #path < 2 then
+    -- No direct route inside the A* budget (walled in, or simply too far).
+    -- Record the miss so we don't re-probe every tick; the slate cost stands.
+    state.capture_route[key] = { id = pid, tick = now, tmx = tmx, tmy = tmy,
+                                 mode = "none" }
+    return
+  end
+  path = capture_route_trim(path, tmx, tmy)
+
+  local killed, damage = false, 0
+  if C.WSIM_ENABLED and path and #path >= 2 then
+    wsim.snapshot(world, info, path, nil)
+    local r = wsim.run(C.WSIM_MAX_TICKS)
+    killed = r.killed and true or false
+    damage = r.damage or 0
+  end
+
+  ent = { id = pid, tick = now, tmx = tmx, tmy = tmy,
+          direct_cost = cost, killed = killed, damage = damage,
+          npath = __idiv(#path, 2) }
+  if killed then
+    -- Lethal direct run: hand the decision to the danger-weighted A* next tick.
+    ent.mode = "pending_danger"
+  else
+    ent.mode = "direct"
+    ent.cost = cost
+  end
+  state.capture_route[key] = ent
+end
+
+-- =========================================================================
 -- compute_pool4_cost — the capture_pill cost formula extracted so it
 -- can be evaluated synchronously at queue-add time (high-priority
 -- "grab the pill we just killed" responsiveness) AND at the normal
@@ -4568,6 +4871,28 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
       return 1e30, 1e30, 1e30, 0
     end
   end
+  -- Tank→pill Manhattan distance. Hoisted above the DIRECT-ROUTE override
+  -- because the probe's range gate measures the same way; the intercept and
+  -- free-pill terms below reuse this one value.
+  local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
+  -- DIRECT-ROUTE override (capture_route_probe, above). For the FOCUS pill the
+  -- probe has already decided between the danger-free direct A* run and the
+  -- danger-weighted one; when it holds a verdict its cost REPLACES the slate
+  -- lookup, so the pool ranks — and the goal commits — on the route we would
+  -- actually drive. Other candidates never have an entry and are untouched.
+  -- _route_far is set when there is no verdict BECAUSE the pill is out of the
+  -- probe's range, so the panel can say "not probed" rather than leaving it
+  -- looking like the direct route was tried and lost.
+  local _route_dmg, _route_far = 0, nil
+  local _rent = state.capture_route and state.capture_route[obj.my * 256 + obj.mx]
+  if _rent and _rent.cost and _rent.cost < 1e29
+     and (_rent.mode == "direct" or _rent.mode == "danger") then
+    dist_raw     = _rent.cost
+    dist_method  = (_rent.mode == "direct") and "astar_direct" or "astar_danger"
+    _route_dmg   = _rent.damage or 0
+  elseif our_dist > (C.CAPTURE_ROUTE_MAX_TILES or 10) then
+    _route_far = our_dist
+  end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
   local danger_val = threat.at(obj.mx, obj.my)
   -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
@@ -4577,7 +4902,7 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
   -- Intercept: an enemy tank close enough to beat us to the pill
   -- (Manhattan dist ratio scaled by safety margin) bumps the cost.
-  local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
+  -- our_dist computed above (shared with the DIRECT-ROUTE range check).
   local intercept = 0
   local enemy_tanks = state.perc and state.perc.enemy_tanks or {}
   for _, et in ipairs(enemy_tanks) do
@@ -4612,7 +4937,7 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   if free_bonus > 0 then
     c = math.max(C.CAPTURE_FREE_PILL_MIN_COST, c - free_bonus)
   end
-  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method, free_bonus
+  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method, free_bonus, _route_dmg, _route_far
 end
 
 -- Public: the capture_pill (pool 4) score for a SPECIFIC pill, used by the
@@ -4866,13 +5191,15 @@ function M.build_eval_queue(state, world, info)
             _reject_remaining = reject.remaining or 0,
           }
         else
-          local c, _draw, dscore, dval, intcpt, _lm4, _dm4, _free4 =
+          local c, _draw, dscore, dval, intcpt, _lm4, _dm4, _free4, _rdmg4, _rfar4 =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
           state.cost_cache[ck] = {
             cost = c, raw = _draw, tick = now, _p = 4, _id = id,
             _mx = obj.mx, _my = obj.my,
             _ds = dscore, _dv = dval, _intcpt = intcpt,
             _dist_method = _dm4, _free = _free4,  -- _free = scaled value bonus subtracted
+            _route_dmg = _rdmg4,                  -- wsim damage on the probed direct route
+            _route_far = _rfar4,                  -- set = too far to probe, slate cost stands
           }
         end
       end
@@ -4893,6 +5220,20 @@ function M.build_eval_queue(state, world, info)
       local lp = world.pills[ce._id]
       if (not lp) or (lp.health or 0) > 0 or lp.in_tank or lp.carrier or lp._synth_carry then
         state.cost_cache[ck] = nil
+      end
+    end
+  end
+
+  -- Same sweep for the DIRECT-ROUTE verdicts (capture_route_probe). Entries are
+  -- keyed by pill TILE, so a pill rebuilt alive on the same tile would otherwise
+  -- inherit the dead body's route decision. Drop any verdict whose pill is gone,
+  -- alive again, or carried; staleness by age/movement is handled in the probe.
+  if state.capture_route then
+    for rk, re in pairs(state.capture_route) do
+      local lp = re.id and world.pills[re.id]
+      if (not lp) or (lp.health or 0) > 0 or lp.in_tank or lp.carrier
+         or (lp.my * 256 + lp.mx) ~= rk then
+        state.capture_route[rk] = nil
       end
     end
   end
@@ -5394,11 +5735,29 @@ local function get_formula_inner(e)
         and string.format("|free:close/safe grab (≤ %.1f tiles, danger %.1f) → −%.1f (0=none .. %.1f=best, floor %.1f)",
               C.TANK_COMBAT_ENGAGE_RANGE * C.CAPTURE_FREE_PILL_RANGE_MULT, e._dv or 0, _fd, C.CAPTURE_FREE_PILL_VALUE, C.CAPTURE_FREE_PILL_MIN_COST)
         or  "|free:none (too far or too dangerous)"
+      -- DIRECT-ROUTE probe verdict (capture_route_probe). Only the focus pill
+      -- carries one; every other row is still a plain slate/A* distance. The
+      -- "too far" case gets its own line so it can't be misread as "the direct
+      -- route was tried and lost".
+      local _route_det = ""
+      if _dm_str == "astar_direct" then
+        _route_det = string.format(
+          "|route:DIRECT A* — danger_scale=0, the straight run at the body. The wsim drove it and we LIVE (%d dmg), so this route and its cost are what the pool ranks on",
+          e._route_dmg or 0)
+      elseif _dm_str == "astar_danger" then
+        _route_det = string.format(
+          "|route:DANGER A* — the direct (danger_scale=0) run KILLED us in the wsim (%d dmg), so we re-priced on the danger-weighted A* route instead",
+          e._route_dmg or 0)
+      elseif e._route_far then
+        _route_det = string.format(
+          "|route:NOT PROBED — pill is %d tiles away, past CAPTURE_ROUTE_MAX_TILES (%d). No direct-route A* and no wsim were run for it; the dist above is the plain Dijkstra/A* slate cost",
+          e._route_far, C.CAPTURE_ROUTE_MAX_TILES or 10)
+      end
       f = string.format(
-        "(base{%d} + dist{%.1f}[%s]@(%d,%d) + danger{%.1f} + intcpt{%.0f})%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f [%s]|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s%s",
+        "(base{%d} + dist{%.1f}[%s]@(%d,%d) + danger{%.1f} + intcpt{%.0f})%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f [%s]|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s%s%s",
         C.CAPTURE_PILL_BASE_COST, e._ds, _dm_str, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt, _free_mult,
         raw, C.CAPTURE_PILL_DIST_SCALE, e._ds, _dm_str,
-        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det, _free_det)
+        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det, _free_det, _route_det)
     end
   elseif p == 3 then
     -- capture_base: the A* number IS the danger-weighted dijkstra travel cost —
@@ -5598,6 +5957,39 @@ function M.step_eval_queue(state, world, info)
     else
       local _bt = squad.blitz_ready_status(state, now, info.player_number or -1, info)
       in_2plus_blitz = (_bt or 0) >= 1
+    end
+  end
+
+  -- capture_pill DIRECT-ROUTE probe — see capture_route_probe's header for the
+  -- decision and the cost bounds. It runs HERE (and nowhere else) for two
+  -- reasons: step_eval_queue already refuses to run while the pathfinder has a
+  -- live path_to search, which a one-shot A* would clobber; and it is the one
+  -- place that is throttled by the eval_iv capacity tier. Exactly ONE pill is
+  -- probed per call — the FOCUS pill:
+  --   1. the pill we hold a capture_pill goal on (we are committed to it),
+  --   2. else the body we have a fresh-kill claim on (we are about to be),
+  --   3. else last tick's pool-4 leader (the one most likely to win).
+  -- Everything else keeps the cheap Dijkstra lookup for the ranking pass.
+  do
+    local _fp, _fid
+    local _g = state.goal
+    if _g and _g.kind == "capture_pill" and _g.target_id then
+      _fid = _g.target_id
+    elseif state.kill_pickup and state.kill_pickup.id then
+      _fid = state.kill_pickup.id
+    else
+      local _best = math.huge
+      for _, ce in pairs(state.cost_cache or {}) do
+        if ce._p == 4 and not ce._reject and (ce.cost or math.huge) < _best then
+          _best = ce.cost; _fid = ce._id
+        end
+      end
+    end
+    _fp = _fid and world.pills and world.pills[_fid] or nil
+    -- Only a real, takeable body is worth an A*: alive pills belong to
+    -- attack_pill and a carried one has no meaningful (mx,my).
+    if _fp and (_fp.health or 0) == 0 and not _fp.in_tank and not _fp.carrier then
+      capture_route_probe(state, world, info, _fp, _fid, tmx, tmy)
     end
   end
 
@@ -6429,8 +6821,10 @@ function M.step_eval_queue(state, world, info)
       local _cpill_lgm_mult = 1
       local _cpill_dist_method = "dij"
       local _cpill_free_disc = 0  -- value-bonus semantics: 0 = no free-grab bonus
+      local _cpill_route_dmg = 0  -- wsim damage on the probed direct route
+      local _cpill_route_far = nil -- set = beyond CAPTURE_ROUTE_MAX_TILES, never probed
       if pool_idx == 4 then
-        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc =
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc, _cpill_route_dmg, _cpill_route_far =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
@@ -6602,6 +6996,8 @@ function M.step_eval_queue(state, world, info)
         entry._lgm_mult=_cpill_lgm_mult
         entry._dist_method=_cpill_dist_method
         entry._free=_cpill_free_disc
+        entry._route_dmg=_cpill_route_dmg
+        entry._route_far=_cpill_route_far
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg
@@ -7721,6 +8117,19 @@ function M.finalize_pools(state, world, info)
     if BRAIN_POOL_VIZ then
       desc4 = string.format("capture_pill#%d@(%d,%d) cost=%.0f", pid, pill.mx, pill.my, raw_cost4)
       if imminent4 then desc4 = desc4 .. " IMMINENT" end
+      -- Which route the DIRECT-ROUTE probe settled on for this body, and why.
+      -- NOT-PROBED is called out separately from SAFE-ROUTE: one means the
+      -- direct run lost, the other means we never asked.
+      local _r4 = state.capture_route and state.capture_route[pill.my * 256 + pill.mx]
+      local _ce4 = state.cost_cache and state.cost_cache["4:" .. pid]
+      if _r4 and _r4.mode == "direct" then
+        desc4 = desc4 .. string.format(" DIRECT(wsim %ddmg, lives)", _r4.damage or 0)
+      elseif _r4 and _r4.mode == "danger" then
+        desc4 = desc4 .. string.format(" SAFE-ROUTE(direct was lethal, %ddmg)", _r4.damage or 0)
+      elseif _ce4 and _ce4._route_far then
+        desc4 = desc4 .. string.format(" NOT-PROBED(%d tiles > %d)",
+                _ce4._route_far, C.CAPTURE_ROUTE_MAX_TILES or 10)
+      end
     end
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
     -- See note on race_mode above (line ~644). Same dead-branch.
@@ -7897,6 +8306,9 @@ function M.finalize_pools(state, world, info)
     local _dt = (clock_us() - _te) / 1000
     _ev_ms[idx] = _dt
     if BRAIN_PROFILE then opt(string.format("    fp eval[%d] %.2f ms", idx, _dt)) end
+    -- PROFILING LITE: single-eval outlier (e.g. place_pill_strategic spiking
+    -- to ~5 ms). Reuses _dt — no extra clock read — and formats nothing until
+    -- an eval actually blows past 1.5 ms.
   end
   local _t3 = clock_us()
 
@@ -9112,7 +9524,7 @@ local function goal_selection(state, world, info, quiet)
     -- attack_pill and the refuel group ride at x1; defend_pill pays
     -- PILL_SUICIDER_DEFEND_MULT, everything else PILL_SUICIDER_OTHER_MULT.
     -- No-op for every bot that isn't a suicider (suicider_cost_mult -> 1.0),
-    -- and unconditional on phase ─ unlike influence, this is who the bot IS,
+    -- and unconditional on phase — unlike influence, this is who the bot IS,
     -- not where the goal sits. _suicider_mult is stashed for the WINNERS-row
     -- reconciliation exactly like _inf_mult.
     if state.is_pill_suicider then
@@ -9431,7 +9843,7 @@ local function goal_selection(state, world, info, quiet)
                and pce.goal.mx == state.goal.mx
                and pce.goal.my == state.goal.my then
               -- Carried-forward costs come straight from pool_cache, which is
-              -- PRE-selection ─ so the suicider multiplier (applied in the pool
+              -- PRE-selection — so the suicider multiplier (applied in the pool
               -- pass above, which this entry missed) has to be re-applied here
               -- or a suicider's stickiness bar would be 3-6x too low and every
               -- challenger would win by walkover.
@@ -9441,11 +9853,6 @@ local function goal_selection(state, world, info, quiet)
                             _suicider_mult = (_cf_sui ~= 1.0) and _cf_sui or nil,
                             _carried_forward = true }
               pool[#pool + 1] = cur_entry
-              if BRAIN_DEBUG_MODE then
-                print2(string.format(
-                  "  hysteresis(carry): current %s@%d,%d had no pool entry this cycle — carried at last cost %.0f",
-                  state.goal.kind, state.goal.mx or -1, state.goal.my or -1, pce.cost))
-              end
               break
             end
           end
@@ -9660,10 +10067,18 @@ local function goal_selection(state, world, info, quiet)
       -- Dump the FINAL post-everything scores for every candidate so a
       -- replan tick can be reconstructed after the fact. Stripped from
       -- opt/ via print2.
+      --
+      -- Tier-gated: one line per candidate is ~1 ms of string.format on the
+      -- most expensive tick shape the brain has. The capacity controller drops
+      -- tiers to survive the budget, but no tier lever reached the replan path
+      -- — so below REPLAN_LOG_MIN_TIER the reconstruction detail is dropped and
+      -- the controller's low tiers become measurably cheaper on replan ticks.
+      if (state._capacity_tier or 10) >= (C.REPLAN_LOG_MIN_TIER or 3) then
       for i, c in ipairs(pool) do
         local base = c._base_cost or c.cost
         local penalty = (c.cost or 0) - base
       end
+      end -- REPLAN_LOG_MIN_TIER
 
       local winner = pool[1]
 

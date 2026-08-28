@@ -89,9 +89,21 @@ typedef struct {
 typedef struct {
   int16_t  armour_remaining;
   int16_t  damage_taken;
+  int16_t  damage_during_dwell; /* subset of damage_taken suffered while the
+                                 * tank was stationary at its destination
+                                 * (see BrainWorldSim::dwell_ticks).
+                                 * Always 0 when dwell_ticks is 0 — a
+                                 * no-dwell run has no parked ticks at all. */
   int16_t  ticks_simulated;
   int16_t  arrival_tick;      /* when tank reached destination, or -1 */
   uint8_t  killed;            /* did armor reach 0? */
+  /* The run stopped because it ran out of ticks (max_ticks reached, or the
+   * cooperative abort flag fired) rather than reaching a natural end.
+   * A truncated run means UNKNOWN, not SAFE: the tank neither arrived-and-
+   * dwelled nor died, so whatever was going to happen next was never
+   * simulated. Callers must not read a low damage_taken from a truncated
+   * run as evidence the trip is survivable. */
+  uint8_t  truncated;
   uint8_t  lgm_survived;     /* 0=not dispatched, 1=survived, 2=killed */
   int16_t  lgm_arrival_tick;  /* when LGM reached dest, or -1 */
   int16_t  lgm_death_tick;    /* when LGM died, or -1 */
@@ -119,6 +131,20 @@ struct BrainWorldSim {
   int           attack_target;       /* pill index we're shooting, or -1 */
   int           tank_shoot_interval; /* ticks between our shots (default 8) */
   int           shell_damage;        /* armor per hit (default 5) */
+
+  /* Ticks the tank stands still on the destination tile once it reaches the
+   * end of its path. N gives exactly N parked ticks, counting the arrival
+   * tick itself (the tank is already standing there when that tick's pills
+   * fire). 0 (the default) reproduces the historical behaviour of stopping
+   * dead on arrival — the sim then only answers "can I survive the drive?"
+   * and is bit-identical to the pre-dwell simulator on every route.
+   *
+   * Non-zero answers the more useful question "can I survive the drive AND
+   * the job I drove there to do?". Callers pass the time the tank actually
+   * has to stand there: for a pill placement that is the LGM round trip
+   * (walk out + build + walk back). While parked the tank takes FULL shell
+   * damage — see the distance discount in brainWorldSimRun. */
+  int           dwell_ticks;
 
   /* Cooperative abort flag (SDL_AtomicInt *). Polled at the per-tick
    * checkpoint in brainWorldSimRun. NULL disables polling. void * so
@@ -159,6 +185,11 @@ void brainWorldSimSetPath(BrainWorldSim *sim,
 void brainWorldSimSetAttackTarget(BrainWorldSim *sim, int pill_index);
 void brainWorldSimSetLGM(BrainWorldSim *sim, int dispatch_tick,
                          int dest_mx, int dest_my, int speed);
+
+/* Ticks to keep simulating after arrival, with the tank held stationary on
+ * the destination tile. 0 (default, and what brainWorldSimClear restores)
+ * keeps the old stop-on-arrival behaviour. */
+void brainWorldSimSetDwell(BrainWorldSim *sim, int dwell_ticks);
 
 /*********************************************************
  * Run simulation

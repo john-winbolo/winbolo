@@ -878,9 +878,10 @@ function Brain.think(info)
       -- goal kind. (goals.lua's pool consult exempts the same case on read.)
       local survival = (gk == "refuel_at_base" or gk == "flee_to_base")
                        and (info.armour or 99) <= C.ARMOUR_LOW
-      if not survival then
-        U.goal_blacklist_add(state, gk, gt, g and g.mx, g and g.my,
-                             now + (C.GOAL_BLACKLIST_TICKS or 750))
+      if survival then
+      else
+        local until_t = now + (C.GOAL_BLACKLIST_TICKS or 750)
+        U.goal_blacklist_add(state, gk, gt, g and g.mx, g and g.my, until_t)
       end
       -- Drop to goal=none; the (rate-limited) goal=none replan then picks
       -- something else, because selection consults _goal_blacklist.
@@ -1213,6 +1214,11 @@ function Brain.think(info)
 
     state._capacity_tier = cur
     state._capacity = C.BRAIN_CAPACITY_LEVELS[cur]
+
+    -- PROFILING LITE: stash the budget this tick was tiered against so the
+    -- end-of-tick TICK_COST / NEAR_BUDGET lines can report ms-vs-target
+    -- without re-deriving it. tgt_ms is a local to this do-block, hence the
+    -- stash. Debug-only field — stripped from opt/ with the whole block.
 
     -- Tier-shift logging: every change emits a line to optimize.log so
     -- we can verify the algorithm + corroborate per-tier ms history.
@@ -2717,7 +2723,29 @@ function Brain.think(info)
                           and info.shells < state.last_shells
   state.last_shells = info.shells
 
-  if fired_this_tick then
+  -- ...with one exception. A place_pill_strategic sitting on its drop spot
+  -- while builder.decide()'s LGM gate keeps refusing (place_gate_fails is
+  -- running) is NOT working by shooting back — it is the park-and-die stall:
+  -- the tank can't place, the 50-tick replan re-picks the same spot at an
+  -- ever-lower cost, and every returned shell used to zero the one timer that
+  -- could have broken it (20260827_115304 bot3, t=12523 to death at t=12678).
+  -- Scoped to that goal kind so a tank genuinely fighting from cover on any
+  -- other goal still counts firing as progress. The counter is written later in
+  -- the tick by builder.decide(), so this reads last tick's value — one tick of
+  -- lag on a 100+ tick condition, which doesn't matter.
+  -- The stamp check matters: builder.decide() can return before the gate branch
+  -- (drowning / slow-terrain road builds), which leaves place_gate_fails frozen
+  -- non-zero. Without the freshness test a stale count would keep this true and
+  -- strip the firing-is-progress exemption from a tank that has moved off the
+  -- drop spot and is genuinely fighting — wrongly tripping stuck-flee.
+  local _bld = state.builder
+  local gate_stalled = state.goal.kind == "place_pill_strategic"
+                       and _bld ~= nil
+                       and (_bld.place_gate_fails or 0) > 0
+                       and _bld.place_gate_tick ~= nil
+                       and (now - _bld.place_gate_tick) <= (C.PLACE_GATE_STALE_TICKS or 2)
+  local fire_is_progress = fired_this_tick and not gate_stalled
+  if fire_is_progress then
     -- Active firing is progress — reset the timer so a planted bot
     -- shooting defenders doesn't trip stuck-flee mid-take.
     state.stuck_for = 0
@@ -2726,7 +2754,7 @@ function Brain.think(info)
      and state.goal.kind ~= "none"
      and not attack_at_standoff
      and not state.wall_clearing
-     and not fired_this_tick then
+     and not fire_is_progress then
     state.stuck_for = state.stuck_for + 1
     -- In water the tank turns at 0.25 brad/tick (a 90-deg turn alone is
     -- ~256 ticks) and drives 3-4 WU/tick, so the 150-tick same-tile test
@@ -2961,6 +2989,26 @@ function Brain.think(info)
       return (t ~= nil and (_pf_dc[cat] or 0) >= t), cat
     end
 
+    -- Blocked-tile test for the same two drops. A spot the place_pill gate
+    -- breaker (builder.decide) or the stuck detector gave up on is held in
+    -- state.blocked for PLACE_GATE_BLOCK_TICKS. pick_goal enforces that on pool
+    -- candidates and the strategic scan skips them, but BOTH drops below elect a
+    -- tile from U.is_placeable + danger alone, neither of which reads
+    -- state.blocked — so they hand the breaker straight back the tile it just
+    -- abandoned. On the emergency path that is an endless loop: it re-runs every
+    -- tick with no cooldown, and because it re-picks the lowest-danger neighbour
+    -- while shell stamps expire, the winner can flip between tiles and reset the
+    -- breaker's consecutive counter, so the breaker may never reach its
+    -- threshold at all. The antitank drop has ANTITANK_DROP_COOLDOWN (200t) to
+    -- slow it, but the block runs 600t, so it too can re-elect a blocked tile
+    -- twice inside one block window. One hash lookup; both get the test.
+    local function drop_tile_blocked(mx, my)
+      local bl = state.blocked
+      if not bl then return false end
+      local until_t = bl[U.mkey(mx, my)]
+      return until_t ~= nil and now < until_t
+    end
+
     -- Anti-tank opportunistic pill drop: if carrying a pill and an enemy
     -- tank is close, place the pill between us and the threat.
     if C.ANTITANK_DROP_ENABLED
@@ -2979,11 +3027,25 @@ function Brain.think(info)
         if mid_mx ~= cur_mx or mid_my ~= cur_my then  -- don't place on self
           -- Opportunistic, not life-critical: skip if the spot's role is already
           -- in surplus so we don't overfill (e.g. a 3rd back pill at 2/0).
-          if U.is_placeable(mid_mx, mid_my, world) and not drop_role_surplus(mid_mx, mid_my) then
+          if U.is_placeable(mid_mx, mid_my, world) and not drop_role_surplus(mid_mx, mid_my)
+             and not drop_tile_blocked(mid_mx, mid_my) then
+            -- Build-gate urgency: this goal bypasses the placement pool, so it
+            -- has to stamp the fields itself or builder.decide() gates it at the
+            -- flat LGM_DANGER_HIGH. No portfolio figure here (drop_role_surplus
+            -- only answers a yes/no per tile), so the deficit term is 0. NOT an
+            -- emergency: the comment above says it — opportunistic, not
+            -- life-critical — so it does not get the panic term, and it keeps
+            -- the strict pdist<=1 dispatch. The midpoint is TOWARD the enemy
+            -- tank; sending the LGM 6 tiles into that is a different decision
+            -- than the one this drop is making.
+            local _au, _auc, _aud, _aue =
+              builder.place_urgency(info.carried_pills, 0, false)
             state.goal = {
               kind = "place_pill_strategic", mx = mid_mx, my = mid_my,
               wx = U.m2w(mid_mx), wy = U.m2w(mid_my),
               antitank = true,
+              _urgency = _au, _urg_carry = _auc, _urg_deficit = _aud,
+              _urg_emerg = _aue,
             }
             state.pf.status = "idle"
             state.antitank_drop_cooldown = now + C.ANTITANK_DROP_COOLDOWN
@@ -3033,7 +3095,12 @@ function Brain.think(info)
           local dx = math.floor(math.sin(angle) + 0.5)
           local dy = math.floor(-math.cos(angle) + 0.5)
           local px, py = cur_mx + dx, cur_my + dy
-          if U.in_map(px, py) and U.is_placeable(px, py, world) then
+          -- drop_tile_blocked: never re-elect a tile the gate breaker or the
+          -- stuck detector just abandoned (see the helper above) — this search
+          -- runs every tick with no cooldown, so without it the park resumes
+          -- immediately and the breaker loops forever.
+          if U.in_map(px, py) and U.is_placeable(px, py, world)
+             and not drop_tile_blocked(px, py) then
             -- Prefer tiles away from where we're heading (behind us)
             local aim_to_drop = U.aim_at(info.tankx, info.tanky, U.m2w(px), U.m2w(py))
             local angle_from_front = math.abs(U.adiff(tank_dir, aim_to_drop))
@@ -3055,10 +3122,31 @@ function Brain.think(info)
           best_drop_mx, best_drop_my = surp_mx, surp_my   -- all safe tiles are surplus-role → still save the pill
         end
         if best_drop_mx then
+          -- Build-gate urgency: this goal bypasses the placement pool, so it
+          -- stamps the fields itself. No portfolio figure here, so the deficit
+          -- term is 0 — the flat emergency term is what buys the raise, which is
+          -- right: we are at/below EMERGENCY_DROP_ARMOUR with enemy tanks on us,
+          -- and the alternative to a risky LGM walk is dying and handing the
+          -- pills over.
+          local _eu, _euc, _eud, _eue =
+            builder.place_urgency(info.carried_pills, 0, true)
           state.goal = {
             kind = "place_pill_strategic", mx = best_drop_mx, my = best_drop_my,
             wx = U.m2w(best_drop_mx), wy = U.m2w(best_drop_my),
             emergency = true,
+            -- _place_emergency is the field the rest of the brain actually
+            -- reads (builder.set_mode's PLACE_EMERGENCY_MAX_DIST relaxation,
+            -- and the pool's hysteresis / attack_tank exemptions). `emergency`
+            -- above is write-only — nothing in the brain has ever read it — so
+            -- this drop never got its dispatch relaxation. That mattered: the
+            -- search below picks one of EMERGENCY_DROP_SEARCH_DIRS neighbours,
+            -- and a DIAGONAL neighbour is Manhattan distance 2, which the
+            -- pdist<=1 test rejects outright. Half the candidate spots could
+            -- never dispatch. Keeping `emergency` for anything outside the
+            -- brain that may inspect the goal.
+            _place_emergency = true,
+            _urgency = _eu, _urg_carry = _euc, _urg_deficit = _eud,
+            _urg_emerg = _eue,
           }
           state.pf.status = "idle"
           log.event("emergency_drop", string.format("at(%d,%d) arm=%d", best_drop_mx, best_drop_my, info.armour))
@@ -3396,6 +3484,10 @@ function Brain.think(info)
     end
     opt(string.format("  goal-validation chain done %.2f ms (gk=%s)", (t_goal0 - t_gv0) / 1000, tostring(gk)))
     opt(string.format("water+goal_invalid done %.2f ms", (t_goal0 - t_water0) / 1000))
+    -- PROFILING LITE checkpoint 1/3 — "prelude" ends here: everything before
+    -- goal selection (world/danger/threat/percept, the incremental Dijkstra
+    -- scheduler, mid, water + goal-validation). See the NEAR_BUDGET block at
+    -- the main think exit for the stage definitions.
 
     -- Rolling candidate evaluation: 2 A* cost_to calls per tick
     -- Skip on ticks where threat grid rebuilt (both are expensive, don't stack)
@@ -4182,8 +4274,26 @@ function Brain.think(info)
         for _, entry in ipairs(state._pick_goal_timing) do opt(entry) end
       end
       opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
-      -- Dump all pool_cache winners with costs for diagnosing goal switches
-      -- Dump goal_competition entries
+      -- Dump all pool_cache winners with costs for diagnosing goal switches.
+      -- Tier-gated: these per-candidate dumps are ~1 ms of string.format +
+      -- print2 on a replan tick, which is exactly the tick the capacity
+      -- controller is trying to shrink. Below REPLAN_LOG_MIN_TIER the
+      -- controller's low tiers have to be genuinely cheaper than its high
+      -- ones or its floor is fiction, so the diagnostics go first.
+      local _replan_log = BRAIN_DEBUG_MODE
+        and (state._capacity_tier or 10) >= (C.REPLAN_LOG_MIN_TIER or 3)
+      if _replan_log and state.pool_cache then
+        for pi = 0, 10 do
+          local pce = state.pool_cache[pi]
+          if pce and pce.goal then
+          end
+        end
+      end
+      -- Dump goal_competition entries (same tier gate as the pool dump above)
+      if _replan_log and state.goal_competition then
+        for _, gc in ipairs(state.goal_competition) do
+        end
+      end
       -- During active pill engage, only allow switching to critical
       -- flee_to_base. Routine refuel_at_base (cost-competition or
       -- Override 2) is NOT a valid preemption — it would skip the
@@ -4444,6 +4554,11 @@ function Brain.think(info)
     end
   end
 
+  -- PROFILING LITE checkpoint 2/3 — "replan" ends here: the replan decision
+  -- plus (on replan ticks) build_eval_queue / finalize_pools / pick_goal /
+  -- goal-swap, and the pf auto-expire chain. On non-replan ticks this stage
+  -- is ~0. See the NEAR_BUDGET block at the main think exit.
+
   -- Per-tick attack substate machine (runs every tick, not just on replan)
   local t_as0 = clock_us()
   attack.update_attack_substate(state.goal, state, world, info)
@@ -4528,6 +4643,10 @@ function Brain.think(info)
   t_goal1 = clock_us()
   metrics.set("us_goals", t_goal1 - t_goal0)
   opt(string.format("goals done %.2f ms", (t_goal1 - t_goal0) / 1000))
+  -- PROFILING LITE checkpoint 3/3 — "handler" ends here: the per-tick goal
+  -- handler (attack.update_attack_substate) and the attack aim-point solve.
+  -- Everything after this (demine, lookahead, steering, builder, HUD, squad/
+  -- comms, tail) lands in "rest". See the NEAR_BUDGET block at the main exit.
 
   -- Automatic de-mine interrupt: when a known mine is in crosshair range
   -- and the goal is interruptible, push a kill_mine goal over it (the real
@@ -6259,6 +6378,22 @@ function Brain.think(info)
   -- "MSG_TX" across a session to audit actual /info bus traffic — cadence and
   -- content of state-slate, bes/bd, bco/bcc/bcq, replies, etc. (dest 0 = the
   -- ally/bot-only internal channel; a nonzero bitmask = specific recipients).
+
+  -- ── PROFILING LITE: TICK_COST / NEAR_BUDGET ─────────────────────────────
+  -- Sits immediately before print2.flush() so it measures as much of the
+  -- tick as can still be logged, and so the evidence lands in the buffer of
+  -- the tick BEFORE a budget kill (a killed tick loses its whole buffer).
+  --
+  -- Clock: print2.elapsed_ms() — the same os.clock origin behind every
+  -- "[x.xxms]" line prefix in this log, so TICK_COST lines up with them.
+  --
+  -- Happy path cost: one clock read + one string.format. NEAR_BUDGET's
+  -- extra format only runs when the tick is already near its budget.
+  --
+  -- Only the MAIN think exit is instrumented. The four early exits (dead /
+  -- startup / manual / paused) never call print2.flush(), so anything
+  -- printed on those ticks is discarded when the next set_tick clears the
+  -- buffer — a TICK_COST there would be invisible.
 
   -- Flush print2 log for this tick. MUST be the last thing before return so it
   -- captures the /info broadcast block above (blitz TX diagnostics included).
