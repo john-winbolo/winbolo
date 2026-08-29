@@ -1159,6 +1159,32 @@ static void renderBrainSettingsWindow(void) {
     ImGui::End();
 }
 
+/* Bring the desktop Send Message pop-out to the front and put the caret in
+ * its input box, with any draft text already there selected so typing
+ * replaces it.
+ *
+ * Deliberately not a toggle. Players open the pop-out, click back into the
+ * game window to keep playing, then press Ctrl+M again expecting the message
+ * box — but the key press lands on the main window, so a toggle hides the
+ * pop-out instead of raising it. Every desktop entry point (Ctrl+M, the
+ * Players menu item, windowShowSendMessages(wsrOpen), the mac menu bar)
+ * routes through here so the window comes forward however it was asked for.
+ * Closing is left to the pop-out's own close box. */
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+static void sendMsgPopOutShow(void) {
+    /* popOutCreate re-shows and raises a window it created earlier, so this
+     * one call covers both the first open and a raise from behind the game. */
+    bool wasOpen = s_popSendMsg.open;
+    if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200))
+        return;
+    /* Only a fresh open clears the cooldown — re-raising must not hand back
+     * an early Send button and let Ctrl+M spam past SEND_MSG_WAIT_MS. */
+    if (!wasOpen) s_sendMsgCooldownEnd = 0;
+    s_sendMsgFocusInput = true;
+    s_closeMenuPopups   = true;
+}
+#endif
+
 /* -------------------------------------------------------
  * Send Message panel
  * Mirrors dialogMessages.c: radio buttons for recipient,
@@ -2849,8 +2875,10 @@ static void renderMenuBar(ClientSim *cs) {
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
+            /* Checked when the pop-out is open; picking it raises and focuses
+               that window rather than closing it, matching Ctrl+M. */
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M", s_popSendMsg.open))
-                togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+                sendMsgPopOutShow();
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
@@ -3664,18 +3692,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
-                    togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
-                    s_closeMenuPopups = true;
+                    sendMsgPopOutShow();
                 } else {
 #endif
-                    if (s_showSendMsg) {
-                        s_sendMsgFocusInput = true;
-                        s_closeMenuPopups = true;
-                    } else {
-                        s_showSendMsg = true;
-                        s_sendMsgFocusInput = true;
-                        s_closeMenuPopups = true;
-                    }
+                    /* Never a toggle — an already-open panel is raised to the
+                       front of the ImGui stack and refocused (SetWindowFocus
+                       in renderSendMsgContent) instead of being hidden. */
+                    s_showSendMsg       = true;
+                    s_sendMsgFocusInput = true;
+                    s_closeMenuPopups   = true;
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
 #endif
@@ -4825,17 +4850,11 @@ void sdl3ImguiShowSendMsg(bool open) {
                 s_showCtrlSendMsg = false;
             }
         } else {
-            /* Mouse/keyboard desktop: the draggable pop-out window. */
+            /* Mouse/keyboard desktop: the draggable pop-out window.  Opening
+               an already-open pop-out raises and refocuses it — see
+               sendMsgPopOutShow. */
             if (open) {
-                if (!s_popSendMsg.open) {
-                    popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
-                }
-                /* Match the other paths' side effects so the user gets a
-                 * fresh cooldown and a focused input regardless of which
-                 * path opened Send Message. */
-                s_sendMsgCooldownEnd = 0;
-                s_sendMsgFocusInput  = true;
-                s_closeMenuPopups    = true;
+                sendMsgPopOutShow();
             } else {
                 if (s_popSendMsg.open) popOutHide(&s_popSendMsg);
             }
