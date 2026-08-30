@@ -794,6 +794,38 @@ void windowSetSoundVolume(int pct) {
   soundVolume = pct;
   soundSetVolume(pct);
 }
+
+/* -------------------------------------------------------
+ * Voice settings — apply a value to the running voice module
+ * and clamp it to the range the UI offers, the same way
+ * winbolo.c does for the desktop.  The settings dialog is
+ * shared and compiles into this target with WINBOLO_VOICE
+ * set, so it calls these here as well; winbolo.c, which holds
+ * the desktop copies, is not part of the wasm build.  Keep
+ * the clamps in step with that copy.
+ * ------------------------------------------------------- */
+void windowSetVoiceEnabled(bool on) {
+  voiceSetEnabled(on);
+}
+
+void windowSetVoiceMode(int mode) {
+  if (mode < VOICE_MODE_OFF || mode > VOICE_MODE_OPEN) {
+    mode = VOICE_MODE_PTT;
+  }
+  voiceSetMode((VoiceMode)mode);
+}
+
+void windowSetVoiceMicGain(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 4.0f) gain = 4.0f;
+  voiceSetMicGain(gain);
+}
+
+void windowSetVoiceVolume(float gain) {
+  if (gain < 0.0f) gain = 0.0f;
+  if (gain > 2.0f) gain = 2.0f;
+  voiceSetOutputVolume(gain);
+}
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);

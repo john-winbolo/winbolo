@@ -107,7 +107,8 @@ extern "C" {
   void windowSoundKeepalive(void);
   void windowSetSoundVolume(int pct);
 #if defined(WINBOLO_VOICE)
-  /* Voice apply/persist helpers — winbolo.c, beside windowSetSoundVolume. */
+  /* Voice apply/persist helpers — winbolo.c on the desktop, main_wasm.c in
+     the browser build, both beside windowSetSoundVolume. */
   void windowSetVoiceEnabled(bool on);
   void windowSetVoiceMode(int mode);
   void windowSetVoiceMicGain(float gain);
