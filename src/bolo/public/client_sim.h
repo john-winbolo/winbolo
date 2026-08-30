@@ -38,6 +38,7 @@
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -387,7 +388,9 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message);
 void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName);
-void clientSimGetPlayerName(ClientSim *cs, char *value);
+/* Reads the local player's name into value, which holds at most
+   valueSize bytes including the NUL; longer names are truncated. */
+void clientSimGetPlayerName(ClientSim *cs, char *value, size_t valueSize);
 bool clientSimSetPlayerName(ClientSim *cs, char *value);
 
 /* High-level send-message wrappers used by the players-panel UI. */
@@ -443,9 +446,16 @@ gameType clientSimGetGameType(const ClientSim *cs);
 
 /* Per-player accessors that forward to the embedded players struct. */
 uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
+/* Colour band for that ping, tracked with hysteresis so a player parked on a
+ * threshold doesn't strobe between colours. Player rows should use this
+ * rather than re-deriving a band from the number. */
+PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
-void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);
+/* destSize is the size of dest in bytes, including the NUL; a longer
+ * location is truncated rather than overrunning the caller. */
+void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest,
+                                    size_t destSize);
 uint8_t  clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum);
 void     clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest);
 bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);
@@ -453,7 +463,6 @@ bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans);
 void netGetServerAddressStr(ClientSim *cs, char *dest);
 void netGetOurAddressStr(ClientSim *cs, char *dest);
-BYTE netGetDownloadPos(void);
 void netSecond(void);
 int netGetNetTime(void);
 bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey);
@@ -616,6 +625,17 @@ typedef struct {
 bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
                           ClientGameVoteSnapshot *out);
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible);
+
+/* Whether the local player is part of a vote's electorate — i.e. whether
+ * this vote should be visible to them at all. Surrender votes belong to
+ * the surrendering team (teamId) and are private to it: non-members get
+ * neither the widget nor the newswire lines, and the server declines to
+ * send them the state in the first place (see udpClientDeliverControl).
+ * Every other kind is open to all connected players. Mirrors the server's
+ * eligibility rule in gameVoteEligibleMask(). teamId comes from the vote
+ * snapshot; kind is GAME_VOTE_KIND_*. */
+bool clientSimMayAnswerGameVote(const ClientSim *cs, uint8_t kind,
+                                uint8_t teamId);
 
 /* Per-frame tick that emits "Returning to lobby in N" newswire lines
  * for a vote-driven back-to-lobby transition. Server just enters
@@ -819,6 +839,12 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs);
+
+/* Counter bumped each time another player reports having rated or commented
+ * on the round clientSimGetLastRoundStats describes. Only movement matters —
+ * a caller holding its own last-seen value re-reads that round's WinBolo.net
+ * page when the two differ. 0 for a NULL cs. */
+uint32_t clientSimGetRatingPostedSeq(const ClientSim *cs);
 
 /* Server-supplied map directory listing — populated asynchronously
  * by PACKET_LOBBY_MAP_LIST_RSP after the client sends a

@@ -8,8 +8,10 @@
  * Filename:      wbn_comments.cpp
  * Purpose:
  *   Async fetch and post of WinBolo.net log comments.
- *   Each operation is backed by a detached std::thread
- *   and polled via wbn_comments_*_done from the UI thread.
+ *   Each operation is backed by a joinable std::thread
+ *   held in its handle and polled via wbn_comments_*_done
+ *   from the UI thread. Freeing a handle joins its worker,
+ *   so the worker cannot outlive the state it writes into.
  *********************************************************/
 
 #include "wbn_comments.h"
@@ -18,6 +20,7 @@ extern "C" {
 #include <SDL3/SDL.h>
 #include "http.h"
 #include "cJSON.h"
+#include "winbolonet_core.h"
 }
 
 #include <atomic>
@@ -79,33 +82,49 @@ void extractServerError(const char *response, char *err, size_t err_size) {
 /* ===================================================== */
 
 struct WbnCommentsFetch {
+    /* The worker writes every field below, so the handle holds it and joins
+     * it on free rather than detaching. cancel is polled by curl as bytes
+     * arrive, which is what keeps that join short. */
+    std::thread              thr;
+    volatile int             cancel = 0;
     std::atomic<bool>        done{false};
     std::mutex               mtx;
     std::vector<WbnComment>  comments;
+    float                    rating10 = 0.0f;
+    int                      numRatings = 0;
     int                      httpStatus = -1;
     char                     errMsg[256] = {0};
 };
 
 extern "C" WbnCommentsFetch *wbn_comments_fetch_start(const char *key32) {
-    if (!key32 || !key32[0]) return nullptr;
+    /* key32 lands in an API path below, so it is held to the 32-hex shape WBN
+     * issues. Callers are expected to have checked it where it entered the
+     * process; this is the backstop that makes the path safe on its own. */
+    if (!winbolonetKeyIsValid(key32)) return nullptr;
 
     auto *f = new WbnCommentsFetch();
     std::string keyCopy(key32);
 
-    std::thread([f, keyCopy]() {
+    f->thr = std::thread([f, keyCopy]() {
         char path[128];
         SDL_snprintf(path, sizeof(path), "logs/%s", keyCopy.c_str());
 
         char *response = nullptr;
-        int   status   = wbn_api_get(path, &response);
+        int   status   = wbn_api_get_cancellable(path, &response, &f->cancel);
 
         std::vector<WbnComment> parsed;
         char err[256] = {0};
+        float rating10   = 0.0f;
+        int   numRatings = 0;
 
         if (status == 200 && response) {
             cJSON *json = cJSON_Parse(response);
             if (json) {
                 parseCommentsArray(cJSON_GetObjectItem(json, "comments"), parsed);
+                cJSON *rv = cJSON_GetObjectItem(json, "rating");
+                if (rv) rating10 = (float)rv->valuedouble;
+                cJSON *nv = cJSON_GetObjectItem(json, "num_ratings");
+                if (nv) numRatings = nv->valueint;
                 cJSON_Delete(json);
             }
         } else {
@@ -117,11 +136,13 @@ extern "C" WbnCommentsFetch *wbn_comments_fetch_start(const char *key32) {
         {
             std::lock_guard<std::mutex> lock(f->mtx);
             f->comments = std::move(parsed);
+            f->rating10 = rating10;
+            f->numRatings = numRatings;
             f->httpStatus = status;
             SDL_strlcpy(f->errMsg, err, sizeof(f->errMsg));
         }
         f->done.store(true);
-    }).detach();
+    });
 
     return f;
 }
@@ -147,7 +168,27 @@ extern "C" int wbn_comments_fetch_result(WbnCommentsFetch *f,
     return f->httpStatus;
 }
 
+extern "C" void wbn_comments_fetch_rating(WbnCommentsFetch *f,
+                                          float *out_rating10,
+                                          int *out_num_ratings) {
+    if (!f) {
+        if (out_rating10)    *out_rating10 = 0.0f;
+        if (out_num_ratings) *out_num_ratings = 0;
+        return;
+    }
+    std::lock_guard<std::mutex> lock(f->mtx);
+    if (out_rating10)    *out_rating10    = f->rating10;
+    if (out_num_ratings) *out_num_ratings = f->numRatings;
+}
+
+/* Cancels the transfer and blocks until the worker has stopped, whether or
+ * not it finished — it writes into the handle, so nothing may free the handle
+ * while it runs. The wait is a poll interval, not a request timeout. Must not
+ * be called from the worker itself: a thread cannot join itself. */
 extern "C" void wbn_comments_fetch_free(WbnCommentsFetch *f) {
+    if (!f) return;
+    f->cancel = 1;
+    if (f->thr.joinable()) f->thr.join();
     delete f;
 }
 
@@ -156,6 +197,13 @@ extern "C" void wbn_comments_fetch_free(WbnCommentsFetch *f) {
 /* ===================================================== */
 
 struct WbnCommentPost {
+    /* Held and joined like the fetch's worker, for the same reason: it writes
+     * the fields below. cancel is set on free but nothing polls it — http.h
+     * has no cancellable POST — so the join waits for the request itself. The
+     * flag is here so both handles have one shape and a cancellable POST can
+     * be dropped in without touching the lifetime code. */
+    std::thread       thr;
+    volatile int      cancel = 0;
     std::atomic<bool> done{false};
     std::mutex        mtx;
     int               httpStatus = -1;
@@ -164,7 +212,10 @@ struct WbnCommentPost {
 
 extern "C" WbnCommentPost *wbn_comments_post_start(const char *key32, const char *token,
                                                     const char *text, int rating) {
-    if (!key32 || !key32[0] || !token || !token[0] || !text || !text[0]) return nullptr;
+    /* Same gate as the fetch, and it matters more here: this request carries
+     * the signed-in user's token in its body. */
+    if (!winbolonetKeyIsValid(key32)) return nullptr;
+    if (!token || !token[0] || !text || !text[0]) return nullptr;
 
     auto *p = new WbnCommentPost();
     std::string keyCopy(key32);
@@ -172,7 +223,7 @@ extern "C" WbnCommentPost *wbn_comments_post_start(const char *key32, const char
     std::string textCopy(text);
     int ratingCopy = rating;
 
-    std::thread([p, keyCopy, tokenCopy, textCopy, ratingCopy]() {
+    p->thr = std::thread([p, keyCopy, tokenCopy, textCopy, ratingCopy]() {
         cJSON *body = cJSON_CreateObject();
         cJSON_AddStringToObject(body, "token",   tokenCopy.c_str());
         cJSON_AddStringToObject(body, "comment", textCopy.c_str());
@@ -201,7 +252,7 @@ extern "C" WbnCommentPost *wbn_comments_post_start(const char *key32, const char
             SDL_strlcpy(p->message, msg, sizeof(p->message));
         }
         p->done.store(true);
-    }).detach();
+    });
 
     return p;
 }
@@ -220,6 +271,13 @@ extern "C" int wbn_comments_post_result(WbnCommentPost *p, char *msg, size_t msg
     return p->httpStatus;
 }
 
+/* Blocks until the worker has stopped. Nothing polls the POST for
+ * cancellation, so a call made while one is in flight waits for the request to
+ * answer or time out. Must not be called from the worker itself: a thread
+ * cannot join itself. */
 extern "C" void wbn_comments_post_free(WbnCommentPost *p) {
+    if (!p) return;
+    p->cancel = 1;
+    if (p->thr.joinable()) p->thr.join();
     delete p;
 }

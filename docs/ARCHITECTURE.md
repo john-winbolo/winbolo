@@ -705,6 +705,14 @@ hands the parsed header to a **recipient-agnostic sink** that decides where the
 blob lands and what to do on completion — so preview, upload, download, and resync
 (`BULK_KIND_*`) all ride the one machinery.
 
+A join download is pull-started: the server arms it at `JOIN_ACCEPT` but streams
+only after the client's `PACKET_MAP_DL_READY` confirms its receive buffers exist,
+so the stream head can never race the accept that sizes them. The client re-sends
+the READY if the stream never starts or stalls outright, and the server answers a
+re-ask with a full restart behind a `CHANNEL_BULK` re-base — the recovery for a
+transfer whose bytes the channel has already acked but the receiver could not
+keep (e.g. its framing was reset mid-body).
+
 **Off-socket testability.** Because the reliability burden lives behind a pure
 byte-buffer seam, the whole loss / reorder / dup matrix is a unit test with no
 sockets or threads: `tests/unit/test_channel_mux.c` drives two `ChannelMux`

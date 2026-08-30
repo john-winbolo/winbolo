@@ -558,6 +558,60 @@ int run_command_codec_lobby_claim_start(void) {
     return 0;
 }
 
+/* CMD_RATING_POSTED — a fixed-length key body. The key must survive the
+ * round trip whether or not it fills the field, and the decoder must refuse
+ * a packet that is not exactly the fixed length. */
+int run_command_codec_rating_posted(void) {
+    ClientCommand in, out;
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t outLen = 0;
+
+    /* Full-width key. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_RATING_POSTED;
+    in.cmdSeq = 50;
+    {
+        int i;
+        for (i = 0; i < ROUND_STATS_LOGKEY_LEN - 1; i++) {
+            in.u.ratingPosted.key[i] = (char)('a' + (i % 26));
+        }
+        in.u.ratingPosted.key[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
+    }
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_RATING_POSTED");
+    UT_ASSERT(out.type == CMD_RATING_POSTED);
+    UT_ASSERT(out.cmdSeq == 50);
+    UT_ASSERT(strcmp(out.u.ratingPosted.key, in.u.ratingPosted.key) == 0);
+
+    /* Short key: NUL-padded onto the wire, NUL-terminated on the way back. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_RATING_POSTED;
+    in.cmdSeq = 51;
+    memcpy(in.u.ratingPosted.key, "abc123", 6);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0,
+                  "CMD_RATING_POSTED short key");
+    UT_ASSERT(out.cmdSeq == 51);
+    UT_ASSERT(strcmp(out.u.ratingPosted.key, "abc123") == 0);
+
+    /* Fixed length: one byte short and one byte long are both refused. */
+    UT_ASSERT(commandCodecEncode(&in, buf, sizeof(buf), &outLen) == true);
+    UT_ASSERT_MSG(outLen == PACKET_HEADER_SIZE + 4 + (ROUND_STATS_LOGKEY_LEN - 1),
+                  "wire len = %zu", outLen);
+    {
+        ClientCommand sink;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen - 1, &sink) == false,
+                      "decoder must reject a short RATING_POSTED packet");
+        buf[outLen] = 0;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen + 1, &sink) == false,
+                      "decoder must reject an over-long RATING_POSTED packet");
+    }
+
+    return 0;
+}
+
 /* Focused check on the 4-byte cmdSeq slot the codec wrapper owns,
  * independent of any variant body. Catches off-by-four errors in the
  * wire-offset arithmetic that the per-variant suite would mask if

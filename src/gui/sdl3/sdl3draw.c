@@ -62,6 +62,7 @@
 #include "glyphs.h"
 #include "global.h"
 #include "client_sim.h"
+#include "client_net.h"   /* clientSimGetConnectState — map-transfer progress */
 #include "build_cursor.h"
 #include "../gamefront.h"
 #include "tilenum.h"
@@ -2211,15 +2212,18 @@ static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   SDL_RenderFillRect(gRenderer, &playfield);
 
   if (!justBlack) {
-    /* Map netGetDownloadPos() (0–255) to playfield height.
-     * The back-buffer is (MAIN_SCREEN_SIZE_Y+2)*TILE_SIZE_Y = 272 pixels;
-     * the playfield occupies rows TILE_SIZE_Y..TILE_SIZE_Y+MAIN_SCREEN_SIZE_Y*TILE_SIZE_Y.
-     * The download position is a raw pixel count from the top of the back buffer,
-     * so subtract the TILE_SIZE_Y row offset and clamp. */
-    int downloadRaw = (int)netGetDownloadPos();
-    int visibleY = downloadRaw - TILE_SIZE_Y;
-    if (visibleY < 0) visibleY = 0;
+    /* Fill the playfield from the top in proportion to the map transfer.
+     * The old source was a raw scanline in the 272-pixel back buffer, which
+     * is why this used to offset by a tile row before clamping; the transport
+     * reports a percentage, so scale that against the playfield directly.
+     * Only while the transport is actually receiving — the byte counters
+     * behind the percentage survive a finished transfer and would otherwise
+     * paint a full white playfield during the re-join after a map change. */
     int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y;
+    int visibleY = 0;
+    if (clientSimGetConnectState(cs) == CLIENT_CONNECT_DOWNLOADING_MAP) {
+      visibleY = playfieldH * (int)clientSimGetMapDownloadPercent(cs) / 100;
+    }
     if (visibleY > playfieldH) visibleY = playfieldH;
 
     SDL_FRect bar = {

@@ -81,7 +81,7 @@ int run_stream_load(void) {
 
   /* The slot-1 join ("Joiner") decoded back through the stream path proves it
    * served the same events the zip path does. */
-  lv_screenGetPlayerName(joinName, 1);
+  lv_screenGetPlayerName(joinName, 1, sizeof(joinName));
   UT_ASSERT_MSG(strcmp(joinName, "Joiner") == 0,
                 "slot-1 player name = '%s' (want 'Joiner')", joinName);
   UT_ASSERT_MSG(lv_screenGetNumPlayers() >= 2,

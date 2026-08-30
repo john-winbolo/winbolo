@@ -32,36 +32,9 @@
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
 
-/* Per-player per-round gameplay stats. Server-internal: never serialized
- * directly — a curated subset ships to clients in a later phase. */
-typedef struct {
-    uint32_t kills, deaths, drowns, suicides, mineDeaths;
-    uint32_t lgmKills, lgmDeaths;
-    uint32_t pillCaptures, pillKills, baseCaptures, steals;
-    uint32_t treesFarmed, treesWasted, pillsBuilt, minesLaid;
-    uint32_t shellsFired;
-    uint8_t  mostPillsDropped;      /* max pills dumped at a single death */
-    uint64_t dmgToPlayers, dmgToPills, dmgToBases;
-    uint16_t killedBy[MAX_TANKS];   /* killedBy[k] = times killer slot k killed me */
-    uint16_t killsOf[MAX_TANKS];    /* killsOf[v]  = times I killed victim slot v */
-} PlayerRoundStats;
-
-/* NotableEvent.type values — server-internal; consumed by the later reel. */
-typedef enum {
-    NOTABLE_KILL = 0,
-    NOTABLE_PILL_CAPTURE,
-    NOTABLE_BASE_CAPTURE,
-    NOTABLE_LGM_LOST
-} NotableType;
-
-/* Ordered round timeline for the later highlights reel. */
-#define NOTABLE_EVENTS_MAX 512
-typedef struct {
-    uint32_t tick;     /* per-round running tick */
-    uint8_t  mapX, mapY;
-    uint8_t  type;     /* server-internal NotableType */
-    uint8_t  actorA, actorB;
-} NotableEvent;
+/* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
+ * shared accumulator/timeline types, defined in round_stats.h (included above)
+ * so the offline log viewer rebuilds them from the same records. */
 
 /* Control-event subscriber capacity: one slot per tank, one for the local
  * host/SP ClientSim, plus one per possible spectator. Single source of truth
@@ -71,11 +44,32 @@ typedef struct {
 /* Cap on the current-session lobby-chat catch-up buffer (oldest dropped). */
 #define LOBBY_CHAT_BUFFER_MAX 200
 
+/* Why a return-to-lobby countdown is running, which decides what the
+ * returning lobby is told and who gets credited with the win. NONE also
+ * covers a game-over that arrives with no countdown at all — a game-time
+ * or tick limit expiring — which reports whatever the base sweep says. */
+#define RETURN_REASON_NONE        0
+#define RETURN_REASON_MANUAL_VOTE 1
+#define RETURN_REASON_SURRENDER   2
+#define RETURN_REASON_BASE_WIN    3
+#define RETURN_REASON_ABANDONED   4
+
+/* roundLogStartTick before the round's first log entry has been written. Not a
+ * plausible tick, so it doubles as the "not latched yet" flag. */
+#define ROUND_LOG_START_UNSET     0xFFFFFFFFu
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
     /* Tick state */
     uint32_t     tick;
+    /* The tick the current round's log segment starts at, latched the first
+     * time serverSimLogTick writes while running. Clip times are measured from
+     * it: ticks that ran before the log did (the startDelay hold advances the
+     * sim without writing an entry) are not part of the round the viewer sees.
+     * ROUND_LOG_START_UNSET until that first write, and reset to it whenever
+     * tick is. */
+    uint32_t     roundLogStartTick;
     int32_t      startDelay;
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
@@ -362,7 +356,6 @@ struct ServerSim {
         uint64_t pendingPassUntilMs;
     } gameVotes[2];
     uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
-    bool     baseMonopolyTriggeredThisRound;
 
     /* Forced return-to-lobby countdown (e.g. from a vote-pass). When
      * > 0, the running-state tick decrements this each call; at 0
@@ -370,22 +363,15 @@ struct ServerSim {
      * header so clients can render their own "Returning to lobby in
      * N" indicator off the value. */
     int32_t  returnToLobbyTicks;
-    /* When a vote-pass triggers the game-over transition, lifecycle should
-     * skip buildWinMessage so the players don't get the generic
-     * "Game over!" line on top of the 3/2/1 countdown. Cleared once
-     * consumed. */
-    bool     suppressNextWinMessage;
-    /* Non-zero when a surrender vote ended the round: the team that gave
-     * up. The game-over handler credits the opposing team with the win
-     * (WBN events + lobby winner line) instead of the base-ownership
-     * sweep, which never fires on a surrender. Reset by
+    /* Why the current countdown is running, or why the round just ended —
+     * see RETURN_REASON_*. Decides the message the returning lobby gets and
+     * whether WinBolo.net win events are credited. Reset by
      * serverSimGameVoteResetAll. */
-    uint8_t  surrenderTeamId;
-    /* True when a manual back-to-lobby vote ended the round. The
-     * game-over handler leaves a lobby line explaining why the round
-     * ended (the in-game announcement only reaches the newswire, which
-     * the returning lobby never sees). Reset by serverSimGameVoteResetAll. */
-    bool     returnToLobbyByVote;
+    uint8_t  returnToLobbyReason;
+    /* The team that gave up, when returnToLobbyReason is SURRENDER. The
+     * opposing side is credited with the win; the base sweep never fires on
+     * a surrender. Reset by serverSimGameVoteResetAll. */
+    uint8_t  returnToLobbyTeamId;
 
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
@@ -417,7 +403,7 @@ struct ServerSim {
     /* Post-game stats accumulator — populated during running, reset per round. */
     PlayerRoundStats roundStats[MAX_TANKS];
     NotableEvent     notableEvents[NOTABLE_EVENTS_MAX];
-    uint16_t         notableEventCount;
+    int              notableEventCount;
 
     /* Per-round attribution record stream (packed attribution_track.h records),
      * appended during a running round and reset each round. */
@@ -519,11 +505,8 @@ uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
  * slot >= MAX_TANKS. */
 const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot);
 
-/* Pure award computation over the finalized accumulator. Ranks slots
- * 0..n-1; includeBots=false skips bot slots. Writes up to AWARD_COUNT
- * results to out[], sets *outCount. No sim state touched. */
-void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
-                   const bool isBot[], AwardResult out[], int *outCount);
+/* computeAwards / roundStatsApplyRecord — the shared derivation over the
+ * public record/stats types — are declared in round_stats_derive.h. */
 
 /* Build the curated end-of-round summary (per-connected-slot scoreboard
  * rows + computed awards) from the finalized accumulator. wbnLogKey is

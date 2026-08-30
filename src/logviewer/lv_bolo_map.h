@@ -189,9 +189,12 @@ bool lv_mapIsMine(map *value, BYTE xValue, BYTE yValue);
 *  Returns if the operation was successful or not
 *
 *ARGUMENTS:
-*  value - Pointer to the map data structure
+*  value   - Pointer to the map data structure
+*  numRuns - Out: how many non-terminator runs the block held. A lobby-mode
+*            snapshot body holds none, a running-round one always holds at
+*            least one. May be NULL.
 *********************************************************/
-bool lv_mapReadRuns(map *value);
+bool lv_mapReadRuns(map *value, int *numRuns);
 
 /*********************************************************
 *NAME:          lv_mapProcessRun

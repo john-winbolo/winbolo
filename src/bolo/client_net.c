@@ -688,6 +688,31 @@ uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs) {
       (Transport *)&cs->transport);
 }
 
+/* === Last completed round's replay log === */
+
+int clientSimGetRoundLogState(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    return CLIENT_ROUND_LOG_IDLE;
+  }
+  return transportUdpClientGetRoundLogState((Transport *)&cs->transport);
+}
+
+uint8_t clientSimGetRoundLogPercent(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientGetRoundLogPercent((Transport *)&cs->transport);
+}
+
+bool clientSimNetSendRoundLogRequest(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientSendRoundLogRequest(&cs->transport);
+}
+
+uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen) {
+  if (outLen != NULL) *outLen = 0;
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return NULL;
+  return transportUdpClientTakeRoundLog(&cs->transport, outLen);
+}
+
 void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       uint32_t totalLen,
                                       const char *name,
@@ -829,6 +854,15 @@ void clientSimNetSendWbnReauth(ClientSim *cs) {
   (void)serverSimApplyCommand(cs->boundServerSim,
                               clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
+}
+
+void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (key32 == NULL || key32[0] == '\0') return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_RATING_POSTED };
+  SDL_strlcpy(cmd.u.ratingPosted.key, key32, sizeof(cmd.u.ratingPosted.key));
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 /* === Voice === */

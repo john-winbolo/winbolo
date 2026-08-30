@@ -314,8 +314,7 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
   BYTE tankY;
   BYTE tankTrees;
   BYTE pos;      /* Map terrain at build request place */
-  BYTE pillArmour=0;
-  
+
   tankX = tankGetMX(tnk);
   tankY = tankGetMY(tnk);
   tankTrees = (*tnk)->trees;
@@ -420,24 +419,14 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
         proceed = FALSE;
         sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_INSUFFICIENT_TREES, NULL);
       } else {
-		pillArmour = pillsGetArmourPos(pb, mapX, mapY);
-		if(pillArmour>=11){
-          *trees = LGM_COST_PILLREPAIR;
-		}
-		if(pillArmour>=7&&pillArmour<11){
-		  *trees = LGM_COST_PILLREPAIR*2;
-		}
-		if(pillArmour>=3&&pillArmour<7){
-		  *trees = LGM_COST_PILLREPAIR*3;
-		}
-		if(pillArmour<3){
-		  *trees = LGM_COST_PILLREPAIR*4;
-		}
-		if(tankTrees<*trees)
-		{
-			*trees = LGM_COST_PILLREPAIR*tankTrees;
-		}
-		tankGetLgmTrees(sim, tnk, *trees, perform);
+        /* Take a full load rather than sizing it to the damage we can see
+           now. The pill can be shot a lot more while the man walks over, and
+           a load picked from today's armour would arrive short. */
+        *trees = LGM_COST_PILLREPAIR * LGM_LOAD_PILLREPAIR;
+        if (tankTrees < *trees) {
+          *trees = tankTrees;
+        }
+        tankGetLgmTrees(sim, tnk, *trees, perform);
       }
       *pillNum = LGM_NO_PILL;
     } else if ((tankGetCarriedPill(tnk, pillNum, perform)) == FALSE) {
@@ -1061,8 +1050,8 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
     if ((*lgman)->numPills == LGM_NO_PILL) {
       /* Repair pill */
       if (isPill == TRUE) {
-        pillsRepairPos(sim, pb, bmx, bmy,(*lgman)->numTrees);
-		(*lgman)->numTrees = 0;
+        /* Keep whatever the repair didn't need — it rides back to the tank */
+        (*lgman)->numTrees = pillsRepairPos(sim, pb, bmx, bmy, (*lgman)->numTrees);
         sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
       }
     } else {
@@ -1408,7 +1397,8 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
       {
         MessageArgs args;
         memset(&args, 0, sizeof(args));
-        playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, args.playerName, sim->isServer);
+        playersGetPlayerName(&sim->plyrs, (*lgman)->playerNum, args.playerName,
+                             sizeof(args.playerName), sim->isServer);
         args.playerFlags = playersGetAccountFlags(&sim->plyrs, (*lgman)->playerNum);
         playersGetCountryCode(&sim->plyrs, (*lgman)->playerNum, args.playerCountry);
         sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);

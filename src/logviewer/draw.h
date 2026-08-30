@@ -228,6 +228,30 @@ struct SDL_Renderer* lv_drawGetSDLRenderer(void);
 struct SDL_Texture* lv_drawGetGameTexture(void);
 
 /*********************************************************
+*NAME:          lv_drawSetEmbedded / lv_drawSetEmbedViewport
+*PURPOSE:
+*  Embed mode. When enabled, lv_drawMainScreen and
+*  lv_drawBlitGameTexture paint only into the render target
+*  and never blit it to the framebuffer (the host draws the
+*  texture inside its own ImGui frame), the menu-bar offset
+*  is 0 at every site, and lv_drawApplyZoomStep sizes the
+*  tile grid from the viewport set here instead of the
+*  window.
+*********************************************************/
+void lv_drawSetEmbedded(int enabled);
+void lv_drawSetEmbedViewport(int w, int h);
+
+/*********************************************************
+*NAME:          lv_drawGetGameTargetSize
+*PURPOSE:
+*  Returns the render target's pixel dimensions, which are
+*  (sizeX+1, sizeY+1) tiles — one tile larger than the
+*  visible slice. An embedding host needs them to turn the
+*  visible slice into texture UVs. Out-params are optional.
+*********************************************************/
+void lv_drawGetGameTargetSize(int *outW, int *outH);
+
+/*********************************************************
 *NAME:          lv_drawGetTilesTexture / lv_drawGetSheetScale
 *PURPOSE:
 *  Expose the unified SVG/PNG/BMP tile atlas (and its build
@@ -324,5 +348,17 @@ float lv_drawGetZoomStepValue(int index);
 *  given screen coordinates.
 *********************************************************/
 void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY);
+
+/*********************************************************
+*NAME:          lv_drawSetZoomStepIndexRaw
+*PURPOSE:
+*  Sets the zoom step alone — no viewport resize, no cursor
+*  anchoring, no screen-state writes. For saving and
+*  restoring the step around an embedded session, where the
+*  anchored path would resize the tile grid to the embed's
+*  rect and, on restore, write through decoder state that is
+*  already gone.
+*********************************************************/
+void lv_drawSetZoomStepIndexRaw(int index);
 
 #endif

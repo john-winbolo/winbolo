@@ -281,6 +281,60 @@ void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);
 void clientSimNetSendWbnReauth(ClientSim *cs);
 
+/* Tell the server this client has just had a rating or comment accepted on
+ * the WinBolo.net page for round `key32` (the summary's wbnLogKey), so the
+ * other clients in the lobby can re-read that page instead of showing a
+ * stale list. Sends nothing without a transport, on an empty key, or from a
+ * spectator. */
+void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32);
+
+/* === Last completed round's replay log === */
+
+/* State of the round-log transfer. A joined client cannot record a round
+ * itself, so to replay the round its recap describes it asks the server for
+ * that round's .wbv bytes and takes delivery over the bulk channel.
+ *
+ * The three unavailable states stay distinct so a caller can word each
+ * refusal: the server does not serve logs, it has no completed round, or the
+ * round's log is over the transfer cap. A refusal the client can simply retry
+ * — the server is at its concurrent-transfer cap, or this client asked too
+ * soon — is not a state: the transport backs off and stays WAITING. */
+typedef enum {
+  CLIENT_ROUND_LOG_IDLE = 0,     /* nothing asked for, or the blob was taken */
+  CLIENT_ROUND_LOG_WAITING,      /* request sent, no bytes yet               */
+  CLIENT_ROUND_LOG_DOWNLOADING,  /* bytes arriving; see the percent getter   */
+  CLIENT_ROUND_LOG_READY,        /* whole blob held, waiting to be taken     */
+  CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED,
+  CLIENT_ROUND_LOG_UNAVAILABLE_NONE,
+  CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE
+} ClientRoundLogState;
+
+/* Current state, as a ClientRoundLogState. CLIENT_ROUND_LOG_IDLE without a
+ * UDP transport. */
+int clientSimGetRoundLogState(const ClientSim *cs);
+
+/* Transfer progress as 0..100. Only meaningful while the state is
+ * CLIENT_ROUND_LOG_DOWNLOADING; 0 otherwise. */
+uint8_t clientSimGetRoundLogPercent(const ClientSim *cs);
+
+/* Ask the server for the last completed round's log. Supersedes anything the
+ * transport already holds for an earlier request — a completed blob or a
+ * part-received one is freed — and moves the state to CLIENT_ROUND_LOG_WAITING.
+ * Returns false and changes nothing without a connected UDP transport, so a
+ * caller that means to ask only once must keep asking until it returns true. */
+bool clientSimNetSendRoundLogRequest(ClientSim *cs);
+
+/* Take ownership of a completed transfer: returns the blob, writes its length
+ * through outLen (may be NULL), clears the transport's pointer and returns the
+ * state to CLIENT_ROUND_LOG_IDLE. Returns NULL unless the state is
+ * CLIENT_ROUND_LOG_READY.
+ *
+ * The caller owns the returned buffer from this point on — nothing in the
+ * transport reads or frees it again. Release it with plain free(), or hand it
+ * to lvEmbedBegin, which takes ownership and frees it itself, including on
+ * every refusal. */
+uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen);
+
 /* === Voice ===
  * Encoded audio frames move as opaque bytes: the caller supplies and
  * receives whatever the codec produced, and the wire framing stays inside

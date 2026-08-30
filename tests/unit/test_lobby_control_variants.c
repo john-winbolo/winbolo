@@ -380,3 +380,59 @@ int run_lobby_sync_complete_codec_roundtrip(void) {
     UT_ASSERT(out.type == CTRL_LOBBY_SYNC_COMPLETE);
     return 0;
 }
+
+/* ================================================================
+ * CTRL_ROUND_RATING_POSTED — who posted, and the WinBolo.net key of
+ * the round they posted against. Delivered body-only on
+ * CHANNEL_CONTROL with no full-packet wrapper and no PACKET_* type,
+ * so this one resolves the pair through the body tables the live path
+ * uses rather than through codec_roundtrip above.
+ * ================================================================ */
+int run_lobby_rating_posted_codec_roundtrip(void) {
+    ControlEncodeBodyFn enc =
+        transportControlCodecBodyEncoder(CTRL_ROUND_RATING_POSTED);
+    ControlDecodeBodyFn dec =
+        transportControlCodecBodyDecoder(CTRL_ROUND_RATING_POSTED);
+    UT_ASSERT_MSG(enc != NULL, "no body encoder for CTRL_ROUND_RATING_POSTED");
+    UT_ASSERT_MSG(dec != NULL, "no body decoder for CTRL_ROUND_RATING_POSTED");
+
+    ControlEvent in, out;
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t outLen = 0;
+    const char *key = "0123456789abcdef0123456789abcdef";  /* fills the field */
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_ROUND_RATING_POSTED;
+    in.u.ratingPosted.fromPlayer = 9;
+    memcpy(in.u.ratingPosted.key, key, strlen(key));
+
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT_MSG(outLen == 1 + (ROUND_STATS_LOGKEY_LEN - 1),
+                  "body len = %zu (want %zu)", outLen,
+                  (size_t)(1 + (ROUND_STATS_LOGKEY_LEN - 1)));
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(dec(buf, outLen, &out), "decode failed");
+    UT_ASSERT(out.type == CTRL_ROUND_RATING_POSTED);
+    UT_ASSERT(out.u.ratingPosted.fromPlayer == 9);
+    UT_ASSERT(strcmp(out.u.ratingPosted.key, key) == 0);
+
+    /* A short key is NUL-padded out, so the body is the same size and the
+     * key still comes back terminated. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_ROUND_RATING_POSTED;
+    in.u.ratingPosted.fromPlayer = 0;
+    memcpy(in.u.ratingPosted.key, "abc123", 6);
+    outLen = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(dec(buf, outLen, &out), "decode failed (short key)");
+    UT_ASSERT(out.u.ratingPosted.fromPlayer == 0);
+    UT_ASSERT(strcmp(out.u.ratingPosted.key, "abc123") == 0);
+
+    /* Fixed-length body: a truncated one is refused. */
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(!dec(buf, outLen - 1, &out),
+                  "decoder must reject a short body");
+    return 0;
+}

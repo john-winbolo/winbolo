@@ -35,6 +35,7 @@
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
 #include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
+#include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
 
@@ -150,6 +151,12 @@ struct ClientSim {
     /* Min-over-window RTT the transport stamps in each PONG; the snapshot
      * path anchors forward-projection to it rather than the display ping. */
     uint16_t    projectionPingMs;
+
+    /* Per-slot conditioning for the ping the player rows render — smoothing,
+     * repaint deadband and colour-band hysteresis over the raw RTT each
+     * snapshot carries. Display only; projectionPingMs above is what the
+     * sim-affecting paths read. */
+    PingDisplay displayPing[MAX_TANKS];
 
     /* Reconciliation stats — current 1s window + last completed window */
     uint16_t reconCountThisWindow;
@@ -374,6 +381,12 @@ struct ClientSim {
      * countdown starts. lastRoundStatsValid gates whether the panel shows. */
     RoundStatsSummary lastRoundStats;
     bool              lastRoundStatsValid;
+
+    /* Bumped on every CTRL_ROUND_RATING_POSTED that names the round
+     * lastRoundStats describes and came from another player. The recap's
+     * WinBolo.net block watches it for movement and re-reads the round's
+     * ratings and comments; the value itself carries no meaning. */
+    uint32_t          ratingPostedSeq;
 
     /* Reassembly of the server's bot-pool catalog, streamed as
      * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
@@ -691,5 +704,12 @@ void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby);
 
 /* Free the seed and every queued record, returning the feed to empty. */
 void clientSimSpectatorFeedClear(ClientSim *cs);
+
+/* Drop a slot's ping smoothing state so an arriving player doesn't inherit
+ * the previous occupant's average. T2: called by players.c when the slot
+ * empties, never by a frontend — the readout is something frontends only
+ * read (clientSimGetPlayerPing / clientSimGetPlayerPingBand in client_sim.h),
+ * so the reset has no business on the public API. */
+void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

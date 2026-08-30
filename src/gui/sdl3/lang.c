@@ -352,6 +352,7 @@ static const LangEntry langTable[] = {
     {603,  "Hidden"},
     {604,  "Visible"},
     {605,  "Downloading map..."},
+    {1946, "Waiting for server..."},
     {606,  "Map preview unavailable"},
     {607,  "Pillboxes:"},
     {608,  "Bases:"},
@@ -532,6 +533,7 @@ static const LangEntry langTable[] = {
     {750,  "Failed to load details"},
     {751,  "Download failed"},
     {752,  "Could not determine save path"},
+    {753,  "Select a game to view its details"},
     {754,  "Fetch failed"},
     {755,  "Unknown error"},
     {756,  "WinBolo Log Files"},
@@ -541,13 +543,13 @@ static const LangEntry langTable[] = {
     /* Lobby "Last round" panel — between-rounds scoreboard + awards. */
     {1899, "Last round"},
     {1900, "Name"},
-    {1901, "K"},
-    {1902, "D"},
+    {1901, "Kills"},
+    {1902, "Deaths"},
     {1903, "Base"},
     {1904, "Pill"},
-    {1905, "Dmg"},
+    {1905, "Damage"},
     {1874, "Builds"},
-    {1875, "More awards"},
+    {1947, "Awards"},
     {1876, "(empty)"},
     {1877, "{string1} owned {string2}"},
     {1878, "Most Kills"},
@@ -569,8 +571,32 @@ static const LangEntry langTable[] = {
     {1894, "Wasteful"},
     {1895, "Biggest Fumble"},
     {1896, "Last round"},
-    {1897, "LGM K"},
-    {1898, "LGM D"},
+    {1897, "Builder Kills"},
+    {1898, "Builder Deaths"},
+    /* Lobby "Last round" panel — the round's highlight clips. */
+    {1922, "Highlights"},
+    {1923, "No highlights this round"},
+    {1924, "{string1} ({player})"},
+    {1925, "{string1} ({player} vs {other})"},
+    {1926, "Team wipe: {number} down ({player})"},
+    {1927, "Steal ({player} from {other})"},
+    {1928, "LGM sweep: {number} down ({player})"},
+    {1929, "Fumble: {number} pills dropped ({player})"},
+    {1930, "Drowned with {number} pills ({player})"},
+    {1931, "Drowned ({player})"},
+    {1932, "Front collapse: {number} tiles taken ({player})"},
+    {1933, "Front collapse: {number} tiles taken"},
+    {1934, "Turning point: {number} tiles swung ({player})"},
+    {1935, "Turning point: {number} tiles swung"},
+    {1936, "Highlight"},
+    {1944, "Pill sweep: {number} grabbed ({player})"},
+    {1945, "All-out action: {number} events"},
+    /* Lobby "Last round" panel — the reel's delivery state. */
+    {1938, "Asking the server for the replay..."},
+    {1939, "Downloading replay... {number}%"},
+    {1940, "This server does not share replays"},
+    {1941, "No replay available for this round"},
+    {1942, "The round was too long to send"},
     {757,  "WinBolo - Set Player Name"},
     {758,  "Your player name is set by WinBolo.net."},
     {759,  "Please enter your player name."},
@@ -601,6 +627,7 @@ static const LangEntry langTable[] = {
     {784,  "Signing in..."},
     {785,  "Sign in"},
     {786,  "Please enter your username and password."},
+    {1943, "WinBolo.net accounts can only be changed from the main menu, not during a game."},
     {787,  "WinBolo - Game Selection"},
     {788,  "Single Player"},
     {789,  "Local"},
@@ -1777,6 +1804,7 @@ static const LangEntry langTable[] = {
     {1917, "Enable Logging"},
     {1919, "Log Directory"},
     {1920, "Applies to the next hosted / New Internet game."},
+    {1937, "Send Replays to Players"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
     {1866, "[Spectator] {string1}"},
@@ -1806,34 +1834,37 @@ static const LangEntry langTable[] = {
     {1872, "Could not connect to the server."},
     {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
 
+    /* Log viewer Options item: present the round on a game-relative clock. */
+    {1921, "Hide Lobby"},
+
     /* Voice section of the Display/Sound settings tab */
-    {1921, "Voice"},
-    {1922, "Microphone loopback test"},
-    {1923, "Mic gain"},
-    {1924, "Input level"},
-    {1925, "Transmit voice"},
-    {1926, "Enable voice"},
-    {1927, "Mode"},
-    {1928, "Off"},
-    {1929, "Push to talk"},
-    {1930, "Open mic"},
-    {1931, "Push-to-talk key"},
-    {1932, "Transmitting"},
-    {1933, "Not transmitting"},
-    {1934, "Voice volume"},
+    {1948, "Voice"},
+    {1949, "Microphone loopback test"},
+    {1950, "Mic gain"},
+    {1951, "Input level"},
+    {1952, "Transmit voice"},
+    {1953, "Enable voice"},
+    {1954, "Mode"},
+    {1955, "Off"},
+    {1956, "Push to talk"},
+    {1957, "Open mic"},
+    {1958, "Push-to-talk key"},
+    {1959, "Transmitting"},
+    {1960, "Not transmitting"},
+    {1961, "Voice volume"},
 
     /* Key setup — push to talk binding */
-    {1935, "Push to talk"},
+    {1962, "Push to talk"},
 
     /* Players panel — microphone state icon */
-    {1936, "Talking — click to mute"},
-    {1937, "Has a microphone — click to mute"},
-    {1938, "Their microphone is off — click to mute"},
-    {1939, "No microphone — click to mute"},
-    {1940, "Muted by you — click to unmute"},
-    {1941, "Your microphone"},
-    {1942, "You have no microphone"},
-    {1943, "Your microphone is off"},
+    {1963, "Talking — click to mute"},
+    {1964, "Has a microphone — click to mute"},
+    {1965, "Their microphone is off — click to mute"},
+    {1966, "No microphone — click to mute"},
+    {1967, "Muted by you — click to unmute"},
+    {1968, "Your microphone"},
+    {1969, "You have no microphone"},
+    {1970, "Your microphone is off"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
@@ -1874,8 +1905,15 @@ static int langNameCmp(const void *a, const void *b) {
 }
 
 static langid resolveName(const char *name) {
+    /* Derive the element count from the array itself rather than the
+     * generated K_LANG_NAME_TABLE_SIZE macro. When the macro drifted
+     * above the real length (a hand-edit of the generated .inc), bsearch
+     * read one element past the end of the table and faulted in strcmp on
+     * the garbage slot's name pointer. tests/unit/test_lang_name_table.c
+     * pins the macro against the array so the drift can't recur. */
     const LangNameEntry *hit = (const LangNameEntry *)bsearch(
-        name, kLangNameTable, K_LANG_NAME_TABLE_SIZE,
+        name, kLangNameTable,
+        sizeof(kLangNameTable) / sizeof(kLangNameTable[0]),
         sizeof(kLangNameTable[0]), langNameCmp);
     return hit ? hit->id : 0;
 }

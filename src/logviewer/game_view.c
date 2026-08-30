@@ -77,7 +77,7 @@ extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
 extern void  lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                      BYTE *px, BYTE *py, BYTE *frame);
 extern void  lv_playersGetLgmStatus(BYTE playerNumber, bool *isOut, bool *isDead);
-extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest);
+extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize);
 extern bool         lv_playersIsBot(BYTE playerNumber);
 extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
 
@@ -147,8 +147,8 @@ static bool         s_didTtfInit    = false;
 
 /* Scrolling-marquee tick. The live game advances the marquee every
  * MESSAGE_SCROLL_TIME (4) display ticks. Display ticks run every OTHER
- * GAME_TICK_LENGTH iteration of the live client's main loop (the
- * justKeysFlag alternation in winbolo.c — only the "game tick" branch
+ * GAME_TICK_LENGTH iteration of the live client's main loop (the keys/game
+ * alternation in client_frontend_tick.c — only the "game tick" branch
  * calls clientSimDisplayTick), so they fire every 20ms wall, not 10ms.
  * That gives one column shift per 4 × 20ms = 80ms wall-clock at 1×
  * speed. Anchored to SDL_GetTicks (NOT timeRunning) so fast-forward /
@@ -812,7 +812,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
 
       char rawName[PLAYER_NAME_LEN];
       rawName[0] = '\0';
-      lv_playersGetPlayerName(slot, rawName);
+      lv_playersGetPlayerName(slot, rawName, sizeof(rawName));
       if (rawName[0] == '\0') continue;
 
       /* Brain-driven slots get an "[AI]" tag so a viewer scanning the

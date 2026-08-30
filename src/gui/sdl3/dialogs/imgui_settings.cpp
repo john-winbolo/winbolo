@@ -948,6 +948,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                                          win, loc, false);
             }
             ImGui::PopID();
+
+            /* Hand the finished round's log to players who ask for it, so
+             * their post-game recap plays. Nested under logging because
+             * there is nothing to serve without a recording. */
+            bool serveReplays = gameFrontHostingServeReplays;
+            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_SERVEREPLAY),
+                                &serveReplays)) {
+                gameFrontSetHostingServeReplays(serveReplays);
+            }
         }
     }
 
@@ -1143,7 +1152,12 @@ extern "C" void imguiSettingsShow(void) {
         present[STAB_GENERAL] = true;
         present[STAB_DISPLAY] = true;
         present[STAB_GAMEHUD] = true;
-        present[STAB_HOSTING] = true;  /* mobile can host too */
+        /* Mobile can host too; a browser tab can't listen for connections. */
+#if defined(__EMSCRIPTEN__)
+        present[STAB_HOSTING] = false;
+#else
+        present[STAB_HOSTING] = true;
+#endif
 #if !BOLO_MOBILE
         present[STAB_CONTROLS] = !uiModeIsTablet();
         present[STAB_LAST]     = true;
@@ -1227,6 +1241,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
+#if !defined(__EMSCRIPTEN__)
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
                     s_pgForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_HOSTING;
@@ -1235,6 +1250,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
+#endif
 #if !BOLO_MOBILE
             if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {

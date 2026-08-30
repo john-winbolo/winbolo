@@ -28,6 +28,7 @@ set(LV_ROOT  "${SRC_ROOT}/logviewer")
 set(DATA_DIR "${REPO_ROOT}/data")
 
 include(${REPO_ROOT}/cmake/bolo_lib.cmake)
+include(${REPO_ROOT}/cmake/bolo_version.cmake)
 
 ###
 # Fetch dependencies (same versions as main build)
@@ -110,6 +111,10 @@ file(GLOB LV_SOURCES
 # Exclude files we're replacing with WASM versions
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*main\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer\\.c$")
+# lv_embed.c is the embed host, split out of logviewer.c. This target excludes
+# logviewer.c and supplies its own host in main_wasm.c, so the embed has no
+# caller here — keep it out of the standalone viewer's payload.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*lv_embed\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
 
@@ -162,6 +167,21 @@ target_include_directories(logviewer PRIVATE
     ${LV_ROOT}/platform
 )
 bolo_apply_include_rules(logviewer runtime_only)
+
+# Version constants, from the same cmake/bolo_version.cmake the root project
+# and the wasm game client use, so all three report one version. screen.c's
+# spectator seed-load path stamps BOLO_VERSION_* into the published game info.
+# PREFERENCE_FILE is not passed here — lv_global.h already defines it.
+target_compile_definitions(logviewer PRIVATE
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
 
 target_link_libraries(logviewer PRIVATE
     minizip

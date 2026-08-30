@@ -403,7 +403,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
             args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, newOwner);
             playersGetCountryCode(&csPtr->sim.plyrs, newOwner, args.playerCountry);
             if (prevOwner != NEUTRAL) {
-              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName, FALSE);
+              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName,
+                                   sizeof(args.otherName), FALSE);
               args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, prevOwner);
               playersGetCountryCode(&csPtr->sim.plyrs, prevOwner, args.otherCountry);
               csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
@@ -513,7 +514,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         if (isHuman) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
-          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], args.playerName, FALSE);
+          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0],
+                               args.playerName, sizeof(args.playerName), FALSE);
           args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
           playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
@@ -669,13 +671,26 @@ void clientApplySnapshot(ClientSim *csPtr,
       continue;
     }
 
-    /* Update ping and client flags for all players from snapshot */
-    playersSetPing(&csPtr->sim.plyrs, pn, tanks[i].pingMs);
-    /* Push the fresh ping into the frontend's per-slot cache too —
-     * the HUD player rows read from that cache, not from the players
-     * struct, and it would otherwise stay frozen at the value set by
-     * the join-time frontEndSetPlayer call. */
-    frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, tanks[i].pingMs);
+    /* Update ping and client flags for all players from snapshot.
+     *
+     * The wire value is a raw RTT sample the server re-stamps every tick but
+     * only re-measures every ~0.4s, so it is fed through the display
+     * conditioner (smoothing + repaint deadband) before it reaches anything
+     * player-facing — rendered raw it jitters by tens of ms. Only the
+     * readout is affected: lag comp and shell projection read the raw and
+     * min-over-window values on their own paths. */
+    {
+      uint16_t shownPing = (pn < MAX_TANKS)
+                               ? pingDisplayPush(&csPtr->displayPing[pn],
+                                                 tanks[i].pingMs, arrivalMs)
+                               : tanks[i].pingMs;
+      playersSetPing(&csPtr->sim.plyrs, pn, shownPing);
+      /* Push the fresh ping into the frontend's per-slot cache too —
+       * the HUD player rows read from that cache, not from the players
+       * struct, and it would otherwise stay frozen at the value set by
+       * the join-time frontEndSetPlayer call. */
+      frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, shownPing);
+    }
     {
       /* Snapshot is authoritative only for these bits — preserve any others
        * (e.g. STEAM_BUILD set once from JOIN_REQUEST, PLAYER_FLAG_BOT set at

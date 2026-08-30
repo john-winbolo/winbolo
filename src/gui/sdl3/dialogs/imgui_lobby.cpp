@@ -40,6 +40,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_star_rating.h"
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "imgui_server_address.h"
@@ -52,6 +53,7 @@
 extern "C" {
 #include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
+#include "../../tiles.h"   /* map sprites for the recap scoreboard headers */
 #include "../../gamefront.h"
 #include "global.h"
 #include "bolo_rand.h"
@@ -62,15 +64,18 @@ extern "C" {
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
+#include "../../../server/server_dedicated_log.h"  /* last completed round's .wbv */
 #include "../../../server/threads.h"  /* threadsWaitForMutex / Release — SP-host server calls */
 #include "platform_net.h"
 #include "../../../common/mp_diag_log.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../input_gamepad.h"  /* inputGamepadGetScrollDirection — right stick */
 #include "../../ui_mode.h"
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
 #include "../../../bolo/public/wire_limits.h"
+#include "../../../bolo/public/round_stats_derive.h"  /* roundStatsPickAwardSubset */
 #include <errno.h>
 
 /* stb_image entry points used by lobbyWbnGeneratePreview (defined in
@@ -82,15 +87,99 @@ extern "C" {
     void stbi_image_free(void *);
 }
 #include "../map_preview_popup.h"
+#include "../macos_pinch.h"  /* macOSPinchZoomConsume — trackpad pinch over the reel */
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
+#include "imgui_winbolonet.h"    /* sign-in section, for the recap's comment form */
 #include "../../../winbolonet/http.h"
+#include "../../../winbolonet/wbn_comments.h"  /* recap ratings + comments */
 #include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
+
+/* Parts of the recap that need something a given build does not have, and the
+ * one that has a transport per platform. Named for what they need rather than
+ * for the platform, so the reason each one is out reads at the site as well as
+ * here.
+ *
+ * BOLO_REEL_WBN_FETCH      — the reel's WinBolo.net fallback source, used when
+ *   a WBN-registered host uploads its round log instead of serving it over the
+ *   game socket. On for every build: the retry ladder, the attempt cap, the
+ *   size ceiling and the progress reporting are one copy, and only the
+ *   transport underneath forks.
+ * BOLO_REEL_WBN_FETCH_CURL — which transport that is. Desktop downloads on a
+ *   std::thread through http.c. The browser has neither: http.c refuses to
+ *   build under Emscripten because it embeds the WinBolo.net signing key, and
+ *   the wasm client is single-threaded, so it drives the page's fetch()
+ *   through src/wasm/round_log_fetch_wasm.c instead.
+ * BOLO_RECAP_WBN_RATING    — the round's stars and comments, on the same
+ *   http.c through wbn_comments; neither that nor the star widget is in the
+ *   wasm target's sources.
+ * BOLO_RECAP_CLIP_GIF      — the clip export. The GIF encoder's implementation
+ *   TU (third_party/msf_gif/msf_gif_impl.c) is not in the wasm target's
+ *   sources, and the save path spins its own SDL event loop waiting on a
+ *   native file dialog, which a browser main loop cannot do. */
+#define BOLO_REEL_WBN_FETCH 1
+#ifdef __EMSCRIPTEN__
+#define BOLO_REEL_WBN_FETCH_CURL 0
+#define BOLO_RECAP_WBN_RATING    0
+#define BOLO_RECAP_CLIP_GIF      0
+#else
+#define BOLO_REEL_WBN_FETCH_CURL 1
+#define BOLO_RECAP_WBN_RATING    1
+#define BOLO_RECAP_CLIP_GIF      1
+#endif
+
+/* Embedded log-viewer reel (src/logviewer/lv_embed.c). Hand-declared rather
+ * than included: logviewer.h pulls in backend.h / viewport_types.h, whose
+ * screen / screenMines types collide with the client's — the same rule
+ * gamefront.c documents. Scalars and void * only, so no viewer type crosses
+ * the seam. Must stay inside this extern "C" block or the calls compile and
+ * then fail to link on a mangled symbol. */
+#if !BOLO_MOBILE
+bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  uint8_t *zipData, size_t zipLen, int viewW, int viewH);
+void lvEmbedEnd(void);
+bool lvEmbedIsActive(void);
+void lvEmbedSetViewportSize(int viewW, int viewH);
+bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
+                         int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
+float lvEmbedGetZoomLevel(void);
+void lvEmbedPlay(void);
+void lvEmbedPause(void);
+bool lvEmbedIsPlaying(void);
+void lvEmbedWheel(int localX, int localY, float wheelY);
+void lvEmbedPanBegin(void);
+void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
+void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
+void lvEmbedSeekRatio(float ratio);
+void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
+void lvEmbedSeekToTime(uint32_t roundRelMs);
+bool lvEmbedFocusPlayerByName(const char *name);
+void lvEmbedStepTicks(int ticks);
+void lvEmbedSetSelfName(const char *name);
+#endif
+#if !BOLO_REEL_WBN_FETCH_CURL
+/* Round-log download for the reel's WinBolo.net source
+ * (src/wasm/round_log_fetch_wasm.c). Start hands the request to the page and
+ * returns; the poll is read once a frame, so nothing here suspends the C stack
+ * inside an ImGui frame. Poll gives 0 while the request is in flight, otherwise
+ * the HTTP status, or -1 when it never completed; on a 200 whose body fits the
+ * ceiling it hands over a malloc'd buffer the caller owns. Hand-declared on the
+ * same terms as the reel above. */
+void wbRoundLogFetchStart(const char *key);
+int  wbRoundLogFetchPoll(uint8_t **outBuf, int *outLen);
+void wbRoundLogFetchCancel(void);
+#endif
 }
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+/* Single-header GIF encoder behind the recap's clip export; the one
+ * implementation TU is src/third_party/msf_gif/msf_gif_impl.c. Carries its own
+ * extern "C" guards, so it goes outside the block above. */
+#include "../../../third_party/msf_gif/msf_gif.h"
+#endif
 #include "../wb_theme.h"
 #include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
 
@@ -101,6 +190,27 @@ extern "C" {
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
+/* Smallest lobby window a restored size is allowed to shrink to — below
+ * this the two-column layout's own floors stop fitting. */
+static const int DIALOG_MIN_W = 640;
+static const int DIALOG_MIN_H = 480;
+
+/* Players/map column split, as a signed offset off the automatic split, in
+ * logical (UI-scale-independent) pixels — the layout multiplies it by the
+ * scale it computed for the current window, so a scale change carries the
+ * divider along instead of stranding it. Positive widens the left column.
+ * One offset per right-panel view: the post-game replay wants the width and
+ * the map view wants it back for the teams table, so a single remembered
+ * position would have the player re-dragging the divider after every round
+ * and again before the next one. Which view is up picks the offset the
+ * layout applies and the one a drag moves.
+ * Seeded from WINDOW/Lobby Split and WINDOW/Lobby Split Recap on first use
+ * rather than at lobby entry: the in-game seam calls imguiLobbyRenderFrame
+ * without going through imguiLobbyShow, and both paths have to come up on
+ * the saved split. */
+static float s_lobbySplitOffsetMap   = 0.0f;
+static float s_lobbySplitOffsetRecap = 0.0f;
+static bool  s_lobbySplitOffsetInit  = false;
 
 /* Per-slot tracking of whether the bot's name was manually overridden
  * by the host typing into the name input field.  Cleared when a bot
@@ -512,10 +622,6 @@ static bool             s_chooseMapMaximized     = false;
  * Cancel / Keep Picking" prompt instead of silently reverting. */
 static bool             s_chooseMapPreviewPending = false;
 static bool             s_chooseMapWantCloseConfirm = false;
-/* True while the desktop "Last round" recap window is open. The button
- * above Ready sets it; it is forced false when no stored summary
- * exists (the next countdown clears the summary). */
-static bool             g_lastRoundWinOpen        = false;
 /* Cached ClientSim pointer for the chooser. Captured by
  * lobbyChooseMapOpen so the listProvider (which only gets a void*
  * ctx) can reach into the cs's lobbyMapList* state without each
@@ -926,8 +1032,8 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
      * visible row. Instead the selected map's preview is driven on the
      * main thread by lobbyServerMapsPumpPreview, which requests the
      * bytes via PACKET_LOBBY_MAP_PREVIEW_REQ on select and feeds the
-     * streamed reply into mapChooserSetSelectedFile (mirroring the WBN
-     * tab). So return false here — no per-row thumbnail — but the
+     * streamed reply into mapChooserSetSelectedMapBytes (mirroring the
+     * WBN tab). So return false here — no per-row thumbnail — but the
      * selected-map preview pane still fills in. */
     return false;
 }
@@ -935,8 +1041,8 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
 /* Main-thread pump for the Server Maps preview pane (MP only). Polls
  * the ClientSim's lobbyMapPreview* accumulator (filled async by the
  * CHANNEL_BULK preview receiver) and, once a full map's bytes have
- * arrived for the path we asked for, spills them to a worker-private
- * temp file and points the chooser at it via mapChooserSetSelectedFile.
+ * arrived for the path we asked for, hands them to the chooser via
+ * mapChooserSetSelectedMapBytes, which rasterises them in memory.
  * No-op for SP / in-process host — there generatePreview already serves
  * the preview synchronously off the local ServerSim. */
 static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
@@ -957,26 +1063,37 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
         return;
     }
 
-    const char *tmpPath = "data/preview_cache/.sm_preview.map";
-    SDL_CreateDirectory("data/preview_cache");
-    FILE *fp = fopen(tmpPath, "wb");
-    if (fp) {
-        size_t wrote = fwrite(bytes, 1, blen, fp);
-        fclose(fp);
-        if (wrote == blen) {
-            /* Display name = basename minus the .map suffix. */
-            char disp[128];
-            const char *base = SDL_strrchr(path, '/');
-            base = base ? base + 1 : path;
-            SDL_strlcpy(disp, base, sizeof(disp));
-            size_t dl = SDL_strlen(disp);
-            if (dl > 4 && SDL_strcasecmp(disp + dl - 4, ".map") == 0) {
-                disp[dl - 4] = '\0';
-            }
-            mapChooserSetSelectedFile(&s_chooseMapState, renderer,
-                                      tmpPath, disp);
-        }
+    /* Display name = basename minus the .map suffix. */
+    char disp[128];
+    const char *base = SDL_strrchr(path, '/');
+    base = base ? base + 1 : path;
+    SDL_strlcpy(disp, base, sizeof(disp));
+    size_t dl = SDL_strlen(disp);
+    if (dl > 4 && SDL_strcasecmp(disp + dl - 4, ".map") == 0) {
+        disp[dl - 4] = '\0';
     }
+
+    /* Rasterise from memory. This used to spill the blob to
+     * data/preview_cache/.sm_preview.map and have mapChooserSetSelectedFile
+     * read it straight back off disk — a write and a re-read of bytes
+     * already in hand, and the one step here that depends on a writable
+     * filesystem, which the browser build does not really have (data/ is
+     * MEMFS, and the cache directory has to be created at runtime). Both
+     * failure branches were silent — no else on the fopen, none on a short
+     * write — and the clear below runs either way, so a failed write
+     * dropped the blob with nothing left to re-request it: the sole
+     * PREVIEW_REQ goes out on the row click.
+     *
+     * mapChooserSetSelectedMapBytes takes the same raw .map image the WBN
+     * tab feeds it and needs no file at all. It does stamp a synthetic
+     * "wbnmem:" marker over selectedPath for that tab's loading-spinner
+     * check, so preserve the row path the click already put there. */
+    char keepPath[FILENAME_MAX];
+    SDL_strlcpy(keepPath, s_chooseMapState.selectedPath, sizeof(keepPath));
+    mapChooserSetSelectedMapBytes(&s_chooseMapState, renderer,
+                                  bytes, (int)blen, disp);
+    SDL_strlcpy(s_chooseMapState.selectedPath, keepPath,
+                sizeof(s_chooseMapState.selectedPath));
     clientSimClearLobbyMapPreview(cs);
 }
 
@@ -2492,7 +2609,11 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
         SDL_Texture *tex = mapPreviewViewGetTexture(activeChooser->previewView);
         if (tex) {
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
+            bool nearest =
+                mapPreviewViewWantsNearestSampling(activeChooser->previewView);
+            if (nearest) imguiPushNearestSampling();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            if (nearest) imguiPopNearestSampling();
             ImGui::SetCursorScreenPos(imgPos);
             ImGui::SetNextItemAllowOverlap();
             ImGui::InvisibleButton("##MapPreviewDragMax",
@@ -3332,6 +3453,35 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
     clientMapPreviewDestroy(mp);
 }
 
+/* Caption + bar fraction for the map-transfer line the preview panel shows
+ * while the map is not yet in hand. Both places that draw it call this so
+ * they cannot drift apart.
+ *
+ * The percentage on its own cannot say "not started". It is computed from
+ * the transport's byte counters, and those outlive a transfer: after a
+ * mid-lobby map change the client re-JOINs, and until the new JOIN_ACCEPT
+ * re-arms them they still describe the PREVIOUS map — fully received, so
+ * 100%. Reporting that verbatim is what made a wedged re-join look like a
+ * download stuck at the finish line. The connect state is the only thing
+ * that separates the two, so read them together.
+ *
+ * A live-lobby spectator fetching its own copy of the map stays
+ * SPECTATING throughout, so it lands on the waiting caption for the
+ * duration rather than showing a bar. Counting it as downloading would be
+ * worse: a spectator the server sent no map for has no byte total either,
+ * and the percentage answers "nothing to fetch" as 100 — a full bar for a
+ * transfer that never started, which is the exact thing this is undoing.
+ * Telling the two apart needs the transport's spectator-download flag,
+ * which no T1 accessor exposes today. */
+static const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
+    if (clientSimGetConnectState(cs) == CLIENT_CONNECT_DOWNLOADING_MAP) {
+        *outProgress = (float)clientSimGetMapDownloadPercent(cs) / 100.0f;
+        return langGetText(STR_DLGLOBBY_DOWNLOADING);
+    }
+    *outProgress = 0.0f;
+    return langGetText(STR_DLGLOBBY_AWAITING_MAP);
+}
+
 /* Per-start ownership codes (0-based, start index i+1) for the minimap
  * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy. Also returns an FNV-1a
  * signature so the caller can detect when a recolour rebuild is needed
@@ -3632,6 +3782,10 @@ static SDL_Texture *s_iconSettings = nullptr;
 static SDL_Texture *s_iconBotCpuGreen  = nullptr;
 static SDL_Texture *s_iconBotCpuRed    = nullptr;
 static SDL_Texture *s_iconLocked       = nullptr;
+static SDL_Texture *s_iconSkull        = nullptr;
+static SDL_Texture *s_iconPicture      = nullptr;
+static SDL_Texture *s_iconPlay         = nullptr;
+static SDL_Texture *s_iconPause        = nullptr;
 static bool         s_iconsAttempted = false;
 /* The renderer instance the icons above were created against. SDL_Texture
  * is tied to the renderer that created it, so if the renderer instance
@@ -3725,6 +3879,23 @@ static SDL_Texture *getTankGood04Texture(SDL_Renderer *renderer) {
     return s_tankGood04;
 }
 
+/* Two-path load for a white-mask icon: relative to the working directory
+ * first, then relative to the executable, which is where an installed build
+ * keeps its data/ tree. Same fallback the coloured icons above do inline. */
+static SDL_Texture *loadWhiteIcon(SDL_Renderer *renderer, const char *relPath,
+                                  int iconPx) {
+    SDL_Texture *tex = imguiLoadSvgIconWhite(renderer, relPath, iconPx);
+    if (tex == nullptr) {
+        char basePathBuf[FILENAME_MAX];
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            SDL_snprintf(basePathBuf, sizeof(basePathBuf), "%s%s", base, relPath);
+            tex = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+        }
+    }
+    return tex;
+}
+
 static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
@@ -3739,6 +3910,10 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_iconBotCpuGreen) { SDL_DestroyTexture(s_iconBotCpuGreen); s_iconBotCpuGreen = nullptr; }
         if (s_iconBotCpuRed)   { SDL_DestroyTexture(s_iconBotCpuRed);   s_iconBotCpuRed   = nullptr; }
         if (s_iconLocked)      { SDL_DestroyTexture(s_iconLocked);      s_iconLocked      = nullptr; }
+        if (s_iconSkull)       { SDL_DestroyTexture(s_iconSkull);       s_iconSkull       = nullptr; }
+        if (s_iconPicture)     { SDL_DestroyTexture(s_iconPicture);     s_iconPicture     = nullptr; }
+        if (s_iconPlay)        { SDL_DestroyTexture(s_iconPlay);        s_iconPlay        = nullptr; }
+        if (s_iconPause)       { SDL_DestroyTexture(s_iconPause);       s_iconPause       = nullptr; }
     }
     s_iconsAttempted = true;
     s_iconsRenderer  = renderer;
@@ -3784,6 +3959,25 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
             s_iconLocked = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
         }
     }
+
+    /* Skull for the recap scoreboard's death columns — a white alpha mask
+     * like the lock badge, so the header can tint it to the text colour. */
+    s_iconSkull = imguiLoadSvgIconWhite(renderer, "data/ui/skull.svg", iconPx);
+    if (s_iconSkull == nullptr) {
+        char basePathBuf[FILENAME_MAX];
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                         "%sdata/ui/skull.svg", base);
+            s_iconSkull = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+        }
+    }
+
+    /* The reel's transport and export glyphs — white alpha masks like the two
+     * above, so each button tints them to its surrounding text colour. */
+    s_iconPicture = loadWhiteIcon(renderer, "data/ui/picture.svg", iconPx);
+    s_iconPlay    = loadWhiteIcon(renderer, "data/ui/play.svg", iconPx);
+    s_iconPause   = loadWhiteIcon(renderer, "data/ui/pause.svg", iconPx);
 }
 
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
@@ -4270,6 +4464,113 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
     }
 }
 
+/* True when the lobby's right panel is currently showing the replay reel
+ * rather than the map. Defined below, next to the recap view statics it
+ * reads; declared here because the player list is rendered before them. */
+static bool lobbyRecapReelVisible(ClientSim *cs);
+
+/* Clicking a player's name jumps to that player in whichever view is on
+ * screen — the replay reel in the post-game recap, the map preview otherwise.
+ *
+ * Which view: the inline ##MapPanel preview is a fixed fit of the whole map
+ * bounding box and has no camera — every start is already on screen there
+ * and there is nothing to centre — so the jump drives the zoom popup, which
+ * does have a camera and is already what clicking the inline preview opens.
+ * Position data is the lobby slot's claimed start index (1-based, 0xFF when
+ * unclaimed) resolved through the start cache rebuildStartCompassCache
+ * fills from the map bytes, so no extra decompression happens per frame.
+ *
+ * Call immediately after the name text. Hover and click are tested on that
+ * text item instead of an overlaid InvisibleButton, so the trailing tag-pill
+ * SameLine chain and every other control in the row (gear, ping, kick, team
+ * and start dropdowns) keep their own hit areas — a real widget overlapping
+ * the name wins the hover test, which is the behaviour we want.
+ *
+ * The affordance is an underline plus the hand cursor rather than a tooltip:
+ * it needs no new string, so nothing ships untranslated. Players with no
+ * claimed start get no affordance at all, since there is nowhere to go. */
+static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
+    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+    if (!ls || !ls->connected) return;
+
+    /* The jump targets whatever view the player is actually looking at, so
+     * "show me them" always moves the thing on screen. The right panel is
+     * showing the replay reel exactly when the recap is up and its Map tab is
+     * not — the negation of the panel's own showMapPanel — in which case the
+     * reel travels to their tank, the same follow the stats-table rows use.
+     * On the map view (Map tab chosen, or an ordinary pre-game lobby with no
+     * recap at all) it stays the map-preview popup jump to their claimed
+     * start. */
+    const bool reelView = lobbyRecapReelVisible(cs);
+
+    if (reelView) {
+        /* No tank in the replay right now is the reel's existing no-target
+         * case: no affordance, nothing moves. */
+        if (!ls->playerName[0]) return;
+        if (!ImGui::IsItemHovered()) return;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImVec2 rmn = ImGui::GetItemRectMin();
+        ImVec2 rmx = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(rmn.x, rmx.y - 1.0f), ImVec2(rmx.x, rmx.y - 1.0f),
+            ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            lvEmbedFocusPlayerByName(ls->playerName);
+        }
+        return;
+    }
+
+    if (!popupCompressedData || popupCompressedLen <= 0) return;
+    int start1 = (int)ls->startIdx;
+    if (start1 < 1 || start1 > (int)s_startCount || start1 > MAX_STARTS) return;
+    if (!ImGui::IsItemHovered()) return;
+
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    ImVec2 mn = ImGui::GetItemRectMin();
+    ImVec2 mx = ImGui::GetItemRectMax();
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(mn.x, mx.y - 1.0f), ImVec2(mx.x, mx.y - 1.0f),
+        ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
+
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        int sqX = (int)s_startMapX[start1];
+        int sqY = (int)s_startMapY[start1];
+        /* Bounds are only the pre-parse framing hint; the explicit centre in
+         * mapPreviewPopupFocusMapSquare overrides them once the map parses,
+         * so a tight box around the target is all this needs. */
+        mapPreviewPopupFocusMapSquare(popupCompressedData, popupCompressedLen,
+                                      sqX - 8, sqY - 8, sqX + 8, sqY + 8,
+                                      sqX, sqY);
+    }
+}
+
+/* Clicking a row in the post-game recap's stats table zooms the replay reel
+ * onto that player's tank — the video overview, not the map preview. (The
+ * left-hand player-list name click keeps going to the map preview popup; the
+ * two entry points answer different questions and deliberately differ.)
+ *
+ * Position source: the logviewer's own live player table, which carries every
+ * tank's map square and sub-tile pixel at the current playback moment. That is
+ * strictly better than anything the recap summary has — RoundPlayerSummary is
+ * counters only, no coordinates — and it means the view tracks the player as
+ * playback continues rather than jumping once and going stale.
+ *
+ * The bridge is the player NAME: the lobby's slot numbering and the log's
+ * player numbering are separate spaces, and the name is the only key both
+ * carry. Bots are included; they have tanks in the replay like anyone else.
+ *
+ * No tank at the current replay time (dead, or not yet joined) — the reel is
+ * left exactly where the player had it, rather than being thrown at (0,0) or
+ * at a stale last-known spot that no longer shows anything. Scrubbing to a
+ * moment where they are alive and clicking again then works. */
+static void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
+    (void)isBot;
+    if (slot < 0 || slot >= MAX_TANKS) return;
+    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
+    if (!ls || !ls->playerName[0]) return;
+    lvEmbedFocusPlayerByName(ls->playerName);
+}
+
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     const bool spectator = clientSimIsSpectator(cs);
@@ -4389,13 +4690,40 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             args.number = teamId;
             SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
         }
+        /* Header geometry, hoisted out of the host block below because the
+         * shed after the team name has to know how much room the right-hand
+         * controls will take before it decides what the left side may draw. */
+        const float comboW      = 200.0f * s;
+        /* Gap between the Bot Naming combo and the Add Bot button — just a
+         * normal widget-pair spacing so the dropdown sits directly next to
+         * Add Bot rather than being pushed off to the middle of the row. */
+        const float namingShift = 6.0f * s;
+        const float botBtnW     = 95.0f * s;
+        const float xBtnW       = 22.0f * s;
+        const float gap         = 6.0f * s;
+        const float labelW      = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
+        /* Bots are only addable when the server's AI policy allows it
+         * (lobbyAiType != aiNone) AND the server has at least one brain on
+         * disk to assign. Both fields are mirrored from the server
+         * dynamically, so the button and the Bot Naming controls disappear /
+         * reappear without a reconnect when -ai policy or brains/ changes. */
+        bool botsAllowed = (clientSimGetLobbyAiType(cs) != 0) &&
+                           (clientSimGetLobbyBrainList(cs)->count > 0);
+        int  humanCount  = memberCount[teamId] - botCount[teamId];
+        bool showXBtn    = (teamId >= 3) && (humanCount == 0);
+        bool showNaming  = effectiveHost && botsAllowed && botCount[teamId] > 0;
+        bool showJoin    = !spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                           clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId;
+        bool showTeamCount = true;
+
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
         ImGui::Text("%s", defaultName);
         ImGui::PopStyleColor();
 
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
+        /* Built before it is drawn — the shed below measures this line to
+         * decide whether it still clears the buttons. */
+        char membersLine[96];
         {
             char membersStr[64];
             if (memberCount[teamId] == 1) {
@@ -4411,15 +4739,50 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             if (botCount[teamId] == 1)      botsPart = langGetText(STR_DLGLOBBY_TEAM_1BOT);
             else if (botCount[teamId] > 1)  botsPart = langGetText(STR_DLGLOBBY_TEAM_NBOTS);
             const char *sep = botCount[teamId] > 0 ? " · " : "";
-            ImGui::TextDisabled("%s%s%s", membersStr, sep, botsPart);
+            SDL_snprintf(membersLine, sizeof(membersLine), "%s%s%s",
+                         membersStr, sep, botsPart);
+        }
+
+        /* Header shed. The host's bot controls are pinned to the panel's
+         * right edge, so whatever the left side draws past their left edge
+         * ends up underneath them. Measure both sides against the panel's own
+         * content width and give up the optional pieces widest-first — the
+         * Bot Naming pool, then the member count, then Join Team — so a
+         * narrow players column keeps the header readable instead of piling
+         * it on itself. */
+        {
+            const ImGuiStyle &hs = ImGui::GetStyle();
+            float effBotBtnW = botsAllowed ? botBtnW : 0.0f;
+            float effBotGap  = botsAllowed ? gap     : 0.0f;
+            float groupBaseW = effectiveHost ? (effBotBtnW + effBotGap + xBtnW) : 0.0f;
+            float namingW    = labelW + gap + comboW + namingShift;
+            float countW     = hs.ItemSpacing.x + ImGui::CalcTextSize(membersLine).x;
+            float joinW      = showJoin
+                               ? hs.ItemSpacing.x + hs.FramePadding.x * 2.0f
+                                 + ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_JOIN_TEAM)).x
+                               : 0.0f;
+            float needW = 6.0f * s + ImGui::CalcTextSize(defaultName).x
+                        + groupBaseW + gap;
+            if (showNaming && contentW < needW + namingW + countW + joinW) {
+                showNaming = false;
+            }
+            if (showNaming) needW += namingW;
+            showTeamCount = (contentW >= needW + countW + joinW);
+            if (showTeamCount) needW += countW;
+            if (showJoin && contentW < needW + joinW) showJoin = false;
+        }
+
+        if (showTeamCount) {
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", membersLine);
         }
 
         /* "Join Team" — moves the local player to this team. Available
          * to every client regardless of permissions (you can always
          * move yourself) and only rendered when you're not already on
          * this team. */
-        if (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-            clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId) {
+        if (showJoin) {
             ImGui::SameLine();
             char joinId[64];
             SDL_snprintf(joinId, sizeof(joinId), "%s##j%d", langGetText(STR_DLGLOBBY_JOIN_TEAM), teamId);
@@ -4447,27 +4810,6 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * "+ Bot" button stays at the same X coordinate across teams
          * that do/don't render an X. */
         if (effectiveHost) {
-            const float comboW   = 200.0f * s;
-            /* Gap between the Bot Naming combo and the Add Bot button —
-             * just a normal widget-pair spacing so the dropdown sits
-             * directly next to Add Bot rather than being pushed off to
-             * the middle of the row. */
-            const float namingShift = 6.0f * s;
-            const float botBtnW  = 95.0f * s;
-            const float xBtnW    = 22.0f * s;
-            const float labelW   = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
-            const float gap      = 6.0f * s;
-            /* Bots are only addable when the server's AI policy allows
-             * it (lobbyAiType != aiNone) AND the server has at least
-             * one brain on disk to assign. Both fields are mirrored
-             * from the server dynamically, so the button and the
-             * Bot Naming controls disappear / reappear without a
-             * reconnect when -ai policy or brains/ changes. */
-            bool botsAllowed = (clientSimGetLobbyAiType(cs) != 0) &&
-                               (clientSimGetLobbyBrainList(cs)->count > 0);
-            bool showNaming = botsAllowed && botCount[teamId] > 0;
-            int humanCount = memberCount[teamId] - botCount[teamId];
-            bool showXBtn   = (teamId >= 3) && (humanCount == 0);
             /* Always reserve the X width so "+ Bot" sits at the same
              * X position across teams with/without an X. */
             /* When showing the Bot Naming controls, leave a wider
@@ -4658,6 +5000,57 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                          ? clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber : 0;
         char tableId[32];
         SDL_snprintf(tableId, sizeof(tableId), "##members%d", teamId);
+
+        /* Column shed. The fixed columns keep their width under
+         * SizingStretchProp, so once the players column is narrower than they
+         * add up to they start landing on each other — give them up one at a
+         * time instead, in order of what a lobby can most do without: the
+         * identity icons, the start picker, ping/gear, the tank badge, the
+         * name tags, then the kick X. The floor is the player name and the
+         * ready pill, which stay at every width.
+         *
+         * Each threshold is the running total of what is still kept at that
+         * point plus the name column's own floor, built from the same widths
+         * TableSetupColumn uses below so a column resize carries them along.
+         * Measured against the panel's real content width rather than the
+         * divider's offset, so a small lobby window sheds the same way a
+         * divider dragged left does, and scaled by s throughout so it lands
+         * the same at any DPI. */
+        const float kColTankW    = 60.0f * s;
+        const float kColIconsW   = 96.0f * s;
+        const float kColPingW    = 50.0f * s;
+        const float kColReadyW   = 80.0f * s;
+        const float kColXW       = 44.0f * s;
+        /* The spacer column exists to hold the start dropdown, so what it
+         * needs is that dropdown plus the clearance kept around it. */
+        const float kColStartW   = 96.0f * s + 8.0f * s;
+        /* About eight characters and an ellipsis — the least a name can say
+         * and still tell two players apart. */
+        const float kColNameMinW = 64.0f * s;
+        /* What lobbyTruncateName already reserves for a HOST/ADMIN/BOT pill;
+         * the pill shares the name's cell, so at the floor it is the name's
+         * own room it would be taking. */
+        const float kNameTagW    = 56.0f * s;
+        const float cellPadW     = ImGui::GetStyle().CellPadding.x * 2.0f;
+        const float needXCol     = kColNameMinW + kColReadyW + kColXW + cellPadW * 3.0f;
+        const float needNameTags = needXCol  + kNameTagW;
+        const float needTankCol  = needXCol  + kColTankW  + cellPadW;
+        const float needPingCol  = needTankCol + kColPingW  + cellPadW;
+        const float needStartCol = needPingCol + kColStartW + cellPadW;
+        const float needIconsCol = needStartCol + kColIconsW + cellPadW;
+        const bool showXCol      = contentW >= needXCol;
+        const bool showNameTags  = contentW >= needNameTags;
+        const bool showTankCol   = contentW >= needTankCol;
+        const bool showPingCol   = contentW >= needPingCol;
+        const bool showStartCol  = contentW >= needStartCol;
+        const bool showIconsCol  = contentW >= needIconsCol;
+        /* Disabled is the master hide flag — the column takes no width and
+         * ImGui skips every widget submitted into it, so the remaining
+         * columns get the room back. The row blocks below still guard their
+         * own content: the direct draw-list work (tags, pills, gear, promote
+         * glyph) is not covered by that skip. */
+        const ImGuiTableColumnFlags kShedCol = ImGuiTableColumnFlags_Disabled;
+
         ImGuiTableFlags tableFlags = ImGuiTableFlags_BordersInnerH
                                    | ImGuiTableFlags_RowBg
                                    | ImGuiTableFlags_SizingStretchProp
@@ -4681,17 +5074,22 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
              * Two stretch columns (name + spacer) with weights 3:1
              * park the ping/gear column at roughly 3/4 across the
              * row instead of flush against the ready/X cluster. */
-            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
+            ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed |
+                                                (showTankCol ? 0 : kShedCol), kColTankW);
             /* Wide enough for the worst case: country flag + platform +
              * WBN-verified shield + Steam badge (16 + 3×14 px plus
              * inter-icon spacing), so the verified badge can't spill into
              * the name column. */
-            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
+            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed |
+                                                (showIconsCol ? 0 : kShedCol), kColIconsW);
             ImGui::TableSetupColumn("##name",   ImGuiTableColumnFlags_WidthStretch, 3.0f);
-            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
-            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
-            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 44.0f * s);
+            ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed |
+                                                (showPingCol ? 0 : kShedCol), kColPingW);
+            ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch |
+                                                (showStartCol ? 0 : kShedCol), 1.0f);
+            ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, kColReadyW);
+            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed |
+                                                (showXCol ? 0 : kShedCol), kColXW);
 
             /* Drive striping ourselves (per-player, not per-table-row)
              * so the bot's expanded AiConfig sub-row inherits the same
@@ -4777,7 +5175,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * Server re-validates on PACKET_LOBBY_TEAM_SET.
                  * Rendered as a 4-arrow "move" cross centered in the
                  * row, before the tank icon. */
-                bool canDragThis = effectiveHost;
+                bool canDragThis = effectiveHost && showTankCol;
                 if (canDragThis) {
                     const float handleS = 14.0f * s;
                     cyAbs(handleS);
@@ -4847,7 +5245,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             tankTex = getTankEvil04Texture(r);  /* red enemy */
                         }
                     }
-                    if (tankTex) {
+                    if (tankTex && showTankCol) {
                         /* Indent the tank inside its cell so it
                          * doesn't sit flush with the team panel's
                          * left edge. */
@@ -4868,7 +5266,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 /* ── Column 1: identity icons (flag/platform/bot) ── */
                 ImGui::TableSetColumnIndex(1);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot) {
+                if (isBot && showIconsCol) {
                     /* Green for bots on the local player's team (incl.
                      * the local player's own bots), red for bots on
                      * any other team. Fall back to the neutral
@@ -4886,7 +5284,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::Image((ImTextureID)botTex,
                                      ImVec2(tankSz, tankSz));
                     }
-                } else {
+                } else if (!isBot && showIconsCol) {
                     /* Same 2px upward nudge applied to text / tank /
                      * chip / gear — keeps every glyph in the row
                      * landing on a consistent optical center. */
@@ -4928,11 +5326,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * a HOST/ADMIN/BOT tag) so it can't overflow and push the start
                  * dropdown into the Ready button on small windows. */
                 {
-                    bool rowHasTag = (i == clientSimGetLobbyHostSlot(cs)) || isBot ||
-                        (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
-                                    & PLAYER_FLAG_ADMIN));
+                    bool rowHasTag = showNameTags &&
+                        ((i == clientSimGetLobbyHostSlot(cs)) || isBot ||
+                         (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
+                                     & PLAYER_FLAG_ADMIN)));
                     float nameAvail  = ImGui::GetContentRegionAvail().x;
-                    float tagReserve = rowHasTag ? 56.0f * s : 0.0f;
+                    float tagReserve = rowHasTag ? kNameTagW : 0.0f;
                     char nameBuf[64];
                     lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
                                       nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
@@ -4946,6 +5345,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     } else {
                         ImGui::Text("%s", nameBuf);
                     }
+                    lobbyNameJumpToPlayer(cs, i);
                 }
 
 
@@ -4988,7 +5388,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 fg, lbl);
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 };
-                if (i == clientSimGetLobbyHostSlot(cs)) {
+                if (showNameTags && i == clientSimGetLobbyHostSlot(cs)) {
                     /* Badge follows the current host slot. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_HOST),
@@ -4996,7 +5396,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 g_theme->hostTagText,
                                 g_theme->hostTagBorder);
                 }
-                if (!isBot && i != clientSimGetLobbyHostSlot(cs) &&
+                if (showNameTags && !isBot && i != clientSimGetLobbyHostSlot(cs) &&
                     (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags & PLAYER_FLAG_ADMIN)) {
                     /* IP-matched admin (server -admins). Shown beside the
                      * name like HOST but in a distinct teal so it reads
@@ -5005,7 +5405,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 IM_COL32(70, 160, 175, 255),
                                 IM_COL32(10, 30, 35, 255));
                 }
-                if (isBot) {
+                if (showNameTags && isBot) {
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_BOT),
                                 g_theme->botTagBg,
                                 g_theme->botTagText,
@@ -5030,7 +5430,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * a focus ring — A expands the AiConfig sub-row, whose
                  * widgets (name, Bot Code combo, difficulty) are then
                  * navigable like any other dialog control. */
-                if (isBot && effectiveHost) {
+                if (showPingCol && isBot && effectiveHost) {
                     if (s_iconSettings && !uiShouldUseControllerMode()) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
@@ -5078,13 +5478,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             lobbyGearTooltip(cs, i, s);
                         }
                     }
-                } else if (!isBot) {
+                } else if (showPingCol && !isBot) {
                     if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs > 0) {
                         cyTextAbs();
                         ImVec4 pingColor;
-                        if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs < 50)        pingColor = wbThemeColor(g_theme->statusOnline);
-                        else if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs < 150)  pingColor = wbThemeColor(g_theme->statusHighPing);
-                        else                                       pingColor = wbThemeColor(g_theme->statusDisconnected);
+                        switch (pingBandClassify(clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs)) {
+                            case PING_BAND_GOOD: pingColor = wbThemeColor(g_theme->statusOnline); break;
+                            case PING_BAND_FAIR: pingColor = wbThemeColor(g_theme->statusHighPing); break;
+                            default:             pingColor = wbThemeColor(g_theme->statusDisconnected); break;
+                        }
                         ImGui::TextColored(pingColor, "%dms", (int)clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs);
                     }
                 }
@@ -5102,10 +5504,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * column. Used as a floor for the dropdown's left bound so
                  * it never overlaps the ping text / bot gear when names are
                  * short. Constant across rows; capture once. */
-                if (startColPingRightX == 0.0f) {
+                if (showStartCol && startColPingRightX == 0.0f) {
                     startColPingRightX = ImGui::GetCursorScreenPos().x;
                 }
-                {
+                if (showStartCol) {
                     const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
                     uint8_t sIdx = cslot->startIdx;
                     /* A host edits any connected row; a non-host edits only
@@ -5263,7 +5665,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * admin / openHost — server re-validates either way. */
                 ImGui::TableSetColumnIndex(6);
                 rowTopY = ImGui::GetCursorPosY();
-                if (isBot && effectiveHost) {
+                if (showXCol && isBot && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 closePos = ImGui::GetCursorScreenPos();
                     char rbStr[24];
@@ -5276,7 +5678,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
                     }
-                } else if (!isBot && !isMe && i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
+                } else if (showXCol && !isBot && !isMe &&
+                           i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 basePos = ImGui::GetCursorScreenPos();
                     /* Host-only "Make host" promote button, drawn to the
@@ -5394,9 +5797,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * right — the widest name(+tag) or the ping/gear column — plus a small
      * pad, so the dropdown is centered in the clear gap before Ready and
      * never collides with the ping text / bot gear. Guarded so a degenerate
-     * frame (no rows, or no room) leaves the previous value untouched
-     * rather than snapping the column. */
-    if (startColReadyLeftX > 0.0f) {
+     * frame (no rows, or no room, or the start column shed on a narrow
+     * players column) leaves the previous value untouched rather than
+     * snapping the column. */
+    if (startColReadyLeftX > 0.0f && startColPingRightX > 0.0f) {
         float startColLeftBound =
             ImMax(startColNameMaxRight, startColPingRightX) + 8.0f * s;
         if (startColReadyLeftX > startColLeftBound) {
@@ -6049,13 +6453,33 @@ static ImU32 lastRoundTeamTint(ClientSim *cs, uint8_t teamNumber) {
 
 /* Resolve and render a slot's name inline: bots use the bot-badge tint
  * plus the BOT tag (as in the roster); humans are tinted by team color.
- * Falls back to a placeholder when the slot has no name. */
+ * Falls back to a placeholder when the slot has no name.
+ *
+ * Country flag and platform/WBN badges come first, on the same line, the
+ * way the roster renders them. Both hang off the lobby slot, so a player
+ * who left before the recap (no slot) simply gets the placeholder name on
+ * its own — nothing to draw and nothing to misalign. */
 static void lastRoundRenderName(ClientSim *cs, uint8_t slot, bool isBot) {
     const ClientLobbySlot *ls =
         (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot) : nullptr;
     const char *name = (ls && ls->playerName[0])
                            ? ls->playerName
                            : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER);
+    if (ls) {
+        if (drawCountryFlagWithTip(ls->countryCode)) {
+            ImGui::SameLine();
+        }
+        /* Badges only: the name itself is drawn below with its team tint.
+         * Bots are skipped — the BOT tag already says what they are. The
+         * WBN shield is meaningless off the network, so drop it there. */
+        if (!isBot) {
+            uint8_t pflags = ls->clientFlags;
+            if (clientSimIsSinglePlayer(cs) || clientSimIsLanOnly(cs)) {
+                pflags &= ~PLAYER_FLAG_WBN_VERIFIED;
+            }
+            renderPlayerName(NULL, pflags, ls->clientType, "", false);
+        }
+    }
     if (isBot) {
         ImGui::TextColored(wbThemeColor(g_theme->botBadge), "%s", name);
         ImGui::SameLine(0, 4.0f);
@@ -6068,35 +6492,2344 @@ static void lastRoundRenderName(ClientSim *cs, uint8_t slot, bool isBot) {
     }
 }
 
-/* Container-less recap body: the between-rounds scoreboard table plus a
- * flat list of every won award. Renders no chrome and decides nothing
- * about visibility — the caller (mouse popup / controller tab) gates it
- * on clientSimGetLastRoundStats and supplies the surrounding window. */
+/* Resolve a slot to a display name without rendering it, for the clip
+ * lines that build a whole sentence through langGetTextFmt. Same
+ * fallback as lastRoundRenderName. */
+static const char *lastRoundSlotName(ClientSim *cs, uint8_t slot) {
+    const ClientLobbySlot *ls =
+        (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot) : nullptr;
+    return (ls && ls->playerName[0])
+               ? ls->playerName
+               : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER);
+}
+
+/* Highlight clip → localized line-format id. Some types choose between
+ * two formats on the clip's own fields — a drowning with or without
+ * carried pills, a team's swing with or without a slot to name — so this
+ * takes the clip rather than just its type. Types the scorer does not
+ * select yet land on the generic label. */
+static langid lastRoundHighlightLabel(const HighlightWindow *h) {
+    switch (h->type) {
+        case HL_AWARD:
+            return (h->awardId == AWARD_NEMESIS)
+                       ? STR_DLGLOBBY_HL_AWARD_VS_FMT
+                       : STR_DLGLOBBY_HL_AWARD_FMT;
+        case HL_CLUSTER_WIPE:    return STR_DLGLOBBY_HL_WIPE_FMT;
+        case HL_OBJECTIVE_STEAL: return STR_DLGLOBBY_HL_STEAL_FMT;
+        case HL_MULTI_LGM:       return STR_DLGLOBBY_HL_LGM_FMT;
+        case HL_FUMBLE:          return STR_DLGLOBBY_HL_FUMBLE_FMT;
+        case HL_RARE_DEATH:
+            return (h->value > 0) ? STR_DLGLOBBY_HL_DROWN_PILLS_FMT
+                                  : STR_DLGLOBBY_HL_DROWN_FMT;
+        case HL_PICKUP_SPREE:    return STR_DLGLOBBY_HL_PICKUP_FMT;
+        /* A busy stretch of the round is nobody's, so its line names no
+         * player — both actors are NEUTRAL on this type. */
+        case HL_ACTION_DENSITY:  return STR_DLGLOBBY_HL_DENSITY_FMT;
+        /* Ground taken off a team belongs to the team that took it;
+         * actorA only names a slot standing in for it, and is NEUTRAL
+         * when the gaining team has no one to point at. */
+        case HL_BREAKTHROUGH:
+            return (h->actorA < MAX_TANKS)
+                       ? STR_DLGLOBBY_HL_COLLAPSE_FMT
+                       : STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT;
+        case HL_TURNING_POINT:
+            return (h->actorA < MAX_TANKS)
+                       ? STR_DLGLOBBY_HL_TURNING_FMT
+                       : STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT;
+        default:                 return STR_DLGLOBBY_HL_GENERIC;
+    }
+}
+
+/* Which of the two views the desktop map panel is showing between rounds.
+ * False is the recap, where every new summary starts; the button at the top
+ * of the panel flips it. */
+static bool s_recapShowMap = false;
+
+/* Is the right panel showing the replay reel right now? Exactly the negation
+ * of the panel's own showMapPanel test (`!lobbyShowLastRound || s_recapShowMap`
+ * at the ##MapPanel render): the reel is up when a last-round summary exists
+ * AND the panel has not been flipped to its Map tab. With the recap withheld
+ * at build level there is no reel, so this is constant false — matching the
+ * same #if the lobby uses to compute lobbyShowLastRound. */
+static bool lobbyRecapReelVisible(ClientSim *cs) {
+#if POSTGAME_STATS_ENABLED
+    return (clientSimGetLastRoundStats(cs) != NULL) && !s_recapShowMap;
+#else
+    (void)cs;
+    return false;
+#endif
+}
+
+/* How many awards the recap draws at random, on top of the ones it always
+ * leads with. A round can win all eighteen, and a list that long buries the
+ * ones worth reading. */
+static const int RECAP_AWARDS_RANDOM = 4;
+
+/* Whether the highlight-clip list is expanded. Per-summary like s_recapShowMap,
+ * and closed to begin with: the clips are a place to go looking once something
+ * in the round is worth finding again, and the replay above them is what the
+ * recap is for. Folded away, the reel gets the rows' height. */
+static bool s_recapShowHighlights = false;
+
+/* Skull for the scoreboard's death columns, drawn square at text height and
+ * tinted to the text colour so it sits with the other header art rather than
+ * shouting. Returns false when the asset is missing, which is the caller's
+ * cue to fall back to the column's written label. */
+static bool lastRoundDrawSkull(void) {
+    if (!s_iconSkull) return false;
+    float sz = ImGui::GetTextLineHeight();
+    ImGui::ImageWithBg((ImTextureID)s_iconSkull, ImVec2(sz, sz),
+                       ImVec2(0, 0), ImVec2(1, 1),
+                       ImVec4(0, 0, 0, 0),
+                       ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    return true;
+}
+
+#if !BOLO_MOBILE
+/* ── Embedded replay reel ─────────────────────────────────────────
+ * The log viewer decodes on its own timer threads and paints the round
+ * into an SDL render target; the recap blits the visible slice of that
+ * target as an image and feeds wheel/drag input back. The viewer owns a
+ * process-wide decoder singleton, so the reel is torn down whenever the
+ * recap stops drawing it or the summary clears. */
+static bool  s_reelActive     = false;
+static bool  s_reelTried      = false;  /* one load attempt per summary */
+/* The one attempt came to nothing — the viewer refused this summary's bytes,
+ * or there were none to hand it. There is nothing further to try for this
+ * round, so the recap says so instead of going back round for more bytes. */
+static bool  s_reelLoadFailed = false;
+static bool  s_reelDrawn      = false;  /* body drew the reel this frame */
+/* True when the pause was ours (the recap stopped being drawn), not the
+ * player's — the reel resumes on its own when the recap comes back, but only
+ * then. */
+static bool  s_reelAutoPaused = false;
+static float s_reelViewW      = 0.0f;
+static float s_reelViewH      = 0.0f;
+/* Where the seek slider sits, and whether the player is dragging it. Held
+ * apart from the playhead so a drag is not fought by the reel advancing under
+ * it. The reel follows the handle live while it is dragged — see the scrub
+ * block in the transport row for what each direction costs. */
+static float s_reelSeekRatio  = 0.0f;
+static bool  s_reelSeeking    = false;
+/* Last ratio actually handed to the decoder, and when. Tracks the playhead
+ * while idle so a drag starts from the truth. */
+static float  s_reelSeekApplied    = 0.0f;
+static Uint64 s_reelSeekAppliedMs  = 0;
+/* Playing state latched when a drag began, restored when it ends: a scrub
+ * pauses the reel for its duration rather than letting every applied seek
+ * tear down and rebuild the two SDL playback timers. */
+static bool  s_reelSeekWasPlaying  = false;
+
+#if BOLO_RECAP_CLIP_GIF
+/* Crop frame: an optional rectangle over the reel that an export takes instead
+ * of the whole visible view, so a clip can be posted without the map around it.
+ * Off by default, and off is the untouched full-view path.
+ *
+ * Held normalized to the displayed image rather than in pixels, so resizing the
+ * lobby or zooming the reel keeps the same framing rather than leaving the box
+ * pointing at a different part of the map. Session-only, by design — a crop is
+ * chosen for the clip being taken, not kept as a preference. */
+static bool  s_reelCropOn = false;
+static float s_reelCropX0 = 0.25f;
+static float s_reelCropY0 = 0.25f;
+static float s_reelCropX1 = 0.75f;
+static float s_reelCropY1 = 0.75f;
+
+/* The slice the reel last blitted, in render-target pixels: origin plus the
+ * whole-pixel visible extent the draw computed. The crop frame is normalized
+ * against this extent, so a capture can map the frame back onto exactly the
+ * pixels the outline was drawn over rather than re-deriving the mapping and
+ * risking a different answer. */
+static SDL_Rect s_reelLastSlice = { 0, 0, 0, 0 };
+
+/* Smallest crop the frame will shrink to, in displayed pixels. */
+static const float REEL_CROP_MIN_PX = 16.0f;
+/* Grab margin either side of an edge, in displayed pixels. */
+static const float REEL_CROP_GRAB_PX = 6.0f;
+#endif
+
+/* A backward scrub cannot continue the decode — it has to restore the round's
+ * snapshot and replay from there — so only the newest one in a burst is paid
+ * for. Forward scrubs are incremental and run every frame. */
+#define RECAP_SCRUB_BACK_MS 90
+
+/* Where a client that did not record the round stands in getting it from the
+ * server that did: the transfer's state as a ClientRoundLogState, the percent
+ * that goes with it while bytes are arriving, and the latch that keeps the
+ * request to one send per summary. Read by the recap so it can say what is
+ * happening in place of a reel it has no bytes for yet. A process replaying
+ * its own recording never asks, and leaves these idle. */
+static bool    s_reelLogAsked   = false;
+static int     s_reelLogState   = CLIENT_ROUND_LOG_IDLE;
+static uint8_t s_reelLogPercent = 0;
+/* Last state and ten-percent step written to winbolo.log, so the transfer is
+ * traced as it moves instead of once a frame. */
+static int     s_reelLogStateSeen = -1;
+static int     s_reelLogStepSeen  = -1;
+
+#if BOLO_REEL_WBN_FETCH
+/* Where a round shared through WinBolo.net comes from. A host registered with
+ * WinBolo.net uploads its log there rather than serving it over the game
+ * connection, so a client that joined fetches the same bytes over HTTP using
+ * the key the round summary carries. The upload lands a few seconds after the
+ * recap opens, so the first GET is expected to miss a round that is about to
+ * exist; a bounded ladder covers that lag without becoming a request a frame.
+ *
+ * Under the curl transport the worker writes buf/len/status and then releases
+ * s_reelWbnDone; the render thread reads those three only after acquiring it,
+ * which is the whole hand-off — one producer, one consumer, no mutex. Every
+ * other field here is the render thread's own, s_reelWbnRunning included, so
+ * the guards that decide whether to start another attempt never read a field a
+ * worker is writing. The fetch transport has no second thread at all and fills
+ * the same three fields from its poll. */
+static const int    REEL_WBN_RETRY_MAX = 12;
+static const Uint64 REEL_WBN_RETRY_MS  = 5000;
+
+static char                   s_reelWbnKey[ROUND_STATS_LOGKEY_LEN] = "";
+#if BOLO_REEL_WBN_FETCH_CURL
+/* The worker and the two fields that coordinate with it. Nothing outside the
+ * curl transport has a second thread to coordinate with. */
+static std::thread            s_reelWbnThread;
+static std::atomic<bool>      s_reelWbnDone{false};
+static volatile int           s_reelWbnCancel = 0;
+#endif
+/* What the transfer has moved, for the reading below. Curl fills both from its
+ * worker as bytes arrive; fetch resolves the whole body at once and leaves them
+ * at zero, which that reading already treats as "nothing to report yet". */
+static std::atomic<long long> s_reelWbnBytesNow{0};
+static std::atomic<long long> s_reelWbnBytesTotal{0};
+static bool                   s_reelWbnRunning   = false;
+static uint8_t               *s_reelWbnBuf       = nullptr;
+static size_t                 s_reelWbnLen       = 0;
+static int                    s_reelWbnStatus    = 0;
+static int                    s_reelWbnAttempts  = 0;
+static Uint64                 s_reelWbnRetryAtMs = 0;
+
+/* Stop whatever is in flight and forget the round it belonged to. The curl
+ * worker is joined and never detached: it writes into the statics above, and a
+ * lobby that has gone away leaves nothing for it to write into. Cancelling
+ * first is what keeps the join short, since curl polls the flag as bytes
+ * arrive. The fetch transport aborts its request and drops the slot its reply
+ * would have landed in, which is the same thing without the join. */
+static void lobbyReelWbnAbort(void) {
+#if BOLO_REEL_WBN_FETCH_CURL
+    s_reelWbnCancel = 1;
+    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+#else
+    wbRoundLogFetchCancel();
+#endif
+    free(s_reelWbnBuf);
+    s_reelWbnBuf       = nullptr;
+    s_reelWbnLen       = 0;
+    s_reelWbnStatus    = 0;
+    s_reelWbnRunning   = false;
+    s_reelWbnAttempts  = 0;
+    s_reelWbnRetryAtMs = 0;
+    s_reelWbnKey[0]    = '\0';
+    s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
+    s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+#if BOLO_REEL_WBN_FETCH_CURL
+    s_reelWbnDone.store(false, std::memory_order_relaxed);
+    s_reelWbnCancel = 0;
+#endif
+}
+
+/* Spend one rung of the ladder, if one is due. Everything that would make a
+ * fetch pointless is a guard rather than a condition at the call site, so the
+ * caller can ask every frame. */
+static void lobbyReelWbnKick(void) {
+    if (s_reelWbnRunning || s_reelWbnBuf) return;
+    if (s_reelWbnKey[0] == '\0') return;
+    /* The key is pasted into the request path below, so it never goes out
+     * unless it is the 32-hex shape WBN issues. The codec already drops a
+     * malformed one off the wire; this is the backstop on the path itself,
+     * the same one wbn_comments_fetch_start applies to its own. */
+    if (!winbolonetKeyIsValid(s_reelWbnKey)) return;
+    /* The load below gets one attempt per summary; once it has spent it there
+     * is nothing left to play another copy of the same round. */
+    if (s_reelTried) return;
+    if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) return;
+    if (SDL_GetTicks() < s_reelWbnRetryAtMs) return;
+#if BOLO_REEL_WBN_FETCH_CURL
+    /* A worker that finished without the poll below seeing it still owns a
+     * thread handle; std::thread destructs hard on a joinable one. */
+    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+
+    /* The one WinBolo.net entry point that does not bring HTTP up on its own:
+     * it fails outright when nothing has called httpCreate, where the GET and
+     * POST paths create lazily. Reentrant, so the browser's own create/destroy
+     * pair is unaffected. Once a round is enough. */
+    if (s_reelWbnAttempts == 0) httpCreate();
+#endif
+
+    char keyCopy[ROUND_STATS_LOGKEY_LEN];
+    SDL_strlcpy(keyCopy, s_reelWbnKey, sizeof(keyCopy));
+
+#if BOLO_REEL_WBN_FETCH_CURL
+    /* Curl's byte sink, running on the worker. Non-capturing so it converts to
+     * the C function pointer, and it keeps the last total it was given, since
+     * curl reports zero until it has read a Content-Length. */
+    WbnProgressFn progressFn = [](void *user, int64_t now, int64_t total) {
+        (void)user;
+        s_reelWbnBytesNow.store((long long)now, std::memory_order_relaxed);
+        if (total > 0) {
+            s_reelWbnBytesTotal.store((long long)total, std::memory_order_relaxed);
+        }
+    };
+#endif
+
+    s_reelWbnAttempts++;
+    s_reelWbnRunning = true;
+    s_reelWbnStatus  = 0;
+#if BOLO_REEL_WBN_FETCH_CURL
+    s_reelWbnDone.store(false, std::memory_order_relaxed);
+#endif
+    s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
+    s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[REEL] winbolo.net round log attempt %d/%d, key prefix '%.6s'",
+                s_reelWbnAttempts, REEL_WBN_RETRY_MAX, keyCopy);
+
+#if !BOLO_REEL_WBN_FETCH_CURL
+    /* Returns at once; the reply lands in the page and the poll below takes it
+     * on a later frame. The ceiling is applied there, where the bytes are. */
+    wbRoundLogFetchStart(keyCopy);
+#else
+    s_reelWbnThread = std::thread([keyCopy, progressFn]() {
+        char path[128];
+        SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
+        uint8_t *data = nullptr;
+        size_t   size = 0;
+        /* Held to the same ceiling the server-served path enforces on its own
+         * transfer. Without it this is the one way into the reel that a round
+         * log of any size at all can come through, and the recap opens and
+         * fetches on its own between rounds. */
+        int status = wbn_api_download_to_memory_progress(path, &data, &size,
+                                                         ROUND_LOG_MAX_BYTES,
+                                                         progressFn, nullptr,
+                                                         &s_reelWbnCancel);
+        if (status != 200 || size == 0) {
+            free(data);
+            data = nullptr;
+            size = 0;
+        }
+        s_reelWbnBuf    = data;
+        s_reelWbnLen    = size;
+        s_reelWbnStatus = status;
+        /* Last, and releasing: the three writes above are published by it. */
+        s_reelWbnDone.store(true, std::memory_order_release);
+    });
+#endif
+}
+
+/* Collect a finished attempt. A 200 leaves its bytes standing for the load
+ * below to take; anything else arms the next rung. */
+static void lobbyReelWbnPoll(void) {
+#if BOLO_REEL_WBN_FETCH_CURL
+    if (!s_reelWbnDone.load(std::memory_order_acquire)) return;
+    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+    s_reelWbnDone.store(false, std::memory_order_relaxed);
+#else
+    /* Still in flight reads as 0; any other answer settles the attempt, and
+     * brings the bytes with it when there are any to bring. */
+    uint8_t *fetched = nullptr;
+    int      fetchedLen = 0;
+    int      fetchedStatus = wbRoundLogFetchPoll(&fetched, &fetchedLen);
+    if (fetchedStatus == 0) return;
+    s_reelWbnBuf    = fetched;
+    s_reelWbnLen    = (fetched != nullptr) ? (size_t)fetchedLen : 0;
+    s_reelWbnStatus = fetchedStatus;
+#endif
+    s_reelWbnRunning = false;
+
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[REEL] winbolo.net round log attempt %d done: status %d, "
+                "%zu bytes",
+                s_reelWbnAttempts, s_reelWbnStatus, s_reelWbnLen);
+    if (s_reelWbnBuf) return;
+
+    s_reelWbnLen       = 0;
+    s_reelWbnRetryAtMs = SDL_GetTicks() + REEL_WBN_RETRY_MS;
+    if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) {
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[REEL] winbolo.net round log gave up after %d attempts",
+                    s_reelWbnAttempts);
+    }
+}
+#endif /* BOLO_REEL_WBN_FETCH */
+
+/* Vertical room the recap left unused on the previous frame, accumulated.
+ * The reel adds it to its own height, which is what stops the body ending
+ * well short of the bottom of a tall panel. Immediate mode gives no way to
+ * know what the content below the reel will cost before drawing it, so this
+ * is a one-frame feedback loop: renderLastRoundBody measures the shortfall
+ * at the end of the frame and this grows or shrinks by that much. It has to
+ * accumulate rather than hold the raw shortfall — a raw value would be
+ * spent, measure zero, and collapse back the next frame. */
+static float s_recapSlack = 0.0f;
+
+#if BOLO_RECAP_CLIP_GIF
+/* Defined with the clip export below, which needs the reel's own state. */
+static void lobbyClipGifAbort(void);
+#endif
+
+static void lobbyReelEnd(void) {
+#if BOLO_RECAP_CLIP_GIF
+    /* An export in flight is holding encoder allocations and a playback
+     * position to put back, and the reel it was reading is about to go. */
+    lobbyClipGifAbort();
+#endif
+#if BOLO_REEL_WBN_FETCH
+    /* And a WinBolo.net fetch is a thread writing into state this is about to
+     * zero, so it is cancelled and joined here too. */
+    lobbyReelWbnAbort();
+#endif
+    if (s_reelActive) {
+        lvEmbedEnd();
+        s_reelActive = false;
+    }
+    s_reelTried      = false;
+    s_reelLoadFailed = false;
+    s_reelDrawn      = false;
+    s_reelAutoPaused = false;
+    s_reelSeekRatio  = 0.0f;
+    s_reelSeeking    = false;
+    s_reelSeekApplied   = 0.0f;
+    s_reelSeekAppliedMs = 0;
+    s_reelSeekWasPlaying = false;
+    s_recapSlack     = 0.0f;
+    /* The next summary asks for its own round's log, and reports nothing about
+     * a transfer until it has one. */
+    s_reelLogAsked     = false;
+    s_reelLogState     = CLIENT_ROUND_LOG_IDLE;
+    s_reelLogPercent   = 0;
+    s_reelLogStateSeen = -1;
+    s_reelLogStepSeen  = -1;
+}
+
+/* Trace the transfer as it moves, so winbolo.log tells a slow download apart
+ * from a stalled one and both apart from a refusal — the recap draws nothing
+ * about it yet. Ten-percent steps while bytes arrive keep a 4 MB transfer to a
+ * handful of lines. */
+static void lobbyReelLogTransfer(int state, uint8_t percent) {
+    const int step = (state == CLIENT_ROUND_LOG_DOWNLOADING) ? percent / 10 : -1;
+    if (state == s_reelLogStateSeen && step == s_reelLogStepSeen) return;
+    s_reelLogStateSeen = state;
+    s_reelLogStepSeen  = step;
+    switch (state) {
+        case CLIENT_ROUND_LOG_WAITING:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log requested, no bytes yet");
+            break;
+        case CLIENT_ROUND_LOG_DOWNLOADING:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log downloading %u%%", (unsigned)percent);
+            break;
+        case CLIENT_ROUND_LOG_READY:
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[REEL] round log ready to play");
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log unavailable: server does not serve logs");
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_NONE:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log unavailable: server has no completed round");
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE:
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[REEL] round log unavailable: over the transfer cap");
+            break;
+        default:
+            /* Idle: nothing asked for, or the viewer has taken the blob. */
+            break;
+    }
+}
+
+/* Give back a downloaded round that nothing is going to play. A blob belongs
+ * to the round its recap described, and the transport holds a completed one
+ * until it is taken — so once the summary is gone (the countdown clears it)
+ * the bytes are stale and the next round must fetch its own. Kept apart from
+ * lobbyReelEnd, which also runs at the end of a lobby session with no
+ * ClientSim in reach. */
+static void lobbyReelDropRoundLog(ClientSim *cs) {
+    if (clientSimGetRoundLogState(cs) != CLIENT_ROUND_LOG_READY) return;
+    size_t len = 0;
+    uint8_t *buf = clientSimTakeRoundLog(cs, &len);
+    free(buf);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[REEL] dropped round log (%zu bytes), its recap is gone", len);
+}
+
+/* Say where the round log has got to, centred in the space the reel would have
+ * filled, so a recap with nothing to play yet reads as waiting or refused
+ * rather than as a blank rectangle.
+ *
+ * Waiting and each of the three refusals get an icon and a line of their own —
+ * the refusals are worded apart because they tell a player different things:
+ * one is the host's choice, one is a round the server never finished, one is a
+ * round too long to send. A transfer in flight gets a ring struck from the
+ * percent the transport reports, which is a real fraction of the bytes and not
+ * an animation, so a stalled download looks stalled.
+ *
+ * Reports only: the state is whatever the caller read off the transport this
+ * frame, and nothing here times anything out, retries, or moves the transfer
+ * along. */
+static void lobbyRenderReelStatus(int state, uint8_t percent, ImVec2 rect,
+                                  float s) {
+    /* The recap can be the first thing on screen in the controller layout's
+     * Last round tab, where the player list that usually brings the status
+     * icons up is not drawn. The load is idempotent, so asking again is free. */
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer) loadStatusIconsOnce(renderer, s);
+
+    const char  *msg = nullptr;
+    SDL_Texture *ico = nullptr;
+    char msgBuf[128];
+
+    switch (state) {
+        case CLIENT_ROUND_LOG_WAITING:
+            ico = s_iconInfo;
+            msg = langGetText(STR_DLGLOBBY_REEL_WAITING);
+            break;
+        case CLIENT_ROUND_LOG_DOWNLOADING: {
+            /* Copied out rather than held: langGetTextFmt returns a pointer
+             * into a short ring of buffers that later calls reuse. */
+            MessageArgs args = {};
+            args.number = (int)percent;
+            SDL_snprintf(msgBuf, sizeof(msgBuf), "%s",
+                         langGetTextFmt(STR_DLGLOBBY_REEL_DOWNLOADING, &args));
+            msg = msgBuf;
+            break;
+        }
+        case CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED:
+            ico = s_iconError;
+            msg = langGetText(STR_DLGLOBBY_REEL_DISABLED);
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_NONE:
+            ico = s_iconError;
+            msg = langGetText(STR_DLGLOBBY_REEL_NONE);
+            break;
+        case CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE:
+            ico = s_iconError;
+            msg = langGetText(STR_DLGLOBBY_REEL_TOO_LARGE);
+            break;
+        default:
+            /* Idle: nothing was asked for on this connection, or the viewer has
+             * already taken the bytes and a load is on its way. Neither is
+             * something to tell the player about, and drawing nothing at all
+             * leaves the recap the layout it had before there was a transfer to
+             * describe. */
+            return;
+    }
+
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const bool   ring     = (state == CLIENT_ROUND_LOG_DOWNLOADING);
+    const float  ringR    = 22.0f * s;
+    const float  iconSize = 18.0f * s;
+    const float  gapX     = style.ItemSpacing.x;
+    const float  gapY     = style.ItemSpacing.y;
+    const ImVec2 textSz   = ImGui::CalcTextSize(msg);
+    /* Icon and message share one row; the ring, when there is one, sits above
+     * it and the pair is centred in the area as a block. */
+    const float rowH   = (ico && iconSize > textSz.y) ? iconSize : textSz.y;
+    const float rowW   = textSz.x + (ico ? iconSize + gapX : 0.0f);
+    const float blockH = rowH + (ring ? ringR * 2.0f + gapY : 0.0f);
+
+    /* A round still on its way holds the reel's whole rect, so the scoreboard
+     * does not shuffle down the moment the reel appears in that same space. A
+     * refusal never becomes a reel, so it keeps only the band its own line
+     * needs and leaves the rest of the panel to the rows below. */
+    const bool holdRect = (state == CLIENT_ROUND_LOG_WAITING || ring);
+    ImVec2     area(rect.x, holdRect ? rect.y : blockH + gapY * 2.0f);
+    if (area.y > rect.y) area.y = rect.y;
+
+    ImDrawList  *dl = ImGui::GetWindowDrawList();
+    const ImVec2 pmin = ImGui::GetCursorScreenPos();
+    const ImVec2 pmax(pmin.x + area.x, pmin.y + area.y);
+
+    /* Nothing may leave that area — a long translation is cut off rather than
+     * written across the rows underneath. */
+    dl->PushClipRect(pmin, pmax, true);
+    dl->AddRectFilled(pmin, pmax, ImGui::GetColorU32(ImGuiCol_FrameBg),
+                      style.FrameRounding);
+
+    const float cx  = pmin.x + area.x * 0.5f;
+    const float top = pmin.y + (area.y - blockH) * 0.5f;
+
+    if (ring) {
+        /* Struck clockwise from 12 o'clock on a full-circle track, the shape
+         * the vote ring already uses. */
+        const ImVec2 centre(cx, top + ringR);
+        dl->AddCircle(centre, ringR, ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                      36, 3.0f * s);
+        const float frac = ((percent > 100) ? 100.0f : (float)percent) / 100.0f;
+        if (frac > 0.0f) {
+            const float a0 = -IM_PI * 0.5f;
+            dl->PathArcTo(centre, ringR, a0, a0 + frac * IM_PI * 2.0f, 36);
+            dl->PathStroke(ImGui::GetColorU32(ImGuiCol_PlotHistogram),
+                           3.5f * s);
+        }
+    }
+
+    const float rowY = top + blockH - rowH;
+    float       x    = cx - rowW * 0.5f;
+    if (ico) {
+        const ImVec2 iconMin(x, rowY + (rowH - iconSize) * 0.5f);
+        dl->AddImage((ImTextureID)ico, iconMin,
+                     ImVec2(iconMin.x + iconSize, iconMin.y + iconSize));
+        x += iconSize + gapX;
+    }
+    dl->AddText(ImVec2(x, rowY + (rowH - textSz.y) * 0.5f),
+                ImGui::GetColorU32(ImGuiCol_Text), msg);
+    dl->PopClipRect();
+
+    /* Spend what was drawn into, so the rows below start under it and the
+     * height the recap feeds back has somewhere to land instead of climbing. */
+    ImGui::Dummy(area);
+}
+
+/* Reel height: a share of whatever vertical room the container has left, plus
+ * the room the rest of the recap turned out not to need, floored so it stays
+ * watchable in a short controller tab and capped as a share of the container
+ * so the transport row underneath is never pushed off. The share is the term
+ * that decides the size in practice: the slack only ever hands over room the
+ * rest of the recap genuinely left, which in a panel the scoreboard already
+ * overflows is none. The floor is in unscaled pixels; the cap is a fraction,
+ * because a tall panel is exactly the case the slack exists to fill. Taken
+ * from the content region rather than the window so the same numbers serve
+ * both containers. */
+static const float REEL_HEIGHT_FRAC     = 0.60f;
+static const float REEL_HEIGHT_MIN      = 180.0f;
+static const float REEL_HEIGHT_MAX_FRAC = 0.85f;
+
+/* Defined down with the chat input's state, which is declared after this. */
+static void lobbyChatInputAppendTime(uint32_t curMs);
+
+#if BOLO_RECAP_CLIP_GIF
+/* Defined with the clip export below, which needs the reel's own state. The
+ * transport bar carries the same control the clip rows do, so both are reached
+ * from here. */
+static bool lobbyClipGifButton(const char *id, bool compact);
+static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+/* Whether an export is running. The crop frame reads it to hold still: the
+ * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
+ * so letting it be dragged mid-capture would show a box the recording is not
+ * following. */
+static bool lobbyClipGifActive(void);
+
+/* The crop control, sitting with the export it crops. Names the frame rather
+ * than describing it — the same rule the GIF control's caption follows, and
+ * the reason both ship a word rather than a sentence. */
+static const char *const REEL_CROP_TITLE = "Crop";
+
+/* Toggle button carrying a drawn square-frame glyph. Drawn with the draw list
+ * rather than loaded, so the control needs no new art asset and follows the
+ * text colour and UI scale the way the icons beside it do. Stays pressed while
+ * the frame is up, which is how the file's other state buttons read. */
+static bool lobbyReelCropButton(const char *id) {
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float lineH = ImGui::GetTextLineHeight();
+    const bool  on    = s_reelCropOn;
+
+    if (on) {
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    }
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::Button(id, ImVec2(lineH + sty.FramePadding.x * 2.0f,
+                                            lineH + sty.FramePadding.y * 2.0f));
+    if (on) {
+        ImGui::PopStyleColor();
+    }
+
+    /* The glyph: a square outline inset in the button, with the corners drawn
+     * heavier so it reads as a crop frame rather than an empty box. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    ImVec2 a(p.x + sty.FramePadding.x + 1.0f, p.y + sty.FramePadding.y + 1.0f);
+    ImVec2 b(a.x + lineH - 2.0f, a.y + lineH - 2.0f);
+    dl->AddRect(a, b, col, 0.0f, 0, 1.0f);
+    float tick = (b.x - a.x) * 0.32f;
+    dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x + tick, a.y), col, 2.0f);
+    dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x, a.y + tick), col, 2.0f);
+    dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x - tick, b.y), col, 2.0f);
+    dl->AddLine(ImVec2(b.x, b.y), ImVec2(b.x, b.y - tick), col, 2.0f);
+
+    imguiHelpTooltip(REEL_CROP_TITLE);
+    return clicked;
+}
+
+/* Draw the crop frame over the reel and let it be moved and resized. Returns
+ * true when the frame owns this frame's mouse, so the caller sits its pan out.
+ *
+ * Precedence: while the frame is up, its interior and its handles win over the
+ * reel's drag-pan. The handles are submitted after the reel's own overlay
+ * button, which is marked allow-overlap, so ImGui's hit test hands them the
+ * hover; the caller additionally gates the pan on the return value so the press
+ * frame cannot slip through. The wheel is left alone entirely — zooming still
+ * works with the cursor anywhere over the reel, frame included.
+ *
+ * Everything is computed in displayed pixels and stored back normalized, and
+ * every edge is clamped inside the image, so the frame can neither leave the
+ * view nor invert. */
+static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
+                                 bool panHoldsMouse) {
+    if (!s_reelCropOn || imgSize.x < 1.0f || imgSize.y < 1.0f) {
+        return false;
+    }
+    const bool locked = lobbyClipGifActive();
+
+    float x0 = imgMin.x + s_reelCropX0 * imgSize.x;
+    float y0 = imgMin.y + s_reelCropY0 * imgSize.y;
+    float x1 = imgMin.x + s_reelCropX1 * imgSize.x;
+    float y1 = imgMin.y + s_reelCropY1 * imgSize.y;
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    /* Dim the frame while a capture is running: it is showing what the GIF is
+     * taking, and it is not going to answer a drag. */
+    ImU32 line = locked ? IM_COL32(255, 255, 255, 110) : IM_COL32(255, 255, 255, 230);
+    ImU32 shade = IM_COL32(0, 0, 0, 90);
+    /* Shade everything the export will drop, so the kept area reads at a
+     * glance rather than having to be traced along the outline. */
+    dl->AddRectFilled(imgMin, ImVec2(imgMin.x + imgSize.x, y0), shade);
+    dl->AddRectFilled(ImVec2(imgMin.x, y1),
+                      ImVec2(imgMin.x + imgSize.x, imgMin.y + imgSize.y), shade);
+    dl->AddRectFilled(ImVec2(imgMin.x, y0), ImVec2(x0, y1), shade);
+    dl->AddRectFilled(ImVec2(x1, y0),
+                      ImVec2(imgMin.x + imgSize.x, y1), shade);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), IM_COL32(0, 0, 0, 160), 0.0f, 0, 3.0f);
+    dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), line, 0.0f, 0, 1.0f);
+
+    if (locked) {
+        return false;
+    }
+
+    /* Which part of the frame a press took hold of. Latched, so a drag that
+     * wanders off the handle keeps resizing the edge it started on. */
+    static int  s_grab = 0;   /* bit 1 left, 2 right, 4 top, 8 bottom, 16 move */
+    static bool s_dragging = false;
+
+    /* A pan already holding the mouse keeps it. Ownership is decided at the
+     * press and not re-decided per frame, so dragging the reel across the
+     * frame does not hand the drag over halfway and stall the pan — the same
+     * mistake the map preview's start markers used to make. */
+    if (panHoldsMouse && !s_dragging) {
+        return false;
+    }
+
+    const float g = REEL_CROP_GRAB_PX;
+    ImVec2 mp = ImGui::GetMousePos();
+    int hot = 0;
+    bool overFrame = (mp.x >= x0 - g && mp.x <= x1 + g &&
+                      mp.y >= y0 - g && mp.y <= y1 + g);
+    if (overFrame) {
+        if (mp.x >= x0 - g && mp.x <= x0 + g) hot |= 1;
+        if (mp.x >= x1 - g && mp.x <= x1 + g) hot |= 2;
+        if (mp.y >= y0 - g && mp.y <= y0 + g) hot |= 4;
+        if (mp.y >= y1 - g && mp.y <= y1 + g) hot |= 8;
+        if (hot == 0 && mp.x > x0 && mp.x < x1 && mp.y > y0 && mp.y < y1) {
+            hot = 16;
+        }
+    }
+
+    /* One invisible item over the whole frame plus its grab margin, so ImGui
+     * knows the press belongs here and the reel's pan button does not take it.
+     * Submitted after the reel's overlay (which allows overlap), which is what
+     * puts it in front for hit-testing. */
+    bool takesMouse = false;
+    if (hot != 0 || s_dragging) {
+        ImGui::SetCursorScreenPos(ImVec2(x0 - g, y0 - g));
+        ImGui::InvisibleButton("##ReelCropGrab",
+                               ImVec2((x1 - x0) + g * 2.0f, (y1 - y0) + g * 2.0f));
+        takesMouse = ImGui::IsItemHovered() || ImGui::IsItemActive() || s_dragging;
+        if (ImGui::IsItemActivated()) {
+            s_grab = hot;
+            s_dragging = true;
+        }
+    }
+
+    int shape = s_dragging ? s_grab : hot;
+    if (shape != 0) {
+        ImGuiMouseCursor cur = ImGuiMouseCursor_ResizeAll;
+        switch (shape & 15) {
+            case 1: case 2:            cur = ImGuiMouseCursor_ResizeEW; break;
+            case 4: case 8:            cur = ImGuiMouseCursor_ResizeNS; break;
+            case 1 | 4: case 2 | 8:    cur = ImGuiMouseCursor_ResizeNWSE; break;
+            case 2 | 4: case 1 | 8:    cur = ImGuiMouseCursor_ResizeNESW; break;
+            default:                   break;   /* move */
+        }
+        ImGui::SetMouseCursor(cur);
+    }
+
+    if (s_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImVec2 d = ImGui::GetIO().MouseDelta;
+        const float minW = REEL_CROP_MIN_PX;
+        if (s_grab & 16) {
+            /* Move: both edges together, stopped by the image rather than
+             * squashed against it. */
+            float w = x1 - x0, h = y1 - y0;
+            x0 += d.x; y0 += d.y;
+            if (x0 < imgMin.x) x0 = imgMin.x;
+            if (y0 < imgMin.y) y0 = imgMin.y;
+            if (x0 + w > imgMin.x + imgSize.x) x0 = imgMin.x + imgSize.x - w;
+            if (y0 + h > imgMin.y + imgSize.y) y0 = imgMin.y + imgSize.y - h;
+            x1 = x0 + w; y1 = y0 + h;
+        } else {
+            if (s_grab & 1) x0 += d.x;
+            if (s_grab & 2) x1 += d.x;
+            if (s_grab & 4) y0 += d.y;
+            if (s_grab & 8) y1 += d.y;
+            if (x0 < imgMin.x) x0 = imgMin.x;
+            if (y0 < imgMin.y) y0 = imgMin.y;
+            if (x1 > imgMin.x + imgSize.x) x1 = imgMin.x + imgSize.x;
+            if (y1 > imgMin.y + imgSize.y) y1 = imgMin.y + imgSize.y;
+            /* No inverting: the dragged edge stops a minimum short of its
+             * opposite instead of crossing it. */
+            if (x1 - x0 < minW) {
+                if (s_grab & 1) x0 = x1 - minW; else x1 = x0 + minW;
+            }
+            if (y1 - y0 < minW) {
+                if (s_grab & 4) y0 = y1 - minW; else y1 = y0 + minW;
+            }
+            /* The min-size correction can push an edge back out of the image
+             * on a very small view; clamp once more so it never does. */
+            if (x0 < imgMin.x) { x0 = imgMin.x; if (x1 < x0 + minW) x1 = x0 + minW; }
+            if (y0 < imgMin.y) { y0 = imgMin.y; if (y1 < y0 + minW) y1 = y0 + minW; }
+        }
+        s_reelCropX0 = (x0 - imgMin.x) / imgSize.x;
+        s_reelCropY0 = (y0 - imgMin.y) / imgSize.y;
+        s_reelCropX1 = (x1 - imgMin.x) / imgSize.x;
+        s_reelCropY1 = (y1 - imgMin.y) / imgSize.y;
+    } else if (s_dragging) {
+        s_dragging = false;
+        s_grab = 0;
+    }
+    return takesMouse;
+}
+#endif
+
+/* One zoom step per notch of travel, from either gesture a trackpad offers.
+ *
+ * The wheel arrives as whatever SDL had from the device: a mouse notch is a
+ * clean 1.0, but a macOS trackpad scrolls with precise deltas, which SDL passes
+ * on as fractions and the ImGui backend forwards unscaled. Stepping on every
+ * frame that carried anything at all therefore ran the whole 0.5x..4x ladder
+ * in the first few frames of a two-finger flick and sat at whichever end it
+ * reached, which reads as a reel that will not zoom rather than one that zooms
+ * too eagerly. Banking the deltas and spending them a whole notch at a time
+ * leaves a mouse feeling exactly as it did and gives the trackpad the same
+ * distance-per-step.
+ *
+ * Pinch is the gesture that never arrived at all: macOS sends magnification as
+ * its own NSEvent and SDL does not turn it into a wheel, so the reel — alone
+ * among the map views — could not answer the one gesture a laptop user reaches
+ * for first. macos_pinch.m has been collecting it all along for the map
+ * preview, the map editor and the standalone log viewer; the reel now spends it
+ * on the same 0.15 threshold, so a pinch travels the same in all four.
+ *
+ * Both banks are dropped whenever the reel goes a frame without the cursor:
+ * the pinch monitor is process-wide and keeps filling wherever the cursor is
+ * (and the reel is not even drawn while the panel's Map tab is up), so a
+ * gesture aimed at something else must not arrive here as a jump the moment
+ * the reel is hovered again. Continuity is judged on the ImGui frame counter
+ * rather than a hovered/not flag, which covers the frames the reel is not
+ * drawn at all as well as the ones where the cursor is simply elsewhere. */
+#define REEL_WHEEL_STEP 1.0f  /* a mouse notch, the unit the wheel reports in */
+#define REEL_PINCH_STEP 0.15f /* magnification per step; matches the map views */
+
+static float s_reelWheelAccum = 0.0f;
+static float s_reelPinchAccum = 0.0f;
+static int   s_reelZoomFrame  = -1;
+
+static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
+    if (!hovered) {
+        return;
+    }
+
+    /* Anything banked before a gap belongs to a gesture that has ended. */
+    const int frame = ImGui::GetFrameCount();
+    const bool continuing = (s_reelZoomFrame == frame - 1);
+    s_reelZoomFrame = frame;
+    if (!continuing) {
+        s_reelWheelAccum = 0.0f;
+        s_reelPinchAccum = 0.0f;
+    }
+
+    const ImVec2 mp = ImGui::GetMousePos();
+    const int localX = (int)(mp.x - imgMin.x);
+    const int localY = (int)(mp.y - imgMin.y);
+
+    float wheel = ImGui::GetIO().MouseWheel;
+    if (wheel != 0.0f) {
+        /* A reversal is a new gesture, not a continuation of the old one: drop
+         * what the other direction had banked so turning around answers on the
+         * next notch instead of paying the leftover back first. */
+        if ((wheel > 0.0f) != (s_reelWheelAccum > 0.0f)) {
+            s_reelWheelAccum = 0.0f;
+        }
+        s_reelWheelAccum += wheel;
+        while (s_reelWheelAccum >= REEL_WHEEL_STEP) {
+            lvEmbedWheel(localX, localY, 1.0f);
+            s_reelWheelAccum -= REEL_WHEEL_STEP;
+        }
+        while (s_reelWheelAccum <= -REEL_WHEEL_STEP) {
+            lvEmbedWheel(localX, localY, -1.0f);
+            s_reelWheelAccum += REEL_WHEEL_STEP;
+        }
+    }
+
+    /* Consumed on every hovered frame, gap or not: the accumulator is shared
+     * with the other views, so the backlog has to be taken off it either way —
+     * what a gap changes is that it is thrown away rather than spent. */
+    const float pinch = macOSPinchZoomConsume();
+    if (pinch != 0.0f && continuing) {
+        s_reelPinchAccum += pinch;
+        while (s_reelPinchAccum >= REEL_PINCH_STEP) {
+            lvEmbedWheel(localX, localY, 1.0f);
+            s_reelPinchAccum -= REEL_PINCH_STEP;
+        }
+        while (s_reelPinchAccum <= -REEL_PINCH_STEP) {
+            lvEmbedWheel(localX, localY, -1.0f);
+            s_reelPinchAccum += REEL_PINCH_STEP;
+        }
+    }
+}
+
+static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
+                            float s) {
+    /* Source, in order: the file this process wrote, else the copy the server
+     * sent us, else the copy WinBolo.net holds under the round's key.
+     *
+     * A triple gate on the file: only a round this process recorded, published
+     * to a file that is actually there. gameFrontHasLocalServer() is the
+     * load-bearing one — the accessor describes whatever round this process
+     * last recorded, so a player who hosted, left and then joined someone
+     * else's server would otherwise see a completely different game replayed
+     * here. It does not cover a host that is local but is not the server that
+     * recorded the round; what covers that is gameFrontShutdownServer clearing
+     * the accessor as it tears each server down. */
+    const char *replayPath = serverDedicatedLogLastRoundFile();
+    SDL_PathInfo replayInfo;
+    const bool haveLocalFile = gameFrontHasLocalServer() &&
+                               replayPath[0] != '\0' &&
+                               SDL_GetPathInfo(replayPath, &replayInfo);
+
+    /* Sized before the source is settled, because a round still on its way from
+     * the server draws its delivery state into this same rect. Nothing has been
+     * drawn yet either way, so the room measured here is the room the reel gets
+     * once there is one. */
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC + s_recapSlack);
+    if (rect.y < REEL_HEIGHT_MIN * s) rect.y = REEL_HEIGHT_MIN * s;
+    /* Cap last, so a container too short for the floor is still not overrun. */
+    if (rect.y > avail.y * REEL_HEIGHT_MAX_FRAC) {
+        rect.y = avail.y * REEL_HEIGHT_MAX_FRAC;
+    }
+    if (rect.y < 1.0f) rect.y = 1.0f;
+    if (rect.x < 1.0f) rect.x = 1.0f;
+
+    /* A load that came to nothing is the end of it for this round: the bytes
+     * were had and refused, so there is no source left to try. Said with the
+     * arm that already means "no replay for this round", and said here because
+     * the block below would otherwise re-read the transfer state and re-kick
+     * the WinBolo.net fetch every frame, leaving the recap on "asking the
+     * server" for the rest of the lobby. */
+    if (s_reelLoadFailed) {
+        lobbyRenderReelStatus(CLIENT_ROUND_LOG_UNAVAILABLE_NONE, 0, rect, s);
+        return;
+    }
+
+    /* A client that joined recorded nothing, so it asks the server that ran
+     * the round for the bytes and waits for them. The request goes out from
+     * here and nowhere else, so a player who never opens the recap never costs
+     * the server a transfer, and the latch closes on a send the transport
+     * accepted rather than on the attempt — the recap can be drawing before
+     * the return-to-lobby handshake has finished, and a request made then goes
+     * nowhere. Until it is accepted the ask is retried each frame, which costs
+     * one comparison against the join state. Asking comes before reading the
+     * state, which is what stops a blob left over from an earlier round being
+     * played as this one: the request supersedes whatever the transport is
+     * still holding. Only until a reel is up: taking the blob returns the
+     * state to idle, and past that point idle means the viewer has it, not
+     * that there is nothing to play.
+     *
+     * Until the bytes are here the rect above carries the transfer's state
+     * instead of a reel. A host or single-player session that recorded the
+     * round never reaches this: it resolves to its own file above and goes
+     * straight to playing it, asking for nothing and drawing no overlay. */
+    if (!s_reelActive && !haveLocalFile) {
+        if (!s_reelLogAsked && clientSimNetSendRoundLogRequest(cs)) {
+            s_reelLogAsked = true;
+        }
+        s_reelLogState = clientSimGetRoundLogState(cs);
+        s_reelLogPercent = (s_reelLogState == CLIENT_ROUND_LOG_DOWNLOADING)
+                               ? clientSimGetRoundLogPercent(cs)
+                               : 0;
+        lobbyReelLogTransfer(s_reelLogState, s_reelLogPercent);
+
+        /* A host registered with WinBolo.net hands the round there instead of
+         * serving it itself, so its refusal is the cue to go and get the same
+         * bytes over HTTP. Only the three terminal answers qualify: a transfer
+         * still moving is left alone to finish. Without a key there is nowhere
+         * to go, and the refusal stands as the thing the recap says. */
+        const bool serverRefused =
+            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED ||
+            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_NONE ||
+            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE;
+        bool haveWbnBytes = false;
+        if (serverRefused && st && st->wbnLogKey[0] != '\0') {
+            /* A key that is not the one being fetched belongs to a later
+             * round, and whatever the previous one gathered is stale. */
+            if (strncmp(s_reelWbnKey, st->wbnLogKey, sizeof(s_reelWbnKey)) != 0) {
+                lobbyReelWbnAbort();
+                SDL_strlcpy(s_reelWbnKey, st->wbnLogKey, sizeof(s_reelWbnKey));
+            }
+            lobbyReelWbnKick();
+            lobbyReelWbnPoll();
+            haveWbnBytes = (s_reelWbnBuf != nullptr);
+            if (!haveWbnBytes) {
+                /* Said in the states the overlay already draws, so the fetch
+                 * costs no state of its own and no string of its own: a
+                 * transfer with a length behind it is a download with a real
+                 * fraction of the bytes, a spent ladder is a round with no
+                 * replay to be had, and anything else is still waiting. */
+                const long long got =
+                    s_reelWbnBytesNow.load(std::memory_order_relaxed);
+                const long long total =
+                    s_reelWbnBytesTotal.load(std::memory_order_relaxed);
+                int     wbnState = CLIENT_ROUND_LOG_WAITING;
+                uint8_t wbnPct   = 0;
+                if (s_reelWbnRunning && total > 0) {
+                    long long pct = got * 100 / total;
+                    if (pct < 0) pct = 0;
+                    if (pct > 100) pct = 100;
+                    wbnState = CLIENT_ROUND_LOG_DOWNLOADING;
+                    wbnPct   = (uint8_t)pct;
+                } else if (!s_reelWbnRunning &&
+                           s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) {
+                    wbnState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
+                }
+                lobbyRenderReelStatus(wbnState, wbnPct, rect, s);
+                return;
+            }
+        }
+
+        if (!haveWbnBytes && s_reelLogState != CLIENT_ROUND_LOG_READY) {
+            lobbyRenderReelStatus(s_reelLogState, s_reelLogPercent, rect, s);
+            return;
+        }
+    }
+
+    if (!s_reelActive && !s_reelTried) {
+        /* One attempt per summary either way — a failed load must not be
+         * retried every frame. */
+        s_reelTried = true;
+        s_reelViewW = rect.x;
+        s_reelViewH = rect.y;
+        if (haveLocalFile) {
+            SDL_IOStream *io = SDL_IOFromFile(replayPath, "rb");
+            if (io) {
+                Sint64 len = SDL_GetIOSize(io);
+                /* malloc, not SDL_malloc: the viewer releases the buffer with
+                 * plain free(), and it owns it from the call on — including
+                 * when the load fails. */
+                uint8_t *buf = (len > 0) ? (uint8_t *)malloc((size_t)len) : NULL;
+                if (buf) {
+                    if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
+                        s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                                                    sdl3DrawGetRenderer(),
+                                                    buf, (size_t)len,
+                                                    (int)rect.x, (int)rect.y);
+                    } else {
+                        free(buf);
+                    }
+                }
+                SDL_CloseIO(io);
+            }
+        } else {
+            /* The downloaded blob is already the bytes the viewer wants, on
+             * the same malloc terms as the read above — hand it straight over
+             * rather than looking at it first, since the viewer owns it from
+             * the call on and frees it even when it refuses the data.
+             * WinBolo.net's copy goes first when there is one, since it is
+             * only ever fetched after the server has already declined to send
+             * one. Nulling the static as the pointer goes is what keeps the
+             * ownership single: from here the viewer frees it, and nothing
+             * else may. */
+            size_t   len = 0;
+            uint8_t *buf = nullptr;
+            if (s_reelWbnBuf) {
+                buf          = s_reelWbnBuf;
+                len          = s_reelWbnLen;
+                s_reelWbnBuf = nullptr;
+                s_reelWbnLen = 0;
+            } else {
+                buf = clientSimTakeRoundLog(cs, &len);
+            }
+            if (buf) {
+                s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                                            sdl3DrawGetRenderer(),
+                                            buf, len,
+                                            (int)rect.x, (int)rect.y);
+            }
+        }
+        /* Tell a reel that came up who is watching it, so the round is drawn
+         * from their side: their team's tanks green, the other side's red.
+         * The lobby slot is where that lives — its name is the key the log
+         * shares, and the team alliances the server applied at kickoff are in
+         * the log itself, so the reel needs nothing else. A spectator has no
+         * slot of their own (and myPlayerNum is a stale index for one), so
+         * they are named as nobody and the reel draws as it always did. */
+        const ClientLobbySlot *watcher =
+            clientSimIsSpectator(cs)
+                ? nullptr
+                : clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        lvEmbedSetSelfName(watcher ? watcher->playerName : "");
+
+        /* No reel out of the attempt means there is no replay to be had for
+         * this round, whichever way it fell short — the file would not open,
+         * came up short, would not fit in memory, no bytes were handed over,
+         * or the viewer refused the ones that were. They all read the same to
+         * the player, and none of them get better by being tried again. */
+        s_reelLoadFailed = !s_reelActive;
+    }
+    if (!s_reelActive) return;
+
+    /* The frame-end hook pauses a reel the recap stopped drawing, which is
+     * every frame the panel's Map tab is up. Drawing again undoes that pause
+     * — but only when the pause was ours, so a deliberate one survives a
+     * round trip through the other tab. */
+    if (s_reelAutoPaused) {
+        s_reelAutoPaused = false;
+        lvEmbedPlay();
+    }
+
+    if (rect.x != s_reelViewW || rect.y != s_reelViewH) {
+        lvEmbedSetViewportSize((int)rect.x, (int)rect.y);
+        s_reelViewW = rect.x;
+        s_reelViewH = rect.y;
+    }
+
+    void *tex = NULL;
+    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    ImVec2 imgMin = ImGui::GetCursorScreenPos();
+    float  blockTopY = ImGui::GetCursorPosY();
+    ImVec2 imgSize = rect;
+    if (lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) &&
+        tex && texW > 0 && texH > 0) {
+        /* The tile grid is fitted to the rect by rounding to whole tiles, so
+         * the slice it reports rarely lands on the rect exactly. Trim the
+         * visible slice down to whole source pixels and take the drawn size
+         * from that, so one source pixel is always exactly `zoom` host pixels
+         * — the ratio the standalone viewer gets by blitting at that multiple
+         * and letting the window edge clip. What the trim leaves over is under
+         * one zoom step wide and stays as padding. */
+        float zoom = lvEmbedGetZoomLevel();
+        if (zoom <= 0.0f) zoom = 1.0f;
+        int visW = (int)floorf(rect.x / zoom);
+        int visH = (int)floorf(rect.y / zoom);
+        if (visW < 1) visW = 1;
+        if (visH < 1) visH = 1;
+        if (visW > srcW) visW = srcW;
+        if (visH > srcH) visH = srcH;
+        imgSize.x = (float)visW * zoom;
+        imgSize.y = (float)visH * zoom;
+        /* The render target is a tile larger than the visible slice, so the
+         * UVs pick whole source pixels out of it, starting at the sub-tile pan
+         * offset. Whole pixels on both edges are what keeps the blit an exact
+         * multiple instead of a resample. */
+        ImVec2 uv0((float)srcX / (float)texW, (float)srcY / (float)texH);
+        ImVec2 uv1((float)(srcX + visW) / (float)texW,
+                   (float)(srcY + visH) / (float)texH);
+        /* The reel is game pixel art magnified `zoom` times. Drawn through
+         * ImGui the SDL_Renderer backend forces LINEAR on every texture it
+         * binds, which is what made the replay look soft — the same defect the
+         * lobby's inline map preview had. Point-sample it for the blit and put
+         * LINEAR back for the surrounding UI. */
+        imguiPushNearestSampling();
+        ImGui::Image((ImTextureID)tex, imgSize, uv0, uv1);
+        imguiPopNearestSampling();
+#if BOLO_RECAP_CLIP_GIF
+        /* Publish the exact slice this blit used. The crop frame is normalized
+         * against it, so an export maps the frame back through the same
+         * numbers the picture was drawn with. */
+        s_reelLastSlice.x = srcX;
+        s_reelLastSlice.y = srcY;
+        s_reelLastSlice.w = visW;
+        s_reelLastSlice.h = visH;
+#endif
+    } else {
+        ImGui::Dummy(rect);
+    }
+
+    /* Input overlay on the image rect: the button takes the drag as an
+     * active item, so a drag pans the reel instead of moving the window
+     * under it. Mirrors the map preview popup. Sized to the image, not the
+     * rect, so the coordinates handed back to the viewer are image-local. */
+    ImGui::SetCursorScreenPos(imgMin);
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##ReelView", imgSize);
+    const bool reelHovered = ImGui::IsItemHovered();
+    if (reelHovered) {
+        /* Claim the wheel on every hovered frame, not just the ones that
+         * carry a notch: the ownership set here is what ImGui reads at the
+         * start of the next frame, and it is what stops the enclosing recap
+         * window from scrolling under the reel as it zooms. */
+        ImGui::SetKeyOwner(ImGuiKey_MouseWheelY, ImGui::GetItemID());
+    }
+    lobbyReelZoomInput(reelHovered, imgMin);
+    const bool reelPanActivated = ImGui::IsItemActivated();
+    const bool reelPanActive =
+        ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    ImVec2 reelPanDrag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+
+    /* The crop frame goes on after the reel's own overlay so its handles win
+     * the hit test, and it reports back whether it took the mouse — the pan
+     * below sits out the frames it did. */
+    bool cropTookMouse = false;
+#if BOLO_RECAP_CLIP_GIF
+    cropTookMouse = lobbyReelCropOverlay(imgMin, imgSize, reelPanActive);
+#endif
+
+    if (!cropTookMouse) {
+        if (reelPanActivated) {
+            lvEmbedPanBegin();
+        }
+        if (reelPanActive) {
+            lvEmbedPanDelta(reelPanDrag.x, reelPanDrag.y);
+        }
+    }
+
+    /* Claim the whole rect whatever the image came out at, so zooming does
+     * not shuffle everything below the reel up and down. */
+    ImGui::SetCursorPosY(blockTopY + rect.y);
+
+    /* Transport toggle as a glyph: a written caption is the widest thing on
+     * this row and its width moves as the label swaps and as the language
+     * changes, which shoves everything after it. The icon is square and the
+     * two states are the same size, so the row holds still. The written label
+     * stays as the tooltip — it is already translated, and a bare glyph does
+     * not say what it does for someone meeting it the first time. */
+    const bool reelPlaying = lvEmbedIsPlaying();
+    SDL_Texture *transportIcon = reelPlaying ? s_iconPause : s_iconPlay;
+    const char  *transportText = langGetText(reelPlaying ? STR_LV_PAUSE
+                                                         : STR_LV_PLAY_BTN);
+    bool transportClicked;
+    if (transportIcon) {
+        transportClicked = ImGui::ImageButton(
+            "##reelplay", (ImTextureID)transportIcon,
+            ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()),
+            ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
+            ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        imguiHelpTooltip(transportText);
+    } else {
+        transportClicked = ImGui::Button(transportText);
+    }
+    if (transportClicked) {
+        /* Whichever way it goes, the player has now said what they want —
+         * drop any claim we had on the transport. */
+        s_reelAutoPaused = false;
+        if (reelPlaying) {
+            lvEmbedPause();
+        } else {
+            lvEmbedPlay();
+        }
+    }
+
+    uint32_t curMs = 0, totalMs = 0;
+    lvEmbedGetProgress(&curMs, &totalMs);
+
+    /* Drop where the reel is sitting into the chat box, so the moment can be
+     * talked about. Punctuation rather than a lang string, like the zoom
+     * buttons: the token it writes is the caption. */
+    ImGui::SameLine();
+    if (ImGui::Button("@")) {
+        lobbyChatInputAppendTime(curMs);
+    }
+
+#if BOLO_RECAP_CLIP_GIF
+    /* Export the next few seconds from wherever the reel is sitting. The view
+     * is left as the player framed it — they have already chosen what they are
+     * looking at, which is the whole point of exporting from here rather than
+     * off a row. Full height, so it sits level with the two buttons before
+     * it rather than shrinking the transport row. */
+    ImGui::SameLine();
+    if (lobbyClipGifButton("##reelgif", false)) {
+        lobbyClipGifStartFromPlayhead(curMs, clientSimGetMapName(cs));
+    }
+
+    /* Crop frame, next to the export it crops: with it up, that export takes
+     * the framed rectangle instead of the whole visible view. */
+    ImGui::SameLine();
+    if (lobbyReelCropButton("##reelcrop")) {
+        s_reelCropOn = !s_reelCropOn;
+    }
+#endif
+
+    /* Seek slider shares the transport row with Play/Pause and takes the rest
+     * of the width. Times are the presented window's, which with the lobby
+     * hidden is the round itself. */
+    ImGui::SameLine();
+    if (!s_reelSeeking) {
+        s_reelSeekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
+        if (s_reelSeekRatio > 1.0f) s_reelSeekRatio = 1.0f;
+        /* Idle: the applied value is wherever the reel actually is, so the
+         * next drag measures its first step from the truth. */
+        s_reelSeekApplied = s_reelSeekRatio;
+    }
+    unsigned curSecs = (unsigned)(curMs / 1000u);
+    char seekLabel[48];
+    if (totalMs > 0) {
+        unsigned totalSecs = (unsigned)(totalMs / 1000u);
+        snprintf(seekLabel, sizeof(seekLabel), "%02u:%02u / %02u:%02u",
+                 curSecs / 60u, curSecs % 60u, totalSecs / 60u, totalSecs % 60u);
+    } else {
+        snprintf(seekLabel, sizeof(seekLabel), "%02u:%02u / --:--",
+                 curSecs / 60u, curSecs % 60u);
+    }
+    ImGui::PushItemWidth(-1);
+    /* NoRoundToFormat is essential: seekLabel is a pre-rendered string
+     * ("01:12 / 04:30"), not a numeric printf format. Without the flag ImGui
+     * rounds the dragged value by round-tripping it through that label, which
+     * parses back to 0 and pins every seek to the start of the log. */
+    if (ImGui::SliderFloat("##ReelSeek", &s_reelSeekRatio, 0.0f, 1.0f, seekLabel,
+                           ImGuiSliderFlags_NoRoundToFormat)) {
+        if (!s_reelSeeking) {
+            /* Freeze playback for the scrub instead of letting every applied
+             * seek pause and resume it — lvEmbedSeekRatio does that by
+             * removing and re-adding the two SDL playback timers, which is
+             * not something to do sixty times a second. */
+            s_reelSeeking        = true;
+            s_reelSeekWasPlaying = lvEmbedIsPlaying();
+            if (s_reelSeekWasPlaying) lvEmbedPause();
+            s_reelSeekAppliedMs  = 0;
+        }
+    }
+    /* Live scrub: the tanks follow the handle as it is dragged, not only when
+     * it is dropped.
+     *
+     * The two directions cost very different amounts. A seek restores the
+     * newest snapshot at or before the target and re-decodes forward to it at
+     * 20 ms of log per tick, and a round carries essentially one snapshot — at
+     * its start — so a naive per-frame seek re-decoded the whole round every
+     * frame, which is what made this release-only. Forward seeks no longer pay
+     * that: lv_screenSeekToAbsoluteMs now continues the decode from where it
+     * already stands, so dragging right costs only the ticks the handle
+     * crossed since the last frame and can run every frame. Dragging left
+     * still has to rewind through the snapshot, so it is throttled and only
+     * the newest seek in a burst is paid for.
+     *
+     * The release below always applies the exact dropped value, so where it
+     * lands is never a throttled approximation. */
+    if (s_reelSeeking && ImGui::IsItemActive()) {
+        Uint64 nowMs = SDL_GetTicks();
+        bool   apply = false;
+        if (s_reelSeekRatio > s_reelSeekApplied) {
+            apply = true;                       /* forward: incremental */
+        } else if (s_reelSeekRatio < s_reelSeekApplied) {
+            apply = (nowMs - s_reelSeekAppliedMs >= RECAP_SCRUB_BACK_MS);
+        }
+        if (apply) {
+            lvEmbedSeekRatio(s_reelSeekRatio);
+            s_reelSeekApplied   = s_reelSeekRatio;
+            s_reelSeekAppliedMs = nowMs;
+        }
+    }
+    /* IsItemDeactivated, not ...AfterEdit: this also has to un-pause, and a
+     * release that ImGui does not count as an edit would otherwise leave the
+     * reel frozen for good. */
+    if (s_reelSeeking && ImGui::IsItemDeactivated()) {
+        s_reelSeeking = false;
+        /* Land exactly on the dropped value. A no-op when the last live apply
+         * already got there — a forward seek to the current time decodes
+         * nothing. */
+        lvEmbedSeekRatio(s_reelSeekRatio);
+        s_reelSeekApplied = s_reelSeekRatio;
+        if (s_reelSeekWasPlaying) lvEmbedPlay();
+        s_reelSeekWasPlaying = false;
+    }
+    ImGui::PopItemWidth();
+
+    s_reelDrawn = true;
+}
+
+#if BOLO_RECAP_CLIP_GIF
+/* ── Clip GIF export ──────────────────────────────────────────────
+ * A clip row can hand its moment to a GIF the player can post somewhere.
+ * The round is not sitting in memory as frames — it has to be replayed to be
+ * seen — so the export steps the reel five ticks at a time and reads the
+ * result back off the GPU, which is a second or more of work for a long clip.
+ * That runs a batch per lobby frame under a modal rather than in one loop, so
+ * the lobby keeps drawing and the player can call it off.
+ *
+ * The caption and the modal's title are the format's name, not copy — the same
+ * rule the transport's @ button follows. */
+static const char *const CLIP_GIF_TITLE = "GIF";
+static const char *const CLIP_GIF_POPUP = "GIF##clipgif";
+
+/* Log ticks per captured frame. The viewer's log clock is 20 ms an entry, so
+ * five of them is 100 ms — 10 fps, which is 10 centiseconds a frame. This is
+ * the reel's clock only; a clip's own duration is in sim ticks and is never
+ * divided by this. */
+static const int CLIP_GIF_TICKS_PER_FRAME = 5;
+static const int CLIP_GIF_CS_PER_FRAME    = 10;
+/* Wall-clock length of one captured frame, the same 10 fps said in ms. */
+static const uint32_t CLIP_GIF_FRAME_MS   = 100u;
+static const int CLIP_GIF_QUALITY         = 16;  /* the encoder's own default */
+/* 15 s of clip, and a floor so a clip that arrives with no duration still
+ * exports something rather than an empty file. */
+static const int CLIP_GIF_MAX_FRAMES      = 150;
+static const int CLIP_GIF_MIN_FRAMES      = 10;
+/* What the transport's own button captures, having no clip to take a length
+ * from: long enough to hold a moment, short enough to still be worth posting. */
+static const uint32_t CLIP_GIF_PLAYHEAD_MS = 5000u;
+/* Frames per lobby frame. Four keeps the longest clip under a second of
+ * wall time while leaving the readback stalls small enough to hide. */
+static const int CLIP_GIF_FRAMES_PER_PASS = 4;
+/* Every frame in a GIF is the same size, so the crop is fixed once at the
+ * start; this caps how wide it may be, and the height follows the same ratio
+ * so the clip keeps the shape the reel showed. */
+static const int CLIP_GIF_MAX_WIDTH       = 480;
+
+static struct ClipGifCapture {
+    bool        active;
+    bool        failed;
+    MsfGifState enc;
+    int         frame;
+    int         total;
+    SDL_Rect    crop;           /* inside the viewer's render target */
+    uint32_t    restoreMs;      /* where the reel was before we took it */
+    bool        restorePlaying;
+    char        name[96];       /* <map>_<mmss>, the file's base name */
+} s_clipGif = {};
+
+/* <map>_<mmss>, reduced to characters every filesystem here will take — a map
+ * name is free text and reaches this straight off the wire. */
+static void lobbyClipGifBaseName(char *out, size_t outLen, const char *mapName,
+                                 unsigned mins, unsigned secs) {
+    char base[64];
+    if (mapName && mapName[0]) {
+        snprintf(base, sizeof(base), "%s", mapName);
+        size_t blen = SDL_strlen(base);
+        if (blen > 4 && SDL_strcmp(base + blen - 4, ".map") == 0) {
+            base[blen - 4] = '\0';
+        }
+    } else {
+        snprintf(base, sizeof(base), "clip");
+    }
+    for (char *p = base; *p != '\0'; p++) {
+        char c = *p;
+        bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') || c == '-' || c == '_';
+        if (!keep) *p = '_';
+    }
+    snprintf(out, outLen, "%s_%02u%02u", base, mins, secs);
+}
+
+/* Put the reel back where the player had it, transport included: an export is
+ * a detour, not a seek they asked for. */
+static void lobbyClipGifRestoreReel(void) {
+    lvEmbedSeekToTime(s_clipGif.restoreMs);
+    if (s_clipGif.restorePlaying) {
+        lvEmbedPlay();
+    }
+}
+
+/* End the encoder however the capture ended — it holds heap buffers from
+ * msf_gif_begin on and only msf_gif_end releases them, so cancelling has to
+ * come through here too. outResult takes the finished bytes when the caller
+ * means to write them (and then owes msf_gif_free); NULL throws them away. */
+static void lobbyClipGifFinish(MsfGifResult *outResult) {
+    MsfGifResult res = msf_gif_end(&s_clipGif.enc);
+    if (outResult != NULL) {
+        *outResult = res;
+    } else {
+        msf_gif_free(res);
+    }
+    lobbyClipGifRestoreReel();
+    s_clipGif.active = false;
+    s_clipGif.failed = false;
+    s_clipGif.frame  = 0;
+    s_clipGif.total  = 0;
+}
+
+static void lobbyClipGifAbort(void) {
+    if (s_clipGif.active) {
+        lobbyClipGifFinish(NULL);
+    }
+}
+
+static bool lobbyClipGifActive(void) {
+    return s_clipGif.active;
+}
+
+/* Park the reel on the moment and open the encoder at the size every frame of
+ * this capture will be. Takes a time and a length rather than a clip: the
+ * transport's button has neither a clip nor a cell, only where the playhead is.
+ * centreOnCell splits the two the same way lvEmbedSeekWindowMs does — a clip
+ * row names a place as well as a moment, the transport names only a moment and
+ * leaves the framing the player set up alone. */
+static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
+                              bool centreOnCell, int mapX, int mapY,
+                              const char *mapName) {
+    if (s_clipGif.active || !lvEmbedIsActive()) {
+        return;
+    }
+
+    lvEmbedGetProgress(&s_clipGif.restoreMs, NULL);
+    s_clipGif.restorePlaying = lvEmbedIsPlaying();
+    lvEmbedPause();
+    /* Same seek the caller's own control does, so the capture opens on the
+     * moment it named. */
+    if (centreOnCell) {
+        lvEmbedSeekToClip(startMs, mapX, mapY);
+    } else {
+        lvEmbedSeekToTime(startMs);
+    }
+
+    void *tex = NULL;
+    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    if (!lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) ||
+        tex == NULL || srcW <= 0 || srcH <= 0) {
+        lobbyClipGifRestoreReel();
+        return;
+    }
+    /* The slice is reported against a target a tile larger than itself, but
+     * clamp anyway — the crop is read back as-is for every frame after this. */
+    if (srcX + srcW > texW) srcW = texW - srcX;
+    if (srcY + srcH > texH) srcH = texH - srcY;
+    if (srcW <= 0 || srcH <= 0) {
+        lobbyClipGifRestoreReel();
+        return;
+    }
+    int cropW, cropH;
+    if (s_reelCropOn && s_reelLastSlice.w > 0 && s_reelLastSlice.h > 0) {
+        /* The frame the player drew is what this takes. It is normalized
+         * against the slice the reel blitted, so mapping it back is that same
+         * slice's extent times the fractions — the identical arithmetic the
+         * Image's uv0/uv1 used, which is what makes the GIF exactly the
+         * rectangle the outline showed.
+         *
+         * The extent comes from the last draw (an on-screen size a seek cannot
+         * change) while the origin is the fresh one read above, because the
+         * seek this export just did may have moved the camera and the frame
+         * names a place on the view, not on the map. */
+        int visW = s_reelLastSlice.w;
+        int visH = s_reelLastSlice.h;
+        if (visW > srcW) visW = srcW;
+        if (visH > srcH) visH = srcH;
+        int fx0 = (int)(s_reelCropX0 * (float)visW + 0.5f);
+        int fy0 = (int)(s_reelCropY0 * (float)visH + 0.5f);
+        int fx1 = (int)(s_reelCropX1 * (float)visW + 0.5f);
+        int fy1 = (int)(s_reelCropY1 * (float)visH + 0.5f);
+        if (fx0 < 0) fx0 = 0;
+        if (fy0 < 0) fy0 = 0;
+        if (fx1 > visW) fx1 = visW;
+        if (fy1 > visH) fy1 = visH;
+        cropW = fx1 - fx0;
+        cropH = fy1 - fy0;
+        if (cropW < 1) cropW = 1;
+        if (cropH < 1) cropH = 1;
+        s_clipGif.crop.x = srcX + fx0;
+        s_clipGif.crop.y = srcY + fy0;
+        s_clipGif.crop.w = cropW;
+        s_clipGif.crop.h = cropH;
+        /* No CLIP_GIF_MAX_WIDTH here: that cap trims an uncropped view down to
+         * something worth posting, and a frame is the player saying what to
+         * take instead. */
+    } else {
+        cropW = srcW;
+        cropH = srcH;
+        if (cropW > CLIP_GIF_MAX_WIDTH) {
+            cropW = CLIP_GIF_MAX_WIDTH;
+            cropH = (int)((float)srcH * (float)cropW / (float)srcW);
+        }
+        if (cropW < 1) cropW = 1;
+        if (cropH < 1) cropH = 1;
+        if (cropH > srcH) cropH = srcH;
+        s_clipGif.crop.x = srcX + (srcW - cropW) / 2;
+        s_clipGif.crop.y = srcY + (srcH - cropH) / 2;
+        s_clipGif.crop.w = cropW;
+        s_clipGif.crop.h = cropH;
+    }
+
+    /* From the length in ms, not in ticks: the reel steps a log clock and a
+     * clip is measured in sim ticks, and the two do not share a rate. */
+    uint32_t frames = durationMs / CLIP_GIF_FRAME_MS;
+    if (frames > (uint32_t)CLIP_GIF_MAX_FRAMES) frames = CLIP_GIF_MAX_FRAMES;
+    if (frames < (uint32_t)CLIP_GIF_MIN_FRAMES) frames = CLIP_GIF_MIN_FRAMES;
+
+    if (!msf_gif_begin(&s_clipGif.enc, cropW, cropH)) {
+        lobbyClipGifRestoreReel();
+        return;
+    }
+
+    unsigned secs = (unsigned)(startMs / 1000u);
+    lobbyClipGifBaseName(s_clipGif.name, sizeof(s_clipGif.name), mapName,
+                         secs / 60u, secs % 60u);
+    s_clipGif.frame  = 0;
+    s_clipGif.total  = (int)frames;
+    s_clipGif.failed = false;
+    s_clipGif.active = true;
+}
+
+/* A clip row's export: the moment and the place the row names, for as long as
+ * the round's scorer decided the clip runs. */
+static void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName) {
+    lobbyClipGifStart(h->startMs, h->durationMs, true, h->mapX, h->mapY,
+                      mapName);
+}
+
+/* The transport's export: a fixed length from wherever the playhead sits, with
+ * the view left where the player put it. */
+static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName) {
+    lobbyClipGifStart(curMs, CLIP_GIF_PLAYHEAD_MS, false, 0, 0, mapName);
+}
+
+/* The export control itself: the picture glyph where it loaded, the format's
+ * name where it didn't. `compact` drops the frame padding's vertical half so
+ * the button fits a one-text-line clip row; the transport's copy keeps it and
+ * comes out the height of the buttons beside it. The tooltip names the format
+ * either way — a glyph on its own does not say which one. (Not `small`: the
+ * Windows RPC headers define that as a type.) */
+static bool lobbyClipGifButton(const char *id, bool compact) {
+    const float lineH = ImGui::GetTextLineHeight();
+    bool clicked;
+
+    if (s_iconPicture) {
+        if (compact) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+        }
+        clicked = ImGui::ImageButton(id, (ImTextureID)s_iconPicture,
+                                     ImVec2(lineH, lineH),
+                                     ImVec2(0, 0), ImVec2(1, 1),
+                                     ImVec4(0, 0, 0, 0),
+                                     ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        if (compact) {
+            ImGui::PopStyleVar();
+        }
+    } else {
+        /* id already carries its own ## prefix, so this reads as the caption
+         * with the same hidden id the icon path uses. */
+        char label[48];
+        snprintf(label, sizeof(label), "%s%s", CLIP_GIF_TITLE, id);
+        clicked = compact ? ImGui::SmallButton(label) : ImGui::Button(label);
+    }
+    imguiHelpTooltip(CLIP_GIF_TITLE);
+    return clicked;
+}
+
+/* Width the control above will take, for a caller placing it by hand. */
+static float lobbyClipGifButtonWidth(void) {
+    return (s_iconPicture ? ImGui::GetTextLineHeight()
+                          : ImGui::CalcTextSize(CLIP_GIF_TITLE).x)
+           + ImGui::GetStyle().FramePadding.x * 2.0f;
+}
+
+/* One frame: read the fixed crop out of the viewer's render target and hand it
+ * to the encoder. The lobby is mid-frame and owns the render target, so
+ * whatever it was pointing at goes straight back. */
+static bool lobbyClipGifCaptureFrame(void) {
+    void *tex = NULL;
+    int texW = 0, texH = 0, srcX = 0, srcY = 0, srcW = 0, srcH = 0;
+    if (!lvEmbedFrameTexture(&tex, &texW, &texH, &srcX, &srcY, &srcW, &srcH) ||
+        tex == NULL) {
+        return false;
+    }
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer == NULL) {
+        return false;
+    }
+
+    SDL_Texture *saved = SDL_GetRenderTarget(renderer);
+    if (!SDL_SetRenderTarget(renderer, (SDL_Texture *)tex)) {
+        return false;
+    }
+    SDL_Surface *raw = SDL_RenderReadPixels(renderer, &s_clipGif.crop);
+    SDL_SetRenderTarget(renderer, saved);
+    if (raw == NULL) {
+        return false;
+    }
+
+    /* Convert rather than assume: the readback's layout follows the render
+     * target, and the encoder reads RGBA8 rows. Its own pitch goes with it —
+     * a converted surface is not promised to be tightly packed. */
+    SDL_Surface *rgba = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(raw);
+    if (rgba == NULL) {
+        return false;
+    }
+    bool ok = msf_gif_frame(&s_clipGif.enc, (uint8_t *)rgba->pixels,
+                            CLIP_GIF_CS_PER_FRAME, CLIP_GIF_QUALITY,
+                            rgba->pitch) != 0;
+    SDL_DestroySurface(rgba);
+    return ok;
+}
+
+/* Native save dialog's answer. */
+typedef struct {
+    char path[FILENAME_MAX];
+    int  ok;
+    int  done;
+} ClipGifSaveState;
+
+static void SDLCALL lobbyClipGifSaveCallback(void *userdata,
+                                             const char *const *filelist,
+                                             int filter) {
+    ClipGifSaveState *st = (ClipGifSaveState *)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(st->path, filelist[0], sizeof(st->path));
+        /* Not every platform's dialog applies the filter's extension to a name
+         * typed without one, so a name that arrives bare gets it here — the
+         * file has to open as a GIF wherever the player shares it. Matched
+         * case-insensitively so a name already ending .GIF keeps the one it
+         * has. If there is no room for the suffix the path stands as typed;
+         * SDL_strlcat leaves it terminated either way. */
+        size_t len = SDL_strlen(st->path);
+        if (len > 0 &&
+            (len < 4 || SDL_strcasecmp(st->path + len - 4, ".gif") != 0)) {
+            SDL_strlcat(st->path, ".gif", sizeof(st->path));
+        }
+        st->ok = 1;
+    }
+    st->done = 1;
+}
+
+static bool lobbyClipGifWriteFile(const char *path, const MsfGifResult *res) {
+    SDL_IOStream *io = SDL_IOFromFile(path, "wb");
+    if (io == NULL) {
+        return false;
+    }
+    bool ok = (SDL_WriteIO(io, res->data, res->dataSize) == res->dataSize);
+    SDL_CloseIO(io);
+    return ok;
+}
+
+/* Where the bytes go, on the split windowSaveMap uses: no usable native dialog
+ * under a controller, so that path names the file itself under the pref dir and
+ * reports where it went; the desktop path asks. The report is the path — the
+ * box's title is the format name and its icon carries the rest, so neither
+ * outcome needs a sentence. */
+static void lobbyClipGifSave(const MsfGifResult *res) {
+    if (uiShouldUseControllerMode()) {
+        char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (prefDir == NULL) {
+            return;
+        }
+        char clipsDir[FILENAME_MAX];
+        snprintf(clipsDir, sizeof(clipsDir), "%sclips", prefDir);
+        SDL_CreateDirectory(clipsDir);
+
+        char fullPath[FILENAME_MAX];
+        snprintf(fullPath, sizeof(fullPath), "%s/%s.gif", clipsDir,
+                 s_clipGif.name);
+        SDL_free(prefDir);
+
+        bool ok = lobbyClipGifWriteFile(fullPath, res);
+        imguiMessageBoxEx(CLIP_GIF_TITLE, fullPath,
+                          ok ? IMGUI_MSG_INFO : IMGUI_MSG_ERROR,
+                          IMGUI_MSG_OK);
+        return;
+    }
+
+    ClipGifSaveState state;
+    SDL_DialogFileFilter filters[] = {
+        { "GIF Images", "gif" },
+    };
+
+    memset(&state, 0, sizeof(state));
+
+    SDL_ShowSaveFileDialog(lobbyClipGifSaveCallback, &state,
+                           sdl3DrawGetWindow(), filters, 1, NULL);
+    while (!state.done) {
+        SDL_Event e;
+        SDL_WaitEventTimeout(&e, 100);
+    }
+    if (state.ok && !lobbyClipGifWriteFile(state.path, res)) {
+        /* The player picked the place, so silence would be the only cue that
+         * nothing landed there. */
+        imguiMessageBoxEx(CLIP_GIF_TITLE, state.path, IMGUI_MSG_ERROR,
+                          IMGUI_MSG_OK);
+    }
+}
+
+/* Drives a capture from the recap's own frames and draws the modal over it.
+ * Called once per body render, after the clip rows that arm it. */
+static void lobbyClipGifRender(float s) {
+    if (!s_clipGif.active) {
+        return;
+    }
+    /* Opened from here rather than from the row that started the capture: a
+     * popup's id is seeded from the window submitting it, and the recap body
+     * is drawn from two different containers. Re-asserting it every frame the
+     * capture is live is what keeps the modal with the capture if the lobby
+     * swaps layouts underneath it. */
+    if (!ImGui::IsPopupOpen(CLIP_GIF_POPUP)) {
+        ImGui::OpenPopup(CLIP_GIF_POPUP);
+    }
+
+    MsfGifResult finished = {};
+    bool         haveFinished = false;
+
+    if (ImGui::BeginPopupModal(CLIP_GIF_POPUP, NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize
+                               | ImGuiWindowFlags_NoCollapse
+                               | ImGuiWindowFlags_NoSavedSettings)) {
+        for (int i = 0; i < CLIP_GIF_FRAMES_PER_PASS &&
+                        s_clipGif.frame < s_clipGif.total; i++) {
+            lvEmbedStepTicks(CLIP_GIF_TICKS_PER_FRAME);
+            if (!lobbyClipGifCaptureFrame()) {
+                /* A refused readback or a spent encoder stops here rather than
+                 * writing a clip that cuts off mid-moment. */
+                s_clipGif.failed = true;
+                break;
+            }
+            s_clipGif.frame++;
+        }
+
+        /* Both widgets take the same explicit width rather than -1: the window
+         * auto-resizes, and a fill-the-rest width inside one chases its own
+         * previous frame until the modal is as narrow as the button. */
+        const float rowW = 280.0f * s;
+        float done = (s_clipGif.total > 0)
+                         ? (float)s_clipGif.frame / (float)s_clipGif.total
+                         : 0.0f;
+        ImGui::ProgressBar(done, ImVec2(rowW, 0.0f));
+
+        WBUI::PushCancelStyle();
+        bool cancel = ImGui::Button(langGetText(STR_CANCEL),
+                                    ImVec2(rowW, 0.0f));
+        WBUI::PopCancelStyle();
+        if (WBUI::CancelKeyPressed()) {
+            cancel = true;
+        }
+
+        if (cancel || s_clipGif.failed) {
+            lobbyClipGifFinish(NULL);
+            ImGui::CloseCurrentPopup();
+        } else if (s_clipGif.frame >= s_clipGif.total) {
+            lobbyClipGifFinish(&finished);
+            haveFinished = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    /* Saving runs its own dialog loop, so it waits until the popup is off the
+     * stack. The bytes are ours from msf_gif_end on either way. */
+    if (haveFinished) {
+        if (finished.data != NULL) {
+            lobbyClipGifSave(&finished);
+        }
+        msf_gif_free(finished);
+    }
+}
+#endif /* BOLO_RECAP_CLIP_GIF */
+
+#if BOLO_RECAP_WBN_RATING
+/* ── WinBolo.net rating & comments ────────────────────────────────
+ * The finished round's own page on WinBolo.net: the aggregate stars it
+ * has been given, the comments left on it, and a form to add one. All of
+ * it hangs off the summary's log key, which only a round a
+ * WinBolo.net-registered host uploaded ever carries — a LAN or
+ * single-player round has nothing to fetch and draws nothing.
+ *
+ * The async lifecycle is the log viewer's comments window
+ * (src/logviewer/imgui/imgui_comments.cpp): one fetch per key, polled
+ * from the render, and a post that re-arms the fetch when it lands. */
+
+/* The round's log reaches WinBolo.net a few seconds after the recap opens,
+ * so the first GET can legitimately miss a round that is about to exist.
+ * Bounded retries cover the upload lag without becoming a per-frame
+ * request loop against a key the server will never have. */
+static const int    RECAP_RATING_RETRY_MAX = 6;
+static const Uint64 RECAP_RATING_RETRY_MS  = 5000;
+
+/* The key everything below belongs to; a different one means the state is
+ * for the previous round and is thrown away. */
+static char s_recapRatingKey[ROUND_STATS_LOGKEY_LEN] = "";
+
+static WbnCommentsFetch       *s_recapFetch         = nullptr;
+static bool                    s_recapFetchComplete = false;
+static int                     s_recapFetchStatus   = 0;
+static char                    s_recapFetchErr[256] = "";
+static std::vector<WbnComment> s_recapComments;
+static float                   s_recapRating10      = 0.0f;
+static int                     s_recapNumRatings    = 0;
+
+static WbnCommentPost *s_recapPost             = nullptr;
+static char            s_recapPostMsg[256]     = "";
+static int             s_recapPostStatus       = 0;
+static char            s_recapCommentText[512] = "";
+static int             s_recapCommentRating    = 0;
+
+/* Fetches spent on this key, and the earliest tick the next one may go out. */
+static int    s_recapFetchAttempts  = 0;
+static Uint64 s_recapFetchRetryAtMs = 0;
+
+/* Another player posting against this round re-reads the page, so their stars
+ * and comment show without waiting for the next round. The counter is only
+ * watched for movement; it is consumed on every move but acted on at most once
+ * per interval, so a burst of nudges cannot queue a re-read up for later. The
+ * bound sits here rather than on the server because what it protects is this
+ * client's traffic to WinBolo.net, and it holds whatever the server or a
+ * modified client sends. */
+static uint32_t     s_recapRatingSeenSeq       = 0;
+static Uint64       s_recapRatingNudgeAtMs     = 0;
+static const Uint64 RECAP_RATING_NUDGE_MIN_MS  = 10000;
+
+/* Both expands, driven from our own flags the way the highlight and award
+ * expands above are, so a new round's recap starts on the closed form. */
+static bool s_recapShowComments   = false;
+static bool s_recapShowAddComment = false;
+
+static void lobbyRatingReset(void) {
+    if (s_recapFetch) {
+        wbn_comments_fetch_free(s_recapFetch);
+        s_recapFetch = nullptr;
+    }
+    s_recapComments.clear();
+    s_recapRating10       = 0.0f;
+    s_recapNumRatings     = 0;
+    s_recapFetchComplete  = false;
+    s_recapFetchStatus    = 0;
+    s_recapFetchErr[0]    = '\0';
+    s_recapFetchAttempts  = 0;
+    s_recapFetchRetryAtMs = 0;
+    s_recapPostMsg[0]     = '\0';
+    s_recapPostStatus     = 0;
+    s_recapCommentText[0] = '\0';
+    s_recapCommentRating  = 0;
+    s_recapShowComments   = false;
+    s_recapShowAddComment = false;
+    s_recapRatingKey[0]   = '\0';
+    /* An in-flight post is deliberately left running — it may still complete
+     * against the old key, and the only cost is that that round does not
+     * auto-refresh. */
+}
+
+/* Point the state at the round the lobby is holding, dropping whatever the
+ * previous one loaded. Keyed off the summary rather than off the block being
+ * drawn: between rounds the summary is gone, the desktop panel may be flipped
+ * to the map and the controller layout may be on another tab, and none of
+ * those paths reach the renderer — so a render-driven reset would leave the
+ * finished round's stars and comments loaded and show them for the frames
+ * before the next round's summary lands. Idempotent, so both the per-frame
+ * hook and the renderer can call it. */
+static void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st) {
+    const char *key = (st && st->wbnLogKey[0] != '\0') ? st->wbnLogKey : "";
+    if (strncmp(s_recapRatingKey, key, sizeof(s_recapRatingKey)) == 0) return;
+
+    lobbyRatingReset();
+    /* Latched, not zeroed: the counter belongs to the sim and keeps climbing
+     * across rounds, so a new round starting from zero would read the running
+     * total as movement and read the page back a second time. */
+    s_recapRatingSeenSeq   = clientSimGetRatingPostedSeq(cs);
+    s_recapRatingNudgeAtMs = 0;
+    if (key[0] != '\0') {
+        SDL_strlcpy(s_recapRatingKey, key, sizeof(s_recapRatingKey));
+    }
+}
+
+static void lobbyRatingKick(const char *key) {
+    if (s_recapFetch || s_recapFetchComplete) return;
+    if (s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) return;
+    if (SDL_GetTicks() < s_recapFetchRetryAtMs) return;
+
+    s_recapFetch = wbn_comments_fetch_start(key);
+    s_recapFetchAttempts++;
+    if (!s_recapFetch) {
+        /* HTTP isn't up yet. Space the next try like a failed one rather than
+         * spending the whole budget over six consecutive frames. */
+        s_recapFetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
+    }
+}
+
+static void lobbyRatingPoll(ClientSim *cs) {
+    if (s_recapFetch && wbn_comments_fetch_done(s_recapFetch)) {
+        const WbnComment *raw = nullptr;
+        size_t count = 0;
+        int status = wbn_comments_fetch_result(s_recapFetch, &raw, &count,
+                                               s_recapFetchErr,
+                                               sizeof(s_recapFetchErr));
+        s_recapComments.clear();
+        if (raw && count > 0) {
+            s_recapComments.assign(raw, raw + count);
+        }
+        wbn_comments_fetch_rating(s_recapFetch, &s_recapRating10,
+                                  &s_recapNumRatings);
+        s_recapFetchStatus = status;
+
+        wbn_comments_fetch_free(s_recapFetch);
+        s_recapFetch = nullptr;
+
+        if (status == 200) {
+            s_recapFetchComplete = true;
+        } else {
+            /* Left incomplete so the kick above comes back for it once the
+             * gap has passed, until the budget runs out. */
+            s_recapFetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
+        }
+    }
+
+    if (s_recapPost && wbn_comments_post_done(s_recapPost)) {
+        s_recapPostStatus = wbn_comments_post_result(s_recapPost, s_recapPostMsg,
+                                                     sizeof(s_recapPostMsg));
+        wbn_comments_post_free(s_recapPost);
+        s_recapPost = nullptr;
+
+        if (s_recapPostStatus == 200 || s_recapPostStatus == 201) {
+            s_recapCommentText[0] = '\0';
+            s_recapCommentRating  = 0;
+            /* Read the round back so the new comment and the rating it moved
+             * both show. */
+            s_recapFetchComplete  = false;
+            s_recapFetchAttempts  = 0;
+            s_recapFetchRetryAtMs = 0;
+            /* And tell the rest of the lobby, so their blocks read it back
+             * too instead of listing this round without the new comment. */
+            clientSimNetSendRatingPosted(cs, s_recapRatingKey);
+        }
+    }
+}
+
+static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
+                                   float s) {
+    lobbyRatingSyncKey(cs, st);
+
+    if (st->wbnLogKey[0] == '\0') {
+        /* Nothing on WinBolo.net to rate, so not a separator and not a
+         * disabled line — the block costs the body no height at all. */
+        return;
+    }
+
+    /* Someone else in the lobby has posted against this round. Take the new
+     * value whether or not the fetch is allowed yet, so a burst leaves nothing
+     * armed behind it, and re-arm only once the interval has passed. */
+    {
+        uint32_t postedSeq = clientSimGetRatingPostedSeq(cs);
+        if (postedSeq != s_recapRatingSeenSeq) {
+            s_recapRatingSeenSeq = postedSeq;
+            if (SDL_GetTicks() >= s_recapRatingNudgeAtMs) {
+                s_recapFetchComplete   = false;
+                s_recapFetchAttempts   = 0;
+                s_recapFetchRetryAtMs  = 0;
+                s_recapRatingNudgeAtMs = SDL_GetTicks() + RECAP_RATING_NUDGE_MIN_MS;
+            }
+        }
+    }
+
+    /* Every frame: the textures are shared with the log browser, whose exit
+     * destroys them, so re-entering the lobby afterwards has to be able to
+     * rebuild them. Once they are up the call is an early-out. */
+    imguiStarRatingLoadIcons(sdl3DrawGetRenderer());
+    lobbyRatingKick(s_recapRatingKey);
+    lobbyRatingPoll(cs);
+
+    ImGui::Separator();
+
+    if (s_recapFetchStatus == 200) {
+        if (s_recapNumRatings > 0) {
+            imguiStarRating(s_recapRating10);
+            ImGui::SameLine();
+            char ratingBuf[16];
+            SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", s_recapRating10);
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
+            args.number = s_recapNumRatings;
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+        } else {
+            /* Nobody has rated the round, so an average of 0.0 out of 0 is a
+             * score nobody gave it. Said the way the browser's rating column
+             * says it, and with no stars, since five empty ones read as a
+             * verdict rather than as an absence of one. */
+            ImGui::TextDisabled("%s: --", langGetText(STR_DLGWBN_COL_RATING));
+        }
+    } else if (!s_recapFetch && s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) {
+        const char *err = s_recapFetchErr[0] ? s_recapFetchErr
+                                             : langGetText(STR_DLGWBN_NETERR);
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", err);
+    } else {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
+    }
+
+    {
+        MessageArgs args = {};
+        args.number = (int)s_recapComments.size();
+        char cmtHeader[128];
+        snprintf(cmtHeader, sizeof(cmtHeader), "%s###recapWbnComments",
+                 langGetTextFmt(STR_DLGWBN_COMMENTS_FMT, &args));
+        ImGui::SetNextItemOpen(s_recapShowComments, ImGuiCond_Always);
+        s_recapShowComments = ImGui::CollapsingHeader(cmtHeader);
+    }
+    if (s_recapShowComments) {
+        /* Height-bounded: the reel is fed whatever the body leaves unused, so
+         * a list free to grow with the round's comment count would starve it. */
+        ImGui::BeginChild("##recapCommentList",
+                          ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * 6.0f),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+
+        /* The list is text only, so nothing in it can take focus and a round
+         * with more comments than the six lines fit is out of reach on a pad.
+         * The right stick pans it instead — nothing else in the lobby reads
+         * that stick. Covers Steam Input and a native pad alike, +Y = down. */
+        float sdx, sdy;
+        if (inputGamepadGetScrollDirection(&sdx, &sdy)) {
+            ImGui::SetScrollY(ImGui::GetScrollY() + sdy * ImGui::GetTextLineHeight());
+        }
+
+        if (s_recapComments.empty()) {
+            ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOCOMMENTS));
+        } else {
+            for (const WbnComment &c : s_recapComments) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
+                ImGui::TextUnformatted(c.username);
+                ImGui::PopStyleColor();
+                if (c.rating > 0) {
+                    ImGui::SameLine();
+                    imguiStarRating((float)c.rating);
+                }
+                if (c.time_formatted[0]) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("- %s", c.time_formatted);
+                }
+                ImGui::TextWrapped("  %s", c.comment);
+                ImGui::Spacing();
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    /* Closed unless the player opens it, so the text field stays out of the
+     * nav graph and the Deck's on-screen keyboard never comes up while the
+     * recap is only being read. */
+    ImGui::SetNextItemOpen(s_recapShowAddComment, ImGuiCond_Always);
+    s_recapShowAddComment =
+        ImGui::CollapsingHeader(langGetText(STR_DLGWBN_ADDCOMMENT));
+    if (s_recapShowAddComment) {
+        char wbnToken[256], wbnExpiry[256];
+        gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
+
+        if (wbnToken[0] == '\0') {
+            /* Read-only, the way the section renders in game: it reports the
+             * account state and, in place of a sign-in button, says where
+             * accounts are changed. Signing in is a welcome-screen action —
+             * the lobby only reports which account it already has. */
+            imguiWinbolonetDrawSection(true);
+        } else {
+            float cw = ImGui::GetContentRegionAvail().x;
+            /* "-" is a comment with no rating, so the combo needs to say what
+             * it sets — on its own it reads as an unexplained number picker. */
+            ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_COL_RATING));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(80 * s);
+            ImGui::Combo("##recapRating", &s_recapCommentRating,
+                         "-\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
+            ImGui::SetNextItemWidth(cw);
+            ImGui::InputTextWithHint("##recapCmtText",
+                                     langGetText(STR_DLGWBN_HINT_COMMENT),
+                                     s_recapCommentText,
+                                     sizeof(s_recapCommentText));
+
+            /* Until the fetch has found the round, WinBolo.net does not have
+             * it yet and a comment posted against the key would be refused. */
+            bool canPost = s_recapCommentText[0] != '\0' &&
+                           s_recapPost == nullptr &&
+                           s_recapFetchStatus == 200;
+            if (!canPost) ImGui::BeginDisabled();
+            if (ImGui::Button(langGetText(STR_DLGWBN_POST), ImVec2(cw, 0))) {
+                s_recapPostStatus = 0;
+                s_recapPostMsg[0] = '\0';
+                s_recapPost = wbn_comments_post_start(s_recapRatingKey, wbnToken,
+                                                      s_recapCommentText,
+                                                      s_recapCommentRating);
+            }
+            imguiHandOnHover();
+            if (!canPost) ImGui::EndDisabled();
+
+            if (s_recapPost) {
+                ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
+            } else if (s_recapPostStatus == 200 || s_recapPostStatus == 201) {
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s",
+                                   langGetText(STR_DLGWBN_POSTED));
+            } else if (s_recapPostStatus != 0) {
+                const char *err = s_recapPostMsg[0] ? s_recapPostMsg
+                                                    : langGetText(STR_DLGWBN_NETERR);
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", err);
+            }
+        }
+    }
+}
+#endif /* BOLO_RECAP_WBN_RATING */
+#endif /* !BOLO_MOBILE */
+
+/* Container-less recap body, in reading order: the round's replay reel, its
+ * highlight clips, the scoreboard table, then a handful of the round's awards.
+ * Renders no chrome and decides nothing about visibility — the caller (the
+ * desktop lobby's right column / the controller layout's Last round tab)
+ * gates it on clientSimGetLastRoundStats and supplies the surrounding
+ * container. */
 static void renderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
-    if (!st) return;
+    if (!st) {
+#if !BOLO_MOBILE
+        lobbyReelEnd();
+#endif
+        return;
+    }
+
+#if !BOLO_MOBILE
+    /* Height of the container the body is about to fill, and where it starts,
+     * so the tail of this function can see how much of it went unused and feed
+     * that back into the reel. */
+    const float bodyAvailH = ImGui::GetContentRegionAvail().y;
+    const float bodyStartY = ImGui::GetCursorPosY();
+
+    lobbyRenderReel(cs, st, s);
+#endif
+
+    /* ── Highlight clips ─────────────────────────────────────────── */
+    /* Read-only list, in the order the server selected them (already
+     * chronological). Each line is a round-relative timestamp plus a
+     * one-phrase description.
+     *
+     * Behind an expand that starts closed, so the reel above gets the height
+     * the rows would have taken and the scoreboard stays in view. The count
+     * rides on the header because a closed section otherwise says nothing
+     * about whether opening it is worth it — parenthesised digits after the
+     * translated noun, not a sentence, so there is no new string to
+     * translate. The ### keeps the widget's id off the changing count. */
+    ImGui::Separator();
+    if (st->highlightCount == 0) {
+        /* A quiet round selects no clips — normal, not an error. Nothing to
+         * fold away, so this stays the plain header it always was rather than
+         * an expand that opens on one disabled line. */
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_HL_HEADER));
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_HL_NONE));
+    } else {
+        int hc = st->highlightCount;
+        if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) {
+            hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+        }
+        char hlHeader[96];
+        snprintf(hlHeader, sizeof(hlHeader), "%s (%d)###recapHighlights",
+                 langGetText(STR_DLGLOBBY_HL_HEADER), hc);
+        /* Driven from our own flag rather than ImGui's storage, so the next
+         * round's recap starts closed again instead of inheriting this one's
+         * state. */
+        ImGui::SetNextItemOpen(s_recapShowHighlights, ImGuiCond_Always);
+        s_recapShowHighlights = ImGui::CollapsingHeader(hlHeader);
+        if (s_recapShowHighlights) {
+            for (int i = 0; i < hc; i++) {
+                const HighlightWindow *h = &st->highlights[i];
+                /* The summary carries the clip's round-relative milliseconds, so
+                 * the round clock is a plain division. The tick fields it also
+                 * carries are the scorer's own units and do not convert at any
+                 * rate this side knows. */
+                unsigned secs = (unsigned)(h->startMs / 1000u);
+#if !BOLO_MOBILE
+                /* While a reel is up the whole row is a seek target: a selectable
+                 * underneath for the hit area and controller focus, with the row's
+                 * own two-tone text drawn back over it (text is not interactive,
+                 * so it does not steal the hover). With no reel to seek there is
+                 * no selectable at all — the text still renders everywhere, it
+                 * just does not look clickable when it isn't. */
+                if (lvEmbedIsActive()) {
+                    ImVec2 rowPos = ImGui::GetCursorPos();
+                    char rowId[16];
+                    snprintf(rowId, sizeof(rowId), "##clip%d", i);
+                    /* The export button sits on top of this at the far end of the
+                     * row; without the overlap the selectable underneath keeps the
+                     * hover and the button can never be pressed. */
+                    ImGui::SetNextItemAllowOverlap();
+                    if (ImGui::Selectable(rowId, false, 0,
+                                          ImVec2(0, ImGui::GetTextLineHeight()))) {
+                        /* Round-relative ms, the same base the reel's own window
+                         * is measured in and the same one the timestamp above is
+                         * divided out of. */
+                        lvEmbedSeekToClip(h->startMs, h->mapX, h->mapY);
+                    }
+                    ImGui::SetCursorPos(rowPos);
+                }
+#endif
+                ImGui::TextDisabled("%02u:%02u", secs / 60u, secs % 60u);
+                ImGui::SameLine();
+
+                MessageArgs args = {};
+                SDL_strlcpy(args.playerName, lastRoundSlotName(cs, h->actorA),
+                            sizeof(args.playerName));
+                SDL_strlcpy(args.otherName, lastRoundSlotName(cs, h->actorB),
+                            sizeof(args.otherName));
+                args.number = (int)h->value;
+                if (h->type == HL_AWARD) {
+                    /* An award-anchored clip reuses that award's own label. */
+                    SDL_strlcpy(args.string1,
+                                langGetText(lastRoundAwardLabel(h->awardId)),
+                                sizeof(args.string1));
+                }
+                /* Names render plain inside the sentence, not team-tinted, so
+                 * the clip reads as one phrase. */
+                ImGui::TextUnformatted(
+                    langGetTextFmt(lastRoundHighlightLabel(h), &args));
+
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+                /* Export control, right-aligned so the rows keep a column of them
+                 * however long the sentences run. Sized to one text line, so the
+                 * row stays the height the selectable underneath was given: the
+                 * icon takes the line height and the frame padding loses its
+                 * vertical half, which is what SmallButton does for a caption.
+                 * The glyph says what the control produces and the tooltip names
+                 * the format; with no icon loaded the format's name is the
+                 * caption, as it was before. */
+                if (lvEmbedIsActive()) {
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x -
+                                         lobbyClipGifButtonWidth());
+                    ImGui::PushID(i);
+                    if (lobbyClipGifButton("##clipgif", true)) {
+                        lobbyClipGifStartClip(h, clientSimGetMapName(cs));
+                    }
+                    ImGui::PopID();
+                }
+#endif
+            }
+        }
+    }
 
     /* ── Scoreboard ordering ─────────────────────────────────────── */
-    /* Display order: kills desc, then fewest deaths, then slot. */
+    /* The table sorts on whichever column its header was last clicked, so the
+     * order can only be built once the specs are readable — inside the table,
+     * below. What lives here is what the comparison is made of.
+     *
+     * Default order, and the tie-break under every other column: kills desc,
+     * then fewest deaths, then slot. */
     int n = st->playerCount;
     if (n > MAX_TANKS) n = MAX_TANKS;
     int order[MAX_TANKS];
-    for (int i = 0; i < n; i++) order[i] = i;
-    for (int i = 1; i < n; i++) {
-        int j = i;
-        while (j > 0) {
-            const RoundPlayerSummary *a = &st->players[order[j - 1]];
-            const RoundPlayerSummary *b = &st->players[order[j]];
-            bool swap =
-                (b->kills > a->kills) ||
-                (b->kills == a->kills && b->deaths < a->deaths) ||
-                (b->kills == a->kills && b->deaths == a->deaths &&
-                 b->slot < a->slot);
-            if (!swap) break;
-            int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
-            j--;
+    auto scoreBefore = [](const RoundPlayerSummary *a,
+                          const RoundPlayerSummary *b) {
+        if (a->kills != b->kills)   return a->kills > b->kills;
+        if (a->deaths != b->deaths) return a->deaths < b->deaths;
+        return a->slot < b->slot;
+    };
+    /* Every column but the name counts something, so one unsigned reads them
+     * all. Column 0 sorts by name and never reaches this. */
+    auto colValue = [](const RoundPlayerSummary *p, int col) -> unsigned {
+        switch (col) {
+            case 1:  return p->kills;
+            case 2:  return p->deaths;
+            case 3:  return p->baseCaptures;
+            case 4:  return p->pillCaptures;
+            case 5:  return p->dmgDealt;
+            case 6:  return p->builds;
+            case 7:  return p->lgmKills;
+            case 8:  return p->lgmDeaths;
+            default: return 0;
         }
-    }
+    };
 
     /* awardId (1..AWARD_COUNT) → index into awards[], -1 when unwon. */
     int ac = st->awardCount;
@@ -6108,33 +8841,240 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         if (id >= 1 && id <= AWARD_COUNT) awardIdx[id] = i;
     }
 
+    /* Widest count each column will actually print this round. A fixed-width
+     * column clips, so a column has to cover its own numbers — but only the
+     * ones that are there, not a worst case this round never reached. */
+    unsigned colMax[9] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    for (int i = 0; i < n; i++) {
+        const RoundPlayerSummary *pp = &st->players[i];
+        if ((unsigned)pp->kills        > colMax[1]) colMax[1] = pp->kills;
+        if ((unsigned)pp->deaths       > colMax[2]) colMax[2] = pp->deaths;
+        if ((unsigned)pp->baseCaptures > colMax[3]) colMax[3] = pp->baseCaptures;
+        if ((unsigned)pp->pillCaptures > colMax[4]) colMax[4] = pp->pillCaptures;
+        if ((unsigned)pp->dmgDealt     > colMax[5]) colMax[5] = pp->dmgDealt;
+        if ((unsigned)pp->builds       > colMax[6]) colMax[6] = pp->builds;
+        if ((unsigned)pp->lgmKills     > colMax[7]) colMax[7] = pp->lgmKills;
+        if ((unsigned)pp->lgmDeaths    > colMax[8]) colMax[8] = pp->lgmDeaths;
+    }
+
+    /* Every column that counts something the map draws is headed by that
+     * sprite alone, with the written name on the tooltip, so the column only
+     * has to hold its icon and its numbers — the Name column is stretch-sized
+     * and gets back everything the written labels used to cost. Icons are
+     * text-height tall and keep their source aspect, so these follow the UI
+     * scale without a hard-coded pixel anywhere. */
+    const ImGuiStyle &sty = ImGui::GetStyle();
+    const float iconH = ImGui::GetTextLineHeight();
+    const float lgmW  = iconH * (float)LGM_WIDTH / (float)LGM_HEIGHT;
+    /* What the header spends on the sort arrow, which ImGui draws hard against
+     * the right edge of the sorted column's cell — the same width TableHeader
+     * reserves for it. On a column only as wide as its icon that would be the
+     * icon's own pixels, so the sorted column asks for the arrow as well. */
+    const float arrowW =
+        SDL_truncf(ImGui::GetFontSize() * 0.65f + sty.FramePadding.x);
+
+    /* A stat column's static width, and the floor the stretchy Name column is
+     * not allowed to fall below — scaled like every other width here.
+     *
+     * "If there's room": eight static columns plus a readable Name column is
+     * wider than the recap panel at the default lobby size, so the static width
+     * is taken only when the panel can pay for it, and the content-derived
+     * width below is used when it cannot. Neither depends on which column is
+     * sorted, so the choice only ever changes when the lobby is resized. */
+    const float kRecapStatColW = 75.0f * s;
+    const float kRecapNameMinW = 120.0f * s;
+    const bool  statColsStatic =
+        ImGui::GetContentRegionAvail().x >= kRecapNameMinW + kRecapStatColW * 8.0f;
+
+    auto iconColWidth = [&](int col, float iconExtent) {
+        char buf[16];
+        SDL_snprintf(buf, sizeof(buf), "%u", colMax[col]);
+        float w = ImGui::CalcTextSize(buf).x;
+        if (iconExtent > w) w = iconExtent;
+        /* Charged to EVERY stat column, not just the sorted one. ImGui draws
+         * the arrow hard against the right edge of the sorted cell, so paying
+         * for it only there made the sorted column wider than its neighbours:
+         * moving the sort grew one column, shrank another, and slid every
+         * column between them sideways. Reserving it everywhere costs one
+         * arrow's width per column and holds the layout still. */
+        w += arrowW;
+        /* One pixel of slop: an icon sized to exactly fill the cell would
+         * otherwise be at the mercy of rounding at the clip edge. */
+        w += sty.CellPadding.x * 2.0f + 1.0f;
+        if (statColsStatic && w < kRecapStatColW) w = kRecapStatColW;
+        return w;
+    };
+
+    /* Sortable: a click sorts on that column, a second click reverses it. The
+     * counting columns lead with their biggest, which is the answer anyone
+     * clicking them is after; names lead A→Z. Kills is where the table starts,
+     * so an untouched scoreboard reads the way it always did. */
+    const ImGuiTableColumnFlags statCol = ImGuiTableColumnFlags_WidthFixed |
+                                          ImGuiTableColumnFlags_PreferSortDescending;
     if (n > 0 &&
         ImGui::BeginTable("##lastRoundScore", 9,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
-                              ImGuiTableFlags_NoHostExtendX)) {
+                              ImGuiTableFlags_NoHostExtendX |
+                              ImGuiTableFlags_Sortable)) {
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_NAME),
                                 ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_KILLS),
-                                ImGuiTableColumnFlags_WidthFixed, 28.0f * s);
+                                statCol | ImGuiTableColumnFlags_DefaultSort,
+                                iconColWidth(1, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DEATHS),
-                                ImGuiTableColumnFlags_WidthFixed, 28.0f * s);
+                                statCol, iconColWidth(2, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BASE),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                                statCol, iconColWidth(3, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_PILL),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                                statCol, iconColWidth(4, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DMG),
-                                ImGuiTableColumnFlags_WidthFixed, 52.0f * s);
+                                statCol, iconColWidth(5, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BUILDS),
-                                ImGuiTableColumnFlags_WidthFixed, 48.0f * s);
+                                statCol, iconColWidth(6, iconH));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMK),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+                                statCol, iconColWidth(7, lgmW));
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMD),
-                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
-        ImGui::TableHeadersRow();
+                                statCol,
+                                iconColWidth(8, lgmW + sty.ItemInnerSpacing.x +
+                                                iconH));
+
+        /* Header row drawn by hand: every column that counts something the
+         * map draws is headed by that sprite instead of a word, with the
+         * written name on the tooltip. Only Name keeps its text — no sprite
+         * says "name", and none is needed: the column already reads as what
+         * it is. Deaths reuses the skull the LGM Deaths column ends with, and
+         * Dmg the widest frame of a shell burst, which is the map's own
+         * picture of damage being done. TableHeader is still submitted for
+         * every column, with an empty label where the icon speaks, so the
+         * cell keeps its header background, hover, sort click and id path;
+         * the id comes from the column index the way TableHeadersRow does
+         * it. */
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        for (int c = 0; c < 9; c++) {
+            ImGui::TableSetColumnIndex(c);
+            const char *label = ImGui::TableGetColumnName(c);
+            bool drewIcon = false;
+            switch (c) {
+                case 1:
+                    imguiDrawTileIcon(TANK_SELF_0_X, TANK_SELF_0_Y);
+                    drewIcon = true;
+                    break;
+                case 2:
+                    drewIcon = lastRoundDrawSkull();
+                    break;
+                case 3:
+                    imguiDrawTileIcon(BASE_GOOD_X, BASE_GOOD_Y);
+                    drewIcon = true;
+                    break;
+                case 4:
+                    imguiDrawTileIcon(PILL_EVIL15_X, PILL_EVIL15_Y);
+                    drewIcon = true;
+                    break;
+                case 5:
+                    imguiDrawTileIcon(EXPLOSION4_X, EXPLOSION4_Y);
+                    drewIcon = true;
+                    break;
+                case 6:
+                    imguiDrawTileIcon(BUILD_SINGLE_X, BUILD_SINGLE_Y);
+                    drewIcon = true;
+                    break;
+                case 7:
+                    imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                    drewIcon = true;
+                    break;
+                case 8:
+                    /* Man then skull — the pair reads as "little men lost",
+                     * against column 7's bare man for the ones you killed.
+                     * Without the skull the pair is ambiguous, so that case
+                     * falls back to the written label. */
+                    imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                    ImGui::SameLine(0.0f, sty.ItemInnerSpacing.x);
+                    drewIcon = lastRoundDrawSkull();
+                    break;
+                default:
+                    break;
+            }
+            if (drewIcon) ImGui::SameLine(0.0f, 0.0f);
+            ImGui::PushID(c);
+            ImGui::TableHeader(drewIcon ? "" : label);
+            ImGui::PopID();
+            if (drewIcon) imguiHelpTooltip(label);
+        }
+
+        /* Rows in the order the header row just asked for. Reading the specs
+         * after the headers rather than before them is what makes a click
+         * land on the frame it happened rather than the one after. A column
+         * that ties falls back to the default order, so equal counts still
+         * come out best-round-first instead of shuffling. */
+        int sortCol = 1;
+        bool sortAsc = false;
+        if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
+            if (specs->SpecsCount > 0) {
+                sortCol = specs->Specs[0].ColumnIndex;
+                sortAsc = specs->Specs[0].SortDirection ==
+                          ImGuiSortDirection_Ascending;
+            }
+            specs->SpecsDirty = false;
+        }
+
+        auto rowBefore = [&](const RoundPlayerSummary *a,
+                             const RoundPlayerSummary *b) {
+            if (sortCol == 0) {
+                int c = SDL_strcasecmp(lastRoundSlotName(cs, a->slot),
+                                       lastRoundSlotName(cs, b->slot));
+                if (c != 0) return sortAsc ? (c < 0) : (c > 0);
+            } else {
+                unsigned va = colValue(a, sortCol), vb = colValue(b, sortCol);
+                if (va != vb) return sortAsc ? (va < vb) : (va > vb);
+            }
+            return scoreBefore(a, b);
+        };
+        for (int i = 0; i < n; i++) order[i] = i;
+        for (int i = 1; i < n; i++) {
+            int j = i;
+            while (j > 0 && rowBefore(&st->players[order[j]],
+                                      &st->players[order[j - 1]])) {
+                int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
+                j--;
+            }
+        }
+
+        const BYTE mySlot = gameFrontGetPlayerNum();
         for (int r = 0; r < n; r++) {
             const RoundPlayerSummary *p = &st->players[order[r]];
             ImGui::TableNextRow();
+            /* Lift your own line off the alternating row background so it
+             * is findable at a glance. Background only — the team tint has
+             * to stay the row's text colour. */
+            if (p->slot == mySlot) {
+                ImVec4 mine = ImGui::GetStyleColorVec4(ImGuiCol_Header);
+                mine.w = 0.38f;
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                       ImGui::GetColorU32(mine));
+            }
             ImGui::TableSetColumnIndex(0);
+            /* Row hit area. The previous attempt hand-rolled a hover band from
+             * GetWindowContentRegionMin/Max plus IsWindowHovered, and never
+             * fired — inside a table those are the wrong window and the wrong
+             * coordinate space. This is the canonical ImGui table row-click
+             * recipe instead: a label-less Selectable spanning every column,
+             * submitted first so the cells draw on top of it, with
+             * AllowOverlap so they keep their own hit-testing. It also brings
+             * its own hover highlight, which is the affordance. */
+            ImGui::PushID(r);
+            bool rowClicked = ImGui::Selectable(
+                "##recapRow", false,
+                ImGuiSelectableFlags_SpanAllColumns |
+                    ImGuiSelectableFlags_AllowOverlap,
+                ImVec2(0.0f, 0.0f));
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            ImGui::PopID();
+            if (rowClicked) {
+                lobbyRecapRowJump(cs, (int)p->slot, p->isBot != 0);
+            }
+            ImGui::SameLine(0.0f, 0.0f);
             lastRoundRenderName(cs, p->slot, p->isBot != 0);
             ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
             ImGui::TableSetColumnIndex(2); ImGui::Text("%u", (unsigned)p->deaths);
@@ -6149,6 +9089,11 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
     /* ── Awards ribbon ───────────────────────────────────────────── */
+    /* Headed like the clip list above it, so the lines below read as their own
+     * section rather than as a tail on the scoreboard. */
+    ImGui::Separator();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LASTROUND_AWARDS));
+
     /* Renders one award line: label — winner [owned subject] (value). */
     auto renderAward = [&](int idx) {
         const AwardResult *aw = &st->awards[idx];
@@ -6190,10 +9135,56 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         }
     };
 
-    /* Every won award, listed in award-id order. */
-    for (int id = 1; id <= AWARD_COUNT; id++) {
-        if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
+    /* The three the ribbon always leads with: the two objective captures a
+     * round is actually won on, and the builder hunt. A round that did not
+     * award one just does not show that line — the rest keep their order. */
+    static const uint8_t pinnedAwards[] = {
+        AWARD_MOST_BASE_CAPTURES, AWARD_MOST_PILL_CAPTURES, AWARD_LGM_HUNTER
+    };
+    const int pinnedCount = (int)(sizeof(pinnedAwards) / sizeof(pinnedAwards[0]));
+    for (int i = 0; i < pinnedCount; i++) {
+        if (awardIdx[pinnedAwards[i]] >= 0) renderAward(awardIdx[pinnedAwards[i]]);
     }
+
+    /* A busy round wins most of the eighteen, which reads as a wall of text and
+     * buries the ones worth reading. The rest of the ribbon is a fixed handful
+     * of the others, drawn from the summary's own bytes so every client shows
+     * the same ones and a re-render never reshuffles. The three above are held
+     * out of the draw so none of them can come up twice. */
+    uint8_t picks[RECAP_AWARDS_RANDOM];
+    int pickCount = roundStatsPickAwardSubsetExcluding(st, pinnedAwards,
+                                                       pinnedCount, picks,
+                                                       RECAP_AWARDS_RANDOM);
+    for (int i = 0; i < pickCount; i++) {
+        renderAward(picks[i]);
+    }
+
+#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+    /* ── WinBolo.net rating & comments ───────────────────────────── */
+    lobbyRenderRatingBlock(cs, st, s);
+#endif
+
+#if !BOLO_MOBILE && BOLO_RECAP_CLIP_GIF
+    /* A clip export in progress. Drawn after the rows that start it, and after
+     * the rest of the body: it is a popup, so it costs the layout nothing and
+     * the slack measurement below still sees what the body really used. */
+    lobbyClipGifRender(s);
+#endif
+
+#if !BOLO_MOBILE
+    /* What the body did not use goes to the reel next frame. One frame of lag
+     * is inherent — the cost of everything below the reel is only known once
+     * it has been drawn — so switching between the desktop column and the
+     * controller tab, which are different heights, shows a single frame at the
+     * old size before this settles. Growing the reel shrinks the shortfall by
+     * the same amount, so it converges instead of hunting. Bounded by the
+     * container: with no replay to show, the reel draws nothing and there is
+     * nothing to absorb the shortfall, so an unbounded total would climb for
+     * as long as the recap is on screen. */
+    s_recapSlack += bodyAvailH - (ImGui::GetCursorPosY() - bodyStartY);
+    if (s_recapSlack < 0.0f)       s_recapSlack = 0.0f;
+    if (s_recapSlack > bodyAvailH) s_recapSlack = bodyAvailH;
+#endif
 }
 
 /* ── Layout A — small inline lock badge ───────────────────────────
@@ -6217,6 +9208,65 @@ static void renderLockBadge(void) {
     }
 }
 
+/* ── Skip-map vote ────────────────────────────────────────────────
+ * The toggle button plus the running "n of m" count. Draws nothing at
+ * all unless the server offers the vote and the map is unlocked, so the
+ * caller needs no gate of its own — including the leading spacer, which
+ * would otherwise leave a gap on servers that never offer it.
+ *
+ * sameLine chooses between stacking it under the map info (what the map
+ * panel wants) and setting it beside whatever precedes it on the row. */
+static void renderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
+                              float s, bool sameLine) {
+    if (spectator || !clientSimIsMapSkipAvailable(cs) ||
+        !clientSimIsInLobby(cs) ||
+        (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
+        return;
+    }
+    if (sameLine) {
+        ImGui::SameLine();
+    } else {
+        ImGui::Spacing();
+    }
+    bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
+    if (countdownActive) ImGui::BeginDisabled();
+    bool voted = clientSimIsMapSkipMyVote(cs);
+    const char *skipLabel = langGetText(
+        voted ? STR_DLGLOBBY_CANCELSKIP : STR_DLGLOBBY_SKIPMAP);
+    if (voted) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
+    }
+    if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
+        clientSimSetMapSkipMyVote(cs, !clientSimIsMapSkipMyVote(cs));
+        if (hasTransport) {
+            clientSimNetSendMapSkipVote(cs);
+        }
+    }
+    if (voted) {
+        ImGui::PopStyleColor(3);
+    }
+    ImGui::SameLine();
+    int skipCount = 0, humanCount = 0;
+    for (int j = 0; j < MAX_TANKS; j++) {
+        const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
+        if (jSlot && jSlot->connected && !jSlot->isBot) {
+            humanCount++;
+            if (clientSimIsMapSkipVote(cs, (BYTE)j)) skipCount++;
+        }
+    }
+    {
+        MessageArgs vargs;
+        memset(&vargs, 0, sizeof(vargs));
+        vargs.number  = skipCount;
+        vargs.number2 = humanCount;
+        ImGui::TextUnformatted(
+            langGetTextFmt(STR_DLGLOBBY_VOTES, &vargs));
+    }
+    if (countdownActive) ImGui::EndDisabled();
+}
+
 /* ── Layout A — editable game settings panel ──────────────────────
  * Renders the four mockup setting groups (Game Type / AI / Other /
  * Time Limit). Locked settings render disabled with a lock badge.
@@ -6225,6 +9275,54 @@ static void renderLockBadge(void) {
 /* Forward decl — the form body is defined just after the panel, but the
  * panel (and the controller Settings tab) call it. */
 static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
+
+/* Open state of the settings CollapsingHeader. File-scope rather than a
+ * panel-local static because the lobby's post-game edge handler below
+ * drives it from outside the panel. */
+static bool s_settingsOpen     = true;
+static bool s_settingsOpenInit = false;
+/* Set while the header sits collapsed on the post-game view's initiative,
+ * so the recap clearing knows there is something to put back. */
+static bool s_settingsAutoCollapsed = false;
+static bool s_settingsPreCollapse   = true;
+
+/* Default collapsed on the Steam Deck: its small screen needs the
+ * vertical room for the player list and the Ready button, and the
+ * map / game-type summary is already on the lobby's top status bar.
+ * Desktop keeps it open. Runs from whichever of the panel or the
+ * post-game edge handler comes first, so a first-frame init can't
+ * clobber an auto-collapse that already happened. */
+static void lobbySettingsHeaderInit(void) {
+    if (s_settingsOpenInit) return;
+    s_settingsOpen     = !uiModeIsSteamDeck();
+    s_settingsOpenInit = true;
+}
+
+/* The post-game recap needs the vertical room the settings form takes,
+ * so entering the post-game view folds the header away — once, on the
+ * edge, never re-forced per frame, so the chevron still re-opens it.
+ *
+ * Restore policy on the way out (countdown clears the summary): put back
+ * the pre-collapse state only if the header is still exactly as the
+ * auto-collapse left it. Re-opening it during the recap clears the flag,
+ * so a manual choice outranks the remembered state and survives into the
+ * next round. */
+static void lobbySettingsPostGameEdge(bool showLastRound) {
+    static bool s_prevShowLastRound = false;
+    lobbySettingsHeaderInit();
+    if (showLastRound && !s_prevShowLastRound) {
+        s_settingsPreCollapse   = s_settingsOpen;
+        /* Already collapsed → nothing was taken away, nothing to give back. */
+        s_settingsAutoCollapsed = s_settingsOpen;
+        s_settingsOpen          = false;
+    } else if (showLastRound) {
+        if (s_settingsOpen) s_settingsAutoCollapsed = false;
+    } else if (s_prevShowLastRound) {
+        if (s_settingsAutoCollapsed) s_settingsOpen = s_settingsPreCollapse;
+        s_settingsAutoCollapsed = false;
+    }
+    s_prevShowLastRound = showLastRound;
+}
 
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
@@ -6243,20 +9341,11 @@ static void renderGameSettingsPanel(ClientSim *cs,
     }
 
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
-     * Settings" button at the bottom of the panel can fold it away
-     * once the host is happy with the configuration.
-     *
-     * Default collapsed on the Steam Deck: its small screen needs the
-     * vertical room for the player list and the Ready button, and the
-     * map / game-type summary is already on the lobby's top status bar.
-     * Desktop keeps it open. The chevron / "Hide Settings" button still
-     * toggles it either way. */
-    static bool s_settingsOpen     = true;
-    static bool s_settingsOpenInit = false;
-    if (!s_settingsOpenInit) {
-        s_settingsOpen     = !uiModeIsSteamDeck();
-        s_settingsOpenInit = true;
-    }
+     * Settings" button at the bottom of the panel — and the post-game
+     * auto-collapse — can fold it away once the host is happy with the
+     * configuration. The chevron still toggles it either way; see
+     * lobbySettingsHeaderInit / lobbySettingsPostGameEdge above. */
+    lobbySettingsHeaderInit();
     ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
     /* Capture screen-Y of the header before drawing so the
      * right-aligned openHost control can be overlaid on the same
@@ -6573,6 +9662,190 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 #endif
 }
 
+/* ----------------------------------------------------------------------
+ * Chat history with clickable timestamps
+ *
+ * A chat line may name a moment in the round as "@m:ss" / "@mm:ss". The token
+ * is ordinary text everywhere else — it goes over the wire, into the history
+ * and into the .wbv verbatim — so a client with no reel just reads it. Only
+ * the render below turns it into something to click.
+ * ------------------------------------------------------------------- */
+
+#if !BOLO_MOBILE
+/* Match a timestamp token at p. Returns one past its last digit and fills the
+ * out-params on a match, NULL otherwise. Minutes are one or two digits,
+ * seconds exactly two and under 60. A third seconds digit rejects the whole
+ * candidate, so "@1:234" stays text instead of matching "@1:23" out of the
+ * front of it. */
+static const char *lobbyMatchChatTime(const char *p, const char *end,
+                                      unsigned *outMins, unsigned *outSecs) {
+    const char *q;
+    unsigned    mins   = 0, secs = 0;
+    int         digits = 0;
+
+    if (p >= end || *p != '@') {
+        return NULL;
+    }
+    q = p + 1;   /* past the '@' */
+    while (q < end && digits < 2 && *q >= '0' && *q <= '9') {
+        mins = mins * 10u + (unsigned)(*q - '0');
+        q++;
+        digits++;
+    }
+    if (digits == 0 || q >= end || *q != ':') {
+        return NULL;
+    }
+    q++;
+    if ((end - q) < 2 || q[0] < '0' || q[0] > '9' || q[1] < '0' || q[1] > '9') {
+        return NULL;
+    }
+    secs = (unsigned)(q[0] - '0') * 10u + (unsigned)(q[1] - '0');
+    q += 2;
+    if (secs >= 60u || (q < end && *q >= '0' && *q <= '9')) {
+        return NULL;
+    }
+    *outMins = mins;
+    *outSecs = secs;
+    return q;
+}
+
+static bool lobbyChatLineHasTime(const char *begin, const char *end) {
+    unsigned mins = 0, secs = 0;
+    for (const char *q = begin; q < end; q++) {
+        if (*q == '@' && lobbyMatchChatTime(q, end, &mins, &secs) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Lay out one line that holds at least one token as alternating text and link
+ * runs, butted together with zero-spacing SameLine so no gap is invented. Such
+ * a line is not wrapped: a wrap position does not carry across SameLine, so a
+ * long one clips at the panel edge rather than flowing onto a second row. That
+ * is the deliberate trade for laying the line out by hand — chat is capped at
+ * 128 characters, so the case is rare. TextLink takes its id from its label,
+ * so the ids pushed here are what stop two identical tokens in one history
+ * from sharing one. */
+static void lobbyRenderChatTimeLine(const char *begin, const char *end,
+                                    int lineIndex) {
+    const char *p       = begin;
+    int         segment = 0;
+
+    ImGui::PushID(lineIndex);
+    while (p < end) {
+        const char *tok = NULL, *tokEnd = NULL, *q;
+        unsigned    mins = 0, secs = 0;
+        char        label[8];
+        size_t      labelLen;
+
+        for (q = p; q < end; q++) {
+            if (*q != '@') {
+                continue;
+            }
+            tokEnd = lobbyMatchChatTime(q, end, &mins, &secs);
+            if (tokEnd != NULL) {
+                tok = q;
+                break;
+            }
+        }
+
+        if (tok == NULL) {
+            if (segment > 0) ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(p, end);
+            break;
+        }
+        if (tok > p) {
+            if (segment > 0) ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(p, tok);
+            segment++;
+        }
+
+        labelLen = (size_t)(tokEnd - tok);
+        if (labelLen >= sizeof(label)) {
+            labelLen = sizeof(label) - 1;
+        }
+        SDL_memcpy(label, tok, labelLen);
+        label[labelLen] = '\0';
+
+        if (segment > 0) ImGui::SameLine(0.0f, 0.0f);
+        ImGui::PushID(segment);
+        if (ImGui::TextLink(label)) {
+            lvEmbedSeekToTime((mins * 60u + secs) * 1000u);
+        }
+        ImGui::PopID();
+        segment++;
+
+        p = tokEnd;
+    }
+    ImGui::PopID();
+}
+#endif
+
+/* One chat history, the \n-separated blob the sim owns (read only — never
+ * written to here). Runs of lines with no token are batched into a single
+ * wrapped TextUnformatted, so a history without one renders as the same lone
+ * blob draw it always did; only a line carrying a token is split up. Zero
+ * vertical item spacing is what makes the two kinds of line stack at the pitch
+ * a single text block would. With no reel to seek there is nothing to link, so
+ * every line takes the plain path. */
+static void lobbyRenderChatHistory(const char *blob) {
+    if (blob == NULL) {
+        return;
+    }
+
+#if !BOLO_MOBILE
+    if (lvEmbedIsActive()) {
+        const ImGuiStyle &style     = ImGui::GetStyle();
+        const char       *runBegin  = NULL;
+        const char       *runEnd    = NULL;
+        const char       *p         = blob;
+        int               lineIndex = 0;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                            ImVec2(style.ItemSpacing.x, 0.0f));
+        for (;;) {
+            const char *lineEnd = p;
+            while (*lineEnd != '\0' && *lineEnd != '\n') {
+                lineEnd++;
+            }
+            if (lobbyChatLineHasTime(p, lineEnd)) {
+                if (runBegin != NULL) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextUnformatted(runBegin, runEnd);
+                    ImGui::PopTextWrapPos();
+                    runBegin = NULL;
+                }
+                lobbyRenderChatTimeLine(p, lineEnd, lineIndex);
+            } else {
+                if (runBegin == NULL) {
+                    runBegin = p;
+                }
+                runEnd = lineEnd;
+            }
+            if (*lineEnd == '\0') {
+                break;
+            }
+            p = lineEnd + 1;
+            lineIndex++;
+        }
+        if (runBegin != NULL) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(runBegin, runEnd);
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::PopStyleVar();
+        return;
+    }
+#endif
+
+    /* Wrap long lines at the child's right edge so a full-length (128-char)
+     * message flows onto extra lines instead of running off the panel. */
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(blob);
+    ImGui::PopTextWrapPos();
+}
+
 /* Render the lobby chat InputText + Send button pair, with the
  * 2-frame refocus-after-send and nav-highlight suppression logic
  * shared between the chat tab and the in-game lobby chat panel.
@@ -6681,6 +9954,28 @@ typedef struct LobbyFrameState {
 
 static LobbyFrameState s_lf = {};
 
+#if !BOLO_MOBILE
+/* Append the reel's position to the chat box as "@mm:ss ", then take the
+ * keyboard focus the way a send does so the player types straight after it.
+ * Silently does nothing when the whole token will not fit: half a token in
+ * the box reads as a link nobody can follow. A round past 99 minutes writes
+ * three minute digits, which lobbyMatchChatTime leaves as plain text. */
+static void lobbyChatInputAppendTime(uint32_t curMs) {
+    unsigned secs = (unsigned)(curMs / 1000u);
+    char     token[16];
+    size_t   used, room;
+
+    snprintf(token, sizeof(token), "@%02u:%02u ", secs / 60u, secs % 60u);
+    used = SDL_strlen(s_lf.chatInput);
+    room = (size_t)(CHAT_INPUT_SIZE - 1) - used;
+    if (SDL_strlen(token) > room) {
+        return;
+    }
+    SDL_strlcat(s_lf.chatInput, token, CHAT_INPUT_SIZE);
+    s_chatRefocusFrames = 2;
+}
+#endif
+
 /* Seed the data + default-chrome fields for a fresh lobby session.
  * imguiLobbyShow() overrides the chrome (scale / countdown font / insets)
  * afterwards with values from its private context; the WASM path keeps
@@ -6759,6 +10054,23 @@ extern "C" void imguiLobbyFrameReset(void) {
     s_chooseMapPreviewPending   = false;
     s_chooseMapCs               = NULL;
 
+    /* A lobby re-entered with a summary still stored should open on the
+     * recap, not on whatever the last session was left looking at. */
+    s_recapShowMap              = false;
+    s_recapShowHighlights       = false;
+
+#if !BOLO_MOBILE
+    /* The reel holds the viewer's decoder singleton — never leave it running
+     * past the lobby session. */
+    lobbyReelEnd();
+#endif
+#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+    /* Release the rating fetch and everything it filled in. The star textures
+     * stay: they belong to the WBN browser as much as to the recap, and the
+     * loader rebuilds them on demand. */
+    lobbyRatingReset();
+#endif
+
     s_kickPendingOpen = false;
     s_kickPendingSlot = -1;
     s_kickPendingName[0] = '\0';
@@ -6781,6 +10093,12 @@ extern "C" void imguiLobbyFrameReset(void) {
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
 extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
+
+#if !BOLO_MOBILE && BOLO_RECAP_WBN_RATING
+    /* Before anything draws, so a round that has ended takes its rating and
+     * comments with it whether or not the recap is the view on screen. */
+    lobbyRatingSyncKey(cs, cs ? clientSimGetLastRoundStats(cs) : NULL);
+#endif
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -7240,6 +10558,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
 #endif
+        /* The countdown clearing the summary also clears the map view and the
+         * clip expand, so the next round's recap opens on itself rather than on
+         * wherever the player left the panel. */
+        if (!lobbyShowLastRound) {
+            s_recapShowMap        = false;
+            s_recapShowHighlights = false;
+        }
+        /* Fold the settings header away for the post-game view and put it
+         * back when the countdown clears the summary. Called every frame,
+         * acts only on the transitions. */
+        lobbySettingsPostGameEdge(lobbyShowLastRound);
 
         /* Settings above the layout is the two-column (mouse) path only; the
          * tabbed layout renders the same form in a dedicated tab, so skip it
@@ -7389,10 +10718,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                 /* Ping */
                                 ImGui::TableSetColumnIndex(1);
                                 if (slot->pingMs > 0) {
-                                    ImVec4 pingColor;
-                                    if (slot->pingMs < 50)        pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                                    else if (slot->pingMs < 150)   pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                                    else                                        pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                                    ImVec4 pingColor =
+                                        imguiPingBandColor(pingBandClassify(slot->pingMs));
                                     ImGui::TextColored(pingColor, "%dms", (int)slot->pingMs);
                                 } else {
                                     ImGui::TextDisabled("-");
@@ -7552,7 +10879,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
                             ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
                             IM_COL32(0, 0, 80, 255));
+                        /* Same magnified 1-px-per-square art as the
+                         * two-column path — point-sample it. */
+                        imguiPushNearestSampling();
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                        imguiPopNearestSampling();
                         ImVec2 miniMin = ImGui::GetItemRectMin();
                         bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                                 effHostMap, miniMin, innerSize,
@@ -7586,9 +10917,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
                     } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
-                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                        float progress = 0.0f;
+                        ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
                         ImGui::Spacing();
-                        float progress = (float)netGetDownloadPos() / 255.0f;
                         ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                     } else {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
@@ -7675,12 +11006,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         if (chatHistH < 20.0f) chatHistH = 20.0f;
 
                         ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-                        /* Wrap long lines at the child's right edge so a
-                         * full-length (128-char) message flows onto extra
-                         * lines instead of running off the panel. */
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
-                        ImGui::PopTextWrapPos();
+                        lobbyRenderChatHistory(clientSimGetLobbyChatHistory(cs));
                         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                             ImGui::SetScrollHereY(1.0f);
                         }
@@ -7720,9 +11046,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             if (chatHistH < 20.0f) chatHistH = 20.0f;
 
                             ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
-                            ImGui::PopTextWrapPos();
+                            lobbyRenderChatHistory(clientSimGetLobbyTeamChatHistory(cs));
                             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                                 ImGui::SetScrollHereY(1.0f);
                             }
@@ -7870,7 +11194,75 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * the teams take whatever extra room there is). */
             float mapPanelW = ImMax((MAP_PREVIEW_SIZE + 20) * s,
                                     availW * 0.30f);
-            float playerPanelW = availW - mapPanelW - 8.0f;
+            /* Between rounds the right column holds the recap instead of the
+             * preview, and a replay reel wants far more width than a map
+             * thumbnail — but the players/chat column still has to be worth
+             * reading, so it keeps a floor and the recap gives the width back
+             * on a narrow lobby. Keyed on the summary, not on which of the
+             * panel's two tabs is up: switching tabs must not reflow the
+             * lobby around the player. */
+            const float kRecapPanelFrac  = 0.55f;
+            const float kRecapLeftMinW   = 360.0f;
+            if (lobbyShowLastRound) {
+                float recapW = ImMax((MAP_PREVIEW_SIZE + 20) * s,
+                                     availW * kRecapPanelFrac);
+                float roomW  = availW - 8.0f - kRecapLeftMinW * s;
+                if (recapW > roomW) recapW = roomW;
+                if (recapW > mapPanelW) mapPanelW = recapW;
+            }
+
+            /* Draggable split. The width above is the automatic split; the
+             * gutter splitter (drawn between the two columns further down)
+             * accumulates a signed offset off it, positive widening the left
+             * column. Kept as an offset in logical pixels rather than as a
+             * fraction so a window resize reflows the automatic part and
+             * leaves the user's adjustment where they put it.
+             *
+             * The drag floors are deliberately looser than the automatic
+             * layout's own (kRecapLeftMinW, the natural preview width): this
+             * is the user overriding the automatic split, so they only need
+             * to be stopped short of squashing either column into nothing.
+             * The offset is re-synced to the clamped result each frame, so
+             * dragging past a floor doesn't build up slack the user has to
+             * drag back out before the split moves again. */
+            const float kSplitterW     = 8.0f;
+            const float kSplitLeftMinW = 180.0f;
+            const float kSplitMapMinW  = 220.0f;
+            if (!s_lobbySplitOffsetInit) {
+                s_lobbySplitOffsetMap   = gameFrontLobbySplit;
+                s_lobbySplitOffsetRecap = gameFrontLobbySplitRecap;
+                s_lobbySplitOffsetInit  = true;
+            }
+            /* Pick the showing view's offset before any width is computed —
+             * the panel flips on the next frame (see the ##MapPanel button),
+             * so reading it here draws the frame the view changes on at that
+             * view's width instead of a frame of the old one. */
+            bool   splitOnRecap = lobbyRecapReelVisible(cs);
+            float *splitOffset  = splitOnRecap ? &s_lobbySplitOffsetRecap
+                                               : &s_lobbySplitOffsetMap;
+            float *splitSaved   = splitOnRecap ? &gameFrontLobbySplitRecap
+                                               : &gameFrontLobbySplit;
+            float autoMapPanelW = mapPanelW;
+            mapPanelW -= *splitOffset * s;
+            float maxMapW = availW - kSplitterW - kSplitLeftMinW * s;
+            if (mapPanelW > maxMapW) mapPanelW = maxMapW;
+            /* Map floor last so it wins on a lobby too narrow for both. */
+            if (mapPanelW < kSplitMapMinW * s) mapPanelW = kSplitMapMinW * s;
+            *splitOffset = (autoMapPanelW - mapPanelW) / (s > 0.0f ? s : 1.0f);
+
+            /* Persist through the same debounced window-settings path the
+             * position and size use — a drag or a re-clamp is a change, and
+             * gameFrontPumpDirty (already driven per frame below) flushes the
+             * trailing one. Only the showing view's value moves; the other
+             * keeps whatever it was left at. The epsilon is coarser than the
+             * two decimals the value is stored at, so a reload can't look
+             * like a change. */
+            if (SDL_fabsf(*splitOffset - *splitSaved) > 0.02f) {
+                *splitSaved = *splitOffset;
+                gameFrontSaveWindowSettings();
+            }
+
+            float playerPanelW = availW - mapPanelW - kSplitterW;
 
             /* "Allow New Players" row spans the full width above both
              * panels so PlayerPanel and MapPanel top edges align in Y. */
@@ -7889,13 +11281,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * vertical space back. */
             float frameH = ImGui::GetFrameHeight();
             float readyAreaH = frameH;
-            /* The between-rounds recap button sits in the footer directly
-             * above Ready when a summary exists, so reserve a second row
-             * (+ inter-button spacing). The MapPanel shrinks to keep Ready
-             * on-screen. */
-            if (lobbyShowLastRound) {
-                readyAreaH += frameH + ImGui::GetStyle().ItemSpacing.y;
-            }
 
             /* Split the remaining vertical space between PlayerPanel
              * (top) and ChatBlock (bottom). The chat's bottom edge
@@ -8021,10 +11406,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         /* Ping */
                         ImGui::TableSetColumnIndex(2);
                         if (slot->pingMs > 0) {
-                            ImVec4 pingColor;
-                            if (slot->pingMs < 50)        pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                            else if (slot->pingMs < 150)   pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                            else                                        pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                            ImVec4 pingColor =
+                                imguiPingBandColor(pingBandClassify(slot->pingMs));
                             ImGui::TextColored(pingColor, "%dms", (int)slot->pingMs);
                         } else {
                             ImGui::TextDisabled("-");
@@ -8143,11 +11526,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
                             chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
                         ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-                        /* Wrap long lines at the child's right edge (see the
-                         * lobby Chat tab above). */
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
-                        ImGui::PopTextWrapPos();
+                        lobbyRenderChatHistory(clientSimGetLobbyChatHistory(cs));
                         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                             ImGui::SetScrollHereY(1.0f);
                         }
@@ -8175,9 +11554,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
                                 chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
                             ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-                            ImGui::PushTextWrapPos(0.0f);
-                            ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
-                            ImGui::PopTextWrapPos();
+                            lobbyRenderChatHistory(clientSimGetLobbyTeamChatHistory(cs));
                             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                                 ImGui::SetScrollHereY(1.0f);
                             }
@@ -8202,7 +11579,34 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
             ImGui::EndGroup(); /* /left column */
 
-            ImGui::SameLine(0, 8.0f);
+            /* Vertical splitter, sized to fill the gutter exactly so the two
+             * columns keep landing on availW. SameLine(0,0) on both sides —
+             * the gutter is the button, not item spacing. Hit-tested full
+             * column height; the offset it drives is clamped where the widths
+             * are computed, above. */
+            ImGui::SameLine(0, 0.0f);
+            ImVec2 splitPos = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##LobbyColSplitter",
+                                   ImVec2(kSplitterW, leftFillH));
+            bool splitActive = ImGui::IsItemActive();
+            if (splitActive || ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                /* Only visible while the user is on it — the resting lobby
+                 * keeps the plain gap it has always had. */
+                ImGui::GetWindowDrawList()->AddLine(
+                    ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y),
+                    ImVec2(splitPos.x + kSplitterW * 0.5f, splitPos.y + leftFillH),
+                    ImGui::GetColorU32(splitActive ? ImGuiCol_SeparatorActive
+                                                   : ImGuiCol_SeparatorHovered),
+                    2.0f);
+            }
+            if (splitActive) {
+                /* Mouse delta is real pixels; the offset is logical. Moves
+                 * only the showing view's offset. */
+                *splitOffset +=
+                    ImGui::GetIO().MouseDelta.x / (s > 0.0f ? s : 1.0f);
+            }
+            ImGui::SameLine(0, 0.0f);
 
             /* Right column — MapPanel extends down to just above the
              * Ready/Balance footer, so the map preview's bottom border
@@ -8212,12 +11616,37 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* Right: Map preview + info */
             ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, mapH), ImGuiChildFlags_Borders);
 
+            /* Between rounds the panel holds two views — the round recap and
+             * the map panel, whole and unchanged — and one button across the
+             * top swaps between them, captioned with the view it goes to. The
+             * map keeps its full panel rather than collapsing to a row because
+             * picking next round's start is a mini-map interaction: the start
+             * overlay, the click-to-claim and the zoomed picker all live in
+             * the preview below, and there is nowhere else to do it before the
+             * countdown. With no summary there is no button and showMapPanel
+             * stays true, so the panel is exactly the map panel. The child
+             * keeps its id so the map chooser's scrim still finds it. */
+            bool showMapPanel = !lobbyShowLastRound || s_recapShowMap;
+            if (lobbyShowLastRound) {
+                /* The flip lands on the next frame, so the caption and what is
+                 * under it always describe the same view. */
+                if (ImGui::Button(langGetText(showMapPanel
+                                                  ? STR_DLGLOBBY_LASTROUND_BTN
+                                                  : STR_DLGLOBBY_MAP_TAB),
+                                  ImVec2(-1, 0))) {
+                    s_recapShowMap = !s_recapShowMap;
+                }
+                if (!showMapPanel) {
+                    renderLastRoundBody(cs, s);
+                }
+            }
+
             /* Prefer the existing texture even while we're waiting on
              * fresh bytes — the rebuild block above swaps it
              * atomically once the new map's chunks finish arriving,
              * so users keep seeing the previously-selected map until
              * the new one is ready to slot in. */
-            if (mapPreviewTex) {
+            if (showMapPanel && mapPreviewTex) {
                 /* Compute UV coordinates to zoom into the interesting area with padding */
                 int pad = 10;   /* extra zoom-out margin so edge-start initials have room */
                 int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
@@ -8301,7 +11730,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
                     ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
                     IM_COL32(0, 0, 80, 255));
+                /* 1 px per map square cropped to the bounding box and blown
+                 * up over the panel — a 5-7x magnification that bilinear
+                 * turns to mush. Point-sample it; the surrounding UI goes
+                 * back to LINEAR straight after. */
+                imguiPushNearestSampling();
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                imguiPopNearestSampling();
                 ImVec2 miniMin = ImGui::GetItemRectMin();
                 bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                         effHostMap, miniMin, innerSize,
@@ -8330,75 +11765,38 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         lobbyChooseMapOpen(cs, renderer);
                     }
                 }
-            } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
+            } else if (showMapPanel && (!clientSimIsMapDownloadComplete(cs) ||
+                                        awaitingMapChangePacket)) {
                 /* No texture yet AND we're mid-download — show the
                  * progress bar so the user knows something's coming. */
-                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                float progress = 0.0f;
+                ImGui::TextUnformatted(lobbyMapTransferLine(cs, &progress));
                 ImGui::Spacing();
-                float progress = (float)netGetDownloadPos() / 255.0f;
                 ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                 ImGui::Spacing();
-            } else {
+            } else if (showMapPanel) {
                 ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
             }
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Map info — show the lock badge inline with the map name
-             * when LOBBY_LOCK_MAP is set so admins / non-hosts can see
-             * the map is pinned even though the Choose Map / Skip-Map
-             * affordances aren't drawn. */
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), clientSimGetMapName(cs));
-            if ((clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP) != 0) {
-                ImGui::SameLine(0.0f, 4.0f * s);
-                renderLockBadge();
-            }
-            ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
-            ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
-            ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
-
-            if (!spectator && clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
+            if (showMapPanel) {
                 ImGui::Spacing();
-                bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
-                if (countdownActive) ImGui::BeginDisabled();
-                bool voted = clientSimIsMapSkipMyVote(cs);
-                const char *skipLabel = langGetText(
-                    voted ? STR_DLGLOBBY_CANCELSKIP : STR_DLGLOBBY_SKIPMAP);
-                if (voted) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.1f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.5f, 0.2f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.3f, 0.05f, 1.0f));
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                /* Map info — show the lock badge inline with the map name
+                 * when LOBBY_LOCK_MAP is set so admins / non-hosts can see
+                 * the map is pinned even though the Choose Map / Skip-Map
+                 * affordances aren't drawn. */
+                ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), clientSimGetMapName(cs));
+                if ((clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP) != 0) {
+                    ImGui::SameLine(0.0f, 4.0f * s);
+                    renderLockBadge();
                 }
-                if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
-                    clientSimSetMapSkipMyVote(cs, !clientSimIsMapSkipMyVote(cs));
-                    if (hasTransport) {
-                        clientSimNetSendMapSkipVote(cs);
-                    }
-                }
-                if (voted) {
-                    ImGui::PopStyleColor(3);
-                }
-                ImGui::SameLine();
-                int skipCount = 0, humanCount = 0;
-                for (int j = 0; j < MAX_TANKS; j++) {
-                    const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
-                    if (jSlot && jSlot->connected && !jSlot->isBot) {
-                        humanCount++;
-                        if (clientSimIsMapSkipVote(cs, (BYTE)j)) skipCount++;
-                    }
-                }
-                {
-                    MessageArgs vargs;
-                    memset(&vargs, 0, sizeof(vargs));
-                    vargs.number  = skipCount;
-                    vargs.number2 = humanCount;
-                    ImGui::TextUnformatted(
-                        langGetTextFmt(STR_DLGLOBBY_VOTES, &vargs));
-                }
-                if (countdownActive) ImGui::EndDisabled();
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
+
+                renderMapSkipVote(cs, spectator, hasTransport, s, false);
             }
 
             /* Choose Map button moved up to sit directly under the
@@ -8432,18 +11830,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * WBN's split immediately on response (no Apply /
                  * Dismiss approval step). */
 
-                /* Between-rounds recap: a button directly above Ready that
-                 * opens the scoreboard + awards in a large titled window.
-                 * Shown only while a stored summary exists (set at game
-                 * over, cleared on the next countdown). The window itself
-                 * is rendered later, outside this group. */
-                if (lobbyShowLastRound) {
-                    if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_BTN),
-                                      ImVec2(-1, 0))) {
-                        g_lastRoundWinOpen = true;
-                    }
-                }
-
                 /* The viewer holds no slot to ready up — hide the Ready button. */
                 if (!spectator) {
                 if (!canReady) ImGui::BeginDisabled();
@@ -8473,39 +11859,6 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }  /* close !spectator: Ready button */
             }
             ImGui::EndGroup(); /* /right column */
-
-            /* Between-rounds recap window: a large, titled, non-modal
-             * window (matches the Map preview popup's geometry) opened by
-             * the "Last round" button above Ready. Auto-dismisses when the
-             * stored summary clears on the next countdown. */
-            if (!lobbyShowLastRound) {
-                g_lastRoundWinOpen = false;
-            }
-            if (g_lastRoundWinOpen) {
-                ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-                const float kGutter = 15.0f;
-                float lineH = ImGui::GetTextLineHeightWithSpacing();
-                float winW = displaySize.x - kGutter * 2.0f;
-                float winH = displaySize.y - kGutter * 2.0f - lineH * 3.0f;
-                if (winW < 480.0f) winW = 480.0f;
-                if (winH < 320.0f) winH = 320.0f;
-                if (winH > displaySize.y * 0.85f) winH = displaySize.y * 0.85f;
-                ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowPos(ImVec2(kGutter, kGutter), ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f),
-                                                    ImVec2(FLT_MAX, FLT_MAX));
-                char title[128];
-                SDL_snprintf(title, sizeof(title), "%s###LastRoundWin",
-                             langGetText(STR_DLGLOBBY_LASTROUND_BTN));
-                if (ImGui::Begin(title, &g_lastRoundWinOpen, 0)) {
-                    if (ImGui::IsWindowFocused() &&
-                        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                        g_lastRoundWinOpen = false;
-                    }
-                    renderLastRoundBody(cs, s);
-                }
-                ImGui::End();
-            }
         } /* /desktop layout scope (playerPanelW/mapPanelW) */
 
         /* --- Map preview popup --- */
@@ -8681,7 +12034,73 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
-    return leftLobby ? LOBBY_FRAME_LEFT : LOBBY_FRAME_CONTINUE;
+#if !BOLO_MOBILE
+    /* The reel outlives any single body render. Once the summary is gone (the
+     * countdown clears it) drop the reel and the per-summary load latch —
+     * unconditionally, since a round whose load failed leaves the latch set
+     * with no reel to end, and would otherwise block every later round in the
+     * session. lobbyReelEnd is idempotent, and so is the blob drop that goes
+     * with it — a download that completed after the recap it belongs to went
+     * away is stale, and the round starting now will ask for its own. While a
+     * summary stands, freeze a reel the recap stopped drawing — a tab switched
+     * away from must not leave the decoder ticking unseen. */
+    if (!clientSimGetLastRoundStats(cs)) {
+        lobbyReelDropRoundLog(cs);
+        lobbyReelEnd();
+    } else if (s_reelActive && !s_reelDrawn && lvEmbedIsPlaying()) {
+        lvEmbedPause();
+        s_reelAutoPaused = true;
+    }
+    s_reelDrawn = false;
+#endif
+
+    if (leftLobby) return LOBBY_FRAME_LEFT;
+    return LOBBY_FRAME_CONTINUE;
+}
+
+/* Usable bounds of the display a restored lobby window should be fitted
+ * to: the one the saved dialog position lands on, else the one the window
+ * is currently on, else the primary. Mirrors the same fallback chain the
+ * game window's restore uses in winbolo.c. False when SDL can't name a
+ * display at all, in which case the caller skips the clamp rather than
+ * clamping against garbage. */
+static bool lobbyRestoreUsableBounds(SDL_Window *window, SDL_Rect *out) {
+    SDL_DisplayID dispID = 0;
+    if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+        SDL_Point pt = { gameFrontDialogX, gameFrontDialogY };
+        dispID = SDL_GetDisplayForPoint(&pt);
+    }
+    if (!dispID && window) dispID = SDL_GetDisplayForWindow(window);
+    if (!dispID) dispID = SDL_GetPrimaryDisplay();
+    if (!dispID) return false;
+    return SDL_GetDisplayUsableBounds(dispID, out);
+}
+
+/* Record the lobby window's current size and mark the window settings
+ * dirty. Debounced downstream (gameFrontSaveWindowSettings writes at most
+ * once per 500ms, gameFrontPumpDirty flushes the trailing event), so this
+ * is safe to call from every move/resize event of a drag.
+ *
+ * Skipped when the window size isn't the player's to choose: controller
+ * mode leaves the host window alone, and an active device preset forces
+ * its own dimensions — saving either would overwrite the desktop size. */
+static void lobbySaveWindowGeometry(SDL_Window *window) {
+    if (!window) return;
+#if !BOLO_MOBILE
+    if (uiShouldUseControllerMode()) return;
+    if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
+        s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
+        return;
+    }
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window, &w, &h);
+    if (w <= 0 || h <= 0) return;
+    gameFrontLobbyW = w;
+    gameFrontLobbyH = h;
+    gameFrontSaveWindowSettings();
+#else
+    (void)window;
+#endif
 }
 
 /* Blocking desktop modal: owns a private ImGui context + SDL backends and
@@ -8710,11 +12129,54 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #endif
 
 #if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    /* Reopen at the size the player last left the lobby at, falling back to
+     * the built-in default when nothing is saved. Clamped to the usable
+     * bounds of the display the restore targets so a size saved on a bigger
+     * monitor that is no longer attached can't come back larger than the
+     * screen. dialogSetWindowSize still owns the controller-mode and
+     * device-preset overrides. */
+    {
+        int lobbyW = DIALOG_W, lobbyH = DIALOG_H;
+        if (gameFrontLobbyW > 0 && gameFrontLobbyH > 0) {
+            lobbyW = gameFrontLobbyW;
+            lobbyH = gameFrontLobbyH;
+        }
+        SDL_Rect usable;
+        if (lobbyRestoreUsableBounds(window, &usable)) {
+            if (lobbyW > usable.w) lobbyW = usable.w;
+            if (lobbyH > usable.h) lobbyH = usable.h;
+        }
+        if (lobbyW < DIALOG_MIN_W) lobbyW = DIALOG_MIN_W;
+        if (lobbyH < DIALOG_MIN_H) lobbyH = DIALOG_MIN_H;
+        dialogSetWindowSize(window, lobbyW, lobbyH);
+    }
     dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
+    /* A saved position from a monitor that has since been unplugged (or one
+     * that no longer fits the restored size) would leave the lobby off-screen
+     * with no way to drag it back, so pull it inside the target display's
+     * usable area. Only writes when it actually moved, so the normal case
+     * leaves the saved position untouched. */
+    {
+        SDL_Rect usable;
+        int px = 0, py = 0, ww = 0, wh = 0;
+        SDL_GetWindowPosition(window, &px, &py);
+        SDL_GetWindowSize(window, &ww, &wh);
+        if (lobbyRestoreUsableBounds(window, &usable) && ww > 0 && wh > 0) {
+            int cx = px, cy = py;
+            if (cx + ww > usable.x + usable.w) cx = usable.x + usable.w - ww;
+            if (cy + wh > usable.y + usable.h) cy = usable.y + usable.h - wh;
+            if (cx < usable.x) cx = usable.x;
+            if (cy < usable.y) cy = usable.y;
+            if (cx != px || cy != py) {
+                SDL_SetWindowPosition(window, cx, cy);
+                dialogSaveCurrentPosition(window);
+                gameFrontSaveWindowSettings();
+            }
+        }
+    }
     SDL_ShowWindow(window);
     SDL_RaiseWindow(window);
 
@@ -8766,7 +12228,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            /* Position goes to gameFrontDialogX/Y (shared with every other
+             * dialog — it is the one dialog window); the size is the lobby's
+             * own. Both then take the debounced save path. */
             dialogHandleWindowMoveResize(window, &ev);
+            if ((ev.type == SDL_EVENT_WINDOW_MOVED ||
+                 ev.type == SDL_EVENT_WINDOW_RESIZED) &&
+                ev.window.windowID == SDL_GetWindowID(window)) {
+                lobbySaveWindowGeometry(window);
+            }
             if (ev.type == SDL_EVENT_QUIT) {
                 running = false;
             }
@@ -8833,9 +12303,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         imguiSteamNavFeedCurrentContext();
         controllerDialogsRenderMenu();
 
-        if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
-            result = 0;
-            running = false;
+        switch (imguiLobbyRenderFrame(cs)) {
+            case LOBBY_FRAME_LEFT:
+                result = 0;
+                running = false;
+                break;
+            default:
+                break;
         }
 
         dialogDrawNavOutline();
@@ -8851,6 +12325,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
     /* Release per-frame state (texture, popup buffers, transient flags). */
     imguiLobbyFrameReset();
+
+    /* The lobby closing is the last chance to write a move / resize / split
+     * drag that landed inside the debounce window — there is no further
+     * per-frame pump to flush it. */
+    gameFrontFlushWindowSettings();
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);

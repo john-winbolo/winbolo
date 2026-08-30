@@ -160,6 +160,15 @@ typedef struct LogViewerState {
   BYTE         prevBaseArmour[MAX_BASES];
   bool         prevBaseStockValid[MAX_BASES];
 
+  /* --- Embedded reel (post-game recap) state --- */
+  /* Colour tanks by their alliance to the local player -- green allies, red
+   * enemies -- instead of by the viewer's per-team palette. The reel is
+   * watched by one of the players, so that is the reading it wants; it also
+   * brings up no preferences, so tc[] is all zeros there and every team would
+   * otherwise index the sheet's uncoloured row. Only the reel sets it, so the
+   * standalone viewer, the spectator and the game view keep the team palette. */
+  bool         allyColours;
+
   /* --- FROM draw.c (SDL handles) --- */
   struct SDL_Window   *window;
   struct SDL_Renderer *renderer;
@@ -187,6 +196,58 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
  * Takes ownership of zipData. */
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+
+/* Embedded reel: drives the decoder and the block-grid render-to-texture for a
+ * host that already owns an ImGui frame, so a round can be drawn as a texture
+ * inside that frame. The viewer's ImGui context, panels, sound and preferences
+ * are never brought up. Scalars and void * only — hosts that cannot include
+ * this header (the client's GUI, whose types collide with backend.h) hand-
+ * declare the same signatures.
+ *
+ * lvEmbedBegin borrows window/renderer, takes ownership of zipData (freeing it
+ * on every refusal), and refuses while any viewer, spectator or earlier embed
+ * still holds the decoder singleton. viewW/viewH are the host's image rect in
+ * pixels; the tile grid is sized to it and re-fitted by lvEmbedSetViewportSize.
+ * lvEmbedFrameTexture updates the render target when the decode timers asked
+ * for it and reports the texture plus the visible slice within it (src rect in
+ * texture pixels), clearing and presenting nothing. Wheel coordinates are
+ * image-local; pan deltas are host screen pixels measured from lvEmbedPanBegin.
+ * lvEmbedGetZoomLevel reports the scale the slice is drawn at, so a host can
+ * size its image at the slice times the zoom instead of stretching it to fill.
+ * lvEmbedGetProgress, lvEmbedSeekRatio, lvEmbedSeekToClip and lvEmbedSeekToTime
+ * all speak in the presented window rather than the whole log: progress is
+ * elapsed and total milliseconds within it (zeros while no embed is running), a
+ * ratio addresses it as 0..1, and both seek times are measured from its start.
+ * lvEmbedSeekToClip also centres the view on the cell the clip happened at;
+ * lvEmbedSeekToTime leaves the view alone, for a caller naming a moment rather
+ * than a place. Times past the end of the window clamp to it.
+ * lvEmbedStepTicks walks the log forward by whole ticks with no timer driving
+ * it, for a host stepping the round a fixed amount at a time; the next
+ * lvEmbedFrameTexture repaints to the moment it stepped to.
+ * lvEmbedSetSelfName names the player watching, so the round is drawn from
+ * their side — green allies, red enemies — rather than from log slot 0's; an
+ * empty name leaves the reel drawing as it does with nobody named.
+ * lvEmbedEnd is safe to call twice or while inactive. */
+bool lvEmbedBegin(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  uint8_t *zipData, size_t zipLen, int viewW, int viewH);
+void lvEmbedEnd(void);
+bool lvEmbedIsActive(void);
+void lvEmbedSetViewportSize(int viewW, int viewH);
+bool lvEmbedFrameTexture(void **outTexture, int *outTexW, int *outTexH,
+                         int *outSrcX, int *outSrcY, int *outSrcW, int *outSrcH);
+float lvEmbedGetZoomLevel(void);
+void lvEmbedPlay(void);
+void lvEmbedPause(void);
+bool lvEmbedIsPlaying(void);
+void lvEmbedWheel(int localX, int localY, float wheelY);
+void lvEmbedPanBegin(void);
+void lvEmbedPanDelta(float dxScreenPx, float dyScreenPx);
+void lvEmbedGetProgress(uint32_t *outCurMs, uint32_t *outTotalMs);
+void lvEmbedSeekRatio(float ratio);
+void lvEmbedSeekToClip(uint32_t roundRelMs, int mapX, int mapY);
+void lvEmbedSeekToTime(uint32_t roundRelMs);
+void lvEmbedStepTicks(int ticks);
+void lvEmbedSetSelfName(const char *name);
 
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world

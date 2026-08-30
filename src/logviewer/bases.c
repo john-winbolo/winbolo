@@ -337,7 +337,7 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
     MessageArgs args = {0};
     snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     if (returnValue != NEUTRAL) {
-      lv_playersGetPlayerName(returnValue, oldOwner);
+      lv_playersGetPlayerName(returnValue, oldOwner, sizeof(oldOwner));
       snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
       lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
     } else {

@@ -864,6 +864,24 @@ static bool commandDecodeWbnReauth(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_RATING_POSTED — PACKET_RATING_POSTED
+ * Wire: [header 8] [key RATING_POSTED_KEY_WIRE] — fixed length, no length
+ * prefix; a short key is NUL-padded out to fill the field. */
+#define RATING_POSTED_KEY_WIRE (ROUND_STATS_LOGKEY_LEN - 1)
+
+static bool commandEncodeRatingPosted(const ClientCommand *cmd,
+                                      uint8_t *buf, size_t bufCap,
+                                      size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + RATING_POSTED_KEY_WIRE;
+    size_t keyLen = strnlen(cmd->u.ratingPosted.key, RATING_POSTED_KEY_WIRE);
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_RATING_POSTED, 0);
+    memset(buf + CMD_PACKET_BODY_OFFSET, 0, RATING_POSTED_KEY_WIRE);
+    memcpy(buf + CMD_PACKET_BODY_OFFSET, cmd->u.ratingPosted.key, keyLen);
+    *outLen = needed;
+    return true;
+}
+
 /* CMD_PLAYER_MUTE — PACKET_PLAYER_MUTE
  * Wire: [header 8] [targetPlayer 1] [muted 1] */
 static bool commandEncodePlayerMute(const ClientCommand *cmd,
@@ -875,6 +893,17 @@ static bool commandEncodePlayerMute(const ClientCommand *cmd,
     buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.playerMute.targetPlayer;
     buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.playerMute.muted ? 1 : 0;
     *outLen = needed;
+    return true;
+}
+
+static bool commandDecodeRatingPosted(const uint8_t *buf, size_t len,
+                                      ClientCommand *cmd) {
+    /* Fixed-length body: anything shorter or longer is not this command. */
+    if (len != CMD_PACKET_BODY_OFFSET + RATING_POSTED_KEY_WIRE) return false;
+    cmd->type = CMD_RATING_POSTED;
+    memcpy(cmd->u.ratingPosted.key, buf + CMD_PACKET_BODY_OFFSET,
+           RATING_POSTED_KEY_WIRE);
+    cmd->u.ratingPosted.key[RATING_POSTED_KEY_WIRE] = '\0';
     return true;
 }
 
@@ -954,6 +983,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_BALANCE_APPLY:         ok = commandEncodeBalanceApply(cmd, buf, bufCap, outLen); break;
         case CMD_BALANCE_DISMISS:       ok = commandEncodeBalanceDismiss(cmd, buf, bufCap, outLen); break;
         case CMD_WBN_REAUTH:            ok = commandEncodeWbnReauth(cmd, buf, bufCap, outLen); break;
+        case CMD_RATING_POSTED:         ok = commandEncodeRatingPosted(cmd, buf, bufCap, outLen); break;
         case CMD_PLAYER_MUTE:           ok = commandEncodePlayerMute(cmd, buf, bufCap, outLen); break;
         case CMD_VOICE_STATE:           ok = commandEncodeVoiceState(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
@@ -1001,6 +1031,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_BALANCE_APPLY:         return commandDecodeBalanceApply(buf, len, cmd);
         case PACKET_BALANCE_DISMISS:       return commandDecodeBalanceDismiss(buf, len, cmd);
         case PACKET_WBN_REAUTH:            return commandDecodeWbnReauth(buf, len, cmd);
+        case PACKET_RATING_POSTED:         return commandDecodeRatingPosted(buf, len, cmd);
         case PACKET_PLAYER_MUTE:           return commandDecodePlayerMute(buf, len, cmd);
         case PACKET_VOICE_STATE:           return commandDecodeVoiceState(buf, len, cmd);
         default:                           return false;

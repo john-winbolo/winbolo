@@ -146,6 +146,44 @@ int run_attribution_reader_rejects_bad(void) {
     return 0;
 }
 
+/* slotCount is a uint16 off disk and the file is untrusted — a log comes from
+ * wherever the user got it, and the client loads them from a game server and
+ * from WinBolo.net. Readers bound a slot index against it and then index the
+ * fixed MAX_TANKS slots[], so a value above MAX_TANKS is a read off the end of
+ * the header for any slot byte the records carry above 15 — and a slot byte
+ * reaches 255. The parser holds it down; the member itself still loads, since
+ * nothing about it is otherwise malformed. */
+int run_attribution_reader_clamps_slotcount(void) {
+    AttrTrackHeader hdr;
+    const AttrTrackHeader *h;
+
+    memset(&hdr, 0, sizeof hdr);
+    memcpy(hdr.magic, ATTRIBUTION_TRACK_MAGIC, 4);
+    hdr.version   = ATTRIBUTION_TRACK_VERSION;
+    hdr.slotCount = 65535;
+    hdr.recordCount = 0;
+
+    UT_ASSERT_MSG(lvAttributionParseMember((const uint8_t *)&hdr, sizeof hdr),
+                  "an oversized slotCount is clamped, not a rejected member");
+    h = lvAttributionGetHeader();
+    UT_ASSERT(h != NULL);
+    UT_ASSERT_MSG(h->slotCount == MAX_TANKS,
+                  "slotCount must be clamped to MAX_TANKS, got %u",
+                  (unsigned)h->slotCount);
+
+    /* A member written with fewer identities than we compile for is left
+     * alone — the clamp is a ceiling, not a rewrite. */
+    hdr.slotCount = 4;
+    UT_ASSERT(lvAttributionParseMember((const uint8_t *)&hdr, sizeof hdr));
+    h = lvAttributionGetHeader();
+    UT_ASSERT(h != NULL);
+    UT_ASSERT_MSG(h->slotCount == 4, "a short slotCount stands, got %u",
+                  (unsigned)h->slotCount);
+
+    lvAttributionClear();
+    return 0;
+}
+
 int run_attribution_reader_old_wbv(void) {
     const char *dir = getenv("WB_WBV_FIXTURE_DIR");
     char path[512];

@@ -501,7 +501,61 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 #define PACKET_ROUND_STATS             209  /* server → all: end-of-round
                                               scoreboard + awards */
 
-#define PACKET_PLAYER_MUTE             210  /* client → server
+#define PACKET_ROUND_LOG_REQ           210  /* client → server
+                                              { reqSeq 4 BE } — ask for the
+                                              last completed round's .wbv.
+                                              The bytes stream back over
+                                              CHANNEL_BULK behind a
+                                              BULK_KIND_ROUND_LOG stream
+                                              header whose gen echoes reqSeq,
+                                              so a reply to a superseded
+                                              request is droppable. */
+#define PACKET_ROUND_LOG_ERR           211  /* server → client
+                                              { reqSeq 4 BE, code 1 } — a
+                                              refused ROUND_LOG_REQ. Every
+                                              refusal is answered, so the
+                                              client can tell "no" from a
+                                              lost request. */
+
+/* PACKET_ROUND_LOG_ERR codes. BUSY and RATE_LIMITED are transient — the
+ * client may ask again — while DISABLED, NONE and TOO_LARGE hold for as
+ * long as the round does. */
+#define ROUND_LOG_ERR_DISABLED      1  /* server does not serve round logs, or
+                                        * is not in a state where it can */
+#define ROUND_LOG_ERR_NONE          2  /* no completed round to serve */
+#define ROUND_LOG_ERR_BUSY          3  /* concurrent-transfer cap reached */
+#define ROUND_LOG_ERR_TOO_LARGE     4  /* round log exceeds ROUND_LOG_MAX_BYTES */
+#define ROUND_LOG_ERR_RATE_LIMITED  5  /* this client asked too soon, or too
+                                        * many times this round */
+
+#define PACKET_RATING_POSTED           212  /* client → server
+                                              { key 32 } — the sender has just
+                                              rated or commented on the
+                                              finished round's WinBolo.net
+                                              page. The server neither reads
+                                              nor checks the key; it fans the
+                                              event out so the other clients
+                                              re-read that page. */
+
+#define PACKET_MAP_DL_READY            213  /* client → server
+                                              { connId 8 } — "my join-download
+                                              buffers are armed; begin the map
+                                              stream". Sent when JOIN_ACCEPT
+                                              arms the download, and re-sent by
+                                              the client's download watchdog.
+                                              A re-ask while a stream is (or
+                                              was) in flight is answered with a
+                                              full restart behind a
+                                              CHANNEL_BULK re-base, so a
+                                              transfer whose head the client
+                                              missed (accept lost, stream
+                                              already flowing) is recoverable.
+                                              connId must match the slot's; a
+                                              mismatch is dropped (an
+                                              address-spoofed READY could
+                                              otherwise reset a healthy
+                                              client's stream). */
+#define PACKET_PLAYER_MUTE             214  /* client → server
                                               { targetPlayer 1, muted 1 }
                                               per-recipient mute: the
                                               server stops forwarding
@@ -509,7 +563,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               chat to the sender. Not
                                               echoed to anyone else. */
 
-#define PACKET_VOICE_STATE             211  /* client → server
+#define PACKET_VOICE_STATE             215  /* client → server
                                               { hasMic 1, selfMuted 1 }
                                               the sender's own mic status,
                                               sent when it changes. Lands

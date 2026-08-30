@@ -213,8 +213,10 @@ void lv_playersUpdateLgm(BYTE playerNum, BYTE lgmMX, BYTE lgmMY, BYTE lgmPX, BYT
 *ARGUMENTS:
 *  playerNum  - The player number to set
 *  dest       - Destination string
+*  destSize   - Size of dest in bytes, including the NUL. Longer names
+*               are truncated rather than overrunning the caller.
 *********************************************************/
-void lv_playersGetPlayerName(BYTE playerNum, char *dest);
+void lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize);
 
 /*********************************************************
 *NAME:          lv_playersMakeMessageName
@@ -444,6 +446,23 @@ bool lv_playersChooseView(int x, int y);
 
 BYTE lv_playersGetCentredX();
 BYTE lv_playersGetCentredY();
+
+/* Centred tank in native pixels (square * TILE_SIZE + sub-tile pixel), -1 when
+ * it has no usable position. The BYTE pair above discards the sub-tile part,
+ * which is what limits a follow camera to whole-tile steps. */
+int lv_playersGetCentredPixelX(void);
+int lv_playersGetCentredPixelY(void);
+
+/* Aim the follow camera at a player by name (the only key shared between the
+ * lobby's slots and the log's players). False when nobody matches or the match
+ * has no tank on the map at this point in the replay. */
+bool lv_playersSetViewByName(const char *name);
+
+/* The slot a named player holds in the log right now, or NEUTRAL when nobody
+ * carries that name. Same name-is-the-only-key bridge as the call above, but it
+ * only reports: it moves neither the view nor self, and it does not care where
+ * the tank is, so a player who is dead at this moment still resolves. */
+BYTE lv_playersFindByName(const char *name);
 BYTE lv_playersGetTeamId(BYTE playerNum);
 BYTE lv_playersGetUnusedTeam(BYTE playerNum);
 BYTE lv_playersGetTeamForOwner(BYTE owner);

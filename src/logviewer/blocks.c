@@ -28,8 +28,21 @@
 /* Chunk size to decompress at a time (64 KB) */
 #define LOG_DECOMPRESS_CHUNK (64 * 1024)
 
-/* Maximum decompressed log size (512 MB) */
+/* Maximum decompressed log size for a file the user opened themselves (512 MB).
+ * Generous on purpose: they picked it, and a long session's log is large. */
 #define LOG_MAX_SIZE (512 * 1024 * 1024)
+
+/* And for one that arrived over the network — the reel's copy from a game
+ * server or from WinBolo.net (128 MB). The zip is capped at a few megabytes
+ * before it gets here, but a zip says nothing about what it decompresses to,
+ * and 512 MB of it costs the sender almost nothing to ask for. A round log
+ * that far exceeds what a real round produces is not one worth playing back,
+ * and unlike the file case nobody chose to open this one. */
+#define LOG_MAX_SIZE_EMBED (128 * 1024 * 1024)
+
+/* Which of the two this session is held to; set by whichever entry point
+ * opened it. */
+static size_t logMaxSize = LOG_MAX_SIZE;
 
 static uint8_t *ownedZipData = NULL;  /* Zip buffer owned by us (from memory load) */
 
@@ -44,11 +57,11 @@ static unzFile  logFile = NULL;
 
 /* Grow logData to at least 'needed' bytes. Returns TRUE on success. */
 static bool growBuffer(size_t needed) {
-  if (needed > LOG_MAX_SIZE) return FALSE;
+  if (needed > logMaxSize) return FALSE;
   if (needed <= logCapacity) return TRUE;
   size_t newCap = logCapacity ? logCapacity : LOG_INITIAL_CAPACITY;
   while (newCap < needed) newCap *= 2;
-  if (newCap > LOG_MAX_SIZE) newCap = LOG_MAX_SIZE;
+  if (newCap > logMaxSize) newCap = logMaxSize;
   uint8_t *newData = realloc(logData, newCap);
   if (newData == NULL) return FALSE;
   logData = newData;
@@ -122,6 +135,7 @@ static void lv_blocksLoadAttributionTrack(unzFile zf) {
 /* Size parameter is ignored -- we buffer the whole file. */
 bool lv_blocksCreate(char *fileName, int size) {
   (void)size;
+  logMaxSize  = LOG_MAX_SIZE;   /* the user chose this file */
   blockKey    = 0;
   logData     = NULL;
   logSize     = 0;
@@ -227,6 +241,9 @@ static int ZCALLBACK mem_error(voidpf opaque, voidpf stream) {
 static MemReader s_memReader;
 
 bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
+  /* These bytes came off the wire — the reel's copy from a game server or from
+   * WinBolo.net — so the tighter of the two ceilings applies. */
+  logMaxSize  = LOG_MAX_SIZE_EMBED;
   blockKey    = 0;
   logData     = NULL;
   logSize     = 0;
@@ -295,6 +312,11 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
  * buffers are freed here. A live zip handle is assumed already closed, as with
  * the other create entry points. */
 void lv_blocksBeginStream(void) {
+  /* Left at the file ceiling rather than the embed one. These bytes are also
+   * from a server, but they are a live spectate arriving at the pace the game
+   * is played, not a zip that expands as fast as it can be read, and a long
+   * session legitimately accumulates. Nothing here is amplified. */
+  logMaxSize  = LOG_MAX_SIZE;
   free(logData);
   logData     = NULL;
   free(ownedZipData);
@@ -370,7 +392,7 @@ int lv_blocksReadBytes(BYTE *buff, int len) {
 
 void lv_logDecompressAll(void) {
   if (logFile == NULL) return;
-  while (!logEOF && logSize < LOG_MAX_SIZE) {
+  while (!logEOF && logSize < logMaxSize) {
     decompressUpTo(logSize + LOG_DECOMPRESS_CHUNK);
   }
 }

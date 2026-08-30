@@ -283,6 +283,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  memset(cs->displayPing, 0, sizeof(cs->displayPing));
   explosionsCreate(&cs->sim.expl);
   rubbleCreate(&cs->sim.rbl);
   buildingCreate(&cs->sim.blds);
@@ -1141,11 +1142,16 @@ void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName)
   }
 }
 
-void clientSimGetPlayerName(ClientSim *csPtr, char *value) {
+void clientSimGetPlayerName(ClientSim *csPtr, char *value, size_t valueSize) {
+  if (valueSize == 0) {
+    return;
+  }
   if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
-    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
+    SDL_strlcpy(value, clientSimGetMyLastPlayerName(csPtr), valueSize);
   } else {
-    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
+    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs,
+                         clientSimGetMyPlayerNum(csPtr), value, valueSize,
+                         FALSE);
   }
 }
 
@@ -1321,6 +1327,19 @@ uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum) {
   return playersGetPing(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
 
+PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum) {
+  if (cs == NULL || playerNum >= MAX_TANKS) {
+    return PING_BAND_NONE;
+  }
+  return pingDisplayBand(&cs->displayPing[playerNum]);
+}
+
+void clientSimResetPlayerDisplayPing(ClientSim *cs, BYTE playerNum) {
+  if (cs != NULL && playerNum < MAX_TANKS) {
+    pingDisplayReset(&cs->displayPing[playerNum]);
+  }
+}
+
 uint8_t clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum) {
   return playersGetClientFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
@@ -1329,8 +1348,10 @@ uint8_t clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum) {
   return playersGetClientType(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
 
-void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest) {
-  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest,
+                                size_t destSize) {
+  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest,
+                           destSize);
 }
 
 uint8_t clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum) {
@@ -1371,10 +1392,6 @@ void netGetOurAddressStr(ClientSim *cs, char *dest) {
   } else {
     strcpy(dest, NET_SINGLE_PLAYER_GAME);
   }
-}
-
-BYTE netGetDownloadPos(void) {
-  return 255; /* complete */
 }
 
 void netSecond(void) {
@@ -1604,6 +1621,20 @@ bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
   return true;
 }
 
+bool clientSimMayAnswerGameVote(const ClientSim *cs, uint8_t kind,
+                                uint8_t teamId) {
+  if (!cs) return false;
+  if (kind != GAME_VOTE_KIND_SURRENDER) return true;
+  /* A spectator has no slot and no team, so it is never part of a
+   * surrender electorate. Guard explicitly — myPlayerNum is a stale
+   * player index for a spectator, not an empty one. */
+  if (cs->isSpectator) return false;
+  BYTE me = cs->myPlayerNum;
+  if (me >= MAX_TANKS) return false;
+  BYTE myTeam = cs->lobbySlots[me].teamNumber;
+  return myTeam != 0 && myTeam == teamId;
+}
+
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible) {
   if (!cs) return;
   int idx = clientGameVoteIdx(kind);
@@ -1828,6 +1859,9 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->predictedShellCount = 0;
   cs->projectedShellCount = 0;
   cs->projectionPingMs = 0;
+  /* Rows render "---" until the first snapshot of the new round lands,
+   * rather than a smoothed value carried over from the last one. */
+  memset(cs->displayPing, 0, sizeof(cs->displayPing));
 
   /* Reconciliation stats are predict-scoped — start each game fresh. */
   cs->reconCountThisWindow = 0;
@@ -1964,6 +1998,11 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
 
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
   return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
+}
+
+uint32_t clientSimGetRatingPostedSeq(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return cs->ratingPostedSeq;
 }
 
 const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {

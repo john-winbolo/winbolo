@@ -30,6 +30,7 @@
 #include <stdint.h>
 
 #include "wire_limits.h"  /* PACKET_MAX_PLAYER_NAME */
+#include "round_stats.h"  /* ROUND_STATS_LOGKEY_LEN — CmdRatingPosted key */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -71,6 +72,7 @@ typedef enum {
     CMD_BALANCE_DISMISS,
     CMD_WBN_REAUTH,
     CMD_LOBBY_CLAIM_START,
+    CMD_RATING_POSTED,
     CMD_PLAYER_MUTE,
     CMD_VOICE_STATE
 } ClientCommandType;
@@ -320,12 +322,20 @@ typedef struct {
  * upgrade their connected-player flags after a Steam linkage or
  * supporter-tier change. Token is the same fixed-size wire envelope
  * the join handshake uses (see WBN_JOIN_KEY_WIRE_LEN in
- * internal/transport_udp.h — pinned to 65 here to keep this header
- * dependency-free). */
+ * internal/transport_udp.h — pinned to 65 here so this public header
+ * does not reach into an internal one). */
 typedef struct {
     char token[65];
 } CmdWbnReauth;
 
+/* CMD_RATING_POSTED — the sender's rating or comment on the finished
+ * round's WinBolo.net page has just been accepted. key names the round
+ * (the summary's wbnLogKey); the server passes it through untouched so
+ * the receiving clients can tell whether the nudge is for the round
+ * their own recap is showing. */
+typedef struct {
+    char key[ROUND_STATS_LOGKEY_LEN];
+} CmdRatingPosted;
 /* CMD_PLAYER_MUTE — mute or unmute one player for the sending client
  * only. The server stops forwarding that player's voice and chat to the
  * sender. Session-scoped: nothing is persisted, and the mask is cleared
@@ -382,6 +392,7 @@ typedef struct ClientCommand {
         CmdBalanceDismiss      balanceDismiss;
         CmdWbnReauth           wbnReauth;
         CmdLobbyClaimStart     lobbyClaimStart;
+        CmdRatingPosted        ratingPosted;
         CmdPlayerMute          playerMute;
         CmdVoiceState          voiceState;
     } u;

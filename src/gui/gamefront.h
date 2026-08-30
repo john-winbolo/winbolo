@@ -423,6 +423,19 @@ void gameFrontSaveCurrentPrefs(void);
 void gameFrontSaveWindowSettings(void);
 
 /*********************************************************
+*NAME:          gameFrontFlushWindowSettings
+*PURPOSE:
+* Write the window settings now, bypassing the 500ms
+* debounce. For close/shutdown paths, where there may be
+* no further gameFrontPumpDirty call to flush a trailing
+* move/resize. Cheap and idempotent.
+*
+*ARGUMENTS:
+*  none
+*********************************************************/
+void gameFrontFlushWindowSettings(void);
+
+/*********************************************************
 *NAME:          gameFrontPumpDirty
 *PURPOSE:
 * Consume point for the debounce dirty flag set by
@@ -839,6 +852,19 @@ void gameFrontReloadSkins(void);
 void gameFrontShutdownServer(void);
 
 /*********************************************************
+*NAME:          gameFrontHasLocalServer
+*PURPOSE:
+* TRUE while this process owns a local ServerSim (single
+* player or a listen server). The round-log accessors only
+* describe a round this process recorded, so a caller must
+* not offer them otherwise.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+bool gameFrontHasLocalServer(void);
+
+/*********************************************************
 *NAME:          gameFrontSetServerPaused
 *PURPOSE:
 *  Freeze or resume the in-process server tick. When paused
@@ -880,6 +906,18 @@ struct ServerSim *gameFrontGetSinglePlayerServerSim(void);
 extern int gameFrontDialogX;
 extern int gameFrontDialogY;
 
+/* Lobby window size and players/map column split ([WINDOW] section).
+ * The lobby reuses the dialog window, so its position is gameFrontDialogX/Y
+ * above; -1 width/height means "never saved". The split offsets are in
+ * logical (UI-scale-independent) pixels, one per right-panel view — the map
+ * view uses gameFrontLobbySplit, the post-game replay uses
+ * gameFrontLobbySplitRecap. Saved through the same debounced
+ * gameFrontSaveWindowSettings path as the rest of the window state. */
+extern int gameFrontLobbyW;
+extern int gameFrontLobbyH;
+extern float gameFrontLobbySplit;
+extern float gameFrontLobbySplitRecap;
+
 extern bool gameFrontUseUpnp;
 extern bool gameFrontUseNatTraversal;
 
@@ -899,6 +937,11 @@ extern char           gameFrontHostingUploadDir[FILENAME_MAX];
 extern bool           gameFrontHostingLogging;         /* default Yes   */
 extern char           gameFrontHostingLogDir[FILENAME_MAX];
                               /* Round-log dir; default <prefs path> */
+extern bool           gameFrontHostingServeReplays;    /* default Yes   */
+                              /* Hand a finished round's log to players who
+                               * ask for it. Yes leaves the serve policy at
+                               * ROUND_LOG_SERVE_AUTO, which serves unless
+                               * WinBolo.net is running; No forces it off. */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
@@ -909,5 +952,6 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
+void gameFrontSetHostingServeReplays(bool serve);
 
 #endif

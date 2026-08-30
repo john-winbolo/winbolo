@@ -69,6 +69,7 @@
 #include "../winbolonet/http.h"
 #include "server_sim_internal.h"
 #include "attribution_track.h"
+#include "round_stats_derive.h"   /* roundStatsApplyRecord, computeAwards */
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
@@ -90,6 +91,13 @@
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
 #define SNAPSHOT_VIEWPORT_MARGIN 20
+
+/* Wall-clock length of one sim->tick while a round is running. serverSimTick
+ * runs simRunHalfStep twice per 20 ms frame in serverStateRunning and once in
+ * every other state, so a running tick is 10 ms and a lobby/countdown tick is
+ * 20 ms. Anything converting a round's ticks to time wants this one; change the
+ * half-step count and this has to change with it. */
+#define SIM_TICK_MS 10u
 
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
     int i;
@@ -135,6 +143,15 @@ static void publishMapSkipState(ServerSim *sim);
 /* Full lobby reset when the last human leaves — removes bots, restores
  * the startup settings snapshot, and unlocks the lobby. Defined below. */
 static void serverSimResetLobbyToDefaults(ServerSim *sim);
+
+/* The player slot every base owner is allied to when one side has swept
+ * the map, or NEUTRAL when no side has. Same predicate as
+ * serverSimCheckGameWin: a base at or below MIN_ARMOUR_CAPTURE is dead
+ * and recapturable, so it does not count toward a sweep. */
+static BYTE serverSimWinningOwner(ServerSim *sim);
+
+/* Server-originated English broadcast; defined further down the file. */
+static void publishServerMessage(ServerSim *sim, const char *message);
 
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
@@ -410,51 +427,35 @@ static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
                                     BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
     if (sim->state != serverStateRunning) return;
-    {
-        /* Record every hit, including owner-less/NEUTRAL splash — the offline
-         * derivation filters. The DMG_ and ATTR_ constants share numeric
-         * values, so the target/source bytes copy across directly. */
-        AttrDamageRecord r;
-        r.type = ATTR_REC_DAMAGE; r.tick = sim->tick;
-        r.source = source; r.target = targetKind; r.targetIndex = targetIndex;
-        r.attacker = attacker; r.amount = dealt; r.destroyed = destroyed ? 1 : 0;
-        r.mapX = mapX; r.mapY = mapY;
-        serverSimTrackAppend(sim, &r, sizeof r);
-    }
-    if (attacker >= MAX_TANKS) return;   /* aggregates skip owner-less/NEUTRAL, as before */
-    PlayerRoundStats *as = &sim->roundStats[attacker];
-    switch (targetKind) {
-    case DMG_TARGET_TANK: as->dmgToPlayers += dealt; break;
-    case DMG_TARGET_PILL: as->dmgToPills   += dealt; if (destroyed) as->pillKills++; break;
-    case DMG_TARGET_BASE: as->dmgToBases   += dealt; break;
-    default: break;
-    }
+    /* Record every hit, including owner-less/NEUTRAL splash — the shared
+     * derivation filters. The DMG_ and ATTR_ constants share numeric values,
+     * so the target/source bytes copy across directly. */
+    AttrDamageRecord r;
+    r.type = ATTR_REC_DAMAGE; r.tick = sim->tick;
+    r.source = source; r.target = targetKind; r.targetIndex = targetIndex;
+    r.attacker = attacker; r.amount = dealt; r.destroyed = destroyed ? 1 : 0;
+    r.mapX = mapX; r.mapY = mapY;
+    serverSimTrackAppend(sim, &r, sizeof r);
+    roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                          &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
 static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
                                           BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
     if (sim->state != serverStateRunning || player >= MAX_TANKS) return;
-    {
-        AttrActionRecord r;
-        r.type = ATTR_REC_ACTION; r.tick = sim->tick;
-        r.player = player; r.action = actionKind;
-        r.mapX = mapX; r.mapY = mapY;
-        serverSimTrackAppend(sim, &r, sizeof r);
-    }
-    PlayerRoundStats *ps = &sim->roundStats[player];
-    switch (actionKind) {
-    case PLAYER_ACTION_FARM:  ps->treesFarmed++; break;
-    case PLAYER_ACTION_BUILD: ps->pillsBuilt++;  break;
-    case PLAYER_ACTION_MINE:  ps->minesLaid++;   break;
-    case PLAYER_ACTION_SHELL: ps->shellsFired++; break;
-    default: break;
-    }
+    AttrActionRecord r;
+    r.type = ATTR_REC_ACTION; r.tick = sim->tick;
+    r.player = player; r.action = actionKind;
+    r.mapX = mapX; r.mapY = mapY;
+    serverSimTrackAppend(sim, &r, sizeof r);
+    roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                          &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
-/* A tank scooped a dead (0-armour) pillbox into its inventory. Recorded to the
- * attribution track only (no aggregate counter); backs the pickup-spree
- * highlight. Server-only; NULL on the client. */
+/* A tank scooped a dead (0-armour) pillbox into its inventory. Persisted to the
+ * attribution track and appended to the notable timeline (no aggregate
+ * counter); backs the pickup-spree highlight. Server-only; NULL on the client. */
 static void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                                         BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
@@ -464,6 +465,8 @@ static void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
     r.picker = picker; r.pillIndex = pillIndex;
     r.mapX = mapX; r.mapY = mapY;
     serverSimTrackAppend(sim, &r, sizeof r);
+    roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                          &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -512,6 +515,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->gameTickLimit = 0;
     sim->gameTicksRun = 0;
     sim->tick = 0;
+    sim->roundLogStartTick = ROUND_LOG_START_UNSET;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;
@@ -1043,6 +1047,18 @@ static void serverSimLogTick(ServerSim *sim) {
         logWriteSnapshot(sim, TRUE);
     }
 
+    /* First entry of the running round is where the round's log segment — and
+     * so every clip time measured against it — begins. Latched here rather than
+     * derived from startDelay: the hold at the top of simRunHalfStep advances
+     * the sim without writing anything, and its counter is in half-steps while
+     * the value it was given is in the legacy 20 ms units, so no arithmetic on
+     * it gives the right answer. Whichever tick actually wrote first is the
+     * answer by definition. */
+    if (sim->roundLogStartTick == ROUND_LOG_START_UNSET &&
+        sim->state == serverStateRunning) {
+        sim->roundLogStartTick = sim->tick;
+    }
+
     logWriteTick();
 }
 
@@ -1417,7 +1433,7 @@ static void simRunHalfStep(ServerSim *sim) {
             sim->roundHadHuman = true;
         } else if (sim->roundHadHuman) {
             mapSetChangeCallback(NULL);
-            serverSimSetSuppressNextWinMessage(sim, true);
+            sim->returnToLobbyReason = RETURN_REASON_ABANDONED;
             serverSimConsoleMessage("No human players remaining. Returning to lobby.");
             serverSimEnterGameOver(sim);
             sim->tick++;
@@ -1691,16 +1707,6 @@ static void simRunHalfStep(ServerSim *sim) {
             }
         }
 
-        /* Build arrays for multi-tank subsystem updates */
-        numTanks = 0;
-        for (count = 0; count < MAX_TANKS; count++) {
-            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
-                tanksArray[numTanks] = sim->sim.tanks[count];
-                lgmPtrs[numTanks] = &sim->sim.lgmen[count];
-                numTanks++;
-            }
-        }
-
         /* Precompute per-player compensation ticks for pill shell rewind */
         {
             BYTE c;
@@ -1716,8 +1722,37 @@ static void simRunHalfStep(ServerSim *sim) {
         /* Enforce high-ping limits */
         transportUdpServerEnforcePing(sim);
 
+        /* Build arrays for multi-tank subsystem updates.
+         *
+         * Snapshotted here — as late as possible, immediately before the
+         * world-update stage that consumes them — and NOT earlier in the
+         * half-step. tanksArray holds tank pointers by value and lgmPtrs holds
+         * addresses of sim->sim.lgmen[] slots, so anything that removes a
+         * player between this loop and the last consumer below leaves the
+         * arrays pointing at freed objects (dangling tanks) or NULLed slots
+         * (lgmen), with numTanks still counting the departed slot. That is
+         * exactly what a mid-half-step ping kick used to do. Keep any code
+         * that can call serverSimRemovePlayer above this point. */
+        numTanks = 0;
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (sim->playerConnected[count] && sim->sim.tanks[count] != NULL) {
+                tanksArray[numTanks] = sim->sim.tanks[count];
+                lgmPtrs[numTanks] = &sim->sim.lgmen[count];
+                numTanks++;
+            }
+        }
+
         /* Update world systems */
-        tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, &sim->sim.tanks[0], &sim->sim.ss);
+        /* tanksArray, NOT &sim->sim.tanks[0]: lgmPtrs is compacted over the
+         * connected players, so the tank array must be compacted the same way
+         * or the two index spaces diverge as soon as the occupied slots are
+         * non-contiguous (anyone leaving mid-game). tkExplosionUpdate pairs
+         * lgms[i] with tanks[i] to tell a killed lgm which tank to walk back
+         * to, so a mismatch sent the man to another player's tank — or, when
+         * the raw slot was empty, to a NULL tank and thus back to where he
+         * died. shellsUpdate and minesExpUpdate below already take the
+         * compacted array. */
+        tkExplosionUpdate(&sim->sim, lgmPtrs, numTanks, tanksArray, &sim->sim.ss);
         shellsUpdate(&sim->sim, tanksArray, numTanks, lgmPtrs, &sim->sim.ss);
         {
             shells q = sim->sim.shs;
@@ -1792,14 +1827,45 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->prevBaseCount = (uint8_t)nb;
     }
 
-    /* Check game-win condition. Fires when one alliance owns every
-     * base above the capture-armour threshold. Lobby-enabled rounds
-     * always check — winning ends the round and returns to lobby via
-     * the existing serverSimEnterGameOver path. quitOnWin is the
-     * legacy dedicated-server flag that also shuts the process down
-     * when no lobby is configured. */
-    if ((sim->quitOnWin || sim->lobbyEnabled) &&
-        serverSimCheckGameWin(sim, TRUE)) {
+    /* All-bases win. Every base held by one alliance with none of them dead
+     * (armour > MIN_ARMOUR_CAPTURE — the same test basesGetStatusNum uses to
+     * draw the X) IS the win condition, so it ends the round on the spot.
+     *
+     * There is deliberately no grace period layered on top. The grace period
+     * is already built into the condition: a base shelled to 0 stays dead,
+     * and therefore keeps the sweep false, for the whole time it takes to
+     * regenerate past MIN_ARMOUR_CAPTURE. That is the losing side's window to
+     * retake it. A second countdown on top only bought the right to announce
+     * a win and then retract it.
+     *
+     * A no-lobby round has nowhere to return to — quitOnWin ends it the same
+     * way and the process shuts down.
+     *
+     * A return-to-lobby countdown already running (a passed vote, a
+     * surrender) is left alone: those are irrevocable decisions and own the
+     * reason the returning lobby is given. The sweep must not relabel a
+     * surrender's win credit on its way out. */
+    if (sim->lobbyEnabled) {
+        if (sim->returnToLobbyTicks == 0 && serverSimCheckGameWin(sim, FALSE)) {
+            char buf[256];
+            char name[256];
+            BYTE winner = serverSimWinningOwner(sim);
+            playersGetPlayerName(&sim->sim.plyrs, winner, name, sizeof(name),
+                                 TRUE);
+            snprintf(buf, sizeof(buf),
+                     "*** %s and their allies control every base. ***", name);
+            publishServerMessage(sim, buf);
+            serverSimConsoleMessage(buf);
+            /* Set before entering game over: serverSimResolveGameOver
+             * switches on it to name the winner in the returning lobby and
+             * credit the WinBolo.net win events. */
+            sim->returnToLobbyReason = RETURN_REASON_BASE_WIN;
+            mapSetChangeCallback(NULL);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    } else if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
         serverSimConsoleMessage("Game won!");
         serverSimEnterGameOver(sim);
@@ -1815,7 +1881,8 @@ static void simRunHalfStep(ServerSim *sim) {
     if (sim->returnToLobbyTicks > 0) {
         sim->returnToLobbyTicks--;
         if (sim->returnToLobbyTicks == 0) {
-            serverSimSetSuppressNextWinMessage(sim, true);
+            /* returnToLobbyReason, set when the countdown was armed, tells
+             * serverSimResolveGameOver what the returning lobby is told. */
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -1917,7 +1984,8 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     sim->playerPing[p] = transportUdpServerGetClientPing(p);
 }
 
-void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
+void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
+                       const char *country, bool wantRejoin) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "addPlayer slot=%u name='%s' wantRejoin=%d state=%d",
         (unsigned)playerNum,
@@ -2020,6 +2088,10 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     if (playerName != NULL) {
         playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "XX",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        /* Apply the country before the log event below reads it back out —
+         * the recorded join otherwise carries the "XX" placeholder for the
+         * whole round. No-ops on NULL or a malformed code, leaving "XX". */
+        setPlayerCountryInternal(sim, playerNum, country);
         {
             char pstr[256];
             int nameLen = (int)strlen(playerName);
@@ -2027,7 +2099,10 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
             if (nameLen > 255) nameLen = 255;
             pstr[0] = (char)nameLen;
             memcpy(pstr + 1, playerName, nameLen);
-            logAddEvent(log_PlayerJoined, playerNum, '?', '?', accountFlags, 0, pstr);
+            logAddEvent(log_PlayerJoined, playerNum,
+                        sim->sim.plyrs->item[playerNum].location[0],
+                        sim->sim.plyrs->item[playerNum].location[1],
+                        accountFlags, 0, pstr);
         }
     }
 
@@ -2078,7 +2153,7 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
 }
 
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
-    addPlayerInternal(sim, playerNum, playerName, wantRejoin);
+    addPlayerInternal(sim, playerNum, playerName, NULL, wantRejoin);
     fillAndPublishPlayerJoin(sim, playerNum);
 }
 
@@ -2132,8 +2207,7 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 
     country = (fallbackCountry != NULL) ? fallbackCountry : "";
 
-    addPlayerInternal(sim, (BYTE)slot, validatedName, false);
-    setPlayerCountryInternal(sim, (BYTE)slot, country);
+    addPlayerInternal(sim, (BYTE)slot, validatedName, country, false);
     setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
     fillAndPublishPlayerJoin(sim, (BYTE)slot);
 
@@ -2164,7 +2238,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     wasBot = botManagerIsBot(sim, playerNum);
     {
         char nm[PLAYER_NAME_LEN];
-        playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, sizeof(nm), TRUE);
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
             "removePlayer slot=%u name='%s' state=%d",
             (unsigned)playerNum, nm, (int)sim->state);
@@ -2180,6 +2254,22 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         memset(&leaveEvt, 0, sizeof(leaveEvt));
         serverSimFillPlayerLeaveEvent(sim, playerNum, &leaveEvt);
         serverSimPublishControl(sim, &leaveEvt);
+    }
+
+    /* Freeze this slot's identity before the roster entry is torn down: the
+     * attribution track's identity table is otherwise only filled at game over,
+     * which would leave a mid-round leaver nameless in the finished log. */
+    {
+        AttrSlotIdentity *id = &sim->trackIdentity[playerNum];
+        /* Read the full-length name first; id->name is the shorter
+         * wire-sized field, so the copy into it truncates. */
+        char nameBuf[PLAYER_NAME_LEN];
+        memset(id, 0, sizeof(*id));
+        id->isBot = wasBot ? 1 : 0;
+        id->team  = sim->lobbyPlayers[playerNum].teamNumber;
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, nameBuf,
+                             sizeof(nameBuf), TRUE);
+        snprintf(id->name, sizeof(id->name), "%s", nameBuf);
     }
 
     sim->playerConnected[playerNum] = FALSE;
@@ -2247,7 +2337,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         BYTE numPills = pillsGetNumPills(&sim->sim.pb);
         BYTE numBases = basesGetNumBases(&sim->sim.bs);
         BYTE i;
-        playersGetPlayerName(&sim->sim.plyrs, playerNum, pName, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, playerNum, pName, sizeof(pName),
+                             TRUE);
         for (i = 1; i <= numPills; i++) {
             if (pillsGetPillOwner(&sim->sim.pb, i) == playerNum) {
                 pillBits |= (1u << (i - 1));
@@ -2519,7 +2610,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
      * fans out, both carry the bot identity. A bot slot inherits no human
      * identity bits — set rather than OR. */
     playersSetClientFlags(&sim->sim.plyrs, playerNum, PLAYER_FLAG_BOT);
-    addPlayerInternal(sim, playerNum, cfg->brainName, false);
+    addPlayerInternal(sim, playerNum, cfg->brainName, NULL, false);
     fillAndPublishPlayerJoin(sim, playerNum);
 
     sim->lobbyPlayers[playerNum].isBot      = true;
@@ -3061,23 +3152,6 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     return count;
 }
 
-/* Append one entry to the per-round notable-event timeline (for the later
- * highlights reel). Bounded; silently drops once full. Location (mapX/mapY)
- * is recorded as 0 for now — the v1 reel scorer keys on tick/type/actor, not
- * position; precise per-event location can be sourced in the reel phase if
- * the scorer needs it. */
-static void serverSimNotableAppend(ServerSim *sim, uint8_t type,
-                                   uint8_t actorA, uint8_t actorB) {
-    if (sim->notableEventCount >= NOTABLE_EVENTS_MAX) return;
-    NotableEvent *ne = &sim->notableEvents[sim->notableEventCount++];
-    ne->tick   = sim->tick;
-    ne->mapX   = 0;
-    ne->mapY   = 0;
-    ne->type   = type;
-    ne->actorA = actorA;
-    ne->actorB = actorB;
-}
-
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
@@ -3086,73 +3160,38 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
         const uint8_t *d = event->data;
         switch (event->type) {
         case EVENT_TANK_KILLED: {
-            BYTE killer = d[0], killed = d[1], cause = d[2];
-            {
-                AttrKillRecord r;
-                r.type = ATTR_REC_KILL; r.tick = sim->tick;
-                r.killer = d[0]; r.killed = d[1]; r.deathCause = d[2];
-                r.carriedPills = d[3]; r.treesWasted = d[4];
-                r.mapX = d[5]; r.mapY = d[6];   /* stashed in serverSimCbTankKill */
-                serverSimTrackAppend(sim, &r, sizeof r);
-            }
-            if (killed < MAX_TANKS) {
-                PlayerRoundStats *vs = &sim->roundStats[killed];
-                vs->deaths++;
-                if (cause == LAST_DEATH_BY_DEEPSEA)      vs->drowns++;
-                else if (cause == LAST_DEATH_BY_MINES)   vs->mineDeaths++;
-                else if (cause == LAST_DEATH_BY_SHELL) {
-                    if (killer < MAX_TANKS && killer != killed) {
-                        sim->roundStats[killer].kills++;
-                        sim->roundStats[killer].killsOf[killed]++;
-                        vs->killedBy[killer]++;
-                    } else if (killer == killed) {
-                        vs->suicides++;
-                    }
-                }
-                vs->treesWasted += d[4];
-                if (d[3] > vs->mostPillsDropped) vs->mostPillsDropped = d[3];
-            }
-            serverSimNotableAppend(sim, NOTABLE_KILL, /*killer*/d[0], /*killed*/d[1]);
+            AttrKillRecord r;
+            r.type = ATTR_REC_KILL; r.tick = sim->tick;
+            r.killer = d[0]; r.killed = d[1]; r.deathCause = d[2];
+            r.carriedPills = d[3]; r.treesWasted = d[4];
+            r.mapX = d[5]; r.mapY = d[6];   /* stashed in serverSimCbTankKill */
+            serverSimTrackAppend(sim, &r, sizeof r);
+            roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                                  &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
             break;
         }
         case EVENT_PILL_CAPTURED:
         case EVENT_BASE_CAPTURED: {
-            BYTE owner = d[0], cls = d[2];
-            {
-                AttrCaptureRecord r;
-                r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
-                r.target = (event->type == EVENT_PILL_CAPTURED)
-                               ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
-                r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
-                r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
-                r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
-                serverSimTrackAppend(sim, &r, sizeof r);
-            }
-            if (owner < MAX_TANKS && cls != CAPTURE_CLASS_ALLY) {
-                PlayerRoundStats *os = &sim->roundStats[owner];
-                if (event->type == EVENT_PILL_CAPTURED) os->pillCaptures++;
-                else                                    os->baseCaptures++;
-                if (cls == CAPTURE_CLASS_ENEMY) os->steals++;
-            }
-            /* An ownership change is notable even if it credits nobody. */
-            serverSimNotableAppend(sim,
-                event->type == EVENT_PILL_CAPTURED ? NOTABLE_PILL_CAPTURE
-                                                   : NOTABLE_BASE_CAPTURE,
-                /*newOwner*/d[0], /*prevOwner*/d[1]);
+            AttrCaptureRecord r;
+            r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
+            r.target = (event->type == EVENT_PILL_CAPTURED)
+                           ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
+            r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
+            r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
+            r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
+            serverSimTrackAppend(sim, &r, sizeof r);
+            roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                                  &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
             break;
         }
         case EVENT_LGM_LOST: {
-            BYTE victim = d[0], killer = d[1];
-            {
-                AttrLgmRecord r;
-                r.type = ATTR_REC_LGM; r.tick = sim->tick;
-                r.victim = d[0]; r.killer = d[1];
-                r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
-                serverSimTrackAppend(sim, &r, sizeof r);
-            }
-            if (victim < MAX_TANKS) sim->roundStats[victim].lgmDeaths++;
-            if (killer < MAX_TANKS) sim->roundStats[killer].lgmKills++;
-            serverSimNotableAppend(sim, NOTABLE_LGM_LOST, /*killer*/d[1], /*victim*/d[0]);
+            AttrLgmRecord r;
+            r.type = ATTR_REC_LGM; r.tick = sim->tick;
+            r.victim = d[0]; r.killer = d[1];
+            r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
+            serverSimTrackAppend(sim, &r, sizeof r);
+            roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                                  &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
             break;
         }
         default: break;
@@ -3214,7 +3253,62 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
                   out->awards, &n);
     out->awardCount = (uint8_t)n;
 
-    /* wbnLogKey stays empty here; the finished-round key is filled later. */
+    /* The round's highlight clips. The accumulator and the notable timeline are
+     * already live, so only the territory series has to be derived here: one
+     * walk of the attribution stream turning pill/base ownership changes into
+     * per-team map control. sim->trackBuf is NULL on a round that recorded
+     * nothing, which computeTerritoryShifts handles by yielding no shifts. */
+    uint8_t team[MAX_TANKS];
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        team[slot] = sim->trackIdentity[slot].team;
+    }
+
+    TerritoryShift shifts[TERRITORY_SHIFTS_MAX];
+    int shiftCount = 0;
+    computeTerritoryShifts(sim->trackBuf, sim->trackLen, sim->trackIdentity,
+                           MAX_TANKS, shifts, &shiftCount, TERRITORY_SHIFTS_MAX);
+
+    int hlCount = 0;
+    computeHighlights(sim->notableEvents, sim->notableEventCount,
+                      sim->roundStats, team, out->awards, (int)out->awardCount,
+                      shifts, shiftCount, out->highlights, &hlCount,
+                      ROUND_STATS_HIGHLIGHTS_WIRE_MAX);
+    out->highlightCount = (uint8_t)hlCount;
+
+    /* computeHighlights works in sim ticks; the clients want a time. Convert
+     * once, here, so nothing downstream has to know the sim's cadence.
+     * The origin is the tick the round's log segment started at, so a clip's
+     * ms is measured from the same instant the viewer's window is. A clip that
+     * somehow predates the latch clamps to the start rather than wrapping. */
+    for (int i = 0; i < hlCount; i++) {
+        HighlightWindow *h = &out->highlights[i];
+        h->startMs = (sim->roundLogStartTick != ROUND_LOG_START_UNSET &&
+                      h->startTick >= sim->roundLogStartTick)
+                         ? (h->startTick - sim->roundLogStartTick) *
+                               SIM_TICK_MS
+                         : 0u;
+        h->durationMs = h->durationTicks * SIM_TICK_MS;
+    }
+
+    /* The round's WinBolo.net identity is the server key it was played
+     * under, read live here so the lobby recap can name this round's log
+     * to WBN later. That live read is correct only because of when this
+     * runs: the summary is built at game over, ahead of the
+     * EndSession/upload/BeginSession sandwich in server_lifecycle.c, so
+     * winboloNetServerKey still holds the finished round's key. Move the
+     * round-stats publish after that rotation, or the rotation ahead of
+     * it, and this silently publishes the next round's key instead.
+     * Stays empty (memset above) when WBN isn't running: a LAN or
+     * single-player round's log is never uploaded, so there is no key
+     * for the recap to point at. */
+    if (winbolonetIsRunning()) {
+        char serverKey[WINBOLONET_KEY_LEN];
+        serverKey[0] = '\0';
+        winboloNetGetServerKey(serverKey);
+        serverKey[WINBOLONET_KEY_LEN - 1] = '\0';
+        strncpy(out->wbnLogKey, serverKey, sizeof(out->wbnLogKey) - 1);
+        out->wbnLogKey[sizeof(out->wbnLogKey) - 1] = '\0';
+    }
 }
 
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
@@ -3578,7 +3672,7 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         fprintf(stdout, "Players:\n");
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
-            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
 
             /* Ping and the input-buffer depth are in-process artifacts for
              * bot slots (0ms ping, a buffer that exists but never gates an
@@ -3716,42 +3810,55 @@ bool serverSimSaveMap(ServerSim *sim, char *fileName) {
     return mapWrite(fileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss);
 }
 
-bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
-    bool allOwned;
+static BYTE serverSimWinningOwner(ServerSim *sim) {
     BYTE count;
     BYTE max;
     BYTE first = NEUTRAL;
     BYTE current;
-    char name[256];
 
-    allOwned = TRUE;
     max = basesGetNumBases(&sim->sim.bs);
+    if (max == 0) {
+        return NEUTRAL;
+    }
 
-    for (count = 1; count <= max && allOwned; count++) {
+    for (count = 1; count <= max; count++) {
         BYTE shellsAmt, minesAmt, armourAmt;
         current = basesGetBaseOwner(&sim->sim.bs, count);
         basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
         if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
+            return NEUTRAL;
+        }
+        if (count == 1) {
             first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
+        } else if (!playersIsAllie(&sim->sim.plyrs, current, first)) {
+            return NEUTRAL;
         }
     }
 
-    if (allOwned && max > 0 && printWinners) {
+    return first;
+}
+
+bool serverSimCheckGameWin(ServerSim *sim, bool printWinners) {
+    BYTE count;
+    BYTE first = serverSimWinningOwner(sim);
+    char name[256];
+
+    if (first == NEUTRAL) {
+        return FALSE;
+    }
+
+    if (printWinners) {
         fprintf(stdout, "Game Won!\nWinners:\n");
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
-                playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+                playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
                 fprintf(stdout, "  %s\n", name);
             }
         }
     }
 
-    return allOwned && max > 0;
+    return TRUE;
 }
 
 bool serverSimCheckAutoClose(ServerSim *sim) {
@@ -3952,12 +4059,20 @@ void serverSimEnterGameOver(ServerSim *sim) {
      * read back offline without a live server. */
     for (int slot = 0; slot < MAX_TANKS; slot++) {
         AttrSlotIdentity *id = &sim->trackIdentity[slot];
-        memset(id, 0, sizeof(*id));
+        /* A slot that is already gone keeps whatever serverSimRemovePlayer
+         * stamped on the way out — the roster has no name for it any more.
+         * serverSimResetGameWorld zeroes the whole table at round start, so
+         * an entry surviving to here belongs to the round just played. */
         if (!sim->playerConnected[slot]) continue;
+        /* Read the full-length name first; id->name is the shorter
+         * wire-sized field, so the copy into it truncates. */
+        char nameBuf[PLAYER_NAME_LEN];
+        memset(id, 0, sizeof(*id));
         id->isBot = botManagerIsBot(sim, (BYTE)slot) ? 1 : 0;
         id->team  = sim->lobbyPlayers[slot].teamNumber;
-        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, id->name, TRUE);
-        id->name[sizeof(id->name) - 1] = '\0';
+        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, nameBuf,
+                             sizeof(nameBuf), TRUE);
+        snprintf(id->name, sizeof(id->name), "%s", nameBuf);
     }
 
     if (!sim->lobbyEnabled) {
@@ -4298,6 +4413,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 7. Reset tick */
     sim->tick = 0;
+    /* Re-arm the latch with it: the next round's log segment starts wherever
+     * its first written tick lands, not where the last one did. */
+    sim->roundLogStartTick = ROUND_LOG_START_UNSET;
 
     /* 8. Flush all input queues */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -4764,28 +4882,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
 void serverSimSendWbnWinEvents(ServerSim *sim) {
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
-    bool allOwned = TRUE;
+    BYTE first = serverSimWinningOwner(sim);
 
-    max = basesGetNumBases(&sim->sim.bs);
-
-    /* Find the winning alliance — same logic as serverSimBuildWinMessage */
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
-    }
-
-    if (!allOwned || max == 0) {
+    if (first == NEUTRAL) {
         return;
     }
 
@@ -4812,30 +4911,11 @@ static size_t winMsgAdvance(size_t pos, size_t bufSize, int written) {
 
 bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     BYTE count;
-    BYTE max;
-    BYTE first = NEUTRAL;
-    BYTE current;
-    bool allOwned = TRUE;
+    BYTE first = serverSimWinningOwner(sim);
     char name[256];
     size_t pos;
 
-    max = basesGetNumBases(&sim->sim.bs);
-
-    /* Check if all bases are owned by the same alliance */
-    for (count = 1; count <= max && allOwned; count++) {
-        BYTE shellsAmt, minesAmt, armourAmt;
-        current = basesGetBaseOwner(&sim->sim.bs, count);
-        basesGetStats(&sim->sim.bs, count, &shellsAmt, &minesAmt, &armourAmt);
-        if (current == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-            allOwned = FALSE;
-        } else if (count == 1) {
-            first = current;
-        } else {
-            allOwned = playersIsAllie(&sim->sim.plyrs, current, first);
-        }
-    }
-
-    if (!allOwned || max == 0) {
+    if (first == NEUTRAL) {
         snprintf(buf, bufSize, "Game over!");
         return FALSE;
     }
@@ -4847,7 +4927,7 @@ bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
         if (!sim->playerConnected[count]) continue;
         if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
-            playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+            playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
             pos = winMsgAdvance(pos, bufSize,
                                 snprintf(buf + pos, bufSize - pos, " %s", name));
         }
@@ -4908,7 +4988,7 @@ bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
                                          "\nGame Won! Winners:"));
             any = TRUE;
         }
-        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+        playersGetPlayerName(&sim->sim.plyrs, count, name, sizeof(name), TRUE);
         pos = winMsgAdvance(pos, bufSize,
                             snprintf(buf + pos, bufSize - pos, " %s", name));
     }
@@ -4925,38 +5005,44 @@ void serverSimResolveGameOver(ServerSim *sim) {
      * to return a message to. */
     if (!sim->lobbyEnabled) return;
 
-    if (sim->surrenderTeamId != 0) {
-        /* A surrender vote ended the round — the opposing team wins.
-         * The returnToLobbyTicks countdown set suppressNextWinMessage
-         * (shared with a plain back-to-lobby vote); consume and ignore
-         * it so the winner line still reaches the lobby. The base sweep
-         * never fires on a surrender, so credit the win by team. */
-        serverSimConsumeSuppressNextWinMessage(sim);
-        serverSimBuildSurrenderWinMessage(sim, sim->surrenderTeamId,
+    switch (sim->returnToLobbyReason) {
+    case RETURN_REASON_SURRENDER:
+        /* A surrender vote ended the round — the opposing team wins. The
+         * base sweep never fires on a surrender, so credit the win by
+         * team instead. */
+        serverSimBuildSurrenderWinMessage(sim, sim->returnToLobbyTeamId,
                                           sim->pendingWinMessage,
                                           sizeof(sim->pendingWinMessage));
-        serverSimSendWbnSurrenderWinEvents(sim, sim->surrenderTeamId);
-    } else if (sim->returnToLobbyByVote) {
+        serverSimSendWbnSurrenderWinEvents(sim, sim->returnToLobbyTeamId);
+        break;
+
+    case RETURN_REASON_MANUAL_VOTE:
         /* A manual back-to-lobby vote ended the round — no winner, but
          * leave a line in the returning lobby explaining why (the
-         * in-game announcement only reached the newswire). Consume and
-         * ignore the suppress flag the countdown set. */
-        serverSimConsumeSuppressNextWinMessage(sim);
+         * in-game countdown only reached the players still in the game). */
         SDL_strlcpy(sim->pendingWinMessage,
                     "*** Players voted to return to the lobby. ***",
                     sizeof(sim->pendingWinMessage));
-    } else {
-        if (serverSimConsumeSuppressNextWinMessage(sim)) {
-            /* Vote-driven game end already announced itself. */
-            sim->pendingWinMessage[0] = '\0';
-        } else {
-            /* Capture win message now while game state is intact;
-             * it will be sent after players return to the lobby. */
-            serverSimBuildWinMessage(sim,
-                                     sim->pendingWinMessage,
-                                     sizeof(sim->pendingWinMessage));
-        }
+        break;
+
+    case RETURN_REASON_ABANDONED:
+        /* Everyone left — nobody won, so no lobby line and no WBN
+         * crediting. */
+        sim->pendingWinMessage[0] = '\0';
+        break;
+
+    case RETURN_REASON_BASE_WIN:
+    case RETURN_REASON_NONE:
+    default:
+        /* An all-bases sweep, or a game-over with no countdown behind it
+         * (game-time / tick limits): both report whatever the sweep says.
+         * Capture the win message now while game state is intact; it is
+         * sent once the players are back in the lobby. */
+        serverSimBuildWinMessage(sim,
+                                 sim->pendingWinMessage,
+                                 sizeof(sim->pendingWinMessage));
         serverSimSendWbnWinEvents(sim);
+        break;
     }
 }
 
@@ -5428,17 +5514,6 @@ bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind) {
     return gv && gv->active == GAME_VOTE_ACTIVE_RUNNING;
 }
 
-bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim) {
-    if (!sim) return false;
-    bool v = sim->suppressNextWinMessage;
-    sim->suppressNextWinMessage = false;
-    return v;
-}
-
-void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v) {
-    if (sim) sim->suppressNextWinMessage = v;
-}
-
 bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
                                   ServerGameVoteSnapshot *out) {
     const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
@@ -5476,10 +5551,9 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     memset(sim->gameVotes, 0, sizeof(sim->gameVotes));
     sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
-    sim->baseMonopolyTriggeredThisRound = false;
     sim->returnToLobbyTicks = 0;
-    sim->surrenderTeamId = 0;
-    sim->returnToLobbyByVote = false;
+    sim->returnToLobbyReason = RETURN_REASON_NONE;
+    sim->returnToLobbyTeamId = 0;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
@@ -5523,14 +5597,11 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * so clients can render their own 3/2/1 countdown.
          *
          * Budget: 7 seconds at 100Hz (each serverSimTick call). */
-        /* A player-initiated vote leaves a line in the returning lobby
-         * explaining why the round ended (no in-game newswire line —
-         * clients already render the 3/2/1 countdown). Base-monopoly
-         * auto-votes keep their existing winner reporting and don't add
-         * this line. */
-        if (gv->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) {
-            sim->returnToLobbyByVote = true;
-        }
+        /* The vote leaves a line in the returning lobby explaining why the
+         * round ended (no in-game newswire line — clients already render
+         * the 3/2/1 countdown). Every back-to-lobby vote is player-started
+         * since the base-monopoly auto-vote was removed. */
+        sim->returnToLobbyReason = RETURN_REASON_MANUAL_VOTE;
         sim->returnToLobbyTicks = 700;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
@@ -5545,7 +5616,8 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * game-over handler credits the opposing team with the win
          * (WBN events + lobby winner line), then return to the lobby on
          * the same countdown a back-to-lobby vote uses. */
-        sim->surrenderTeamId = gv->teamId;
+        sim->returnToLobbyReason = RETURN_REASON_SURRENDER;
+        sim->returnToLobbyTeamId = gv->teamId;
         sim->returnToLobbyTicks = 700;
     }
 }
@@ -5719,71 +5791,13 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     }
 }
 
-/* Detect "one team owns every base" and auto-start a back-to-lobby vote. */
-static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
-    if (sim->state != serverStateRunning) return;
-    if (sim->baseMonopolyTriggeredThisRound) return;
-
-    /* Count bases per team-via-owner-player. */
-    int nBases = basesGetNumBases(&sim->sim.bs);
-    if (nBases <= 0) return;
-
-    uint8_t teamCount[MAX_TANKS] = {0};
-    uint8_t neutral = 0;
-    int i;
-    for (i = 0; i < nBases; i++) {
-        BYTE owner = basesGetBaseOwner(&sim->sim.bs, (BYTE)(i + 1));
-        if (owner >= MAX_TANKS) { neutral++; continue; }
-        if (!sim->playerConnected[owner]) { neutral++; continue; }
-        uint8_t t = sim->lobbyPlayers[owner].teamNumber;
-        if (t == 0 || t >= MAX_TANKS) { neutral++; continue; }
-        teamCount[t]++;
-    }
-    if (neutral > 0) return;
-
-    int teamsWithBases = 0;
-    uint8_t monoTeam = 0;
-    int t;
-    for (t = 1; t < MAX_TANKS; t++) {
-        if (teamCount[t] > 0) { teamsWithBases++; monoTeam = (uint8_t)t; }
-    }
-    if (teamsWithBases != 1) return;
-
-    /* Require >1 active team in play to make "monopoly" meaningful. */
-    if (serverSimCountActiveTeams(sim) < 2) return;
-
-    struct ServerGameVote *gv = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-    if (!gv) return;
-    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) return;
-
-    char buf[128];
-    const char *tname = sim->teams[monoTeam].name[0]
-                        ? sim->teams[monoTeam].name : "?";
-    snprintf(buf, sizeof(buf),
-             "Team %s controls every base. Returning to lobby on unanimous vote.",
-             tname);
-    publishServerMessage(sim, buf);
-
-    gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
-    /* Pre-cast YES for every eligible voter. */
-    gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
-    gv->answeredMask = gv->votesMask;
-    publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-
-    sim->baseMonopolyTriggeredThisRound = true;
-}
-
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
     /* Voting only exists on lobby-enabled servers (see
-     * serverSimGameVoteToggle). Skip the whole vote machinery — including
-     * the base-monopoly auto-vote — when there is no lobby. */
+     * serverSimGameVoteToggle). Skip the whole vote machinery when there
+     * is no lobby. */
     if (!sim->lobbyEnabled) return;
 
     sim->gameVoteWallMs = nowMs;
-
-    /* Auto-trigger checks before per-slot servicing. */
-    gameVoteCheckBaseMonopoly(sim, nowMs);
 
     int k;
     for (k = 0; k < 2; k++) {
@@ -6939,7 +6953,8 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
 
     memset(out, 0, sizeof(*out));
     /* isServer=TRUE: read the server-side player table directly. */
-    playersGetPlayerName(&sim->sim.plyrs, i, out->name, TRUE);
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, sizeof(out->name),
+                         TRUE);
     out->name[sizeof(out->name) - 1] = '\0';
 
     t = &sim->sim.tanks[i];

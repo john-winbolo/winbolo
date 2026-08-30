@@ -65,6 +65,9 @@ bool netImpairParseConfig(const char *spec, NetImpairConfig *out) {
         tokEnd = i;
         if (i < len) {
             i++;  /* step past the comma for the next token */
+            if (i == len) {
+                return false;  /* trailing comma — the final token is empty */
+            }
         }
         if (tokEnd == tokStart) {
             return false;  /* empty token, e.g. trailing or doubled comma */

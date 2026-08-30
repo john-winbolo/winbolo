@@ -292,7 +292,11 @@ static bool s_closeMenuPopups = false;
 
 /* Player slot state — updated by frontEndSetPlayer / frontEndClearPlayer */
 #define MAX_PLAYERS 16
-static char     s_playerName[MAX_PLAYERS][33] = {};        /* PLAYER_NAME_LEN = 33 */
+/* These rows index ClientSim state sized by MAX_TANKS (the ping band, for
+ * one). A local define drifting past it would silently render every extra
+ * slot grey rather than fail. */
+static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
+static char     s_playerName[MAX_PLAYERS][PLAYER_NAME_LEN] = {};  /* display copy */
 static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country code + NUL */
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
 static bool     s_playerChecked[MAX_PLAYERS]  = {};
@@ -386,10 +390,10 @@ static bool s_wbnInitialised     = false;
 static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
-static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
+static char s_changeNameBuf[PLAYER_NAME_LEN] = "";
 
 static bool s_showAllianceOpen   = false;
-static char s_alliancePlayerName[33] = "";
+static char s_alliancePlayerName[PLAYER_NAME_LEN] = "";
 static BYTE s_alliancePlayerNum  = 0;
 static bool s_allianceVisible     = false;
 
@@ -865,7 +869,8 @@ static void renderNetInfoContent(ClientSim *cs) {
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr,
+                                   sizeof(addr));
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -1373,16 +1378,14 @@ static void renderCtrlSendMsg(ClientSim *cs) {
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
-   answerable only by members of the surrendering team (teamId); everyone
-   else can watch the tally but has no Yes/No to cast. Other vote kinds are
-   open to all connected players. Mirrors the server's eligibility rule in
-   gameVoteEligibleMask(). */
+   answerable only by members of the surrendering team (teamId); other vote
+   kinds are open to all connected players. Thin wrapper over the shared
+   rule in client_sim.c, which the newswire gate uses too — a non-member no
+   longer even receives the state event, so this is now belt-and-braces for
+   anything already mirrored. */
 static bool localCanAnswerGameVote(ClientSim *cs,
                                    const ClientGameVoteSnapshot *snap) {
-    if (snap->kind != GAME_VOTE_KIND_SURRENDER) return true;
-    const ClientLobbySlot *ls =
-        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
-    return ls && ls->teamNumber != 0 && ls->teamNumber == snap->teamId;
+    return clientSimMayAnswerGameVote(cs, snap->kind, snap->teamId);
 }
 
 /* -------------------------------------------------------
@@ -1626,11 +1629,9 @@ static void renderPlayersPanel(ClientSim *cs) {
 
         /* Right-aligned ping */
         ImGui::SameLine(fullWidth - pingWidth);
-        ImVec4 pingColor;
-        if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-        else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-        else if (s_playerPing[i] < 150)  pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-        else                              pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+        ImVec4 pingColor = imguiPingBandColor(
+            cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
+               : pingBandClassify(s_playerPing[i]));
         ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
@@ -1862,7 +1863,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showChangeName    = false;
         s_changeNameBuf[0] = '\0';
-        clientSimGetPlayerName(cs, s_changeNameBuf);
+        clientSimGetPlayerName(cs, s_changeNameBuf, sizeof(s_changeNameBuf));
     }
     static float s_fadeChangeName = 0.0f;
     bool changeNameOpen = true;
@@ -1887,7 +1888,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         bool doCancel = (f == WBUI::FOOTER_CANCEL);
 
         if (doOK) {
-            s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
+            s_changeNameBuf[PLAYER_NAME_LAST] = '\0'; /* final byte stays NUL */
             utilStripName(s_changeNameBuf);
             if (s_changeNameBuf[0] == '\0') {
                 /* blank — stay open */
@@ -2582,7 +2583,8 @@ static void renderSettingsPanel(ClientSim *cs) {
 
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
-       ends.  All five in-game tabs are always present. */
+       ends.  Every in-game tab is present except Hosting in the web build,
+       where a browser tab can't listen for connections. */
     enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
@@ -2591,7 +2593,11 @@ static void renderSettingsPanel(ClientSim *cs) {
     present[STAB_DISPLAY]  = true;
     present[STAB_CONTROLS] = true;
     present[STAB_GAMEHUD]  = true;
+#if defined(__EMSCRIPTEN__)
+    present[STAB_HOSTING]  = false;
+#else
     present[STAB_HOSTING]  = true;
+#endif
     present[STAB_LAST]     = true;
     {
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
@@ -2667,6 +2673,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
+#if !defined(__EMSCRIPTEN__)
         if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
                 s_igForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_HOSTING;
@@ -2675,6 +2682,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
+#endif
         if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_SESSION), nullptr,
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
@@ -3069,11 +3077,9 @@ static void renderMenuBar(ClientSim *cs) {
 
                 /* Ping with color coding — anchored just left of the checkmark slot. */
                 ImGui::SameLine(pingLocalX);
-                ImVec4 pingColor;
-                if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-                else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
-                else if (s_playerPing[i] < 150)  pingColor = ImVec4(0.9f, 0.9f, 0.0f, 1.0f);
-                else                              pingColor = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
+                ImVec4 pingColor = imguiPingBandColor(
+                    cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
+                       : pingBandClassify(s_playerPing[i]));
                 ImGui::PushStyleColor(ImGuiCol_Text, pingColor);
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();
@@ -4257,6 +4263,11 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
      * unflushed local timing). Stale slot rows in the native menu are
      * cheap (one drawRect per refresh), so we fill all 16 unconditionally
      * and let mac_menubar_refresh() decide between view + numeric title. */
+    /* The copy below takes sizeof p->name bytes out of s_playerName[i].
+     * mac_menubar.h spells the field length as a literal to stay free of
+     * global.h, so a divergence would read past the source array. */
+    static_assert(sizeof(((struct MacPlayerSlot *)0)->name) == PLAYER_NAME_LEN,
+                  "MacPlayerSlot.name must match PLAYER_NAME_LEN");
     for (int i = 0; i < MAX_PLAYERS; i++) {
         struct MacPlayerSlot *p = &s->players[i];
         p->enabled = s_playerEnabled[i];
@@ -4269,12 +4280,17 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
             p->pflags = (int)s_playerFlags[i];
             p->ptype  = (int)s_playerClientType[i];
             p->ping   = cs ? (int)clientSimGetPlayerPing(cs, (BYTE)i) : 0;
+            /* Band travels with the number so the native row doesn't
+             * re-derive thresholds and lose the hysteresis. */
+            p->pingBand = cs ? (int)clientSimGetPlayerPingBand(cs, (BYTE)i)
+                             : PING_BAND_NONE;
         } else {
             p->name[0]    = '\0';
             p->country[0] = '\0';
             p->pflags     = 0;
             p->ptype      = 0;
             p->ping       = 0;
+            p->pingBand   = PING_BAND_NONE;
         }
     }
 
@@ -4449,10 +4465,23 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
         if (nowInLobby) {
             if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
-                /* Confirmed Leave: drop the connection. The lobby stops
-                   rendering next frame (clientSimIsInLobby flips false),
-                   which also triggers imguiLobbyFrameReset above. */
+                /* Confirmed Leave: drop the connection, then go wherever
+                   this host goes when a game ends. The disconnect alone
+                   strands the player in a frozen lobby: it tears down the
+                   transport without touching netStat or inLobby, and
+                   inLobby is only
+                   cleared by the CTRL_GAME_PHASE_RUNNING control event,
+                   which cannot arrive once the transport is gone. */
                 clientSimDisconnect(cs);
+#ifdef __EMSCRIPTEN__
+                /* The browser has no welcome screen to fall back to the way
+                   winbolo.c does after imguiLobbyShow returns 0 — the menu is
+                   the hosting page, so navigate back to it. Ordered after the
+                   disconnect so transportUdpClientDestroy still gets its
+                   graceful PACKET_QUIT out over a live socket; the navigation
+                   itself only runs once this frame returns to the browser. */
+                windowLeaveGame();
+#endif
             }
             keyboardUpdate();
             dialogDrawNavOutline();

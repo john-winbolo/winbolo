@@ -230,6 +230,9 @@ static void windowRunGameTick(ClientSim *cs) {
 void frontEndTutorialNotePresentedFrame(void);
 static void tutorialRespawnPoll(void);
 
+/* Defined further down with the other winbolo.h entry points. */
+void windowLeaveGame(void);
+
 /* Cloud-prefs bridge (prefs_bridge_wasm.c). */
 void wbPrefsSyncNow(void);
 void wbPrefsPumpUpload(uint64_t nowMs);
@@ -263,11 +266,18 @@ static void main_loop_iteration(void) {
   }
 
   /* On the first frame after a terminal failure, raise the error dialog. The
-   * frozen state below keeps rendering it without ticking or sending. */
+   * frozen state below keeps rendering without ticking or sending for the few
+   * frames that run before the browser unloads the page.
+   *
+   * Dismissing it navigates back to the page the game launched from: there is
+   * no welcome screen to fall back to in the browser build, so without this the
+   * player is left on the cleared frame with only the menu bar over it. The
+   * latch stops this branch re-arming while the navigation completes. */
   if (s_connFailed && !s_connErrorShown) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
                       IMGUI_MSG_OK);
     s_connErrorShown = TRUE;
+    windowLeaveGame();
   }
 
   /* Game tick accumulation (replaces SDL_AddTimer).
@@ -316,13 +326,30 @@ static void main_loop_iteration(void) {
    * NULL until there is a connection, which the runtime expects. */
   voiceTick(cs);
 
-  /* Render (always — even while frozen, so the error dialog draws over the
-   * last frame instead of a blank screen). */
+  /* Render. Frozen still draws, so the error dialog lands over the last frame
+   * instead of a blank screen; the lobby is the one case that clears instead
+   * of rendering (see below). */
   tick = SDL_GetTicks();
   clientMutexWaitFor();
   if (finishedLoop == FALSE && !s_connFailed) {
-    clientSimRenderPrepare(cs, tick);
-    clientRenderFrame(cs, redraw);
+    if (cs != NULL && clientSimIsInLobby(cs)) {
+      /* In the lobby there is no game to show: clientRenderFrame would take
+       * its netLobby branch and paint the whole download-screen chrome, which
+       * then ghosts through the 97%-opaque ##LobbyBg the ImGui pass draws on
+       * top (and shows outright in its rounded corners). The desktop lobby
+       * runs its own blocking loop and clears to this same colour before
+       * compositing; do the equivalent here. Nothing is lost by skipping the
+       * render: the lobby tick step pumps the transport itself, and its
+       * udpClientTick drains the socket. */
+      SDL_Renderer *ren = sdl3DrawGetRenderer();
+      if (ren) {
+        SDL_SetRenderDrawColor(ren, 30, 30, 30, 255);
+        SDL_RenderClear(ren);
+      }
+    } else {
+      clientSimRenderPrepare(cs, tick);
+      clientRenderFrame(cs, redraw);
+    }
   } else if (s_connFailed) {
     /* Frozen: don't render the (possibly never-connected) game; clear to black
      * so the error dialog draws over a clean background, not garbage. */
@@ -445,8 +472,8 @@ int main(int argc, char *argv[]) {
   fflush(stderr);
 
   if (started) {
-    /* Start the shared tick cadence from a known state (first step is a keys
-     * step with a zeroed sub-tick counter), mirroring the desktop run-start. */
+    /* Start the shared tick cadence from a known state (first step is a game
+     * step on tick 0), mirroring the desktop run-start. */
     clientFrontTickReset();
     /* Pull the account's cloud prefs and apply them. This runs AFTER
      * gameFrontStart (which seeds defaults and creates humanSim) so
@@ -965,6 +992,11 @@ void frontEndGameOver(ClientSim *cs) {
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
   finishedLoop = TRUE;
+  /* Dismissing the dialog goes back to the page the game launched from: the
+   * browser build has no welcome screen to rebuild through the way the desktop
+   * loop does, so the launching page is the destination. finishedLoop stops the
+   * tick for the frames that run before the browser unloads the page. */
+  windowLeaveGame();
 }
 
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {

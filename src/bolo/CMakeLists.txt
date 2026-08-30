@@ -66,10 +66,12 @@ add_library(bolo_static STATIC
     net_packet_debug.c
     obs_builder.c
     pillbox.c
+    ping_display.c
     playername_validate.c
     players.c
     playersrejoin.c
     position_history.c
+    round_stats_derive.c
     rubble.c
     screenbrainmap.c
     screenbullet.c

@@ -36,6 +36,8 @@
 #include "positions.h"
 #include "tiles.h"
 #include "logviewer.h"
+#include "lv_host.h"
+#include "lv_stats.h"
 
 #include <SDL3/SDL.h>
 
@@ -65,9 +67,6 @@
 
 /* Version string referenced by imgui_dialogs.cpp */
 const char *lv_g_version_string = "1.01";
-
-/* File-scope pointer to the current viewer session state */
-static LogViewerState *g_lv = NULL;
 
 /* Game-view accessors (Phase D of plans/ctrailer.md). game_view.c includes
  * the bolo-side mapview.h headers and so cannot include backend.h (the two
@@ -123,33 +122,6 @@ static void getDef(char *dest, int index) {
 }
 
 /* --------------------------------------------------------------------------
- * lv_updateSpeed -- sets timerSleep for the given speed value.
- * Called from imgui_controls.cpp via extern, and from mainLoadPreferences.
- * -------------------------------------------------------------------------- */
-void lv_updateSpeed(BYTE spd, int updateSlider) {
-    (void)updateSlider; /* ImGui slider reads g_lv->speed directly */
-    int ts;
-    switch (spd) {
-    case 2: ts = 18; break;
-    case 3: ts = 16; break;
-    case 4: ts = 14; break;
-    case 5: ts = 12; break;
-    case 6: ts = 10; break;
-    case 7: ts =  8; break;
-    case 8: ts =  6; break;
-    case 9: ts =  1; break;
-    default:
-        ts = 20;
-        spd = 1;
-        break;
-    }
-    if (g_lv != NULL) {
-        g_lv->speed = spd;
-        g_lv->timerSleep = ts;
-    }
-}
-
-/* --------------------------------------------------------------------------
  * Sound
  * -------------------------------------------------------------------------- */
 void lv_frontEndPlaySound(sndEffects value) {
@@ -189,6 +161,14 @@ void lv_windowAddEvent(int eventType, char *msg) {
     lv_imgui_events_add(eventType, msg);
 }
 
+void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY) {
+    lv_imgui_events_add_highlight(msg, seekMs, mapX, mapY);
+}
+
+void lv_windowAddSummary(char *msg) {
+    lv_imgui_events_add_summary(msg);
+}
+
 /* Remove events that are ahead of the given playback time (during rewind/seek). */
 void lv_windowRemoveEventsAfter(uint32_t timeMs) {
     lv_imgui_events_remove_after(timeMs);
@@ -211,105 +191,31 @@ void lv_controlsEnable(int state) {
 }
 
 /* --------------------------------------------------------------------------
- * Screen update / redraw
- * -------------------------------------------------------------------------- */
-void lv_windowNeedRedraw(void) {
-    g_lv->wantScreenUpdate = TRUE;
-}
-
-/* --------------------------------------------------------------------------
- * Playback drawing
- * -------------------------------------------------------------------------- */
-void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks,
-                            screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-    lv_drawMainScreen(value, mineView, tks, gs, sBullet, lgms,
-                   FALSE, FALSE, srtDelay, isPillView, edgeX, edgeY, FALSE, 0, 0);
-}
-
-/* --------------------------------------------------------------------------
- * SDL timer callbacks (called on background threads -- only set flags)
- * -------------------------------------------------------------------------- */
-Uint32 SDLCALL lv_windowFrameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
-    (void)userdata; (void)timerID; (void)interval;
-    g_lv->wantScreenUpdate = TRUE;
-    if (g_lv->playIsPlaying == TRUE) {
-        return 50;
-    }
-    return 0;
-}
-
-Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
-    (void)userdata; (void)timerID; (void)interval;
-    lv_clientMutexWaitFor();
-    lv_screenLogTick();
-    if (g_lv->doubleSpeed == TRUE) {
-        lv_screenLogTick();
-        lv_screenLogTick();
-    }
-    lv_clientMutexRelease();
-    if (g_lv->playIsPlaying == TRUE) {
-        return (Uint32)g_lv->timerSleep;
-    }
-    return 0;
-}
-
-/* --------------------------------------------------------------------------
  * Playback control
  * -------------------------------------------------------------------------- */
-void lv_windowPlay(void) {
-    /* Spectator live-DVR runs in the foreground spectatorRun loop, which drives
-       the decoder itself — never start the background replay timer here (it would
-       double-drive lv_screenLogTick and race the live append). playIsPlaying is
-       the orthogonal play/freeze flag the loop reads. */
-    if (lv_screenSpecIsLiveMode()) {
-        g_lv->playIsPlaying = TRUE;
-        return;
-    }
-    if (g_lv->playIsPlaying == FALSE) {
-        g_lv->timerGameID  = SDL_AddTimer(20,  lv_windowTimer,      NULL);
-        g_lv->timerFrameID = SDL_AddTimer(50,  lv_windowFrameTimer, NULL);
-    }
-    g_lv->playIsPlaying = TRUE;
-}
-
-void lv_windowPause(void) {
-    if (lv_screenSpecIsLiveMode()) {
-        g_lv->playIsPlaying = FALSE;
-        return;
+/* Jump the scrubber to a highlight moment and centre the view on its cell.
+ * The seek walks the log and rebuilds the world, the same state lv_windowTimer
+ * ticks on the SDL timer thread under lv_clientMutex, so playback is stopped
+ * and the lock held across it exactly as the scrubber and keyboard step do.
+ * Without that, a click during playback lands lv_shellsAddItem and
+ * lv_shellsDestroy on the same list from two threads and corrupts the heap. */
+void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    unsigned char wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
     }
     lv_clientMutexWaitFor();
-    if (g_lv->playIsPlaying == TRUE) {
-        SDL_RemoveTimer(g_lv->timerGameID);
-        SDL_RemoveTimer(g_lv->timerFrameID);
-        g_lv->timerGameID  = 0;
-        g_lv->timerFrameID = 0;
-    }
-    g_lv->playIsPlaying = FALSE;
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_screenCentreOnCell(mapX, mapY);
+    lv_drawDirtyScreen();
     lv_clientMutexRelease();
-}
-
-void lv_windowStop(int corruptLog) {
-    /* Spectator: the panel's Stop button freezes the feed rather than closing the
-       live log out from under the foreground host loop. */
-    if (lv_screenSpecIsLiveMode()) {
-        g_lv->playIsPlaying = FALSE;
-        return;
-    }
-    if (corruptLog == TRUE) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
-                                 "Error: Corrupt Log File", NULL);
-    }
-    lv_windowPause();
-    SDL_Delay(500);
-    lv_clientMutexWaitFor();
-    lv_frontEndSetGameInformation(TRUE, 0, 0, 0, NULL, 0, 0, 0, 0, 0, NULL, 0);
-    lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, FALSE);
-    lv_screenCloseLog();
-    g_lv->isLoaded = FALSE;
-    lv_imgui_events_clear();
-    lv_clientMutexRelease();
+    lv_imgui_game_view_init_camera(g_lv);
     lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+    g_lv->wantScreenUpdate = TRUE;
 }
 
 void lv_windowFastForward(void) {
@@ -317,7 +223,11 @@ void lv_windowFastForward(void) {
     lv_drawDirtyScreen();
     lv_screenFastForward();
     lv_drawDirtyScreen();
-    lv_screenUpdate(redraw);
+    /* Defer the render to the flag consumer (embed: lvEmbedFrameTexture;
+     * standalone: the main loop) so the repaint pairs with a fresh
+     * blit-offset snapshot instead of tearing one frame — see
+     * lv_screenPanToTotalPixels. */
+    g_lv->wantScreenUpdate = TRUE;
     lv_clientMutexRelease();
 }
 
@@ -327,7 +237,8 @@ void lv_windowRewind(void) {
     lv_drawDirtyScreen();
     lv_screenRewind();
     lv_drawDirtyScreen();
-    lv_screenUpdate(redraw);
+    /* Defer to the flag — see lv_windowFastForward. */
+    g_lv->wantScreenUpdate = TRUE;
     lv_screenGetTime(line);
     lv_clientMutexRelease();
     if (g_lv->playIsPlaying == TRUE) {
@@ -344,12 +255,8 @@ void lv_windowResize(void) {
 }
 
 /* --------------------------------------------------------------------------
- * End-of-log / start-of-log callbacks from backend
+ * Start-of-log callback from backend
  * -------------------------------------------------------------------------- */
-void lv_finished(void) {
-    g_lv->playIsPlaying = FALSE;
-}
-
 void lv_startOfLog(void) {
     /* ImGui controls panel reads isLoaded each frame */
 }
@@ -392,6 +299,7 @@ void lv_windowOpenFile(char *cmdLine) {
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
     }
@@ -550,80 +458,16 @@ static void savePreferences(void) {
 /* --------------------------------------------------------------------------
  * lvHostSetup -- Shared host bring-up for the log viewer and the spectator.
  *
- * Allocates g_lv, brings up the platform layer / mutex / draw / ImGui / sound,
- * loads preferences and sizes the screen to the window. The window/renderer are
- * borrowed when non-NULL (embedded) or created here when NULL (standalone).
+ * The ImGui-free half (lvHostSetupCore) plus the viewer's own ImGui context and
+ * panels, sound, preferences, and the screen sizing that fills the window.
  * Returns TRUE on success; on any failure it unwinds whatever it brought up and
- * returns FALSE with g_lv cleared. Pure extraction from logViewerRun.
+ * returns FALSE with g_lv cleared.
  * -------------------------------------------------------------------------- */
 static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
                        bool fromMainMenu) {
-    char line[256];
-    int  sizeX, sizeY;
-
-    /* Allocate central logviewer state */
-    g_lv = lv_decoderCreate(fromMainMenu);
-    if (g_lv == NULL) {
+    if (lvHostSetupCore(window, renderer, fromMainMenu) == FALSE) {
         return FALSE;
     }
-
-    /* Platform abstraction init */
-    lv_platform_config_init("WinBolo");
-    lv_platform_dialogs_init();
-
-    if (lv_clientMutexCreate() == FALSE) {
-        lv_platform_dialog_error("WinBolo Log Viewer", "Could not create mutex");
-        if (window == NULL) { lv_platform_config_shutdown(); lv_platform_dialogs_shutdown(); }
-        free(g_lv);
-        g_lv = NULL;
-        return FALSE;
-    }
-
-    /* Load screen size before setting up draw */
-    lv_platform_config_get_string("LOGVIEWER", "ScreenSizeX", "50", line, sizeof(line));
-    sizeX = atoi(line);
-    if (sizeX < 5 || sizeX > 99) sizeX = 50;
-
-    lv_platform_config_get_string("LOGVIEWER", "ScreenSizeY", "38", line, sizeof(line));
-    sizeY = atoi(line);
-    if (sizeY < 5 || sizeY > 99) sizeY = 38;
-
-    lv_screenSetSizeX((BYTE)sizeX);
-    lv_screenSetSizeY((BYTE)sizeY);
-
-    if (window == NULL) {
-        /* Standalone mode: create own window/renderer */
-        g_lv->ownsWindow = TRUE;
-        if (lv_drawSetup() == FALSE) {
-            lv_clientMutexDestroy();
-            lv_platform_config_shutdown();
-            lv_platform_dialogs_shutdown();
-            free(g_lv);
-            g_lv = NULL;
-            return FALSE;
-        }
-        g_lv->window = lv_drawGetSDLWindow();
-        g_lv->renderer = lv_drawGetSDLRenderer();
-        /* Standalone: init audio subsystem (embedded gets it from main app) */
-        SDL_InitSubSystem(SDL_INIT_AUDIO);
-    } else {
-        /* Embedded mode: borrow caller's window/renderer */
-        g_lv->window = window;
-        g_lv->renderer = renderer;
-        g_lv->ownsWindow = FALSE;
-        if (lv_drawSetupWithHandles(window, renderer) == FALSE) {
-            lv_clientMutexDestroy();
-            free(g_lv);
-            g_lv = NULL;
-            return FALSE;
-        }
-    }
-
-    /* Associate the window with dialogs (needed on Linux/Wayland for portal) */
-    lv_platform_dialogs_set_window(g_lv->window);
-
-    /* macOS trackpad pinch-to-zoom (no-op if already initialised or non-macOS) */
-    macOSPinchZoomInit();
 
     /* Initialize ImGui */
     if (lv_imgui_context_init(g_lv->window, g_lv->renderer) == 0) {
@@ -695,30 +539,10 @@ static int lvHostSetup(SDL_Window *window, SDL_Renderer *renderer,
  *
  * Stops the decoder, tears down ImGui / draw / sound / mutex / DNS and (when
  * standalone) the platform layer, then frees g_lv. The caller restores any
- * active game view and saves preferences first. Pure extraction.
+ * active game view and saves preferences first.
  * -------------------------------------------------------------------------- */
 static void lvHostTeardown(void) {
-    lv_windowStop(FALSE);
-#ifdef __APPLE__
-    /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
-     * empty stub when standalone since the process is exiting). */
-    lv_mac_menubar_uninstall();
-#endif
-    lv_imgui_comments_shutdown();
-    lv_imgui_context_shutdown();
-    lv_drawCleanupSplash();
-    lv_soundCleanup();
-    {
-        bool standalone = g_lv->ownsWindow;
-        lv_drawCleanup();
-        lv_clientMutexDestroy();
-        lv_dnsShutdown();
-        if (standalone) {
-            SDL_QuitSubSystem(SDL_INIT_AUDIO);
-            lv_platform_config_shutdown();
-            lv_platform_dialogs_shutdown();
-        }
-    }
+    lvHostTeardownCommon(true);
     free(g_lv);
     g_lv = NULL;
 }
@@ -1050,6 +874,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
         lvms.gameViewActive   = g_lv->gameView ? true : false;
         lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
+        lvms.hideLobby        = lv_screenGetHideLobby() ? true : false;
         lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
         lvms.soundVolume      = g_lv->soundVolume;
         lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
@@ -1188,6 +1013,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            lvStatsEmitRoundSummary();
             lv_windowNeedRedraw();
         }
         s_pendingZipData = NULL;
