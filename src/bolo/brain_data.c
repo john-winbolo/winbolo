@@ -606,9 +606,15 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     value->num_messages = 0;
   }
 
-  /* Controling the tank */
-  *clientSimGetBrainHoldKeys(csPtr) = *(value->holdkeys);
-  *clientSimGetBrainTapKeys(csPtr) = *(value->tapkeys);
+  /* Controling the tank. Skipped while dead: the brain still runs on a dead
+   * tick (to reset its own state for respawn, and to broadcast), but its
+   * movement outputs are meaningless and must not reach the tank. The caller
+   * zeroes both key sets before each think, so skipping the write leaves them
+   * clear rather than stale. */
+  if (!value->dead) {
+    *clientSimGetBrainHoldKeys(csPtr) = *(value->holdkeys);
+    *clientSimGetBrainTapKeys(csPtr) = *(value->tapkeys);
+  }
 
   /* Build requests are routed through InputPacket so the server sim
    * processes them authoritatively.  brainBuildInfo->action is 1-based

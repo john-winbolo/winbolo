@@ -1501,11 +1501,19 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
    * here so a successful tick clears stale state from a prior abort. */
   inst->wasKilled = false;
   ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
-  /* Dead tick: the brain ran only to reset its own state for respawn; don't
-   * extract its (no-op) key/build outputs back into the (dead) tank. */
-  if (!inst->bInfo.dead) {
-    brainDataExtractInfo(inst->cs, &inst->bInfo);
-  }
+  /* Always extract, including on a dead tick. The extract is not only about
+   * key/build outputs: it frees every per-tick array brainDataMakeInfo just
+   * allocated (allies, player_bots, base, pillview, viewdata, events,
+   * messages), so skipping it leaked all of them on every tick a bot spent
+   * dead. It is also the only path that delivers sendmessage, and a dying bot
+   * needs to broadcast a goal-clear so teammates stop counting the enemy it
+   * was engaging as taken care of -- exactly when that enemy has just become
+   * free. A dead player can still type in the real game.
+   *
+   * The one output that must NOT be applied while dead is the tank controls;
+   * that is gated inside brainDataExtractInfo on value->dead, next to the
+   * build request which already self-gated on dead armour. */
+  brainDataExtractInfo(inst->cs, &inst->bInfo);
 
   return ok;
 }

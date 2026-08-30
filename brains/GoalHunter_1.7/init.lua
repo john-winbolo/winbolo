@@ -2313,6 +2313,17 @@ function Brain.think(info)
   opt(string.format("  cpf.load_danger done %.2f ms (rebuilt=%s)",
     (t_load_danger - t_threat_upd) / 1000, tostring(threat.rebuilt_this_tick)))
 
+  -- The two build scores. Must run AFTER threat.update: imdanger's exposure
+  -- term reads threat.pill_at, which is only valid once the grid is rebuilt.
+  -- Stored on state so every consumer this tick sees one consistent pair
+  -- rather than recomputing (and the log line stays a single source of truth).
+  state.vuln, state.imdanger, state.vuln_terms, state.imdanger_terms =
+    danger.scores(info, world, state)
+  local t_scores = clock_us()
+  metrics.set("us_scores", t_scores - t_load_danger)
+  opt(string.format("  danger.scores done %.2f ms (vuln=%.1f imd=%.1f)",
+    (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
+
   -- Overlay rebuild: pills/bases stamped as impassable/expensive in the
   -- pathfinder. Moved here (right after danger load) so all downstream
   -- goal evaluation sees fresh overlays — previously ran much later and
@@ -3856,10 +3867,14 @@ function Brain.think(info)
         local tank_dir = info.direction
         local best_drop_mx, best_drop_my = nil, nil
         local best_drop_danger = math.huge
-        -- Fallback: lowest-danger tile whose role is already in SURPLUS. Used
-        -- only if no non-surplus tile is reachable — saving the pill from death
-        -- beats losing it entirely, even if it overfills a role.
-        local surp_mx, surp_my, surp_danger = nil, nil, math.huge
+        -- Ranking bucket: (spacing class, surplus role) flattened to 1..6, so
+        -- one comparison orders the whole preference chain
+        --   clear/non-surplus .. clear/surplus .. diagonal/non-surplus .. down.
+        -- A surplus-role tile is still taken when it is all that is left --
+        -- saving the pill from death beats losing it entirely, even if it
+        -- overfills a role, and the same goes for a crowded one.
+        local best_bucket = math.huge
+        local best_drop_cls, best_drop_surplus = nil, nil
         for d = 0, C.EMERGENCY_DROP_SEARCH_DIRS - 1 do
           local angle = d * (2 * math.pi / C.EMERGENCY_DROP_SEARCH_DIRS)
           local dx = math.floor(math.sin(angle) + 0.5)
@@ -3869,28 +3884,53 @@ function Brain.think(info)
           -- stuck detector just abandoned (see the helper above) — this search
           -- runs every tick with no cooldown, so without it the park resumes
           -- immediately and the breaker loops forever.
+          -- Forest is REFUSED here, not merely deprioritised. is_placeable
+          -- permits it, but lgmCheckNewRequest (lgm.c:410) silently rewrites a
+          -- pill request on forest into a TREE request: the builder chops,
+          -- returns with wood, no pill is placed, and nothing tells the brain.
+          -- panic_build_spot already rejects forest as needs_clearing; this
+          -- search only ever checked is_placeable, so it was a second route
+          -- into that silent failure.
           if U.in_map(px, py) and U.is_placeable(px, py, world)
+             and U.ttype(px, py) ~= C.T_FOREST
              and not drop_tile_blocked(px, py) then
             -- Prefer tiles away from where we're heading (behind us)
             local aim_to_drop = U.aim_at(info.tankx, info.tanky, U.m2w(px), U.m2w(py))
             local angle_from_front = math.abs(U.adiff(tank_dir, aim_to_drop))
-            -- Only consider tiles that aren't directly ahead (> 60 degrees off)
+            -- Only consider tiles that aren't directly ahead. NOTE: 60 here is
+            -- BRADS, not degrees -- U.adiff works in the 256-unit circle
+            -- (util.lua), so this is about 84 degrees. The value is right; the
+            -- old "60 degrees" comment was the part that was wrong. Do not
+            -- "correct" it to 42.7.
             if angle_from_front > 60 then
               local d_danger = danger.danger_at(px, py, now, world)
-              -- Don't overfill a role: a surplus-role tile is a fallback only.
-              if drop_role_surplus(px, py) then
-                if d_danger < surp_danger then surp_danger = d_danger; surp_mx = px; surp_my = py end
-              elseif d_danger < best_drop_danger then
+              -- Ranked: spacing class > surplus role > min danger. Class first
+              -- so repeated emergency drops stop landing in a clump; danger
+              -- stays the selector WITHIN each class+role bucket, exactly as
+              -- before. Nothing is rejected for spacing.
+              local cls = builder.spacing_class(world, state, px, py)
+              local surplus = drop_role_surplus(px, py)
+              local bucket = (cls - 1) * 2 + (surplus and 2 or 1)
+              if bucket < best_bucket
+                 or (bucket == best_bucket and d_danger < best_drop_danger) then
+                best_bucket = bucket
                 best_drop_danger = d_danger
                 best_drop_mx = px
                 best_drop_my = py
+                best_drop_cls = cls
+                best_drop_surplus = surplus
               end
             end
           end
         end
-        if not best_drop_mx and surp_mx then
-          best_drop_mx, best_drop_my = surp_mx, surp_my   -- all safe tiles are surplus-role → still save the pill
-          print2(string.format("EMERGENCY_DROP t=%d only surplus-role tiles reachable — dropping at (%d,%d) to save pill anyway", now, surp_mx, surp_my))
+        if best_drop_mx and BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "SPACING t=%d class=%s spot=(%d,%d) surplus=%s danger=%.1f (emergency search)",
+            now, builder.SPACE_NAME[best_drop_cls] or "?", best_drop_mx, best_drop_my,
+            tostring(best_drop_surplus), best_drop_danger))
+        end
+        if best_drop_surplus then
+          print2(string.format("EMERGENCY_DROP t=%d only surplus-role tiles reachable — dropping at (%d,%d) to save pill anyway", now, best_drop_mx, best_drop_my))
         end
         if best_drop_mx then
           -- Build-gate urgency: this goal bypasses the placement pool, so it

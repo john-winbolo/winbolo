@@ -87,13 +87,83 @@ end
 -- for the whole 600-tick block — where the scan path would just take the
 -- next-best spot. Rejecting it here lets the spiral fall through to its next
 -- candidate (and to tier 2) the same way any other rejection does.
+-- Spacing class for a candidate tile: how badly it crowds a pill we already
+-- have. Nothing is ever REJECTED for spacing -- the class is a ranking key,
+-- because dying with pills aboard is worse than a badly spaced pill.
+--
+--   1 clear       nothing beside it            (chebyshev >= MIN_PILL_GAP)
+--   2 diagonal    corner-to-corner only        (|dx| == 1 and |dy| == 1)
+--   3 orthogonal  directly N/S/E/W             (|dx| + |dy| == 1)
+--
+-- WORST relationship over every nearby pill wins: one pill diagonally and
+-- another orthogonally makes the tile orthogonal. The (0,0) case cannot arise
+-- -- is_placeable already refuses a tile with world.pill_at set.
+--
+-- Counts DEPLOYED friendly/allied pills at ANY health: a nearly-dead pill still
+-- occupies ground, so health is the wrong question here (unlike the support
+-- veto, where hp decides whether the pill can still do the guarding job). Also
+-- counts state._place_trip when set -- a builder walking out to place has not
+-- put its pill on the map yet, and on the tick it returns from a harvest a
+-- panic search can run while that tile is still empty.
+local SPACE_CLEAR, SPACE_DIAG, SPACE_ORTHO = 1, 2, 3
+
+function M.spacing_class(world, state, cx, cy)
+  local gap   = C.PANIC_BUILD_MIN_PILL_GAP or 2
+  local worst = SPACE_CLEAR
+  local near_mx, near_my, near_dx, near_dy
+  local function consider(pmx, pmy)
+    local dx, dy = math.abs(cx - pmx), math.abs(cy - pmy)
+    local cd = (dx > dy) and dx or dy
+    if cd >= gap then return end
+    local cls = (dx + dy == 1) and SPACE_ORTHO or SPACE_DIAG
+    if cls > worst then
+      worst = cls
+      near_mx, near_my, near_dx, near_dy = pmx, pmy, cx - pmx, cy - pmy
+    elseif near_mx == nil then
+      near_mx, near_my, near_dx, near_dy = pmx, pmy, cx - pmx, cy - pmy
+    end
+  end
+  for _, p in pairs((world and world.pills) or {}) do
+    if (p.owner == "friendly" or p.owner == "allied")
+       and not p.in_tank then
+      consider(p.mx, p.my)
+    end
+  end
+  local trip = state and state._place_trip
+  if trip and trip.mx then consider(trip.mx, trip.my) end
+  return worst, near_mx, near_my, near_dx, near_dy
+end
+
+local SPACE_NAME = { "clear", "diagonal", "orthogonal" }
+M.SPACE_NAME = SPACE_NAME
+
+-- Nearest-first ±45° guard-spot spiral. Candidates are ranked
+--     terrain tier  >  spacing class  >  distance
+-- terrain first because a tier-2 spot means the builder PAVES before it builds,
+-- and that delay can cost the pill outright when we are panicking; distance
+-- last, so a clear spot at ring 5 beats a diagonal one at ring 1.
+--
+-- ONE pass with six (tier, class) slots, not one pass per class: the walk sim
+-- is the expensive part and the guard drop runs this every tick during
+-- attack_tank, so re-walking the spiral per class would multiply it. Candidates
+-- are visited nearest-first, so the first to occupy a slot is the nearest of
+-- its kind -- same result, no repeated sims.
+--
+-- Sim ON SLOT ENTRY, never deferred: a candidate must pass the walk sim to
+-- occupy a slot, and one that fails leaves the slot open for the next of its
+-- class. Deferring would let a stored-but-unreachable candidate block the
+-- genuinely reachable one two rings out, dropping the search to a worse class
+-- than it had to take. Worst case is every candidate simmed -- 10, which is
+-- exactly what this function already did before spacing existed.
 function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   local aim = U.aim_at(info.tankx, info.tanky, U.m2w(threat_mx), U.m2w(threat_my))
-  local best_cx, best_cy, best_tier = nil, nil, 99
-  local t2_cx, t2_cy
   local cands = {}
   local blocked = state and state.blocked or nil
   local now_blk = state and state.tick or 0
+  -- slot[tier][class] = { cx, cy }
+  local slot = { {}, {} }
+  local n_class = { 0, 0, 0 }
+  local done = false
   for dist = C.DEFENSIVE_BUILD_MIN_DIST, C.DEFENSIVE_BUILD_MAX_DIST do
     for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
       local angle = (aim + aoff) % 256
@@ -101,7 +171,7 @@ function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
       local dx, dy = math.sin(rad), -math.cos(rad)
       local cx = U.mclamp(math.floor(tmx + dx * dist + 0.5))
       local cy = U.mclamp(math.floor(tmy + dy * dist + 0.5))
-      local rej, tier = nil, nil
+      local rej, tier, cls = nil, nil, nil
       local blk_until = blocked and blocked[cy * C.MAP_W + cx] or nil
       if blk_until and now_blk < blk_until then
         rej = "blocked"
@@ -113,21 +183,49 @@ function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
         elseif tt == C.T_SWAMP or tt == C.T_RUBBLE or tt == C.T_CRATER then tier = 2
         else rej = "needs_clearing" end
         if tier and PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then rej = "wall_between"; tier = nil end
-        -- Real LGM reachability (walk sim, bless the dest so a tier-2 spot we'll
-        -- pave isn't itself rejected). Catches water-locked spits a straight-line
-        -- corridor check missed.
-        if tier and cpf_lgm_travel_ticks_map(tmx, tmy, cx, cy, cx, cy, 2000, 150) == -1 then
-          rej = "unreachable"; tier = nil
+        if tier then
+          -- Cheap first: classify before paying for the walk sim, and skip the
+          -- sim entirely for a class whose slot is already filled.
+          cls = M.spacing_class(world, state, cx, cy)
+          if slot[tier][cls] then
+            rej = "slot_taken"
+          -- Real LGM reachability (walk sim, bless the dest so a tier-2 spot
+          -- we'll pave isn't itself rejected). Catches water-locked spits a
+          -- straight-line corridor check missed.
+          elseif cpf_lgm_travel_ticks_map(tmx, tmy, cx, cy, cx, cy, 2000, 150) == -1 then
+            rej = "unreachable"; tier = nil
+          else
+            slot[tier][cls] = { cx, cy }
+            n_class[cls] = n_class[cls] + 1
+          end
         end
       end
-      cands[#cands + 1] = { mx = cx, my = cy, dist = dist, aoff = aoff, rej = rej, tier = tier }
-      if tier == 1 and not best_cx then best_cx, best_cy, best_tier = cx, cy, 1 end
-      if tier == 2 and not t2_cx then t2_cx, t2_cy = cx, cy end
+      cands[#cands + 1] = { mx = cx, my = cy, dist = dist, aoff = aoff,
+                            rej = rej, tier = tier, space = cls }
+      -- Nothing later can beat a tier-1 clear spot under this ordering.
+      if slot[1][SPACE_CLEAR] then done = true; break end
     end
-    if best_cx then break end   -- nearest grass/road found → stop spiralling out
+    if done then break end
   end
-  if not best_cx and t2_cx then best_cx, best_cy, best_tier = t2_cx, t2_cy, 2 end
-  return best_cx, best_cy, best_tier, cands
+  local best_cx, best_cy, best_tier, best_cls
+  for tier = 1, 2 do
+    for cls = SPACE_CLEAR, SPACE_ORTHO do
+      local s = slot[tier][cls]
+      if s and not best_cx then
+        best_cx, best_cy, best_tier, best_cls = s[1], s[2], tier, cls
+      end
+    end
+  end
+  if best_cx and BRAIN_DEBUG_MODE then
+    local _, nmx, nmy, ndx, ndy = M.spacing_class(world, state, best_cx, best_cy)
+    print2(string.format(
+      "SPACING t=%d class=%s spot=(%d,%d) tier=%d nearest_pill=(%s,%s) dx=%s dy=%s"
+      .. " (clear=%d diagonal=%d orthogonal=%d considered)",
+      now_blk, SPACE_NAME[best_cls] or "?", best_cx, best_cy, best_tier,
+      tostring(nmx), tostring(nmy), tostring(ndx), tostring(ndy),
+      n_class[1], n_class[2], n_class[3]))
+  end
+  return best_cx, best_cy, best_tier, cands, best_cls
 end
 
 -- Panic-build cover dedup (shared by builder's in-combat guard drop AND
@@ -859,7 +957,14 @@ function M.decide(state, world, info, now)
         local behind_dir = bit.band((info.direction + 128), 0xFF)
         local bmx = U.mclamp(tmx + math.floor(U.bsin(behind_dir) * C.TRAIL_DROP_BEHIND_DIST / 128 + 0.5))
         local bmy = U.mclamp(tmy - math.floor(U.bcos(behind_dir) * C.TRAIL_DROP_BEHIND_DIST / 128 + 0.5))
+        -- Forest is refused, not just deprioritised: is_placeable permits it,
+        -- but lgmCheckNewRequest (lgm.c:410) rewrites a pill request on forest
+        -- into a TREE request, so the builder would chop, return with wood, and
+        -- place nothing -- with nothing reported back. This path is latent
+        -- today (TRAIL_DROP_ENABLED is false) but the trap is real the moment
+        -- it is switched on.
         if (bmx ~= tmx or bmy ~= tmy) and U.is_placeable(bmx, bmy, world)
+           and U.ttype(bmx, bmy) ~= C.T_FOREST
            and lgm_can_reach(info, bmx, bmy) then
           state.trail_drop_cooldown = now + C.TRAIL_DROP_COOLDOWN
           log.reason("build", { mode = "trail_drop", behind_mx = bmx, behind_my = bmy })

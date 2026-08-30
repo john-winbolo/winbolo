@@ -2313,4 +2313,64 @@ M.TANK_DEATH_REPLAN_PILL_RANGE = 12
 -- producing a log line nobody can read, and an uncapped tick record is how
 -- a serialization overrun becomes a permanent per-tick budget kill.
 M.LOGGER_TICK_MAX_ENTRIES = 256
+
+-- =========================================================================
+-- vulnerability / imdanger — the two 0-100 build scores (danger.lua)
+-- =========================================================================
+-- Both start at 50 and move up (better) or down (worse). 50 is neutral, 75
+-- is in our favour, 25 is real concern. Every factor below is a signed
+-- contribution to that 50, and they are sized so the full set spans the
+-- range -- see VULNERABILITY_AND_BUILDS_PLAN.md for the derivations.
+--
+-- vulnerability = what I stand to lose (armour + cargo). Intrinsic to the
+-- tank; nothing about the world.
+M.VULN_ARMOUR_SPAN     = 50    -- full armour = +25, empty = -25 (span/2 each way)
+M.VULN_ARMOUR_CAP      = 40    -- min(armour, this): the engine marks DEATH by
+                               -- pushing armour ABOVE TANK_FULL_ARMOUR, which
+                               -- would otherwise read a corpse as safest.
+M.VULN_CARRY_EMPTY     = 25    -- 0 pills: nothing to lose
+M.VULN_CARRY_FULL      = -25   -- 4+ pills: everything to lose (linear from 1 pill = 0)
+M.VULN_CARRY_SATURATE  = 4     -- pills at which the carry term bottoms out
+
+-- imdanger = what is arriving at me. Environmental; nothing about our state.
+M.IMD_COVER_MAX        = 30    -- our pills covering us, max contribution
+M.IMD_COVER_PER_UNIT   = 10    -- 3 calm pills, or 1 heated one, reaches the max
+M.IMD_COVER_HEATED_MULT= 3     -- a fast-firing pill counts triple
+M.HEATED_ANGER         = 0.6   -- anger at/above this = "heated". TWO hits:
+                               -- PILL_ANGER_BUMP 0.3333 x2 = 0.6666 clears it,
+                               -- and the engine HALVES reload per hit
+                               -- (100 -> 50 -> 25 -> 12 -> 6), so two hits is
+                               -- 4x normal output. 0.67 would have meant three.
+M.IMD_COVER_W_NEAR     = 1.00  -- d <= 4
+M.IMD_COVER_W_MID      = 0.75  -- 4 < d <= 8   (8 = a pillbox's true reach)
+M.IMD_COVER_W_FAR      = 0.25  -- 8 < d <= 9   (PILL_RANGE_MAP's 1-tile margin)
+M.IMD_EXPOSURE_MAX     = -10   -- hostile pill has our tile in range
+M.IMD_EXPOSURE_DIV     = 100   -- threat.pill_at value at which exposure saturates
+M.IMD_SHELLS_ONE       = -8    -- one hostile shell arriving
+M.IMD_SHELLS_MANY      = -15   -- two or more
+M.IMD_SHELLS_RADIUS_WU = 768   -- 3 tiles. Wider than the 160-WU hit test: the
+                               -- signal wanted is "someone is shooting at us
+                               -- and may correct their aim", and at 0.625
+                               -- tiles a shell flickers hit/miss as we swerve.
+M.IMD_ODDS_MAX         = -35   -- outnumbered up close
+M.IMD_ODDS_FAR_MAX     = -10   -- a gathering at range worries only a dying bot
+M.IMD_ODDS_SCALE       = 47    -- one unopposed enemy inside 8 saturates ODDS_MAX
+M.IMD_ODDS_W_NEAR      = 0.75  -- d <= 8
+M.IMD_ODDS_W_FAR       = 0.25  -- 8 < d <= 15
+M.IMD_ODDS_NEAR_TILES  = 8
+M.IMD_ODDS_FAR_TILES   = 15
+M.SCORE_ALLY_MAX_AGE   = 1750  -- ticks: ally slate older than this is ignored
+                               -- when excluding enemies an ally is engaging
+
+-- Emergency-build pill spacing. Chebyshev, and a RANKING key rather than a
+-- rejection: a spot is classified clear / diagonal / orthogonal by the worst
+-- crowding against any pill we already have, and the search prefers the best
+-- class available. Nothing is refused for spacing -- dying with pills aboard
+-- is worse than a badly spaced pill.
+--
+-- The comparator is STRICTLY LESS THAN: gap 2 makes exactly the eight tiles
+-- touching a pill non-clear (the 3x3 around it). "Within 2" would read as <= 2
+-- and take in the 5x5 ring instead -- three times the area, and `clear` would
+-- almost never be reachable near a pill group.
+M.PANIC_BUILD_MIN_PILL_GAP = 2
 return M
