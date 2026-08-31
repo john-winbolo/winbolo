@@ -5444,6 +5444,21 @@ function M.build_eval_queue(state, world, info)
       end
     end
   end
+  -- Evict STALE attack-pill cache entries, the way pool 4 does above. The
+  -- loop only refreshes pills that still pass filter_attack_pill; a pill that
+  -- turned friendly/allied, died, or got picked up keeps its old entry
+  -- forever otherwise. Nothing selects from those (the pool draws from the
+  -- queue), but sync_ally_claimed_rejects walks every entry each tick and the
+  -- debug SYNC_P6 dump printed 16 rows for a 9-pill queue.
+  for ck, ce in pairs(state.cost_cache) do
+    if ce._p == 6 then
+      local lp = world.pills[ce._id]
+      if (not lp) or (lp.health or 0) <= 0 or lp.in_tank
+         or not (lp.owner == "hostile" or lp.owner == "neutral") then
+        state.cost_cache[ck] = nil
+      end
+    end
+  end
 
   -- Pool 7: attack_base (only if enough shells, but always keep
   -- the current target so a mid-attack base doesn't vanish from the
@@ -6773,8 +6788,22 @@ function M.step_eval_queue(state, world, info)
               end
             end
             cpf.set_config("armour_drain_rate", 0)
+            -- Danger OFF for this leg. It is a walk to a DEAD pill after the
+            -- take, and with the field on this A* was returning COST_INF for
+            -- perfectly open pills: in a pill cluster the tiles beside the
+            -- target cost hundreds while open ground costs 2-10, the
+            -- heuristic (plain distance) is useless against that, and the
+            -- search floods outward across cheap ground until it burns the
+            -- 4096-node budget -- reported as INF, i.e. "no pickup path"
+            -- (20260831_000722 bot3 t=14761: ids 12/8/10/1/11 each spent
+            -- 1.1-1.65 ms here and scored 1e30 beside a 135-cost neighbour).
+            -- Crossfire from OTHER pills is already priced by xfire_cost, so
+            -- nothing is lost; a remaining INF now means a genuine wall or
+            -- water block (the no_pickup_path skip reason).
+            cpf.set_config("danger_scale", 0)
             local raw = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
                                     boat_flag, shells, trees, mines, armour, 4096)
+            cpf.set_config("danger_scale", 1.0)
             cpf.set_config("armour_drain_rate", 0.02)
             cpf.clear_danger_offset()
             -- Only restamp the impassable overlay if the pill is still
