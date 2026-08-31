@@ -1684,6 +1684,87 @@ function Brain.think(info)
   opt(string.format("  danger.scores done %.2f ms (vuln=%.1f imd=%.1f)",
     (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
 
+  -- ── Placement trip lifecycle ─────────────────────────────────────────────
+  -- state._place_trip is set when a placement request goes out (after
+  -- builder.decide, below) and examined HERE, once per tick, before goal
+  -- selection -- so eval_wait_for_lgm and the resume see this tick's answer.
+  -- The return is a man_status EDGE (prev ~= INTANK -> INTANK), never a level,
+  -- so a momentary flap mid-trip cannot destroy a harvest already paid for.
+  -- Runs after danger.scores because the harvest resume consults panic first.
+  -- Table of events -> flag: VULNERABILITY_AND_BUILDS_PLAN.md "The trip flag".
+  do
+    local trip = state._place_trip
+    local man  = info.man_status
+    local prev = state._trip_prev_man
+    state._trip_prev_man = man
+    if trip then
+      if man ~= C.LGM_INTANK then trip.left = true end
+      local returned = (man == C.LGM_INTANK and prev ~= nil and prev ~= C.LGM_INTANK)
+      local reason, resume_score
+      if man == C.LGM_DEAD then
+        reason = "lgm_lost"
+      elseif trip.harvest and (info.carried_pills or 0) == 0 then
+        -- Scoped to harvest trips: on a plain placement the pill leaves WITH
+        -- the builder (tankGetCarriedPill, lgm.c:443), so carried==0 for the
+        -- whole walk is normal there and must not clear the flag.
+        reason = "no_pills"
+      elseif not trip.left and (now - trip.tick) > (C.PLACE_TRIP_ACCEPT_TICKS or 5) then
+        reason = "not_accepted"   -- engine refused the request; builder never left
+      elseif (now - trip.tick) > (C.PLACE_TRIP_MAX_TICKS or 2000) then
+        reason = "timeout"
+      elseif returned then
+        if not trip.harvest then
+          reason = "placed"
+        elseif danger.should_panic_build(state, info) then
+          -- Panic is evaluated first and overrides the resume: the pool's
+          -- panic build fires this tick on its own.
+          reason = "panic_override"
+        else
+          local ok, why = builder.place_tile_valid(info, world, trip.mx, trip.my)
+          if not ok then
+            reason = (why == "unreachable") and "unreachable" or ("invalid_" .. why)
+          elseif trip.score_at_dispatch then
+            -- Fresh re-score, sc7 pinned (the tank moved on by design).
+            -- nil = the tile no longer qualifies at all (category drift under
+            -- STRICT_NEED, surplus role, blocked).
+            resume_score = goals.score_place_tile(state, world, info,
+                                                  trip.mx, trip.my, trip.sc7_at_dispatch)
+            local s0     = trip.score_at_dispatch
+            local margin = math.max(C.HARVEST_RESUME_MARGIN_ABS or 30,
+                                    s0 * (C.HARVEST_RESUME_MARGIN_FRAC or 0.15))
+            if not resume_score then
+              -- STRICT_NEED category drift, surplus role, blocked tile, or
+              -- reposition-origin exclusion: the re-score refused the cell.
+              reason = "disqualified"
+            elseif (s0 - resume_score) > margin then
+              reason = "worse_than_margin"
+            end
+          end
+          if not reason then
+            -- Valid (and within margin, when there was a score to hold it to):
+            -- re-dispatch to place. builder.set_mode consumes this, no pool.
+            state._place_resume = { mx = trip.mx, my = trip.my, tick = now }
+            reason = "resume"
+          end
+        end
+      end
+      if reason then
+        if trip.harvest and reason ~= "resume" and reason ~= "worse_than_margin" then
+        elseif not trip.harvest then
+        end
+        state._place_trip = nil
+      end
+    end
+    -- A pending resume that decide() never turned into a command (its
+    -- priority branches early-return on water/road builds): drop it rather
+    -- than hold the builder mode forever. Cleared normally when the trip is
+    -- set from the resume dispatch.
+    local rs = state._place_resume
+    if rs and (now - rs.tick) > (C.HARVEST_RESUME_MAX_TICKS or 25) then
+      state._place_resume = nil
+    end
+  end
+
   -- Overlay rebuild: pills/bases stamped as impassable/expensive in the
   -- pathfinder. Moved here (right after danger load) so all downstream
   -- goal evaluation sees fresh overlays — previously ran much later and
@@ -3138,14 +3219,10 @@ function Brain.think(info)
           -- surplus-role, not only when nothing else existed.
         end
         if best_drop_mx then
-          -- Build-gate urgency: this goal bypasses the placement pool, so it
-          -- stamps the fields itself. No portfolio figure here, so the deficit
-          -- term is 0 — the flat emergency term is what buys the raise, which is
-          -- right: we are at/below EMERGENCY_DROP_ARMOUR with enemy tanks on us,
-          -- and the alternative to a risky LGM walk is dying and handing the
-          -- pills over.
-          local _eu, _euc, _eud, _eue =
-            builder.place_urgency(info.carried_pills, 0, true)
+          -- (place_urgency and the _urgency/_urg_* goal fields are gone with
+          -- the LGM danger gate they used to raise -- builder.lua explains.
+          -- This drop bypasses the placement pool, so nothing else stamps
+          -- them either.)
           state.goal = {
             kind = "place_pill_strategic", mx = best_drop_mx, my = best_drop_my,
             wx = U.m2w(best_drop_mx), wy = U.m2w(best_drop_my),
@@ -3161,8 +3238,6 @@ function Brain.think(info)
             -- never dispatch. Keeping `emergency` for anything outside the
             -- brain that may inspect the goal.
             _place_forced = true,
-            _urgency = _eu, _urg_carry = _euc, _urg_deficit = _eud,
-            _urg_emerg = _eue,
           }
           state.pf.status = "idle"
           log.event("emergency_drop", string.format("at(%d,%d) arm=%d", best_drop_mx, best_drop_my, info.armour))
@@ -5379,6 +5454,38 @@ function Brain.think(info)
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
                               eta_tick = now + eta, tick = now }
       state._repair_dispatch_eta = nil
+    end
+    -- Placement trip flag. ONE record per placement dispatch (harvest or
+    -- not), on state rather than the goal because the goal changes while the
+    -- builder walks. Readers: eval_wait_for_lgm (suppress the park for the
+    -- whole trip), builder.spacing_class (the tile counts as occupied), and
+    -- the lifecycle block earlier in think() (return edge -> harvest resume
+    -- or clear). A repair also sends BUILDMODE_PBOX, so key on the builder
+    -- MODE, not the action; pill_place (the take's blocker drop) has its own
+    -- substate machine and stays out.
+    if build_cmd.action == BUILDMODE_PBOX and state.builder.mode == "place_pill"
+       and build_cmd.x and build_cmd.y
+       and not (state.goal and state.goal.kind == "pill_place") then
+      local g = state.goal
+      local on_goal = g and g.kind == "place_pill_strategic"
+                        and g.mx == build_cmd.x and g.my == build_cmd.y
+      local harvest = U.ttype(build_cmd.x, build_cmd.y) == C.T_FOREST
+      state._place_trip = {
+        mx = build_cmd.x, my = build_cmd.y, tick = now,
+        harvest = harvest,
+        -- Score only exists for a pool-picked strategic spot. A guard/panic
+        -- drop on forest still harvests and resumes, but on the hard validity
+        -- check alone -- there is no strategic score to hold it to.
+        score_at_dispatch = on_goal and g._spot_score or nil,
+        sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
+        origin = (state.builder.place_resume and "resume")
+              or ((g and g._place_forced) and "forced")
+              or (on_goal and "strategic" or "guard"),
+        left = false,   -- set once the LGM is seen out of the tank
+      }
+      if state.builder.place_resume then state._place_resume = nil end
+      -- One line per dispatch, on the edge (DISPATCH above repeats every tick
+      -- the mode holds; this is the line to count).
     end
   end
 

@@ -2341,4 +2341,17 @@ M.PLACE_GIVEUP_BLOCK_TICKS  = 600  -- 12s the abandoned tile stays blocked.
 -- not. Mirrored brain-side or an edge placement refuses forever with nothing in
 -- the log to say why.
 M.MAP_EDGE_BAND = 20
+
+-- Placement trip flag (state._place_trip) -- one record per builder dispatch
+-- for a placement, harvest or not. See VULNERABILITY_AND_BUILDS_PLAN.md,
+-- "The trip flag" / "Harvest, then place".
+M.PLACE_TRIP_ACCEPT_TICKS  = 5    -- LGM still aboard this long after the request:
+                                  -- the engine refused it, clear (not_accepted)
+M.PLACE_TRIP_MAX_TICKS     = 2000 -- builder never came back (40s): clear (timeout)
+                                  -- so wait_for_lgm suppression cannot stick forever
+M.HARVEST_RESUME_MARGIN_ABS  = 30   -- resume unless the tile's score fell by more
+M.HARVEST_RESUME_MARGIN_FRAC = 0.15 -- than max(ABS, dispatch_score x FRAC)
+M.HARVEST_RESUME_MAX_TICKS   = 25   -- resume request not dispatched within this
+                                    -- many ticks (decide() early-returned every
+                                    -- tick, e.g. water_build): drop it (stalled)
 return M

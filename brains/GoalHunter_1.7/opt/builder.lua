@@ -388,8 +388,14 @@ function M.set_mode(state, world, info, goal)
     local _pp_ok = close_enough and (info.carried_pills or 0) > 0
        and info.man_status == C.LGM_INTANK and not info.inboat
     if _pp_ok then
-    end
-    if _pp_ok then
+      -- Edge-triggered: one line per (target, trigger), not one per tick the
+      -- mode holds (2273 lines for 9 dispatches in 20260831_000722). The
+      -- key clears at the bottom of set_mode whenever the mode leaves
+      -- place_pill, so a re-dispatch after a return logs again.
+      local dkey = string.format("%d:%d:%s", goal.mx, goal.my, trigger or "close")
+      if b._dispatch_key ~= dkey then
+        b._dispatch_key = dkey
+      end
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }
     end
@@ -502,8 +508,26 @@ function M.set_mode(state, world, info, goal)
   -- and letting it wrongly trip stuck-flee, and (b) resume mid-count when the
   -- tank returns, tripping the breaker early. decide() keys the count on the
   -- drop tile as well, which is what catches a moved target.
+  -- Harvest resume (state._place_resume, set by init.lua's trip lifecycle on
+  -- the tick the builder returns from a harvest trip with the tile still
+  -- valid and within margin): send the builder straight back to place, with
+  -- NO pool competition and without touching the tank's goal -- exactly the
+  -- way the in-combat guard drop above flips b.mode while the goal stays an
+  -- attack. Overrides every branch above. decide()'s gate still runs (trees
+  -- are now aboard, reach was just checked); init.lua clears the request when
+  -- the command goes out, or drops it after HARVEST_RESUME_MAX_TICKS.
+  b.place_resume = nil
+  local rs = state._place_resume
+  if rs and (info.carried_pills or 0) > 0
+     and info.man_status == C.LGM_INTANK and not info.inboat then
+    b.mode         = "place_pill"
+    b.pill_target  = { mx = rs.mx, my = rs.my }
+    b.place_resume = true
+  end
+
   if b.mode ~= "place_pill" then
     b.place_gate_fails, b.place_gate_key, b.place_gate_tick = nil, nil, nil
+    b._dispatch_key = nil
   end
 end
 
@@ -605,6 +629,24 @@ local function lgm_can_reach(info, dmx, dmy)
   -- does stop the LGM. An empty build spot is unaffected (already walkable).
   local ticks = cpf_lgm_travel_ticks_map(tmx, tmy, dmx, dmy, dmx, dmy, 2000, 150)
   return ticks ~= -1
+end
+
+-- Hard validity of a placement tile, the same four facts decide()'s gate
+-- checks (terrain/occupancy, mine, map-edge band, builder reach), as one call
+-- for the harvest resume. Returns true, or false plus the reason the resume
+-- log wants: "occupied" (pill/base/unbuildable terrain), "mine", "edge",
+-- "unreachable".
+function M.place_tile_valid(info, world, mx, my)
+  if not U.in_map(mx, my) or not U.is_placeable(mx, my, world) then
+    return false, "occupied"
+  end
+  if (bit.band(U.traw(mx, my), TERRAIN_MINE_FLAG)) ~= 0 then return false, "mine" end
+  local band = C.MAP_EDGE_BAND
+  if mx <= band or mx >= (C.MAP_W - band) or my <= band or my >= (C.MAP_W - band) then
+    return false, "edge"
+  end
+  if not lgm_can_reach(info, mx, my) then return false, "unreachable" end
+  return true
 end
 
 -- nearest_onpath_forest: search for forest tiles within 'radius' of checkpoints
@@ -978,7 +1020,15 @@ function M.decide(state, world, info, now)
     -- can't build and re-issuing the order just deadlocks (20260707_044217
     -- t=127262: carry=6, tr=0, frozen 764 ticks). Gate on trees; when short, the
     -- seek-trees redirect in goals sends the tank to harvest instead.
-    local have_trees = (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4)
+    -- Harvest trip: the spot is forest, so the engine will turn this pill
+    -- request into a tree harvest (lgmCheckNewRequest, lgm.c:410) and the
+    -- builder comes back with the wood, pill still aboard. We are GAINING
+    -- trees, not spending them, so the tree gate does not apply --
+    -- LGM_GATHER_TREE (4) == PILL_PLACE_TREE_COST (4), the harvest funds the
+    -- placement exactly. init.lua's trip lifecycle re-dispatches the place
+    -- when the builder returns. (Plan: "Harvest, then place".)
+    local is_harvest = U.ttype(px, py) == C.T_FOREST
+    local have_trees = is_harvest or (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4)
     local can_reach  = have_pill and have_trees and lgm_can_reach(info, px, py)
     local g          = state.goal
     -- Mine and map-edge: the ENGINE refuses to build on either, and the brain

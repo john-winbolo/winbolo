@@ -2093,7 +2093,17 @@ local function find_safe_forest(tmx, tmy)
   return near_x, near_y                      -- slate had none yet: nearest known
 end
 
-local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo)
+-- `only` (optional): { mx, my, sc7 } -- re-score exactly ONE tile with the
+-- scan's context rebuilt fresh, and return its score (nil if the tile no longer
+-- qualifies: surplus category, category drift under STRICT_NEED, blocked,
+-- unplaceable). Used by the harvest resume (init.lua) to ask "is the tile the
+-- builder just cleared still worth the pill?" without the pool. sc7 (distance
+-- from the tank) is pinned to its dispatch value because the tank has moved on
+-- by design; every other term reads the live world. Skips the paths that are
+-- about choosing WHETHER to place at all (seek-trees redirect, offensive/panic
+-- drop, combat-goal interrupt, util-reserve hold): that decision was made at
+-- dispatch.
+local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo, only)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
 
   -- Seek-trees redirect (BEFORE the LGM-in-tank actionable gate below, so it
@@ -2102,7 +2112,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- SAFE forest and gather rather than deadlocking on an unpayable build
   -- (20260707_044217 t=127262: carry=6, tr=0, frozen 764 ticks re-issuing
   -- BUILDMODE_PBOX). Pressure scales with pills carried; distance barely dents it.
-  if (info.carried_pills or 0) >= 1 and not info.inboat
+  if not only and (info.carried_pills or 0) >= 1 and not info.inboat
      and (info.trees or 0) < (C.PILL_PLACE_TREE_COST or 4) then
     -- Cache the chosen forest (static terrain) so the expensive map-wide ring
     -- scan runs rarely — not on every pool re-eval (it was spiking pool_cache to
@@ -2158,7 +2168,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- BRAIN_DEBUG_MODE is false) never pays for this and just returns here.
   local viz_only = BRAIN_DEBUG_MODE
                    and (vizmod.is_on("pill_best_spots_back") or vizmod.is_on("pill_best_spots_aggro"))
-  if not actionable and not viz_only then return nil end
+  if only then
+    actionable = true   -- re-score: the LGM is back aboard by definition
+  elseif not actionable and not viz_only then
+    return nil
+  end
 
   -- ── Carry value penalty ─────────────────────────────────────────────────
   -- Increase placement cost when carrying is more useful than placing.
@@ -2210,6 +2224,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- ── Defensive build ──────────────────────────────────────────────────────
   -- Enemy tank visible + we're carrying: drop a pill at ±45° from the threat
   -- direction, 2–5 tiles out.
+  -- (Whole offensive/panic block skipped on a single-tile re-score: it decides
+  -- whether to DROP a pill somewhere else, which is not the question asked.)
+  if not only then
   local _db_et = (state.perc and state.perc.enemy_tanks) and #state.perc.enemy_tanks or 0
   -- Defensive build DROPS a carried pill — so it must only fire when we actually
   -- hold one. Without it the goal wins the pool on a cheap score, then dead-ends
@@ -2287,6 +2304,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           state.tick or 0, _cov.mx, _cov.my, _cov.health or 0,
           U.edist(tmx, tmy, _cov.mx, _cov.my),
           U.edist(closest_et.mx, closest_et.my, _cov.mx, _cov.my)))
+        -- support_veto overlay: both 8-tile circles and the pill in their overlap
+        if BRAIN_DEBUG_MODE then
+          state._build_veto_viz = { tick = state.tick or 0,
+            tmx = tmx, tmy = tmy, emx = closest_et.mx, emy = closest_et.my,
+            pmx = _cov.mx, pmy = _cov.my, hp = _cov.health or 0 }
+        end
         closest_et = nil
       end
     end
@@ -2382,6 +2405,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Don't interrupt active combat goals (normal strategic only — defensive
   -- build above is allowed to preempt since it's directly threat-reactive).
   if gk == "attack_pill" or gk == "pill_place" then return nil end
+  end  -- if not only
 
   -- ── Strategic-bias center (priority chain) ──────────────────────────────
   -- This is no longer the SEARCH center — the scan below is tank-centric (we
@@ -2549,7 +2573,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- is at/below reserve (concentrated in one tank the reserve is fragile:
   -- one death loses all of it, and carried pills can't block takes). After
   -- placing down to 1 carried, the normal hold re-engages.
-  if util_surplus <= 0 and (info.carried_pills or 0) < 2 then
+  if not only and util_surplus <= 0 and (info.carried_pills or 0) < 2 then
     state._place_need_cat = "util_reserve"   -- viz hint
     print2(string.format("PLACE_HOLD_UTIL t=%d util=%d <= reserve=%d — hold carried pill as utility reserve",
       state.tick or 0, pf_counts.utility or 0, util_reserve))
@@ -2601,15 +2625,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local blk_now       = state.tick or 0
   local MAPW          = C.MAP_W
 
-  for dy = -R, R do
-    for dx = -R, R do
-      local cx = U.mclamp(tmx + dx)   -- TANK-centric: scan around our position
-      local cy = U.mclamp(tmy + dy)
+  -- Per-tile scoring. One closure over the scan context above (pf_counts /
+  -- pf_targets / pf_need_cat / unguarded_bases / search center / spike / war
+  -- zone / blocked tiles), so the (2R+1)^2 scan and the harvest resume's
+  -- single-tile re-score run the SAME thirteen terms. Appends to all_cands and
+  -- updates best_*; a bare `return` is the old `return`.
+  local function score_cell(cx, cy)
       if U.is_placeable(cx, cy, world) then
-        if near_repos_origin(cx, cy) then goto skip_cell end
+        if near_repos_origin(cx, cy) then return end
         if blocked_tiles then
           local _blk_until = blocked_tiles[cy * MAPW + cx]
-          if _blk_until and blk_now < _blk_until then goto skip_cell end
+          if _blk_until and blk_now < _blk_until then return end
         end
         -- Surplus skip: never overfill a category already at/over its projected
         -- target (e.g. another BACK pill when back is 2/1). Unlike the old hard
@@ -2620,7 +2646,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local cell_inf = cpf.influence_at(cx, cy)
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
-        if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_cell end
+        if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
         -- HARD balance gate (STRATEGIC_PLACE_STRICT_NEED): non-panic
         -- placement fills ONLY the single most-needed category. Merely
         -- being under target isn't enough — classification drifts with
@@ -2631,7 +2657,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- entirely and stay exempt.
         if (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
            and pf_need_cat and cell_cat ~= pf_need_cat then
-          goto skip_cell
+          return
         end
         local score = 0
         local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -2708,8 +2734,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           score = score + sc6
         end
 
-        -- 7. Distance from tank
-        sc7 = -U.mdist(tmx, tmy, cx, cy) * 0.5
+        -- 7. Distance from tank (pinned to the dispatch value on a harvest
+        --    re-score: the tank moved on by design, so live distance would
+        --    say nothing about the tile)
+        sc7 = (only and only.sc7) or (-U.mdist(tmx, tmy, cx, cy) * 0.5)
         score = score + sc7
 
         -- 8. Offensive spike bonus
@@ -2804,7 +2832,20 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           best_score = score; best_mx = cx; best_my = cy
         end
       end
-      ::skip_cell::
+  end  -- score_cell
+
+  if only then
+    -- Harvest re-score: one tile, fresh context. nil = the tile no longer
+    -- qualifies at all (category drift / surplus / blocked / occupied).
+    score_cell(only.mx, only.my)
+    if best_mx then return best_score end
+    return nil
+  end
+
+  for dy = -R, R do
+    for dx = -R, R do
+      -- TANK-centric: scan around our position
+      score_cell(U.mclamp(tmx + dx), U.mclamp(tmy + dy))
     end
   end
 
@@ -2944,12 +2985,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
   return {
     cost = cost,
-    -- _urgency: how badly this pill wants to be in the ground — builder.decide()
-    -- raises the LGM danger gate by it. The three _urg_* components ride along
-    -- purely so the PLACE_PILL_GATE log line prints every term and the threshold
-    -- stays hand-computable from that one line.
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
-             wx = U.m2w(best_mx), wy = U.m2w(best_my) },
+             wx = U.m2w(best_mx), wy = U.m2w(best_my),
+             -- Spot score + its tank-distance term, carried on the goal so the
+             -- dispatch can stamp them on state._place_trip: the harvest resume
+             -- compares a fresh re-score (sc7 pinned to _spot_sc7) against
+             -- _spot_score.
+             _spot_score = best_score,
+             _spot_sc7   = -U.mdist(tmx, tmy, best_mx, best_my) * 0.5 },
     -- Every multiplier that actually shapes `cost` has to appear here — this
     -- desc is what FINAL_SCORES prints, and lastpill/surplus/multi were missing,
     -- so the printed formula did not reproduce the printed number. Order matches
@@ -2963,6 +3006,19 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
            pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
     cands = cands,
   }
+end
+
+-- Harvest resume: re-score ONE tile with the placement scan's context rebuilt
+-- fresh (portfolio counts, unguarded bases, strategic center...), sc7 pinned to
+-- the value it had at dispatch. Returns the score, or nil when the tile no
+-- longer qualifies (category drift under STRICT_NEED, surplus role, blocked,
+-- occupied, unplaceable). See init.lua's trip lifecycle.
+function M.score_place_tile(state, world, info, mx, my, sc7_pinned)
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  return eval_place_pill_strategic(state, world, info, tmx, tmy,
+                                   info.inboat, info.shells,
+                                   { mx = mx, my = my, sc7 = sc7_pinned or 0 })
 end
 
 -- Map overlay: the best evaluated placement spots by category — orange for a
@@ -3036,12 +3092,25 @@ function M.draw_pill_spots(viz, state)
     if v and (now - (v.tick or 0)) <= 2 then
       for _, c in ipairs(v.spots or {}) do
         local is_win = v.best_cx and c.mx == v.best_cx and c.my == v.best_cy
+        -- Colour by SPACING CLASS (builder.spacing_class): the rule ranks
+        --   terrain tier > spacing class > distance
+        -- so a valid tile shows what class it fell in: clear = yellow,
+        -- diagonal = orange, orthogonal = deep orange. Chosen = green,
+        -- rejected = red with the reason. Class letter C/D/O on valid tiles.
         local r, g, b = 230, 70, 70                      -- red = rejected
+        local lbl = c.rej
         if is_win then r, g, b = 60, 230, 60             -- green = chosen
-        elseif c.tier then r, g, b = 230, 220, 70 end    -- yellow = valid, not best
+        elseif c.tier then
+          if c.space == 1 then r, g, b = 230, 220, 70     -- clear
+          elseif c.space == 2 then r, g, b = 240, 160, 50 -- diagonal
+          else r, g, b = 240, 110, 40 end                 -- orthogonal
+        end
+        if c.space and not c.rej then
+          lbl = ({ "C", "D", "O" })[c.space] .. (c.tier == 2 and "2" or "")
+        end
         viz.rect("panic_build", c.mx, c.my, c.mx + 1, c.my + 1, r, g, b, is_win and 170 or 90, true)
-        if c.rej and viz.text then
-          viz.text("panic_build", c.mx + 0.5, c.my + 0.5, c.rej, "center", 255, 200, 200, 200, 0.35)
+        if lbl and viz.text then
+          viz.text("panic_build", c.mx + 0.5, c.my + 0.5, lbl, "center", 255, 230, 200, 220, 0.35)
         end
       end
       if viz.line then viz.line("panic_build", v.tank_mx + 0.5, v.tank_my + 0.5, v.threat_mx + 0.5, v.threat_my + 0.5, 255, 80, 80, 200) end
@@ -3070,6 +3139,106 @@ function M.draw_pill_spots(viz, state)
         and string.format("THREAT d=%d (no panic build)", t.dist or -1)
         or "PANIC (no pill)"
       viz.text("panic_build", t.mx + 0.5, t.my - 1.0, _plabel, "center", 255, 120, 120, 255)
+    end
+  end
+end
+
+-- Build-design overlays (VULNERABILITY_AND_BUILDS_PLAN.md "Overlays"). Drawn
+-- from the SAME term tables danger.scores produced this tick (state.vuln_terms
+-- / state.imdanger_terms), so what is on the map is what the number was made
+-- from — never a recompute.
+function M.draw_build_viz(viz, state, info)
+  if not viz or not viz.is_on or not state or not info then return end
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local now = state.tick or 0
+  local it  = state.imdanger_terms
+  local vt  = state.vuln_terms
+
+  -- build_scores: the 8/15-tile odds rings with every counted tank labelled by
+  -- its weight (red enemy / blue ally, excluded ones grey with who engages
+  -- them), and the 4/8/9 cover rings with each contributing pill's units.
+  if viz.is_on("build_scores") and it then
+    local cx, cy = tmx + 0.5, tmy + 0.5
+    viz.circle("build_scores", cx, cy, C.IMD_ODDS_NEAR_TILES, 255, 120, 120, 140)
+    viz.circle("build_scores", cx, cy, C.IMD_ODDS_FAR_TILES,  255, 120, 120, 70)
+    viz.circle("build_scores", cx, cy, 4, 120, 200, 255, 140)
+    viz.circle("build_scores", cx, cy, 8, 120, 200, 255, 100)
+    viz.circle("build_scores", cx, cy, 9, 120, 200, 255, 60)
+    for _, t in ipairs(it.counted or {}) do
+      local r, g, b = 255, 90, 90
+      if not t.foe then r, g, b = 90, 150, 255 end
+      viz.rect("build_scores", t.mx, t.my, t.mx + 1, t.my + 1, r, g, b, 110, true)
+      viz.text("build_scores", t.mx + 0.5, t.my - 0.4,
+        string.format("#%d w%.2f %s", t.id or -1, t.w or 0, t.near and "near" or "far"),
+        "center", r, g, b, 255, 0.4)
+    end
+    for _, s in ipairs(it.skipped or {}) do
+      viz.rect("build_scores", s.mx, s.my, s.mx + 1, s.my + 1, 160, 160, 160, 90, true)
+      viz.text("build_scores", s.mx + 0.5, s.my - 0.4,
+        string.format("#%d skip: p%d engaging (%dt)", s.id or -1, s.by or -1, s.age or -1),
+        "center", 200, 200, 200, 255, 0.4)
+    end
+    for _, p in ipairs(it.cover_pills or {}) do
+      viz.circle("build_scores", p.mx + 0.5, p.my + 0.5, 0.45, 120, 200, 255, 220)
+      viz.text("build_scores", p.mx + 0.5, p.my + 1.1,
+        string.format("cover %.2fu d%.1f%s", p.u or 0, p.d or 0, p.hot and " HOT" or ""),
+        "center", 150, 210, 255, 255, 0.4)
+    end
+  end
+
+  -- hud_scores: both scores, every term, the threshold and the panic verdict.
+  if viz.is_on("hud_scores") and it and vt then
+    local v, i = state.vuln or 0, state.imdanger or 0
+    local thr  = danger.panic_threshold(v)
+    local _panic, _, why = danger.should_panic_build(state, info)
+    local pr, pg, pb = 160, 220, 160
+    if _panic then pr, pg, pb = 255, 70, 70 elseif v <= 50 then pr, pg, pb = 255, 200, 80 end
+    viz.hud_text("hud_scores", 10, 4,
+      string.format("vuln %.1f = 50 + arm%+.1f + carry%+.1f", v, vt.armour or 0, vt.carry or 0),
+      "topright", 220, 220, 220)
+    viz.hud_text("hud_scores", 10, 16,
+      string.format("imdanger %.1f = 50 + cover%+.1f + expo%+.1f + shells%+.1f + odds%+.1f",
+        i, it.cover or 0, it.exposure or 0, it.shells or 0, it.odds or 0),
+      "topright", 220, 220, 220)
+    viz.hud_text("hud_scores", 10, 28,
+      string.format("panic thresh %.1f -> %s", thr or 0, _panic and "PANIC" or (why or "-")),
+      "topright", pr, pg, pb)
+  end
+
+  -- support_veto: the two 8-tile support circles (ours and the enemy's) and
+  -- the pill that sat in their overlap and vetoed the offensive build.
+  if viz.is_on("support_veto") then
+    local bv = state._build_veto_viz
+    if bv and (now - bv.tick) <= 2 then
+      local r = C.SUPPORT_PILL_RADIUS or 8
+      viz.circle("support_veto", bv.tmx + 0.5, bv.tmy + 0.5, r, 90, 150, 255, 150)
+      viz.circle("support_veto", bv.emx + 0.5, bv.emy + 0.5, r, 255, 90, 90, 150)
+      viz.rect("support_veto", bv.pmx, bv.pmy, bv.pmx + 1, bv.pmy + 1, 255, 220, 60, 160, true)
+      viz.text("support_veto", bv.pmx + 0.5, bv.pmy - 0.5,
+        string.format("VETO support hp=%d", bv.hp), "center", 255, 230, 120, 255, 0.45)
+    end
+  end
+
+  -- harvest_trip: the pending placement/harvest tile with its stored score, a
+  -- line from the tank, and the resume request when one is waiting.
+  if viz.is_on("harvest_trip") then
+    local trip = state._place_trip
+    if trip then
+      local r, g, b = 80, 220, 120
+      if trip.harvest then r, g, b = 60, 180, 60 end
+      viz.rect("harvest_trip", trip.mx, trip.my, trip.mx + 1, trip.my + 1, r, g, b, 120, true)
+      viz.line("harvest_trip", tmx + 0.5, tmy + 0.5, trip.mx + 0.5, trip.my + 0.5, r, g, b, 160)
+      viz.text("harvest_trip", trip.mx + 0.5, trip.my - 0.5,
+        string.format("%s %s %dt%s", trip.harvest and "HARVEST" or "PLACE",
+          trip.score_at_dispatch and string.format("score %.0f", trip.score_at_dispatch) or "",
+          now - (trip.tick or now), trip.left and "" or " (not left)"),
+        "center", 200, 255, 200, 255, 0.45)
+    end
+    local rs = state._place_resume
+    if rs then
+      viz.circle("harvest_trip", rs.mx + 0.5, rs.my + 0.5, 0.6, 255, 255, 80, 230)
+      viz.text("harvest_trip", rs.mx + 0.5, rs.my + 1.1, "RESUME pending", "center", 255, 255, 120, 255, 0.45)
     end
   end
 end
@@ -4521,6 +4690,14 @@ local function eval_wait_for_lgm(state, info)
   if not (C.WAIT_FOR_LGM_ENABLED or carrying) then return nil end
   if not info or info.man_status ~= C.LGM_MOVING then return nil end
   if state.lgm_stranded then return nil end
+  -- Placement trip in progress (state._place_trip, set at every placement
+  -- dispatch, cleared on the builder's return): the tank is meant to move on,
+  -- not park. Without this the carrying case costs 20 and wins the pool on a
+  -- harvest trip (the pill is still aboard), and a plain placement still costs
+  -- 50 -- cheap enough to re-park the tank next to the spot it just stood off
+  -- from. Keyed off the flag, not the goal, because the goal changes while the
+  -- builder walks.
+  if state._place_trip then return nil end
   local g = state.goal
   if g then
     if g.kind == "rescue_lgm"   then return nil end

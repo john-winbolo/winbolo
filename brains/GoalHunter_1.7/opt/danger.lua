@@ -404,13 +404,16 @@ function M.imdanger(info, world, state)
   -- Friendly AND allied, deployed only. A heated pill counts triple because
   -- the engine halves its reload per hit.
   local units, n_cover, n_heated = 0, 0, 0
+  local cover_pills = nil   -- viz: every contributing pill with its units
   for _, p in pairs((world and world.pills) or {}) do
     if (p.owner == "friendly" or p.owner == "allied")
        and not p.in_tank and (p.health or 0) > 0 then
-      local w = cover_weight(U.edist(tmx, tmy, p.mx, p.my))
+      local d = U.edist(tmx, tmy, p.mx, p.my)
+      local w = cover_weight(d)
       if w > 0 then
         local hot = (p.anger or 0) >= C.HEATED_ANGER
-        units   = units + w * (hot and C.IMD_COVER_HEATED_MULT or 1)
+        local u   = w * (hot and C.IMD_COVER_HEATED_MULT or 1)
+        units   = units + u
         n_cover = n_cover + 1
         if hot then n_heated = n_heated + 1 end
       end
@@ -455,7 +458,8 @@ function M.imdanger(info, world, state)
   if info.objects then
     for _, ob in ipairs(info.objects) do
       if ob.type == OBJECT_TANK then
-        local d = U.edist(tmx, tmy, bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
+        local omx, omy = bit.rshift(ob.x, 8), bit.rshift(ob.y, 8)
+        local d = U.edist(tmx, tmy, omx, omy)
         local w, is_near = odds_weight(d)
         if w > 0 then
           if (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
@@ -488,7 +492,7 @@ function M.imdanger(info, world, state)
     pill_at = pill_at, n_shells = n_shells,
     near = t_near, far = t_far, near_net = near_net, far_net = far_net,
     n_enemy = n_enemy, n_ally = n_ally, n_skipped = n_skipped,
-    skipped = skipped, counted = counted,
+    skipped = skipped, counted = counted, cover_pills = cover_pills,
   }
 end
 
