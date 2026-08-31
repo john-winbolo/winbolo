@@ -112,14 +112,16 @@ function M.spacing_class(world, state, cx, cy)
   local worst = SPACE_CLEAR
   local near_mx, near_my, near_dx, near_dy
   local function consider(pmx, pmy)
-    local dx, dy = math.abs(cx - pmx), math.abs(cy - pmy)
-    local cd = (dx > dy) and dx or dy
-    if cd >= gap then return end
-    local cls = (dx + dy == 1) and SPACE_ORTHO or SPACE_DIAG
+    if U.cdist(cx, cy, pmx, pmy) >= gap then return end
+    -- Strictly inside the gap, and never on the pill (is_placeable already
+    -- refuses a tile carrying world.pill_at), so this is a 1-tile neighbour:
+    -- orthogonal if it shares an edge, diagonal if only a corner.
+    local cls = (math.abs(cx - pmx) + math.abs(cy - pmy) == 1)
+                and SPACE_ORTHO or SPACE_DIAG
+    -- Worst wins. Strictly-greater keeps near_* pointing at the FIRST pill of
+    -- the worst class seen, which is what the log should name.
     if cls > worst then
       worst = cls
-      near_mx, near_my, near_dx, near_dy = pmx, pmy, cx - pmx, cy - pmy
-    elseif near_mx == nil then
       near_mx, near_my, near_dx, near_dy = pmx, pmy, cx - pmx, cy - pmy
     end
   end

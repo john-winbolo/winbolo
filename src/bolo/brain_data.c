@@ -606,15 +606,20 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     value->num_messages = 0;
   }
 
-  /* Controling the tank. Skipped while dead: the brain still runs on a dead
-   * tick (to reset its own state for respawn, and to broadcast), but its
-   * movement outputs are meaningless and must not reach the tank. The caller
-   * zeroes both key sets before each think, so skipping the write leaves them
-   * clear rather than stale. */
-  if (!value->dead) {
-    *clientSimGetBrainHoldKeys(csPtr) = *(value->holdkeys);
-    *clientSimGetBrainTapKeys(csPtr) = *(value->tapkeys);
-  }
+  /* Controling the tank.
+   *
+   * NOTE these two lines are self-assignments and have been for a long time:
+   * brainDataMakeInfo points value->holdkeys AT clientSimGetBrainHoldKeys(cs)
+   * (see :517), so this copies *&cs->brainHoldKeys onto itself. The write that
+   * actually drives the tank happens earlier, when the Lua result table is
+   * read in extract_brain_output(), straight through that alias.
+   *
+   * Kept because the legacy brain API shape (a BrainInfo full of pointers the
+   * brain writes through) is what other frontends still expect, but do not
+   * add conditions here expecting them to gate anything -- the dead-tank gate
+   * lives in extract_brain_output, where the real write is. */
+  *clientSimGetBrainHoldKeys(csPtr) = *(value->holdkeys);
+  *clientSimGetBrainTapKeys(csPtr) = *(value->tapkeys);
 
   /* Build requests are routed through InputPacket so the server sim
    * processes them authoritatively.  brainBuildInfo->action is 1-based

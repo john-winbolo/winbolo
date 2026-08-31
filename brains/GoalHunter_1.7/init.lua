@@ -3930,7 +3930,11 @@ function Brain.think(info)
             tostring(best_drop_surplus), best_drop_danger))
         end
         if best_drop_surplus then
-          print2(string.format("EMERGENCY_DROP t=%d only surplus-role tiles reachable — dropping at (%d,%d) to save pill anyway", now, best_drop_mx, best_drop_my))
+          -- NOT "only surplus tiles were reachable" any more: under the bucket
+          -- ordering a clear/surplus tile legitimately outranks a
+          -- diagonal/non-surplus one, so this fires whenever the WINNER is
+          -- surplus-role, not only when nothing else existed.
+          print2(string.format("EMERGENCY_DROP t=%d best tile is surplus-role — dropping at (%d,%d) anyway to save the pill", now, best_drop_mx, best_drop_my))
         end
         if best_drop_mx then
           -- Build-gate urgency: this goal bypasses the placement pool, so it

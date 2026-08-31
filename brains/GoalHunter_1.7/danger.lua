@@ -375,17 +375,19 @@ end
 -- pill #3 would otherwise suppress enemy tank player 3), and only trust a
 -- slate fresh enough to still describe reality.
 local function enemy_is_ally_engaged(now, id)
-  if id == nil then return false, nil end
+  if id == nil then return false, nil, nil end
   for pn, slot in ally_state.iter_active(now, C.SCORE_ALLY_MAX_AGE) do
     local inf = slot.info
     if inf and inf.goal == "attack_tank" then
       local tgt = tonumber(inf.target)
       if tgt ~= nil and tgt == id then
-        return true, pn
+        -- Age reported so a suppression traced in the log can be judged: a
+        -- slate is only as good as how recently the ally sent it.
+        return true, pn, now - (slot.last_tick or now)
       end
     end
   end
-  return false, nil
+  return false, nil, nil
 end
 
 -- M.imdanger(info, world, state) -> score, terms
@@ -449,7 +451,7 @@ function M.imdanger(info, world, state)
   -- and cannot be reused here.)
   local near_net, far_net = 0, 0
   local n_enemy, n_ally, n_skipped = 0, 0, 0
-  local skipped = nil
+  local skipped, counted = nil, nil
   if info.objects then
     for _, ob in ipairs(info.objects) do
       if ob.type == OBJECT_TANK then
@@ -457,20 +459,30 @@ function M.imdanger(info, world, state)
         local w, is_near = odds_weight(d)
         if w > 0 then
           if (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
-            local engaged, by = enemy_is_ally_engaged(now, ob.idnum)
+            local engaged, by, age = enemy_is_ally_engaged(now, ob.idnum)
             if engaged then
               n_skipped = n_skipped + 1
               if BRAIN_DEBUG_MODE then
                 skipped = skipped or {}
-                skipped[#skipped + 1] = { id = ob.idnum, d = d, by = by }
+                skipped[#skipped + 1] = { id = ob.idnum, d = d, by = by, age = age }
               end
             else
               n_enemy = n_enemy + 1
               if is_near then near_net = near_net + w else far_net = far_net + w end
+              if BRAIN_DEBUG_MODE then
+                counted = counted or {}
+                counted[#counted + 1] = { id = ob.idnum, d = d, w = w,
+                                          near = is_near, foe = true }
+              end
             end
           else
             n_ally = n_ally + 1
             if is_near then near_net = near_net - w else far_net = far_net - w end
+            if BRAIN_DEBUG_MODE then
+              counted = counted or {}
+              counted[#counted + 1] = { id = ob.idnum, d = d, w = w,
+                                        near = is_near, foe = false }
+            end
           end
         end
       end
@@ -489,7 +501,8 @@ function M.imdanger(info, world, state)
     cover_units = units, n_cover = n_cover, n_heated = n_heated,
     pill_at = pill_at, n_shells = n_shells,
     near = t_near, far = t_far, near_net = near_net, far_net = far_net,
-    n_enemy = n_enemy, n_ally = n_ally, n_skipped = n_skipped, skipped = skipped,
+    n_enemy = n_enemy, n_ally = n_ally, n_skipped = n_skipped,
+    skipped = skipped, counted = counted,
   }
 end
 
@@ -503,16 +516,27 @@ function M.scores(info, world, state)
     "SCORES t=%d vuln=%.1f = 50 + arm{%+.1f}(%d/%d) + carry{%+.1f}(%d pills)",
     (state and state.tick) or 0, v, vt.armour, vt.armour_raw,
     C.VULN_ARMOUR_CAP, vt.carry, vt.pills))
+  -- near_net/far_net are printed alongside the clamped contributions so odds is
+  -- derivable, not merely checkable: near = clamp(-35,0, -near_net * SCALE).
   print2(string.format(
     "       imdanger=%.1f = 50 + cover{%+.1f}(%.2fu %dp %dhot) + expo{%+.1f}(pill_at=%.0f)"
-    .. " + shells{%+.1f}(%d near) + odds{%+.1f}(near=%.2f far=%.2f %de %da %dskip)",
+    .. " + shells{%+.1f}(%d near) + odds{%+.1f}(near{%+.1f}=net %.2f, far{%+.1f}=net %.2f;"
+    .. " %de %da %dskip)",
     i, it.cover, it.cover_units, it.n_cover, it.n_heated, it.exposure, it.pill_at,
-    it.shells, it.n_shells, it.odds, it.near, it.far,
+    it.shells, it.n_shells, it.odds, it.near, it.near_net, it.far, it.far_net,
     it.n_enemy, it.n_ally, it.n_skipped))
+  if it.counted then
+    for _, t in ipairs(it.counted) do
+      print2(string.format("       ODDS %-5s #%d @%.1ft ring=%s w=%.2f",
+                           t.foe and "enemy" or "ally", t.id or -1, t.d or -1,
+                           t.near and "near" or "far", t.w or 0))
+    end
+  end
   if it.skipped then
     for _, s in ipairs(it.skipped) do
-      print2(string.format("       ODDS skip enemy #%d @%.1ft — engaged by ally #%d",
-                           s.id or -1, s.d or -1, s.by or -1))
+      print2(string.format(
+        "       ODDS skip enemy #%d @%.1ft — engaged by ally #%d (slate age %dt)",
+        s.id or -1, s.d or -1, s.by or -1, s.age or -1))
     end
   end
   return v, i, vt, it

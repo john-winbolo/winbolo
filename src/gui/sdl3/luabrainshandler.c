@@ -477,19 +477,35 @@ static void extract_brain_output(lua_State *L, BrainInfo *info) {
     return; /* brain returned nothing — leave outputs at their current values */
   }
 
-  /* holdkeys */
-  lua_getfield(L, -1, "holdkeys");
-  if (lua_isinteger(L, -1) && info->holdkeys) {
-    *(info->holdkeys) = (uint32_t)lua_tointeger(L, -1);
-  }
-  lua_pop(L, 1);
+  /* holdkeys / tapkeys.
+   *
+   * These pointers alias straight into ClientSim storage (brainDataMakeInfo
+   * sets info->holdkeys = clientSimGetBrainHoldKeys(cs), which returns
+   * &cs->brainHoldKeys), so writing through them here IS the write that
+   * drives the tank -- it lands before brainDataExtractInfo ever runs. Any
+   * gate on a dead brain's movement therefore has to be here; a check down
+   * in the extract would be copying the value onto itself.
+   *
+   * A dead brain still runs (to reset its own state for respawn, and to
+   * broadcast), but must not steer. GoalHunter already returns zeroed keys
+   * on its dead branch and the caller zeroes both sets before each think, so
+   * this is belt-and-braces for that brain -- but it is the only thing
+   * stopping some other Lua brain from driving a corpse. */
+  if (!info->dead) {
+    /* holdkeys */
+    lua_getfield(L, -1, "holdkeys");
+    if (lua_isinteger(L, -1) && info->holdkeys) {
+      *(info->holdkeys) = (uint32_t)lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
 
-  /* tapkeys */
-  lua_getfield(L, -1, "tapkeys");
-  if (lua_isinteger(L, -1) && info->tapkeys) {
-    *(info->tapkeys) = (uint32_t)lua_tointeger(L, -1);
+    /* tapkeys */
+    lua_getfield(L, -1, "tapkeys");
+    if (lua_isinteger(L, -1) && info->tapkeys) {
+      *(info->tapkeys) = (uint32_t)lua_tointeger(L, -1);
+    }
+    lua_pop(L, 1);
   }
-  lua_pop(L, 1);
 
   /* build: nil means no build request, table means {x, y, action} */
   lua_getfield(L, -1, "build");
