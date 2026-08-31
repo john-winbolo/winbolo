@@ -107,6 +107,15 @@ static char s_run_script_path[1024] = "";
 
 /* Set by --profile / --profile-log (or always-on in dev mode). Captured
  * as BRAIN_PROFILE / BRAIN_PROFILE_LOG Lua globals at brain init. */
+/* Base seed for every brain's math.random; 0 leaves the VM default. The
+ * per-instance seed is this plus the bot's player number, so bots still differ
+ * from each other while being identical across runs. Host-controlled default
+ * rather than a create parameter, so it reaches the seeding point inside
+ * luaBrainInstanceCreate without threading an argument through every caller --
+ * the same shape the debug-mode default uses. */
+static long s_defaultRandomSeed = 0;
+static void seedRandomOnState(lua_State *L, long seed);
+
 static int s_profile     = 0;
 static int s_profile_log = 0;
 /* Pool-viz capture (BRAIN_POOL_VIZ). Decoupled from profile_log so a
@@ -1458,6 +1467,18 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   if (inst->pathfinder) {
     brainPathfinderSetMap(inst->pathfinder, inst->bInfo.theWorld);
   }
+  /* Seed math.random BEFORE brain.open runs. This ordering is the whole
+   * point: GoalHunter draws replan_offset inside open (init.lua), and that
+   * single draw staggers the bot's entire replan cadence for the rest of the
+   * game. Seeding after create returns would leave exactly that draw coming
+   * from PUC-Lua's per-process auto-seed, which is the divergence the knob
+   * exists to remove. */
+  if (s_defaultRandomSeed != 0) {
+    /* Note: the local L, not inst->L -- inst->L is not assigned until after
+     * brain.open succeeds, further down. */
+    seedRandomOnState(L, s_defaultRandomSeed + (long)player_num);
+  }
+
   if (!brainCoreCallMethod(L, &inst->bInfo, "open")) {
     brainDataExtractInfo(cs, &inst->bInfo);
     lua_close(L);
@@ -1550,14 +1571,19 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
 
     /* Capacity-tier pin for measurement runs. Written as the global the brain
      * already honours (_BT_TIER_OVERRIDE, read every tick), so no brain change
-     * is needed and BrainTest's existing panel override shares the seam.
-     * Cleared to nil when off, so turning it off mid-session takes effect. */
+     * is needed.
+     *
+     * Only ever WRITTEN, never cleared. BrainTest's tier panel evals this same
+     * global into the bot, and this runs on the producer before every think --
+     * so clearing it when the server-side override is off would erase the
+     * user's panel selection every tick, before the brain could read it. The
+     * server parses its args once, so there is no on->off transition here to
+     * serve; a future mid-session control would want edge detection in
+     * botManagerTick, which knows the previous value. */
     if (tierOverride >= 1 && tierOverride <= 10) {
         lua_pushinteger(L, tierOverride);
-    } else {
-        lua_pushnil(L);
+        lua_setglobal(L, "_BT_TIER_OVERRIDE");
     }
-    lua_setglobal(L, "_BT_TIER_OVERRIDE");
 
     lua_getglobal(L, "brain");
     if (!lua_istable(L, -1)) {
@@ -1573,14 +1599,24 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
     lua_settop(L, top);
 }
 
+void luaBrainSetDefaultRandomSeed(long base) { s_defaultRandomSeed = base; }
+
 void luaBrainSeedRandom(LuaBrainInstance *inst, long seed) {
-    lua_State *L;
+    if (inst == NULL) return;
+    seedRandomOnState(inst->L, seed);
+}
+
+/* File-local, and takes the lua_State directly, because the caller that
+ * matters runs inside luaBrainInstanceCreate BEFORE inst->L is assigned --
+ * going through the instance there hits the NULL guard and silently does
+ * nothing, which is exactly the bug this split fixes. Not in the header:
+ * lua_State is not a visible type to every consumer of it. */
+static void seedRandomOnState(lua_State *L, long seed) {
     int top;
 
-    if (inst == NULL || inst->L == NULL) {
+    if (L == NULL) {
         return;
     }
-    L = inst->L;
     top = lua_gettop(L);
 
     /* math.randomseed(seed). PUC-Lua 5.4 auto-seeds per process, so without

@@ -797,6 +797,10 @@ void printArgs() {
   fprintf(stderr, "-brain-no-budget-kill - Give each brain a 1000 ms budget so the watchdog\n");
   fprintf(stderr, "                never truncates a think. Still finite, so a hung brain is\n");
   fprintf(stderr, "                still aborted. For measurement runs; pair with -threads 1.\n");
+  fprintf(stderr, "                ALSO suppresses the consecutive-crash kick, so a brain that\n");
+  fprintf(stderr, "                crashes every tick stays in the game instead of being\n");
+  fprintf(stderr, "                removed. Wanted for measurement (a kick is a huge fork),\n");
+  fprintf(stderr, "                surprising on a live server.\n");
 #if WB_ENABLE_NETIMPAIR
   fprintf(stderr, "-netimpair <spec> - Apply network impairment to both directions for testing.\n");
   fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
@@ -1972,7 +1976,8 @@ int main(int argc, char **argv) {
          * dependent instruction. Still finite, so a genuinely hung brain is
          * aborted rather than hanging the server. */
         botManagerSetSlowMoDebug(1);
-        fprintf(stderr, "Brain budget kill disabled (1000 ms per-bot budget)\n");
+        fprintf(stderr, "Brain budget kill disabled (1000 ms per-bot budget); "
+                        "consecutive-crash kick also suppressed\n");
       }
     }
     if (!botManagerInit(threadsArg)) {

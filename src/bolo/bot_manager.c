@@ -435,7 +435,14 @@ void botManagerSetBrainTierOverride(int tier) {
 }
 int  botManagerGetBrainTierOverride(void) { return s_brainTierOverride; }
 
-void botManagerSetBrainLuaSeed(long seed) { s_brainLuaSeed = seed; }
+void botManagerSetBrainLuaSeed(long seed) {
+    s_brainLuaSeed = seed;
+    /* Forwarded to the brain handler, which applies it inside
+     * luaBrainInstanceCreate BEFORE brain.open runs. Seeding after create
+     * returns would miss every draw open itself makes -- including
+     * GoalHunter's replan_offset, which is the one that matters most. */
+    luaBrainSetDefaultRandomSeed(seed);
+}
 long botManagerGetBrainLuaSeed(void)      { return s_brainLuaSeed; }
 
 double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
@@ -626,12 +633,6 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     bot->thinkDeadlineCounter = 0;
     bot->killSite[0] = '\0';
     bot->wasKilled = false;
-    /* Reproducible math.random for measurement runs. Combined with the
-     * player number so bots still differ from one another, but identically
-     * on every run with the same seed. */
-    if (s_brainLuaSeed != 0) {
-        luaBrainSeedRandom(&bot->brain, s_brainLuaSeed + (long)bot->playerNum);
-    }
     if (bot->brain.pathfinder != NULL) {
         brainPathfinderSetAbortFlag(bot->brain.pathfinder, &bot->abort_flag);
     }
@@ -802,12 +803,6 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->thinkDeadlineCounter = 0;
     bot->killSite[0] = '\0';
     bot->wasKilled = false;
-    /* Reproducible math.random for measurement runs. Combined with the
-     * player number so bots still differ from one another, but identically
-     * on every run with the same seed. */
-    if (s_brainLuaSeed != 0) {
-        luaBrainSeedRandom(&bot->brain, s_brainLuaSeed + (long)bot->playerNum);
-    }
 
     /* Wire the abort flag through to the C pathfinder/worldsim so their
      * inner search loops can poll it without going back through Lua.

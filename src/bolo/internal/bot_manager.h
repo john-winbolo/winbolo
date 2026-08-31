@@ -540,6 +540,9 @@ double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
  *  matching wall-clock slowdown is paced by the host's tick
  *  scheduler, not here.
  *
+ *  ALSO suppresses the consecutive-crash kick, so a brain that
+ *  crashes every tick is not removed from the game.
+ *
  *  Process-global (a debug toggle, not per-sim game state).
  *********************************************************/
 void botManagerSetSlowMoDebug(int on);

@@ -540,6 +540,20 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
 void luaBrainSeedRandom(LuaBrainInstance *inst, long seed);
 
 /*********************************************************
+*NAME:          luaBrainSetDefaultRandomSeed
+*PURPOSE:
+*  Host-controlled base seed applied inside luaBrainInstanceCreate,
+*  BEFORE brain.open runs; 0 (the default) leaves the VM alone.
+*  Each instance gets base + its player number.
+*
+*  Must be applied before open, not after create returns: brains
+*  draw during open (GoalHunter's replan_offset staggers its whole
+*  replan cadence off one such draw), and those draws are exactly
+*  what needs to be reproducible.
+*********************************************************/
+void luaBrainSetDefaultRandomSeed(long base);
+
+/*********************************************************
 *NAME:          luaBrainInstanceSetDebugMode
 *PURPOSE:
 *  Updates the BRAIN_DEBUG_MODE Lua global on this instance's
