@@ -208,6 +208,28 @@ EM_JS(int, wb_voice_capture_start, (void), {
   var v = Module.WB_voice;
   if (!v || !v.ctx || !v.modulePromise) return 0;
 
+  /* Unhooks and drops whatever capture chain is currently held, so a chain
+     that is about to be replaced does not stay in the audio graph feeding
+     the same queue as its replacement. Every step is guarded and ordered
+     downstream-first: the message port goes before the nodes, so a frame
+     that arrives mid-teardown is dropped rather than queued. */
+  var releaseOldCapture = function(w) {
+    if (w.capNode) {
+      try { w.capNode.port.onmessage = null; } catch (e) { }
+      try { w.capNode.disconnect(); } catch (e) { }
+      w.capNode = null;
+    }
+    if (w.srcNode) {
+      try { w.srcNode.disconnect(); } catch (e) { }
+      w.srcNode = null;
+    }
+    if (w.micStream) {
+      w.micStream.getTracks().forEach(function(t) { t.stop(); });
+      w.micStream = null;
+    }
+    if (w.capQueue) w.capQueue.length = 0;
+  };
+
   /* The gesture listeners cover the usual case; this catches a context that
      was suspended again later (a backgrounded tab). */
   if (v.ctx.state === "suspended") v.ctx.resume();
@@ -252,6 +274,16 @@ EM_JS(int, wb_voice_capture_start, (void), {
       stream.getTracks().forEach(function(t) { t.stop(); });
       return;
     }
+    /* Tear the previous chain down before overwriting the handles to it.
+       This path runs whenever live went false — a revoked permission, an
+       unplugged device — and the old nodes are not garbage: capNode is
+       still connected to sinkNode, which keeps the browser pulling it, and
+       its port.onmessage is gated on the global capturing flag rather than
+       on which node it belongs to. Left in place it goes on pushing frames
+       (silence, its source track being dead) into the same queue the new
+       node feeds, interleaved with real audio, one more producer per
+       unplug-and-re-grant cycle. */
+    releaseOldCapture(w);
     w.micStream = stream;
     w.srcNode = w.ctx.createMediaStreamSource(stream);
     w.capNode = new AudioWorkletNode(w.ctx, "wb-voice-capture",
@@ -290,11 +322,10 @@ EM_JS(int, wb_voice_capture_start, (void), {
       w.pending = false;
       w.live = false;
       /* A stream that was granted but could not be wired up is released
-         rather than left holding the microphone open for nothing. */
-      if (w.micStream) {
-        w.micStream.getTracks().forEach(function(t) { t.stop(); });
-        w.micStream = null;
-      }
+         rather than left holding the microphone open for nothing — along
+         with any nodes that were built before the failure, and the chain
+         still standing from before it if the grant itself is what failed. */
+      releaseOldCapture(w);
     }
     console.warn("[WB_voice] microphone unavailable:", e);
   });
