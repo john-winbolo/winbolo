@@ -540,10 +540,48 @@ double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
  *  matching wall-clock slowdown is paced by the host's tick
  *  scheduler, not here.
  *
+ *  ALSO suppresses the consecutive-crash kick, so a brain that
+ *  crashes every tick is not removed from the game.
+ *
  *  Process-global (a debug toggle, not per-sim game state).
  *********************************************************/
 void botManagerSetSlowMoDebug(int on);
 int  botManagerGetSlowMoDebug(void);
+
+/*********************************************************
+ *NAME:          botManagerSetBrainTierOverride
+ *PURPOSE:
+ *  Pin every brain's capacity tier to `tier` (1..10); 0 restores
+ *  the dynamic controller. For A/B measurement runs.
+ *
+ *  The tier is normally derived from lastThinkMs / targetMs, both
+ *  wall-clock quantities, so the same seed yields different tiers
+ *  on different runs -- and a different tier is a different brain.
+ *  Pinning it makes brain decisions reproducible while leaving all
+ *  timing telemetry reporting real measured values.
+ *
+ *  Process-global (a debug toggle, not per-sim game state).
+ *********************************************************/
+void botManagerSetBrainTierOverride(int tier);
+int  botManagerGetBrainTierOverride(void);
+
+/*********************************************************
+ *NAME:          botManagerSetBrainLuaSeed
+ *PURPOSE:
+ *  Seed each brain's Lua math.random deterministically; 0 leaves
+ *  the VM default. The per-bot seed is this value combined with the
+ *  bot's player number, so bots still differ from each other but
+ *  identically across runs.
+ *
+ *  PUC-Lua 5.4 auto-seeds its generator per process, and the brain
+ *  draws from it for decisions that persist (replan_offset staggers
+ *  a bot's entire replan cadence), so runs otherwise diverge from
+ *  the first tick.
+ *
+ *  Process-global (a debug toggle, not per-sim game state).
+ *********************************************************/
+void botManagerSetBrainLuaSeed(long seed);
+long botManagerGetBrainLuaSeed(void);
 
 /*********************************************************
  *NAME:          botManagerFlushBrainLogs

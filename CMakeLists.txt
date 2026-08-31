@@ -266,7 +266,18 @@ if(WINBOLO_LUAJIT)
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
             CONFIGURE_COMMAND ""
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}/src" cmd /c msvcbuild.bat static
+            # cmd only searches the current directory for a bare command name
+            # when NoDefaultCurrentDirectoryInExePath is unset. Some CI images
+            # and hardened dev environments set it, and then `msvcbuild.bat`
+            # fails with "is not recognized" even though chdir put us in the
+            # directory containing it. Prefixing ".\" only fixes the batch file
+            # itself -- msvcbuild.bat then invokes the host tools it just built
+            # (minilua, buildvm) as bare names too, and those fail the same way
+            # -- so unset the variable for the whole build step instead.
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+                              --unset=NoDefaultCurrentDirectoryInExePath
+                              ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
+                              cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
@@ -2936,6 +2947,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
+    tests/unit/test_pf_influence_tail.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3312,6 +3324,24 @@ target_link_libraries(WinBoloUnitTests PRIVATE
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+    # 8 MB stack, matching the Linux default.
+    #
+    # test_net_impair.c declares NetImpair as a stack LOCAL in five test
+    # functions, and NetImpair is ~1.06 MB (queue[512] of 2048-byte packets,
+    # net_impair.h). That overflows Windows' 1 MB default, so the runner died
+    # at STATUS_STACK_OVERFLOW partway through `net_impair` -- and because the
+    # test list in test_main.c is a static table walked in order, EVERY test
+    # after that entry (100+ of them, including all the spectator and loopback
+    # suites) silently never ran on Windows. It passed on Linux only because
+    # the default stack there is already 8 MB.
+    #
+    # Raising the stack rather than making those locals `static` keeps each
+    # test case's fixture genuinely fresh, which is the point of a stack local.
+    if(MSVC)
+        target_link_options(WinBoloUnitTests PRIVATE /STACK:8388608)
+    else()
+        target_link_options(WinBoloUnitTests PRIVATE -Wl,--stack,8388608)
+    endif()
 else()
     target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
@@ -3482,6 +3512,12 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    pf_tail_reaches_radius_and_stops
+    pf_tail_blocked_by_wall_and_sea
+    pf_tail_neutral_zone_slows
+    pf_tail_meeting_cancels_tie_to_hostile
+    pf_tail_never_overwrites_a_stamp
+    pf_tail_contact_makes_a_front_line
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback

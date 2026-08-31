@@ -288,6 +288,12 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+int run_pf_tail_reaches_radius_and_stops(void);
+int run_pf_tail_blocked_by_wall_and_sea(void);
+int run_pf_tail_neutral_zone_slows(void);
+int run_pf_tail_meeting_cancels_tie_to_hostile(void);
+int run_pf_tail_never_overwrites_a_stamp(void);
+int run_pf_tail_contact_makes_a_front_line(void);
 
 int run_net_impair(void);
 

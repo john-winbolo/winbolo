@@ -126,6 +126,22 @@ function M.mdist(mx1, my1, mx2, my2)
   return math.abs(mx1 - mx2) + math.abs(my1 - my2)
 end
 
+-- True straight-line tile distance. Ranges that model a physical reach --
+-- a pillbox's 8 tiles, gun range, the odds rings -- must use this, not mdist:
+-- Manhattan calls a diagonal neighbour distance 2, so a mdist <= 8 test
+-- silently excludes a band of tiles the pill can actually shoot.
+function M.edist(mx1, my1, mx2, my2)
+  local dx, dy = mx1 - mx2, my1 - my2
+  return math.sqrt(dx * dx + dy * dy)
+end
+
+-- Chebyshev: diagonal neighbours are distance 1. "Beside" in the sense the
+-- pill-spacing rule means -- the 8 tiles touching a pill are all distance 1.
+function M.cdist(mx1, my1, mx2, my2)
+  local dx, dy = math.abs(mx1 - mx2), math.abs(my1 - my2)
+  return (dx > dy) and dx or dy
+end
+
 -- Chebyshev-style heuristic for 8-connected A*: consistent with diagonal moves
 -- costing 1.41x a cardinal move. Returns an admissible estimate.
 function M.hdist(mx1, my1, mx2, my2)

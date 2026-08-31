@@ -1673,6 +1673,98 @@ function Brain.think(info)
   opt(string.format("  cpf.load_danger done %.2f ms (rebuilt=%s)",
     (t_load_danger - t_threat_upd) / 1000, tostring(threat.rebuilt_this_tick)))
 
+  -- The two build scores. Must run AFTER threat.update: imdanger's exposure
+  -- term reads threat.pill_at, which is only valid once the grid is rebuilt.
+  -- Stored on state so every consumer this tick sees one consistent pair
+  -- rather than recomputing (and the log line stays a single source of truth).
+  state.vuln, state.imdanger, state.vuln_terms, state.imdanger_terms =
+    danger.scores(info, world, state)
+  local t_scores = clock_us()
+  metrics.set("us_scores", t_scores - t_load_danger)
+  opt(string.format("  danger.scores done %.2f ms (vuln=%.1f imd=%.1f)",
+    (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
+
+  -- ── Placement trip lifecycle ─────────────────────────────────────────────
+  -- state._place_trip is set when a placement request goes out (after
+  -- builder.decide, below) and examined HERE, once per tick, before goal
+  -- selection -- so eval_wait_for_lgm and the resume see this tick's answer.
+  -- The return is a man_status EDGE (prev ~= INTANK -> INTANK), never a level,
+  -- so a momentary flap mid-trip cannot destroy a harvest already paid for.
+  -- Runs after danger.scores because the harvest resume consults panic first.
+  -- Table of events -> flag: VULNERABILITY_AND_BUILDS_PLAN.md "The trip flag".
+  do
+    local trip = state._place_trip
+    local man  = info.man_status
+    local prev = state._trip_prev_man
+    state._trip_prev_man = man
+    if trip then
+      if man ~= C.LGM_INTANK then trip.left = true end
+      local returned = (man == C.LGM_INTANK and prev ~= nil and prev ~= C.LGM_INTANK)
+      local reason, resume_score
+      if man == C.LGM_DEAD then
+        reason = "lgm_lost"
+      elseif trip.harvest and (info.carried_pills or 0) == 0 then
+        -- Scoped to harvest trips: on a plain placement the pill leaves WITH
+        -- the builder (tankGetCarriedPill, lgm.c:443), so carried==0 for the
+        -- whole walk is normal there and must not clear the flag.
+        reason = "no_pills"
+      elseif not trip.left and (now - trip.tick) > (C.PLACE_TRIP_ACCEPT_TICKS or 5) then
+        reason = "not_accepted"   -- engine refused the request; builder never left
+      elseif (now - trip.tick) > (C.PLACE_TRIP_MAX_TICKS or 2000) then
+        reason = "timeout"
+      elseif returned then
+        if not trip.harvest then
+          reason = "placed"
+        elseif danger.should_panic_build(state, info) then
+          -- Panic is evaluated first and overrides the resume: the pool's
+          -- panic build fires this tick on its own.
+          reason = "panic_override"
+        else
+          local ok, why = builder.place_tile_valid(info, world, trip.mx, trip.my)
+          if not ok then
+            reason = (why == "unreachable") and "unreachable" or ("invalid_" .. why)
+          elseif trip.score_at_dispatch then
+            -- Fresh re-score, sc7 pinned (the tank moved on by design).
+            -- nil = the tile no longer qualifies at all (category drift under
+            -- STRICT_NEED, surplus role, blocked).
+            resume_score = goals.score_place_tile(state, world, info,
+                                                  trip.mx, trip.my, trip.sc7_at_dispatch)
+            local s0     = trip.score_at_dispatch
+            local margin = math.max(C.HARVEST_RESUME_MARGIN_ABS or 30,
+                                    s0 * (C.HARVEST_RESUME_MARGIN_FRAC or 0.15))
+            if not resume_score then
+              -- STRICT_NEED category drift, surplus role, blocked tile, or
+              -- reposition-origin exclusion: the re-score refused the cell.
+              reason = "disqualified"
+            elseif (s0 - resume_score) > margin then
+              reason = "worse_than_margin"
+            end
+          end
+          if not reason then
+            -- Valid (and within margin, when there was a score to hold it to):
+            -- re-dispatch to place. builder.set_mode consumes this, no pool.
+            state._place_resume = { mx = trip.mx, my = trip.my, tick = now }
+            reason = "resume"
+          end
+        end
+      end
+      if reason then
+        if trip.harvest and reason ~= "resume" and reason ~= "worse_than_margin" then
+        elseif not trip.harvest then
+        end
+        state._place_trip = nil
+      end
+    end
+    -- A pending resume that decide() never turned into a command (its
+    -- priority branches early-return on water/road builds): drop it rather
+    -- than hold the builder mode forever. Cleared normally when the trip is
+    -- set from the resume dispatch.
+    local rs = state._place_resume
+    if rs and (now - rs.tick) > (C.HARVEST_RESUME_MAX_TICKS or 25) then
+      state._place_resume = nil
+    end
+  end
+
   -- Overlay rebuild: pills/bases stamped as impassable/expensive in the
   -- pathfinder. Moved here (right after danger load) so all downstream
   -- goal evaluation sees fresh overlays — previously ran much later and
@@ -2063,6 +2155,33 @@ function Brain.think(info)
   -- grids share a sig — diff the fire-tick across allies to see convergence lag.
   if state._inf_last_sig ~= _inf_sig then
     state._inf_last_sig = _inf_sig
+  end
+  -- Influence tail (constants.lua EXPAND_*). Rebuilt in C only when the
+  -- stamped set or the neutral-pill set changes (or every EXPAND_REFRESH_TICKS
+  -- as a backstop); merged into influence_grid every tick, since the stamp
+  -- loop above wipes it. Must run BEFORE anything reads influence this tick.
+  if C.EXPAND_ENABLED then
+    local _nsig = 0
+    for id, pm in pairs(world.pills) do
+      if pm.owner == "neutral" and pm.health > 0 and not pm.in_tank then
+        _nsig = _nsig + (id * 9173 + 3 + pm.mx * 7 + pm.my * 13)
+      end
+    end
+    local _tsig = _inf_sig + _nsig
+    if state._tail_sig ~= _tsig
+       or (now - (state._tail_tick or -1e9)) >= (C.EXPAND_REFRESH_TICKS or 250) then
+      local _t_tail = clock_us()
+      cpf.clear_neutral_zones()
+      for _, pm in pairs(world.pills) do
+        if pm.owner == "neutral" and pm.health > 0 and not pm.in_tank then
+          cpf.stamp_neutral_zone(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS)
+        end
+      end
+      cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
+                                 C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
+      state._tail_sig, state._tail_tick = _tsig, now
+    end
+    cpf.merge_influence_tail()
   end
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).
@@ -2738,13 +2857,14 @@ function Brain.think(info)
   -- non-zero. Without the freshness test a stale count would keep this true and
   -- strip the firing-is-progress exemption from a tank that has moved off the
   -- drop spot and is genuinely fighting — wrongly tripping stuck-flee.
-  local _bld = state.builder
-  local gate_stalled = state.goal.kind == "place_pill_strategic"
-                       and _bld ~= nil
-                       and (_bld.place_gate_fails or 0) > 0
-                       and _bld.place_gate_tick ~= nil
-                       and (now - _bld.place_gate_tick) <= (C.PLACE_GATE_STALE_TICKS or 2)
-  local fire_is_progress = fired_this_tick and not gate_stalled
+  -- The gate_stalled exemption is gone with the breaker it was built around.
+  -- It stripped the firing-is-progress reset while a placement gate kept
+  -- refusing, so a bot parked on an unplaceable spot and shooting back would
+  -- eventually trip stuck-flee. Give-up clause (d) in builder.decide now covers
+  -- that case directly -- it abandons the spot after PLACE_REFUSE_GIVEUP_TICKS
+  -- of consecutive refusals rather than waiting for the stuck detector to
+  -- notice -- so firing is simply progress again.
+  local fire_is_progress = fired_this_tick
   if fire_is_progress then
     -- Active firing is progress — reset the timer so a planted bot
     -- shooting defenders doesn't trip stuck-flee mid-take.
@@ -2989,19 +3109,16 @@ function Brain.think(info)
       return (t ~= nil and (_pf_dc[cat] or 0) >= t), cat
     end
 
-    -- Blocked-tile test for the same two drops. A spot the place_pill gate
-    -- breaker (builder.decide) or the stuck detector gave up on is held in
-    -- state.blocked for PLACE_GATE_BLOCK_TICKS. pick_goal enforces that on pool
-    -- candidates and the strategic scan skips them, but BOTH drops below elect a
-    -- tile from U.is_placeable + danger alone, neither of which reads
-    -- state.blocked — so they hand the breaker straight back the tile it just
-    -- abandoned. On the emergency path that is an endless loop: it re-runs every
-    -- tick with no cooldown, and because it re-picks the lowest-danger neighbour
-    -- while shell stamps expire, the winner can flip between tiles and reset the
-    -- breaker's consecutive counter, so the breaker may never reach its
-    -- threshold at all. The antitank drop has ANTITANK_DROP_COOLDOWN (200t) to
-    -- slow it, but the block runs 600t, so it too can re-elect a blocked tile
-    -- twice inside one block window. One hash lookup; both get the test.
+    -- Blocked-tile test for the emergency drop. A spot the place_pill gate or
+    -- the stuck detector gave up on is held in state.blocked. pick_goal
+    -- enforces that on pool candidates and the strategic scan skips them, but
+    -- the drop below elects a tile from U.is_placeable + danger alone, neither
+    -- of which reads state.blocked — so without this it hands back the very
+    -- tile that was just abandoned. That is an endless loop here: the search
+    -- re-runs every tick with no cooldown, and because it re-picks the
+    -- lowest-danger neighbour while shell stamps expire, the winner can flip
+    -- between tiles and reset the consecutive-refusal counter, so the give-up
+    -- rule may never reach its threshold at all. One hash lookup.
     local function drop_tile_blocked(mx, my)
       local bl = state.blocked
       if not bl then return false end
@@ -3009,87 +3126,69 @@ function Brain.think(info)
       return until_t ~= nil and now < until_t
     end
 
-    -- Anti-tank opportunistic pill drop: if carrying a pill and an enemy
-    -- tank is close, place the pill between us and the threat.
-    if C.ANTITANK_DROP_ENABLED
-       and (info.carried_pills or 0) >= 1
-       and info.man_status == C.LGM_INTANK
-       and not info.inboat
-       and (not state.antitank_drop_cooldown or now >= state.antitank_drop_cooldown)
-       and state.goal.kind ~= "pill_place"
-       and state.goal.kind ~= "attack_pill"
-       and state.goal.kind ~= "attack_pill" then
-      local perc = state.perc
-      local et = perc and perc.nearest_hostile_tank
-      if et and et.dist <= C.ANTITANK_DROP_RANGE then
-        local mid_mx = U.mclamp(math.floor((cur_mx + et.mx) / 2 + 0.5))
-        local mid_my = U.mclamp(math.floor((cur_my + et.my) / 2 + 0.5))
-        if mid_mx ~= cur_mx or mid_my ~= cur_my then  -- don't place on self
-          -- Opportunistic, not life-critical: skip if the spot's role is already
-          -- in surplus so we don't overfill (e.g. a 3rd back pill at 2/0).
-          if U.is_placeable(mid_mx, mid_my, world) and not drop_role_surplus(mid_mx, mid_my)
-             and not drop_tile_blocked(mid_mx, mid_my) then
-            -- Build-gate urgency: this goal bypasses the placement pool, so it
-            -- has to stamp the fields itself or builder.decide() gates it at the
-            -- flat LGM_DANGER_HIGH. No portfolio figure here (drop_role_surplus
-            -- only answers a yes/no per tile), so the deficit term is 0. NOT an
-            -- emergency: the comment above says it — opportunistic, not
-            -- life-critical — so it does not get the panic term, and it keeps
-            -- the strict pdist<=1 dispatch. The midpoint is TOWARD the enemy
-            -- tank; sending the LGM 6 tiles into that is a different decision
-            -- than the one this drop is making.
-            local _au, _auc, _aud, _aue =
-              builder.place_urgency(info.carried_pills, 0, false)
-            state.goal = {
-              kind = "place_pill_strategic", mx = mid_mx, my = mid_my,
-              wx = U.m2w(mid_mx), wy = U.m2w(mid_my),
-              antitank = true,
-              _urgency = _au, _urg_carry = _auc, _urg_deficit = _aud,
-              _urg_emerg = _aue,
-            }
-            state.pf.status = "idle"
-            state.antitank_drop_cooldown = now + C.ANTITANK_DROP_COOLDOWN
-            log.event("antitank_drop", string.format("at(%d,%d) enemy(%d,%d)", mid_mx, mid_my, et.mx, et.my))
-          end
-        end
-      end
-    end
-    -- Expire antitank drop cooldown
-    if state.antitank_drop_cooldown and now >= state.antitank_drop_cooldown then
-      state.antitank_drop_cooldown = nil
-    end
+    -- The anti-tank opportunistic drop used to sit here: carrying a pill with
+    -- an enemy tank within 12, drop one at the MIDPOINT toward it, vetoed only
+    -- by drop_role_surplus, on a 200-tick cooldown. Deleted -- it was a
+    -- near-duplicate of the offensive build (goals.lua), which fires on the
+    -- same "enemy nearby, carrying a pill" situation with better rules, and
+    -- both wrote goals of kind place_pill_strategic, so whichever ran first in
+    -- the tick simply won.
+    --
+    -- Nothing was carried over. Its 12-tile range went because 8 is a
+    -- pillbox's actual reach (PILLBOX_RANGE 2048 WU / 256), so a drop at 12
+    -- placed a pill that could not engage the tank that triggered it until
+    -- that tank closed 4 more tiles -- a range that only made sense next to
+    -- the midpoint spot, which put the pill 6 tiles closer to the enemy. The
+    -- cooldown went because offensive_build returns a POOL CANDIDATE rather
+    -- than writing state.goal directly, so it goes through goal selection
+    -- instead of pre-empting it; what bounds repeats is LGM_INTANK (one build
+    -- per builder round trip) plus the spacing rule keeping them apart.
+    -- drop_role_surplus as its only veto went in favour of the support-pill
+    -- rule. See VULNERABILITY_AND_BUILDS_PLAN.md, "Offensive build".
 
     -- Emergency pill drop: about to die with carried pills — drop one to save it.
     -- aIndy checks: no incoming shells nearby, don't drop in front of tank,
     -- don't drop in path of shells, don't drop if no enemies.
-    if C.EMERGENCY_DROP_ENABLED
-       and (info.carried_pills or 0) >= 1
-       and info.armour <= C.EMERGENCY_DROP_ARMOUR
-       and info.man_status == C.LGM_INTANK
-       and not info.inboat
-       and state.goal.kind ~= "pill_place"
-       and state.perc and state.perc.enemy_tank_count >= C.EMERGENCY_DROP_MIN_ENEMIES then
-      -- Check for incoming shells nearby — don't send LGM into fire
-      local shells_close = false
-      for _, ob in ipairs(info.objects) do
-        if ob.type == OBJECT_SHOT and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
-          local sdist = U.mdist(cur_mx, cur_my, bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
-          if sdist <= C.EMERGENCY_DROP_SHELL_SAFE_DIST then
-            shells_close = true
-            break
-          end
-        end
-      end
-      if not shells_close then
+    -- Trigger is now the panic condition, not an armour threshold of its own.
+    -- The old gate was armour <= EMERGENCY_DROP_ARMOUR (5) plus at least one
+    -- visible enemy, which is a second armour-threshold trigger running beside
+    -- the one in goals.lua with different rules. The two scores decide this
+    -- better. What survives here is the part panic has no equivalent for: the
+    -- tile search below, and the state facts (builder aboard, not in a boat)
+    -- that should_panic_build checks for us.
+    local _ed_panic = C.EMERGENCY_DROP_ENABLED
+                      and state.goal.kind ~= "pill_place"
+                      and danger.should_panic_build(state, info)
+    if _ed_panic then
+      -- The incoming-shell refusal used to sit here: skip the drop when a
+      -- hostile shell was within EMERGENCY_DROP_SHELL_SAFE_DIST (3 tiles),
+      -- reasoning "don't send the LGM into fire". Removed -- that is the same
+      -- 3-tile ring imdanger uses for its shells term, read the opposite way.
+      -- Shells there are -15, one of the strongest reasons panic fires at all,
+      -- so the refusal blocked exactly the case this design says must build:
+      -- carrying pills, low armour, under fire. The builder walks one tile, so
+      -- its exposure is small, and losing the pills to death is worse.
+      --
+      -- FUTURE ENHANCEMENT, not implemented: the check that would actually be
+      -- correct is per-tile rather than blanket -- take the chosen drop tile,
+      -- project every shell currently in the air along its trajectory, and
+      -- refuse only if one of them crosses THAT tile within the number of
+      -- ticks the builder needs to walk there. That refuses the genuinely
+      -- doomed drop without refusing every drop made under fire.
+      do
         -- Find safe drop position: behind the tank (away from threats)
         -- Don't drop in front of tank (LGM gets run over or blocks path)
         local tank_dir = info.direction
         local best_drop_mx, best_drop_my = nil, nil
         local best_drop_danger = math.huge
-        -- Fallback: lowest-danger tile whose role is already in SURPLUS. Used
-        -- only if no non-surplus tile is reachable — saving the pill from death
-        -- beats losing it entirely, even if it overfills a role.
-        local surp_mx, surp_my, surp_danger = nil, nil, math.huge
+        -- Ranking bucket: (spacing class, surplus role) flattened to 1..6, so
+        -- one comparison orders the whole preference chain
+        --   clear/non-surplus .. clear/surplus .. diagonal/non-surplus .. down.
+        -- A surplus-role tile is still taken when it is all that is left --
+        -- saving the pill from death beats losing it entirely, even if it
+        -- overfills a role, and the same goes for a crowded one.
+        local best_bucket = math.huge
+        local best_drop_cls, best_drop_surplus = nil, nil
         for d = 0, C.EMERGENCY_DROP_SEARCH_DIRS - 1 do
           local angle = d * (2 * math.pi / C.EMERGENCY_DROP_SEARCH_DIRS)
           local dx = math.floor(math.sin(angle) + 0.5)
@@ -3099,42 +3198,63 @@ function Brain.think(info)
           -- stuck detector just abandoned (see the helper above) — this search
           -- runs every tick with no cooldown, so without it the park resumes
           -- immediately and the breaker loops forever.
+          -- Forest is REFUSED here, not merely deprioritised. is_placeable
+          -- permits it, but lgmCheckNewRequest (lgm.c:410) silently rewrites a
+          -- pill request on forest into a TREE request: the builder chops,
+          -- returns with wood, no pill is placed, and nothing tells the brain.
+          -- guard_build_spot already rejects forest as needs_clearing; this
+          -- search only ever checked is_placeable, so it was a second route
+          -- into that silent failure.
           if U.in_map(px, py) and U.is_placeable(px, py, world)
+             and U.ttype(px, py) ~= C.T_FOREST
              and not drop_tile_blocked(px, py) then
             -- Prefer tiles away from where we're heading (behind us)
             local aim_to_drop = U.aim_at(info.tankx, info.tanky, U.m2w(px), U.m2w(py))
             local angle_from_front = math.abs(U.adiff(tank_dir, aim_to_drop))
-            -- Only consider tiles that aren't directly ahead (> 60 degrees off)
+            -- Only consider tiles that aren't directly ahead. NOTE: 60 here is
+            -- BRADS, not degrees -- U.adiff works in the 256-unit circle
+            -- (util.lua), so this is about 84 degrees. The value is right; the
+            -- old "60 degrees" comment was the part that was wrong. Do not
+            -- "correct" it to 42.7.
             if angle_from_front > 60 then
               local d_danger = danger.danger_at(px, py, now, world)
-              -- Don't overfill a role: a surplus-role tile is a fallback only.
-              if drop_role_surplus(px, py) then
-                if d_danger < surp_danger then surp_danger = d_danger; surp_mx = px; surp_my = py end
-              elseif d_danger < best_drop_danger then
+              -- Ranked: spacing class > surplus role > min danger. Class first
+              -- so repeated emergency drops stop landing in a clump; danger
+              -- stays the selector WITHIN each class+role bucket, exactly as
+              -- before. Nothing is rejected for spacing.
+              local cls = builder.spacing_class(world, state, px, py)
+              local surplus = drop_role_surplus(px, py)
+              local bucket = (cls - 1) * 2 + (surplus and 2 or 1)
+              if bucket < best_bucket
+                 or (bucket == best_bucket and d_danger < best_drop_danger) then
+                best_bucket = bucket
                 best_drop_danger = d_danger
                 best_drop_mx = px
                 best_drop_my = py
+                best_drop_cls = cls
+                best_drop_surplus = surplus
               end
             end
           end
         end
-        if not best_drop_mx and surp_mx then
-          best_drop_mx, best_drop_my = surp_mx, surp_my   -- all safe tiles are surplus-role → still save the pill
+        if best_drop_mx and BRAIN_DEBUG_MODE then
+        end
+        if best_drop_surplus then
+          -- NOT "only surplus tiles were reachable" any more: under the bucket
+          -- ordering a clear/surplus tile legitimately outranks a
+          -- diagonal/non-surplus one, so this fires whenever the WINNER is
+          -- surplus-role, not only when nothing else existed.
         end
         if best_drop_mx then
-          -- Build-gate urgency: this goal bypasses the placement pool, so it
-          -- stamps the fields itself. No portfolio figure here, so the deficit
-          -- term is 0 — the flat emergency term is what buys the raise, which is
-          -- right: we are at/below EMERGENCY_DROP_ARMOUR with enemy tanks on us,
-          -- and the alternative to a risky LGM walk is dying and handing the
-          -- pills over.
-          local _eu, _euc, _eud, _eue =
-            builder.place_urgency(info.carried_pills, 0, true)
+          -- (place_urgency and the _urgency/_urg_* goal fields are gone with
+          -- the LGM danger gate they used to raise -- builder.lua explains.
+          -- This drop bypasses the placement pool, so nothing else stamps
+          -- them either.)
           state.goal = {
             kind = "place_pill_strategic", mx = best_drop_mx, my = best_drop_my,
             wx = U.m2w(best_drop_mx), wy = U.m2w(best_drop_my),
             emergency = true,
-            -- _place_emergency is the field the rest of the brain actually
+            -- _place_forced is the field the rest of the brain actually
             -- reads (builder.set_mode's PLACE_EMERGENCY_MAX_DIST relaxation,
             -- and the pool's hysteresis / attack_tank exemptions). `emergency`
             -- above is write-only — nothing in the brain has ever read it — so
@@ -3144,9 +3264,7 @@ function Brain.think(info)
             -- pdist<=1 test rejects outright. Half the candidate spots could
             -- never dispatch. Keeping `emergency` for anything outside the
             -- brain that may inspect the goal.
-            _place_emergency = true,
-            _urgency = _eu, _urg_carry = _euc, _urg_deficit = _eud,
-            _urg_emerg = _eue,
+            _place_forced = true,
           }
           state.pf.status = "idle"
           log.event("emergency_drop", string.format("at(%d,%d) arm=%d", best_drop_mx, best_drop_my, info.armour))
@@ -3806,14 +3924,14 @@ function Brain.think(info)
     local tank_appeared = tank_now_in_range and not (state.prev_tank_in_range or false)
     state.prev_tank_in_range = tank_now_in_range
     -- Panic-range crossing: while CARRYING a pill, an enemy tank ENTERING the
-    -- def_build panic range (DEF_BUILD_THREAT_RANGE, euclidean) forces a replan so
-    -- eval_place_pill_strategic's def_build branch can convert an in-flight
+    -- offensive_build panic range (OFF_BUILD_THREAT_RANGE, euclidean) forces a replan so
+    -- eval_place_pill_strategic's offensive_build branch can convert an in-flight
     -- strategic placement into a panic guard build. tank_appeared above keys off
     -- the WIDE perception set (fires when a tank is first SEEN, often far, and
     -- never re-fires as it closes), so it misses this tighter crossing.
     local panic_tank_in_range = false
     if (info.carried_pills or 0) >= 1 and state.perc and state.perc.enemy_tanks then
-      local pr2 = (C.DEF_BUILD_THREAT_RANGE or 8) ^ 2
+      local pr2 = (C.OFF_BUILD_THREAT_RANGE or 8) ^ 2
       for _, et in ipairs(state.perc.enemy_tanks) do
         local dx, dy = (et.mx or 0) - cur_mx, (et.my or 0) - cur_my
         if dx * dx + dy * dy <= pr2 then panic_tank_in_range = true; break end
@@ -5363,6 +5481,38 @@ function Brain.think(info)
       state._lgm_dispatch = { x = build_cmd.x, y = build_cmd.y,
                               eta_tick = now + eta, tick = now }
       state._repair_dispatch_eta = nil
+    end
+    -- Placement trip flag. ONE record per placement dispatch (harvest or
+    -- not), on state rather than the goal because the goal changes while the
+    -- builder walks. Readers: eval_wait_for_lgm (suppress the park for the
+    -- whole trip), builder.spacing_class (the tile counts as occupied), and
+    -- the lifecycle block earlier in think() (return edge -> harvest resume
+    -- or clear). A repair also sends BUILDMODE_PBOX, so key on the builder
+    -- MODE, not the action; pill_place (the take's blocker drop) has its own
+    -- substate machine and stays out.
+    if build_cmd.action == BUILDMODE_PBOX and state.builder.mode == "place_pill"
+       and build_cmd.x and build_cmd.y
+       and not (state.goal and state.goal.kind == "pill_place") then
+      local g = state.goal
+      local on_goal = g and g.kind == "place_pill_strategic"
+                        and g.mx == build_cmd.x and g.my == build_cmd.y
+      local harvest = U.ttype(build_cmd.x, build_cmd.y) == C.T_FOREST
+      state._place_trip = {
+        mx = build_cmd.x, my = build_cmd.y, tick = now,
+        harvest = harvest,
+        -- Score only exists for a pool-picked strategic spot. A guard/panic
+        -- drop on forest still harvests and resumes, but on the hard validity
+        -- check alone -- there is no strategic score to hold it to.
+        score_at_dispatch = on_goal and g._spot_score or nil,
+        sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
+        origin = (state.builder.place_resume and "resume")
+              or ((g and g._place_forced) and "forced")
+              or (on_goal and "strategic" or "guard"),
+        left = false,   -- set once the LGM is seen out of the tank
+      }
+      if state.builder.place_resume then state._place_resume = nil end
+      -- One line per dispatch, on the edge (DISPATCH above repeats every tick
+      -- the mode holds; this is the line to count).
     end
   end
 

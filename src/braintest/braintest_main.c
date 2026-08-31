@@ -6005,8 +6005,26 @@ int main(int argc, char *argv[]) {
 #endif
         char ts[32];
         strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+        /* Optional "_<label>" suffix from WINBOLO_BRAINDBG_LABEL, same as
+         * the dedicated server's recordings (server_lifecycle.c), so a
+         * launcher bat's sessions are self-identifying in the O browser.
+         * Sanitized to [A-Za-z0-9_-]. */
+        char label[48] = "";
+        const char *lbl = SDL_getenv("WINBOLO_BRAINDBG_LABEL");
+        if (lbl && *lbl) {
+            size_t j = 1;
+            label[0] = '_';
+            for (size_t i = 0; lbl[i] && j + 1 < sizeof label; i++) {
+                char c = lbl[i];
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') || c == '_' || c == '-')
+                    label[j++] = c;
+            }
+            label[j] = '\0';
+            if (j == 1) label[0] = '\0';
+        }
         SDL_snprintf(g_sessionDir, sizeof(g_sessionDir),
-                     "debug_sessions/%s", ts);
+                     "debug_sessions/%s%s", ts, label);
         if (!SDL_CreateDirectory(g_sessionDir)) {
             SDL_Log("WARN: couldn't create %s (%s) — falling back to cwd",
                     g_sessionDir, SDL_GetError());
@@ -6199,6 +6217,25 @@ int main(int argc, char *argv[]) {
         if (n > 0) {
             if (optFollow < 0) app.followBot = 0;
             fprintf(stderr, "Load session: %d frames loaded — playback ready.\n", n);
+            /* Title bar names the loaded session (its dir name, e.g.
+             * 20260831_000722_1_16v17) — the progress bar left it saying
+             * "Loading recording... 100%", and with several BrainTest windows
+             * open there was no way to tell which replay was which. */
+            {
+                char dir[1024];
+                strncpy(dir, optLoadSession, sizeof dir - 1);
+                dir[sizeof dir - 1] = '\0';
+                size_t len = strlen(dir);
+                while (len > 0 && (dir[len - 1] == '/' || dir[len - 1] == '\\'))
+                    dir[--len] = '\0';
+                const char *base = dir;
+                for (const char *p = dir; *p; p++)
+                    if (*p == '/' || *p == '\\') base = p + 1;
+                char title[1200];
+                SDL_snprintf(title, sizeof title, "BrainTest - %s  (%d frames)",
+                             *base ? base : dir, n);
+                SDL_SetWindowTitle(app.window, title);
+            }
             if (g_playbackAutoplay) {
                 app.playbackFrame = 0;   /* start at the beginning … */
                 app.paused        = false;/* … and play straight through (headless verify) */
@@ -6206,6 +6243,7 @@ int main(int argc, char *argv[]) {
             }
         } else {
             fprintf(stderr, "Load session: failed to load frames from %s\n", loadSessionBtr);
+            SDL_SetWindowTitle(app.window, "BrainTest");  /* clear "Loading..." */
         }
     }
 

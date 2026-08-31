@@ -18,12 +18,13 @@ local log    = require("logger")
 local attack = require("attack")
 local print2 = require("print2")
 local threat = require("threat")
+local danger = require("danger")   -- the two build scores + the panic trigger
 local vizmod = require("viz")
 local json   = require("json")
 local ally_state = require("ally_state")
 local circles    = require("circles")
 local squad  = require("squad")
-local builder = require("builder")   -- shared panic guard-spot search (M.panic_build_spot)
+local builder = require("builder")   -- shared panic guard-spot search (M.guard_build_spot)
 local PP     = require("pill_portfolio")
 local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
@@ -657,7 +658,7 @@ end
 --   everything else                x PILL_SUICIDER_OTHER_MULT   (3)
 --
 -- Keyed on goal.kind (not pool index) so kinds with no numbered pool — explore,
--- reposition, rescue_lgm, def_build — are covered by the same rule. Returns
+-- reposition, rescue_lgm, offensive_build — are covered by the same rule. Returns
 -- 1.0 for every non-suicider, so this is a no-op on a normal map.
 -- =========================================================================
 local SUICIDER_EXEMPT_KINDS = {
@@ -666,7 +667,7 @@ local SUICIDER_EXEMPT_KINDS = {
   flee_to_base   = true,   -- still resupplies (and still flees at critical armour)
   capture_pill   = true,   -- scooping the pills it kills is part of the job
   place_pill_strategic = true, -- and so is fielding what it carries
-  def_build      = true,   -- panic drop under fire: survival, not a side quest
+  offensive_build      = true,   -- panic drop under fire: survival, not a side quest
   wait_for_lgm   = true,   -- companion to place/capture — x3 here would let the
                            -- pool yank the tank away while its LGM is still out
 }
@@ -2060,7 +2061,17 @@ local function find_safe_forest(tmx, tmy)
   return near_x, near_y                      -- slate had none yet: nearest known
 end
 
-local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo)
+-- `only` (optional): { mx, my, sc7 } -- re-score exactly ONE tile with the
+-- scan's context rebuilt fresh, and return its score (nil if the tile no longer
+-- qualifies: surplus category, category drift under STRICT_NEED, blocked,
+-- unplaceable). Used by the harvest resume (init.lua) to ask "is the tile the
+-- builder just cleared still worth the pill?" without the pool. sc7 (distance
+-- from the tank) is pinned to its dispatch value because the tank has moved on
+-- by design; every other term reads the live world. Skips the paths that are
+-- about choosing WHETHER to place at all (seek-trees redirect, offensive/panic
+-- drop, combat-goal interrupt, util-reserve hold): that decision was made at
+-- dispatch.
+local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo, only)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
 
   -- Seek-trees redirect (BEFORE the LGM-in-tank actionable gate below, so it
@@ -2069,7 +2080,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- SAFE forest and gather rather than deadlocking on an unpayable build
   -- (20260707_044217 t=127262: carry=6, tr=0, frozen 764 ticks re-issuing
   -- BUILDMODE_PBOX). Pressure scales with pills carried; distance barely dents it.
-  if (info.carried_pills or 0) >= 1 and not info.inboat
+  if not only and (info.carried_pills or 0) >= 1 and not info.inboat
      and (info.trees or 0) < (C.PILL_PLACE_TREE_COST or 4) then
     -- Cache the chosen forest (static terrain) so the expensive map-wide ring
     -- scan runs rarely — not on every pool re-eval (it was spiking pool_cache to
@@ -2125,7 +2136,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- BRAIN_DEBUG_MODE is false) never pays for this and just returns here.
   local viz_only = BRAIN_DEBUG_MODE
                    and (vizmod.is_on("pill_best_spots_back") or vizmod.is_on("pill_best_spots_aggro"))
-  if not actionable and not viz_only then return nil end
+  if only then
+    actionable = true   -- re-score: the LGM is back aboard by definition
+  elseif not actionable and not viz_only then
+    return nil
+  end
 
   -- ── Carry value penalty ─────────────────────────────────────────────────
   -- Increase placement cost when carrying is more useful than placing.
@@ -2177,19 +2192,21 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- ── Defensive build ──────────────────────────────────────────────────────
   -- Enemy tank visible + we're carrying: drop a pill at ±45° from the threat
   -- direction, 2–5 tiles out.
+  -- (Whole offensive/panic block skipped on a single-tile re-score: it decides
+  -- whether to DROP a pill somewhere else, which is not the question asked.)
+  if not only then
   local _db_et = (state.perc and state.perc.enemy_tanks) and #state.perc.enemy_tanks or 0
   -- Defensive build DROPS a carried pill — so it must only fire when we actually
   -- hold one. Without it the goal wins the pool on a cheap score, then dead-ends
   -- at PLACE_PILL_SETMODE "no-dispatch" (carried=0, man=0), stealing a goal cycle
   -- from attack_tank and flip-flopping the aim. Gate on carried_pills > 0.
   local _db_carrying = (info.carried_pills or 0) > 0
-  -- Panic build: at PANIC_BUILD_ARMOUR or below while carrying (and the LGM is in
-  -- the tank to place it), DUMP a pill into the ground NOW — no matter who's
-  -- around (or not). At rock-bottom health we can't count on reaching a base, so
-  -- bank the carried pill (and gain a guard) before dying and gifting it to the
-  -- enemy. A DEAD/out builder can't place — the haul-protection flee covers that.
-  local _panic = _db_carrying and info.man_status == C.LGM_INTANK
-                 and (info.armour or 99) <= (C.PANIC_BUILD_ARMOUR or 10)
+  -- Panic build: bank a carried pill NOW, because we are about to lose it.
+  -- Driven by the two scores rather than a bare armour threshold -- armour
+  -- alone said nothing about whether anything was actually threatening us,
+  -- which is how a bot at armour 10 with the nearest enemy 15 tiles away and
+  -- not even visible dumped four pills in 200 ticks. See danger.lua.
+  local _panic, _panic_thresh, _panic_why = danger.should_panic_build(state, info)
   local _db_skip = ((not _db_carrying) and " -> SKIP(not carrying a pill)")
                 or ((_db_et == 0 and not _panic) and " -> SKIP(no visible enemy tank, armour ok)") or ""
   if (_db_et > 0 or _panic) and _db_carrying then
@@ -2204,35 +2221,59 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     if closest_et and not _panic then
       local _ex, _ey = closest_et.mx - tmx, closest_et.my - tmy
       local _ed = math.sqrt(_ex * _ex + _ey * _ey)
-      if _ed > (C.DEF_BUILD_THREAT_RANGE or 8) then
+      if _ed > (C.OFF_BUILD_THREAT_RANGE or 8) then
         closest_et = nil
       end
     end
-    -- Desperate ("about to die") override: low armour AND actively taking hits
-    -- (a hit within DEATH_BUILD_HIT_WINDOW ticks), with a threat in shoot range.
-    -- A tank that dies carrying pills DROPS them for anyone to grab — so plant
-    -- them as our guard NOW rather than losing them on death. Bypasses the cover
-    -- dedup below (that cover clearly isn't keeping us alive) and forces a
-    -- rock-bottom cost so the build decisively wins the pool. Placement geometry
-    -- is unchanged. Re-fires each cycle while carried>0, so it plants BOTH pills.
-    local _tick = state.tick or 0
-    local _desperate = (closest_et ~= nil)
-      and (info.armour or 99) <= (C.DEATH_BUILD_ARMOUR or 30)
-      and state._last_damage_tick ~= nil
-      and (_tick - state._last_damage_tick) <= (C.DEATH_BUILD_HIT_WINDOW or 50)
+    -- The DESPERATE override used to sit here: armour <= DEATH_BUILD_ARMOUR
+    -- (30) plus a hit within DEATH_BUILD_HIT_WINDOW (50 ticks) plus a threat in
+    -- range, bypassing the support veto and forcing cost 1. Deleted. Its own
+    -- comment gave the game away -- "Re-fires each cycle while carried>0, so it
+    -- plants BOTH pills" -- which is the four-pills-in-200-ticks complaint
+    -- written down as intent. It was a third armour-threshold trigger of
+    -- exactly the kind removed with the antitank drop.
+    --
+    -- The scores deliberately do NOT reproduce it: at armour 30 carrying one
+    -- pill, vulnerability is 62.5 -- above the <=50 gate, so panic cannot fire;
+    -- with three pills it is 45.83 against a threshold of 13.33, and an enemy
+    -- within 8 gives imdanger 15, still no panic. That band -- 75% health and
+    -- one recent hit -- is not panic-worthy under this design. Its cover-bypass
+    -- purpose is separately absorbed by the narrowed support veto, which no
+    -- longer blocks on a pill that fails to cover the enemy.
+    --
+    -- What this gives up: a bot at armour 30 taking fire with a covering pill
+    -- nearby used to plant anyway; now it holds until the scores say otherwise.
+    -- If dying with cargo proves the larger cost, revisit this first.
 
-    -- Cover dedup (shared with builder's in-combat drop): a healthy friendly
-    -- pill already within fire range of the tank is the guard this build would
-    -- provide — don't drop a second pill beside it. Nearly-dead cover
-    -- (<= PANIC_COVER_MIN_HP) doesn't count; build its replacement. Skipped
-    -- when desperate — we plant regardless of existing cover.
-    if closest_et and not _desperate and not _panic then
-      local _cov = builder.panic_cover_pill(world, tmx, tmy)
+    -- Support veto: a healthy friendly pill already within fire range is the
+    -- guard this build would provide — don't drop a second beside it. A pill at
+    -- or below SUPPORT_PILL_MIN_HP is nearly dead and doesn't count; build its
+    -- replacement. Skipped on panic: banking the pill is the point, and a panic
+    -- can fire with no enemy at all, so there is no "this fight" to cover.
+    if closest_et and not _panic then
+      -- Two-distance test: the pill must cover BOTH us and the enemy to count
+      -- as support for this fight. A pill behind us covers us but cannot shoot
+      -- the tank we are engaging, and vetoing on it declines to build
+      -- reinforcement nothing of ours can reach. Safe here because an enemy
+      -- within OFF_BUILD_THREAT_RANGE is this build's trigger, so the enemy is
+      -- close by construction -- unlike the in-combat guard drop, which keeps
+      -- the tank-only form.
+      local _cov = builder.nearby_support_pill(world, tmx, tmy,
+                                               closest_et.mx, closest_et.my)
       if _cov then
+        -- support_veto overlay: both 8-tile circles and the pill in their overlap
         closest_et = nil
       end
-    elseif closest_et and _desperate then
     end
+    -- When BOTH builds fire, the OFFENSIVE one takes priority. Its trigger
+    -- requires an enemy within OFF_BUILD_THREAT_RANGE, so whenever both are
+    -- true there IS a nearby enemy and the ±45° spot rule is well defined -- a
+    -- tactically placed pill beats a merely safe one. Panic stays the fallback
+    -- for everything offensive cannot express, including the cases with no
+    -- enemy tank at all. Without this rule both produce a place_pill_strategic
+    -- goal at cost 1 with different spot rules, and pool ordering decides by
+    -- accident.
+    local _kind = closest_et and "offensive" or (_panic and "panic" or nil)
     if closest_et or _panic then
       -- Guard-spot DIRECTION: the nearest enemy tank if we have one, else (panic
       -- with nobody around) the nearest hostile pill, else a default offset so we
@@ -2251,15 +2292,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       -- LGM-reachable, nearest tier-2 fallback. Returns the spot + all considered
       -- tiles (dcands) for the panic_build overlay.
       local best_cx, best_cy, best_tier, dcands =
-        builder.panic_build_spot(world, info, tmx, tmy, _thr_mx, _thr_my, state)
+        builder.guard_build_spot(world, info, tmx, tmy, _thr_mx, _thr_my, state)
       if best_cx then
         local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_cx, best_cy, 0,
                            info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
         local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST - carry_discount
         local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
-        -- Desperate or panic: floor the cost so the plant decisively wins.
-        if _desperate or _panic then cost = 1 end
+        -- Either trigger floors the cost so the plant decisively wins the pool.
+        if _kind then cost = 1 end
         local cands = {}
+        if _kind == "offensive" then
+        else
+        end
         -- Build-gate urgency for the panic drop. This return happens BEFORE the
         -- portfolio block below runs, so there is no pf_max_deficit to pass —
         -- deficit 0 is the honest answer here, and the flat emergency term is
@@ -2267,19 +2311,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- raised gate was the one path getting urgency 0: in the 9k-tick check,
         -- 24 of 25 PLACE_PILL_GATE lines came from here, all reading urgency{0}
         -- while the tank sat at 10 armour holding 2 pills.
-        local _du, _duc, _dud, _due =
-          builder.place_urgency(info.carried_pills, 0, true)
         return {
           cost = cost,
-          -- _place_emergency: this is the threat-reactive "build while fighting"
+          -- _place_forced: this is the threat-reactive "build while fighting"
           -- drop — exempt from the "place must lose to attack_tank" rule, and
           -- the flag builder.set_mode reads for the PLACE_EMERGENCY_MAX_DIST
           -- dispatch relaxation.
           goal = { kind = "place_pill_strategic", mx = best_cx, my = best_cy,
-                   wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_emergency = true,
-                   _urgency = _du, _urg_carry = _duc, _urg_deficit = _dud,
-                   _urg_emerg = _due },
-          desc = BRAIN_POOL_VIZ and string.format("def_build@(%d,%d) cost=%.0f thr@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
+                   wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_forced = true },
+          desc = BRAIN_POOL_VIZ and string.format("offensive_build@(%d,%d) cost=%.0f thr@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
                  best_cx, best_cy, cost, _thr_mx, _thr_my,
                  path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_discount, C.STRATEGIC_PLACE_COST_MULT) or "",
           cands = cands,
@@ -2291,6 +2331,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Don't interrupt active combat goals (normal strategic only — defensive
   -- build above is allowed to preempt since it's directly threat-reactive).
   if gk == "attack_pill" or gk == "pill_place" then return nil end
+  end  -- if not only
 
   -- ── Strategic-bias center (priority chain) ──────────────────────────────
   -- This is no longer the SEARCH center — the scan below is tank-centric (we
@@ -2402,23 +2443,6 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
 
-  -- LGM build-gate urgency, hung on the goal below as _urgency and read by
-  -- builder.decide()'s place_pill branch. The inputs are the ones already
-  -- computed here to DISCOUNT the goal's cost — carried pills (multi_carry_mult)
-  -- and pf_max_deficit (imbalance_mult) — because they say the same thing about
-  -- the BUILD as they do about the choice: this pill needs to be in the ground.
-  -- Without it the gate is a fixed LGM_DANGER_HIGH (80) that a single predicted
-  -- shell path (DANGER_SHELL_IMPACT = 100) closes for good, so the tank most in
-  -- need of a guard pill is the one that can never place it. Not an emergency:
-  -- this is the routine, chosen-from-the-pool placement, so it gets no
-  -- emergency term (see the LGM_GATE_URGENCY_* comment in constants.lua).
-  -- Two clamped multiplies of integers we already have: no extra scanning, O(1).
-  -- NOT the same thing as state._place_urgency further down — that one is a
-  -- 0..1 scalar from carry TIME that only widens the search radius. This is a
-  -- danger-threshold raise in danger_at units.
-  local place_urgency, urg_carry, urg_deficit, urg_emerg =
-      builder.place_urgency(info.carried_pills, pf_max_deficit, false)
-
   -- Aggro builds sit deeper in enemy influence than the default radius reaches:
   -- the scan is tank-centric and the tank usually sits behind the front, so a
   -- good aggro tile (negative influence, beyond the line) can be >8 tiles out.
@@ -2461,7 +2485,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- takes / blocking, NOT strategic deployment, and util is the highest-
   -- priority role — so never strategically place while the team is at or below
   -- its utility reserve. Only deploy a pill once we hold MORE util pills than
-  -- the reserve target (a genuine surplus). (Emergency def_build returned
+  -- the reserve target (a genuine surplus). (Emergency offensive_build returned
   -- earlier, so it's exempt — a dying-base drop still happens.)
   -- Util reserve = the portfolio's utility target, computed EXACTLY as the
   -- pill-table viz does (PP.targets over back+front+aggro+utility) so the gate
@@ -2475,7 +2499,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- is at/below reserve (concentrated in one tank the reserve is fragile:
   -- one death loses all of it, and carried pills can't block takes). After
   -- placing down to 1 carried, the normal hold re-engages.
-  if util_surplus <= 0 and (info.carried_pills or 0) < 2 then
+  if not only and util_surplus <= 0 and (info.carried_pills or 0) < 2 then
     state._place_need_cat = "util_reserve"   -- viz hint
     return nil
   end
@@ -2525,15 +2549,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local blk_now       = state.tick or 0
   local MAPW          = C.MAP_W
 
-  for dy = -R, R do
-    for dx = -R, R do
-      local cx = U.mclamp(tmx + dx)   -- TANK-centric: scan around our position
-      local cy = U.mclamp(tmy + dy)
+  -- Per-tile scoring. One closure over the scan context above (pf_counts /
+  -- pf_targets / pf_need_cat / unguarded_bases / search center / spike / war
+  -- zone / blocked tiles), so the (2R+1)^2 scan and the harvest resume's
+  -- single-tile re-score run the SAME thirteen terms. Appends to all_cands and
+  -- updates best_*; a bare `return` is the old `return`.
+  local function score_cell(cx, cy)
       if U.is_placeable(cx, cy, world) then
-        if near_repos_origin(cx, cy) then goto skip_cell end
+        if near_repos_origin(cx, cy) then return end
         if blocked_tiles then
           local _blk_until = blocked_tiles[cy * MAPW + cx]
-          if _blk_until and blk_now < _blk_until then goto skip_cell end
+          if _blk_until and blk_now < _blk_until then return end
         end
         -- Surplus skip: never overfill a category already at/over its projected
         -- target (e.g. another BACK pill when back is 2/1). Unlike the old hard
@@ -2544,18 +2570,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         local cell_inf = cpf.influence_at(cx, cy)
         local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
-        if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_cell end
+        if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then return end
         -- HARD balance gate (STRATEGIC_PLACE_STRICT_NEED): non-panic
         -- placement fills ONLY the single most-needed category. Merely
         -- being under target isn't enough — classification drifts with
         -- the front line (a "front" cell placed mid-firefight rereads
         -- as back once the wave recedes: 20260825_194741 bot11 t=444,
         -- back 5/1), so any slack here bleeds the portfolio out of
-        -- balance. Panic/def_build/desperate drops bypass this scan
+        -- balance. Panic/offensive_build/desperate drops bypass this scan
         -- entirely and stay exempt.
         if (C.STRATEGIC_PLACE_STRICT_NEED ~= false)
            and pf_need_cat and cell_cat ~= pf_need_cat then
-          goto skip_cell
+          return
         end
         local score = 0
         local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
@@ -2592,7 +2618,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         do
           local s0 = score
           local influence = cpf.influence_at(cx, cy)
-          if influence < 0 then
+          -- FRONT_ZERO_IS_FRONT=false: an unclaimed 0 tile off the line is
+          -- beyond our claim and pays the same penalty as enemy ground.
+          if influence < 0
+             or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
+                 and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
             score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
@@ -2632,8 +2662,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           score = score + sc6
         end
 
-        -- 7. Distance from tank
-        sc7 = -U.mdist(tmx, tmy, cx, cy) * 0.5
+        -- 7. Distance from tank (pinned to the dispatch value on a harvest
+        --    re-score: the tank moved on by design, so live distance would
+        --    say nothing about the tile)
+        sc7 = (only and only.sc7) or (-U.mdist(tmx, tmy, cx, cy) * 0.5)
         score = score + sc7
 
         -- 8. Offensive spike bonus
@@ -2728,7 +2760,20 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           best_score = score; best_mx = cx; best_my = cy
         end
       end
-      ::skip_cell::
+  end  -- score_cell
+
+  if only then
+    -- Harvest re-score: one tile, fresh context. nil = the tile no longer
+    -- qualifies at all (category drift / surplus / blocked / occupied).
+    score_cell(only.mx, only.my)
+    if best_mx then return best_score end
+    return nil
+  end
+
+  for dy = -R, R do
+    for dx = -R, R do
+      -- TANK-centric: scan around our position
+      score_cell(U.mclamp(tmx + dx), U.mclamp(tmy + dy))
     end
   end
 
@@ -2802,8 +2847,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
                                       mc_extra * (C.STRATEGIC_PLACE_MULTI_CARRY_DISCOUNT or 0.25))
     cost = math.max(1, cost * multi_carry_mult)
   end
+  -- Armour multiplier: the lower our armour, the cheaper it is to field what we
+  -- are carrying. ARMOUR ONLY, not full vulnerability -- cargo is already
+  -- discounted twice above (carry_discount by time held, multi_carry_mult by
+  -- count), and a vulnerability multiplier would make it three times. Armour is
+  -- the piece nothing currently prices: today a bot at 5 and one at 40 pay
+  -- identically for the same spot.
+  local armour_mult = 0.5 + (math.min(info.armour or 40, C.VULN_ARMOUR_CAP)
+                             / C.VULN_ARMOUR_CAP) * 0.5
+  cost = math.max(1, cost * armour_mult)
   -- Combat-zone penalty: enemy tank near the chosen spot (flat add, shown as the
-  -- tankpen term). Emergency def_build is exempt — it returns earlier.
+  -- tankpen term). Emergency offensive_build is exempt — it returns earlier.
   local tank_pen = place_near_tank_penalty(state, best_mx, best_my)
   cost = cost + tank_pen
 
@@ -2816,27 +2870,40 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
   return {
     cost = cost,
-    -- _urgency: how badly this pill wants to be in the ground — builder.decide()
-    -- raises the LGM danger gate by it. The three _urg_* components ride along
-    -- purely so the PLACE_PILL_GATE log line prints every term and the threshold
-    -- stays hand-computable from that one line.
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
              wx = U.m2w(best_mx), wy = U.m2w(best_my),
-             _urgency = place_urgency, _urg_carry = urg_carry,
-             _urg_deficit = urg_deficit, _urg_emerg = urg_emerg },
+             -- Spot score + its tank-distance term, carried on the goal so the
+             -- dispatch can stamp them on state._place_trip: the harvest resume
+             -- compares a fresh re-score (sc7 pinned to _spot_sc7) against
+             -- _spot_score.
+             _spot_score = best_score,
+             _spot_sc7   = -U.mdist(tmx, tmy, best_mx, best_my) * 0.5 },
     -- Every multiplier that actually shapes `cost` has to appear here — this
     -- desc is what FINAL_SCORES prints, and lastpill/surplus/multi were missing,
     -- so the printed formula did not reproduce the printed number. Order matches
     -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
     -- x bal x surplus x multi, then + tankpen.
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}+tankpen{%.0f} = cost{%.1f} urgency{%d} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
-           multi_carry_mult, tank_pen, cost, place_urgency, search_reason, best_score,
+           multi_carry_mult, armour_mult, tank_pen, cost, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
     cands = cands,
   }
+end
+
+-- Harvest resume: re-score ONE tile with the placement scan's context rebuilt
+-- fresh (portfolio counts, unguarded bases, strategic center...), sc7 pinned to
+-- the value it had at dispatch. Returns the score, or nil when the tile no
+-- longer qualifies (category drift under STRICT_NEED, surplus role, blocked,
+-- occupied, unplaceable). See init.lua's trip lifecycle.
+function M.score_place_tile(state, world, info, mx, my, sc7_pinned)
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  return eval_place_pill_strategic(state, world, info, tmx, tmy,
+                                   info.inboat, info.shells,
+                                   { mx = mx, my = my, sc7 = sc7_pinned or 0 })
 end
 
 -- Map overlay: the best evaluated placement spots by category — orange for a
@@ -2888,22 +2955,35 @@ function M.draw_pill_spots(viz, state)
     end
   end
 
-  -- Panic (emergency def_build) overlay: shown whenever a non-rejected enemy
+  -- Panic (emergency offensive_build) overlay: shown whenever a non-rejected enemy
   -- tank is present (attack_tank viable). Draws the emergency build candidate
   -- spots (green=chosen, yellow=valid, red=rejected w/ reason), the threat tank,
   -- a line from us to it, and a "PANIC BUILD" label. Visible only while the
-  -- def_build eval ran this/last tick (carrying a pill); if the tank is present
+  -- offensive_build eval ran this/last tick (carrying a pill); if the tank is present
   -- but we have no pill, just a "PANIC (no pill)" marker on the threat.
   if viz.is_on("panic_build") then
-    local v = state._panic_build_viz
+    local v = state._guard_build_viz
     local now = state.tick or 0
     if v and (now - (v.tick or 0)) <= 2 then
       for _, c in ipairs(v.spots or {}) do
         local is_win = v.best_cx and c.mx == v.best_cx and c.my == v.best_cy
+        -- Colour by SPACING CLASS (builder.spacing_class): the rule ranks
+        --   terrain tier > spacing class > distance
+        -- so a valid tile shows what class it fell in: clear = yellow,
+        -- diagonal = orange, orthogonal = deep orange. Chosen = green,
+        -- rejected = red with the reason. Class letter C/D/O on valid tiles.
         local r, g, b = 230, 70, 70                      -- red = rejected
+        local lbl = c.rej
         if is_win then r, g, b = 60, 230, 60             -- green = chosen
-        elseif c.tier then r, g, b = 230, 220, 70 end    -- yellow = valid, not best
-        if c.rej and viz.text then
+        elseif c.tier then
+          if c.space == 1 then r, g, b = 230, 220, 70     -- clear
+          elseif c.space == 2 then r, g, b = 240, 160, 50 -- diagonal
+          else r, g, b = 240, 110, 40 end                 -- orthogonal
+        end
+        if c.space and not c.rej then
+          lbl = ({ "C", "D", "O" })[c.space] .. (c.tier == 2 and "2" or "")
+        end
+        if lbl and viz.text then
         end
       end
       if viz.line then viz.line("panic_build", v.tank_mx + 0.5, v.tank_my + 0.5, v.threat_mx + 0.5, v.threat_my + 0.5, 255, 80, 80, 200) end
@@ -2920,13 +3000,89 @@ function M.draw_pill_spots(viz, state)
       if viz.text then viz.text("panic_build", v.tank_mx + 0.5, v.tank_my - 2.0, string.format("PANIC BUILD  %dt %d%%", td, math.floor(close * 100)), "center", 255, 80, 80, 255) end
     elseif state._attack_tank_present and state._attack_tank_threat and viz.text then
       local t = state._attack_tank_threat
-      -- This marker means "an enemy tank is present but def_build produced no
+      -- This marker means "an enemy tank is present but offensive_build produced no
       -- plan this tick" — which is NOT necessarily "no pill". Only say no-pill
       -- when we actually have none; otherwise it's threat-out-of-panic-range (the
-      -- def_build distance gate) or the panic eval just wasn't the active one.
+      -- offensive_build distance gate) or the panic eval just wasn't the active one.
       local _plabel = t.have_pill
         and string.format("THREAT d=%d (no panic build)", t.dist or -1)
         or "PANIC (no pill)"
+    end
+  end
+end
+
+-- Build-design overlays (VULNERABILITY_AND_BUILDS_PLAN.md "Overlays"). Drawn
+-- from the SAME term tables danger.scores produced this tick (state.vuln_terms
+-- / state.imdanger_terms), so what is on the map is what the number was made
+-- from — never a recompute.
+function M.draw_build_viz(viz, state, info)
+  if not viz or not viz.is_on or not state or not info then return end
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local now = state.tick or 0
+  local it  = state.imdanger_terms
+  local vt  = state.vuln_terms
+
+  -- build_scores: the 8/15-tile odds rings with every counted tank labelled by
+  -- its weight (red enemy / blue ally, excluded ones grey with who engages
+  -- them), and the 4/8/9 cover rings with each contributing pill's units.
+  if viz.is_on("build_scores") and it then
+    local cx, cy = tmx + 0.5, tmy + 0.5
+    for _, t in ipairs(it.counted or {}) do
+      local r, g, b = 255, 90, 90
+      if not t.foe then r, g, b = 90, 150, 255 end
+    end
+    for _, s in ipairs(it.skipped or {}) do
+    end
+    for _, p in ipairs(it.cover_pills or {}) do
+    end
+  end
+
+  -- hud_scores: both scores, every term, the threshold and the panic verdict.
+  if viz.is_on("hud_scores") and it and vt then
+    local v, i = state.vuln or 0, state.imdanger or 0
+    local thr  = danger.panic_threshold(v)
+    local _panic, _, why = danger.should_panic_build(state, info)
+    local pr, pg, pb = 160, 220, 160
+    if _panic then pr, pg, pb = 255, 70, 70 elseif v <= 50 then pr, pg, pb = 255, 200, 80 end
+  end
+
+  -- support_veto: the two 8-tile support circles (ours and the enemy's) and
+  -- the pill that sat in their overlap and vetoed the offensive build.
+  if viz.is_on("support_veto") then
+    local bv = state._build_veto_viz
+    if bv and (now - bv.tick) <= 2 then
+      local r = C.SUPPORT_PILL_RADIUS or 8
+    end
+  end
+
+  -- influence_tail: cells the tail claimed (not stamped), +-16 around the tank.
+  if viz.is_on("influence_tail") then
+    for dy = -16, 16 do
+      for dx = -16, 16 do
+        local x, y = tmx + dx, tmy + dy
+        if x >= 0 and x <= 255 and y >= 0 and y <= 255 then
+          local t = cpf.influence_tail_at(x, y)
+          if t ~= 0 then
+            local a = 40 + math.min(15, math.abs(t)) * 8
+            if t > 0 then viz.rect("influence_tail", x, y, x + 1, y + 1, 80, 140, 255, a, true)
+            else          viz.rect("influence_tail", x, y, x + 1, y + 1, 255, 80, 80, a, true) end
+          end
+        end
+      end
+    end
+  end
+
+  -- harvest_trip: the pending placement/harvest tile with its stored score, a
+  -- line from the tank, and the resume request when one is waiting.
+  if viz.is_on("harvest_trip") then
+    local trip = state._place_trip
+    if trip then
+      local r, g, b = 80, 220, 120
+      if trip.harvest then r, g, b = 60, 180, 60 end
+    end
+    local rs = state._place_resume
+    if rs then
     end
   end
 end
@@ -3041,7 +3197,11 @@ function M.get_strategic_place_heatmap(state, world, info)
 
         do
           local influence = cpf.influence_at(cx, cy)
-          if influence < 0 then
+          -- FRONT_ZERO_IS_FRONT=false: an unclaimed 0 tile off the line is
+          -- beyond our claim and pays the same penalty as enemy ground.
+          if influence < 0
+             or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
+                 and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
             score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
@@ -4196,7 +4356,7 @@ local POOL_NAMES = {
 -- Reverse map: actual goal.kind → pool index, for looking up cost_cache
 -- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
 -- have different UI labels than their goal.kind values.
--- Pool 10 in the JSON is the WINNERS section, 11 is def_build, 12 is
+-- Pool 10 in the JSON is the WINNERS section, 11 is offensive_build, 12 is
 -- wait_for_lgm, 13 is kill_lgm — those four render as strips below the
 -- main 2x5 grid.
 local KIND_TO_POOL = {
@@ -4360,6 +4520,14 @@ local function eval_wait_for_lgm(state, info)
   if not (C.WAIT_FOR_LGM_ENABLED or carrying) then return nil end
   if not info or info.man_status ~= C.LGM_MOVING then return nil end
   if state.lgm_stranded then return nil end
+  -- Placement trip in progress (state._place_trip, set at every placement
+  -- dispatch, cleared on the builder's return): the tank is meant to move on,
+  -- not park. Without this the carrying case costs 20 and wins the pool on a
+  -- harvest trip (the pill is still aboard), and a plain placement still costs
+  -- 50 -- cheap enough to re-park the tank next to the spot it just stood off
+  -- from. Keyed off the flag, not the goal, because the goal changes while the
+  -- builder walks.
+  if state._place_trip then return nil end
   local g = state.goal
   if g then
     if g.kind == "rescue_lgm"   then return nil end
@@ -5265,6 +5433,21 @@ function M.build_eval_queue(state, world, info)
       end
     end
   end
+  -- Evict STALE attack-pill cache entries, the way pool 4 does above. The
+  -- loop only refreshes pills that still pass filter_attack_pill; a pill that
+  -- turned friendly/allied, died, or got picked up keeps its old entry
+  -- forever otherwise. Nothing selects from those (the pool draws from the
+  -- queue), but sync_ally_claimed_rejects walks every entry each tick and the
+  -- debug SYNC_P6 dump printed 16 rows for a 9-pill queue.
+  for ck, ce in pairs(state.cost_cache) do
+    if ce._p == 6 then
+      local lp = world.pills[ce._id]
+      if (not lp) or (lp.health or 0) <= 0 or lp.in_tank
+         or not (lp.owner == "hostile" or lp.owner == "neutral") then
+        state.cost_cache[ck] = nil
+      end
+    end
+  end
 
   -- Pool 7: attack_base (only if enough shells, but always keep
   -- the current target so a mid-attack base doesn't vanish from the
@@ -5668,19 +5851,38 @@ local function get_formula_inner(e)
         "a spiking pill exists elsewhere (@(%d,%d), in range of a friendly base) → WHOLE cost × %.3f [1 + (SPIKE_OTHER_PENALTY_MULT-1) × best decisiveness] on every non-spiking pill (clear the spike first; fades toward ×1.0 when every spike shares its base with others)",
         e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen)
       or "no spiking pill elsewhere (or this IS the spike) → no cross-penalty"
+    -- INF terms print as "INF" (a %.0f of 1e30 is a 31-digit number and
+    -- math.huge prints "inf"); the SKIP prefix + skip: row name which
+    -- term(s) went INF and why, so an INF row is readable at a glance.
+    local function _fmt_inf(v) return (v or 0) >= 1e29 and "INF" or string.format("%.0f", v or 0) end
+    local _skip_prefix, _d_skip = "", "cost is finite; no INF term"
+    if e._skipped then
+      _skip_prefix = "SKIP " .. e._skipped .. " !! "
+      local _skip_parts = {}
+      for r in string.gmatch(e._skipped, "[^+]+") do
+        _skip_parts[#_skip_parts + 1] = ({
+          low_shells     = string.format("shells=%d < pill_hp=%d → can't finish the pill, ammo=INF", _sh_now, e._hpv or 0),
+          no_spot        = string.format("no firing tile with LOS on the pill within ATTACK_PILL_STANDOFF=%d (or every angle banned) → diff=INF", C.ATTACK_PILL_STANDOFF or 0),
+          unreachable    = "no spot AND the Dijkstra slate never reached the pill's cheapest adjacent tile (island / needs a boat / slate still building) → pickup=INF",
+          no_pickup_path = string.format("spot (%d,%d) found but the spot→pill A* returned COST_INF (no path, or the 4096-node budget ran out) → pickup=INF", e._spot_mx or 0, e._spot_my or 0),
+        })[r] or (r .. ": INF from a term not named above")
+      end
+      _d_skip = table.concat(_skip_parts, "; ")
+    end
     f = string.format(
-      "(spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s)%s%s"..
+      "%s(spot{%.0f}@(%d,%d) + pickup{%s}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%s} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s)%s%s"..
       "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s",
+      "|skip:%s|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s",
+      _skip_prefix,
       e._spot, e._spot_mx or 0, e._spot_my or 0,
-      e._travel,
+      _fmt_inf(e._travel),
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
-      e._stale, e._diff, e._anger, e._xfire, e._intcpt,
+      e._stale, _fmt_inf(e._diff), e._anger, e._xfire, e._intcpt,
       e._hp, _wound_detail, _spike_mult_term, _ammo_str, _atk_tank_term, _spike_pen_term, _danger_term,
       -- (order: atk_tank inside the parens; spike_pen + danger_nearby are
       -- whole-cost multipliers, displayed trailing outside the parens)
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen)
+      _d_skip, _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen)
   elseif p == 7 then
     local _lgm_mult_b = e._lgm_mult or 1
     local _d_threat
@@ -6516,8 +6718,22 @@ function M.step_eval_queue(state, world, info)
               end
             end
             cpf.set_config("armour_drain_rate", 0)
+            -- Danger OFF for this leg. It is a walk to a DEAD pill after the
+            -- take, and with the field on this A* was returning COST_INF for
+            -- perfectly open pills: in a pill cluster the tiles beside the
+            -- target cost hundreds while open ground costs 2-10, the
+            -- heuristic (plain distance) is useless against that, and the
+            -- search floods outward across cheap ground until it burns the
+            -- 4096-node budget -- reported as INF, i.e. "no pickup path"
+            -- (20260831_000722 bot3 t=14761: ids 12/8/10/1/11 each spent
+            -- 1.1-1.65 ms here and scored 1e30 beside a 135-cost neighbour).
+            -- Crossfire from OTHER pills is already priced by xfire_cost, so
+            -- nothing is lost; a remaining INF now means a genuine wall or
+            -- water block (the no_pickup_path skip reason).
+            cpf.set_config("danger_scale", 0)
             local raw = cpf.cost_to(best_spot.mx, best_spot.my, obj.mx, obj.my,
                                     boat_flag, shells, trees, mines, armour, 4096)
+            cpf.set_config("danger_scale", 1.0)
             cpf.set_config("armour_drain_rate", 0.02)
             cpf.clear_danger_offset()
             -- Only restamp the impassable overlay if the pill is still
@@ -6953,6 +7169,31 @@ function M.step_eval_queue(state, world, info)
         entry._ally_heartbeat  = _ac_heartbeat_left
       end
       if pool_idx == 6 then
+        -- Why an attack_pill candidate is INF. Every INF source is named
+        -- (joined with "+" when several apply) so the panel / SYNC_P6 log
+        -- answer "why can't it take this pill" directly, the way
+        -- eval_attack_tank records `skipped`. Display only — the pool
+        -- already loses on cost; nothing reads _skipped for decisions.
+        --   low_shells      ammo_cost=INF: shells < pill hp, can't finish it
+        --   no_spot         diff=INF: evaluate_pill_difficulty found no
+        --                   firing tile with LOS inside ATTACK_PILL_STANDOFF
+        --   unreachable     no spot AND the Dijkstra slate never reached the
+        --                   pill's cheapest adjacent tile (island / needs a
+        --                   boat / slate still building) → pickup=INF
+        --   no_pickup_path  spot found but the spot→pill A* returned
+        --                   COST_INF (no path or 4096-node budget spent)
+        if c >= 1e29 then
+          local why = {}
+          if ammo_cost >= 1e29 then why[#why + 1] = "low_shells" end
+          if diff_cost >= 1e29 then why[#why + 1] = "no_spot" end
+          if travel >= 1e29 then
+            -- goal_spot_method is only set when a firing spot was found
+            -- (best_spot itself is scoped to the pool-6 block above).
+            why[#why + 1] = goal_spot_method and "no_pickup_path" or "unreachable"
+          end
+          if #why == 0 then why[1] = "inf_other" end
+          entry._skipped = table.concat(why, "+")
+        end
         entry._travel=travel; entry._travel_wound=travel_wound; entry._stale=stale_cost; entry._age=_gen_age
         entry._diff=diff_cost; entry._spot=spot_cost
         entry._spot_mx=spot_found_mx; entry._spot_my=spot_found_my
@@ -7012,6 +7253,7 @@ function M.step_eval_queue(state, world, info)
         own = obj.owner or "?", hp = obj.health or 0,
         stale = obj.last_seen and (now - obj.last_seen) or 0,
         obj = obj,  -- ref needed by rederive_pool_partial_best after sync
+        reject = entry._skipped,  -- surfaces in the goal log's winner_cands
       }
       if c < pr.best_cost then
         pr.best_cost = c; pr.best_id = id; pr.best_obj = obj
@@ -9630,7 +9872,7 @@ local function goal_selection(state, world, info, quiet)
       -- from both additive SW+CM penalty AND the multiplicative ratio
       -- gate (the gate only fires for entries with c.hysteresis set,
       -- which we leave nil here).
-      if HYST_EXEMPT[c.goal.kind] or c.goal._place_emergency or c._engage_break_lock
+      if HYST_EXEMPT[c.goal.kind] or c.goal._place_forced or c._engage_break_lock
          or (state.ammo_deprived and c.goal.kind == "attack_pill")
          or _defend_tier == "free" then
         -- Ammo-deprived decoy: charging the pill to draw fire is a "drop
@@ -9641,7 +9883,7 @@ local function goal_selection(state, world, info, quiet)
         -- another group is free). But within the same group, the
         -- target-switch penalty still applies to prevent spinning
         -- between targets (e.g. two capture_base candidates).
-        -- _place_emergency: the threat-reactive "build while fighting" drop.
+        -- _place_forced: the threat-reactive "build while fighting" drop.
         -- It exists precisely for the panic scenario, so it must be free to
         -- preempt kill_lgm/attack_tank instead of being buried under the
         -- +switch+commitment penalty (which it can never out-cost otherwise).
@@ -9784,7 +10026,7 @@ local function goal_selection(state, world, info, quiet)
     end
     -- A NORMAL place_pill_strategic must never out-rank an attack_tank: fighting
     -- a tank beats casually dropping a pill. The EMERGENCY defensive build
-    -- (goal._place_emergency, set on the def_build path) is exempt — that's the
+    -- (goal._place_forced, set on the offensive_build path) is exempt — that's the
     -- "build now while fighting before I die" behavior and stays as-is. Done on
     -- the post-penalty pool costs so it's weight/penalty aware.
     do
@@ -9793,7 +10035,7 @@ local function goal_selection(state, world, info, quiet)
         if e.goal then
           if e.goal.kind == "attack_tank" and e.cost
              and (not at_cost or e.cost < at_cost) then at_cost = e.cost end
-          if e.goal.kind == "place_pill_strategic" and not e.goal._place_emergency then
+          if e.goal.kind == "place_pill_strategic" and not e.goal._place_forced then
             place_entry = e
           end
         end
@@ -10724,7 +10966,7 @@ function M.get_pool_breakdown_json(state)
   end
 
   -- Fixed 2x5 layout matching the optimize-branch poolwindow.
-  -- (Indexes 11/12 used by def_build/wait_for_lgm strips below the grid.)
+  -- (Indexes 11/12 used by offensive_build/wait_for_lgm strips below the grid.)
   local LAYOUT_CELL = {
     [1] = {1,1}, [2] = {1,2}, [3] = {1,3}, [4] = {1,4}, [5] = {1,5},
     [6] = {2,1}, [7] = {2,2}, [8] = {2,3}, [9] = {2,4}, [10]= {2,5},
@@ -10801,8 +11043,10 @@ function M.get_pool_breakdown_json(state)
         stale = (cached and cached.tick) and (now - cached.tick) or -1,
         -- Show the reject chip honestly: an open/joinable blitz reads as "blitz",
         -- not "ally_claimed" (which is reserved for a truly-closed solo take).
+        -- Pool 6 INF rows carry their INF reason (_skipped) in the same chip
+        -- when no real reject is set — same as attack_tank's `skipped` rows.
         reject = cached and ((cached._reject == "ally_claimed" and cached._reject_joinable_blitz)
-                             and "blitz" or cached._reject) or nil,
+                             and "blitz" or cached._reject or cached._skipped) or nil,
         reject_remaining = cached and cached._reject_remaining or 0,
         ally_score = cached and cached._ally_score or nil,
         ally_by    = cached and cached._ally_by    or nil,
@@ -10954,7 +11198,7 @@ function M.get_pool_breakdown_json(state)
   end
 
   -- Build a normal pool section. Used for indexes 1..9 and the
-  -- def_build (11) / wait_for_lgm (12) strips below the main grid.
+  -- offensive_build (11) / wait_for_lgm (12) strips below the main grid.
   local function build_section(idx)
     local pname = POOL_NAMES[idx] or ("p"..idx)
     local pw = (phase_weights and phase_weights[pname]) or 1.0  -- PHASE_WEIGHTS is name-keyed, not idx-keyed
@@ -11285,7 +11529,7 @@ function M.get_pool_breakdown_json(state)
   -- their respective evaluators, not routed through eval_queue or
   -- goal_competition.  We synthesize a WINNERS row from pool_cache so
   -- they compete on the same cost axis as the regular pools.  Note:
-  -- 11 (def_build) is reserved but currently unused — the entry will
+  -- 11 (offensive_build) is reserved but currently unused — the entry will
   -- show up here as soon as something writes pool_cache[11].
   --
   -- Strip rows get the same "<pool_name> <cost> <phase>@<pw>" row
@@ -11305,7 +11549,7 @@ function M.get_pool_breakdown_json(state)
       local raw_base = (pw and pw ~= 0) and (sw.cost / pw) or sw.cost
       local row_summary = string.format("%s %.0f x %s@%.2f",
         pname, raw_base, phase_abbrev, pw)
-      -- Suicider surcharge (reposition / def_build / wait_for_lgm / kill_lgm
+      -- Suicider surcharge (reposition / offensive_build / wait_for_lgm / kill_lgm
       -- are all non-exempt kinds, so these strips DO pay it).
       local _strip_sui = suicider_mult_for_pool(state, pname)
       if _strip_sui ~= 1.0 then
@@ -11374,7 +11618,7 @@ function M.get_pool_breakdown_json(state)
     layout_cell = LAYOUT_CELL[10], rows = winners,
   }
 
-  -- Strips below the grid: def_build (11), wait_for_lgm (12),
+  -- Strips below the grid: offensive_build (11), wait_for_lgm (12),
   -- kill_lgm (13).  Only emit the section if the brain actually
   -- produced candidates for that pool this tick — keeps the renderer
   -- from drawing empty placeholders when the brain doesn't use the slot.

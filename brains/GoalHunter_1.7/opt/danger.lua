@@ -33,6 +33,12 @@ local bit = require('bitcompat')
 local C      = require("constants")
 local U      = require("util")
 local threat = require("threat")
+local print2 = require("print2")
+-- ally_state is a leaf module (no requires of its own), so pulling it in here
+-- is safe. perception.lua must NOT be required — it requires danger, so that
+-- direction is a load cycle; the score functions take `info`/`world`/`state`
+-- as parameters instead.
+local ally_state = require("ally_state")
 
 local M = {}
 
@@ -300,6 +306,267 @@ function M.update(info, tick)
   if tick % 10 == 0 then
     purge_shell_map(tick)
   end
+end
+
+-- =========================================================================
+-- vulnerability / imdanger — the two build scores
+-- =========================================================================
+-- Both are 0-100, clamped, and HIGHER IS BETTER. 50 is neutral. They exist so
+-- the decision "should I dump a pill right now" reads two separate questions
+-- instead of one armour threshold:
+--
+--   vulnerability — what I stand to lose (armour, cargo). Intrinsic.
+--   imdanger      — what is arriving at me (cover, exposure, shells, odds).
+--                   Environmental; says nothing about our own state.
+--
+-- Both return the score AND a terms table, because every printed breakdown
+-- has to let the final number be recomputed by hand. All distances Euclidean,
+-- in map tiles; boundary values belong to the closer, higher-weighted band.
+-- =========================================================================
+
+local function clamp01_100(v)
+  if v < 0 then return 0 elseif v > 100 then return 100 end
+  return v
+end
+
+-- Carry term: 0 pills is the safest we get (nothing to lose), 1 pill is
+-- neutral, and it falls linearly to the floor at VULN_CARRY_SATURATE.
+local function carry_term(n)
+  if n <= 0 then return C.VULN_CARRY_EMPTY end
+  local span = C.VULN_CARRY_SATURATE - 1
+  if span <= 0 then return C.VULN_CARRY_FULL end
+  local t = (n - 1) / span
+  if t > 1 then t = 1 end
+  return C.VULN_CARRY_FULL * t
+end
+
+-- M.vulnerability(info) -> score, terms
+function M.vulnerability(info)
+  local armour = info.armour or 0
+  if armour > C.VULN_ARMOUR_CAP then armour = C.VULN_ARMOUR_CAP end
+  local t_armour = (armour / C.VULN_ARMOUR_CAP) * C.VULN_ARMOUR_SPAN
+                   - (C.VULN_ARMOUR_SPAN / 2)
+  local pills    = info.carried_pills or 0
+  local t_carry  = carry_term(pills)
+  local score    = clamp01_100(50 + t_armour + t_carry)
+  return score, { armour = t_armour, carry = t_carry,
+                  armour_raw = info.armour or 0, pills = pills }
+end
+
+-- Distance weight for the cover term. A pillbox's real reach is 8 tiles
+-- (PILLBOX_RANGE 2048 WU / 256). The 8..9 band is PILL_RANGE_MAP's deliberate
+-- one-tile margin, kept as a small credit for a pill that nearly covers us.
+local function cover_weight(d)
+  if d <= 4 then return C.IMD_COVER_W_NEAR end
+  if d <= 8 then return C.IMD_COVER_W_MID end
+  if d <= 9 then return C.IMD_COVER_W_FAR end
+  return 0
+end
+
+local function odds_weight(d)
+  if d <= C.IMD_ODDS_NEAR_TILES then return C.IMD_ODDS_W_NEAR, true end
+  if d <= C.IMD_ODDS_FAR_TILES  then return C.IMD_ODDS_W_FAR,  false end
+  return 0, false
+end
+
+-- Is some ally already engaging enemy tank `id`? Read from the /info state
+-- slate. Two guards matter: gate on goal == "attack_tank" FIRST, because
+-- `target` is a PILL id when the ally's goal is attack_pill (an ally attacking
+-- pill #3 would otherwise suppress enemy tank player 3), and only trust a
+-- slate fresh enough to still describe reality.
+local function enemy_is_ally_engaged(now, id)
+  if id == nil then return false, nil, nil end
+  for pn, slot in ally_state.iter_active(now, C.SCORE_ALLY_MAX_AGE) do
+    local inf = slot.info
+    if inf and inf.goal == "attack_tank" then
+      local tgt = tonumber(inf.target)
+      if tgt ~= nil and tgt == id then
+        -- Age reported so a suppression traced in the log can be judged: a
+        -- slate is only as good as how recently the ally sent it.
+        return true, pn, now - (slot.last_tick or now)
+      end
+    end
+  end
+  return false, nil, nil
+end
+
+-- M.imdanger(info, world, state) -> score, terms
+--
+-- `state` supplies only state.tick (for slate freshness). `world` supplies
+-- world.pills for the cover term. Neither is required as a module.
+function M.imdanger(info, world, state)
+  local now = (state and state.tick) or 0
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+
+  -- cover (0 .. +IMD_COVER_MAX): our own pillboxes protecting us. They shoot
+  -- at whatever is attacking us, so being inside one's range is real cover.
+  -- Friendly AND allied, deployed only. A heated pill counts triple because
+  -- the engine halves its reload per hit.
+  local units, n_cover, n_heated = 0, 0, 0
+  local cover_pills = nil   -- viz: every contributing pill with its units
+  for _, p in pairs((world and world.pills) or {}) do
+    if (p.owner == "friendly" or p.owner == "allied")
+       and not p.in_tank and (p.health or 0) > 0 then
+      local d = U.edist(tmx, tmy, p.mx, p.my)
+      local w = cover_weight(d)
+      if w > 0 then
+        local hot = (p.anger or 0) >= C.HEATED_ANGER
+        local u   = w * (hot and C.IMD_COVER_HEATED_MULT or 1)
+        units   = units + u
+        n_cover = n_cover + 1
+        if hot then n_heated = n_heated + 1 end
+      end
+    end
+  end
+  local t_cover = units * C.IMD_COVER_PER_UNIT
+  if t_cover > C.IMD_COVER_MAX then t_cover = C.IMD_COVER_MAX end
+
+  -- exposure (0 .. IMD_EXPOSURE_MAX): a hostile pill has our tile in range, so
+  -- this is bad ground to linger on. threat.pill_at, NOT threat.at or
+  -- danger_at -- those fold in tanks and shell stamps, counted in their own
+  -- terms below. Note this only really registers once a pill is ANGRY (anger
+  -- rises on damage taken, never from firing at us), which is correct rather
+  -- than a gap: a calm pill's threat to us IS its shells, and the shells term
+  -- already counts those. This term means "ground covered by a pill that is
+  -- firing fast".
+  local pill_at  = threat.pill_at(tmx, tmy) or 0
+  local expo_frac = pill_at / C.IMD_EXPOSURE_DIV
+  if expo_frac > 1 then expo_frac = 1 end
+  local t_expo = C.IMD_EXPOSURE_MAX * expo_frac
+
+  -- shells (0 / ONE / MANY): hostile shots arriving near us.
+  local _, sdetail = M.shells_incoming_near(info, info.tankx, info.tanky,
+                                            C.IMD_SHELLS_RADIUS_WU)
+  local n_shells = 0
+  for i = 1, #sdetail do
+    if (sdetail[i].dist or 1e9) <= C.IMD_SHELLS_RADIUS_WU then
+      n_shells = n_shells + 1
+    end
+  end
+  local t_shells = 0
+  if n_shells >= 2 then t_shells = C.IMD_SHELLS_MANY
+  elseif n_shells == 1 then t_shells = C.IMD_SHELLS_ONE end
+
+  -- odds (0 .. IMD_ODDS_MAX): are we outnumbered by tanks right now. Our own
+  -- tank is NOT in info.objects, so nothing is added for self -- this measures
+  -- who is around me, not headcount. (perc.allied_tank_count does `+ 1 = us`
+  -- and cannot be reused here.)
+  local near_net, far_net = 0, 0
+  local n_enemy, n_ally, n_skipped = 0, 0, 0
+  local skipped, counted = nil, nil
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_TANK then
+        local omx, omy = bit.rshift(ob.x, 8), bit.rshift(ob.y, 8)
+        local d = U.edist(tmx, tmy, omx, omy)
+        local w, is_near = odds_weight(d)
+        if w > 0 then
+          if (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
+            local engaged, by, age = enemy_is_ally_engaged(now, ob.idnum)
+            if engaged then
+              n_skipped = n_skipped + 1
+            else
+              n_enemy = n_enemy + 1
+              if is_near then near_net = near_net + w else far_net = far_net + w end
+            end
+          else
+            n_ally = n_ally + 1
+            if is_near then near_net = near_net - w else far_net = far_net - w end
+          end
+        end
+      end
+    end
+  end
+  local t_near = -near_net * C.IMD_ODDS_SCALE
+  if t_near > 0 then t_near = 0 elseif t_near < C.IMD_ODDS_MAX then t_near = C.IMD_ODDS_MAX end
+  local t_far = -far_net * C.IMD_ODDS_SCALE
+  if t_far > 0 then t_far = 0 elseif t_far < C.IMD_ODDS_FAR_MAX then t_far = C.IMD_ODDS_FAR_MAX end
+  local t_odds = t_near + t_far
+  if t_odds > 0 then t_odds = 0 elseif t_odds < C.IMD_ODDS_MAX then t_odds = C.IMD_ODDS_MAX end
+
+  local score = clamp01_100(50 + t_cover + t_expo + t_shells + t_odds)
+  return score, {
+    cover = t_cover, exposure = t_expo, shells = t_shells, odds = t_odds,
+    cover_units = units, n_cover = n_cover, n_heated = n_heated,
+    pill_at = pill_at, n_shells = n_shells,
+    near = t_near, far = t_far, near_net = near_net, far_net = far_net,
+    n_enemy = n_enemy, n_ally = n_ally, n_skipped = n_skipped,
+    skipped = skipped, counted = counted, cover_pills = cover_pills,
+  }
+end
+
+-- =========================================================================
+-- The panic build trigger
+-- =========================================================================
+-- Dump a pill into the ground NOW, because we are about to lose what we are
+-- carrying. Replaces a bare armour threshold: armour alone said nothing about
+-- whether anything was actually threatening us, which is how a bot at armour
+-- 10 with no enemy in sight dumped four pills in 200 ticks.
+--
+--   threshold = min(35, 50 - vulnerability * 0.8)
+--   panic     = carrying and builder aboard and not in a boat
+--               and vulnerability <= 50 and imdanger <= threshold
+--
+-- The sliding threshold is the whole idea: the more we stand to lose, the less
+-- arriving danger it takes to justify banking it. The cap at 35 is
+-- load-bearing -- anything reading 40 or above can never panic at any armour,
+-- which permanently excludes quiet ground (50) and distant-only outnumbering
+-- (40). Without it a nearly-dead bot would panic on an empty field.
+function M.panic_threshold(vuln)
+  local t = 50 - vuln * 0.8
+  if t > 35 then t = 35 end
+  return t
+end
+
+-- M.should_panic_build(state, info) -> bool, threshold, why
+--
+-- NO HYSTERESIS, deliberately. If conditions improve the bot should stop
+-- panicking. A panic build is a single tick -- pick_goal, set_mode and decide
+-- all run in the same brain tick, so it fires, picks a spot at ring 1-5 and
+-- dispatches before the tick ends -- after which man_status is no longer
+-- LGM_INTANK and it cannot re-fire until the builder is home. That bounds it
+-- at one pill per builder round trip whatever the scores do meanwhile, which
+-- is what hysteresis would have been protecting, so there is nothing left for
+-- it to buy.
+function M.should_panic_build(state, info)
+  local carrying = (info.carried_pills or 0) >= 1
+  -- Carrying is NOT implied by the scores and has to be stated: at armour 0
+  -- with no pills, vulnerability is 50 + (-25) + 25 = exactly 50, which passes
+  -- the inclusive gate -- so under fire an empty tank would panic with nothing
+  -- to place, electing a cost-1 goal that dead-ends at no dispatch. Carrying
+  -- nothing RAISES vulnerability, because having nothing to lose is safer.
+  if not carrying then return false, nil, "not_carrying" end
+  if info.man_status ~= C.LGM_INTANK then return false, nil, "lgm_out" end
+  if info.inboat then return false, nil, "inboat" end
+
+  local v = state.vuln
+  local i = state.imdanger
+  if v == nil or i == nil then return false, nil, "no_scores" end
+  if v > 50 then return false, nil, "vuln_ok" end
+
+  local thresh = M.panic_threshold(v)
+  if i > thresh then return false, thresh, "imdanger_ok" end
+  return true, thresh, "panic"
+end
+
+-- M.scores(info, world, state) -> vuln, imd, vterms, iterms
+-- Computes both and logs the full breakdown. Kept as one call so the log line
+-- is emitted once per tick with both halves, rather than twice out of order.
+function M.scores(info, world, state)
+  local v, vt = M.vulnerability(info)
+  local i, it = M.imdanger(info, world, state)
+  -- near_net/far_net are printed alongside the clamped contributions so odds is
+  -- derivable, not merely checkable: near = clamp(-35,0, -near_net * SCALE).
+  if it.counted then
+    for _, t in ipairs(it.counted) do
+    end
+  end
+  if it.skipped then
+    for _, s in ipairs(it.skipped) do
+    end
+  end
+  return v, i, vt, it
 end
 
 return M

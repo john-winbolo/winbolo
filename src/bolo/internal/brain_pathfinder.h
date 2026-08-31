@@ -91,6 +91,15 @@ struct BrainPathfinder {
   uint16_t danger_grid[65536];        /* pill danger values */
   int16_t  overlay_grid[65536];       /* modder-extensible custom cost layer */
   int16_t  influence_grid[65536];     /* territorial influence: +friendly, -hostile */
+  /* Influence tail (brainPathfinderRebuildInfluenceTail): the stamped cores
+   * grown outward over passable ground, weakening with distance and slowed
+   * inside a live neutral pill's range. expand_grid is the cached net tail
+   * (friendly - hostile); influence_base_grid is the stamps alone, kept by
+   * the merge so a viz can tell stamped ground from tail-claimed ground. */
+  int16_t  influence_base_grid[65536];
+  int16_t  expand_grid[65536];
+  uint8_t  neutral_zone[65536];       /* 1 = inside a live neutral pill's range */
+  uint8_t  tail_dist[65536];          /* scratch: BFS step distance, 255 = unreached */
   int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
   /* Coastal boat band: 1 where a water/boat tile lies within
    * BRAINPF_COASTAL_BAND euclidean tiles of land. Lets the land-only SHORT
@@ -402,6 +411,24 @@ void brainPathfinderClearInfluence(BrainPathfinder *pf);
 void brainPathfinderStampInfluence(BrainPathfinder *pf, int cx, int cy,
                                     int radius, int strength);
 int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
+
+/* Influence tail. Rebuild reads the stamped influence_grid (cells with
+ * |v| >= seed_min are the cores), grows each side outward over passable
+ * ground with a step-cost BFS (land 1, shallow water water_step, cells in
+ * neutral_zone neutral_step; buildings / deep sea / pillboxes block), capped
+ * at `radius` steps, valued start*(1 - d/(radius+1)), and caches the net
+ * (friendly - hostile; an exact tie goes to the hostile side, -1, so the
+ * front line never has a signless zero seam) in expand_grid. Merge writes
+ * influence_grid = stamped where |stamped| >= |tail|, else tail, keeping the
+ * stamps in influence_base_grid. Call Merge every tick after stamping;
+ * Rebuild only when the stamped set changes. */
+void brainPathfinderClearNeutralZones(BrainPathfinder *pf);
+void brainPathfinderStampNeutralZone(BrainPathfinder *pf, int cx, int cy, int radius);
+void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
+                                         int start, int neutral_step, int water_step);
+void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf);
+/* The tail value at (x,y) if the tail won the last merge there, else 0. */
+int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y);
 
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);

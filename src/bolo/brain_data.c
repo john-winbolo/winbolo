@@ -606,7 +606,18 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     value->num_messages = 0;
   }
 
-  /* Controling the tank */
+  /* Controling the tank.
+   *
+   * NOTE these two lines are self-assignments and have been for a long time:
+   * brainDataMakeInfo points value->holdkeys AT clientSimGetBrainHoldKeys(cs)
+   * (see :517), so this copies *&cs->brainHoldKeys onto itself. The write that
+   * actually drives the tank happens earlier, when the Lua result table is
+   * read in extract_brain_output(), straight through that alias.
+   *
+   * Kept because the legacy brain API shape (a BrainInfo full of pointers the
+   * brain writes through) is what other frontends still expect, but do not
+   * add conditions here expecting them to gate anything -- the dead-tank gate
+   * lives in extract_brain_output, where the real write is. */
   *clientSimGetBrainHoldKeys(csPtr) = *(value->holdkeys);
   *clientSimGetBrainTapKeys(csPtr) = *(value->tapkeys);
 
