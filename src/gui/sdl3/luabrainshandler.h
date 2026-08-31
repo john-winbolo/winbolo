@@ -517,11 +517,27 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst);
 *  lua_State while the bot's worker thread is idle, so no
 *  cross-thread Lua access happens. Stack-balanced (pops every
 *  value it pushes).
+*
+*  tierOverride (1..10) pins the brain's capacity tier by setting
+*  the _BT_TIER_OVERRIDE global the brain already honours; 0 clears
+*  it and restores the dynamic controller.
 *********************************************************/
 void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
-                           bool   wasKilled);
+                           bool   wasKilled,
+                           int    tierOverride);
+
+/*********************************************************
+*NAME:          luaBrainSeedRandom
+*PURPOSE:
+*  Calls math.randomseed(seed) on the brain's Lua state, so
+*  math.random is reproducible across runs. Best-effort: a brain
+*  without a math table, or an erroring randomseed, is ignored.
+*
+*  Call once per instance, after creation. Producer-thread only.
+*********************************************************/
+void luaBrainSeedRandom(LuaBrainInstance *inst, long seed);
 
 /*********************************************************
 *NAME:          luaBrainInstanceSetDebugMode

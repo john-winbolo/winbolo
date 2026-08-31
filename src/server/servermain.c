@@ -785,6 +785,18 @@ void printArgs() {
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
+  fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
+  fprintf(stderr, "-brain-tier <1..10> - Pin every brain's capacity tier instead of deriving it\n");
+  fprintf(stderr, "                from think times. The tier normally comes from wall-clock\n");
+  fprintf(stderr, "                measurements, so the same seed yields different tiers -- and\n");
+  fprintf(stderr, "                a different tier is a different brain. Timing telemetry still\n");
+  fprintf(stderr, "                reports real values.\n");
+  fprintf(stderr, "-brain-lua-seed <N> - Seed each brain's Lua math.random with N + player\n");
+  fprintf(stderr, "                number. Without it PUC-Lua auto-seeds per process and runs\n");
+  fprintf(stderr, "                diverge from the first tick.\n");
+  fprintf(stderr, "-brain-no-budget-kill - Give each brain a 1000 ms budget so the watchdog\n");
+  fprintf(stderr, "                never truncates a think. Still finite, so a hung brain is\n");
+  fprintf(stderr, "                still aborted. For measurement runs; pair with -threads 1.\n");
 #if WB_ENABLE_NETIMPAIR
   fprintf(stderr, "-netimpair <spec> - Apply network impairment to both directions for testing.\n");
   fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
@@ -1929,6 +1941,39 @@ int main(int argc, char **argv) {
     int argNum = findArg(argc, argv, "threads");
     if (argNum != ARG_NOT_FOUND) {
       threadsArg = atoi((char *)argv[argNum]);
+    }
+    /* Determinism aids for A/B measurement runs. Neither has any effect
+     * unless asked for, and both are honest about what they are: the tier pin
+     * changes what the brain DOES, the Lua seed changes what it draws. Timing
+     * telemetry keeps reporting real measured values either way. */
+    {
+      int argNum = findArg(argc, argv, "brain-tier");
+      if (argNum != ARG_NOT_FOUND) {
+        int tier = atoi((char *)argv[argNum]);
+        if (tier < 1 || tier > 10) {
+          fprintf(stderr, "-brain-tier must be 1..10 (got %d)\n", tier);
+          return 0;
+        }
+        botManagerSetBrainTierOverride(tier);
+        fprintf(stderr, "Brain capacity tier pinned to %d "
+                        "(dynamic controller disabled)\n", tier);
+      }
+      argNum = findArg(argc, argv, "brain-lua-seed");
+      if (argNum != ARG_NOT_FOUND) {
+        long ls = strtol((char *)argv[argNum], NULL, 0);
+        botManagerSetBrainLuaSeed(ls);
+        fprintf(stderr, "Brain math.random seeded from %ld (+ player number)\n", ls);
+      }
+      if (argExist(argc, argv, "-brain-no-budget-kill") == TRUE) {
+        /* Reuses the slow-mo path: a 1000 ms budget, which no real tick
+         * approaches, so the watchdog never truncates a think mid-computation
+         * -- including the abort-flag polls inside the C pathfinder and
+         * worldsim, which otherwise cut their results at a wall-clock-
+         * dependent instruction. Still finite, so a genuinely hung brain is
+         * aborted rather than hanging the server. */
+        botManagerSetSlowMoDebug(1);
+        fprintf(stderr, "Brain budget kill disabled (1000 ms per-bot budget)\n");
+      }
     }
     if (!botManagerInit(threadsArg)) {
       fprintf(stderr, "Error initializing bot manager\n");

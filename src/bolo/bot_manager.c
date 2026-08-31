@@ -188,6 +188,27 @@ static const double kSafetyMs = 2.0;
 static int s_slowMoDebug = 0;
 #define BOT_SLOWMO_BUDGET_MS 1000.0
 
+/* Determinism aids for A/B measurement runs. Both process-global debug
+ * toggles, like slow-mo above.
+ *
+ * s_brainTierOverride pins the brain's capacity tier (1..10, 0 = off). The
+ * tier is normally chosen from lastThinkMs / targetMs, BOTH of which are
+ * wall-clock derived -- lastThinkMs is measured per tick, and targetMs
+ * subtracts a wall-clock EWMA -- so the same seed produces different tiers on
+ * different runs, and a different tier is a different brain. Pinning the tier
+ * is deliberately preferred over faking lastThinkMs: the fake would have to
+ * cover targetMs too (the controller uses the ratio), and it would make every
+ * piece of timing telemetry -- overrun warnings, killbot.log, /info -- report
+ * numbers that never happened. This way the brain is deterministic and the
+ * telemetry still tells the truth.
+ *
+ * s_brainLuaSeed makes Lua's math.random reproducible. Under PUC-Lua 5.4 the
+ * generator is auto-seeded per process, and the brain draws from it for
+ * decisions that persist -- replan_offset staggers a bot's whole replan
+ * cadence -- so runs diverge from the first tick. 0 = leave alone. */
+static int    s_brainTierOverride = 0;
+static long   s_brainLuaSeed      = 0;
+
 void botManagerSetPreThinkHook(ServerSim *sim,
                                void (*hook)(int playerNum)) {
     if (sim == NULL) return;
@@ -409,6 +430,14 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
 void botManagerSetSlowMoDebug(int on) { s_slowMoDebug = on ? 1 : 0; }
 int  botManagerGetSlowMoDebug(void)   { return s_slowMoDebug; }
 
+void botManagerSetBrainTierOverride(int tier) {
+    s_brainTierOverride = (tier >= 1 && tier <= 10) ? tier : 0;
+}
+int  botManagerGetBrainTierOverride(void) { return s_brainTierOverride; }
+
+void botManagerSetBrainLuaSeed(long seed) { s_brainLuaSeed = seed; }
+long botManagerGetBrainLuaSeed(void)      { return s_brainLuaSeed; }
+
 double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
     /* Slow-motion debug: hand out an oversized budget so the brain runs its
      * full tier and is never budget-killed. The same value drives the deadline
@@ -597,6 +626,12 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     bot->thinkDeadlineCounter = 0;
     bot->killSite[0] = '\0';
     bot->wasKilled = false;
+    /* Reproducible math.random for measurement runs. Combined with the
+     * player number so bots still differ from one another, but identically
+     * on every run with the same seed. */
+    if (s_brainLuaSeed != 0) {
+        luaBrainSeedRandom(&bot->brain, s_brainLuaSeed + (long)bot->playerNum);
+    }
     if (bot->brain.pathfinder != NULL) {
         brainPathfinderSetAbortFlag(bot->brain.pathfinder, &bot->abort_flag);
     }
@@ -767,6 +802,12 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->thinkDeadlineCounter = 0;
     bot->killSite[0] = '\0';
     bot->wasKilled = false;
+    /* Reproducible math.random for measurement runs. Combined with the
+     * player number so bots still differ from one another, but identically
+     * on every run with the same seed. */
+    if (s_brainLuaSeed != 0) {
+        luaBrainSeedRandom(&bot->brain, s_brainLuaSeed + (long)bot->playerNum);
+    }
 
     /* Wire the abort flag through to the C pathfinder/worldsim so their
      * inner search loops can poll it without going back through Lua.
@@ -1071,7 +1112,8 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         luaBrainSetTickInputs(&sim->botMgr.bots[i].brain,
                               sim->botMgr.bots[i].lastThinkMs,
                               sim->botMgr.lastTargetMs,
-                              sim->botMgr.bots[i].wasKilled);
+                              sim->botMgr.bots[i].wasKilled,
+                              s_brainTierOverride);
         sim->botMgr.bots[i].wasKilled = false;
         /* Clean abort flag so the worker starts each tick unflagged.
          * Atomic store pairs with the worker's atomic load on the

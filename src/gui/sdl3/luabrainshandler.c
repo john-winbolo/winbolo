@@ -1537,7 +1537,8 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
 void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
-                           bool   wasKilled) {
+                           bool   wasKilled,
+                           int    tierOverride) {
     lua_State *L;
     int top;
 
@@ -1546,6 +1547,17 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
     }
     L = inst->L;
     top = lua_gettop(L);
+
+    /* Capacity-tier pin for measurement runs. Written as the global the brain
+     * already honours (_BT_TIER_OVERRIDE, read every tick), so no brain change
+     * is needed and BrainTest's existing panel override shares the seam.
+     * Cleared to nil when off, so turning it off mid-session takes effect. */
+    if (tierOverride >= 1 && tierOverride <= 10) {
+        lua_pushinteger(L, tierOverride);
+    } else {
+        lua_pushnil(L);
+    }
+    lua_setglobal(L, "_BT_TIER_OVERRIDE");
 
     lua_getglobal(L, "brain");
     if (!lua_istable(L, -1)) {
@@ -1558,6 +1570,34 @@ void luaBrainSetTickInputs(LuaBrainInstance *inst,
     lua_setfield(L, -2, "targetMs");
     lua_pushboolean(L, wasKilled ? 1 : 0);
     lua_setfield(L, -2, "wasKilled");
+    lua_settop(L, top);
+}
+
+void luaBrainSeedRandom(LuaBrainInstance *inst, long seed) {
+    lua_State *L;
+    int top;
+
+    if (inst == NULL || inst->L == NULL) {
+        return;
+    }
+    L = inst->L;
+    top = lua_gettop(L);
+
+    /* math.randomseed(seed). PUC-Lua 5.4 auto-seeds per process, so without
+     * this the brain's draws differ every run -- and they are not cosmetic:
+     * replan_offset staggers a bot's entire replan cadence off one draw. The
+     * caller combines a fixed seed with the player number so bots still differ
+     * from one another while being identical across runs. */
+    lua_getglobal(L, "math");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "randomseed");
+        if (lua_isfunction(L, -1)) {
+            lua_pushinteger(L, (lua_Integer)seed);
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                lua_pop(L, 1); /* discard the error; seeding is best-effort */
+            }
+        }
+    }
     lua_settop(L, top);
 }
 
