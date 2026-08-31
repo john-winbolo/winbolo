@@ -1394,23 +1394,20 @@ M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
 -- tank-only test — see nearby_support_pill.
 M.SUPPORT_PILL_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
 M.SUPPORT_PILL_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
--- Desperate ("about to die") build override. When armour <= DEATH_BUILD_ARMOUR
--- AND we've taken a hit within the last DEATH_BUILD_HIT_WINDOW ticks AND an
--- enemy tank is in shoot range while carrying, the offensive_build fires even if a
--- cover pill already exists (that pill clearly isn't keeping us alive) and at a
--- rock-bottom cost so it decisively wins the pool. Rationale: a tank that dies
--- carrying pills drops them for anyone to grab — plant them (as our guard) NOW
--- rather than losing them on death. Placement geometry is unchanged (±45°).
-M.DEATH_BUILD_ARMOUR           = 30   -- armour <= this AND taking hits => desperate build (bypass cover dedup, force win)
-M.DEATH_BUILD_HIT_WINDOW       = 50   -- ticks since last damage to still count as "actively taking hits" (~1s @ 50Hz)
--- Panic build: an even harder floor than DESPERATE. At PANIC_BUILD_ARMOUR or below
--- while carrying (and the LGM is in the tank to place it), DUMP a pill into the
--- ground NOW — no enemy required, no recent-hit required, no cover dedup. At this
--- health we can't count on reaching a base, so bank the carried pill (and gain a
--- guard) before dying and gifting it to the enemy. With a DEAD/out builder the
--- pill can't be placed, so the haul-protection flee (CRITICAL_FLEE_ENABLED) covers
--- that case instead. Complements DESPERATE (which needs an enemy in shoot range).
-M.PANIC_BUILD_ARMOUR           = 10   -- armour <= this AND carrying AND LGM in tank => build immediately, no matter who's around
+-- DEATH_BUILD_ARMOUR / DEATH_BUILD_HIT_WINDOW / PANIC_BUILD_ARMOUR are gone.
+-- All three were armour thresholds deciding when to dump a carried pill, and
+-- armour alone says nothing about whether anything is actually threatening us
+-- -- which is how a bot at armour 10, with the nearest enemy 15 tiles away and
+-- not even visible, dumped four pills in 200 ticks. The panic build now reads
+-- the two scores in danger.lua instead:
+--
+--   threshold = min(35, 50 - vulnerability * 0.8)
+--   panic     = carrying and builder aboard and not in a boat
+--               and vulnerability <= 50 and imdanger <= threshold
+--
+-- so the more we stand to lose, the less arriving danger it takes to justify
+-- banking it. With a DEAD/out builder the pill can't be placed at all, so the
+-- haul-protection flee (CRITICAL_FLEE_ENABLED) still covers that case.
 -- Emergency offensive_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
@@ -1604,9 +1601,6 @@ M.TANK_COMBAT_DEEPSEA_MULT         = 0.25  -- cost multiplier for enemy on deep 
 
 -- Emergency pill drop (aIndy: drop pill when about to die to save it)
 M.EMERGENCY_DROP_ENABLED        = true
-M.EMERGENCY_DROP_ARMOUR         = 5     -- drop when armour at or below this
-M.EMERGENCY_DROP_MIN_ENEMIES    = 1     -- don't drop if no enemies visible
-M.EMERGENCY_DROP_SHELL_SAFE_DIST = 3    -- tiles: don't drop if shell within this range
 M.EMERGENCY_DROP_SEARCH_DIRS    = 8     -- directions to search for safe drop tile
 
 -- Base Killer Mode (aIndy: auto-activate when team outnumbers opponents)

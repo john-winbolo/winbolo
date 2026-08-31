@@ -506,6 +506,60 @@ function M.imdanger(info, world, state)
   }
 end
 
+-- =========================================================================
+-- The panic build trigger
+-- =========================================================================
+-- Dump a pill into the ground NOW, because we are about to lose what we are
+-- carrying. Replaces a bare armour threshold: armour alone said nothing about
+-- whether anything was actually threatening us, which is how a bot at armour
+-- 10 with no enemy in sight dumped four pills in 200 ticks.
+--
+--   threshold = min(35, 50 - vulnerability * 0.8)
+--   panic     = carrying and builder aboard and not in a boat
+--               and vulnerability <= 50 and imdanger <= threshold
+--
+-- The sliding threshold is the whole idea: the more we stand to lose, the less
+-- arriving danger it takes to justify banking it. The cap at 35 is
+-- load-bearing -- anything reading 40 or above can never panic at any armour,
+-- which permanently excludes quiet ground (50) and distant-only outnumbering
+-- (40). Without it a nearly-dead bot would panic on an empty field.
+function M.panic_threshold(vuln)
+  local t = 50 - vuln * 0.8
+  if t > 35 then t = 35 end
+  return t
+end
+
+-- M.should_panic_build(state, info) -> bool, threshold, why
+--
+-- NO HYSTERESIS, deliberately. If conditions improve the bot should stop
+-- panicking. A panic build is a single tick -- pick_goal, set_mode and decide
+-- all run in the same brain tick, so it fires, picks a spot at ring 1-5 and
+-- dispatches before the tick ends -- after which man_status is no longer
+-- LGM_INTANK and it cannot re-fire until the builder is home. That bounds it
+-- at one pill per builder round trip whatever the scores do meanwhile, which
+-- is what hysteresis would have been protecting, so there is nothing left for
+-- it to buy.
+function M.should_panic_build(state, info)
+  local carrying = (info.carried_pills or 0) >= 1
+  -- Carrying is NOT implied by the scores and has to be stated: at armour 0
+  -- with no pills, vulnerability is 50 + (-25) + 25 = exactly 50, which passes
+  -- the inclusive gate -- so under fire an empty tank would panic with nothing
+  -- to place, electing a cost-1 goal that dead-ends at no dispatch. Carrying
+  -- nothing RAISES vulnerability, because having nothing to lose is safer.
+  if not carrying then return false, nil, "not_carrying" end
+  if info.man_status ~= C.LGM_INTANK then return false, nil, "lgm_out" end
+  if info.inboat then return false, nil, "inboat" end
+
+  local v = state.vuln
+  local i = state.imdanger
+  if v == nil or i == nil then return false, nil, "no_scores" end
+  if v > 50 then return false, nil, "vuln_ok" end
+
+  local thresh = M.panic_threshold(v)
+  if i > thresh then return false, thresh, "imdanger_ok" end
+  return true, thresh, "panic"
+end
+
 -- M.scores(info, world, state) -> vuln, imd, vterms, iterms
 -- Computes both and logs the full breakdown. Kept as one call so the log line
 -- is emitted once per tick with both halves, rather than twice out of order.

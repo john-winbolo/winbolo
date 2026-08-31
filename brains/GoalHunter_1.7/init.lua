@@ -3806,25 +3806,33 @@ function Brain.think(info)
     -- Emergency pill drop: about to die with carried pills — drop one to save it.
     -- aIndy checks: no incoming shells nearby, don't drop in front of tank,
     -- don't drop in path of shells, don't drop if no enemies.
-    if C.EMERGENCY_DROP_ENABLED
-       and (info.carried_pills or 0) >= 1
-       and info.armour <= C.EMERGENCY_DROP_ARMOUR
-       and info.man_status == C.LGM_INTANK
-       and not info.inboat
-       and state.goal.kind ~= "pill_place"
-       and state.perc and state.perc.enemy_tank_count >= C.EMERGENCY_DROP_MIN_ENEMIES then
-      -- Check for incoming shells nearby — don't send LGM into fire
-      local shells_close = false
-      for _, ob in ipairs(info.objects) do
-        if ob.type == OBJECT_SHOT and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
-          local sdist = U.mdist(cur_mx, cur_my, bit.rshift(ob.x, 8), bit.rshift(ob.y, 8))
-          if sdist <= C.EMERGENCY_DROP_SHELL_SAFE_DIST then
-            shells_close = true
-            break
-          end
-        end
-      end
-      if not shells_close then
+    -- Trigger is now the panic condition, not an armour threshold of its own.
+    -- The old gate was armour <= EMERGENCY_DROP_ARMOUR (5) plus at least one
+    -- visible enemy, which is a second armour-threshold trigger running beside
+    -- the one in goals.lua with different rules. The two scores decide this
+    -- better. What survives here is the part panic has no equivalent for: the
+    -- tile search below, and the state facts (builder aboard, not in a boat)
+    -- that should_panic_build checks for us.
+    local _ed_panic = C.EMERGENCY_DROP_ENABLED
+                      and state.goal.kind ~= "pill_place"
+                      and danger.should_panic_build(state, info)
+    if _ed_panic then
+      -- The incoming-shell refusal used to sit here: skip the drop when a
+      -- hostile shell was within EMERGENCY_DROP_SHELL_SAFE_DIST (3 tiles),
+      -- reasoning "don't send the LGM into fire". Removed -- that is the same
+      -- 3-tile ring imdanger uses for its shells term, read the opposite way.
+      -- Shells there are -15, one of the strongest reasons panic fires at all,
+      -- so the refusal blocked exactly the case this design says must build:
+      -- carrying pills, low armour, under fire. The builder walks one tile, so
+      -- its exposure is small, and losing the pills to death is worse.
+      --
+      -- FUTURE ENHANCEMENT, not implemented: the check that would actually be
+      -- correct is per-tile rather than blanket -- take the chosen drop tile,
+      -- project every shell currently in the air along its trajectory, and
+      -- refuse only if one of them crosses THAT tile within the number of
+      -- ticks the builder needs to walk there. That refuses the genuinely
+      -- doomed drop without refusing every drop made under fire.
+      do
         -- Find safe drop position: behind the tank (away from threats)
         -- Don't drop in front of tank (LGM gets run over or blocks path)
         local tank_dir = info.direction

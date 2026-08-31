@@ -18,6 +18,7 @@ local log    = require("logger")
 local attack = require("attack")
 local print2 = require("print2")
 local threat = require("threat")
+local danger = require("danger")   -- the two build scores + the panic trigger
 local vizmod = require("viz")
 local json   = require("json")
 local ally_state = require("ally_state")
@@ -2215,16 +2216,19 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- at PLACE_PILL_SETMODE "no-dispatch" (carried=0, man=0), stealing a goal cycle
   -- from attack_tank and flip-flopping the aim. Gate on carried_pills > 0.
   local _db_carrying = (info.carried_pills or 0) > 0
-  -- Panic build: at PANIC_BUILD_ARMOUR or below while carrying (and the LGM is in
-  -- the tank to place it), DUMP a pill into the ground NOW — no matter who's
-  -- around (or not). At rock-bottom health we can't count on reaching a base, so
-  -- bank the carried pill (and gain a guard) before dying and gifting it to the
-  -- enemy. A DEAD/out builder can't place — the haul-protection flee covers that.
-  local _panic = _db_carrying and info.man_status == C.LGM_INTANK
-                 and (info.armour or 99) <= (C.PANIC_BUILD_ARMOUR or 10)
+  -- Panic build: bank a carried pill NOW, because we are about to lose it.
+  -- Driven by the two scores rather than a bare armour threshold -- armour
+  -- alone said nothing about whether anything was actually threatening us,
+  -- which is how a bot at armour 10 with the nearest enemy 15 tiles away and
+  -- not even visible dumped four pills in 200 ticks. See danger.lua.
+  local _panic, _panic_thresh, _panic_why = danger.should_panic_build(state, info)
   local _db_skip = ((not _db_carrying) and " -> SKIP(not carrying a pill)")
                 or ((_db_et == 0 and not _panic) and " -> SKIP(no visible enemy tank, armour ok)") or ""
-  print2(string.format("OFF_BUILD t=%d gate carried=%d man=%s inboat=%s enemy_tanks=%d panic=%s arm=%d%s", state.tick or 0, info.carried_pills or 0, tostring(info.man_status), tostring(info.inboat), _db_et, tostring(_panic), info.armour or -1, _db_skip))
+  print2(string.format("OFF_BUILD t=%d gate carried=%d man=%s inboat=%s enemy_tanks=%d panic=%s(%s v=%.1f i=%.1f th=%.1f) arm=%d%s",
+    state.tick or 0, info.carried_pills or 0, tostring(info.man_status),
+    tostring(info.inboat), _db_et, tostring(_panic), _panic_why or "?",
+    state.vuln or -1, state.imdanger or -1, _panic_thresh or -1,
+    info.armour or -1, _db_skip))
   if (_db_et > 0 or _panic) and _db_carrying then
     local closest_et, closest_dist = nil, math.huge
     for _, et in ipairs(state.perc.enemy_tanks) do
@@ -2242,25 +2246,32 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         closest_et = nil
       end
     end
-    -- Desperate ("about to die") override: low armour AND actively taking hits
-    -- (a hit within DEATH_BUILD_HIT_WINDOW ticks), with a threat in shoot range.
-    -- A tank that dies carrying pills DROPS them for anyone to grab — so plant
-    -- them as our guard NOW rather than losing them on death. Bypasses the cover
-    -- dedup below (that cover clearly isn't keeping us alive) and forces a
-    -- rock-bottom cost so the build decisively wins the pool. Placement geometry
-    -- is unchanged. Re-fires each cycle while carried>0, so it plants BOTH pills.
-    local _tick = state.tick or 0
-    local _desperate = (closest_et ~= nil)
-      and (info.armour or 99) <= (C.DEATH_BUILD_ARMOUR or 30)
-      and state._last_damage_tick ~= nil
-      and (_tick - state._last_damage_tick) <= (C.DEATH_BUILD_HIT_WINDOW or 50)
+    -- The DESPERATE override used to sit here: armour <= DEATH_BUILD_ARMOUR
+    -- (30) plus a hit within DEATH_BUILD_HIT_WINDOW (50 ticks) plus a threat in
+    -- range, bypassing the support veto and forcing cost 1. Deleted. Its own
+    -- comment gave the game away -- "Re-fires each cycle while carried>0, so it
+    -- plants BOTH pills" -- which is the four-pills-in-200-ticks complaint
+    -- written down as intent. It was a third armour-threshold trigger of
+    -- exactly the kind removed with the antitank drop.
+    --
+    -- The scores deliberately do NOT reproduce it: at armour 30 carrying one
+    -- pill, vulnerability is 62.5 -- above the <=50 gate, so panic cannot fire;
+    -- with three pills it is 45.83 against a threshold of 13.33, and an enemy
+    -- within 8 gives imdanger 15, still no panic. That band -- 75% health and
+    -- one recent hit -- is not panic-worthy under this design. Its cover-bypass
+    -- purpose is separately absorbed by the narrowed support veto, which no
+    -- longer blocks on a pill that fails to cover the enemy.
+    --
+    -- What this gives up: a bot at armour 30 taking fire with a covering pill
+    -- nearby used to plant anyway; now it holds until the scores say otherwise.
+    -- If dying with cargo proves the larger cost, revisit this first.
 
-    -- Cover dedup (shared with builder's in-combat drop): a healthy friendly
-    -- pill already within fire range of the tank is the guard this build would
-    -- provide — don't drop a second pill beside it. Nearly-dead cover
-    -- (<= SUPPORT_PILL_MIN_HP) doesn't count; build its replacement. Skipped
-    -- when desperate — we plant regardless of existing cover.
-    if closest_et and not _desperate and not _panic then
+    -- Support veto: a healthy friendly pill already within fire range is the
+    -- guard this build would provide — don't drop a second beside it. A pill at
+    -- or below SUPPORT_PILL_MIN_HP is nearly dead and doesn't count; build its
+    -- replacement. Skipped on panic: banking the pill is the point, and a panic
+    -- can fire with no enemy at all, so there is no "this fight" to cover.
+    if closest_et and not _panic then
       -- Two-distance test: the pill must cover BOTH us and the enemy to count
       -- as support for this fight. A pill behind us covers us but cannot shoot
       -- the tank we are engaging, and vetoing on it declines to build
@@ -2278,9 +2289,16 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           U.edist(closest_et.mx, closest_et.my, _cov.mx, _cov.my)))
         closest_et = nil
       end
-    elseif closest_et and _desperate then
-      print2(string.format("OFF_BUILD t=%d DESPERATE — arm=%d <= %d, hit %d ticks ago; ignoring cover dedup, forcing win", state.tick or 0, info.armour or 0, C.DEATH_BUILD_ARMOUR or 30, _tick - (state._last_damage_tick or _tick)))
     end
+    -- When BOTH builds fire, the OFFENSIVE one takes priority. Its trigger
+    -- requires an enemy within OFF_BUILD_THREAT_RANGE, so whenever both are
+    -- true there IS a nearby enemy and the ±45° spot rule is well defined -- a
+    -- tactically placed pill beats a merely safe one. Panic stays the fallback
+    -- for everything offensive cannot express, including the cases with no
+    -- enemy tank at all. Without this rule both produce a place_pill_strategic
+    -- goal at cost 1 with different spot rules, and pool ordering decides by
+    -- accident.
+    local _kind = closest_et and "offensive" or (_panic and "panic" or nil)
     if closest_et or _panic then
       -- Guard-spot DIRECTION: the nearest enemy tank if we have one, else (panic
       -- with nobody around) the nearest hostile pill, else a default offset so we
@@ -2306,8 +2324,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
                            info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
         local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST - carry_discount
         local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
-        -- Desperate or panic: floor the cost so the plant decisively wins.
-        if _desperate or _panic then cost = 1 end
+        -- Either trigger floors the cost so the plant decisively wins the pool.
+        if _kind then cost = 1 end
         local cands = {}
         if BRAIN_DEBUG_MODE then
           for _, c in ipairs(dcands) do
@@ -2325,7 +2343,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
             }
           end
         end
-        print2(string.format("OFF_BUILD t=%d FIRE%s spot=(%d,%d) tier=%d cost=%.0f threat=(%d,%d) d=%.1f", state.tick or 0, _panic and "(PANIC)" or "", best_cx, best_cy, best_tier, cost, _thr_mx, _thr_my, (closest_et and closest_dist or -1)))
+        if _kind == "offensive" then
+          print2(string.format(
+            "BUILD_TRIGGER t=%d kind=offensive spot=(%d,%d) tier=%d cost=%.0f enemy=(%d,%d)@%.1ft support=none",
+            state.tick or 0, best_cx, best_cy, best_tier, cost,
+            _thr_mx, _thr_my, closest_dist))
+        else
+          print2(string.format(
+            "BUILD_TRIGGER t=%d kind=panic spot=(%d,%d) tier=%d cost=%.0f imdanger=%.1f vuln=%.1f thresh=%.1f",
+            state.tick or 0, best_cx, best_cy, best_tier, cost,
+            state.imdanger or -1, state.vuln or -1, _panic_thresh or -1))
+        end
         -- Build-gate urgency for the panic drop. This return happens BEFORE the
         -- portfolio block below runs, so there is no pf_max_deficit to pass —
         -- deficit 0 is the honest answer here, and the flat emergency term is
