@@ -4159,6 +4159,34 @@ function M.update_attack_substate(goal, state, world, info)
       if reason then
         print(string.format(TAG ..
           " SANITY: shot path blocked (%s) in %s — replanning", reason, sub))
+        -- A PILL in the line does not move: replanning to the same angle just
+        -- loops (20260831_092854 bot2: four SANITY_REPLANs on pill 6 at
+        -- (127,139), same standoff every time, then a blocker dropped beside
+        -- it and the LGM stranded). Ban the chosen angle bucket and its two
+        -- neighbours on this pill -- same mechanism as the approach timeout,
+        -- which the spot scan honours -- so the next plan_position picks a
+        -- line the pill is not in. After SANITY_PILL_REPLANS_MAX of these
+        -- on one take, abandon it: every workable angle is blocked.
+        if reason:sub(1, 7) == "pill at" then
+          goal._sanity_pill_replans = (goal._sanity_pill_replans or 0) + 1
+          if goal._chosen_deg then
+            local pkey = pill.my * 256 + pill.mx
+            state.banned_pill_angles = state.banned_pill_angles or {}
+            local pill_bans = state.banned_pill_angles[pkey]
+            if not pill_bans then
+              pill_bans = {}
+              state.banned_pill_angles[pkey] = pill_bans
+            end
+            local bucket = math.floor((goal._chosen_deg % 360) / 5) * 5
+            for _, off in ipairs({ -5, 0, 5 }) do
+              pill_bans[(bucket + off) % 360] = now + 9000
+            end
+          end
+          if goal._sanity_pill_replans >= (C.SANITY_PILL_REPLANS_MAX or 3) then
+            clear_attack_goal(state, "shot path blocked by our own pill on every tried angle")
+            return
+          end
+        end
         goal.substate                 = "plan_position"
         goal.scan_spots               = nil
         goal._shield_scan             = nil
@@ -4785,7 +4813,14 @@ function M.update_attack_substate(goal, state, world, info)
       pots = pots or {}
       local sorted = {}
       for _, p in ipairs(pots) do sorted[#sorted + 1] = p end
+      -- Closest-to-pill first, but slots that touch an existing friendly
+      -- pill go AFTER the rest (they were already penalised in the scan;
+      -- here they simply get built last, so a carried pill lands on a
+      -- slot that adds cover before one that mostly adds exposure).
       table.sort(sorted, function(a, b)
+        local aa = a.adj_friendly and 1 or 0
+        local ab = b.adj_friendly and 1 or 0
+        if aa ~= ab then return aa < ab end
         local da = (a.mx - pmx) * (a.mx - pmx) + (a.my - pmy) * (a.my - pmy)
         local db = (b.mx - pmx) * (b.mx - pmx) + (b.my - pmy) * (b.my - pmy)
         return da < db

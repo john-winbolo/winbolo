@@ -174,6 +174,11 @@ typedef struct {
      * (falls back to the PILL_SHOTS/WALL_SHOTS default for pill_wall_equiv). */
     int    num_pill_blockers;
     double pill_wall_equiv;
+    /* Per would-be (potential) blocker slot that touches an existing friendly
+     * pill (8-neighbour, pill_map==2): subtracted from the aim score. A
+     * penalty, never a rejection -- mirrors attack_shield.lua's
+     * SHIELD_ADJ_FRIENDLY_PENALTY (scan_c arg 24; 0 disables). */
+    double adj_friendly_penalty;
 } ScanCfg;
 
 /* ── Per-brain state ──────────────────────────────────────────────── */
@@ -573,6 +578,25 @@ static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
             double cover = welt * WALL_SHOTS;
             if (cover > COVER_TARGET) cover = COVER_TARGET;
             double aim_score = cover + built_bonus * sub_na - BUILD_COST * sub_np;
+            /* Mirror of attack_shield.lua score_candidate: each buildable slot
+             * that touches an existing friendly pill costs adj_friendly_penalty.
+             * Not a rejection -- there are takes where it is still the slot. */
+            if (cfg->adj_friendly_penalty > 0.0) {
+                int sub_np_adj = 0;
+                for (int sk = 0; sk < sub_n; sk++) {
+                    if (sub_act[sk]) continue;
+                    int adj = 0;
+                    for (int ndy = -1; ndy <= 1 && !adj; ndy++) {
+                        for (int ndx = -1; ndx <= 1 && !adj; ndx++) {
+                            if (ndx == 0 && ndy == 0) continue;
+                            int pci = lgm_cache_idx(sub_dx[sk] + ndx, sub_dy[sk] + ndy);
+                            if (pci >= 0 && ctx->pill_map[pci] == 2) adj = 1;
+                        }
+                    }
+                    if (adj) sub_np_adj++;
+                }
+                aim_score -= cfg->adj_friendly_penalty * (double)sub_np_adj;
+            }
 
             int left = 0;
             for (int j = i - 1; j >= 0; j--) {
@@ -648,6 +672,7 @@ static int l_run_neighbor_bonus(lua_State *L) {
     /* Optional: dropped-pillbox blocker budget + wall-equivalent (args 13/14). */
     cfg.num_pill_blockers = (int)luaL_optinteger(L, 13, 0);
     cfg.pill_wall_equiv   = luaL_optnumber(L, 14, 0.0);
+    cfg.adj_friendly_penalty = luaL_optnumber(L, 15, 0.0);
 
     if (n_cands > SLATE_MAX_CANDS) n_cands = SLATE_MAX_CANDS;
     if (n_aims  > SLATE_MAX_AIMS)  n_aims  = SLATE_MAX_AIMS;
@@ -1005,6 +1030,7 @@ static int l_scan_c(lua_State *L) {
     if (lua_gettop(L) >= 23) {
         cfg.num_pill_blockers = (int)luaL_checkinteger(L, 22);
         cfg.pill_wall_equiv   = luaL_checknumber(L, 23);
+        cfg.adj_friendly_penalty = luaL_optnumber(L, 24, 0.0);
     }
 
     /* Stack-local 17×17 local pill map centred on pill tile */

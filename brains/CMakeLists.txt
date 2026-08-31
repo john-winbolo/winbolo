@@ -4,11 +4,25 @@
 # bot_brains_static, instead of recompiling them per-binary. Every
 # binary that links luabrainshandler.c links this library to pull in
 # the per-tick registrations and bot-specific header search paths.
-# Adding a new bot's c/ subdirectory is picked up automatically at
-# configure time via CONFIGURE_DEPENDS.
+# ONE brain's c/ directory is compiled: WINBOLO_BRAIN_C_DIR (default the
+# active GoalHunter). The frozen older brains (1.5, 1.6) carry their own
+# c/ copies with the SAME symbol names (naShieldStampRegister,
+# naThreatRegister, ...). Globbing every version compiled them all into
+# this lib, the linker kept the FIRST copy (LNK4006 "second definition
+# ignored") and silently dropped the rest -- so every brain, including the
+# active one, was running GoalHunter_1.5's bindings, and an edit to the
+# active version's c/ never reached the binary. The older brains' Lua
+# calls the same API and never passed the newer optional arguments, so
+# linking the active copy for all of them is what was effectively
+# happening anyway, now made explicit.
+set(WINBOLO_BRAIN_C_DIR "GoalHunter_1.7" CACHE STRING
+    "brains/<dir>/c is the one set of brain C bindings compiled and linked (all brain versions share it)")
 
 file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/*/c/*.c")
+    "${CMAKE_CURRENT_SOURCE_DIR}/${WINBOLO_BRAIN_C_DIR}/c/*.c")
+if(NOT BOT_C_SOURCES)
+    message(FATAL_ERROR "brains/${WINBOLO_BRAIN_C_DIR}/c has no .c sources (WINBOLO_BRAIN_C_DIR)")
+endif()
 
 add_library(bot_brains_static STATIC ${BOT_C_SOURCES})
 

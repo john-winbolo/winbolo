@@ -369,6 +369,30 @@ end
 
 -- Score one candidate position fully (all 5 aims + return fire).
 -- Returns the populated candidate table.
+-- Is a live, deployed friendly pill in the 8 tiles around (mx,my)? Used to
+-- penalise (and build last) shield slots that would put a new pill right
+-- beside an existing one. Shared with attack.lua's build-order sort.
+function M.adjacent_friendly_pill(world, mx, my)
+  local pill_at = world and world.pill_at
+  if not pill_at then return false end
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if not (dx == 0 and dy == 0) then
+        local plist = pill_at[(my + dy) * 256 + (mx + dx)]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0
+               and not e.pill.in_tank then
+              return true
+            end
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
 local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, num_pill_blockers, pill_we)
   local pmx, pmy = pill.mx, pill.my
   local mx, my = cand.mx, cand.my
@@ -468,6 +492,16 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
       local target = C.PPT_COVER_TARGET_SHOTS or 15
       if cover > target then cover = target end
       aim_score = cover + M.BUILT_BONUS * actual_n - (potential_n)
+      -- Would-be blocker slots touching an existing friendly pill: a
+      -- penalty (SHIELD_ADJ_FRIENDLY_PENALTY each), never a rejection --
+      -- see constants.lua. Tagged on the slot too, so the build order
+      -- can put them last.
+      for _, pb in ipairs(potential_blockers) do
+        pb.adj_friendly = M.adjacent_friendly_pill(world, pb.mx, pb.my) or nil
+        if pb.adj_friendly then
+          aim_score = aim_score - (C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)
+        end
+      end
     end
     cand.aims[ai] = {
       tiles               = out_tiles,
@@ -612,7 +646,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       no_builder and true or false,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
       NUM, SDG,
-      num_pill_blockers, PILL_WE)
+      num_pill_blockers, PILL_WE,
+      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)   -- arg 24: C mirror of the adjacency penalty
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,
@@ -632,6 +667,9 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       end
       for k = 0, n_pot - 1 do
         pot[k+1] = { mx = pmx + r[22+k], my = pmy + r[27+k] }
+        -- Same tag the Lua scorer sets: the build order puts these last.
+        -- (The C scorer's SHIELD_ADJ_FRIENDLY_PENALTY mirror is in gh_shield.)
+        pot[k+1].adj_friendly = M.adjacent_friendly_pill(world, pot[k+1].mx, pot[k+1].my) or nil
       end
       local best = {
         kind = "candidate",
@@ -955,7 +993,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       #candidates, #AIM_OFFSETS,
       M.SCORE_PER_SLOT, M.BUILT_BONUS, M.NEIGHBOR_BONUS,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
-      num_pill_blockers, PILL_WE)
+      num_pill_blockers, PILL_WE,
+      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)   -- arg 15: C mirror of the adjacency penalty
 
     local RS = 29  -- RESULT_STRIDE (9 scalars + 5*2 actual + 5*2 potential)
     for ci = 1, #candidates do
