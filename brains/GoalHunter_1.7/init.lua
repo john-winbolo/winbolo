@@ -2878,10 +2878,48 @@ function Brain.think(info)
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
                                  C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
       state._tail_sig, state._tail_tick = _tsig, now
+      state._tail_rebuilt_tick = now
       print2(string.format("TAIL_REBUILD t=%d sig=%d %.2fms",
         now, _tsig, (clock_us() - _t_tail) / 1000))
     end
     cpf.merge_influence_tail()
+    -- What the tail did this rebuild: how much ground each side's tail
+    -- covers, how much of it actually won the merge (was not already
+    -- stamped), and the front line -- sign-change cells -- on the stamps
+    -- alone vs on the merged grid. front_after > front_before is the tail
+    -- making a line the discs could not; won=0 means it claimed nothing new.
+    if BRAIN_DEBUG_MODE and state._tail_rebuilt_tick == now then
+      local tp, tn, wp, wn, fb, fa, tie = cpf.influence_tail_stats()
+      print2(string.format(
+        "TAIL_STATS t=%d tail_cells +%d -%d | won_merge +%d -%d | front stamps=%d merged=%d (%+d) | ties=%d",
+        now, tp, tn, wp, wn, fb, fa, fa - fb, tie))
+      -- ASCII picture of the merged grid, 64x64 around the tank, one char
+      -- per tile:  '#' friendly stamp  '+' friendly tail  '=' hostile stamp
+      -- '-' hostile tail  'F' front-line cell (sign change)  ' ' unclaimed.
+      if C.EXPAND_DEBUG_MAP then
+        local cx, cy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+        local x0, y0 = math.max(0, cx - 32), math.max(0, cy - 32)
+        print2(string.format("TAIL_MAP t=%d origin=(%d,%d) 64x64", now, x0, y0))
+        for y = y0, math.min(255, y0 + 63) do
+          local row = {}
+          for x = x0, math.min(255, x0 + 63) do
+            local v = cpf.influence_at(x, y)
+            local ch = " "
+            if v ~= 0 then
+              local n, s, w, e = cpf.influence_at(x, y - 1), cpf.influence_at(x, y + 1),
+                                 cpf.influence_at(x - 1, y), cpf.influence_at(x + 1, y)
+              local front = (v > 0 and (n < 0 or s < 0 or w < 0 or e < 0))
+                         or (v < 0 and (n > 0 or s > 0 or w > 0 or e > 0))
+              if front then ch = "F"
+              elseif cpf.influence_tail_at(x, y) ~= 0 then ch = (v > 0) and "+" or "-"
+              else ch = (v > 0) and "#" or "=" end
+            end
+            row[#row + 1] = ch
+          end
+          print2("TAIL_MAP " .. table.concat(row))
+        end
+      end
+    end
   end
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).

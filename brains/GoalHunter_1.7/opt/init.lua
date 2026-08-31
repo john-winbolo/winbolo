@@ -2180,8 +2180,14 @@ function Brain.think(info)
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
                                  C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
       state._tail_sig, state._tail_tick = _tsig, now
+      state._tail_rebuilt_tick = now
     end
     cpf.merge_influence_tail()
+    -- What the tail did this rebuild: how much ground each side's tail
+    -- covers, how much of it actually won the merge (was not already
+    -- stamped), and the front line -- sign-change cells -- on the stamps
+    -- alone vs on the merged grid. front_after > front_before is the tail
+    -- making a line the discs could not; won=0 means it claimed nothing new.
   end
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).

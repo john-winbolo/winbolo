@@ -939,6 +939,40 @@ void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf) {
   }
 }
 
+/* Sign-change cells (the front-line rule) over an arbitrary grid. */
+static int count_front_cells(const int16_t *g) {
+  int x, y, n = 0;
+  for (y = 1; y < MAP_SIZE - 1; y++) {
+    for (x = 1; x < MAP_SIZE - 1; x++) {
+      int v = g[y * MAP_SIZE + x];
+      int a, b, c, d;
+      if (v == 0) continue;
+      a = g[(y - 1) * MAP_SIZE + x]; b = g[(y + 1) * MAP_SIZE + x];
+      c = g[y * MAP_SIZE + x - 1];   d = g[y * MAP_SIZE + x + 1];
+      if ((v > 0 && (a < 0 || b < 0 || c < 0 || d < 0)) ||
+          (v < 0 && (a > 0 || b > 0 || c > 0 || d > 0))) n++;
+    }
+  }
+  return n;
+}
+
+void brainPathfinderInfluenceTailStats(BrainPathfinder *pf, int *out) {
+  int idx;
+  int tail_pos = 0, tail_neg = 0, won_pos = 0, won_neg = 0, tie = 0;
+  if (!pf || !out) return;
+  for (idx = 0; idx < 65536; idx++) {
+    int t = pf->expand_grid[idx], b = pf->influence_base_grid[idx];
+    int ab = b < 0 ? -b : b, at = t < 0 ? -t : t;
+    if (t > 0) tail_pos++; else if (t < 0) tail_neg++;
+    if (t == -1) tie++;
+    if (at > ab) { if (t > 0) won_pos++; else won_neg++; }
+  }
+  out[0] = tail_pos; out[1] = tail_neg; out[2] = won_pos; out[3] = won_neg;
+  out[4] = count_front_cells(pf->influence_base_grid);
+  out[5] = count_front_cells(pf->influence_grid);
+  out[6] = tie;
+}
+
 int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y) {
   if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
     int idx = y * MAP_SIZE + x;

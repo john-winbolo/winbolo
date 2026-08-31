@@ -1371,6 +1371,15 @@ static int l_cpf_merge_influence_tail(lua_State *L) {
   return 0;
 }
 
+static int l_cpf_influence_tail_stats(lua_State *L) {
+  CPF_GET(L);
+  int s[7] = {0,0,0,0,0,0,0};
+  int i;
+  brainPathfinderInfluenceTailStats(pf, s);
+  for (i = 0; i < 7; i++) lua_pushinteger(L, s[i]);
+  return 7;
+}
+
 static int l_cpf_influence_tail_at(lua_State *L) {
   CPF_GET(L);
   lua_pushinteger(L, (int)brainPathfinderInfluenceTailAt(pf, (int)luaL_checkinteger(L, 1),
@@ -2220,6 +2229,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_rebuild_influence_tail", l_cpf_rebuild_influence_tail },
     { "cpf_merge_influence_tail",   l_cpf_merge_influence_tail },
     { "cpf_influence_tail_at",      l_cpf_influence_tail_at },
+    { "cpf_influence_tail_stats",   l_cpf_influence_tail_stats },
     { "cpf_path_to",           l_cpf_path_to },
     { "cpf_cost_to",           l_cpf_cost_to },
     { "cpf_cost_to_reset",     l_cpf_cost_to_reset },

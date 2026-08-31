@@ -429,6 +429,10 @@ void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int 
 void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf);
 /* The tail value at (x,y) if the tail won the last merge there, else 0. */
 int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y);
+/* Diagnostics after a merge: out[7] = { tail cells +, tail cells -, cells
+ * where the tail WON the merge +, -, front-line cells on the stamps alone,
+ * front-line cells on the merged grid, cells at the -1 tie value }. */
+void brainPathfinderInfluenceTailStats(BrainPathfinder *pf, int *out);
 
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);

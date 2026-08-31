@@ -31,8 +31,18 @@ static bool     g_failed   = false;   /* gave up opening (no dir / gzopen err) *
 static uint32_t g_lastTick = 0xFFFFFFFFu;
 static int      g_openAttempts = 0;
 static char     g_sessionDir[512] = {0};  /* resolved DEBUG_SESSION_DIR */
-static bool     g_skipViz[256] = {0};     /* overlay viz_idx values to drop */
+static bool     g_skipViz[256] = {0};     /* overlay viz_idx values to drop (fallback set) */
 static bool     g_haveSkip = false;
+/* Per-slot skip sets. Every brain self-assigns its overlay viz_idx values
+ * from ITS OWN sorted id list, so two different brains (GoalHunter 1.6 and
+ * 1.7 in a 2v2) number the same category differently. One skip set taken
+ * from bot 0 therefore dropped the WRONG categories from every bot running
+ * the other brain -- 1.7's pill_portfolio vanished from recordings while
+ * 1.6's showed. Slots without their own set (bots created after the file
+ * was opened) fall back to g_skipViz. */
+static bool     g_skipVizSlot[MAX_TANKS][256];
+static bool     g_haveSkipSlot[MAX_TANKS];
+static uint32_t g_legendBytes = 0;
 
 /* Map-terrain delta tracking. g_prevMap holds the last frame's terrain so a
  * non-keyframe frame writes only changed tiles. */
@@ -271,30 +281,77 @@ static bool ensureOpen(ServerSim *sim) {
     gzwrite(g_gz, &hdr, (unsigned)sizeof hdr);
 
     /* One-time legend: overlay viz_idx -> category name, so the loader can
-     * label/filter recorded overlays. Taken from the first bot that has a
-     * legend (visualizer brains share the same one), so a non-viz bot in a
-     * lower slot (e.g. a scripted test victim) doesn't blank it out. */
+     * label/filter recorded overlays. The blob is ONE length-prefixed string
+     * (opaque to the walker / splitter / peek), but it now carries a legend
+     * PER BOT SLOT as well as the global one:
+     *   {"0":"name",...,"slots":{"<slot>":{"0":"name",...},...}}
+     * Brains number their categories independently (sorted-id self-assign),
+     * so a single legend only ever described the first viz bot's brain and
+     * mislabelled every bot on a different brain. The global map (first viz
+     * bot) stays first so a loader that only knows the old shape still reads
+     * it; slots created after the file opened fall back to it. */
     char *legend = NULL;
     int lslot = firstVizBotSlot(sim, &legend);
-    uint32_t llen = legend ? (uint32_t)strlen(legend) : 0u;
-    gzwrite(g_gz, &llen, (unsigned)sizeof llen);
-    if (llen) gzwrite(g_gz, legend, llen);
+    {
+        size_t cap = (legend ? strlen(legend) : 2) + 64;
+        char  *slotLegend[MAX_TANKS];
+        int    nSlots = 0;
+        memset(slotLegend, 0, sizeof slotLegend);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (!serverSimIsBot(sim, (BYTE)i)) continue;
+            char *lj = serverSimBotEvalLuaString(sim, (BYTE)i, "return brain.viz_legend_json()");
+            if (lj && lj[0] && lj[0] == '{') { slotLegend[i] = lj; cap += strlen(lj) + 16; nSlots++; }
+            else if (lj) free(lj);
+        }
+        char *combined = (char *)malloc(cap);
+        size_t n = 0;
+        if (combined) {
+            const char *g0 = (legend && legend[0] == '{') ? legend : "{}";
+            size_t gl = strlen(g0);
+            /* Global legend minus its closing brace, then the slots object. */
+            memcpy(combined, g0, gl - 1); n = gl - 1;
+            if (nSlots) {
+                n += (size_t)snprintf(combined + n, cap - n, "%s\"slots\":{", gl > 2 ? "," : "");
+                int first = 1;
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    if (!slotLegend[i]) continue;
+                    n += (size_t)snprintf(combined + n, cap - n, "%s\"%d\":%s",
+                                          first ? "" : ",", i, slotLegend[i]);
+                    first = 0;
+                }
+                n += (size_t)snprintf(combined + n, cap - n, "}");
+            }
+            n += (size_t)snprintf(combined + n, cap - n, "}");
+        }
+        for (int i = 0; i < MAX_TANKS; i++) if (slotLegend[i]) free(slotLegend[i]);
+        uint32_t llen = combined ? (uint32_t)n : 0u;
+        gzwrite(g_gz, &llen, (unsigned)sizeof llen);
+        if (llen) gzwrite(g_gz, combined, llen);
+        free(combined);
+        g_legendBytes = llen;
+    }
     if (legend) free(legend);
 
     /* Recorder skip set: viz_idx values the brain flags as too-heavy/cosmetic
      * (label_overlays, attack_scan_spots_all_pills). These overlay commands
-     * are dropped from disk (still drawn live in BrainTest). CSV of indices. */
-    char *skipcsv = NULL;
-    if (lslot >= 0) {
-        skipcsv = serverSimBotEvalLuaString(sim, (BYTE)lslot,
-                                            "return brain.viz_record_skip_csv()");
-    }
+     * are dropped from disk (still drawn live in BrainTest). CSV of indices,
+     * asked of EVERY bot (indices are per-brain, see g_skipVizSlot); the
+     * first viz bot's set doubles as the fallback for late-created slots. */
     int nskip = 0;
-    if (skipcsv) {
+    memset(g_skipVizSlot, 0, sizeof g_skipVizSlot);
+    memset(g_haveSkipSlot, 0, sizeof g_haveSkipSlot);
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        char *skipcsv = serverSimBotEvalLuaString(sim, (BYTE)i,
+                                                  "return brain.viz_record_skip_csv()");
+        if (!skipcsv) continue;
         const char *p = skipcsv;
         while (*p) {
             int v = atoi(p);
-            if (v >= 0 && v < 256 && !g_skipViz[v]) { g_skipViz[v] = true; g_haveSkip = true; nskip++; }
+            if (v >= 0 && v < 256) {
+                if (!g_skipVizSlot[i][v]) { g_skipVizSlot[i][v] = true; g_haveSkipSlot[i] = true; nskip++; }
+                if (i == lslot && !g_skipViz[v]) { g_skipViz[v] = true; g_haveSkip = true; }
+            }
             while (*p && *p != ',') p++;
             if (*p == ',') p++;
         }
@@ -302,8 +359,8 @@ static bool ensureOpen(ServerSim *sim) {
     }
 
     fprintf(stderr, "brain_record: recording brain decisions to '%s' "
-                    "(viz legend %u bytes, %d skipped viz)\n",
-            path, (unsigned)llen, nskip);
+                    "(viz legend %u bytes, %d skipped viz across slots)\n",
+            path, (unsigned)g_legendBytes, nskip);
     return true;
 }
 
@@ -485,14 +542,17 @@ void brainRecordTick(ServerSim *sim) {
             OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
             uint32_t ocount = (ovl && ovl->count > 0) ? (uint32_t)ovl->count : 0;
             uint32_t kept = ocount;
-            if (g_haveSkip && ocount) {
+            /* This slot's own skip set when it has one, else the fallback. */
+            const bool *skip = (slot < MAX_TANKS && g_haveSkipSlot[slot]) ? g_skipVizSlot[slot]
+                             : (g_haveSkip ? g_skipViz : NULL);
+            if (skip && ocount) {
                 kept = 0;
                 for (uint32_t k = 0; k < ocount; k++)
-                    if (!g_skipViz[ovl->cmds[k].viz_idx]) kept++;
+                    if (!skip[ovl->cmds[k].viz_idx]) kept++;
             }
             wr_u32(kept);
             for (uint32_t k = 0; k < ocount; k++) {
-                if (g_haveSkip && g_skipViz[ovl->cmds[k].viz_idx]) continue;
+                if (skip && skip[ovl->cmds[k].viz_idx]) continue;
                 wr_overlay_packed(&ovl->cmds[k]);
             }
             g_pfOvlCmds += kept;
@@ -567,6 +627,8 @@ void brainRecordEndGame(void) {
     g_frameCount   = 0;
     g_haveSkip     = false;
     memset(g_skipViz, 0, sizeof g_skipViz);
+    memset(g_skipVizSlot, 0, sizeof g_skipVizSlot);
+    memset(g_haveSkipSlot, 0, sizeof g_haveSkipSlot);
     if (g_perf) { fclose(g_perf); g_perf = NULL; }
     g_perfTried = false;
     g_perfWallStart = 0;
@@ -588,6 +650,8 @@ void brainRecordShutdown(void) {
     g_frameCount = 0;
     g_haveSkip   = false;
     memset(g_skipViz, 0, sizeof g_skipViz);
+    memset(g_skipVizSlot, 0, sizeof g_skipVizSlot);
+    memset(g_haveSkipSlot, 0, sizeof g_haveSkipSlot);
     if (g_perf) { fclose(g_perf); g_perf = NULL; }
     g_perfTried = false;
     g_perfWallStart = 0;
