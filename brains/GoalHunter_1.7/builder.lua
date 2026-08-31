@@ -33,6 +33,7 @@ local U      = require("util")
 -- below uses it. No cycle: attack.lua requires neither builder nor goals.
 local attack = require("attack")
 local danger = require("danger")
+local threat = require("threat")   -- coverage_at, for the dispatch trigger
 local log    = require("logger")
 local PF     = require("pathfinder")
 local print2 = require("print2")
@@ -40,33 +41,12 @@ local viz    = require("viz")
 
 local M = {}
 
--- -------------------------------------------------------------------------
--- place_urgency: how far a placement may raise the LGM build-danger gate.
--- -------------------------------------------------------------------------
--- Shared by EVERY creator of a place_pill_strategic goal — the normal
--- placement scan and offensive_build in goals.lua, and the emergency drop in
--- init.lua — so the arithmetic lives in exactly one place and the
--- PLACE_PILL_GATE log line is reproducible from the constants alone. Creators
--- stamp all four returned values onto the goal (_urgency + the three
--- components); a goal that stamps nothing reads 0 and gets the plain
--- LGM_DANGER_HIGH, which is the correct default for a non-placement goal.
---   carried   — info.carried_pills
---   deficit   — pf_max_deficit; pass 0 when the caller has no portfolio figure
---               (offensive_build and the emergency drop return before/without one,
---               and the term honestly contributes nothing for them)
---   emergency — true for a panic / about-to-die drop (goal._place_forced)
--- Returns: total (capped), carry term, deficit term, emergency term.
--- See the LGM_GATE_URGENCY_* block in constants.lua for the sizing rationale.
-function M.place_urgency(carried, deficit, emergency)
-  local c = math.min(C.LGM_GATE_URGENCY_PILL_MAX or 0,
-                     math.max(0, (carried or 0) - 1)
-                       * (C.LGM_GATE_URGENCY_PER_PILL or 0))
-  local d = math.min(C.LGM_GATE_URGENCY_DEFICIT_MAX or 0,
-                     math.max(0, deficit or 0)
-                       * (C.LGM_GATE_URGENCY_PER_DEFICIT or 0))
-  local e = emergency and (C.LGM_GATE_URGENCY_EMERGENCY or 0) or 0
-  return math.min(C.LGM_GATE_URGENCY_CAP or 0, c + d + e), c, d, e
-end
+-- place_urgency is gone. It existed only to raise the LGM build-danger gate,
+-- and that gate is now neutralised (LGM_DANGER_YOLO) -- it sampled a straight
+-- line the builder does not walk, against a danger field built for tanks, and
+-- being shot at closed it permanently. The two scores in danger.lua make that
+-- judgement with better information. state._place_urgency is a DIFFERENT thing
+-- (a 0..1 search-radius scalar in goals.lua) and survives.
 
 -- Panic guard-pill spot search. Shared by builder's in-combat guard drop AND
 -- goals.lua's offensive_build (eval_place_pill_strategic) so the two can't drift —
@@ -80,7 +60,7 @@ end
 -- considered: { mx, my, dist, aoff, rej, tier }) for the panic_build viz.
 -- `state` is optional and used only for the blocked-tile skip: a spot the
 -- place_pill gate breaker (decide() below) gave up on is held in state.blocked
--- for PLACE_GATE_BLOCK_TICKS, and pick_goal drops any pool candidate sitting on
+-- for PLACE_GIVEUP_BLOCK_TICKS, and pick_goal drops any pool candidate sitting on
 -- one. offensive_build FIREs its goal before the strategic scan can offer an
 -- alternative, so without this check it keeps electing the abandoned tile,
 -- pick_goal throws away the only pool-8 candidate, and placement offers NOTHING
@@ -230,6 +210,29 @@ function M.guard_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   return best_cx, best_cy, best_tier, cands, best_cls
 end
 
+-- Should the builder be sent from where we stand, rather than the tank driving
+-- onto the spot first? Any ONE of three:
+--
+--   vulnerability <= 30      we stand to lose too much to risk the drive
+--   imdanger      <= 30      too much is arriving to risk it
+--   coverage_at(target) > 0  the SPOT is inside a hostile pill's reach
+--
+-- The third is what fixes the original failure, and it is independent of how
+-- the bot is doing: bot2 was healthy, and the spot was the problem, not the
+-- bot. threat.coverage_at is a plain O(1) count of hostile pills covering a
+-- tile. Greater than zero means standing there means being shot at, so don't
+-- stand there -- at any armour.
+--
+-- A healthy bot placing on safe ground still drives up and places precisely,
+-- which is cheaper and more accurate. Only a covered or dangerous placement
+-- forces the stand-off. Returns the reason, so the log can say which fired.
+function M.dispatch_trigger(state, world, px, py)
+  if (state.vuln or 100) <= (C.PLACE_DISPATCH_VULN or 30) then return "vuln" end
+  if (state.imdanger or 100) <= (C.PLACE_DISPATCH_IMDANGER or 30) then return "imdanger" end
+  if (threat.coverage_at(px, py) or 0) > 0 then return "coverage" end
+  return nil
+end
+
 -- Support-pill veto (shared by builder's in-combat guard drop AND goals.lua's
 -- offensive build, same pairing as guard_build_spot): a live friendly/allied
 -- pill within SUPPORT_PILL_RADIUS already does the guard-pill job — placing
@@ -372,11 +375,33 @@ function M.set_mode(state, world, info, goal)
     local tmx = bit.rshift(info.tankx, 8)
     local tmy = bit.rshift(info.tanky, 8)
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
+    -- Send the builder from where we stand when any dispatch trigger fires,
+    -- rather than driving onto the spot first. The old rule was pdist <= 1 for
+    -- a normal placement, so the tank had to close the distance itself -- and
+    -- arriving is what made the answer "no". A healthy bot on safe ground still
+    -- drives up and places precisely; only a covered or dangerous placement
+    -- forces the stand-off.
+    local trigger = M.dispatch_trigger(state, world, goal.mx, goal.my)
+    -- PLACE_EMERGENCY_MAX_DIST stays. It is NOT superseded by the triggers:
+    -- there are reachable windows where a build goal is active and none of them
+    -- fire -- an ally engaging the only nearby enemy removes it from odds
+    -- (imdanger 50), or a friendly pill covers us but not the enemy (cover +30,
+    -- odds -35 => 45, and the narrowed veto correctly lets the build through).
+    -- A healthy bot would then fall back to pdist <= 1 and drive to within one
+    -- tile of a spot up to 5 tiles out TOWARD the enemy, which is the failure
+    -- this plan opens with. Do not "clean up" this line as redundant.
     local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
+                         or (trigger ~= nil and pdist <= C.PLACE_DISPATCH_MAX_DIST)
                          or pdist <= 1
     local _pp_ok = close_enough and (info.carried_pills or 0) > 0
        and info.man_status == C.LGM_INTANK and not info.inboat
     print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_forced or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), _pp_ok and "place_pill" or "no-dispatch"))
+    if _pp_ok then
+      print2(string.format("DISPATCH t=%d target=(%d,%d) reason=%s pdist=%d coverage=%d v=%.1f i=%.1f",
+        state.tick or 0, goal.mx, goal.my, trigger or "close", pdist,
+        threat.coverage_at(goal.mx, goal.my) or 0,
+        state.vuln or -1, state.imdanger or -1))
+    end
     if _pp_ok then
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }
@@ -1015,21 +1040,36 @@ function M.decide(state, world, info, now)
     -- seek-trees redirect in goals sends the tank to harvest instead.
     local have_trees = (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4)
     local can_reach  = have_pill and have_trees and lgm_can_reach(info, px, py)
-    -- Urgency-raised danger gate. A flat LGM_DANGER_HIGH (80) can never pass a
-    -- cell a predicted shell crosses (DANGER_SHELL_IMPACT = 100), so being shot
-    -- at closed this gate permanently — and being shot at is exactly when a
-    -- guard pill on the ground pays. Every creator of a place_pill_strategic
-    -- goal stamps goal._urgency via M.place_urgency above (carry + portfolio
-    -- deficit + a flat emergency term for panic drops); the cap keeps the raise
-    -- bounded so a shell over a hot pill still refuses. Re-clamped here so a
-    -- creator that forgets to cap can't blow past the ceiling. A goal with no
-    -- _urgency (any non-placement goal reaching this branch) keeps the plain 80.
     local g          = state.goal
-    local urgency    = math.min(C.LGM_GATE_URGENCY_CAP or 0,
-                                math.max(0, (g and g._urgency) or 0))
-    local threshold  = (C.LGM_DANGER_HIGH or 80) + urgency
-    local path_safe  = can_reach and danger.lgm_path_safe_enhanced(info, px, py, threshold, now, world)
-    local gate_ok    = have_pill and have_trees and can_reach and path_safe
+    -- Mine and map-edge: the ENGINE refuses to build on either, and the brain
+    -- never looked. minesExistPos (lgm.c) sits in the proceed block after the
+    -- request switch, so it gates every request kind -- and it returns TRUE
+    -- UNCONDITIONALLY inside the map-edge band (global.h), so an edge tile
+    -- refuses whether or not a mine is there. Without mirroring both, an edge
+    -- placement refuses forever with nothing in the log to say why.
+    local edge_band  = px <= C.MAP_EDGE_BAND or px >= (C.MAP_W - C.MAP_EDGE_BAND)
+                    or py <= C.MAP_EDGE_BAND or py >= (C.MAP_W - C.MAP_EDGE_BAND)
+    -- Same test demine.lua uses: the mine flag on the raw brain-map byte. This
+    -- is player-VISIBLE mine knowledge, which is exactly what minesExistPos
+    -- checks engine-side, so the brain is not being asked to know more than the
+    -- engine does.
+    local has_mine   = (bit.band(U.traw(px, py), TERRAIN_MINE_FLAG)) ~= 0
+    -- The danger gate is gone: LGM_DANGER_YOLO is a threshold nothing exceeds,
+    -- so path_safe is always true and the sample is not even taken.
+    --
+    -- lgm_path_safe_enhanced samples a STRAIGHT LINE the builder does not walk,
+    -- against a danger field built for TANKS -- and pillboxes never target
+    -- builders (pillsUpdate picks the closest non-allied TANK), a builder dies
+    -- to explosion splash. So it refused on a model that does not apply to the
+    -- unit it protects, and it duplicated a judgement the two scores now make
+    -- with better information. Being shot at closed it permanently, and being
+    -- shot at is exactly when a guard pill on the ground pays.
+    --
+    -- Early-return rather than sampling a result we ignore.
+    local threshold  = C.LGM_DANGER_YOLO
+    local path_safe  = true
+    local gate_ok    = have_pill and have_trees and can_reach
+                       and not has_mine and not edge_band
 
     -- Gate-failure breaker (see PLACE_GATE_* in constants.lua). Count
     -- CONSECUTIVE refusals of one drop spot so a permanently-refused gate stops
@@ -1064,12 +1104,11 @@ function M.decide(state, world, info, now)
       b.place_gate_key, b.place_gate_fails = gkey, 1
     end
 
-    print2(string.format("PLACE_PILL_GATE t=%d target=(%d,%d) carried=%d trees=%d/%d reach=%s safe=%s thresh=%d = base{%d} + urgency{%d} = min(cap{%d}, carry{%d} + deficit{%d} + emerg{%d}) emergency=%s fails=%d/%d",
+    print2(string.format("PLACE_PILL_GATE t=%d target=(%d,%d) carried=%d trees=%d/%d reach=%s mine=%s edge=%s forced=%s refused=%d/%d",
       now, px, py, info.carried_pills or 0, info.trees or 0, C.PILL_PLACE_TREE_COST or 4,
-      tostring(can_reach), tostring(path_safe), threshold, C.LGM_DANGER_HIGH or 80, urgency,
-      C.LGM_GATE_URGENCY_CAP or 0, (g and g._urg_carry) or 0, (g and g._urg_deficit) or 0,
-      (g and g._urg_emerg) or 0, tostring((g and g._place_forced) or false),
-      b.place_gate_fails or 0, C.PLACE_GATE_FAIL_TICKS or 100))
+      tostring(can_reach), tostring(has_mine), tostring(edge_band),
+      tostring((g and g._place_forced) or false),
+      b.place_gate_fails or 0, C.PLACE_REFUSE_GIVEUP_TICKS or 100))
 
     if gate_ok then
       log.reason("build", { mode = "place_pill", why = "placing pill",
@@ -1077,17 +1116,59 @@ function M.decide(state, world, info, now)
       return { x = px, y = py, action = BUILDMODE_PBOX }
     end
 
-    if (b.place_gate_fails or 0) >= (C.PLACE_GATE_FAIL_TICKS or 100) then
-      -- Give the spot up. Block the tile first — the placement scan, offensive_build's
-      -- panic search and init.lua's two carried-pill drops all consult
-      -- state.blocked, so none of them can hand the same winner straight back —
-      -- then clear the goal. decide() runs AFTER goal selection, so clearing
-      -- takes effect via the urgent replan on the NEXT tick, not this one.
-      U.set_blocked(state, gkey, now + (C.PLACE_GATE_BLOCK_TICKS or 600),
-                    "place_gate_refused")
+    -- Giving up. The gate-failure breaker is gone, so its replacement has to
+    -- cover EVERY way a placement can refuse forever. Four do:
+    --
+    --   (a) a dispatch trigger fired and the builder cannot walk it -- we have
+    --       already decided this is not an approach the tank should make, so
+    --       "drive closer until it can reach" is not on the table
+    --   (b) the tile has a mine
+    --   (c) the tile is in the map-edge band
+    --   (d) the gate has refused this target for PLACE_REFUSE_GIVEUP_TICKS
+    --       consecutive ticks -- unconditional, no trigger required
+    --
+    -- (d) is not optional. It covers the one corner the others miss: parked,
+    -- firing, refused, with no trigger live. A healthy bot with a safe
+    -- uncovered spot fires no dispatch trigger (correctly -- it should drive up
+    -- and place precisely), and if the spot is water-locked it can never reach
+    -- Manhattan 1 where lgm_can_reach returns true unconditionally, so it parks
+    -- and the gate refuses forever. The generic stuck detector would normally
+    -- clear that after 150 ticks, but fired_this_tick resets stuck_for on every
+    -- shot, so a bot shooting back never trips it. That is bot3's death at
+    -- 20260827: parked at (126,140), refusal repeating, armour 40 -> 0 with four
+    -- pills aboard. 100 ticks is sized against that incident -- bot3 was parked
+    -- 155 ticks before dying, so a 2-second trigger leaves room to abandon and
+    -- do something else while armour remains.
+    --
+    -- (a) is read LIVE, not from a stamp on the goal. Panic always implies a
+    -- trigger by the threshold algebra (vuln > 30 => threshold < 26 => imdanger
+    -- must be under 30 to have panicked; vuln <= 30 => the vuln trigger holds),
+    -- and decide() runs the gate on the same tick the goal is elected, so the
+    -- first refusal always happens while a trigger is live. Stamping would be
+    -- worse than useless -- it would forbid a healthy bot from driving to a
+    -- spot that became safe.
+    local giveup_reason
+    if has_mine then
+      giveup_reason = "mine"
+    elseif edge_band then
+      giveup_reason = "map_edge"
+    elseif not can_reach and M.dispatch_trigger(state, world, px, py) then
+      giveup_reason = "unreachable"
+    elseif (b.place_gate_fails or 0) >= (C.PLACE_REFUSE_GIVEUP_TICKS or 100) then
+      giveup_reason = "refused"
+    end
+    if giveup_reason and is_place_goal then
+      -- Block the tile first — the placement scan, the guard-spot search and
+      -- the emergency drop all consult state.blocked, so none of them can hand
+      -- the same winner straight back — then clear the goal. decide() runs
+      -- AFTER goal selection, so clearing takes effect via the urgent replan on
+      -- the NEXT tick, not this one.
+      U.set_blocked(state, gkey, now + (C.PLACE_GIVEUP_BLOCK_TICKS or 600),
+                    "place_giveup_" .. giveup_reason)
+      print2(string.format("PLACE_GIVEUP t=%d tile=(%d,%d) reason=%s blocked_until=%d",
+        now, px, py, giveup_reason, now + (C.PLACE_GIVEUP_BLOCK_TICKS or 600)))
       attack.clear_attack_goal(state, string.format(
-        "place_pill gate refused %dt at (%d,%d) — abandoning spot",
-        b.place_gate_fails or 0, px, py))
+        "place_pill given up at (%d,%d): %s", px, py, giveup_reason))
       b.place_gate_fails, b.place_gate_key = 0, nil
     end
     return nil

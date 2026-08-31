@@ -3481,13 +3481,14 @@ function Brain.think(info)
   -- non-zero. Without the freshness test a stale count would keep this true and
   -- strip the firing-is-progress exemption from a tank that has moved off the
   -- drop spot and is genuinely fighting — wrongly tripping stuck-flee.
-  local _bld = state.builder
-  local gate_stalled = state.goal.kind == "place_pill_strategic"
-                       and _bld ~= nil
-                       and (_bld.place_gate_fails or 0) > 0
-                       and _bld.place_gate_tick ~= nil
-                       and (now - _bld.place_gate_tick) <= (C.PLACE_GATE_STALE_TICKS or 2)
-  local fire_is_progress = fired_this_tick and not gate_stalled
+  -- The gate_stalled exemption is gone with the breaker it was built around.
+  -- It stripped the firing-is-progress reset while a placement gate kept
+  -- refusing, so a bot parked on an unplaceable spot and shooting back would
+  -- eventually trip stuck-flee. Give-up clause (d) in builder.decide now covers
+  -- that case directly -- it abandons the spot after PLACE_REFUSE_GIVEUP_TICKS
+  -- of consecutive refusals rather than waiting for the stuck detector to
+  -- notice -- so firing is simply progress again.
+  local fire_is_progress = fired_this_tick
   if fire_is_progress then
     -- Active firing is progress — reset the timer so a planted bot
     -- shooting defenders doesn't trip stuck-flee mid-take.

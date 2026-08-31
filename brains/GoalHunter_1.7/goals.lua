@@ -2361,8 +2361,6 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- raised gate was the one path getting urgency 0: in the 9k-tick check,
         -- 24 of 25 PLACE_PILL_GATE lines came from here, all reading urgency{0}
         -- while the tank sat at 10 armour holding 2 pills.
-        local _du, _duc, _dud, _due =
-          builder.place_urgency(info.carried_pills, 0, true)
         return {
           cost = cost,
           -- _place_forced: this is the threat-reactive "build while fighting"
@@ -2370,9 +2368,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           -- the flag builder.set_mode reads for the PLACE_EMERGENCY_MAX_DIST
           -- dispatch relaxation.
           goal = { kind = "place_pill_strategic", mx = best_cx, my = best_cy,
-                   wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_forced = true,
-                   _urgency = _du, _urg_carry = _duc, _urg_deficit = _dud,
-                   _urg_emerg = _due },
+                   wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_forced = true },
           desc = BRAIN_POOL_VIZ and string.format("offensive_build@(%d,%d) cost=%.0f thr@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
                  best_cx, best_cy, cost, _thr_mx, _thr_my,
                  path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_discount, C.STRATEGIC_PLACE_COST_MULT) or "",
@@ -2496,23 +2492,6 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     if d > pf_max_deficit then pf_max_deficit = d; pf_need_cat = cat end
   end
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
-
-  -- LGM build-gate urgency, hung on the goal below as _urgency and read by
-  -- builder.decide()'s place_pill branch. The inputs are the ones already
-  -- computed here to DISCOUNT the goal's cost — carried pills (multi_carry_mult)
-  -- and pf_max_deficit (imbalance_mult) — because they say the same thing about
-  -- the BUILD as they do about the choice: this pill needs to be in the ground.
-  -- Without it the gate is a fixed LGM_DANGER_HIGH (80) that a single predicted
-  -- shell path (DANGER_SHELL_IMPACT = 100) closes for good, so the tank most in
-  -- need of a guard pill is the one that can never place it. Not an emergency:
-  -- this is the routine, chosen-from-the-pool placement, so it gets no
-  -- emergency term (see the LGM_GATE_URGENCY_* comment in constants.lua).
-  -- Two clamped multiplies of integers we already have: no extra scanning, O(1).
-  -- NOT the same thing as state._place_urgency further down — that one is a
-  -- 0..1 scalar from carry TIME that only widens the search radius. This is a
-  -- danger-threshold raise in danger_at units.
-  local place_urgency, urg_carry, urg_deficit, urg_emerg =
-      builder.place_urgency(info.carried_pills, pf_max_deficit, false)
 
   -- Aggro builds sit deeper in enemy influence than the default radius reaches:
   -- the scan is tank-centric and the tank usually sits behind the front, so a
@@ -2905,6 +2884,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
                                       mc_extra * (C.STRATEGIC_PLACE_MULTI_CARRY_DISCOUNT or 0.25))
     cost = math.max(1, cost * multi_carry_mult)
   end
+  -- Armour multiplier: the lower our armour, the cheaper it is to field what we
+  -- are carrying. ARMOUR ONLY, not full vulnerability -- cargo is already
+  -- discounted twice above (carry_discount by time held, multi_carry_mult by
+  -- count), and a vulnerability multiplier would make it three times. Armour is
+  -- the piece nothing currently prices: today a bot at 5 and one at 40 pay
+  -- identically for the same spot.
+  local armour_mult = 0.5 + (math.min(info.armour or 40, C.VULN_ARMOUR_CAP)
+                             / C.VULN_ARMOUR_CAP) * 0.5
+  cost = math.max(1, cost * armour_mult)
   -- Combat-zone penalty: enemy tank near the chosen spot (flat add, shown as the
   -- tankpen term). Emergency offensive_build is exempt — it returns earlier.
   local tank_pen = place_near_tank_penalty(state, best_mx, best_my)
@@ -2961,18 +2949,16 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- purely so the PLACE_PILL_GATE log line prints every term and the threshold
     -- stays hand-computable from that one line.
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
-             wx = U.m2w(best_mx), wy = U.m2w(best_my),
-             _urgency = place_urgency, _urg_carry = urg_carry,
-             _urg_deficit = urg_deficit, _urg_emerg = urg_emerg },
+             wx = U.m2w(best_mx), wy = U.m2w(best_my) },
     -- Every multiplier that actually shapes `cost` has to appear here — this
     -- desc is what FINAL_SCORES prints, and lastpill/surplus/multi were missing,
     -- so the printed formula did not reproduce the printed number. Order matches
     -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
     -- x bal x surplus x multi, then + tankpen.
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}+tankpen{%.0f} = cost{%.1f} urgency{%d} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
-           multi_carry_mult, tank_pen, cost, place_urgency, search_reason, best_score,
+           multi_carry_mult, armour_mult, tank_pen, cost, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
            pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
     cands = cands,
