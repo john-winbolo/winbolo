@@ -1168,18 +1168,21 @@ static void renderBrainSettingsWindow(void) {
  * box — but the key press lands on the main window, so a toggle hides the
  * pop-out instead of raising it. Every desktop entry point (Ctrl+M, the
  * Players menu item, windowShowSendMessages(wsrOpen), the mac menu bar)
- * routes through here so the window comes forward however it was asked for.
- * Closing is left to the pop-out's own close box. */
+ * reaches this — directly, or via sdl3ImguiShowSendMsg where the caller must
+ * also honour controller mode — so the window comes forward however it was
+ * asked for.
+ * Closing is the pop-out's own close box or Escape.
+ *
+ * Deliberately does not touch s_sendMsgCooldownEnd. Opening is not a reason
+ * to hand back an early Send button: clearing it here would let a player
+ * send, close the pop-out and re-press Ctrl+M to skip the remainder of
+ * SEND_MSG_WAIT_MS. The cooldown is short and expires on its own. */
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
 static void sendMsgPopOutShow(void) {
     /* popOutCreate re-shows and raises a window it created earlier, so this
      * one call covers both the first open and a raise from behind the game. */
-    bool wasOpen = s_popSendMsg.open;
     if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200))
         return;
-    /* Only a fresh open clears the cooldown — re-raising must not hand back
-     * an early Send button and let Ctrl+M spam past SEND_MSG_WAIT_MS. */
-    if (!wasOpen) s_sendMsgCooldownEnd = 0;
     s_sendMsgFocusInput = true;
     s_closeMenuPopups   = true;
 }
@@ -3607,6 +3610,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     popOutHide(pw);
                     consumedByPopOut = true;
                 }
+
+                /* Escape closes a focused pop-out, matching the Escape ladder
+                   the tablet panels use. Without it the close box is the only
+                   way out, and on macOS that leaves no keyboard path at all —
+                   there is no Cmd+W item in the native menu. The event was
+                   already forwarded above, so ImGui has deactivated any live
+                   InputText before the window goes away. */
+                if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                    ev.key.windowID == pwID &&
+                    ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                    popOutHide(pw);
+                    consumedByPopOut = true;
+                }
             }
             if (consumedByPopOut) continue;
         }
@@ -3692,7 +3708,14 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
-                    sendMsgPopOutShow();
+                    /* Via sdl3ImguiShowSendMsg rather than straight to
+                       sendMsgPopOutShow: it picks the pop-out or the
+                       controller modal. The pop-out is a separate OS window
+                       that receives no controller input, so on a Deck — where
+                       the virtual pad reports as keyboard and can reach this
+                       shortcut — opening it directly would leave a pad user
+                       with a window they cannot close. */
+                    sdl3ImguiShowSendMsg(true);
                 } else {
 #endif
                     /* Never a toggle — an already-open panel is raised to the
@@ -4845,7 +4868,6 @@ void sdl3ImguiShowSendMsg(bool open) {
                so a pad user could open it but never close it. */
             if (open) {
                 s_pendingCtrlSendMsg = true;
-                s_sendMsgCooldownEnd = 0;
             } else {
                 s_showCtrlSendMsg = false;
             }
@@ -4864,8 +4886,9 @@ void sdl3ImguiShowSendMsg(bool open) {
 #endif
     s_showSendMsg = open;
     if (open) {
-        /* Reset cooldown so the Send button is always enabled on fresh open */
-        s_sendMsgCooldownEnd = 0;
+        /* No cooldown reset here — see sendMsgPopOutShow. s_sendMsgCooldownEnd
+           is set only by an actual send and cleared only by time, so reopening
+           the panel cannot shorten SEND_MSG_WAIT_MS. */
         s_sendMsgFocusInput = true;
         s_closeMenuPopups = true;
 #if BOLO_MOBILE
