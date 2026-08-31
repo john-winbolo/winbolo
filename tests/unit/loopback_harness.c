@@ -132,26 +132,45 @@ static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
  * tankless spectator connect (no tank slot, no map download) over a normal
  * player join. impairSpec is applied to the client endpoint before connect.
  * Sets h->cs / h->clientUp. */
-static bool loopbackConnectClient(LoopbackHarness *h, const char *playerName,
-                                  const char *impairSpec, bool spectator) {
+static bool loopbackConnectClientInto(LoopbackHarness *h, const char *playerName,
+                                      const char *impairSpec, bool spectator,
+                                      struct ClientSim **outCs, bool *outUp) {
     /* Set before connect — transportUdpClientCreate reads WB_NETIMPAIR
      * once at construction. */
     loopbackSetImpairEnv(impairSpec);
 
-    h->cs = clientSimAlloc();
-    if (h->cs == NULL) {
+    *outCs = clientSimAlloc();
+    if (*outCs == NULL) {
         return false;
     }
-    clientSimCreate(h->cs);
-    if (!clientSimConnectUdp(h->cs, "127.0.0.1", h->port, playerName,
+    clientSimCreate(*outCs);
+    if (!clientSimConnectUdp(*outCs, "127.0.0.1", h->port, playerName,
                              /*fallbackCountry*/ "", /*password*/ "",
                              /*wbnApiToken*/ NULL, /*wbnServerKey*/ NULL,
                              /*wantRejoin*/ false, /*trackerAddr*/ "",
                              /*trackerPort*/ 0, spectator)) {
         return false;
     }
-    h->clientUp = true;
+    *outUp = true;
     return true;
+}
+
+static bool loopbackConnectClient(LoopbackHarness *h, const char *playerName,
+                                  const char *impairSpec, bool spectator) {
+    return loopbackConnectClientInto(h, playerName, impairSpec, spectator,
+                                     &h->cs, &h->clientUp);
+}
+
+bool loopbackHarnessAddClient(LoopbackHarness *h, const char *playerName) {
+    if (h == NULL || !h->serverUp || h->client2Up) {
+        return false;
+    }
+    /* Clean path only, and the env is cleared for it: the first client read
+     * WB_NETIMPAIR at its own construction and keeps whatever it was given,
+     * so a second client never inherits the first one's impairment. */
+    return loopbackConnectClientInto(h, playerName, /*impairSpec*/ NULL,
+                                     /*spectator*/ false, &h->cs2,
+                                     &h->client2Up);
 }
 
 bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
@@ -232,6 +251,10 @@ bool loopbackHarnessStartSpectatorLobby(LoopbackHarness *h,
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     if (h->clientUp) clientSimNetTick(h->cs);
+    /* Second client (when one was added) ticks in the same phase as the
+     * first, before the server: both endpoints' datagrams are then drained
+     * by the one server tick below, keeping the pump a single step. */
+    if (h->client2Up) clientSimNetTick(h->cs2);
     /* The server's datagrams are ingested by its background recv thread into an
      * SPSC queue that serverInstanceTick drains. In a tight pump loop that
      * thread can lag a pump, so the just-sent client datagram isn't drained
@@ -271,6 +294,16 @@ bool loopbackHarnessTriggerGameStart(LoopbackHarness *h) {
 
 void loopbackHarnessStop(LoopbackHarness *h) {
     if (h == NULL) return;
+    /* Second client first: it leaves while the server is still up, so its
+     * slot goes through the same disconnect path a real leave takes. */
+    if (h->cs2 != NULL) {
+        if (h->client2Up) {
+            clientSimDisconnect(h->cs2);
+        }
+        clientSimDestroy(h->cs2);
+        h->cs2 = NULL;
+        h->client2Up = false;
+    }
     if (h->cs != NULL) {
         if (h->clientUp) {
             clientSimDisconnect(h->cs);

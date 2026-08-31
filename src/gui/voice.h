@@ -178,6 +178,22 @@ bool voiceIsTransmitting(void);
 void voiceReset(void);
 
 /*********************************************************
+*NAME:          voiceForgetPlayer
+*PURPOSE:
+*  Drops everything held about one player: their decoder and
+*  playback stream, their talking indicator, and the local
+*  mute on them. Called when a player leaves, because slots
+*  are recycled — without it the next joiner into that slot
+*  inherits the mute the departed player was given, and is
+*  silenced here with nothing to show for it but a "muted by
+*  you" icon on a player nobody muted.
+*
+*ARGUMENTS:
+*  player - the player number to forget
+*********************************************************/
+void voiceForgetPlayer(int player);
+
+/*********************************************************
 *NAME:          voiceSetPlayerMuted
 *PURPOSE:
 *  Stops or resumes playing one player's voice locally.

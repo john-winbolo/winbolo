@@ -289,6 +289,37 @@ static void releaseSpeaker(int player) {
 }
 
 /*********************************************************
+*NAME:          voiceForgetPlayer
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Drops everything held about one player: their decoder and
+*  playback, their talking indicator, and the local mute on
+*  them.
+*
+*  The mute goes with them because slots are recycled.  A
+*  mute is on the player who was in the slot, not on the
+*  slot: leaving it set would silence whoever joins into it
+*  next - voice and, through the server's copy of the same
+*  bit, chat as well - with nothing to show for it but a
+*  "muted by you" icon on a player this client never muted.
+*  The server drops its half in serverDisconnectClient.
+*
+*ARGUMENTS:
+*  player - the player number to forget
+*********************************************************/
+void voiceForgetPlayer(int player) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return;
+    }
+    releaseSpeaker(player);
+    mutedPlayers[player] = false;
+    talkingUntilMs[player] = 0;
+    talkingStamped[player] = false;
+}
+
+/*********************************************************
 *NAME:          voiceReset
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -306,10 +337,7 @@ void voiceReset(void) {
     int i;
 
     for (i = 0; i < MAX_TANKS; i++) {
-        releaseSpeaker(i);
-        mutedPlayers[i] = false;
-        talkingUntilMs[i] = 0;
-        talkingStamped[i] = false;
+        voiceForgetPlayer(i);
     }
     /* Forget what the last server was told, so the next connection is sent
      * this client's mic status rather than inheriting a match against a

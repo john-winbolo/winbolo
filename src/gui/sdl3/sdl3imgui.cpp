@@ -5121,6 +5121,15 @@ void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *c
 
 void sdl3ImguiClearPlayer(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return;
+#if defined(WINBOLO_VOICE)
+    /* The slot is empty, so nothing of the last occupant's may be carried
+     * into it: slots are recycled, and a mute left behind would silence the
+     * next joiner here (and their chat, server-side) while the panel showed
+     * "muted by you" for a player this client never muted. Hooked here
+     * because this is where both frontEndClearPlayer implementations that
+     * build voice — desktop and wasm — converge. */
+    voiceForgetPlayer((int)playerNum);
+#endif
     s_playerName[playerNum][0] = '\0';
     s_playerCountry[playerNum][0] = '\0';
     s_playerEnabled[playerNum] = false;

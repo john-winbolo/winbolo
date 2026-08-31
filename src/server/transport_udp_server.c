@@ -3912,6 +3912,19 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* Slots are recycled: without this a new occupant would inherit the
      * previous player's mutes. */
     udpServer.clients[idx].voiceMuteMask = 0;
+    /* The other direction of the same hazard, and the one that is invisible
+     * to the player it hits: everyone who muted THIS player still holds the
+     * bit for this slot, so the next occupant would arrive already muted for
+     * them — no voice, and no chat either, since both read this one bit.
+     * Sweeping the leaver's bit out of every mask is what makes a mute
+     * belong to the player rather than to the slot they sat in. */
+    {
+        const PlayerBitMap leaving = ~((PlayerBitMap)1u << idx);
+        int muter;
+        for (muter = 0; muter < MAX_TANKS; muter++) {
+            udpServer.clients[muter].voiceMuteMask &= leaving;
+        }
+    }
     /* Same reason: a recycled slot inheriting the previous player's onset
      * would hand a new joiner talker priority they did not earn. */
     udpServer.voiceLastFrameTick[idx] = 0;
