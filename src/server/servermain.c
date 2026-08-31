@@ -1968,7 +1968,11 @@ int main(int argc, char **argv) {
         botManagerSetBrainLuaSeed(ls);
         fprintf(stderr, "Brain math.random seeded from %ld (+ player number)\n", ls);
       }
-      if (argExist(argc, argv, "-brain-no-budget-kill") == TRUE) {
+      /* NOTE: argExist prepends the "-" itself — passing the name with a
+       * leading dash made it look for "--brain-no-budget-kill" and the flag
+       * was silently dead (found 20260831: killbot.log full of 3ms kills in
+       * runs that passed it). */
+      if (argExist(argc, argv, "brain-no-budget-kill") == TRUE) {
         /* Reuses the slow-mo path: a 1000 ms budget, which no real tick
          * approaches, so the watchdog never truncates a think mid-computation
          * -- including the abort-flag polls inside the C pathfinder and
