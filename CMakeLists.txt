@@ -3343,6 +3343,24 @@ target_link_libraries(WinBoloUnitTests PRIVATE
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+    # 8 MB stack, matching the Linux default.
+    #
+    # test_net_impair.c declares NetImpair as a stack LOCAL in five test
+    # functions, and NetImpair is ~1.06 MB (queue[512] of 2048-byte packets,
+    # net_impair.h). That overflows Windows' 1 MB default, so the runner died
+    # at STATUS_STACK_OVERFLOW partway through `net_impair` -- and because the
+    # test list in test_main.c is a static table walked in order, EVERY test
+    # after that entry (100+ of them, including all the spectator and loopback
+    # suites) silently never ran on Windows. It passed on Linux only because
+    # the default stack there is already 8 MB.
+    #
+    # Raising the stack rather than making those locals `static` keeps each
+    # test case's fixture genuinely fresh, which is the point of a stack local.
+    if(MSVC)
+        target_link_options(WinBoloUnitTests PRIVATE /STACK:8388608)
+    else()
+        target_link_options(WinBoloUnitTests PRIVATE -Wl,--stack,8388608)
+    endif()
 else()
     target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
