@@ -266,13 +266,18 @@ if(WINBOLO_LUAJIT)
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
             CONFIGURE_COMMAND ""
-            # ".\" is required, not cosmetic: cmd only searches the current
-            # directory for a bare command name when
-            # NoDefaultCurrentDirectoryInExePath is unset. Where that variable
-            # is set (some CI images and hardened dev environments set it), a
-            # bare `msvcbuild.bat` fails with "is not recognized" even though
-            # chdir put us in the directory containing it.
-            BUILD_COMMAND     ${CMAKE_COMMAND} -E chdir "${_lj_src}/src" cmd /c .\\msvcbuild.bat static
+            # cmd only searches the current directory for a bare command name
+            # when NoDefaultCurrentDirectoryInExePath is unset. Some CI images
+            # and hardened dev environments set it, and then `msvcbuild.bat`
+            # fails with "is not recognized" even though chdir put us in the
+            # directory containing it. Prefixing ".\" only fixes the batch file
+            # itself -- msvcbuild.bat then invokes the host tools it just built
+            # (minilua, buildvm) as bare names too, and those fail the same way
+            # -- so unset the variable for the whole build step instead.
+            BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+                              --unset=NoDefaultCurrentDirectoryInExePath
+                              ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
+                              cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
