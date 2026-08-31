@@ -420,7 +420,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 }
 - (void)onShowSendMsg:(id)sender {
     (void)sender;
-    sdl3ImguiShowSendMsg(!sdl3ImguiIsSendMsgOpen());
+    /* Show-and-raise rather than toggle: an already-open pop-out is usually
+       sitting behind the game window, and hiding it is never what the player
+       meant. See sendMsgPopOutShow in sdl3imgui.cpp. */
+    sdl3ImguiShowSendMsg(true);
 }
 - (void)onSelectAllPlayers:(id)sender {
     (void)sender;
