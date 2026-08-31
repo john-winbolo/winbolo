@@ -26,6 +26,9 @@ typedef struct {
 static const UnitTestEntry s_tests[] = {
     { "transport_local_passive_threads", run_transport_local_passive_threads },
     { "sp_subscriber_delivery",          run_sp_subscriber_delivery          },
+    { "active_sim_armed_on_lobby_tick",  run_active_sim_armed_on_lobby_tick  },
+    { "active_sim_cleared_on_cross_thread_destroy",
+      run_active_sim_cleared_on_cross_thread_destroy },
     { "active_local_input_to_shot",      run_active_local_input_to_shot      },
     { "sp_shoot_through_timer",          run_sp_shoot_through_timer          },
     { "prefs_document_roundtrip",        run_prefs_document_roundtrip        },

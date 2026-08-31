@@ -46,6 +46,8 @@ extern "C" {
 
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
+int run_active_sim_armed_on_lobby_tick(void);
+int run_active_sim_cleared_on_cross_thread_destroy(void);
 int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
 int run_prefs_document_roundtrip(void);

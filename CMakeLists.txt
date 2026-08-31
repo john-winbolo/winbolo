@@ -2881,6 +2881,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stubs.c
     tests/unit/test_transport_local_passive_threads.c
     tests/unit/test_sp_subscriber_delivery.c
+    tests/unit/test_active_sim_lifetime.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_prefs_roundtrip.c
@@ -3805,6 +3806,8 @@ set(_unit_test_names
     lobby_maxbots_cap_boundary
     empty_return_to_lobby_removes_bots_and_unlocks
     bot_pool_wire_chunk_transport
+    active_sim_armed_on_lobby_tick
+    active_sim_cleared_on_cross_thread_destroy
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
