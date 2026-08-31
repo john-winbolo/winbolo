@@ -41,7 +41,7 @@ set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 include(FetchContent)
 FetchContent_Declare(sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.2
+    GIT_TAG        release-3.4.14
 )
 FetchContent_Declare(sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
