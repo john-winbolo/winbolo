@@ -564,7 +564,11 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
         -- small to overcome a cheaper rival base). A depleted current base is
         -- rejected above, so the move-on case still works.
         if info.base and info.base.x == tmx and info.base.y == tmy
-           and not (b.mx == tmx and b.my == tmy) then
+           and not (b.mx == tmx and b.my == tmy)
+           -- Yield waiver: we're topping off and a starved ally claimed the
+           -- base under us (state._refuel_yield_tick, stamped by init.lua's
+           -- target cap) -- the +500 must not pin us here.
+           and (now - (state._refuel_yield_tick or -1e9)) > 25 then
           score = score + (C.REFUEL_BASE_HOP_PENALTY or 500)
         end
         -- Self-base hysteresis REMOVED: goal_selection already applies a
@@ -3325,9 +3329,60 @@ local function travel_cost_to_pill(pmx, pmy, boat)
   return best
 end
 
+-- =========================================================================
+-- defend_travel_cost — travel price for the DEFEND evaluation only.
+--
+-- Defending is not "drive onto the pill", it is "get into the standoff
+-- around it": defend_pill_score's own arrival handoff below calls the tank
+-- ARRIVED anywhere inside DEFEND_ARRIVE_RADIUS Euclidean tiles. Pricing the
+-- trip to the pill's own 8 neighbours (travel_cost_to_pill) charges for the
+-- last ten tiles we never have to drive, and because the KIND_NORMAL slate is
+-- danger-weighted those are exactly the tiles under enemy pill fire — so the
+-- threat gets counted twice (the tier multiplier already prices it) and the
+-- bid ignores that a standoff on OUR side of the pill is cheap.
+--
+-- Incident 20260831_113629 bot3 t=19709: pill #14 at hp 2 priced dij 359 —
+-- hostile pills #1 (Chebyshev 4 away) and #4 (7 away) put their 8-tile fire
+-- fields over its approach — where ~13 tiles of bare terrain is about 30.
+-- Full-health pill #0 won the pool on that inflation alone.
+--
+-- So: cheapest reachable slate cost over a sampled Chebyshev disc of radius
+-- DEFEND_ARRIVE_RADIUS around the pill — the 8 adjacent tiles plus a stride-2
+-- grid across the disc. The near side of that disc sits on friendly turf, so
+-- the number reflects the standoff we actually drive to. ~130 O(1) lookups
+-- per pill row. math.huge if nothing in the disc is reachable, as before.
+--
+-- The ETA in the late tier (travel * DEFEND_ETA_PER_COST) rides on this too,
+-- which is right: reaching the standoff IS arriving, per the same radius.
+-- =========================================================================
+local function defend_travel_cost(pmx, pmy, boat)
+  local bf   = boat and 1 or 0
+  local best = math.huge
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, pmx + dx, pmy + dy, bf)
+        if c and c < best then best = c end
+      end
+    end
+  end
+  -- Stride-2 grid over the disc. Chebyshev <= R holds by construction, so
+  -- every sampled tile is one the arrival handoff would call ARRIVED on.
+  -- (0,0) is the pill tile itself: impassable, so it reads back as
+  -- unreachable and the 1e29 guard drops it like any other blocked tile.
+  local R = C.DEFEND_ARRIVE_RADIUS or 10
+  for dy = -R, R, 2 do
+    for dx = -R, R, 2 do
+      local c = cpf.smart_cost_dij_only(KIND_NORMAL, pmx + dx, pmy + dy, bf)
+      if c and c < 1e29 and c < best then best = c end
+    end
+  end
+  return best
+end
+
 -- defend_pill_score — the defend formula for one built team pill.
 --
---   live tier : cost = max(FLOOR, (base + travel) * threat_mult
+--   live tier : cost = max(FLOOR, (base + travel) * threat_mult * wear
 --                            * lateness * readiness)
 --   quiet     : cost = (DEFEND_QUIET_DMG_COST[hits taken] + travel)
 --                            * readiness      -- no base, no threat_mult
@@ -3349,6 +3404,12 @@ end
 --           over DEFEND_SIGHT_FRESH_TICKS.
 --   sight : hostile tank seen within DEFEND_ENEMY_NEAR_RADIUS recently
 --           (_enemy_near_tick) — prevention tier, same linear decay.
+--   wear  : on the sight/setup tiers only, standing damage (hits taken)
+--           discounts the cost by up to DEFEND_WEAR_WEIGHT (~33% at
+--           nearly dead) — a chewed-up pill dies to the next few shells,
+--           so guard it before an untouched one at the same tier. Left
+--           off siege (its savability scaling deliberately runs the
+--           other way) and off quiet (the damage curve IS the price).
 --   cover : other alive team pills whose fire reaches this pill make the
 --           defense cheaper (arrive into friendly cover; heat-up fodder).
 --           Threat-gated: coverage alone is no reason to drive anywhere.
@@ -3360,10 +3421,18 @@ end
 --           top (small) and readiness still multiplies. NOTE this now
 --           makes every quiet pill a finite bidder, where the old code
 --           returned NO BID for a healthy quiet pill.
--- Feasibility (siege only): assumed constant damage rate — TTL =
--- hp x DEFEND_ASSUMED_TICKS_PER_HP vs ETA = travel x DEFEND_ETA_PER_COST.
--- Arriving late scales cost up toward DEFEND_FUTILITY_MAX (never INF —
--- a late arrival still degrades into rebuild/capture recovery).
+-- Feasibility (siege only): MEASURED damage rate — >= 2 hits inside the
+-- last DEFEND_ACTIVE_WINDOW ticks give ticks-per-hit, TTL = hp x rate vs
+-- ETA = travel x DEFEND_ETA_PER_COST. Arriving late scales cost up toward
+-- DEFEND_FUTILITY_MAX (never INF — a late arrival still degrades into
+-- rebuild/capture recovery). No recent hits = shooter paused = no penalty.
+--
+-- TRAVEL is the STANDOFF price, from defend_travel_cost above: the cheapest
+-- reachable tile in the DEFEND_ARRIVE_RADIUS disc around the pill, not the
+-- cost of driving up to its edge. That matches the arrival handoff below —
+-- inside the radius the trip is already over — and stops the danger-weighted
+-- slate charging us for the last ten tiles through enemy pill fire, which the
+-- tier multiplier has already priced once.
 --
 -- ARRIVAL HANDOFF: within DEFEND_ARRIVE_RADIUS (Euclidean tiles) the
 -- travel phase is COMPLETE — the formula above must not keep bidding
@@ -3589,17 +3658,66 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
     end
     bd.mult = mult
 
+    -- Late arrival, priced off the MEASURED damage rate. The old TTL was
+    -- hp x 80 ticks, a constant: it read a pill being shelled every 12
+    -- ticks as "in time" from 19 tiles away, and a pill the shooter had
+    -- stopped hitting 60 ticks ago as "futile x3" (full2 bot2, pill 5).
+    -- Now: hits inside the last DEFEND_ACTIVE_WINDOW ticks (~1 s) say the
+    -- enemy is killing it RIGHT NOW -- two or more give a rate, TTL =
+    -- hp x rate, and ETA beyond that is genuinely late. One hit in the
+    -- window (rate unknown) or none (shooter paused; TTL not shrinking)
+    -- -> no late penalty: the siege tier still pulls, arrival is not
+    -- futile.
     local feas = 1.0
-    if siege and travel < math.huge then
-      bd.ttl = hp * (C.DEFEND_ASSUMED_TICKS_PER_HP or 80)
-      bd.eta = travel * (C.DEFEND_ETA_PER_COST or 6)
-      if bd.ttl > 0 and bd.eta > bd.ttl then
-        feas = math.min(bd.eta / bd.ttl, C.DEFEND_FUTILITY_MAX or 3.0)
+    bd.eta = (travel < math.huge) and travel * (C.DEFEND_ETA_PER_COST or 6) or nil
+    do
+      local log = p.hit_log
+      local win = C.DEFEND_ACTIVE_WINDOW or 50
+      local n_recent, first_t, last_t = 0, nil, nil
+      if log then
+        for i = #log, 1, -1 do
+          local t = log[i]
+          if now - t <= win then
+            n_recent = n_recent + 1
+            first_t  = t
+            last_t   = last_t or t
+          else
+            break
+          end
+        end
+      end
+      bd.hits_win = n_recent
+      if siege and bd.eta and n_recent >= 2 then
+        bd.rate = (last_t - first_t) / (n_recent - 1)   -- ticks per hit, measured
+        if bd.rate < 1 then bd.rate = 1 end
+        bd.ttl  = hp * bd.rate
+        bd.active = true
+        if bd.ttl > 0 and bd.eta > bd.ttl then
+          feas = math.min(bd.eta / bd.ttl, C.DEFEND_FUTILITY_MAX or 3.0)
+        end
       end
     end
     bd.feas = feas
 
-    cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult * feas * ready
+    -- Wear: standing damage makes a pill worth guarding harder. Straight
+    -- linear discount on the sight/setup tiers by hits taken — a chewed-up
+    -- pill dies to the next few shells, so among equal-tier candidates the
+    -- worn one should pull first. Applied ONLY to sight/setup: the siege
+    -- tier prices damage the other way on purpose (savability — an
+    -- almost-dead pill under fire is mostly lost), and the quiet tier's
+    -- DEFEND_QUIET_DMG_COST curve already prices wear directly.
+    -- Incident: full-hp #0 outbid hp-2 #14, both sight-tier, at session
+    -- 20260831_113629 bot3 t=19709.
+    if bd.tier == "sight" or bd.tier == "setup" then
+      local hits = (C.PILLS_MAX_HEALTH or 15) - hp
+      if hits < 0 then hits = 0 end
+      bd.wear_hits = hits
+      bd.wear = 1 - (C.DEFEND_WEAR_WEIGHT or 0.3333)
+                    * (hits / (C.PILLS_MAX_HEALTH or 15))
+    end
+
+    cost = ((C.DEFEND_PILL_BASE_COST or 250) + travel) * mult
+           * (bd.wear or 1.0) * feas * ready
     -- Two-tier floor — LIVE TIERS ONLY (the quiet curve above supersedes
     -- it; its own 250 floor is the quiet backstop). With NO fresh damage
     -- (siege) and NO setup tell (the "pill block going up -> take
@@ -3719,7 +3837,8 @@ end
 --
 -- Rows persist in state.defend_breakdown even on replans where NOTHING is
 -- defendable, so the panel never goes blank. Runs at finalize cadence;
--- travel is O(1) dij-slate lookups per pill (travel_cost_to_pill).
+-- travel is O(1) dij-slate lookups per pill (defend_travel_cost — the
+-- standoff-disc price, not the walk-right-up-to-it price).
 local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
   local now = state.tick or 0
   local rows = BRAIN_POOL_VIZ and {} or nil
@@ -3774,7 +3893,11 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
       -- their would-be cost shows in the panel. An unreachable pill scores
       -- math.huge and simply never wins; no gate needed. Attack state does
       -- NOT gate anything — it feeds defend_pill_score.
-      local travel = travel_cost_to_pill(p.mx, p.my, boat)
+      -- Standoff price, not neighbour price: defending means getting inside
+      -- DEFEND_ARRIVE_RADIUS, so charge for the cheapest tile in that disc.
+      -- (reposition still uses travel_cost_to_pill — it really does drive
+      -- onto the pill's edge.)
+      local travel = defend_travel_cost(p.mx, p.my, boat)
       local cost, bd
       if not reject then
         cost, bd = defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
@@ -3824,11 +3947,18 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
             -- chip UNCONDITIONALLY (rdy/late even at 1.00), and each clamp
             -- prints the value it clamps TO, so reading the chain left to
             -- right reproduces the printed total exactly.
-            --   live tier : (base+dij)*m *rdy *late [floor] [WELLDEF] [+tb]
+            --   live tier : (base+dij)*m [*wear] *rdy *late [floor]
+            --                                        [WELLDEF] [+tb]
             --   quiet     : (quiet_dmg+dij)  *rdy   [WELLDEF] [+tb]
+            -- wear is the one conditional factor: it prints only on the
+            -- sight/setup tiers, where it is the only place it applies.
             local f = bd.quiet_curve and ""
-              or string.format("*late{%.2f eta=%.0f ttl=%.0f}",
-                               bd.feas or 1.0, bd.eta or 0, bd.ttl or 0)
+              or string.format("*late{%.2f eta=%.0f ttl=%s rate=%s hits%ds=%d}",
+                               bd.feas or 1.0, bd.eta or 0,
+                               bd.ttl and string.format("%.0f", bd.ttl) or "-",
+                               bd.rate and string.format("%.0f", bd.rate) or "-",
+                               math.floor((C.DEFEND_ACTIVE_WINDOW or 50) / 50),
+                               bd.hits_win or 0)
             local fl = bd.floored
               and string.format(" floor{%.0f}", bd.floored) or ""
             local wd = bd.welldef
@@ -3839,14 +3969,20 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
             local tb = bd.tb and string.format(" tb{+%.2f}", bd.tb) or ""
             local rd = string.format("*rdy{%.2f sh=%d arm=%d}",
                                 bd.ready or 1.0, info.shells or 0, info.armour or 0)
+            -- Wear discount, sight/setup tiers only — absent chip means the
+            -- factor was not applied (siege/quiet), so the chain still
+            -- multiplies out exactly either way.
+            local wr = bd.wear
+              and string.format("*wear{%.2f hits=%d}", bd.wear, bd.wear_hits or 0)
+              or ""
             local head = bd.quiet_curve
               and string.format("(quiet_dmg{%d hits -> %.0f}+dij{%.0f})",
                                 bd.quiet_hits or 0, bd.quiet_curve, travel)
               or string.format("(base{%.0f}+dij{%.0f})*m{%.2f}",
                                C.DEFEND_PILL_BASE_COST, travel, bd.mult)
             formula = string.format(
-              "%s%s%s%s%s%s%s = %.0f%s||%s",
-              head, rd, f, fl, wd, tb, u, cost,
+              "%s%s%s%s%s%s%s%s = %.0f%s||%s",
+              head, wr, rd, f, fl, wd, tb, u, cost,
               sel_preview(p.mx, p.my, cost), detail)
           end
         else
@@ -3887,7 +4023,8 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
   local is_heat = best_bd and best_bd.heat or nil
   -- Winner desc carries the SAME full chip chain as the candidate rows:
   -- the WINNERS strip must reproduce the final pool cost from what it
-  -- shows alone (head, readiness, lateness, floor, WELLDEF, tiebreaker).
+  -- shows alone (head, wear, readiness, lateness, floor, WELLDEF,
+  -- tiebreaker).
   local best_desc = ""
   if BRAIN_POOL_VIZ then
     local b = best_bd or {}
@@ -3895,12 +4032,20 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
       best_desc = string.format("defend#%d@(%d,%d) ARRIVED heat{%.0f}",
                                 best_id, best.mx, best.my, best_cost)
     else
+      -- Wear discount, sight/setup tiers only; nothing printed when it was
+      -- not applied, so the chain multiplies out exactly either way.
+      local wr = b.wear
+        and string.format("*wear{%.2f hits=%d}", b.wear, b.wear_hits or 0)
+        or ""
       local head = b.quiet_curve
         and string.format("(quiet_dmg{%d hits -> %.0f}+dij{%.0f})",
                           b.quiet_hits or 0, b.quiet_curve, best_travel)
-        or string.format("(base{%.0f}+dij{%.0f})*m{%.2f}*late{%.2f}",
+        or string.format("(base{%.0f}+dij{%.0f})*m{%.2f}%s*late{%.2f eta=%.0f ttl=%s rate=%s hits1s=%d}",
                          C.DEFEND_PILL_BASE_COST, best_travel,
-                         b.mult or 1.0, b.feas or 1.0)
+                         b.mult or 1.0, wr, b.feas or 1.0, b.eta or 0,
+                         b.ttl and string.format("%.0f", b.ttl) or "-",
+                         b.rate and string.format("%.0f", b.rate) or "-",
+                         b.hits_win or 0)
       best_desc = string.format(
         "defend#%d@(%d,%d) %s*rdy{%.2f}%s%s%s = %.0f hits=%d dmg=%d",
         best_id, best.mx, best.my, head, b.ready or 1.0,
@@ -6181,9 +6326,18 @@ function M.step_eval_queue(state, world, info)
       _fid = state.kill_pickup.id
     else
       local _best = math.huge
+      -- Break a cost tie on the lower pill id. state.cost_cache is keyed by
+      -- strings ("<pool>:<id>"), so with a bare strict `<` two equal-cost
+      -- pool-4 entries were resolved by pairs() order — a per-process hash
+      -- order. The winner is the ONE pill that gets an accurate A* route cost
+      -- instead of the cheap Dijkstra lookup, which moves pool-4 ranking and
+      -- so the chosen goal: a tie forked same-seed games.
       for _, ce in pairs(state.cost_cache or {}) do
-        if ce._p == 4 and not ce._reject and (ce.cost or math.huge) < _best then
-          _best = ce.cost; _fid = ce._id
+        if ce._p == 4 and not ce._reject then
+          local c = ce.cost or math.huge
+          if c < _best or (c == _best and _fid and (ce._id or math.huge) < _fid) then
+            _best = c; _fid = ce._id
+          end
         end
       end
     end
@@ -6426,6 +6580,16 @@ function M.step_eval_queue(state, world, info)
       -- wait_for_ally substate in init.lua if an ally tank is parked on the
       -- tile); everyone else drifts to emptier bases. Skip allies whose tank is
       -- dead (a stale broadcast shouldn't price a base we can actually use).
+      -- Asymmetric claim resolution (was: every claimant paid, so two bots
+      -- eyeing the same base both left it -- g9fix2 bot2/bot3 danced
+      -- 11<->12<->13 at every replan, bot3 driving 20 tiles to #13 with #12
+      -- two tiles away). Only the LOSER of a claim pays the penalty:
+      --   1. need first: a tank below a COMBAT line (ally low=1 flag)
+      --      beats a topping-off one, whoever is closer -- a close full
+      --      tank must not hog the stock while a starved one waits;
+      --   2. both alike: lower player number keeps the base.
+      local our_low = (info.armour or 0) < (C.ARMOUR_COMBAT or 30)
+                   or (info.shells or 0) < (C.SHELLS_COMBAT or 30)
       local ally_claimed_n  = 0
       local ally_claimed_by = nil
       for ally_pn, slot in ally_state.iter_active(now, 1750) do
@@ -6443,8 +6607,17 @@ function M.step_eval_queue(state, world, info)
               if amx and amy then matched = (amx == obj.mx and amy == obj.my) end
             end
             if matched then
-              ally_claimed_n  = ally_claimed_n + 1
-              ally_claimed_by = ally_claimed_by or ally_pn
+              local ally_low = (h.low == "1")
+              local we_pay
+              if ally_low ~= our_low then
+                we_pay = ally_low          -- the needy one keeps the base
+              else
+                we_pay = ally_pn < info.player_number
+              end
+              if we_pay then
+                ally_claimed_n  = ally_claimed_n + 1
+                ally_claimed_by = ally_claimed_by or ally_pn
+              end
             end
           end
         end
@@ -6463,7 +6636,9 @@ function M.step_eval_queue(state, world, info)
       -- move — the only case we SHOULD switch bases.
       local _hop_cost = 0
       if info.base and info.base.x == tmx and info.base.y == tmy
-         and not (obj.mx == tmx and obj.my == tmy) then
+         and not (obj.mx == tmx and obj.my == tmy)
+         -- Yield waiver -- see the helper-path twin above.
+         and (now - (state._refuel_yield_tick or -1e9)) > 25 then
         _hop_cost = (C.REFUEL_BASE_HOP_PENALTY or 500)
         score = score + _hop_cost
       end
@@ -11336,7 +11511,17 @@ function M.get_pool_breakdown_json(state)
 
       -- Second fallback: try fuzzy kind match (if mx/my match)
       if not gc then
-        for _, entry in pairs(comp) do
+        -- Walk comp in sorted key order. Several goal kinds can sit on the same
+        -- tile and loosely substring-match ("refuel" vs "refuel_at_base"), so
+        -- more than one entry can match and `break` takes whoever comes first.
+        -- comp is string-keyed ("<kind>@<mx>,<my>"), so raw pairs() order is a
+        -- per-process hash order. Panel display only — no gameplay effect — but
+        -- it kept the pool breakdown from matching between paired replays.
+        local _cks = {}
+        for _ck in pairs(comp) do _cks[#_cks + 1] = _ck end
+        table.sort(_cks)
+        for _, _ck in ipairs(_cks) do
+          local entry = comp[_ck]
           if (entry.mx == w.mx and entry.my == w.my) then
             -- Check if entry.kind "contains" pname or vice-versa
             if (entry.kind and entry.kind:find(pname)) or pname:find(entry.kind or "??") then

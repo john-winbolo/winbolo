@@ -1037,6 +1037,24 @@ M.RESPAWN_CACHE_WIPE_DIST  = 12       -- tiles; if respawn point is farther than
 M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy LGM is dead
 
 -- -------------------------------------------------------------------------
+-- Steering: deep-sea cliff safety
+-- -------------------------------------------------------------------------
+-- Step size (world units) for the global cliff brake's heading-ray scan in
+-- steering.lua. 256 wu = 1 tile, so 64 wu is a quarter tile: whatever the
+-- heading, a quarter-tile hop moves at most 0.25 tiles in x and 0.25 in y,
+-- so it cannot jump clean over a tile, and every tile the tank's CENTER is
+-- about to drive through gets a terrain lookup.
+-- The old scan sampled once per WHOLE tile of look-ahead and could step over
+-- a deep corner tile on a diagonal heading: on the DH-Oil Rig NE staircase
+-- the single sample landed on road at (141,112) while the tank's centre path
+-- clipped deep sea at (142,112) in between, and the tank drowned.
+-- A tile the centre only grazes for less than a quarter tile (a dead-on
+-- corner cut) can still slip between samples; that case is handled by the
+-- lookahead cliff guard's L-step decomposition, not by this brake.
+-- With the 768 wu look-ahead clamp this is at most 12 terrain lookups.
+M.CLIFF_SCAN_STEP_WU = 64
+
+-- -------------------------------------------------------------------------
 -- Shell trajectory prediction
 -- -------------------------------------------------------------------------
 -- bsin/bcos return integers in [-128,128] representing unit-vector components.
@@ -1786,6 +1804,17 @@ M.DEFEND_SIEGE_MULT          = 0.30  -- fresh damage on a FULL-health pill; scal
                                      -- capture/rebuild territory)
 M.DEFEND_SIGHT_MULT          = 0.50  -- hostile tank seen near the pill (prevention tier)
 M.DEFEND_COVERAGE_MULT       = 0.95  -- per covering friendly pill (heat-up potential); threat-gated
+-- WEAR DISCOUNT on the sight/setup-tier defend cost. Linear in standing
+-- damage (hits taken = PILLS_MAX_HEALTH - health): a worn pill is fragile and
+-- worth guarding, so protecting it should outbid guarding an untouched one at
+-- the same tier. Tops out at ~33% off for a nearly-dead pill (13 hits ->
+-- ~29% off, 5 hits -> ~11%).
+-- NOT applied to the siege tier (its savability logic deliberately runs the
+-- other way: an almost-dead pill under fire is mostly lost) and NOT to the
+-- quiet tier (the DEFEND_QUIET_DMG_COST curve below already prices wear).
+-- Incident: full-hp pill #0 outbid hp-2 pill #14, both sight-tier, at
+-- session 20260831_113629 bot3 t=19709.
+M.DEFEND_WEAR_WEIGHT         = 0.3333
 -- QUIET-PILL DAMAGE CURVE. A pill with NO activity around it ??? no fresh
 -- damage (siege), no setup tell (hostile LGM), no sighting ??? is NOT priced
 -- off the (base+travel)*mult product at all. It is priced ONLY by how
@@ -1805,7 +1834,9 @@ M.DEFEND_COVERAGE_MULT       = 0.95  -- per covering friendly pill (heat-up pote
 -- the curve supersedes it; that floor stays for sight-only precaution bids.
 M.DEFEND_QUIET_DMG_COST  = { [0] = 1500, [1] = 1000, [2] = 800, [3] = 500, [4] = 300 }
 M.DEFEND_QUIET_DMG_FLOOR = 250
-M.DEFEND_ASSUMED_TICKS_PER_HP = 80   -- assumed siege damage rate: 15 HP ~ 60 s (TTL = hp x this)
+M.DEFEND_ACTIVE_WINDOW       = 50    -- ticks (~1 s): >= 2 hits on the pill inside this window = it is
+                                     -- being killed RIGHT NOW; the measured ticks-per-hit gives its TTL.
+                                     -- Fewer = no late penalty (shooter paused / rate unknown)
 M.DEFEND_ETA_PER_COST        = 6     -- rough ticks of travel per dij cost unit (ETA estimate)
 M.DEFEND_FUTILITY_MAX        = 3.0   -- cap on the late-arrival cost multiplier during a siege
 M.DEFEND_MIN_COST            = 100   -- floor backstop, rarely hit with the multipliers above.

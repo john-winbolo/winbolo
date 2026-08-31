@@ -4205,8 +4205,38 @@ function Brain.think(info)
     -- base waiting for our LGM to come home (see the release block below).
     local refuel_lgm_hold = false
     if state.goal.kind == "refuel_at_base" then
-      local need_armour = info.armour < state.armour_target
-      local need_shells = info.shells < state.shell_target
+      -- Yield-to-starved-ally: once we are at/above BOTH COMBAT lines
+      -- (30/30) and an ally below one of them is claiming THIS base, cap
+      -- our targets at the COMBAT lines -- topping off to 40 while a
+      -- starved teammate waits is hogging. Mines never hold us here
+      -- anyway (REFUEL_MIN_MINES 0); they only fill while we sit, and
+      -- this makes us sit less.
+      local armour_target = state.armour_target
+      local shell_target  = state.shell_target
+      if info.armour >= (C.ARMOUR_COMBAT or 30)
+         and info.shells >= (C.SHELLS_COMBAT or 30) then
+        for ally_pn, slot in ally_state.iter_active(now, 1750) do
+          if ally_pn ~= info.player_number then
+            local h = slot.info
+            if h and h.goal == "refuel_at_base" and h.low == "1" then
+              local aid = tonumber(h.target)
+              local amx, amy = tonumber(h.mx), tonumber(h.my)
+              if (aid and state.goal.target_id and aid == state.goal.target_id)
+                 or (amx and amx == state.goal.mx and amy == state.goal.my) then
+                armour_target = C.ARMOUR_COMBAT or 30
+                shell_target  = C.SHELLS_COMBAT or 30
+                -- Read by both anti-base-hop sites in goals.lua: while this
+                -- stamp is fresh the +500 stay-on-base penalty is waived, so
+                -- the yield actually moves us off the base.
+                state._refuel_yield_tick = now
+                break
+              end
+            end
+          end
+        end
+      end
+      local need_armour = info.armour < armour_target
+      local need_shells = info.shells < shell_target
       -- Mines never hold the bot at base (REFUEL_MIN_MINES defaults 0). The
       -- mine-hoard surcharge in goals.lua handles "don't linger for mines".
       local need_mines  = info.mines < (C.REFUEL_MIN_MINES or 0)
@@ -6041,6 +6071,14 @@ function Brain.think(info)
     end
     if state.goal and state.goal.kind and state.goal.kind ~= "none" then
       bsi.goal = state.goal.kind
+      -- Resource-need flag: below either COMBAT line (armour/shells 30).
+      -- Receivers use it to resolve refuel claims: a needy tank beats a
+      -- topping-off one for a base regardless of who is closer, so a
+      -- close-but-full tank cannot hog the stock (stacked-bot games).
+      if (info.armour or 0) < (C.ARMOUR_COMBAT or 30)
+         or (info.shells or 0) < (C.SHELLS_COMBAT or 30) then
+        bsi.low = "1"
+      end
       if state.goal.substate and state.goal.substate ~= "" then
         bsi.sub = state.goal.substate
       end

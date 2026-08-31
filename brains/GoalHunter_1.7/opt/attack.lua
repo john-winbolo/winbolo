@@ -4181,8 +4181,31 @@ function M.update_attack_substate(goal, state, world, info)
             for _, off in ipairs({ -5, 0, 5 }) do
               pill_bans[(bucket + off) % 360] = now + 9000
             end
+            -- The ban is honoured by the angle SWEEP, but plan_position reuses
+            -- this pill's cached sweep (state._pill_eval_cache, TTL 250) and the
+            -- pool's spot cache -- both computed before the ban -- so the same
+            -- angle came straight back (g9fix bot3 t=29069..29177: 90..100 deg
+            -- re-picked three times inside one ban). Drop both caches so the
+            -- next plan_position sweeps afresh with the ban in force.
+            local pid = goal.target_id
+            if pid ~= nil then
+              if state._pill_eval_cache    then state._pill_eval_cache[pid]    = nil end
+              if state._pill_eval_progress then state._pill_eval_progress[pid] = nil end
+            end
+            if state._pill_diff_cache then
+              state._pill_diff_cache[pill.mx .. ":" .. pill.my .. ":" .. (state.phase or "")] = nil
+            end
           end
           if goal._sanity_pill_replans >= (C.SANITY_PILL_REPLANS_MAX or 3) then
+            -- Hold the pill off the pool for PP_BLACKLIST_TICKS too, the way an
+            -- abandoned sweep does -- otherwise pick_goal re-adopts it within a
+            -- few ticks and the whole cycle repeats (g9fix bot3: abandon at
+            -- 29119, same take again at 29123).
+            local pid = goal.target_id
+            if pid ~= nil then
+              state._pp_blacklist = state._pp_blacklist or {}
+              state._pp_blacklist[pid] = now + (C.PP_BLACKLIST_TICKS or 500)
+            end
             clear_attack_goal(state, "shot path blocked by our own pill on every tried angle")
             return
           end

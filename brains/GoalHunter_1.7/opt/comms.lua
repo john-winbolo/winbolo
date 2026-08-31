@@ -299,18 +299,34 @@ function M.process_message(sender, text, tick, state)
   end
 end
 
+-- Field order on the wire must not depend on pairs() order. pairs() order is a
+-- per-process thing (LuaJIT hashes strings with a process seed and tables by
+-- memory address), and the wire silently truncates at 128 bytes — so when a
+-- slate overflows, the raw hash order decides WHICH fields the ally actually
+-- receives, and two same-seed games fork. Sorting the field names first makes
+-- the message bytes identical run to run. A slate is a handful of keys, so the
+-- sort costs nothing.
+local function sorted_field_names(info_hash)
+  local names = {}
+  for k in pairs(info_hash) do names[#names + 1] = k end
+  table.sort(names)
+  return names
+end
+
 -- -------------------------------------------------------------------------
 -- M.format_state(info_hash)
 -- Build a "/info state k1=v1 k2=v2 ..." message from a hash of
 -- fields.  Values are stringified.  Keys with empty-string or nil
 -- values are omitted (receiver treats absence as "clear this key").
+-- Fields go out in sorted key order (see sorted_field_names above).
 -- Caller is responsible for keeping the total under
 -- PACKET_MAX_CHAT_MESSAGE (128 bytes on the wire).
 -- -------------------------------------------------------------------------
 function M.format_state(info_hash)
   local parts = { "/info state" }
   if info_hash ~= nil then
-    for k, v in pairs(info_hash) do
+    for _, k in ipairs(sorted_field_names(info_hash)) do
+      local v = info_hash[k]
       if k ~= nil and k ~= "" and v ~= nil and v ~= "" then
         parts[#parts + 1] = k .. "=" .. tostring(v)
       end
@@ -327,7 +343,9 @@ end
 function M.format_extra(info_hash)
   local parts = { "/info extra" }
   if info_hash ~= nil then
-    for k, v in pairs(info_hash) do
+    -- Same sorted-field-name rule as format_state above.
+    for _, k in ipairs(sorted_field_names(info_hash)) do
+      local v = info_hash[k]
       if k ~= nil and k ~= "" and v ~= nil and v ~= "" then
         parts[#parts + 1] = k .. "=" .. tostring(v)
       end
