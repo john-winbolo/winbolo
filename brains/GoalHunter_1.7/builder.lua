@@ -44,17 +44,17 @@ local M = {}
 -- place_urgency: how far a placement may raise the LGM build-danger gate.
 -- -------------------------------------------------------------------------
 -- Shared by EVERY creator of a place_pill_strategic goal — the normal
--- placement scan and def_build in goals.lua, and the antitank / emergency
--- drops in init.lua — so the arithmetic lives in exactly one place and the
+-- placement scan and offensive_build in goals.lua, and the emergency drop in
+-- init.lua — so the arithmetic lives in exactly one place and the
 -- PLACE_PILL_GATE log line is reproducible from the constants alone. Creators
 -- stamp all four returned values onto the goal (_urgency + the three
 -- components); a goal that stamps nothing reads 0 and gets the plain
 -- LGM_DANGER_HIGH, which is the correct default for a non-placement goal.
 --   carried   — info.carried_pills
 --   deficit   — pf_max_deficit; pass 0 when the caller has no portfolio figure
---               (def_build and the init.lua drops return before/without one,
+--               (offensive_build and the emergency drop return before/without one,
 --               and the term honestly contributes nothing for them)
---   emergency — true for a panic / about-to-die drop (goal._place_emergency)
+--   emergency — true for a panic / about-to-die drop (goal._place_forced)
 -- Returns: total (capped), carry term, deficit term, emergency term.
 -- See the LGM_GATE_URGENCY_* block in constants.lua for the sizing rationale.
 function M.place_urgency(carried, deficit, emergency)
@@ -69,7 +69,7 @@ function M.place_urgency(carried, deficit, emergency)
 end
 
 -- Panic guard-pill spot search. Shared by builder's in-combat guard drop AND
--- goals.lua's def_build (eval_place_pill_strategic) so the two can't drift —
+-- goals.lua's offensive_build (eval_place_pill_strategic) so the two can't drift —
 -- they were duplicated and one stayed farthest-first while the other was fixed.
 -- NEAREST-first ±45° from the threat: 1 tile out, then 2, ... both offsets per
 -- ring (+45 then -45). Grass/road (tier 1, instant build) is preferred over
@@ -81,7 +81,7 @@ end
 -- `state` is optional and used only for the blocked-tile skip: a spot the
 -- place_pill gate breaker (decide() below) gave up on is held in state.blocked
 -- for PLACE_GATE_BLOCK_TICKS, and pick_goal drops any pool candidate sitting on
--- one. def_build FIREs its goal before the strategic scan can offer an
+-- one. offensive_build FIREs its goal before the strategic scan can offer an
 -- alternative, so without this check it keeps electing the abandoned tile,
 -- pick_goal throws away the only pool-8 candidate, and placement offers NOTHING
 -- for the whole 600-tick block — where the scan path would just take the
@@ -157,7 +157,7 @@ M.SPACE_NAME = SPACE_NAME
 -- genuinely reachable one two rings out, dropping the search to a worse class
 -- than it had to take. Worst case is every candidate simmed -- 10, which is
 -- exactly what this function already did before spacing existed.
-function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
+function M.guard_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   local aim = U.aim_at(info.tankx, info.tanky, U.m2w(threat_mx), U.m2w(threat_my))
   local cands = {}
   local blocked = state and state.blocked or nil
@@ -230,22 +230,36 @@ function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my, state)
   return best_cx, best_cy, best_tier, cands, best_cls
 end
 
--- Panic-build cover dedup (shared by builder's in-combat guard drop AND
--- goals.lua's def_build, same pairing as panic_build_spot): a live
--- friendly/allied pill within PANIC_COVER_RADIUS of the tank already does the
--- guard-pill job — placing another right beside it wastes a carried pill.
--- Only a reasonably healthy pill counts (> PANIC_COVER_MIN_HP); a nearly-dead
--- one is about to pop, so the panic build proceeds as its replacement.
--- Returns the covering pill (or nil).
-function M.panic_cover_pill(world, tmx, tmy)
-  local r = C.PANIC_COVER_RADIUS or 8
+-- Support-pill veto (shared by builder's in-combat guard drop AND goals.lua's
+-- offensive build, same pairing as guard_build_spot): a live friendly/allied
+-- pill within SUPPORT_PILL_RADIUS already does the guard-pill job — placing
+-- another right beside it wastes a carried pill. Only a reasonably healthy pill
+-- counts (> SUPPORT_PILL_MIN_HP); a nearly-dead one is about to pop, so the
+-- build proceeds as its replacement. Returns the covering pill (or nil).
+--
+-- emx/emy are OPTIONAL. Passed, the pill must be in range of BOTH us and that
+-- enemy to count as support: a pill sitting behind us covers us but cannot
+-- shoot the tank we are fighting, and vetoing on it means declining to build
+-- reinforcement for a fight nothing of ours can reach.
+--
+-- Omitted, the test is tank-only — which is what the in-combat guard drop
+-- wants. There the trigger has NO distance gate on attack_tank, so the enemy
+-- is routinely at detection range, far outside 8 tiles of any pill of ours;
+-- requiring the second test would mean the veto almost never fired and the bot
+-- dropped guard pills in fights where it already had cover.
+function M.nearby_support_pill(world, tmx, tmy, emx, emy)
+  local r = C.SUPPORT_PILL_RADIUS or 8
   local r2 = r * r
-  local min_hp = C.PANIC_COVER_MIN_HP or 4
+  local min_hp = C.SUPPORT_PILL_MIN_HP or 4
   for _, p in pairs(world.pills or {}) do
     if (p.owner == "friendly" or p.owner == "allied") and not p.in_tank
        and (p.health or 0) > min_hp then
       local dx, dy = p.mx - tmx, p.my - tmy
-      if dx * dx + dy * dy <= r2 then return p end
+      if dx * dx + dy * dy <= r2 then
+        if emx == nil then return p end
+        local ex, ey = p.mx - emx, p.my - emy
+        if ex * ex + ey * ey <= r2 then return p end
+      end
     end
   end
   return nil
@@ -344,7 +358,7 @@ function M.set_mode(state, world, info, goal)
 
   -- Strategic pill placement: dispatch LGM to place the pill. Normal placement
   -- waits until the tank is within 1 tile for precise positioning; an EMERGENCY
-  -- def_build (_place_emergency) just needs the pill OUT THERE, so it dispatches
+  -- offensive_build (_place_forced) just needs the pill OUT THERE, so it dispatches
   -- the LGM to run to the spot from wherever the tank is. Either way decide()'s
   -- place_pill handler still gates on lgm_can_reach + lgm_path_safe, so it only
   -- actually fires when the LGM can walk there.
@@ -358,11 +372,11 @@ function M.set_mode(state, world, info, goal)
     local tmx = bit.rshift(info.tankx, 8)
     local tmy = bit.rshift(info.tanky, 8)
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
-    local close_enough = (goal._place_emergency and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
+    local close_enough = (goal._place_forced and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
                          or pdist <= 1
     local _pp_ok = close_enough and (info.carried_pills or 0) > 0
        and info.man_status == C.LGM_INTANK and not info.inboat
-    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_emergency or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), _pp_ok and "place_pill" or "no-dispatch"))
+    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_forced or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), _pp_ok and "place_pill" or "no-dispatch"))
     if _pp_ok then
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }
@@ -398,12 +412,21 @@ function M.set_mode(state, world, info, goal)
       -- mid-take. attack_tank always builds — we're already committed to it.
       if closest_et and kind == "attack_pill" then
         local _ex, _ey = closest_et.mx - tmx, closest_et.my - tmy
-        if math.sqrt(_ex * _ex + _ey * _ey) > (C.DEF_BUILD_THREAT_RANGE or 8) then closest_et = nil end
+        if math.sqrt(_ex * _ex + _ey * _ey) > (C.OFF_BUILD_THREAT_RANGE or 8) then closest_et = nil end
       end
-      -- Cover dedup: a healthy friendly pill already in range of the tank IS
+      -- Support veto: a healthy friendly pill already in range of the tank IS
       -- the guard we'd be dropping — don't build a second one beside it.
+      --
+      -- TANK-ONLY here, deliberately: no enemy position is passed. The
+      -- offensive build in goals.lua requires the pill to cover both us AND the
+      -- enemy, but it can, because an enemy within 8 is its trigger. This path
+      -- has NO distance gate on attack_tank (see above — only the attack_pill
+      -- branch range-checks), so the triggering enemy is routinely at detection
+      -- range, well outside 8 tiles of any pill of ours. Add the second test
+      -- here and the veto would almost never fire, and the bot would drop guard
+      -- pills in fights where it already has cover.
       if closest_et then
-        local _cov = M.panic_cover_pill(world, tmx, tmy)
+        local _cov = M.nearby_support_pill(world, tmx, tmy)
         if _cov then
           b.defensive_debug = { found = false,
             reason = string.format("covered by pill@(%d,%d) hp=%d", _cov.mx, _cov.my, _cov.health or 0) }
@@ -412,11 +435,11 @@ function M.set_mode(state, world, info, goal)
       end
       if closest_et then
         -- Shared NEAREST-first ±45° guard-spot search (same code goals.lua's
-        -- def_build uses — no more farthest-first drift). Returns the spot + all
+        -- offensive_build uses — no more farthest-first drift). Returns the spot + all
         -- considered tiles for the panic_build overlay.
         local found_mx, found_my, found_tier, cands =
-          M.panic_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my, state)
-        if BRAIN_DEBUG_MODE then state._panic_build_viz = { tick = state.tick or 0, spots = cands, best_cx = found_mx, best_cy = found_my, threat_mx = closest_et.mx, threat_my = closest_et.my, tank_mx = tmx, tank_my = tmy } end
+          M.guard_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my, state)
+        if BRAIN_DEBUG_MODE then state._guard_build_viz = { tick = state.tick or 0, spots = cands, best_cx = found_mx, best_cy = found_my, threat_mx = closest_et.mx, threat_my = closest_et.my, tank_mx = tmx, tank_my = tmy } end
         if found_mx then
           b.mode       = "place_pill"
           b.pill_target = { mx = found_mx, my = found_my }
@@ -1014,7 +1037,7 @@ function M.decide(state, world, info, now)
     --   * only counted once we materially could build (pill in hand, wood on
     --     board) — a short-on-trees gate is the seek-trees redirect doing its
     --     job, not a stall, and must not get a good spot blocked;
-    --   * only for a real place_pill_strategic GOAL. The def_build panic drop
+    --   * only for a real place_pill_strategic GOAL. The offensive_build panic drop
     --     in set_mode also flips b.mode to place_pill while the goal is an
     --     attack — abandoning that spot would abort the attack the tank is
     --     actually committed to.
@@ -1045,7 +1068,7 @@ function M.decide(state, world, info, now)
       now, px, py, info.carried_pills or 0, info.trees or 0, C.PILL_PLACE_TREE_COST or 4,
       tostring(can_reach), tostring(path_safe), threshold, C.LGM_DANGER_HIGH or 80, urgency,
       C.LGM_GATE_URGENCY_CAP or 0, (g and g._urg_carry) or 0, (g and g._urg_deficit) or 0,
-      (g and g._urg_emerg) or 0, tostring((g and g._place_emergency) or false),
+      (g and g._urg_emerg) or 0, tostring((g and g._place_forced) or false),
       b.place_gate_fails or 0, C.PLACE_GATE_FAIL_TICKS or 100))
 
     if gate_ok then
@@ -1055,7 +1078,7 @@ function M.decide(state, world, info, now)
     end
 
     if (b.place_gate_fails or 0) >= (C.PLACE_GATE_FAIL_TICKS or 100) then
-      -- Give the spot up. Block the tile first — the placement scan, def_build's
+      -- Give the spot up. Block the tile first — the placement scan, offensive_build's
       -- panic search and init.lua's two carried-pill drops all consult
       -- state.blocked, so none of them can hand the same winner straight back —
       -- then clear the goal. decide() runs AFTER goal selection, so clearing

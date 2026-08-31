@@ -1040,7 +1040,7 @@ M.LGM_GATHER_RETRIES    = 5   -- how many nearby forest candidates (nearest firs
 -- that is being shot at can NEVER dispatch its builder — which is exactly when
 -- a guard pill in the ground is worth most. (20260827_115304 bot3:
 -- PLACE_PILL_GATE reach=true safe=false from t=12523 until it died at t=12678,
--- still holding 4 pills; the DEF_BUILD PANIC and EMERGENCY_DROP retries hit the
+-- still holding 4 pills; the OFF_BUILD PANIC and EMERGENCY_DROP retries hit the
 -- same wall.) Every creator of a place_pill_strategic goal stamps it with a
 -- _urgency scalar (builder.place_urgency builds all of them, so the arithmetic
 -- lives in one place), and the gate uses
@@ -1055,7 +1055,7 @@ M.LGM_GATHER_RETRIES    = 5   -- how many nearby forest candidates (nearest firs
 -- portfolio (2+ pills short) reaches 25 → threshold 105, which clears one shell
 -- path (100) and nothing heavier.
 --
--- EMERGENCY is the panic / about-to-die drop (goal._place_emergency: def_build's
+-- EMERGENCY is the panic / about-to-die drop (goal._place_forced: offensive_build's
 -- threat-reactive build, and init.lua's EMERGENCY_DROP). It is a DISTINCT, flat
 -- term and it dominates the other two, because a panic build is worth more than
 -- a routine one, not less — the whole point of dropping a pill at 10 armour with
@@ -1115,7 +1115,7 @@ M.LGM_GATE_URGENCY_PER_PILL    = 5   -- per carried pill beyond the first
 M.LGM_GATE_URGENCY_PILL_MAX    = 15  -- cap on the carry half (3 extras = 4 pills)
 M.LGM_GATE_URGENCY_PER_DEFICIT = 5   -- per pill of biggest portfolio shortfall (pf_max_deficit)
 M.LGM_GATE_URGENCY_DEFICIT_MAX = 10  -- cap on the imbalance half (2 pills short)
-M.LGM_GATE_URGENCY_EMERGENCY   = 40  -- flat term for a _place_emergency (panic / about-to-die) drop
+M.LGM_GATE_URGENCY_EMERGENCY   = 40  -- flat term for a _place_forced (panic / about-to-die) drop
 M.LGM_GATE_URGENCY_CAP         = 60  -- hard ceiling on the raise; threshold never exceeds 140
 
 -- Gate-failure breaker (builder.lua's place_pill branch). A refused build gate
@@ -1261,7 +1261,7 @@ M.STRATEGIC_PLACE_LOS_MAX_RANGE = 8     -- max tiles to trace per LOS ray
 M.STRATEGIC_PLACE_BASE_COST     = 60    -- base cost so it loses to attack/capture but beats explore
 -- Near-enemy-tank placement penalty (combat zone): flat add to a NON-emergency
 -- place_pill_strategic cost when an enemy tank is within euclidean range of the
--- chosen spot. CLOSE supersedes NEAR. The def_build emergency drop is exempt.
+-- chosen spot. CLOSE supersedes NEAR. The offensive_build emergency drop is exempt.
 M.STRATEGIC_PLACE_NEAR_TANK_DIST     = 10
 M.STRATEGIC_PLACE_NEAR_TANK_PENALTY  = 30
 M.STRATEGIC_PLACE_CLOSE_TANK_DIST    = 7
@@ -1374,17 +1374,29 @@ M.STRATEGIC_PLACE_COST_MULT          = 0.085
 -- the threat direction, 2-5 tiles out, with clear LGM path.
 M.DEFENSIVE_BUILD_MIN_DIST     = 1    -- tiles from tank (inner bound, tried FIRST — nearest spiral out)
 M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound)
-M.DEF_BUILD_THREAT_RANGE       = 8    -- tiles (euclidean): nearest enemy tank must be within this to trigger a panic/defensive build. Past it the tank can't shoot us, so no need to panic-drop a guard pill mid-carry. ~tank gun range + 1 slack.
+-- Offensive build: nearest enemy tank must be within this (euclidean) to
+-- trigger. 8 is exactly a pillbox's reach -- PILLBOX_RANGE 2048 WU over 256 WU
+-- per tile -- so a pill dropped now can actually engage the tank that caused
+-- it. The deleted antitank drop used 12, which only made sense beside its
+-- midpoint spot (that put the pill 6 tiles nearer the enemy); with a ±45°
+-- close-in spot, a trigger at 12 places a pill that cannot reach until the
+-- enemy closes 4 more tiles. Also deliberately distinct from the odds rings' 15.
+M.OFF_BUILD_THREAT_RANGE       = 8
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
--- Panic-build cover dedup: a healthy friendly/allied pill within this radius
--- of the tank IS the guard a panic build would drop — skip building another
--- beside it. A cover pill at or below MIN_HP is nearly dead and doesn't
--- count (build the replacement while it still soaks a few shots).
-M.PANIC_COVER_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
-M.PANIC_COVER_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
+-- Support-pill veto: a healthy friendly/allied pill within this radius IS the
+-- guard an offensive build would drop — skip building another beside it. A pill
+-- at or below MIN_HP is nearly dead and doesn't count (build the replacement
+-- while it still soaks a few shots).
+--
+-- The offensive build requires the pill to be within this radius of BOTH us and
+-- the enemy: one that covers us but cannot shoot the tank we are fighting is
+-- not support for THIS fight. The in-combat guard drop deliberately keeps the
+-- tank-only test — see nearby_support_pill.
+M.SUPPORT_PILL_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
+M.SUPPORT_PILL_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
 -- Desperate ("about to die") build override. When armour <= DEATH_BUILD_ARMOUR
 -- AND we've taken a hit within the last DEATH_BUILD_HIT_WINDOW ticks AND an
--- enemy tank is in shoot range while carrying, the def_build fires even if a
+-- enemy tank is in shoot range while carrying, the offensive_build fires even if a
 -- cover pill already exists (that pill clearly isn't keeping us alive) and at a
 -- rock-bottom cost so it decisively wins the pool. Rationale: a tank that dies
 -- carrying pills drops them for anyone to grab — plant them (as our guard) NOW
@@ -1399,7 +1411,7 @@ M.DEATH_BUILD_HIT_WINDOW       = 50   -- ticks since last damage to still count 
 -- pill can't be placed, so the haul-protection flee (CRITICAL_FLEE_ENABLED) covers
 -- that case instead. Complements DESPERATE (which needs an enemy in shoot range).
 M.PANIC_BUILD_ARMOUR           = 10   -- armour <= this AND carrying AND LGM in tank => build immediately, no matter who's around
--- Emergency def_build dispatches the LGM to run to the spot from wherever the
+-- Emergency offensive_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
 -- candidate selection and dispatch. Beyond this the LGM walk is too slow/risky.
@@ -1589,11 +1601,6 @@ M.GHOST_TANK_COST_PENALTY   = 40    -- added attack_tank cost for a ghost (prefe
 M.TANK_COMBAT_LOW_SHELLS_COST_PER   = 1.5  -- cost per shell below threshold (0→30, 10→15, 15→7.5)
 M.TANK_COMBAT_BOAT_MULT            = 0.8   -- cost multiplier for enemy on river/boat (exposed)
 M.TANK_COMBAT_DEEPSEA_MULT         = 0.25  -- cost multiplier for enemy on deep sea (one-shot kill)
-
--- Anti-tank opportunistic pill drop
-M.ANTITANK_DROP_ENABLED         = true
-M.ANTITANK_DROP_RANGE           = 12    -- enemy tank must be within this many tiles
-M.ANTITANK_DROP_COOLDOWN        = 200   -- ticks between opportunistic drops
 
 -- Emergency pill drop (aIndy: drop pill when about to die to save it)
 M.EMERGENCY_DROP_ENABLED        = true
@@ -2215,7 +2222,7 @@ M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
 --   refuel_at_base / flee_to_base   x1  (EXEMPT — the whole "refuel" GOAL_GROUP;
 --                                        a suicider still keeps itself fuelled)
 --   defend_pill                     x6  PILL_SUICIDER_DEFEND_MULT
---   capture_pill / place_pill_strategic / def_build / wait_for_lgm x1 (EXEMPT:
+--   capture_pill / place_pill_strategic / offensive_build / wait_for_lgm x1 (EXEMPT:
 --     scooping and fielding the pills it kills IS the job; panic drops are
 --     survival; and waiting for its own LGM must never lose to the x3)
 --   everything else                 x3  PILL_SUICIDER_OTHER_MULT
