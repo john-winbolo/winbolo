@@ -736,7 +736,16 @@ function M.build_kw_message(world)
   if not dirty then return nil end
   local PREFIX, BUDGET = "/info kw ", 120
   local toks, len, drained = {}, #PREFIX, {}
-  for key, r in pairs(dirty) do
+  -- Determinism backport from 1.7, 20260831: walk the dirty set in sorted key
+  -- order. pairs() order is per-process (LuaJIT hashes strings with a process
+  -- seed and tables by memory address) and this walk stops early on the byte
+  -- budget, so the raw order decided WHICH knowledge shipped this tick and
+  -- same-seed games forked. Sorting first makes replays exact.
+  local keys = {}
+  for key in pairs(dirty) do keys[#keys + 1] = key end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    local r   = dirty[key]
     local tok = kw_rec_token(r)
     local add = #tok + (#toks > 0 and 1 or 0)   -- +1 for the joining comma
     if len + add > BUDGET then break end
