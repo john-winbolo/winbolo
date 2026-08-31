@@ -8,33 +8,34 @@
 --
 -- The map itself carries the geometry: 6 center bases owned by slots
 -- 0..5 hugging the spawn puddle, 6 DEAD pills just beyond them (the
--- defenders' starting pills — scoop, place, repair), 4 FORWARD horde
--- bases pushed in to r=13 — just outside the ring road, on the 0, 72,
--- 180 and 252 degree spokes — owned by slots 15, 13, 10, 8, and 10 DEAD
--- neutral pills parked out on the old ring at r=26, stamped to the wave
--- at round start — dead on the ground for the attackers' engineering.
+-- defenders' starting pills — scoop, place, repair), 8 horde bases
+-- ringing the shore at r=25 on eight of the ten 36-degree spokes (0,
+-- 36, 72, 108, 180, 216, 252, 288 — 144 and 324 left open), owned by
+-- slots 15..12 and 10..7, and 10 DEAD neutral pills parked out on the
+-- old ring at r=26, stamped to the wave at round start — dead on the
+-- ground for the attackers' engineering.
 --
--- The horde used to hold a full ring of 10 bases at r=26. Sitting out
--- on the shoreline they were free real estate: the fight never reached
--- them, so they were neither contested nor useful. Only the two that
--- had been pushed forward to r=13 ever mattered, because they sit IN
--- the collision zone with the defenders' core. So the ring is gone and
--- those two got a matching pair — one due east, one due west, same
--- radius, same 36-degree spoke grid the map has always used. All four
--- are worth attacking and worth holding.
+-- History: the horde first held a full ring of 10 bases at r=26 that
+-- never got fought over, then 4 forward bases at r=13 inside the
+-- collision zone. The ring came back (2026-08-31) once the brains grew
+-- an INFLUENCE TAIL: each base's claim now reaches ~20 tiles inland,
+-- so eight shore bases project a continuous hostile claim that meets
+-- the defenders' core and draws a front line around the island — the
+-- bots fight for the ground between, instead of for bases that never
+-- mattered.
 --
--- Each of the four is owned by the slot whose ocean start sits on the
--- SAME spoke (on_choose_start pins slot p to start 22-p), so its bot
--- comes ashore pointing straight at its own base. The other six
--- attackers hold no base and fight off the four.
+-- Each base is owned by the slot whose ocean start sits on the SAME
+-- spoke (on_choose_start pins slot p to start 22-p), so its bot comes
+-- ashore pointing straight at its own base. The other two attackers
+-- hold no base.
 --
 -- Round flow:
 --   * on_setup (the SILENT pre-snapshot tick) deals center bases and
 --     their pills round-robin to the defenders actually seated in
 --     slots 0..5 — human or bot, so the host can stack their own team
 --     with lobby bots for testing — with no newswire spam.
---   * ~10 s grace, then wave 1. At the START OF EVERY WAVE the 4
---     forward bases flip back to their bots (humans may capture them
+--   * ~10 s grace, then wave 1. At the START OF EVERY WAVE the 8
+--     shore bases flip back to their bots (humans may capture them
 --     between waves — engine ownership rules apply mid-wave, including
 --     the auto-neutralize when a wave bot dies).
 --   * Wave bots RESPAWN like normal Bolo play (at their own outer
@@ -42,7 +43,7 @@
 --     pressure, ended only by the clock: when it runs out every
 --     attacker vanishes on the spot. Survive all 5 waves and the
 --     defenders win — that is the ONLY win (allow_base_win below turns
---     the engine's all-bases sweep off, so clearing the horde's four
+--     the engine's all-bases sweep off, so clearing the horde's eight
 --     mid-wave doesn't cut the game short). The only loss is the
 --     instant all-6-inner-bases check in on_tick.
 --
@@ -78,7 +79,7 @@ function show_add_team_button(game)
 end
 
 -- The engine's classic all-bases sweep is OFF: taking the horde's
--- forward bases mid-wave must not end the round early (the win is
+-- shore bases mid-wave must not end the round early (the win is
 -- outlasting all 5 waves, nothing else), and the loss is the script's
 -- own instant check on the 6 inner bases — far stricter than a
 -- full-map sweep anyway.
@@ -122,9 +123,9 @@ local ANNOUNCE_GAP = 250    -- final "incoming" warning this many ticks early
 local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 
 -- Map-file layout contracts (see tests/generate_survival_map.py):
-local HORDE_BASES  = 4      -- bases 1..4: the horde's forward bases
-local CENTER_FIRST = 5      -- bases 5..10 form the human center, owners 0..5
-local CENTER_PILLS = 6      -- pill k (1..6) pairs center base 4+k
+local HORDE_BASES  = 8      -- bases 1..8: the horde's shore ring (r=25)
+local CENTER_FIRST = 9      -- bases 9..14 form the human center, owners 0..5
+local CENTER_PILLS = 6      -- pill k (1..6) pairs center base CENTER_FIRST-1+k
 local WAVE_PILLS   = 10     -- pills 7..16: the wave's dead ground pills
 
 local wave = 0
@@ -136,13 +137,15 @@ local wave_ends_at = nil    -- tick the live wave's time runs out
 local last_min_mark = nil   -- minutes-left value last announced
 local half_min_said = false -- the one 30-seconds-left warning
 
--- Which wave slot owns each forward base. Not arithmetic any more: the
--- four bases sit on four of the map's ten 36-degree spokes, and each one
+-- Which wave slot owns each shore base. Not arithmetic any more: the
+-- eight bases sit on eight of the map's ten 36-degree spokes, and each one
 -- belongs to the slot whose ocean start sits on the SAME spoke, so
 -- on_choose_start (slot p -> start 22-p) lands that bot pointing at its
 -- own base. Base 1 is the 0 deg spoke (due east), 2 is 72, 3 is 180
 -- (due west), 4 is 252.
-local HORDE_BASE_SLOT = { 15, 13, 10, 8 }
+-- 8 of the 10 spokes (0,36,72,108 / 180,216,252,288 deg; 144 and 324 left
+-- open): slot 15-i owns the base on spoke i.
+local HORDE_BASE_SLOT = { 15, 14, 13, 12, 10, 9, 8, 7 }
 local function horde_base_slot(k)
   return HORDE_BASE_SLOT[k]
 end
@@ -153,7 +156,7 @@ end
 -- non-neutral owner to another — armour, shells and mines all to zero,
 -- that is the engine's capture rule and it does not care that the
 -- "capture" came from a script. This map re-deals ownership constantly
--- (the center at setup, the horde's four at setup AND at the top of
+-- (the center at setup, the horde's eight at setup AND at the top of
 -- every wave), so without this the round opened on empty bases and the
 -- horde's bases were wiped clean again every five minutes.
 --
@@ -284,12 +287,12 @@ end
 local function spawn_wave(game)
   wave = wave + 1
 
-  -- Every wave opens with the horde's four back in bot hands — whatever
+  -- Every wave opens with the horde's eight back in bot hands — whatever
   -- the humans captured since the last one. Clamp into the slots this
   -- wave actually fields (same rule as the pill pass below): with a
   -- shrunken roster the natural owner slot may be EMPTY, and a base
   -- owned by a nonexistent player reads hostile to BOTH sides — all
-  -- four must stay horde no matter how few attackers spawn. Two of them
+  -- eight must stay horde no matter how few attackers spawn. Several
   -- can land on the same slot once the roster is short enough; a slot
   -- owning two bases is fine, a base owned by nobody is not.
   local lowest_slot = 16 - WAVE_SIZE
@@ -424,7 +427,7 @@ local function deal_center(game)
   -- no armour to repair with, no shells, no mines, in a map whose
   -- entire premise is digging in. Put it all back.
   restock(game, CENTER_FIRST, CENTER_FIRST + 5, "center")
-  -- Deal the horde's four to the horde immediately too — spawn_wave
+  -- Deal the horde's eight to the horde immediately too — spawn_wave
   -- re-deals them every wave, but until wave 1 lands the map-file owners
   -- rule, and with a shrunken roster (WAVE_SIZE < 10) the natural
   -- owners of the low-slot bases are EMPTY slots: red to both sides from

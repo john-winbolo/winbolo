@@ -53,7 +53,7 @@ C = 128
 R_LAKE = 2.5
 R_LAND = 29
 R_HSTART, R_HBASE = 2, 6
-R_BBASE, R_BSTART = 13, 33   # horde bases sit forward, just past the road
+R_BBASE, R_BSTART = 25, 33   # horde bases ring the shore (r=25), starts at r=33
 R_PILL = 8               # 6 dead defender pills, one beyond each base
 R_PILL_OUT = 26          # 10 dead neutral pills for the wave-1 tanks
 
@@ -73,7 +73,10 @@ human_bases  = [pol(R_HBASE,  a) for a in human_angles]      # owners 0..5
 # Each is owned by the slot whose ocean start sits on the SAME spoke
 # (on_choose_start pins slot p to start 22-p, and slot 15-i starts on
 # spoke i), so its bot comes ashore aimed at its own base.
-FORWARD_SPOKES = [0, 2, 5, 7]           # zero-based index into bot_angles
+# 8 of the 10 spokes carry a horde base (point-symmetric: skip 4 and 9).
+# The influence tail grows ~20 tiles from each, so the ring's claim meets
+# the defenders' core claim and forms a front line around the island.
+FORWARD_SPOKES = [0, 1, 2, 3, 5, 6, 7, 8]   # zero-based index into bot_angles
 bot_bases  = [pol(R_BBASE, bot_angles[i]) for i in FORWARD_SPOKES]
 bot_owners = [15 - i for i in FORWARD_SPOKES]                # 15, 13, 10, 8
 bot_starts   = [pol(R_BSTART, a) for a in bot_angles]
@@ -138,7 +141,7 @@ for (px, py) in human_bases + bot_bases + pills:
 def cheb(a, b):
     return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
 
-all_bases = bot_bases + human_bases   # file order: horde 1..4, center 5..10
+all_bases = bot_bases + human_bases   # file order: horde 1..8, center 9..14
 for i, s in enumerate(human_starts + bot_starts):
     assert grid[s[0]][s[1]] == DEEP, f"start {i} not in deep sea: {s}"
     near = [bi for bi, b in enumerate(all_bases) if cheb(s, b) <= 9]
@@ -149,10 +152,12 @@ for i, s in enumerate(human_starts + bot_starts):
         # must never see a HORDE base.
         assert all(bi >= 4 for bi in near), f"human start {i} sees horde bases {near}"
     else:
-        # Every horde base is forward now, far inland from every ocean
-        # start, so no bot start pairs with one. Placement is hook-driven
-        # (on_choose_start), so the engine fallback is never consulted.
-        assert near == [], f"bot start {i} sees bases {near}"
+        # Horde bases sit on the shore ring, so a bot start may be within 9
+        # of the base on ITS OWN spoke. Placement is hook-driven
+        # (on_choose_start), so the engine's tiering fallback is never
+        # consulted -- report it, don't refuse it.
+        if near:
+            print(f"note: bot start {i} within 9 of horde base(s) {near} (hook-placed)")
 for b in all_bases + pills:
     assert grid[b[0]][b[1]] != DEEP, f"structure in water: {b}"
 
