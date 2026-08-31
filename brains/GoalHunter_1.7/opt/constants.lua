@@ -156,6 +156,25 @@ M.BASE_INFLUENCE_RADIUS   = 12
 M.BASE_INFLUENCE_STRENGTH = 100
 M.PILL_INFLUENCE_RADIUS   = 8
 M.PILL_INFLUENCE_STRENGTH = 60
+-- Influence tail: grow each side's stamped cores outward over passable ground
+-- so unclaimed gaps between our pills/bases read as ours (and theirs as
+-- theirs), and the front line forms where the two tails meet instead of at
+-- the disc edges. Merged into the same signed grid, so every consumer and the
+-- '1'/'3' overlays see it without change. See brain_pathfinder.c.
+M.EXPAND_ENABLED       = true
+M.EXPAND_SEED_MIN      = 20   -- |stamped| at/above this is a core the tail grows from
+M.EXPAND_RADIUS        = 10   -- steps the tail reaches (one pill range plus a bit)
+M.EXPAND_START         = 15   -- value at the core edge, 0 at RADIUS. Below every
+                              -- hard threshold (+-50 goal mults, -20 deep-enemy take)
+M.EXPAND_NEUTRAL_STEP  = 3    -- step cost inside a live NEUTRAL pill's range:
+                              -- the tail penetrates ~1/3 as far and fades 3x faster
+M.EXPAND_WATER_STEP    = 2    -- shallow water / boat tile. Deep sea, buildings,
+                              -- walls and pillboxes block the tail outright
+M.EXPAND_REFRESH_TICKS = 250  -- backstop rebuild; normally only on a stamp-set change
+-- classify(): an unclaimed (0) tile away from any front line. true = "front"
+-- (today's behaviour: fillable, placement can land there); false = "beyond"
+-- (not a fillable role; the placement scan pays the beyond-front penalty).
+M.FRONT_ZERO_IS_FRONT  = true
 
 -- Pill anger decay: engine takes ~3000 ticks (speed 6->100, +1 every 32 ticks)
 M.PILL_ANGER_DECAY = 3000

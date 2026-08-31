@@ -2966,6 +2966,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
+    tests/unit/test_pf_influence_tail.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3542,6 +3543,12 @@ set(_unit_test_names
     pf_dijkstra_no_solid_corner_cut
     pf_astar_no_solid_corner_cut
     pf_costto_no_solid_corner_cut
+    pf_tail_reaches_radius_and_stops
+    pf_tail_blocked_by_wall_and_sea
+    pf_tail_neutral_zone_slows
+    pf_tail_meeting_cancels_tie_to_hostile
+    pf_tail_never_overwrites_a_stamp
+    pf_tail_contact_makes_a_front_line
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback

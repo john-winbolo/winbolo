@@ -2156,6 +2156,33 @@ function Brain.think(info)
   if state._inf_last_sig ~= _inf_sig then
     state._inf_last_sig = _inf_sig
   end
+  -- Influence tail (constants.lua EXPAND_*). Rebuilt in C only when the
+  -- stamped set or the neutral-pill set changes (or every EXPAND_REFRESH_TICKS
+  -- as a backstop); merged into influence_grid every tick, since the stamp
+  -- loop above wipes it. Must run BEFORE anything reads influence this tick.
+  if C.EXPAND_ENABLED then
+    local _nsig = 0
+    for id, pm in pairs(world.pills) do
+      if pm.owner == "neutral" and pm.health > 0 and not pm.in_tank then
+        _nsig = _nsig + (id * 9173 + 3 + pm.mx * 7 + pm.my * 13)
+      end
+    end
+    local _tsig = _inf_sig + _nsig
+    if state._tail_sig ~= _tsig
+       or (now - (state._tail_tick or -1e9)) >= (C.EXPAND_REFRESH_TICKS or 250) then
+      local _t_tail = clock_us()
+      cpf.clear_neutral_zones()
+      for _, pm in pairs(world.pills) do
+        if pm.owner == "neutral" and pm.health > 0 and not pm.in_tank then
+          cpf.stamp_neutral_zone(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS)
+        end
+      end
+      cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
+                                 C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
+      state._tail_sig, state._tail_tick = _tsig, now
+    end
+    cpf.merge_influence_tail()
+  end
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).
   -- Token: <id><cls><lastseen>; pills add 'T' when in_tank, 'A' if ally-sourced.

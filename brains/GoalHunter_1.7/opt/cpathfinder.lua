@@ -220,6 +220,17 @@ function M.influence_at(x, y)
   return cpf_influence_at(x, y)
 end
 
+--- Influence tail (see brainPathfinderRebuildInfluenceTail). Rebuild reads the
+--- stamped grid, so call it after the stamps and before merge; merge every tick.
+function M.clear_neutral_zones() cpf_clear_neutral_zones() end
+function M.stamp_neutral_zone(cx, cy, radius) cpf_stamp_neutral_zone(cx, cy, radius) end
+function M.rebuild_influence_tail(seed_min, radius, start, neutral_step, water_step)
+  cpf_rebuild_influence_tail(seed_min, radius, start, neutral_step, water_step)
+end
+function M.merge_influence_tail() cpf_merge_influence_tail() end
+--- Tail value at (x,y) if the tail won the merge there, else 0 (viz).
+function M.influence_tail_at(x, y) return cpf_influence_tail_at(x, y) end
+
 function M.set_overlay(x, y, value)
   cpf_set_overlay(x, y, value)
 end

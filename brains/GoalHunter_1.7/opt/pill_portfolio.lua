@@ -87,8 +87,12 @@ function M.classify(mx, my, in_use, placing)
   if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro", inf end
   -- back: positive influence AND outside the front range AND not surrounded.
   if inf > 0 then return "back", inf end
-  -- inf == 0, away from the line, not surrounded: neutral → treat as front.
-  return "front", inf
+  -- inf == 0, away from the line, not surrounded: unclaimed ground.
+  -- FRONT_ZERO_IS_FRONT (constants.lua): true = treat as front (fillable);
+  -- false = "beyond" -- not a portfolio role, so the placement scan's
+  -- STRICT_NEED gate skips it and its sc3 term pays the beyond-front penalty.
+  if C.FRONT_ZERO_IS_FRONT ~= false then return "front", inf end
+  return "beyond", inf
 end
 
 -- Cached role for an EXISTING pill, re-evaluated every PILL_ROLE_REEVAL_TICKS

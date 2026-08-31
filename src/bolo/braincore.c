@@ -1341,6 +1341,43 @@ static int l_cpf_influence_at(lua_State *L) {
   return 1;
 }
 
+static int l_cpf_clear_neutral_zones(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearNeutralZones(pf);
+  return 0;
+}
+
+static int l_cpf_stamp_neutral_zone(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderStampNeutralZone(pf, (int)luaL_checkinteger(L, 1),
+                                  (int)luaL_checkinteger(L, 2),
+                                  (int)luaL_checkinteger(L, 3));
+  return 0;
+}
+
+static int l_cpf_rebuild_influence_tail(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderRebuildInfluenceTail(pf, (int)luaL_checkinteger(L, 1),
+                                      (int)luaL_checkinteger(L, 2),
+                                      (int)luaL_checkinteger(L, 3),
+                                      (int)luaL_checkinteger(L, 4),
+                                      (int)luaL_checkinteger(L, 5));
+  return 0;
+}
+
+static int l_cpf_merge_influence_tail(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderMergeInfluenceTail(pf);
+  return 0;
+}
+
+static int l_cpf_influence_tail_at(lua_State *L) {
+  CPF_GET(L);
+  lua_pushinteger(L, (int)brainPathfinderInfluenceTailAt(pf, (int)luaL_checkinteger(L, 1),
+                                                         (int)luaL_checkinteger(L, 2)));
+  return 1;
+}
+
 static int l_cpf_path_to(lua_State *L) {
   int next_x = -1, next_y = -1;
   int status;
@@ -2178,6 +2215,11 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_influence",   l_cpf_clear_influence },
     { "cpf_stamp_influence",   l_cpf_stamp_influence },
     { "cpf_influence_at",      l_cpf_influence_at },
+    { "cpf_clear_neutral_zones",    l_cpf_clear_neutral_zones },
+    { "cpf_stamp_neutral_zone",     l_cpf_stamp_neutral_zone },
+    { "cpf_rebuild_influence_tail", l_cpf_rebuild_influence_tail },
+    { "cpf_merge_influence_tail",   l_cpf_merge_influence_tail },
+    { "cpf_influence_tail_at",      l_cpf_influence_tail_at },
     { "cpf_path_to",           l_cpf_path_to },
     { "cpf_cost_to",           l_cpf_cost_to },
     { "cpf_cost_to_reset",     l_cpf_cost_to_reset },

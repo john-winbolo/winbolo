@@ -67,11 +67,22 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   (void)inst;
 }
 
+/* Lua seeding (ec47fa43 / 73ba4e7a): the bot manager forwards -brain-lua-seed
+ * here; nothing in the unit suite runs a Lua brain. */
+void luaBrainSeedRandom(LuaBrainInstance *inst, long seed) {
+  (void)inst; (void)seed;
+}
+
+void luaBrainSetDefaultRandomSeed(long seed) {
+  (void)seed;
+}
+
 void luaBrainSetTickInputs(LuaBrainInstance *inst,
                            double lastThinkMs,
                            double targetMs,
-                           bool   wasKilled) {
-  (void)inst; (void)lastThinkMs; (void)targetMs; (void)wasKilled;
+                           bool   wasKilled,
+                           int    tierOverride) {
+  (void)inst; (void)lastThinkMs; (void)targetMs; (void)wasKilled; (void)tierOverride;
 }
 
 void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {

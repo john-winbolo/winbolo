@@ -2618,7 +2618,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         do
           local s0 = score
           local influence = cpf.influence_at(cx, cy)
-          if influence < 0 then
+          -- FRONT_ZERO_IS_FRONT=false: an unclaimed 0 tile off the line is
+          -- beyond our claim and pays the same penalty as enemy ground.
+          if influence < 0
+             or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
+                 and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
             score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)
@@ -3052,6 +3056,23 @@ function M.draw_build_viz(viz, state, info)
     end
   end
 
+  -- influence_tail: cells the tail claimed (not stamped), +-16 around the tank.
+  if viz.is_on("influence_tail") then
+    for dy = -16, 16 do
+      for dx = -16, 16 do
+        local x, y = tmx + dx, tmy + dy
+        if x >= 0 and x <= 255 and y >= 0 and y <= 255 then
+          local t = cpf.influence_tail_at(x, y)
+          if t ~= 0 then
+            local a = 40 + math.min(15, math.abs(t)) * 8
+            if t > 0 then viz.rect("influence_tail", x, y, x + 1, y + 1, 80, 140, 255, a, true)
+            else          viz.rect("influence_tail", x, y, x + 1, y + 1, 255, 80, 80, a, true) end
+          end
+        end
+      end
+    end
+  end
+
   -- harvest_trip: the pending placement/harvest tile with its stored score, a
   -- line from the tank, and the resume request when one is waiting.
   if viz.is_on("harvest_trip") then
@@ -3176,7 +3197,11 @@ function M.get_strategic_place_heatmap(state, world, info)
 
         do
           local influence = cpf.influence_at(cx, cy)
-          if influence < 0 then
+          -- FRONT_ZERO_IS_FRONT=false: an unclaimed 0 tile off the line is
+          -- beyond our claim and pays the same penalty as enemy ground.
+          if influence < 0
+             or (influence == 0 and C.FRONT_ZERO_IS_FRONT == false
+                 and not PP.near_front(cx, cy, C.FRONT_NEAR_RADIUS_PLACE or 0)) then
             score = score - C.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY
           elseif influence > 0 then
             score = score + math.max(0, C.STRATEGIC_PLACE_FRONT_PROX_CAP - influence)

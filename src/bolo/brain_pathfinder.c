@@ -819,6 +819,136 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y) {
   return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Influence tail                                                      */
+/* ------------------------------------------------------------------ */
+
+void brainPathfinderClearNeutralZones(BrainPathfinder *pf) {
+  if (pf) memset(pf->neutral_zone, 0, sizeof(pf->neutral_zone));
+}
+
+void brainPathfinderStampNeutralZone(BrainPathfinder *pf, int cx, int cy, int radius) {
+  int dx, dy;
+  int r2 = radius * radius;
+  if (!pf) return;
+  for (dy = -radius; dy <= radius; dy++) {
+    int ny = cy + dy;
+    if (ny < 0 || ny > 255) continue;
+    for (dx = -radius; dx <= radius; dx++) {
+      int nx = cx + dx;
+      if (nx < 0 || nx > 255) continue;
+      if (dx * dx + dy * dy > r2) continue;
+      pf->neutral_zone[ny * MAP_SIZE + nx] = 1;
+    }
+  }
+}
+
+#define TAIL_MAXD 64
+#define TAIL_POOL (4 * 65536)
+
+/* A tile the tail cannot claim through: solid, open sea, or a pillbox. */
+static int tail_blocked(int type) {
+  return type == TT_BUILDING || type == TT_HALFBUILD || type == TT_DEEPSEA
+      || type == 12 /* pillbox */;
+}
+
+/* One side's step-distance BFS from its cores. Bucket queue (Dial's) over a
+ * pooled entry list: a node re-enters a lower bucket when a cheaper route
+ * reaches it, and stale entries are skipped by comparing to tail_dist. Seeds
+ * and buckets are visited in tile-index order, so the result is
+ * deterministic. `sign` +1 grows the friendly tail into expand_grid, -1
+ * subtracts the hostile tail (exact tie -> -1). */
+static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
+                      int start, int neutral_step, int water_step,
+                      int32_t *pool_idx, int32_t *pool_next) {
+  int head[TAIL_MAXD + 1];
+  int d, idx, used = 0;
+  int maxd = radius > TAIL_MAXD ? TAIL_MAXD : radius;
+  float span = (float)(radius + 1);
+  memset(pf->tail_dist, 0xFF, sizeof(pf->tail_dist));
+  for (d = 0; d <= maxd; d++) head[d] = -1;
+  for (idx = 0; idx < 65536; idx++) {
+    int v = pf->influence_grid[idx];
+    if (sign > 0 ? (v >= seed_min) : (v <= -seed_min)) {
+      pf->tail_dist[idx] = 0;
+      pool_idx[used] = idx; pool_next[used] = head[0]; head[0] = used; used++;
+    }
+  }
+  for (d = 0; d <= maxd; d++) {
+    int e;
+    for (e = head[d]; e != -1; e = pool_next[e]) {
+      int ci = pool_idx[e];
+      int cx, cy, k;
+      if (pf->tail_dist[ci] != d) continue;   /* stale entry */
+      cx = ci % MAP_SIZE; cy = ci / MAP_SIZE;
+      for (k = 0; k < 8; k++) {
+        int nx = cx + DX8[k], ny = cy + DY8[k];
+        int ni, type, step, nd;
+        if (nx < 0 || nx > 255 || ny < 0 || ny > 255) continue;
+        ni = ny * MAP_SIZE + nx;
+        type = pf->map[ni] & 0x0F;
+        if (tail_blocked(type)) continue;
+        step = (type == TT_RIVER || type == TT_BOAT) ? water_step : 1;
+        if (pf->neutral_zone[ni] && neutral_step > step) step = neutral_step;
+        nd = d + step;
+        if (nd > maxd || nd >= pf->tail_dist[ni]) continue;
+        if (used >= TAIL_POOL) return;         /* pool full: degrade, never overrun */
+        pf->tail_dist[ni] = (uint8_t)nd;
+        pool_idx[used] = ni; pool_next[used] = head[nd]; head[nd] = used; used++;
+      }
+    }
+  }
+  for (idx = 0; idx < 65536; idx++) {
+    int dist = pf->tail_dist[idx];
+    int e;
+    if (dist == 255) continue;
+    e = (int)((float)start * (1.0f - (float)dist / span));
+    if (e <= 0) continue;
+    if (sign > 0) {
+      pf->expand_grid[idx] = (int16_t)e;
+    } else {
+      int f = pf->expand_grid[idx];
+      pf->expand_grid[idx] = (int16_t)(f == e ? -1 : f - e);
+    }
+  }
+}
+
+void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
+                                         int start, int neutral_step, int water_step) {
+  int32_t *pool_idx, *pool_next;
+  if (!pf || !pf->map) return;
+  memset(pf->expand_grid, 0, sizeof(pf->expand_grid));
+  if (radius <= 0 || start <= 0) return;
+  pool_idx  = (int32_t *)malloc(sizeof(int32_t) * TAIL_POOL);
+  pool_next = (int32_t *)malloc(sizeof(int32_t) * TAIL_POOL);
+  if (!pool_idx || !pool_next) { free(pool_idx); free(pool_next); return; }
+  tail_pass(pf, +1, seed_min, radius, start, neutral_step, water_step, pool_idx, pool_next);
+  tail_pass(pf, -1, seed_min, radius, start, neutral_step, water_step, pool_idx, pool_next);
+  free(pool_idx);
+  free(pool_next);
+}
+
+void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf) {
+  int idx;
+  if (!pf) return;
+  memcpy(pf->influence_base_grid, pf->influence_grid, sizeof(pf->influence_grid));
+  for (idx = 0; idx < 65536; idx++) {
+    int b = pf->influence_grid[idx], t = pf->expand_grid[idx];
+    int ab = b < 0 ? -b : b, at = t < 0 ? -t : t;
+    if (at > ab) pf->influence_grid[idx] = (int16_t)t;
+  }
+}
+
+int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y) {
+  if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
+    int idx = y * MAP_SIZE + x;
+    int b = pf->influence_base_grid[idx], t = pf->expand_grid[idx];
+    int ab = b < 0 ? -b : b, at = t < 0 ? -t : t;
+    return (int16_t)(at > ab ? t : 0);
+  }
+  return 0;
+}
+
 void brainPathfinderSetDanger(BrainPathfinder *pf, int x, int y, float value) {
   if (pf && x >= 0 && x < MAP_SIZE && y >= 0 && y < MAP_SIZE) {
     int v = (int)(value + 0.5f);
