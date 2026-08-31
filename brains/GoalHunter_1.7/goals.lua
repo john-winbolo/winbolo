@@ -5858,19 +5858,38 @@ local function get_formula_inner(e)
         "a spiking pill exists elsewhere (@(%d,%d), in range of a friendly base) → WHOLE cost × %.3f [1 + (SPIKE_OTHER_PENALTY_MULT-1) × best decisiveness] on every non-spiking pill (clear the spike first; fades toward ×1.0 when every spike shares its base with others)",
         e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen)
       or "no spiking pill elsewhere (or this IS the spike) → no cross-penalty"
+    -- INF terms print as "INF" (a %.0f of 1e30 is a 31-digit number and
+    -- math.huge prints "inf"); the SKIP prefix + skip: row name which
+    -- term(s) went INF and why, so an INF row is readable at a glance.
+    local function _fmt_inf(v) return (v or 0) >= 1e29 and "INF" or string.format("%.0f", v or 0) end
+    local _skip_prefix, _d_skip = "", "cost is finite; no INF term"
+    if e._skipped then
+      _skip_prefix = "SKIP " .. e._skipped .. " !! "
+      local _skip_parts = {}
+      for r in string.gmatch(e._skipped, "[^+]+") do
+        _skip_parts[#_skip_parts + 1] = ({
+          low_shells     = string.format("shells=%d < pill_hp=%d → can't finish the pill, ammo=INF", _sh_now, e._hpv or 0),
+          no_spot        = string.format("no firing tile with LOS on the pill within ATTACK_PILL_STANDOFF=%d (or every angle banned) → diff=INF", C.ATTACK_PILL_STANDOFF or 0),
+          unreachable    = "no spot AND the Dijkstra slate never reached the pill's cheapest adjacent tile (island / needs a boat / slate still building) → pickup=INF",
+          no_pickup_path = string.format("spot (%d,%d) found but the spot→pill A* returned COST_INF (no path, or the 4096-node budget ran out) → pickup=INF", e._spot_mx or 0, e._spot_my or 0),
+        })[r] or (r .. ": INF from a term not named above")
+      end
+      _d_skip = table.concat(_skip_parts, "; ")
+    end
     f = string.format(
-      "(spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s)%s%s"..
+      "%s(spot{%.0f}@(%d,%d) + pickup{%s}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%s} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s)%s%s"..
       "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s",
+      "|skip:%s|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s",
+      _skip_prefix,
       e._spot, e._spot_mx or 0, e._spot_my or 0,
-      e._travel,
+      _fmt_inf(e._travel),
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
-      e._stale, e._diff, e._anger, e._xfire, e._intcpt,
+      e._stale, _fmt_inf(e._diff), e._anger, e._xfire, e._intcpt,
       e._hp, _wound_detail, _spike_mult_term, _ammo_str, _atk_tank_term, _spike_pen_term, _danger_term,
       -- (order: atk_tank inside the parens; spike_pen + danger_nearby are
       -- whole-cost multipliers, displayed trailing outside the parens)
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen)
+      _d_skip, _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen)
   elseif p == 7 then
     local _lgm_mult_b = e._lgm_mult or 1
     local _d_threat
@@ -7193,6 +7212,31 @@ function M.step_eval_queue(state, world, info)
         entry._ally_heartbeat  = _ac_heartbeat_left
       end
       if pool_idx == 6 then
+        -- Why an attack_pill candidate is INF. Every INF source is named
+        -- (joined with "+" when several apply) so the panel / SYNC_P6 log
+        -- answer "why can't it take this pill" directly, the way
+        -- eval_attack_tank records `skipped`. Display only — the pool
+        -- already loses on cost; nothing reads _skipped for decisions.
+        --   low_shells      ammo_cost=INF: shells < pill hp, can't finish it
+        --   no_spot         diff=INF: evaluate_pill_difficulty found no
+        --                   firing tile with LOS inside ATTACK_PILL_STANDOFF
+        --   unreachable     no spot AND the Dijkstra slate never reached the
+        --                   pill's cheapest adjacent tile (island / needs a
+        --                   boat / slate still building) → pickup=INF
+        --   no_pickup_path  spot found but the spot→pill A* returned
+        --                   COST_INF (no path or 4096-node budget spent)
+        if c >= 1e29 then
+          local why = {}
+          if ammo_cost >= 1e29 then why[#why + 1] = "low_shells" end
+          if diff_cost >= 1e29 then why[#why + 1] = "no_spot" end
+          if travel >= 1e29 then
+            -- goal_spot_method is only set when a firing spot was found
+            -- (best_spot itself is scoped to the pool-6 block above).
+            why[#why + 1] = goal_spot_method and "no_pickup_path" or "unreachable"
+          end
+          if #why == 0 then why[1] = "inf_other" end
+          entry._skipped = table.concat(why, "+")
+        end
         entry._travel=travel; entry._travel_wound=travel_wound; entry._stale=stale_cost; entry._age=_gen_age
         entry._diff=diff_cost; entry._spot=spot_cost
         entry._spot_mx=spot_found_mx; entry._spot_my=spot_found_my
@@ -7252,6 +7296,7 @@ function M.step_eval_queue(state, world, info)
         own = obj.owner or "?", hp = obj.health or 0,
         stale = obj.last_seen and (now - obj.last_seen) or 0,
         obj = obj,  -- ref needed by rederive_pool_partial_best after sync
+        reject = entry._skipped,  -- surfaces in the goal log's winner_cands
       }
       if c < pr.best_cost then
         pr.best_cost = c; pr.best_id = id; pr.best_obj = obj
@@ -7397,9 +7442,10 @@ local function sync_ally_claimed_rejects(state, info)
     -- fails" class of bugs.
     if BRAIN_DEBUG_MODE and pool_idx == 6 then
       print2(string.format(
-        "SYNC_P6 pid=%s mx=%s my=%s cost=%.0f _reject_in=%s in_REJECT_POOLS=%s",
+        "SYNC_P6 pid=%s mx=%s my=%s cost=%s _reject_in=%s skipped=%s in_REJECT_POOLS=%s",
         tostring(e._id), tostring(e._mx), tostring(e._my),
-        e.cost or 0, tostring(e._reject),
+        ((e.cost or 0) >= 1e29) and "INF" or string.format("%.0f", e.cost or 0),
+        tostring(e._reject), tostring(e._skipped),
         tostring(_REJECT_POOLS[pool_idx] ~= nil)))
     end
     -- Pool 4 (capture_pill) "ally did the take" REJECT.  Snapshot at
@@ -11430,8 +11476,10 @@ function M.get_pool_breakdown_json(state)
         stale = (cached and cached.tick) and (now - cached.tick) or -1,
         -- Show the reject chip honestly: an open/joinable blitz reads as "blitz",
         -- not "ally_claimed" (which is reserved for a truly-closed solo take).
+        -- Pool 6 INF rows carry their INF reason (_skipped) in the same chip
+        -- when no real reject is set — same as attack_tank's `skipped` rows.
         reject = cached and ((cached._reject == "ally_claimed" and cached._reject_joinable_blitz)
-                             and "blitz" or cached._reject) or nil,
+                             and "blitz" or cached._reject or cached._skipped) or nil,
         reject_remaining = cached and cached._reject_remaining or 0,
         ally_score = cached and cached._ally_score or nil,
         ally_by    = cached and cached._ally_by    or nil,

@@ -313,7 +313,7 @@ M.IDS = {
   spike_pills = { short = "Spiking pills (base denial)",
                   long  = "Map overlay: hostile/neutral pills within PILL_FIRE_RANGE of a friendly base ('spiking' — they shoot us while we refuel, denying the base). Magenta square on the pill, line + tint to each denied base, 'SPIKE n=N' label. These pills get SPIKE_PILL_DISCOUNT on attack_pill combat cost; while any exists, every other pill pays SPIKE_OTHER_PENALTY. Same table the pool-6 cost reads." },
   panic_build = { short = "Panic build (emergency)",
-                  long  = "Shown whenever a non-rejected enemy tank is present (attack_tank viable): the emergency def_build candidate spots (green=chosen, yellow=valid, red=rejected with reason), the threat tank (red), a line from us to it, and a 'PANIC BUILD' label. If a tank is present but we have no pill to drop, just a 'PANIC (no pill)' marker on the threat." },
+                  long  = "Shown whenever a non-rejected enemy tank is present (attack_tank viable): the emergency offensive_build candidate spots (green=chosen, yellow=valid, red=rejected with reason), the threat tank (red), a line from us to it, and a 'PANIC BUILD' label. If a tank is present but we have no pill to drop, just a 'PANIC (no pill)' marker on the threat." },
   ally_avoid_overlay = { short = "Ally avoid zones",
                          long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
   blocker_pills = { short = "Blocker pills (in-use)",

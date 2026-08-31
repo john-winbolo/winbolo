@@ -1034,89 +1034,18 @@ M.LGM_DANGER_HIGH = 80   -- emergency wall / refuel: only heavy fire (angry pill
 M.LGM_GATHER_MAX_DANGER = 20  -- pre-flight tree gather: mild pill danger on the LGM's harvest path is acceptable (don't refuse trees over a little danger). If the nearest tree's path is too hot, try the next-nearest up to LGM_GATHER_RETRIES.
 M.LGM_GATHER_RETRIES    = 5   -- how many nearby forest candidates (nearest first) the gather tries before giving up
 
--- Urgency-raised LGM gate — place_pill_strategic only (builder.lua's
--- place_pill branch). LGM_DANGER_HIGH is a fixed 80 while ONE predicted shell
--- path stamps DANGER_SHELL_IMPACT (100) on every cell it crosses, so a tank
--- that is being shot at can NEVER dispatch its builder — which is exactly when
--- a guard pill in the ground is worth most. (20260827_115304 bot3:
--- PLACE_PILL_GATE reach=true safe=false from t=12523 until it died at t=12678,
--- still holding 4 pills; the DEF_BUILD PANIC and EMERGENCY_DROP retries hit the
--- same wall.) Every creator of a place_pill_strategic goal stamps it with a
--- _urgency scalar (builder.place_urgency builds all of them, so the arithmetic
--- lives in one place), and the gate uses
---   threshold = LGM_DANGER_HIGH + min(LGM_GATE_URGENCY_CAP, goal._urgency)
---   _urgency  = carry term + deficit term + emergency term
---
--- CARRY and DEFICIT are the two signals the placement scorer already measures
--- to DISCOUNT the goal's cost — pills stacked in THIS tank, and how far the
--- pill portfolio is out of its back/front/aggro ratio. Each is capped on its
--- own so neither buys the raise alone: a full carry (3+ extras) is worth 15 →
--- threshold 95, which still refuses a bare shell path. Adding an out-of-ratio
--- portfolio (2+ pills short) reaches 25 → threshold 105, which clears one shell
--- path (100) and nothing heavier.
---
--- EMERGENCY is the panic / about-to-die drop (goal._place_emergency: def_build's
--- threat-reactive build, and init.lua's EMERGENCY_DROP). It is a DISTINCT, flat
--- term and it dominates the other two, because a panic build is worth more than
--- a routine one, not less — the whole point of dropping a pill at 10 armour with
--- an enemy tank on you is that the alternative is dying and gifting the pills
--- away. In the 9k-tick verification run 24 of 25 gate lines came from this path
--- and every one of them read urgency{0}, so without its own term the raise never
--- reached the goals that needed it.
---
--- Sizing, in danger_at units. danger_at = DANGER_SHELL_IMPACT (a flat 100 on
--- every cell a predicted shell crosses) + threat.at. The pill part of threat.at
--- is stamped by gh_threat.c's stamp_pill as
---     (PILL_DANGER_BASE 8 + PILL_DANGER_ANGER 200 x anger)   -- LINEAR in anger
---       x hp_mult (0.60 at 0 hp .. 1.00 at PILLS_MAX_HEALTH)
---       x proximity (1.00 on the pill .. 0.50 at the PILL_RANGE_MAP 9 rim)
---       x tree hide (reduces)  x terrain (up to 1.5x)
--- so with PILL_ANGER_BUMP = 0.3333 (three hits saturate at anger 1.0) a healthy
--- pill contributes roughly:
---     calm  (anger 0.00)  ~4..8      (up to ~12 on bad terrain)
---     1 hit (anger 0.33)  ~37..75    (up to ~112)
---     angry (anger 1.00)  ~104..208  (up to ~312)
--- It does NOT top out near 95 — the "0..~95" figure in the LGM_DANGER_* comment
--- above is wrong and predates the current stamp. What the raise actually buys:
---   emergency alone            = 40 → threshold 120: clears a bare shell path
---                                     (100), and a shell over a CALM pill
---                                     (100 + ~8 = ~108).
---   emergency + full carry
---     + full deficit (capped)  = 60 → threshold 140: same, plus a shell over the
---                                     outer rim of a once-hit pill (100 + ~37).
---   what it does NOT clear          : a shell over a pill that has been hit even
---                                     once and is anywhere near the LGM's route
---                                     (100 + ~75 = ~175 > 140), and any angry
---                                     pill at all (>= ~204).
--- That last line is the incident's own configuration — a pill actively shooting
--- our tank has anger >= 0.33 by definition — so the raise did NOT open the gate
--- there and was never going to. What fixed that case was the emergency term
--- clearing the far commoner shell-over-open-ground refusals plus the gate-
--- failure breaker below (measured: consecutive refusals on one spot went from
--- 178/185 with a 91-tick stall to 5/113 with a 5-tick stall).
---
--- DELIBERATELY NOT RAISING THE CAP FURTHER. Clearing a shell-over-angry-pill
--- would need ~+130 over the base, at which point the gate can no longer refuse
--- anything and stops being a gate. The real problem is that pill danger is the
--- wrong measure for a BUILDER: pillboxes never target LGMs (pillbox.c:358 picks
--- "the closest non-allied tank in range"), and an LGM only dies to explosion
--- splash, so pill danger is a tank-centric proxy that systematically overstates
--- the risk to a walking builder. The fix is a builder-specific danger term
--- (enemy tanks with line of sight to the corridor, splash sources) — that is a
--- later part of the plan. Inflating a threshold against a proxy that measures
--- the wrong thing would make that real fix harder to tune, and there is no
--- evidence of remaining harm to justify it: in the 60k-tick match the breaker
--- never had to fire.
--- Note the original plan's "clears a shell but not an angry pill" pairing is
--- unachievable for a different reason than first recorded here: a pill's
--- contribution spans both sides of the shell's flat 100 depending on anger and
--- range, so no single threshold separates the two cleanly.
-M.LGM_GATE_URGENCY_PER_PILL    = 5   -- per carried pill beyond the first
-M.LGM_GATE_URGENCY_PILL_MAX    = 15  -- cap on the carry half (3 extras = 4 pills)
-M.LGM_GATE_URGENCY_PER_DEFICIT = 5   -- per pill of biggest portfolio shortfall (pf_max_deficit)
-M.LGM_GATE_URGENCY_DEFICIT_MAX = 10  -- cap on the imbalance half (2 pills short)
-M.LGM_GATE_URGENCY_EMERGENCY   = 40  -- flat term for a _place_emergency (panic / about-to-die) drop
-M.LGM_GATE_URGENCY_CAP         = 60  -- hard ceiling on the raise; threshold never exceeds 140
+-- The LGM build-danger gate is retired for placements. It sampled a STRAIGHT
+-- LINE the builder does not walk, against a danger field built for TANKS --
+-- and pillboxes never target builders, which die to explosion splash. So it
+-- refused on a model that did not apply to the unit it protected, and a single
+-- predicted shell path (DANGER_SHELL_IMPACT 100) against a flat threshold of 80
+-- closed it for good: the tank being shot at could NEVER dispatch its builder,
+-- which is exactly when a guard pill in the ground is worth most.
+-- (20260827_115304 bot3: PLACE_PILL_GATE reach=true safe=false from t=12523
+-- until it died at t=12678, still holding 4 pills; the panic and emergency
+-- retries hit the same wall.) Placements now pass LGM_DANGER_YOLO and the two
+-- scores in danger.lua make the judgement instead. Other callers -- repair,
+-- wall builds, demine -- keep their real thresholds.
 
 -- Gate-failure breaker (builder.lua's place_pill branch). A refused build gate
 -- used to be silent AND permanent: the tank sits on the drop spot, the 50-tick
@@ -1126,8 +1055,6 @@ M.LGM_GATE_URGENCY_CAP         = 60  -- hard ceiling on the raise; threshold nev
 -- in place. Count consecutive refusals for one drop spot; past FAIL_TICKS give
 -- the spot up — block the tile so the placement scan cannot hand it straight
 -- back, and clear the goal so pick_goal has to look elsewhere.
-M.PLACE_GATE_FAIL_TICKS  = 100  -- consecutive ticks (~2 s @ 50 Hz) of a refused gate before abandoning the spot
-M.PLACE_GATE_BLOCK_TICKS = 600  -- how long the abandoned drop spot stays blocked (~12 s); matches the stuck-detector block
 -- How old the gate-failure stamp may be and still count as "consecutive".
 -- builder.decide() evaluates the gate once per tick, and init.lua's stuck check
 -- runs BEFORE decide() so it necessarily reads last tick's value — 2 ticks
@@ -1261,7 +1188,7 @@ M.STRATEGIC_PLACE_LOS_MAX_RANGE = 8     -- max tiles to trace per LOS ray
 M.STRATEGIC_PLACE_BASE_COST     = 60    -- base cost so it loses to attack/capture but beats explore
 -- Near-enemy-tank placement penalty (combat zone): flat add to a NON-emergency
 -- place_pill_strategic cost when an enemy tank is within euclidean range of the
--- chosen spot. CLOSE supersedes NEAR. The def_build emergency drop is exempt.
+-- chosen spot. CLOSE supersedes NEAR. The offensive_build emergency drop is exempt.
 M.STRATEGIC_PLACE_NEAR_TANK_DIST     = 10
 M.STRATEGIC_PLACE_NEAR_TANK_PENALTY  = 30
 M.STRATEGIC_PLACE_CLOSE_TANK_DIST    = 7
@@ -1374,32 +1301,41 @@ M.STRATEGIC_PLACE_COST_MULT          = 0.085
 -- the threat direction, 2-5 tiles out, with clear LGM path.
 M.DEFENSIVE_BUILD_MIN_DIST     = 1    -- tiles from tank (inner bound, tried FIRST — nearest spiral out)
 M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound)
-M.DEF_BUILD_THREAT_RANGE       = 8    -- tiles (euclidean): nearest enemy tank must be within this to trigger a panic/defensive build. Past it the tank can't shoot us, so no need to panic-drop a guard pill mid-carry. ~tank gun range + 1 slack.
+-- Offensive build: nearest enemy tank must be within this (euclidean) to
+-- trigger. 8 is exactly a pillbox's reach -- PILLBOX_RANGE 2048 WU over 256 WU
+-- per tile -- so a pill dropped now can actually engage the tank that caused
+-- it. The deleted antitank drop used 12, which only made sense beside its
+-- midpoint spot (that put the pill 6 tiles nearer the enemy); with a ±45°
+-- close-in spot, a trigger at 12 places a pill that cannot reach until the
+-- enemy closes 4 more tiles. Also deliberately distinct from the odds rings' 15.
+M.OFF_BUILD_THREAT_RANGE       = 8
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
--- Panic-build cover dedup: a healthy friendly/allied pill within this radius
--- of the tank IS the guard a panic build would drop — skip building another
--- beside it. A cover pill at or below MIN_HP is nearly dead and doesn't
--- count (build the replacement while it still soaks a few shots).
-M.PANIC_COVER_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
-M.PANIC_COVER_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
--- Desperate ("about to die") build override. When armour <= DEATH_BUILD_ARMOUR
--- AND we've taken a hit within the last DEATH_BUILD_HIT_WINDOW ticks AND an
--- enemy tank is in shoot range while carrying, the def_build fires even if a
--- cover pill already exists (that pill clearly isn't keeping us alive) and at a
--- rock-bottom cost so it decisively wins the pool. Rationale: a tank that dies
--- carrying pills drops them for anyone to grab — plant them (as our guard) NOW
--- rather than losing them on death. Placement geometry is unchanged (±45°).
-M.DEATH_BUILD_ARMOUR           = 30   -- armour <= this AND taking hits => desperate build (bypass cover dedup, force win)
-M.DEATH_BUILD_HIT_WINDOW       = 50   -- ticks since last damage to still count as "actively taking hits" (~1s @ 50Hz)
--- Panic build: an even harder floor than DESPERATE. At PANIC_BUILD_ARMOUR or below
--- while carrying (and the LGM is in the tank to place it), DUMP a pill into the
--- ground NOW — no enemy required, no recent-hit required, no cover dedup. At this
--- health we can't count on reaching a base, so bank the carried pill (and gain a
--- guard) before dying and gifting it to the enemy. With a DEAD/out builder the
--- pill can't be placed, so the haul-protection flee (CRITICAL_FLEE_ENABLED) covers
--- that case instead. Complements DESPERATE (which needs an enemy in shoot range).
-M.PANIC_BUILD_ARMOUR           = 10   -- armour <= this AND carrying AND LGM in tank => build immediately, no matter who's around
--- Emergency def_build dispatches the LGM to run to the spot from wherever the
+-- Support-pill veto: a healthy friendly/allied pill within this radius IS the
+-- guard an offensive build would drop — skip building another beside it. A pill
+-- at or below MIN_HP is nearly dead and doesn't count (build the replacement
+-- while it still soaks a few shots).
+--
+-- The offensive build requires the pill to be within this radius of BOTH us and
+-- the enemy: one that covers us but cannot shoot the tank we are fighting is
+-- not support for THIS fight. The in-combat guard drop deliberately keeps the
+-- tank-only test — see nearby_support_pill.
+M.SUPPORT_PILL_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
+M.SUPPORT_PILL_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
+-- DEATH_BUILD_ARMOUR / DEATH_BUILD_HIT_WINDOW / PANIC_BUILD_ARMOUR are gone.
+-- All three were armour thresholds deciding when to dump a carried pill, and
+-- armour alone says nothing about whether anything is actually threatening us
+-- -- which is how a bot at armour 10, with the nearest enemy 15 tiles away and
+-- not even visible, dumped four pills in 200 ticks. The panic build now reads
+-- the two scores in danger.lua instead:
+--
+--   threshold = min(35, 50 - vulnerability * 0.8)
+--   panic     = carrying and builder aboard and not in a boat
+--               and vulnerability <= 50 and imdanger <= threshold
+--
+-- so the more we stand to lose, the less arriving danger it takes to justify
+-- banking it. With a DEAD/out builder the pill can't be placed at all, so the
+-- haul-protection flee (CRITICAL_FLEE_ENABLED) still covers that case.
+-- Emergency offensive_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
 -- candidate selection and dispatch. Beyond this the LGM walk is too slow/risky.
@@ -1590,16 +1526,8 @@ M.TANK_COMBAT_LOW_SHELLS_COST_PER   = 1.5  -- cost per shell below threshold (0�
 M.TANK_COMBAT_BOAT_MULT            = 0.8   -- cost multiplier for enemy on river/boat (exposed)
 M.TANK_COMBAT_DEEPSEA_MULT         = 0.25  -- cost multiplier for enemy on deep sea (one-shot kill)
 
--- Anti-tank opportunistic pill drop
-M.ANTITANK_DROP_ENABLED         = true
-M.ANTITANK_DROP_RANGE           = 12    -- enemy tank must be within this many tiles
-M.ANTITANK_DROP_COOLDOWN        = 200   -- ticks between opportunistic drops
-
 -- Emergency pill drop (aIndy: drop pill when about to die to save it)
 M.EMERGENCY_DROP_ENABLED        = true
-M.EMERGENCY_DROP_ARMOUR         = 5     -- drop when armour at or below this
-M.EMERGENCY_DROP_MIN_ENEMIES    = 1     -- don't drop if no enemies visible
-M.EMERGENCY_DROP_SHELL_SAFE_DIST = 3    -- tiles: don't drop if shell within this range
 M.EMERGENCY_DROP_SEARCH_DIRS    = 8     -- directions to search for safe drop tile
 
 -- Base Killer Mode (aIndy: auto-activate when team outnumbers opponents)
@@ -2215,7 +2143,7 @@ M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
 --   refuel_at_base / flee_to_base   x1  (EXEMPT — the whole "refuel" GOAL_GROUP;
 --                                        a suicider still keeps itself fuelled)
 --   defend_pill                     x6  PILL_SUICIDER_DEFEND_MULT
---   capture_pill / place_pill_strategic / def_build / wait_for_lgm x1 (EXEMPT:
+--   capture_pill / place_pill_strategic / offensive_build / wait_for_lgm x1 (EXEMPT:
 --     scooping and fielding the pills it kills IS the job; panic drops are
 --     survival; and waiting for its own LGM must never lose to the x3)
 --   everything else                 x3  PILL_SUICIDER_OTHER_MULT
@@ -2314,4 +2242,103 @@ M.TANK_DEATH_REPLAN_PILL_RANGE = 12
 -- a serialization overrun becomes a permanent per-tick budget kill.
 M.LOGGER_TICK_MAX_ENTRIES = 256
 
+-- =========================================================================
+-- vulnerability / imdanger — the two 0-100 build scores (danger.lua)
+-- =========================================================================
+-- Both start at 50 and move up (better) or down (worse). 50 is neutral, 75
+-- is in our favour, 25 is real concern. Every factor below is a signed
+-- contribution to that 50, and they are sized so the full set spans the
+-- range -- see VULNERABILITY_AND_BUILDS_PLAN.md for the derivations.
+--
+-- vulnerability = what I stand to lose (armour + cargo). Intrinsic to the
+-- tank; nothing about the world.
+M.VULN_ARMOUR_SPAN     = 50    -- full armour = +25, empty = -25 (span/2 each way)
+M.VULN_ARMOUR_CAP      = 40    -- min(armour, this): the engine marks DEATH by
+                               -- pushing armour ABOVE TANK_FULL_ARMOUR, which
+                               -- would otherwise read a corpse as safest.
+M.VULN_CARRY_EMPTY     = 25    -- 0 pills: nothing to lose
+M.VULN_CARRY_FULL      = -25   -- 4+ pills: everything to lose (linear from 1 pill = 0)
+M.VULN_CARRY_SATURATE  = 4     -- pills at which the carry term bottoms out
+
+-- imdanger = what is arriving at me. Environmental; nothing about our state.
+M.IMD_COVER_MAX        = 30    -- our pills covering us, max contribution
+M.IMD_COVER_PER_UNIT   = 10    -- 3 calm pills, or 1 heated one, reaches the max
+M.IMD_COVER_HEATED_MULT= 3     -- a fast-firing pill counts triple
+M.HEATED_ANGER         = 0.6   -- anger at/above this = "heated". TWO hits:
+                               -- PILL_ANGER_BUMP 0.3333 x2 = 0.6666 clears it,
+                               -- and the engine HALVES reload per hit
+                               -- (100 -> 50 -> 25 -> 12 -> 6), so two hits is
+                               -- 4x normal output. 0.67 would have meant three.
+M.IMD_COVER_W_NEAR     = 1.00  -- d <= 4
+M.IMD_COVER_W_MID      = 0.75  -- 4 < d <= 8   (8 = a pillbox's true reach)
+M.IMD_COVER_W_FAR      = 0.25  -- 8 < d <= 9   (PILL_RANGE_MAP's 1-tile margin)
+M.IMD_EXPOSURE_MAX     = -10   -- hostile pill has our tile in range
+M.IMD_EXPOSURE_DIV     = 100   -- threat.pill_at value at which exposure saturates
+M.IMD_SHELLS_ONE       = -8    -- one hostile shell arriving
+M.IMD_SHELLS_MANY      = -15   -- two or more
+M.IMD_SHELLS_RADIUS_WU = 768   -- 3 tiles. Wider than the 160-WU hit test: the
+                               -- signal wanted is "someone is shooting at us
+                               -- and may correct their aim", and at 0.625
+                               -- tiles a shell flickers hit/miss as we swerve.
+M.IMD_ODDS_MAX         = -35   -- outnumbered up close
+M.IMD_ODDS_FAR_MAX     = -10   -- a gathering at range worries only a dying bot
+M.IMD_ODDS_SCALE       = 47    -- one unopposed enemy inside 8 saturates ODDS_MAX
+M.IMD_ODDS_W_NEAR      = 0.75  -- d <= 8
+M.IMD_ODDS_W_FAR       = 0.25  -- 8 < d <= 15
+M.IMD_ODDS_NEAR_TILES  = 8
+M.IMD_ODDS_FAR_TILES   = 15
+M.SCORE_ALLY_MAX_AGE   = 1750  -- ticks: ally slate older than this is ignored
+                               -- when excluding enemies an ally is engaging
+
+-- Emergency-build pill spacing. Chebyshev, and a RANKING key rather than a
+-- rejection: a spot is classified clear / diagonal / orthogonal by the worst
+-- crowding against any pill we already have, and the search prefers the best
+-- class available. Nothing is refused for spacing -- dying with pills aboard
+-- is worse than a badly spaced pill.
+--
+-- The comparator is STRICTLY LESS THAN: gap 2 makes exactly the eight tiles
+-- touching a pill non-clear (the 3x3 around it). "Within 2" would read as <= 2
+-- and take in the 5x5 ring instead -- three times the area, and `clear` would
+-- almost never be reachable near a pill group.
+M.PANIC_BUILD_MIN_PILL_GAP = 2
+
+-- =========================================================================
+-- Placement dispatch, and giving up (builder.lua)
+-- =========================================================================
+-- Send the builder from where we stand instead of driving onto the spot first,
+-- when ANY of these fires. The old rule was pdist <= 1 for a normal placement,
+-- so the tank had to close the distance itself -- and arriving is what made the
+-- answer "no".
+M.PLACE_DISPATCH_VULN     = 30   -- vulnerability at/below this => dispatch
+M.PLACE_DISPATCH_IMDANGER = 30   -- imdanger at/below this => dispatch
+M.PLACE_DISPATCH_MAX_DIST = 15   -- tiles: furthest we will send the builder on a
+                                 -- trigger. Beyond this the walk is too long to
+                                 -- be worth committing to (it cannot be recalled).
+
+-- The LGM danger gate, neutralised rather than deleted at its call site: a
+-- threshold nothing exceeds, so the path sample is never taken for a placement.
+-- lgm_path_safe_enhanced samples a STRAIGHT LINE the builder does not walk,
+-- against a danger field built for TANKS -- and pillboxes never target builders.
+-- It refused on a model that does not apply to the unit it protects, and being
+-- shot at closed it permanently, which is exactly when a guard pill pays.
+-- Other callers (repair, wall builds, demine) keep their real thresholds.
+M.LGM_DANGER_YOLO = 1e9
+
+-- Giving up on a placement spot. Four clauses, see builder.decide.
+M.PLACE_REFUSE_GIVEUP_TICKS = 100  -- ~2s of CONSECUTIVE gate refusals of one
+                                   -- target => block and abandon. Sized against
+                                   -- the 20260827 incident: bot3 was parked 155
+                                   -- ticks between arriving and dying, so a
+                                   -- 600-tick trigger would never have fired.
+M.PLACE_GIVEUP_BLOCK_TICKS  = 600  -- 12s the abandoned tile stays blocked.
+                                   -- lgm_can_reach measures from the tank's
+                                   -- CURRENT position, so unreachable is not a
+                                   -- property of the tile -- from six tiles east
+                                   -- the answer may flip. Hence a timed block.
+
+-- Map-edge band. minesExistPos returns TRUE unconditionally inside it
+-- (global.h MAP_MINE_EDGE_*), so the engine refuses ANY build there, mine or
+-- not. Mirrored brain-side or an edge placement refuses forever with nothing in
+-- the log to say why.
+M.MAP_EDGE_BAND = 20
 return M
