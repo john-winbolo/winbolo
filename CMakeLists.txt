@@ -228,9 +228,23 @@ if(WINBOLO_LUAJIT AND (EMSCRIPTEN OR CMAKE_SYSTEM_NAME STREQUAL "iOS"))
     set(WINBOLO_LUAJIT OFF)
 endif()
 
+# Deterministic VM: build LuaJIT with LUAJIT_SECURITY_PRNG=0 so the string
+# hash seed is fixed instead of drawn from OS entropy at process start. With
+# the default (secure) seeding, pairs() iteration order over hash tables
+# differs EVERY RUN — which reordered the brains' /info broadcasts and eval
+# scan orders and made identical -seed games diverge (found 20260831: two
+# same-seed runs split within 6 game-seconds; first observable diff was
+# /info key order). Trusted-brain game servers don't need hash-flood
+# hardening; reproducible A/B runs matter more. OFF restores stock seeding.
+option(WINBOLO_LUAJIT_DETERMINISTIC
+       "Fixed LuaJIT string-hash/PRNG seed so same-seed games replay identically" ON)
+
 if(WINBOLO_LUAJIT)
     include(ExternalProject)
     message(STATUS "WINBOLO_LUAJIT: building LuaJIT ${WINBOLO_LUAJIT_LUAJIT_TAG} from source (native build system)")
+    if(WINBOLO_LUAJIT_DETERMINISTIC)
+        message(STATUS "WINBOLO_LUAJIT_DETERMINISTIC: LUAJIT_SECURITY_PRNG=0 (fixed seed)")
+    endif()
 
     # 1. LuaJIT source (no CMakeLists of its own — MakeAvailable only populates).
     FetchContent_Declare(luajit_src
@@ -262,6 +276,10 @@ if(WINBOLO_LUAJIT)
     #    supported path. XCFLAGS=-fPIC so the static lib links into winbolo_gym.
     if(MSVC)
         set(_lj_lib "${_lj_src}/src/lua51.lib")
+        set(_lj_msvc_env "")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            set(_lj_msvc_env "CL=/DLUAJIT_SECURITY_PRNG=0")
+        endif()
         ExternalProject_Add(luajit_ext
             SOURCE_DIR        "${_lj_src}"
             BUILD_IN_SOURCE   TRUE
@@ -274,14 +292,21 @@ if(WINBOLO_LUAJIT)
             # itself -- msvcbuild.bat then invokes the host tools it just built
             # (minilua, buildvm) as bare names too, and those fail the same way
             # -- so unset the variable for the whole build step instead.
+            # cl.exe appends the CL environment variable to every compile, so
+            # the determinism define reaches all of msvcbuild.bat's compiles
+            # (the bat never sets CL itself) without patching LuaJIT source.
             BUILD_COMMAND     ${CMAKE_COMMAND} -E env
                               --unset=NoDefaultCurrentDirectoryInExePath
+                              ${_lj_msvc_env}
                               ${CMAKE_COMMAND} -E chdir "${_lj_src}/src"
                               cmd /c .\\msvcbuild.bat static
             INSTALL_COMMAND   ""
             BUILD_BYPRODUCTS  "${_lj_lib}")
     else()
         set(_lj_xcflags "-fPIC")
+        if(WINBOLO_LUAJIT_DETERMINISTIC)
+            string(APPEND _lj_xcflags " -DLUAJIT_SECURITY_PRNG=0")
+        endif()
         if(APPLE)
             # Hardened runtime kills any process executing JIT-compiled code
             # from plain anonymous pages (SIGKILL "Code Signature Invalid").
