@@ -5162,10 +5162,6 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 /* ── Column 0: drag handle + tank icon ─────────────── */
                 ImGui::TableSetColumnIndex(0);
                 rowTopY = ImGui::GetCursorPosY();
-                /* Capture the row's screen-Y top while we're at it so
-                 * later columns can do an absolute-rect hover test
-                 * (gear visibility, etc.). */
-                float rowTopScreenY = ImGui::GetCursorScreenPos().y;
 
                 /* Drag handle — drives the "drag a player onto a team"
                  * flow. Authority: only effectiveHost (host / admin /
@@ -6015,15 +6011,11 @@ static void renderBotAiConfig(ClientSim *cs,
     float nameGroupBottomY = ImGui::GetItemRectMax().y;
 
     /* Bot Code group, right of the Name group at the same anchor Y. */
-    float botCodeStartX = 0.0f;
-    float botCodeStartY = 0.0f;
     bool  botCodeShown  = (bl->count > 0);
     const float comboW  = 240.0f * s;
     if (botCodeShown) {
         float bcX = nameGroupRightX + 24.0f * s;
         ImGui::SetCursorScreenPos(ImVec2(bcX, formAnchor.y));
-        botCodeStartX = bcX;
-        botCodeStartY = formAnchor.y;
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_CODE));
         uint8_t curIdx = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
