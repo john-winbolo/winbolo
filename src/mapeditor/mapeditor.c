@@ -3853,6 +3853,13 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             SDL_RenderFillRect(renderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
         }
 
+        /* ImGui's SDL3 renderer backend forces every texture it draws to its
+           current sampler (LINEAR by default), and the terrain palette draws
+           tile icons straight out of this atlas. Re-assert NEAREST each frame
+           or the zoomed canvas samples across atlas cell borders and shows a
+           dark grid between tiles. */
+        SDL_SetTextureScaleMode(ed->tilesTex, SDL_SCALEMODE_NEAREST);
+
         meRenderTiles(ed, renderW, renderH);
         if (ed->showGrid) meRenderGrid(ed, renderW, renderH);
         meRenderStarts(ed, renderW, renderH);
