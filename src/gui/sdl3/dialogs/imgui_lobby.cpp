@@ -3778,6 +3778,12 @@ static SDL_Texture *loadLobbyPng(SDL_Renderer *renderer, const char *filename) {
     return tex;
 }
 
+/* The three tank getters below guard only on their own attempted flag —
+ * a renderer swap is handled for them by loadStatusIconsOnce, which
+ * destroys these textures and clears those flags. Every path that reaches
+ * a getter runs it first in the same frame: the only callers are in
+ * renderTeamGroupedPlayers, which loads the icons at its top and draws
+ * the tank column further down, against the same renderer. */
 static SDL_Texture *getTankSelf04Texture(SDL_Renderer *renderer) {
     if (s_icons.tankSelfAttempted) return s_icons.tankSelf04;
     s_icons.tankSelfAttempted = true;
@@ -3835,7 +3841,9 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
      * recreated it; SDL3 textures don't survive that), destroy the
-     * stale textures and reload. */
+     * stale textures and reload. That covers the tank sprites too:
+     * they live in the same cache but are loaded lazily by the getters
+     * above, so clearing their attempted flags is what reloads them. */
     if (s_icons.attempted && s_icons.renderer == renderer) return;
     if (s_icons.attempted && s_icons.renderer != renderer) {
         if (s_icons.success)     { SDL_DestroyTexture(s_icons.success);     s_icons.success     = nullptr; }
@@ -3849,6 +3857,12 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.picture)     { SDL_DestroyTexture(s_icons.picture);     s_icons.picture     = nullptr; }
         if (s_icons.play)        { SDL_DestroyTexture(s_icons.play);        s_icons.play        = nullptr; }
         if (s_icons.pause)       { SDL_DestroyTexture(s_icons.pause);       s_icons.pause       = nullptr; }
+        if (s_icons.tankSelf04)  { SDL_DestroyTexture(s_icons.tankSelf04);  s_icons.tankSelf04  = nullptr; }
+        if (s_icons.tankEvil04)  { SDL_DestroyTexture(s_icons.tankEvil04);  s_icons.tankEvil04  = nullptr; }
+        if (s_icons.tankGood04)  { SDL_DestroyTexture(s_icons.tankGood04);  s_icons.tankGood04  = nullptr; }
+        s_icons.tankSelfAttempted = false;
+        s_icons.tankEvilAttempted = false;
+        s_icons.tankGoodAttempted = false;
     }
     s_icons.attempted = true;
     s_icons.renderer  = renderer;
