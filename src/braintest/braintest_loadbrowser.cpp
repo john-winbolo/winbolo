@@ -13,7 +13,19 @@
 
 #include "braintest_loadbrowser.h"
 
-int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count) {
+/* Path-tail compare: the browser stores "debug_sessions/<name>" while
+ * -loadsession may carry any prefix or separator style. Two dirs are the
+ * same session iff their basenames match. */
+static bool sameSessionDir(const char *a, const char *b) {
+    if (!a || !b || !a[0] || !b[0]) return false;
+    const char *ba = a, *bb = b;
+    for (const char *c = a; *c; c++) if (*c == '/' || *c == '\\') ba = c + 1;
+    for (const char *c = b; *c; c++) if (*c == '/' || *c == '\\') bb = c + 1;
+    return SDL_strcmp(ba, bb) == 0;
+}
+
+int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
+                      const char *loadedDir) {
     if (!open || !*open) return -1;
     int chosen = -1;
 
@@ -38,12 +50,26 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count) {
             ImGui::TableSetupColumn("",         ImGuiTableColumnFlags_WidthFixed,   60.0f);
             ImGui::TableHeadersRow();
 
+            const bool appearing = ImGui::IsWindowAppearing();
             for (int i = 0; i < count; i++) {
                 const LoadSessionEntry *e = &list[i];
+                /* Highlight the CURRENTLY LOADED session's row (and scroll it
+                 * into view when the window opens): "which part am I on?" is
+                 * one glance, and the next part is the neighbouring row. */
+                const bool isLoaded = sameSessionDir(e->dir, loadedDir);
                 ImGui::TableNextRow();
+                if (isLoaded) {
+                    ImU32 hl = ImGui::GetColorU32(ImVec4(0.18f, 0.42f, 0.22f, 0.65f));
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, hl);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, hl);
+                }
 
                 ImGui::TableNextColumn();
-                if (e->loadable) ImGui::TextUnformatted(e->name);
+                if (isLoaded && appearing) ImGui::SetScrollHereY(0.4f);
+                if (isLoaded) {
+                    ImGui::TextColored(ImVec4(0.55f, 1.0f, 0.6f, 1.0f), "%s", e->name);
+                    ImGui::SameLine(); ImGui::TextDisabled("(loaded)");
+                } else if (e->loadable) ImGui::TextUnformatted(e->name);
                 else             ImGui::TextDisabled("%s", e->name);
 
                 if (!e->loadable) {

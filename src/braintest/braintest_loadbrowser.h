@@ -36,8 +36,12 @@ typedef struct {
 } LoadSessionEntry;
 
 /* Render the browser window. *open toggles visibility (Cancel clears it).
- * Returns the index in `list` the user clicked "Load" on this frame, else -1. */
-int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count);
+ * Returns the index in `list` the user clicked "Load" on this frame, else -1.
+ * loadedDir: the -loadsession dir this instance is replaying ("" / NULL when
+ * none) — its row is highlighted and scrolled into view when the window
+ * opens, so stepping to the next part of a split session is one glance. */
+int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
+                      const char *loadedDir);
 
 #ifdef __cplusplus
 }
