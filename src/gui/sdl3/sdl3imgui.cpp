@@ -457,13 +457,24 @@ struct PopOutWindow {
     int           height;
 };
 
-static PopOutWindow s_popSysInfo  = {};
-static PopOutWindow s_popNetInfo  = {};
-static PopOutWindow s_popGameInfo = {};
-static PopOutWindow s_popSendMsg  = {};
+static PopOutWindow s_popSysInfo     = {};
+static PopOutWindow s_popNetInfo     = {};
+static PopOutWindow s_popGameInfo    = {};
+static PopOutWindow s_popSendMsg     = {};
+static PopOutWindow s_popMapOverview = {};
+
+/* Every site that treats the pop-outs as a set — event routing, the
+ * focus/mute check, cleanup — walks this table, so adding a pop-out means
+ * adding it here and nowhere else. The per-frame pump stays unrolled
+ * because each pop-out draws different content. */
+static PopOutWindow *const s_popOuts[] = {
+    &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg, &s_popMapOverview
+};
+#define POPOUT_COUNT ((int)(sizeof(s_popOuts) / sizeof(s_popOuts[0])))
+
 static ImGuiContext *s_mainImguiCtx = nullptr;
 
-static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
+static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     /* Re-show an existing pop-out rather than recreating it. We deliberately
      * keep the SDL_Window + Metal SDL_Renderer alive across closes: destroying
      * a Metal renderer mid-run releases Metal objects that the Steam overlay
@@ -477,12 +488,15 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
         return true;
     }
 
-    pw->window = SDL_CreateWindow(title, w, h, 0);
+    pw->window = SDL_CreateWindow(title, w, h, flags);
     if (!pw->window) return false;
 
 #ifdef _WIN32
-    /* Remove minimize/maximize buttons — leave only the close box */
-    {
+    /* Remove minimize/maximize buttons — leave only the close box. A
+     * resizable pop-out keeps both: the maximize box is the normal way to
+     * fill the screen with it, and stripping it would leave edge-dragging as
+     * the only way to make the window bigger. */
+    if ((flags & SDL_WINDOW_RESIZABLE) == 0) {
         HWND hwnd = (HWND)SDL_GetPointerProperty(
             SDL_GetWindowProperties(pw->window),
             SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
@@ -588,11 +602,11 @@ static void popOutEndFrame(PopOutWindow *pw) {
     SDL_RenderPresent(pw->renderer);
 }
 
-static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h) {
+static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     if (pw->open) {
         popOutHide(pw);
     } else {
-        popOutCreate(pw, title, w, h);
+        popOutCreate(pw, title, w, h, flags);
     }
 }
 
@@ -1181,7 +1195,7 @@ static void renderBrainSettingsWindow(void) {
 static void sendMsgPopOutShow(void) {
     /* popOutCreate re-shows and raises a window it created earlier, so this
      * one call covers both the first open and a raise from behind the game. */
-    if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200))
+    if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200, 0))
         return;
     s_sendMsgFocusInput = true;
     s_closeMenuPopups   = true;
@@ -1379,6 +1393,14 @@ static void renderCtrlSendMsg(ClientSim *cs) {
     } else {
         s_showCtrlSendMsg = false;
     }
+}
+
+/* -------------------------------------------------------
+ * Map Overview pop-out
+ * ------------------------------------------------------- */
+static void renderMapOverviewContent(ClientSim *cs) {
+    /* The content area is empty — the pop-out draws its clear colour only. */
+    (void)cs;
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
@@ -2714,9 +2736,14 @@ static void renderMenuBar(ClientSim *cs) {
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
-            if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  440, 600);
-            if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo,  langGetText(STR_DLGNETINFO_TITLE),  360, 420);
+            if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  440, 600, 0);
+            if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo,  langGetText(STR_DLGNETINFO_TITLE),  360, 420, 0);
+            /* The overview draws the map the player has seen, so it stays
+               greyed out until a game is running. */
+            if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
+                                cs != nullptr && clientSimIsRunning(cs)))
+                togglePopOut(&s_popMapOverview, langGetText(STR_MENU_MAP_OVERVIEW), 640, 640, SDL_WINDOW_RESIZABLE);
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
@@ -3564,10 +3591,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            pop-out, forward it there and skip the rest of the main loop
            so it doesn't reach the game input. */
         {
-            PopOutWindow *popOuts[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg };
             bool consumedByPopOut = false;
-            for (int i = 0; i < 4; i++) {
-                PopOutWindow *pw = popOuts[i];
+            for (int i = 0; i < POPOUT_COUNT; i++) {
+                PopOutWindow *pw = s_popOuts[i];
                 if (!pw->open || !pw->window) continue;
 
                 SDL_WindowID pwID = SDL_GetWindowID(pw->window);
@@ -3576,6 +3602,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                     case SDL_EVENT_WINDOW_FOCUS_GAINED:
                     case SDL_EVENT_WINDOW_FOCUS_LOST:
+                    case SDL_EVENT_WINDOW_RESIZED:
+                    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                         isForThisWindow = (ev.window.windowID == pwID);
                         break;
                     case SDL_EVENT_KEY_DOWN:
@@ -3604,6 +3632,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     ImGui_ImplSDL3_ProcessEvent(&ev);
                     ImGui::SetCurrentContext(savedCtx);
                     consumedByPopOut = true;
+
+                    /* Track the current size of a resizable pop-out. The main
+                       window's resize handler further down only ever looks at
+                       s_window, so this is the only place a pop-out learns it
+                       changed size. RESIZED carries the logical size, the same
+                       units popOutCreate was given; PIXEL_SIZE_CHANGED carries
+                       backing-store pixels and would disagree on a HiDPI
+                       display, so only RESIZED is recorded. */
+                    if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
+                        ev.window.data1 > 0 && ev.window.data2 > 0) {
+                        pw->width  = ev.window.data1;
+                        pw->height = ev.window.data2;
+                    }
                 }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
@@ -3665,9 +3706,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 SDL_Window *focused = SDL_GetKeyboardFocus();
                 bool focusedIsOurs = (focused == s_window);
                 if (!focusedIsOurs) {
-                    PopOutWindow *pws[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg };
-                    for (int i = 0; i < 4; i++) {
-                        if (pws[i]->window && pws[i]->window == focused) { focusedIsOurs = true; break; }
+                    for (int i = 0; i < POPOUT_COUNT; i++) {
+                        if (s_popOuts[i]->window && s_popOuts[i]->window == focused) { focusedIsOurs = true; break; }
                     }
                 }
                 if (!focusedIsOurs) soundSetMuted(true);
@@ -3772,6 +3812,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 continue;
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
+                continue;
+            case SDL_SCANCODE_O:
+                /* Same running-game condition as the File menu item. */
+                if (cs != nullptr && clientSimIsRunning(cs)) sdl3ImguiShowMapOverview(true);
                 continue;
             default:
                 break;
@@ -4129,10 +4173,12 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->networkStatusMessages = showNetworkStatusMessages;
     s->networkDebugMessages  = showNetworkDebugMessages;
 
-    s->sysInfoOpen  = sdl3ImguiIsSysInfoOpen();
-    s->netInfoOpen  = sdl3ImguiIsNetInfoOpen();
-    s->gameInfoOpen = sdl3ImguiIsGameInfoOpen();
-    s->sendMsgOpen  = sdl3ImguiIsSendMsgOpen();
+    s->sysInfoOpen     = sdl3ImguiIsSysInfoOpen();
+    s->netInfoOpen     = sdl3ImguiIsNetInfoOpen();
+    s->gameInfoOpen    = sdl3ImguiIsGameInfoOpen();
+    s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
+    s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
+    s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs));
 
     int dispW = 99999, dispH = 99999;
     if (s_window) {
@@ -4754,6 +4800,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             popOutEndContent(&s_popSendMsg);
             popOutEndFrame(&s_popSendMsg);
         }
+        /* The overview shows what this game has revealed, so it goes away
+           with the game rather than sitting over the lobby. Hidden, not
+           destroyed — see popOutHide. */
+        if (s_popMapOverview.open && (cs == nullptr || !clientSimIsRunning(cs))) {
+            popOutHide(&s_popMapOverview);
+        }
+        if (popOutBeginFrame(&s_popMapOverview)) {
+            popOutBeginContent();
+            renderMapOverviewContent(cs);
+            popOutEndContent(&s_popMapOverview);
+            popOutEndFrame(&s_popMapOverview);
+        }
 
         ImGui::SetCurrentContext(mainCtx);
     }
@@ -4807,7 +4865,7 @@ void sdl3ImguiShowSysInfo(bool open) {
         if (open) {
             if (!s_popSysInfo.open) {
                 sysInfoGraphReset();
-                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600);
+                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600, 0);
             }
         } else {
             if (s_popSysInfo.open) popOutHide(&s_popSysInfo);
@@ -4834,7 +4892,7 @@ void sdl3ImguiShowNetInfo(bool open) {
         if (open) {
             if (!s_popNetInfo.open) {
                 pingGraphReset();
-                popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420);
+                popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420, 0);
             }
         } else {
             if (s_popNetInfo.open) popOutHide(&s_popNetInfo);
@@ -4856,7 +4914,7 @@ void sdl3ImguiShowGameInfo(bool open) {
     if (!uiModeIsTablet()) {
         if (open) {
             if (!s_popGameInfo.open) {
-                popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
+                popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
             }
         } else {
             if (s_popGameInfo.open) popOutHide(&s_popGameInfo);
@@ -4917,6 +4975,30 @@ bool sdl3ImguiIsSendMsgOpen(void) {
     if (!uiModeIsTablet()) return s_popSendMsg.open;
 #endif
     return s_showSendMsg;
+}
+/* The overview has no in-window twin, so in tablet mode there is nothing to
+ * show and nothing to report open. */
+void sdl3ImguiShowMapOverview(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popMapOverview.open) {
+                popOutCreate(&s_popMapOverview, langGetText(STR_MENU_MAP_OVERVIEW), 640, 640,
+                             SDL_WINDOW_RESIZABLE);
+            }
+        } else {
+            if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+        }
+        return;
+    }
+#endif
+    (void)open;
+}
+bool sdl3ImguiIsMapOverviewOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popMapOverview.open;
+#endif
+    return false;
 }
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;
@@ -5225,10 +5307,7 @@ void sdl3ImguiShowKeySetup(void) {
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
     inputGamepadShutdown();
-    popOutDestroy(&s_popSysInfo);
-    popOutDestroy(&s_popNetInfo);
-    popOutDestroy(&s_popGameInfo);
-    popOutDestroy(&s_popSendMsg);
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
     flagsDestroy();
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }

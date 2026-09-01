@@ -384,6 +384,7 @@
 #define STR_MENU_FILE                       539
 #define STR_MENU_NEW                        540
 #define STR_MENU_SAVE_MAP                   541
+#define STR_MENU_MAP_OVERVIEW               1948
 #define STR_MENU_EXIT                       542
 #define STR_MENU_EDIT                       543
 #define STR_MENU_FRAME_RATE                 544

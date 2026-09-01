@@ -112,6 +112,7 @@ static NSMenuItem *s_sysInfoItem             = nil;
 static NSMenuItem *s_netInfoItem             = nil;
 static NSMenuItem *s_gameInfoItem            = nil;
 static NSMenuItem *s_sendMsgItem             = nil;
+static NSMenuItem *s_mapOverviewItem         = nil;
 static NSMenuItem *s_winboloRequestAllianceItem = nil;
 static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
 static NSMenuItem *s_playersRequestAllianceItem = nil;
@@ -223,6 +224,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onShowGameInfo:(id)sender;
 - (void)onShowSysInfo:(id)sender;
 - (void)onShowNetInfo:(id)sender;
+- (void)onShowMapOverview:(id)sender;
 - (void)onSmoothScrolling:(id)sender;
 - (void)onAutoScrolling:(id)sender;
 - (void)onShowGunsight:(id)sender;
@@ -297,6 +299,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onShowNetInfo:(id)sender {
     (void)sender;
     sdl3ImguiShowNetInfo(!sdl3ImguiIsNetInfoOpen());
+}
+- (void)onShowMapOverview:(id)sender {
+    (void)sender;
+    sdl3ImguiShowMapOverview(!sdl3ImguiIsMapOverviewOpen());
 }
 - (void)onSmoothScrolling:(id)sender {
     (void)sender;
@@ -813,6 +819,14 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     NSMenuItem *fileItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_FILE) action:nil keyEquivalent:@""];
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_FILE)];
     [fileItem setSubmenu:fileMenu];
+    /* Map Overview's enabled state comes from game state via
+     * mac_menubar_refresh(). AppKit's automatic enabling would recompute it
+     * back to enabled on every menu update and key-equivalent lookup, since
+     * the item has a live target that responds to its action. Every other
+     * item in this menu is always selectable, which is what an NSMenuItem
+     * defaults to, so turning the automatic mode off changes nothing for
+     * them. */
+    [fileMenu setAutoenablesItems:NO];
 
     NSMenuItem *newGameItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_NEW)
@@ -853,6 +867,14 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [netInfoItem setTarget:g_bridge];
     [fileMenu addItem:netInfoItem];
     s_netInfoItem = netInfoItem;
+
+    NSMenuItem *mapOverviewItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_MAP_OVERVIEW)
+        action:@selector(onShowMapOverview:)
+        keyEquivalent:@"o"];
+    [mapOverviewItem setTarget:g_bridge];
+    [fileMenu addItem:mapOverviewItem];
+    s_mapOverviewItem = mapOverviewItem;
 
     /* Edit menu — mirrors the ImGui Edit menu (renderMenuBar() in
      * sdl3imgui.cpp). Titles are localized via langGetText so the native
@@ -1415,6 +1437,7 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_sysInfoItem)               [s_sysInfoItem               setState:(s->sysInfoOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_netInfoItem)               [s_netInfoItem               setState:(s->netInfoOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_gameInfoItem)              [s_gameInfoItem              setState:(s->gameInfoOpen          ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_mapOverviewItem)           [s_mapOverviewItem           setState:(s->mapOverviewOpen       ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_sendMsgItem)               [s_sendMsgItem               setState:(s->sendMsgOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
 
@@ -1452,6 +1475,11 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
      * MacMenuState producer (populateMacMenuState in sdl3imgui.cpp). */
     if (s_playersVoteBackToLobbyItem) [s_playersVoteBackToLobbyItem setEnabled:(s->voteRunning ? YES : NO)];
     if (s_playersVoteSurrenderItem)   [s_playersVoteSurrenderItem   setEnabled:(s->voteCanSurrender ? YES : NO)];
+
+    /* Map Overview gating — the overview draws the map this game has
+     * revealed, so it is selectable only while a game is running. Disabling
+     * the item also makes its Cmd+O key equivalent inert. */
+    if (s_mapOverviewItem)            [s_mapOverviewItem            setEnabled:(s->mapOverviewEnabled ? YES : NO)];
 
     /* Per-slot view swap. Occupied slots get a WBPlayerSlotView assigned
      * (lazily allocated on first use); empty slots have their view torn

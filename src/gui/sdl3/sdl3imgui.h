@@ -98,6 +98,7 @@ void sdl3ImguiShowSysInfo(bool open);
 void sdl3ImguiShowNetInfo(bool open);
 void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
+void sdl3ImguiShowMapOverview(bool open);
 void sdl3ImguiShowPlayersPanel(bool open);
 void sdl3ImguiTogglePlayersPanel(void);
 
@@ -110,6 +111,9 @@ bool sdl3ImguiIsSysInfoOpen(void);
 bool sdl3ImguiIsNetInfoOpen(void);
 bool sdl3ImguiIsGameInfoOpen(void);
 bool sdl3ImguiIsSendMsgOpen(void);
+/* The map overview is a desktop-only pop-out with no in-window twin, so it
+ * always reports closed in tablet mode. */
+bool sdl3ImguiIsMapOverviewOpen(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiAllianceReqInCooldown
