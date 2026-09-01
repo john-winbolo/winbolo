@@ -607,7 +607,10 @@ static int l_set_tile(lua_State *L) {
     int x = (int)luaL_checkinteger(L, 1);
     int y = (int)luaL_checkinteger(L, 2);
     int t = (int)luaL_checkinteger(L, 3);
-    if (x < 0 || x > 255 || y < 0 || y > 255 || t < 0 || t > 15) {
+    /* Terrain 0..15 are the normal codes; 0xFF is DEEP_SEA (global.h), which
+     * scenarios need too — e.g. restoring open sea under a dead pill the map
+     * loader put a ROAD pedestal beneath (tests/water_pills.scenario.lua). */
+    if (x < 0 || x > 255 || y < 0 || y > 255 || t < 0 || (t > 15 && t != 0xFF)) {
         lua_pushboolean(L, FALSE);
         return 1;
     }
