@@ -2544,9 +2544,14 @@ M.SEA_COMPONENT_MIN_WATER     = 3     -- the pills' water must hold at least thi
 M.SEA_COMPONENT_MAX_TILES     = 1200  -- hard cap on that BFS so an ocean map cannot flood the whole grid each rescan
 M.SEA_FLOOD_WAIT_TICKS        = 900   -- how long to wait after the mine goes off for the crater to flood to RIVER
                                       -- (floodfill.c counts FLOOD_FILL_WAIT down before it converts; it is not instant)
-M.SEA_TREES_MIN_INFLUENCE     = 0     -- a forest tile only counts when cpf.influence_at is STRICTLY above this — i.e. OUR side of
-                                      -- the front. Raise it to demand deeper own territory. 0 also rejects "no influence data yet",
-                                      -- which is deliberate: nobody farms 21 trees into unknown ground for a boat.
+M.SEA_TREES_MIN_INFLUENCE     = 0     -- SUPERSEDED BY THE COVERAGE TEST (2026-09-01). sea_count_safe_forest used to
+                                      -- require cpf.influence_at above this to call a forest tile harvestable. par2 bot3
+                                      -- t=23410 showed why that is the wrong question: two hostile BASES owned the corner
+                                      -- by influence, so a shore we were actively raiding with four pills aboard read as
+                                      -- "no trees in territory" for the rest of the game. The gate is now "no live
+                                      -- hostile/neutral PILLBOX covers the tile" (range + heated margin + line of fire,
+                                      -- the same rule the boat uses for water). Nothing reads this value any more; it is
+                                      -- left defined only so an old config that sets it does not become a nil-index.
 M.SEA_PILL_TREE_LEG_PER_TREE  = 6     -- cost charged per missing tree for the seek_trees leg (≈ one LGM farm round trip / 4 trees)
 M.SEA_NOGO_SPEED_CAP          = 16    -- info.speed cap (0..64) while covered water is near: a boat's turn RADIUS grows
                                       -- with speed (the turn RATE is terrain-fixed), so 52 overshoots a turn by ~1 tile
@@ -2578,5 +2583,60 @@ M.SEA_BASE_STOCK_STALE        = 3000  -- a base whose stock reading is older tha
                                       -- unvisited base must not read as empty (that cost sea_pills_D 500 ticks of
                                       -- explore while sitting 4 tiles from a base holding 90 mines)
 M.SEA_PILL_CLAIM_RADIUS       = 3     -- an ally's deep-sea capture target claims every dead sea pill this close (same as the cluster radius)
+
+-- =========================================================================
+-- BEGIN pill-damage attribution + land capture clusters (2026-09-01)
+-- Added for the 20260901_160325_1_par2 bot3 incident (t=17930-18600): six
+-- free dead pills sat unclaimed for 700 ticks while defend/take_cover cycled
+-- on a HEALTHY team pill that was only catching STRAY shells from a neutral
+-- pillbox shooting at our tank.  Three rules, in one delimited block so the
+-- whole change is greppable.
+-- =========================================================================
+
+-- --- Part 1: how scary is the thing that hit our pill? -------------------
+-- Pillboxes only ever fire at TANKS (pillbox.c), so a shell that lands on a
+-- team pill from an enemy/neutral pillbox is a MISS aimed at somebody else.
+-- A tank shelling our pill is deliberate and will finish the job; a stray is
+-- noise.  The factor scales the DISCOUNT the siege tier gives (see
+-- defend_pill_score): 1.0 leaves the tier exactly as it was, 0.25 keeps only
+-- a quarter of its urgency.
+M.DEFEND_SRC_TANK_MULT       = 1.0   -- aimed tank fire: unchanged, the old behaviour
+M.DEFEND_SRC_EPILL_MULT      = 0.5   -- enemy pillbox stray: half the urgency
+M.DEFEND_SRC_NPILL_MULT      = 0.25  -- neutral pillbox stray: a quarter
+M.DEFEND_WATCH_MIN_HP_FRAC   = 2/3   -- ARRIVED watch on non-tank damage only below this hp
+                                     -- fraction: a 13/15 pill catching strays is fine
+
+-- Shell -> source attribution (perception.lua).  A shell's muzzle is on its
+-- own back-ray: walk BACKWARDS from where we see it and see whether a live
+-- hostile/neutral pillbox sits on that line.
+M.PILL_SRC_SHELL_RADIUS      = 3     -- tiles: a non-friendly shell this close to a team
+                                     -- pill is logged as a possible hit on it
+M.PILL_SRC_SHELL_WINDOW      = 90    -- ticks a logged shell sighting stays eligible to
+                                     -- explain a hit (the hp drop is reported after the
+                                     -- shell object is already gone)
+M.PILL_SRC_ORIGIN_SLOP_WU    = 384   -- 1.5 tiles: how far off the back-ray a pillbox
+                                     -- centre may sit and still count as the muzzle
+M.PILL_SRC_PRESENCE_WINDOW   = 300   -- ticks: with NO shells seen at all, a hostile-tank
+                                     -- sighting stamp this fresh means "tank fire"
+M.PILL_SRC_LOG_MAX           = 8     -- ring size of per-pill shell sightings
+
+-- --- Part 2: land dead-pill clusters ------------------------------------
+-- Mirrors SEA_PILL_CLUSTER_RADIUS on land.  Six dead pills in one heap are
+-- one errand, not six: price each member as its share of the trip.
+M.CAPTURE_CLUSTER_RADIUS      = 3    -- dead pills within this many tiles chain into one cluster
+M.CAPTURE_CLUSTER_DIVISOR_MAX = 6    -- cap on the divisor (a 20-pill heap is not 20x cheaper)
+M.CAPTURE_CLUSTER_MIN_COST    = 5    -- the discount can never price a capture below this
+M.CAPTURE_CLUSTER_SCAN_TICKS  = 50   -- guard re-scan cadence (5 shell sims per guard pill)
+
+-- --- Part 3: hostile territory over the cluster -------------------------
+-- The discount must not walk a tank into a fortress.  Count the live
+-- hostile/neutral pillboxes that can actually put a shell on a cluster tile
+-- (PILLBOX_RANGE + the heated margin AND a clear line of fire, the same test
+-- the sea harvest uses) and price the cluster back up.
+M.CAPTURE_CLUSTER_GUARD_MULT  = 0.75 -- surcharge PER covering pill (1 -> x1.75, 2 -> x2.5)
+M.CAPTURE_CLUSTER_GUARD_MAX   = 4.0  -- cap: three or more guards is already a no-go
+-- =========================================================================
+-- END pill-damage attribution + land capture clusters
+-- =========================================================================
 
 return M

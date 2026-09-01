@@ -27,6 +27,67 @@ local function track_hist_at(tr, k)
 end
 
 -- -------------------------------------------------------------------------
+-- Damage-source attribution: who is actually shooting our pill?
+--
+-- Pillboxes only ever fire at TANKS (pillbox.c pillsUpdate), so a shell that
+-- lands on a team PILL from a pillbox is a MISS aimed at somebody else. A
+-- tank shelling our pill is deliberate and will finish the job; a pillbox
+-- stray is noise. Scariness order, and the whole reason this exists:
+--     tank fire  >  enemy pill fire  >  neutral pill fire
+-- (20260901_160325_1_par2 bot3 t=18080: our 13/15-hp pill #4 read as
+-- "taking_damage" and preempted a six-pill free capture, when the damage was
+-- stray fire from NEUTRAL pill #8 shooting at our own tank.)
+--
+-- SRC_RANK ranks the classes so the worst evidence in the window wins.
+local SRC_RANK = { tank = 3, epill = 2, npill = 1 }
+
+-- Classify ONE visible shell by its muzzle. A shell flies in a straight line,
+-- so walk its direction BACKWARDS and see whether a live hostile/neutral
+-- pillbox centre sits on (or within PILL_SRC_ORIGIN_SLOP_WU of) that back-ray,
+-- no further back than a shell can fly (SHELL_MAX_STEPS x SHELL_SPEED =
+-- 2048 wu = the pillbox's own range).
+--
+-- Returns "epill" / "npill" (the OWNER class of the pillbox that fired — an
+-- enemy player's pillbox labels its shells HOSTILE exactly like a tank does,
+-- so the shell's own label cannot answer this) plus that pill's id, or
+-- "tank", nil when nothing on the back-ray explains it.
+--
+-- Deterministic: the NEAREST muzzle wins and ties break on the lower pill id,
+-- so pairs() order never reaches the answer.
+local function shell_source_class(world, ob)
+  local ux =  U.bsin(ob.direction) / 128
+  local uy = -U.bcos(ob.direction) / 128
+  local maxr  = (C.SHELL_MAX_STEPS or 64) * (C.SHELL_SPEED or 32)
+  local slop  = C.PILL_SRC_ORIGIN_SLOP_WU or 384
+  local slop2 = slop * slop
+  local best_id, best_t, best_owner = nil, nil, nil
+  for pid, p in pairs(world.pills) do
+    if (p.owner == "hostile" or p.owner == "neutral")
+       and (p.health or 0) > 0 and not p.in_tank then
+      local dx = U.m2w(p.mx) - ob.x
+      local dy = U.m2w(p.my) - ob.y
+      -- t = how far BACK along the flight path this pill lies. The origin is
+      -- at shell - t*u, so t = -(d . u) and the perpendicular miss is d + t*u.
+      local t = -(dx * ux + dy * uy)
+      if t >= 0 and t <= maxr then
+        local ex = dx + t * ux
+        local ey = dy + t * uy
+        if ex * ex + ey * ey <= slop2 then
+          if best_t == nil or t < best_t
+             or (t == best_t and pid < best_id) then
+            best_id, best_t, best_owner = pid, t, p.owner
+          end
+        end
+      end
+    end
+  end
+  if best_owner == "hostile" then return "epill", best_id end
+  if best_owner == "neutral" then return "npill", best_id end
+  return "tank", nil
+end
+M.shell_source_class = shell_source_class
+
+-- -------------------------------------------------------------------------
 -- M.update(state, world, info)
 -- Call once per tick, before goal selection / builder / steering.
 -- Populates state.perc with the current perception snapshot.
@@ -719,6 +780,128 @@ function M.update(state, world, info)
           print2(string.format(
             "ALLY_HEAT t=%d pill@(%d,%d) NOT ally-only (%d friendly, %d hostile/neutral) -> alarm live",
             now, p.mx, p.my, h.friendly, h.other))
+        end
+      end
+    end
+  end
+
+  -- ----- Damage-source log: which shells came near which team pill -----
+  -- Companion to the ally-heat watch above, but the opposite question. That
+  -- one asks "is every shell here OURS" (suppress the alarm); this one asks,
+  -- of the shells that are NOT ours, WHERE DID THEY COME FROM — a tank's gun
+  -- or a pillbox's. The hp drop itself is reported a tick or more AFTER the
+  -- shell object is gone, so the answer has to be banked while the shell is
+  -- still on screen: a small per-pill ring of {tick, class} that the
+  -- attribution pass below reads back inside PILL_SRC_SHELL_WINDOW.
+  -- Only NON-friendly shells are logged and only near DEPLOYED team pills, so
+  -- on a quiet map this loop does nothing at all.
+  do
+    local SHELL_FRIENDLY = 0  -- SHELLS_BRAIN_FRIENDLY (shells.h)
+    local r   = C.PILL_SRC_SHELL_RADIUS or 3
+    local win = C.PILL_SRC_SHELL_WINDOW or 90
+    local cap = C.PILL_SRC_LOG_MAX or 8
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_SHOT and ob.info ~= SHELL_FRIENDLY then
+        local smx = bit.rshift(ob.x, 8)
+        local smy = bit.rshift(ob.y, 8)
+        local cls, by = nil, nil   -- back-ray classified lazily: only pays off
+                                   -- when a team pill is actually in the way
+        for _, p in pairs(world.pills) do
+          if (p.owner == "friendly" or p.owner == "allied")
+             and not (p.in_tank or p.carrier or p._synth_carry)
+             and math.abs(p.mx - smx) <= r and math.abs(p.my - smy) <= r then
+            if cls == nil then cls, by = shell_source_class(world, ob) end
+            local lg = p._src_log
+            if not lg then lg = {}; p._src_log = lg end
+            -- Compact out anything that has aged past the window, in place.
+            local k = 0
+            for i = 1, #lg do
+              if now - lg[i].t <= win then k = k + 1; lg[k] = lg[i] end
+            end
+            for i = #lg, k + 1, -1 do lg[i] = nil end
+            local last = lg[#lg]
+            -- One entry per (tick, class): a volley of four identical strays
+            -- must not push the tank sighting out of an 8-slot ring.
+            if not (last and last.t == now and last.src == cls) then
+              lg[#lg + 1] = { t = now, src = cls, by = by }
+              if #lg > cap then table.remove(lg, 1) end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- ----- Attribute fresh damage on team pills to a source class -----
+  -- world.lua stamps p.last_hit_tick on every REAL hp drop. Each new stamp is
+  -- classified exactly once (_src_done_tick) into p.last_hit_src, which
+  -- defend_pill_score reads as its scariness factor:
+  --   1. observed shells — the SCARIEST class in the log inside the window
+  --      wins (a tank joining in on top of pill strays is still tank fire);
+  --   2. nothing seen at all (offscreen hit) — a fresh hostile-TANK sighting
+  --      stamp at the pill (_enemy_near_tick) means tank fire;
+  --   3. still nothing — the nearest live enemy/neutral pillbox whose range
+  --      covers the pill takes the blame, at ITS owner class;
+  --   4. nothing whatsoever — "tank", the conservative answer (defend keeps
+  --      its full pre-change urgency when we simply do not know).
+  do
+    local win = C.PILL_SRC_SHELL_WINDOW or 90
+    for _, p in pairs(world.pills) do
+      if (p.owner == "friendly" or p.owner == "allied")
+         and not (p.in_tank or p.carrier or p._synth_carry) then
+        local hit = p.last_hit_tick or 0
+        if hit > 0 and hit > (p._src_done_tick or 0) then
+          p._src_done_tick = hit
+          local src, how, via = nil, nil, nil
+          local lg = p._src_log
+          if lg then
+            local rank = 0
+            for i = 1, #lg do
+              local e = lg[i]
+              if (now - e.t) <= win then
+                local rk = SRC_RANK[e.src] or 0
+                if rk > rank then rank = rk; src = e.src; via = e.by end
+              end
+            end
+            if src then how = "shell" end
+          end
+          if not src then
+            local pw = C.PILL_SRC_PRESENCE_WINDOW or 300
+            if p._enemy_near_tick and (now - p._enemy_near_tick) <= pw then
+              src, how = "tank", "presence_tank"
+            end
+          end
+          if not src then
+            -- Nearest live enemy/neutral pill whose fire reaches this tile.
+            -- Deterministic: nearest wins, ties on the lower id.
+            local lim = C.PILLBOX_RANGE_WU or 2048
+            local lim2 = lim * lim
+            local bd2, bid, bowner = nil, nil, nil
+            for pid, q in pairs(world.pills) do
+              if (q.owner == "hostile" or q.owner == "neutral")
+                 and (q.health or 0) > 0 and not q.in_tank then
+                local dwx = U.m2w(q.mx) - U.m2w(p.mx)
+                local dwy = U.m2w(q.my) - U.m2w(p.my)
+                local d2 = dwx * dwx + dwy * dwy
+                if d2 <= lim2
+                   and (bd2 == nil or d2 < bd2 or (d2 == bd2 and pid < bid)) then
+                  bd2, bid, bowner = d2, pid, q.owner
+                end
+              end
+            end
+            if bowner then
+              src  = (bowner == "hostile") and "epill" or "npill"
+              how, via = "presence_pill", bid
+            end
+          end
+          if not src then src, how = "tank", "unknown" end
+          p.last_hit_src      = src
+          p.last_hit_src_tick = hit
+          p.last_hit_src_how  = how
+          p.last_hit_src_by   = via
+          print2(string.format(
+            "PILL_HIT_SRC t=%d pill@(%d,%d) hp=%d hit_t=%d src=%s via=%s by=%s",
+            now, p.mx, p.my, p.health or 0, hit, src, how, tostring(via)))
         end
       end
     end

@@ -1963,7 +1963,14 @@ local function attack_pill_steer(state, world, info, goal)
       end
       return keys, taps
     end
-    if not goal._finetune_on_pill then
+    -- Keep tapping until the shot both REACHES the pill AND is CLEAR of hard
+    -- blockers (attack.lua exports both verdicts). Gating on on_pill alone
+    -- deadlocked: reached-but-blocked froze the heading one brad short of a
+    -- clear graze lane and the take timed out (par2 bot3 t=21684). Turning
+    -- further toward the centre is also the correct search direction for a
+    -- grazed blocker — that is what "turn in for clearance" means — and
+    -- attack.lua's CLEAR_TURN_IN_TAPS bounds how far we chase it.
+    if not (goal._finetune_on_pill and goal._finetune_clear) then
       local pcx = (goal.mx or 0) + 0.5
       local pcy = (goal.my or 0) + 0.5
       local pdir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,

@@ -3692,10 +3692,43 @@ local function quiet_dmg_cost(hits)
   return flr + (c - flr) * (0.5 ^ (hits - top))
 end
 
+-- How scary is whatever last hit this pill? perception.lua attributes every
+-- fresh hp drop to a source class (see its shell_source_class + the
+-- attribution pass); this turns that class into the factor that scales the
+-- siege tier's DISCOUNT.
+--
+--   tank  x1.00  aimed fire — a tank is finishing the pill off, unchanged
+--   epill x0.50  an enemy pillbox's stray, aimed at some tank near it
+--   npill x0.25  a neutral pillbox's stray, same but nobody even chose it
+--
+-- The factor multiplies the DISCOUNT, not the multiplier: the tiers here are
+-- multipliers BELOW 1.0 and smaller means MORE urgent, so scaling them
+-- directly by 0.25 would make a stray four times as alarming as a tank. The
+-- correct wiring is  m' = 1 - (1 - m) * f  — f=1 leaves the tier exactly as
+-- it was, f=0.25 keeps a quarter of its pull, f=0 would erase the tier.
+-- Returns (factor, class-or-nil); nil class = never attributed, treat as tank.
+local function defend_src_factor(p)
+  local src = p and p.last_hit_src
+  if src == "npill" then return (C.DEFEND_SRC_NPILL_MULT or 0.25), "npill" end
+  if src == "epill" then return (C.DEFEND_SRC_EPILL_MULT or 0.50), "epill" end
+  if src == "tank"  then return (C.DEFEND_SRC_TANK_MULT  or 1.00), "tank"  end
+  return (C.DEFEND_SRC_TANK_MULT or 1.00), nil
+end
+local function defend_src_scale(m, f)
+  return 1 - (1 - m) * f
+end
+
 local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   local bd = { travel = travel }
   local hp  = p.health or 0
   local dmg = p.attack_damage or 0
+
+  -- Damage-source scariness (Part 1). Recorded UNCONDITIONALLY so the src=
+  -- chip is visible on every row that has ever been hit, even when the tier
+  -- it scales is not the live one.
+  local src_f, src_tag = defend_src_factor(p)
+  bd.src_f = src_f
+  bd.src   = src_tag
 
   local hit_age   = (p.last_hit_tick and p.last_hit_tick > 0)
                     and (now - p.last_hit_tick) or math.huge
@@ -3795,15 +3828,38 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
       -- fresh damage (siege) or an enemy tank visible at the pill right now —
       -- exactly incident B's situation. ally_repair is excluded: an ally is
       -- already handling it, so camping adds nothing.
-      local watch_ok = (hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400) or live_enemy)
+      --
+      -- SOURCE GATE (Part 1). Fresh damage only counts as watch-worthy
+      -- evidence when a TANK is doing it, or when the pill is already chewed
+      -- below DEFEND_WATCH_MIN_HP_FRAC of full. A healthy pill catching stray
+      -- shells from a pillbox that is really shooting at a tank is not under
+      -- siege and must not park us: par2 bot3 t=18080, pill #4 at 13/15 hp
+      -- taking neutral-pill strays, watch bid 30 (weighted 93) preempting a
+      -- six-pill free capture 50 ticks after it finally won. The live_enemy
+      -- path is untouched — a hostile tank standing at the pill right now is
+      -- its own evidence regardless of who fired the last shell.
+      local dmg_fresh   = hit_age < (C.DEFEND_DMG_FRESH_TICKS or 400)
+      local hp_frac     = hp / (C.PILLS_MAX_HEALTH or 15)
+      local hp_low      = hp_frac < (C.DEFEND_WATCH_MIN_HP_FRAC or (2/3))
+      local src_is_tank = (bd.src == nil or bd.src == "tank")
+      local dmg_watch_ok = dmg_fresh and (src_is_tank or hp_low)
+      if dmg_fresh and not dmg_watch_ok then
+        bd.watch_src_denied = string.format("%s strays, hp %d/%d",
+          tostring(bd.src), hp, C.PILLS_MAX_HEALTH or 15)
+      end
+      local watch_ok = (dmg_watch_ok or live_enemy)
                        and block ~= "ally_repair"
       if not watch_ok then
         bd.cost = math.huge
         print2(string.format(
-          "HEAT_GATE t=%d pill@(%d,%d) NO-BID (%s, nothing live: hit_age=%s live_enemy=%s) hp=%d anger=%.2f shells=%d",
+          "HEAT_GATE t=%d pill@(%d,%d) NO-BID (%s, %s: hit_age=%s live_enemy=%s dmgsrc=%s hp=%d/%d) anger=%.2f shells=%d",
           now, p.mx, p.my, block,
+          bd.watch_src_denied and ("no-watch " .. bd.watch_src_denied)
+            or "nothing live",
           hit_age < math.huge and tostring(hit_age) or "-",
-          tostring(live_enemy), hp, p.anger or 0, info.shells or 0))
+          tostring(live_enemy),
+          string.format("%s{x%.2f}", tostring(bd.src or "-"), bd.src_f or 1.0),
+          hp, C.PILLS_MAX_HEALTH or 15, p.anger or 0, info.shells or 0))
         return math.huge, bd
       end
       -- WATCH bid (was: no bid at all).  Arrived at the pill, heat is not
@@ -3851,8 +3907,10 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
       bd.watch_mx, bd.watch_my, bd.watch_src = wmx, wmy, wsrc
       bd.cost = C.DEFEND_WATCH_COST or 30
       print2(string.format(
-        "HEAT_GATE t=%d pill@(%d,%d) WATCH %.0f (%s) at=(%d,%d) src=%s hp=%d anger=%.2f shells=%d hit_age=%s sight_age=%s setup_age=%s",
-        now, p.mx, p.my, bd.cost, block, wmx, wmy, wsrc, hp, p.anger or 0, info.shells or 0,
+        "HEAT_GATE t=%d pill@(%d,%d) WATCH %.0f (%s) dmgsrc=%s at=(%d,%d) src=%s hp=%d anger=%.2f shells=%d hit_age=%s sight_age=%s setup_age=%s",
+        now, p.mx, p.my, bd.cost, block,
+        string.format("%s{x%.2f}", tostring(bd.src or "-"), bd.src_f or 1.0),
+        wmx, wmy, wsrc, hp, p.anger or 0, info.shells or 0,
         hit_age < math.huge and tostring(hit_age) or "-",
         sight_age < math.huge and tostring(sight_age) or "-",
         setup_age < math.huge and tostring(setup_age) or "-"))
@@ -3886,8 +3944,12 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
     -- capture/rebuild territory) so its multiplier decays toward 1.
     -- Damage depth thus works AGAINST the bid — weaker pull here,
     -- shorter TTL below.
-    bd.siege_m = 1 - (1 - (C.DEFEND_SIEGE_MULT or 0.30))
+    bd.siege_m_raw = 1 - (1 - (C.DEFEND_SIEGE_MULT or 0.30))
                      * (hp / (C.PILLS_MAX_HEALTH or 15))
+    -- ...then scaled by WHO is shooting (Part 1). defend_src_scale shrinks the
+    -- discount, never the multiplier: pillbox strays leave a shallower tier,
+    -- aimed tank fire leaves it exactly as it was.
+    bd.siege_m = defend_src_scale(bd.siege_m_raw, src_f)
     if bd.siege_m < mult then mult = bd.siege_m; bd.tier = "siege" end
   end
   if setup_f > 0 then
@@ -4233,14 +4295,27 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
                 C.DEFEND_ARRIVE_RADIUS or 10, C.HEAT_PILL_SHOTS or 3, detail)
             elseif bd.watch then
               formula = string.format(
-                "ARRIVED watch{%.0f}%s||within %d tiles: travel phase done; heat blocked by %s,"
+                "ARRIVED watch{%.0f} src=%s%s||within %d tiles: travel phase done; heat blocked by %s,"
                 .. " so bid the flat DEFEND_WATCH_COST to HOLD at (%d,%d) [%s]%s —"
                 .. " loses to attack_tank and to take_cover's haul floor, beats seek_trees; %s",
-                cost, sel_preview(p.mx, p.my, cost),
+                cost, tostring(bd.src or "-"), sel_preview(p.mx, p.my, cost),
                 C.DEFEND_ARRIVE_RADIUS or 10, bd.heat_block,
                 bd.watch_mx or p.mx, bd.watch_my or p.my, bd.watch_src or "?",
                 bd.watch_threat and string.format(" threat.at=%.0f", bd.watch_threat) or "",
                 detail)
+            elseif bd.watch_src_denied then
+              -- Fresh damage, but it is pillbox spray on a still-healthy pill:
+              -- the watch bid is refused ON THE SOURCE, which is a different
+              -- statement from "nothing is happening here" and gets its own row.
+              formula = string.format(
+                "ARRIVED no-watch (%s)||within %d tiles: travel phase done and the pill IS taking damage,"
+                .. " but perception attributed it to %s fire (src=%s, x%.2f) and the pill is at %d/%d hp,"
+                .. " at or above DEFEND_WATCH_MIN_HP_FRAC (%.2f). Pillboxes only ever shoot at TANKS, so"
+                .. " these are strays aimed at somebody else — no watch bid, defend yields; %s",
+                bd.watch_src_denied, C.DEFEND_ARRIVE_RADIUS or 10,
+                tostring(bd.src), tostring(bd.src), bd.src_f or 1.0,
+                hp, C.PILLS_MAX_HEALTH or 15,
+                C.DEFEND_WATCH_MIN_HP_FRAC or (2/3), detail)
             else
               formula = string.format(
                 "ARRIVED no-bid (%s)||within %d tiles: travel phase done; heat blocked by %s -> defend yields to attack_tank / repair_pill / whatever else bids; %s",
@@ -4254,7 +4329,15 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
             -- Threat-tier chips, only the live ones (strongest wins).
             local u = ""
             if bd.worn then u = " WORN(quiet + damaged: curve-priced)" end
-            if bd.siege_m then u = u .. string.format(" siege{%.2f}", bd.siege_m) end
+            if bd.siege_m then
+              u = u .. string.format(" siege{%.2f}", bd.siege_m)
+              -- Where the siege tier came from: the savability multiplier, and
+              -- then the damage-source factor applied to its DISCOUNT.
+              -- 1-(1-raw)*f reproduces the printed siege{} exactly.
+              u = u .. string.format(" src=%s{x%.2f: 1-(1-%.2f)*%.2f}",
+                                     tostring(bd.src or "unknown"), bd.src_f or 1.0,
+                                     bd.siege_m_raw or bd.siege_m, bd.src_f or 1.0)
+            end
             if bd.setup_m then u = u .. string.format(" setup{%.2f}", bd.setup_m) end
             if bd.sight_m then u = u .. string.format(" sight{%.2f}", bd.sight_m) end
             if bd.cover_m then u = u .. string.format(" cover{%.2fx%d}", bd.cover_m, bd.cover_n) end
@@ -4350,8 +4433,8 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
                                 best_id, best.mx, best.my, best_cost)
     elseif is_watch then
       best_desc = string.format(
-        "defend#%d@(%d,%d) ARRIVED watch{%.0f} hold=(%d,%d) [%s] blocked=%s",
-        best_id, best.mx, best.my, best_cost,
+        "defend#%d@(%d,%d) ARRIVED watch{%.0f} src=%s hold=(%d,%d) [%s] blocked=%s",
+        best_id, best.mx, best.my, best_cost, tostring(b.src or "-"),
         b.watch_mx or best.mx, b.watch_my or best.my,
         b.watch_src or "?", tostring(b.heat_block))
     else
@@ -4369,8 +4452,11 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
                          b.ttl and string.format("%.0f", b.ttl) or "-",
                          b.rate and string.format("%.0f", b.rate) or "-",
                          b.hits_win or 0)
+      local sr = b.siege_m and string.format(" siege{%.2f} src=%s{x%.2f}",
+                                 b.siege_m, tostring(b.src or "unknown"),
+                                 b.src_f or 1.0) or ""
       best_desc = string.format(
-        "defend#%d@(%d,%d) %s*rdy{%.2f}%s%s%s = %.0f hits=%d dmg=%d",
+        "defend#%d@(%d,%d) %s*rdy{%.2f}%s%s%s".. sr .." = %.0f hits=%d dmg=%d",
         best_id, best.mx, best.my, head, b.ready or 1.0,
         -- Post-product clamps, in application order, so the printed
         -- formula multiplies out to the final number instead of
@@ -6117,6 +6203,157 @@ local function capture_route_probe(state, world, info, pill, pid, tmx, tmy)
 end
 
 -- =========================================================================
+-- PILL CLUSTERING — shared by the sea harvest and the land capture discount.
+--
+-- Greedy single-linkage over SORTED ids: a pill joins the first existing
+-- cluster that already holds a tile within R, otherwise it starts its own.
+-- Sorting first is what makes it deterministic — with pairs() order the same
+-- three pills could produce one cluster or two depending on hash layout, and
+-- every cluster id in the log and the panel would drift run to run.
+--
+-- ids : an ARRAY of pill ids (this function sorts a copy, callers need not)
+-- Returns clusters = { {id=, ids={...}, tiles={{mx,my},...}, n=}, ... },
+--         by_pill  = { [pill_id] = cluster index }
+local function build_pill_clusters(world, ids, R)
+  local sorted = {}
+  for i = 1, #ids do sorted[i] = ids[i] end
+  table.sort(sorted)
+  local clusters, by_pill = {}, {}
+  for _, pid in ipairs(sorted) do
+    local p = world.pills[pid]
+    local home = nil
+    for ci = 1, #clusters do
+      for _, t in ipairs(clusters[ci].tiles) do
+        if U.mdist(p.mx, p.my, t[1], t[2]) <= R then home = ci break end
+      end
+      if home then break end
+    end
+    if not home then
+      clusters[#clusters + 1] = { id = #clusters + 1, ids = {}, tiles = {} }
+      home = #clusters
+    end
+    local cl = clusters[home]
+    cl.ids[#cl.ids + 1] = pid
+    cl.tiles[#cl.tiles + 1] = { p.mx, p.my }
+    by_pill[pid] = home
+  end
+  for _, cl in ipairs(clusters) do cl.n = #cl.ids end
+  return clusters, by_pill
+end
+
+-- =========================================================================
+-- LAND DEAD-PILL CLUSTERS (Part 2 + Part 3 of the par2 fix)
+--
+-- Incident 20260901_160325_1_par2 bot3, t=17930-18600: SIX dead pills sat in
+-- a heap at (114-117,130-131) — no reject on any of them — and capture#2
+-- still priced 234 because each one was quoted the full ~11-tile trip through
+-- a contested zone. Six free pills in one heap is ONE errand: the tank is
+-- already there for the first, and the rest are a few tiles of walking. So
+-- price each member as its SHARE of the trip, exactly as the sea harvest
+-- already does for a raft (sea_plan_cluster splits the boat cost by cl.n).
+--
+--   discount : cost / min(n, CAPTURE_CLUSTER_DIVISOR_MAX), floored at
+--              CAPTURE_CLUSTER_MIN_COST
+--   guard    : x (1 + CAPTURE_CLUSTER_GUARD_MULT * k) capped at
+--              CAPTURE_CLUSTER_GUARD_MAX, where k = live hostile/neutral
+--              pillboxes that can actually put a shell on a cluster tile
+--
+-- The guard term is the user's own condition on the discount: "we should
+-- still penalize the cost of the capture_pills even on a cluster though if
+-- it's in really hostile territory (protected by a lot of pills)". It uses
+-- the SAME test as the sea coverage veto — PILLBOX_RANGE plus the heated
+-- margin AND cpf.simulate_shot actually reaching the tile — so a pillbox
+-- walled off from the heap does not count, and one that can shell it does.
+--
+-- Only the CLUSTER TILES are tested. The route is already danger-weighted by
+-- the Dijkstra/A* slate that produced dist_raw; charging for it twice would
+-- price the same pillboxes into the number two different ways.
+--
+-- DEEP-SEA pills are excluded outright: sea_plan_cluster already splits their
+-- cost by cluster size, and a second divisor here would double-discount them.
+--
+-- Cached like the sea scan (CAPTURE_CLUSTER_SCAN_TICKS): the guard test is
+-- ~5 shell sims per guard pill, so it runs on a cadence, not per candidate
+-- per tick. The cache also rebuilds immediately when the dead-pill set
+-- changes (a pill collected or a fresh kill), so a stale n can never price a
+-- heap that is no longer there.
+local function capture_cluster_signature(world, deepsea)
+  local ids = {}
+  for pid, p in pairs(world.pills) do
+    if (p.health or 0) == 0 and not p.in_tank and not p.carrier
+       and not p._synth_carry and not (deepsea and deepsea[pid]) then
+      ids[#ids + 1] = pid
+    end
+  end
+  table.sort(ids)
+  local sig = {}
+  for i = 1, #ids do
+    local p = world.pills[ids[i]]
+    sig[i] = string.format("%d@%d,%d", ids[i], p.mx, p.my)
+  end
+  return ids, table.concat(sig, ";")
+end
+
+local function capture_cluster_refresh(state, world, now)
+  local cache = state._cap_clusters
+  -- compute_pool4_cost calls this once PER CANDIDATE; the world does not
+  -- change inside a tick, so the signature scan runs at most once per tick.
+  if cache and cache.check_tick == now then return cache end
+  local deepsea = state.perc and state.perc.deepsea_pill_ids
+  local ids, sig = capture_cluster_signature(world, deepsea)
+  local period = C.CAPTURE_CLUSTER_SCAN_TICKS or 50
+  if cache and cache.sig == sig and (now - (cache.tick or 0)) < period then
+    cache.check_tick = now
+    return cache
+  end
+  local clusters = build_pill_clusters(world, ids,
+                                       C.CAPTURE_CLUSTER_RADIUS or 3)
+  local by_tile = {}
+  local guard_range = C.SEA_PILL_PILL_SAFE_RANGE or 9
+  for _, cl in ipairs(clusters) do
+    cl.div = math.min(cl.n, C.CAPTURE_CLUSTER_DIVISOR_MAX or 6)
+    cl.guard_ids = {}
+    if cl.n > 1 then
+      -- Only a cluster that will actually get a discount pays for the scan.
+      local threats = M.sea_threat_pills(world, cl.tiles, guard_range)
+      for _, tp in ipairs(threats) do
+        local covers = false
+        for _, t in ipairs(cl.tiles) do
+          if M.sea_pill_covers(world, tp, t[1], t[2], nil) then
+            covers = true
+            break
+          end
+        end
+        if covers then cl.guard_ids[#cl.guard_ids + 1] = tp.id end
+      end
+    end
+    cl.guard_n = #cl.guard_ids
+    cl.guard_m = math.min(C.CAPTURE_CLUSTER_GUARD_MAX or 4.0,
+                          1.0 + (C.CAPTURE_CLUSTER_GUARD_MULT or 0.75)
+                                * cl.guard_n)
+    for _, t in ipairs(cl.tiles) do
+      by_tile[t[2] * 256 + t[1]] = cl
+    end
+    if BRAIN_DEBUG_MODE and cl.n > 1 then print2(string.format("CAPTURE_CLUSTER t=%d cluster#%d n=%d div=%d guards=%d[%s] guard_m=%.2f tiles=%s", now, cl.id, cl.n, cl.div, cl.guard_n, table.concat(cl.guard_ids, ","), cl.guard_m, (function() local s = {} for _, t in ipairs(cl.tiles) do s[#s + 1] = string.format("(%d,%d)", t[1], t[2]) end return table.concat(s, " ") end)())) end
+  end
+  cache = { tick = now, check_tick = now, sig = sig,
+            clusters = clusters, by_tile = by_tile }
+  state._cap_clusters = cache
+  return cache
+end
+M.capture_cluster_refresh = capture_cluster_refresh
+
+-- The land cluster covering a tile, or nil. nil for a lone dead pill too:
+-- a cluster of one is not a cluster and must price exactly as it did before.
+local function capture_cluster_at(state, world, now, mx, my)
+  local cache = capture_cluster_refresh(state, world, now)
+  local cl = cache.by_tile[my * 256 + mx]
+  if cl and cl.n > 1 then return cl end
+  return nil
+end
+M.capture_cluster_at = capture_cluster_at
+
+-- =========================================================================
 -- compute_pool4_cost — the capture_pill cost formula extracted so it
 -- can be evaluated synchronously at queue-add time (high-priority
 -- "grab the pill we just killed" responsiveness) AND at the normal
@@ -6291,7 +6528,25 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   if free_bonus > 0 then
     c = math.max(C.CAPTURE_FREE_PILL_MIN_COST, c - free_bonus)
   end
-  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method, free_bonus, _route_dmg, _route_far
+  -- ── Cluster discount + hostile-territory guard (Parts 2 and 3) ────────
+  -- Dead pills only, and never deep-sea ones (capture_cluster_refresh drops
+  -- those — the sea plan already splits their cost by cluster size).
+  local _cl_n, _cl_div, _cl_guard_n, _cl_guard_m, _cl_ids = 1, 1, 0, 1.0, nil
+  if (obj.health or 0) == 0 and not obj.in_tank and not obj.carrier
+     and not obj._synth_carry then
+    local cl = capture_cluster_at(state, world, state.tick or 0, obj.mx, obj.my)
+    if cl then
+      _cl_n, _cl_div = cl.n, cl.div
+      _cl_guard_n, _cl_guard_m = cl.guard_n, cl.guard_m
+      _cl_ids = cl.guard_ids
+      c = c / _cl_div
+      local floor_c = C.CAPTURE_CLUSTER_MIN_COST or 5
+      if c < floor_c then c = floor_c end
+      c = c * _cl_guard_m
+    end
+  end
+  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method, free_bonus, _route_dmg, _route_far,
+         _cl_n, _cl_div, _cl_guard_n, _cl_guard_m, _cl_ids
 end
 
 -- Public: the capture_pill (pool 4) score for a SPECIFIC pill, used by the
@@ -6479,6 +6734,10 @@ local function sea_threat_pills(world, tiles, range)
   for i = 1, #ids do out[i] = { id = ids[i], pill = world.pills[ids[i]] } end
   return out
 end
+-- Exported so the LAND capture-cluster guard scan (capture_cluster_refresh,
+-- defined earlier in this file) can run the IDENTICAL coverage test the sea
+-- harvest uses instead of keeping a second copy of it.
+M.sea_threat_pills = sea_threat_pills
 
 -- First threatening pill with a clear line onto (mx,my), or nil.
 -- `rays` (optional) collects every ray for the overlay.
@@ -6618,37 +6877,86 @@ local function sea_pick_F(world, smx, smy, threats)
   return best
 end
 
--- Count forest tiles we could actually harvest for the boat, stopping as soon
--- as `want` of them are found. Gates mirror find_safe_forest (the seek_trees
--- scan): pill heat below the bad-ground line, threat.at within
--- SEEK_TREES_MAX_THREAT, not deep in enemy influence — plus the tank being
--- able to get there at all. Scanned in a box around S; a tile also qualifies
--- when it is close to the TANK, because the harvest happens on the way.
--- Scan order is a plain row-major sweep, so the count is deterministic.
--- Returns (count, nearest_mx, nearest_my) — "nearest" measured from the TANK,
--- with the tile key as a deterministic tie-break. The whole box is scanned
--- (no early exit) so the nearest tile is really the nearest, which is what the
--- seek_trees substate parks on; the box is at most 25x25 on a 50-tick cadence.
-local function sea_count_safe_forest(state, info, smx, smy, tmx, tmy)
+-- Count forest tiles we could actually harvest for the boat. Gates mirror
+-- find_safe_forest (the seek_trees scan): pill heat below the bad-ground line,
+-- threat.at within SEEK_TREES_MAX_THREAT, NOT COVERED BY AN ENEMY PILLBOX —
+-- plus the tank being able to get there at all. Scanned in a box around S; a
+-- tile also qualifies when it is close to the TANK, because the harvest
+-- happens on the way. Scan order is a plain row-major sweep, so the count is
+-- deterministic. Returns (count, nearest_mx, nearest_my, covered_count) —
+-- "nearest" measured from the TANK, with the tile key as a deterministic
+-- tie-break. The whole box is scanned (no early exit) so the nearest tile is
+-- really the nearest, which is what the seek_trees substate parks on; the box
+-- is at most 25x25 and sea_refresh only runs it every SEA_PILL_SCAN_PERIOD
+-- ticks.
+--
+-- COVERAGE, NOT INFLUENCE (2026-09-01). This used to require
+-- cpf.influence_at > SEA_TREES_MIN_INFLUENCE — "our side of the front by the
+-- numbers". par2 bot3 t=23410: pill #9 lay dead in the water at (112,142) with
+-- the tank right beside it at (114,139) holding 11/21 trees, and forest was
+-- everywhere — the shore strip at x~108-110 and a whole block at y~142-145 —
+-- but two hostile BASES at (109,137) and (115,143) owned that corner by
+-- influence, so every tile was rejected and the row read
+-- no_trees_in_territory for the rest of the game. We were in fact raiding
+-- that corner with four pills aboard. Influence is a bookkeeping fact about
+-- who owns the neighbourhood; what actually kills an LGM walking out for wood
+-- is a PILLBOX with a line on the tile. So the gate is now exactly that, and
+-- it is the same per-tile rule the boat already uses for water:
+-- sea_pill_covers — within PILLBOX_RANGE (inclusive, euclidean, plus the
+-- heated margin) AND the shell actually arrives.
+local function sea_count_safe_forest(state, world, info, smx, smy, tmx, tmy)
   local R    = C.SEA_TREES_RADIUS or 12
   local BAD  = C.TAKE_COVER_BAD_GROUND_PILL_AT or C.TANK_COMBAT_DEFENDED_DANGER or 30
   local MAXT = C.SEEK_TREES_MAX_THREAT or 8
-  -- OUR ground only. seek_trees is allowed to reach into contested ground
-  -- (it only skips forest below -SEEK_TREES_MIN_INFLUENCE); a boat harvest is
-  -- not. cpf.influence_at is positive on our side of the front and 0 when the
-  -- influence pass has not run yet — and "no data" must read as "not ours",
-  -- because nobody should farm 21 trees into unknown ground for a boat.
-  local MINI = C.SEA_TREES_MIN_INFLUENCE or 0
-  local n = 0
+  -- Every live hostile/neutral pill that could cover ANY tile of the box: a
+  -- qualifying tile is within R of S or of the tank, and a pill covering that
+  -- tile is within SEA_PILL_PILL_SAFE_RANGE of it, so R + that reach around
+  -- either centre is a superset. Sorted by id inside sea_threat_pills.
+  local threats = sea_threat_pills(world, { { smx, smy }, { tmx, tmy } },
+                                   R + (C.SEA_PILL_PILL_SAFE_RANGE or 9))
+  -- Per-tile coverage memo, keyed on the threat set itself (id, tile and hot
+  -- flag — the hot flag moves the margin). Anything that changes the answer
+  -- changes the key, so a stale verdict cannot survive a pill dying, moving or
+  -- heating up. Within one refresh the memo also stops two clusters that share
+  -- a shore from paying for the same shot sims twice.
+  local sigp = {}
+  for i = 1, #threats do
+    local tp = threats[i]
+    sigp[i] = string.format("%d:%d,%d,%d", tp.id, tp.pill.mx, tp.pill.my,
+      ((tp.pill.anger or 0) >= (C.HEATED_ANGER or 0.6)) and 1 or 0)
+  end
+  local sig = table.concat(sigp, ";")
+  local memo = state._sea_forest_cover
+  if not memo or memo.sig ~= sig then
+    memo = { sig = sig, c = {} }
+    state._sea_forest_cover = memo
+  end
+  local n, covered_n = 0, 0
   local bx, by, bd = nil, nil, 1e9
   for my = math.max(0, smy - R), math.min(255, smy + R) do
     for mx = math.max(0, smx - R), math.min(255, smx + R) do
       if U.mdist(mx, my, smx, smy) <= R or U.mdist(mx, my, tmx, tmy) <= R then
         if U.ttype(mx, my) == C.T_FOREST then
-          local hot = threat.pill_at(mx, my) or 0
-          if hot < BAD and (threat.at(mx, my) or 0) <= MAXT then
-            local infl = cpf.influence_at(mx, my) or 0
-            if infl > MINI then
+          -- COVERAGE FIRST, then the heat/threat gates. Order matters only for
+          -- ATTRIBUTION, not for the verdict: the two sets a covered tile could
+          -- fall in overlap almost completely (a pillbox close enough to shoot
+          -- a tile has usually already pushed threat.at past
+          -- SEEK_TREES_MAX_THREAT). Asking the coverage question first is what
+          -- lets the reject say "found 8 covered_by_pill" instead of the
+          -- uninformative "found 0 forest tiles".
+          local k = my * 256 + mx
+          local cov = memo.c[k]
+          if cov == nil then
+            -- sea_pill_covers range-tests before it simulates, so a tile with
+            -- no pill anywhere near it costs a few subtractions.
+            cov = sea_tile_covered(world, threats, mx, my, nil) or false
+            memo.c[k] = cov
+          end
+          if cov then
+            covered_n = covered_n + 1
+          else
+            local hot = threat.pill_at(mx, my) or 0
+            if hot < BAD and (threat.at(mx, my) or 0) <= MAXT then
               local tc = cpf.smart_cost_dij_only(KIND_NORMAL, mx, my, 0)
               -- INF only means "the slate has not expanded here yet"; a forest
               -- tile this close to a shore we can already reach is not really
@@ -6666,7 +6974,12 @@ local function sea_count_safe_forest(state, info, smx, smy, tmx, tmy)
       end
     end
   end
-  return n, bx, by
+  -- One line per scan (the scan itself is on sea_refresh's 50-tick cadence).
+  -- infl is REPORTED, never read by the decision: it is the number the retired
+  -- SEA_TREES_MIN_INFLUENCE gate used to test, kept in the log so a run can
+  -- show a harvest going ahead on ground the old rule called enemy territory.
+  if BRAIN_DEBUG_MODE then print2(string.format("SEA_FOREST t=%d S=(%d,%d) tank=(%d,%d) R=%d threats=%d ok=%d covered=%d nearest=%s infl_at_nearest=%s", state.tick or 0, smx, smy, tmx, tmy, R, #threats, n, covered_n, bx and string.format("(%d,%d)", bx, by) or "-", bx and tostring(cpf.influence_at(bx, by) or 0) or "-")) end
+  return n, bx, by, covered_n
 end
 
 -- The connected body of water the cluster floats in. BFS out from the pill
@@ -6863,29 +7176,11 @@ local function sea_build_clusters(state, world)
       ids[#ids + 1] = pid
     end
   end
-  table.sort(ids)
-  local R = C.SEA_PILL_CLUSTER_RADIUS or 3
-  local clusters, by_pill = {}, {}
-  for _, pid in ipairs(ids) do
-    local p = world.pills[pid]
-    local home = nil
-    for ci = 1, #clusters do
-      for _, t in ipairs(clusters[ci].tiles) do
-        if U.mdist(p.mx, p.my, t[1], t[2]) <= R then home = ci break end
-      end
-      if home then break end
-    end
-    if not home then
-      clusters[#clusters + 1] = { id = #clusters + 1, ids = {}, tiles = {} }
-      home = #clusters
-    end
-    local cl = clusters[home]
-    cl.ids[#cl.ids + 1] = pid
-    cl.tiles[#cl.tiles + 1] = { p.mx, p.my }
-    by_pill[pid] = home
-  end
+  -- Same greedy-over-sorted-ids union rule the LAND capture discount uses;
+  -- one copy, in build_pill_clusters above.
+  local clusters, by_pill = build_pill_clusters(world, ids,
+                                                C.SEA_PILL_CLUSTER_RADIUS or 3)
   for _, cl in ipairs(clusters) do
-    cl.n = #cl.ids
     -- LEAD pill: the lowest id in the cluster. One boat trip takes the whole
     -- cluster, so the cluster is ONE goal identity — only the lead is priced
     -- and can win; the others ride along as visible `cluster_member_of` rows.
@@ -7386,23 +7681,26 @@ local function sea_plan_cluster(state, world, info, cl, tmx, tmy)
     -- LGM_GATHER_TREE = 4 trees (lgm.c:999). So the shortfall s needs
     -- ceil(s/4) harvestable tiles. "Harvestable" uses the same gates
     -- seek_trees' find_safe_forest applies — pill heat below the bad-ground
-    -- line, threat within SEEK_TREES_MAX_THREAT, not deep in enemy influence
+    -- line, threat within SEEK_TREES_MAX_THREAT, and NOT COVERED by a live
+    -- hostile/neutral pillbox (see the long note on sea_count_safe_forest: it
+    -- replaced an influence test that condemned a corner we were raiding)
     -- — plus tank reachability, within SEA_TREES_RADIUS of the entrance OR of
     -- the tank (the harvest happens on the way). If we cannot count enough,
     -- the plan is not fundable: REJECT rather than march out and stall.
     -- (The LGM's own walk is re-gated at dispatch by builder.decide's gather
     -- priority — lgm_can_reach + lgm_path_safe_enhanced — which is the
     -- authoritative check the moment the trip actually starts.)
-    local fmx, fmy
-    forest_ok, fmx, fmy = sea_count_safe_forest(state, info, best_s.mx, best_s.my,
-                                                tmx, tmy)
+    local fmx, fmy, fcov
+    forest_ok, fmx, fmy, fcov = sea_count_safe_forest(state, world, info,
+                                                best_s.mx, best_s.my, tmx, tmy)
     cl.tree_spot = fmx and { fmx, fmy } or nil
+    cl.forest_covered = fcov or 0
     if forest_ok < need_tiles then
-      return rej("no_trees_in_territory", string.format(
-        "trees %d/%d short %d -> need %d forest tiles (%d trees each, LGM_GATHER_TREE), found %d inside our influence (> %d) and safe within %d tiles of S(%d,%d) or the tank",
+      return rej("no_safe_trees", string.format(
+        "trees %d/%d short %d -> need %d forest tiles (%d trees each, LGM_GATHER_TREE), found %d uncovered and safe within %d tiles of S(%d,%d) or the tank; found %d covered_by_pill",
         info.trees or 0, trees_need, trees_short, need_tiles, per_tile,
-        forest_ok, C.SEA_TREES_MIN_INFLUENCE or 0,
-        C.SEA_TREES_RADIUS or 12, best_s.mx, best_s.my))
+        forest_ok, C.SEA_TREES_RADIUS or 12, best_s.mx, best_s.my,
+        fcov or 0))
     end
     leg_trees = trees_short * (C.SEA_PILL_TREE_LEG_PER_TREE or 6)
   end
@@ -8468,7 +8766,8 @@ function M.build_eval_queue(state, world, info)
             _reject_remaining = reject.remaining or 0,
           }
         else
-          local c, _draw, dscore, dval, intcpt, _lm4, _dm4, _free4, _rdmg4, _rfar4 =
+          local c, _draw, dscore, dval, intcpt, _lm4, _dm4, _free4, _rdmg4, _rfar4,
+                _cln4, _cldiv4, _clgn4, _clgm4, _clgids4 =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
           -- Deep-sea pill with a live harvest plan: the plan's cost REPLACES
           -- the land formula (the tank cannot walk there at all — what it
@@ -8489,6 +8788,10 @@ function M.build_eval_queue(state, world, info)
             _dist_method = _dm4, _free = _free4,  -- _free = scaled value bonus subtracted
             _route_dmg = _rdmg4,                  -- wsim damage on the probed direct route
             _route_far = _rfar4,                  -- set = too far to probe, slate cost stands
+            -- Land dead-pill cluster: n members, the divisor applied, and how
+            -- many live hostile/neutral pills can shell a cluster tile.
+            _cl_n = _cln4, _cl_div = _cldiv4,
+            _cl_guard_n = _clgn4, _cl_guard_m = _clgm4, _cl_guard_ids = _clgids4,
           }
         end
       end
@@ -9065,7 +9368,7 @@ local function get_formula_inner(e)
         entrance_unreachable = "pill lies in DEEP SEA: the chosen entrance has no tank route (Dijkstra and A* both INF)",
         no_shells_anywhere = "pill lies in DEEP SEA: the entrance needs a mine detonated and we have neither the shells nor a reachable friendly base to fetch them from",
         no_mines_anywhere = "pill lies in DEEP SEA, we carry no mine, and there is no reachable friendly/allied base at all to fetch one from — nothing can crater the shore. (A base that merely READ empty is still offered: stock is only reported up close and bases restock.)",
-        no_trees_in_territory = string.format("pill lies in DEEP SEA: short of the %d trees the mine+boat need (LGM_COST_BOAT 20 + LGM_COST_MINE 1) and there are not enough harvestable forest tiles INSIDE OUR INFLUENCE within %d tiles of the entrance (%d trees per tile)", C.SEA_PILL_TREES_TOTAL or 21, C.SEA_TREES_RADIUS or 12, C.SEA_TREES_PER_FOREST or 4),
+        no_safe_trees = string.format("pill lies in DEEP SEA: short of the %d trees the mine+boat need (LGM_COST_BOAT 20 + LGM_COST_MINE 1) and there are not enough harvestable forest tiles within %d tiles of the entrance (%d trees per tile) that are NOT COVERED by a live hostile/neutral pillbox. Coverage, not influence: whose neighbourhood it is by the numbers does not kill an LGM, a pillbox with a line on the tile does", C.SEA_PILL_TREES_TOTAL or 21, C.SEA_TREES_RADIUS or 12, C.SEA_TREES_PER_FOREST or 4),
       })[e._reject]
       -- The three reject reasons that name a pill id.
       if not desc and type(e._reject) == "string" then
@@ -9114,7 +9417,7 @@ local function get_formula_inner(e)
         .. "||sea:cluster %d, %d dead pill(s) in deep sea at %s — entrance{%s} S=(%d,%d)%s water_component{%d tiles}, park=%s, mine=%s, boat=%s (%s)"
         .. "|travel:danger-weighted route tank -> S(%d,%d) = %.0f"
         .. "|refuel_leg:%s"
-        .. "|tree_leg:trees{%d}/%d[SEA_PILL_TREES_TOTAL = LGM_COST_BOAT 20 + LGM_COST_MINE 1] short{%d} need_tiles{%d} (LGM_GATHER_TREE %d trees per forest tile) forest_ok{%d} (in_influence, within %dt) -> %d x %.0f[SEA_PILL_TREE_LEG_PER_TREE] = %.0f"
+        .. "|tree_leg:trees{%d}/%d[SEA_PILL_TREES_TOTAL = LGM_COST_BOAT 20 + LGM_COST_MINE 1] short{%d} need_tiles{%d} (LGM_GATHER_TREE %d trees per forest tile) forest_ok{%d} (uncovered, within %dt) -> %d x %.0f[SEA_PILL_TREE_LEG_PER_TREE] = %.0f"
         .. "|mines:mines{%d}/%d needed for the crater"
         .. "|shells:shells{%d}/%d — one to land on the mine, plus one for every FOREST tile in the F->S lane (a shell dies on the first forest and only turns it to grass)"
         .. "|coverage:a pill covers a tile only if the tile centre is within PILLBOX_RANGE %d wu of it (euclidean, inclusive — util.c utilIsItemInRange) AND the shell reaches it. CALM pills use r=%.1f tiles, HEATED ones r=%.1f (they reload fast, so the boat keeps a tile of buffer). Covered water in this component: %d tiles. Dropped members: %s"
@@ -9203,11 +9506,44 @@ local function get_formula_inner(e)
           "|route:NOT PROBED — pill is %d tiles away, past CAPTURE_ROUTE_MAX_TILES (%d). No direct-route A* and no wsim were run for it; the dist above is the plain Dijkstra/A* slate cost",
           e._route_far, C.CAPTURE_ROUTE_MAX_TILES or 10)
       end
+      -- Land dead-pill cluster (Parts 2/3). Both chips print only when the
+      -- pill is actually in a cluster of 2+, and each shows the factor it
+      -- applied, so the printed chain still multiplies out to the total:
+      --     (...)[−FREE] / div  [floor 5]  × guard
+      local _cl_n  = e._cl_n or 1
+      local _cl_dv = e._cl_div or 1
+      local _cl_gn = e._cl_guard_n or 0
+      local _cl_gm = e._cl_guard_m or 1.0
+      local _cluster_mult, _cluster_det = "", ""
+      if _cl_n > 1 then
+        _cluster_mult = string.format(" cluster{%d} /%dX", _cl_n, _cl_dv)
+        _cluster_det = string.format(
+          "|cluster:%d dead pills within %d tiles of each other — ONE errand, so each member pays its share:"
+          .. " cost / min(%d, %d[DIVISOR_MAX]) = /%d, floored at %.0f",
+          _cl_n, C.CAPTURE_CLUSTER_RADIUS or 3, _cl_n,
+          C.CAPTURE_CLUSTER_DIVISOR_MAX or 6, _cl_dv,
+          C.CAPTURE_CLUSTER_MIN_COST or 5)
+        local _gids = e._cl_guard_ids
+        if _cl_gn > 0 then
+          _cluster_mult = _cluster_mult ..
+            string.format(" guard{%d pills, x%.2f}", _cl_gn, _cl_gm)
+          _cluster_det = _cluster_det .. string.format(
+            "|guard:%d live hostile/neutral pill(s) [%s] can put a shell on a cluster tile"
+            .. " (within %.0f wu + heat margin AND a clear line of fire) → x(1 + %.2f × %d) capped at %.1f = x%.2f."
+            .. " Route danger is NOT counted here — the Dijkstra/A* dist above already prices it",
+            _cl_gn, _gids and table.concat(_gids, ",") or "?",
+            C.PILLBOX_RANGE_WU or 2048, C.CAPTURE_CLUSTER_GUARD_MULT or 0.75,
+            _cl_gn, C.CAPTURE_CLUSTER_GUARD_MAX or 4.0, _cl_gm)
+        else
+          _cluster_det = _cluster_det ..
+            "|guard:none — no live hostile/neutral pillbox has both the range and a clear line onto any cluster tile, so the discount stands undiluted"
+        end
+      end
       f = string.format(
-        "(base{%d} + dist{%.1f}[%s]@(%d,%d) + danger{%.1f} + intcpt{%.0f})%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f [%s]|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s%s%s",
-        C.CAPTURE_PILL_BASE_COST, e._ds, _dm_str, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt, _free_mult,
+        "(base{%d} + dist{%.1f}[%s]@(%d,%d) + danger{%.1f} + intcpt{%.0f})%s%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f [%s]|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s%s%s%s",
+        C.CAPTURE_PILL_BASE_COST, e._ds, _dm_str, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt, _free_mult, _cluster_mult,
         raw, C.CAPTURE_PILL_DIST_SCALE, e._ds, _dm_str,
-        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det, _free_det, _route_det)
+        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det, _free_det, _route_det, _cluster_det)
     end
   elseif p == 3 then
     -- capture_base: the A* number IS the danger-weighted dijkstra travel cost —
@@ -10368,8 +10704,10 @@ function M.step_eval_queue(state, world, info)
       local _cpill_route_dmg = 0  -- wsim damage on the probed direct route
       local _cpill_route_far = nil -- set = beyond CAPTURE_ROUTE_MAX_TILES, never probed
       local _cpill_sea = nil
+      local _cpill_cl_n, _cpill_cl_div, _cpill_cl_gn, _cpill_cl_gm, _cpill_cl_gids = 1, 1, 0, 1.0, nil
       if pool_idx == 4 then
-        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc, _cpill_route_dmg, _cpill_route_far =
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc, _cpill_route_dmg, _cpill_route_far,
+        _cpill_cl_n, _cpill_cl_div, _cpill_cl_gn, _cpill_cl_gm, _cpill_cl_gids =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
@@ -10593,6 +10931,9 @@ function M.step_eval_queue(state, world, info)
         entry._free=_cpill_free_disc
         entry._route_dmg=_cpill_route_dmg
         entry._route_far=_cpill_route_far
+        entry._cl_n=_cpill_cl_n; entry._cl_div=_cpill_cl_div
+        entry._cl_guard_n=_cpill_cl_gn; entry._cl_guard_m=_cpill_cl_gm
+        entry._cl_guard_ids=_cpill_cl_gids
       elseif pool_idx == 5 then
         entry._stale=stale_cost; entry._age=_gen_age
         entry._dmg=_rp_dmg

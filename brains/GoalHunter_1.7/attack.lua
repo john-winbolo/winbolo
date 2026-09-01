@@ -6724,12 +6724,25 @@ function M.update_attack_substate(goal, state, world, info)
     local _fine_clear = (_fine_obs ~= math.huge)
     goal._finetune_path    = path        -- viz reads these
     goal._finetune_on_pill = on_pill
+    -- Steering's tap gate reads this too: it must KEEP tapping toward the
+    -- centre while the shot reaches the pill but a blocker is still on the
+    -- lane. It used to stop the moment on_pill went true — with the lane
+    -- blocked that froze the heading, made the +N turn-in bound below
+    -- unreachable (the tap counter only advanced while on_pill was false),
+    -- and the take sat motionless until FINETUNE_TIMEOUT (par2 bot3
+    -- t=21684: pill #8 with friendly #4 grazing the lane; the clear lane
+    -- was ~1 brad further clockwise, exactly where the next taps would
+    -- have swept).
+    goal._finetune_clear   = _fine_clear
     -- Bound the "turn in for clearance" search: once the shot first REACHES the
     -- pill, allow only CLEAR_TURN_IN_TAPS more taps (a few brad of extra turn-in)
     -- to also clear a grazed blocker. If it can't clear in that small window the
     -- lane is genuinely pinched — give up rather than turning arbitrarily far off
-    -- the corner chasing a lane that isn't there.
-    local CLEAR_TURN_IN_TAPS = 4
+    -- the corner chasing a lane that isn't there. 6 (was 4): the counter now
+    -- advances while blocked (see above), and at the /8 ramp with the 3-burst
+    -- cap 6 ticks is ~1.5-2.5 brads of real turn — enough to thread a grazed
+    -- corner, still far too little to wander off the pill.
+    local CLEAR_TURN_IN_TAPS = 6
     if on_pill and not goal._finetune_reached_tap then
       goal._finetune_reached_tap = goal._finetune_taps or 0
     end
@@ -6786,7 +6799,8 @@ function M.update_attack_substate(goal, state, world, info)
         n_taps, FINETUNE_MAX_TAPS, n_ticks, FINETUNE_TIMEOUT,
         angle_f, pmx, pmy))
     end
-    -- Else: steering will tap one brad toward pill center this tick.
+    -- Else: steering keeps tapping toward the pill centre this tick (it taps
+    -- whenever the shot is not yet reached-AND-clear).
     -- Fall through to draw
   end
 
