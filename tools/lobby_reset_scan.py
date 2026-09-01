@@ -71,6 +71,9 @@ ALLOWLIST_NAMES = (
     ("s_settings",
      "settings header open state, deliberately carried across rounds by "
      "lobbySettingsPostGameEdge"),
+    ("s_brains",
+     "sticky bot-brain pick and the brain about.txt metadata cache, "
+     "process-scoped by design"),
 )
 
 # Statics whose declared type makes them non-assignable. Matched on the

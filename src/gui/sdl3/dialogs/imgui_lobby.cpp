@@ -139,18 +139,49 @@ static float s_lobbySplitOffsetMap   = 0.0f;
 static float s_lobbySplitOffsetRecap = 0.0f;
 static bool  s_lobbySplitOffsetInit  = false;
 
-/* Per-slot tracking of whether the bot's name was manually overridden
- * by the host typing into the name input field.  Cleared when a bot
- * is added or its name is rerolled (those are pool-driven names);
- * set when the user types a name in the AiConfig sub-panel.  Used by
- * the team-naming-pool dropdown to decide which bots to auto-rename
- * when the pool changes — overridden names stay, pool-driven names
- * get a fresh pick from the new pool.
- *
- * UI-side state only (no server propagation). For multiplayer the
- * server picks names so this array would never gate anything; for
- * single-player it's the source of truth. */
-static bool s_botNameOverridden[MAX_TANKS] = {0};
+/* Lobby command-dispatch state: the per-slot bot-name override flags and
+ * the add-bot debounce. All of it belongs to one lobby session, so
+ * lobbyCommandReset() clears it on teardown. */
+typedef struct LobbyCommandState {
+    /* Per-slot tracking of whether the bot's name was manually overridden
+     * by the host typing into the name input field.  Cleared when a bot
+     * is added or its name is rerolled (those are pool-driven names);
+     * set when the user types a name in the AiConfig sub-panel.  Used by
+     * the team-naming-pool dropdown to decide which bots to auto-rename
+     * when the pool changes — overridden names stay, pool-driven names
+     * get a fresh pick from the new pool.
+     *
+     * UI-side state only (no server propagation). For multiplayer the
+     * server picks names so this array would never gate anything; for
+     * single-player it's the source of truth. */
+    bool   botNameOverridden[MAX_TANKS] = {0};
+
+    /* Add-bot debounce — disables the Add Bot button while a previously-sent
+     * request is in flight. Counts current connected lobby slots at click
+     * time, locks the button until either (a) the connected count grows to
+     * the expected value (server acked) or (b) a 2 s timeout elapses (lost
+     * packet / SP path that already returned). Prevents spam-clicks from
+     * pushing past MAX_TANKS or otherwise racing the server.
+     *
+     * Belt-and-suspenders against the lobby-spam crash:
+     *   - addBotFrame: ImGui frame number of the last successful send.
+     *     Hard-blocks any second add-bot in the same frame, even if it
+     *     comes from a different button (per-team header + per-row in the
+     *     player table) before the debounce-disabled state can propagate.
+     *   - All loops over MAX_TANKS guard the slot accessor against NULL
+     *     and treat NULL as "not connected" (the SP path can briefly hold
+     *     a partially-initialized slot while serverSimCreateBot is
+     *     allocating the ClientSim). */
+    Uint32 addBotSentMs                 = 0;
+    int    addBotExpectedConn           = 0;
+    int    addBotFrame                  = -1;
+} LobbyCommandState;
+
+static LobbyCommandState s_commands = {};
+
+static void lobbyCommandReset(void) {
+    s_commands = LobbyCommandState{};
+}
 
 /* ── Single-player vs multiplayer command dispatch ─────────────────
  * The lobby UI was originally written against the UDP transport — it
@@ -181,14 +212,6 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     soundPlayEffect(ready ? lobbyReady : lobbyUnready);
 }
 
-/* Sticky "last picked brain" catalogue index. ADD BOT uses this
- * when in range so new bots inherit whatever brain the host last
- * selected (via the per-bot AiConfig "Bot Code" dropdown), instead
- * of always falling back to the server's default brain. 0xFF means
- * "no sticky yet — use the server default"; valid values index into
- * the lobby brain catalogue. Process-scoped. */
-static uint8_t s_lastChosenBrainIdx = 0xFF;
-
 /* Catalogue index of the default add-bot brain — prefer "GoalHunter_1.6", else
  * the first entry (the catalogue is sorted newest-version-first). -1 if empty. */
 static int lobbyDefaultBrainIdx(const BrainList *bl) {
@@ -216,16 +239,34 @@ struct LobbyBrainMeta {
     char tagline[BRAIN_LIST_TAG_LEN];
     char desc[BRAIN_LIST_DESC_LEN];
 };
-static LobbyBrainMeta s_brainMeta[BRAIN_LIST_MAX];
-static int            s_brainMetaCount = 0;
+
+/* Bot-brain state that outlives any one lobby session: the host's sticky
+ * brain pick and the about.txt metadata cache. Deliberately has no reset
+ * function — imguiLobbyFrameReset runs on every lobby→game edge, so
+ * clearing this would drop the host's brain choice and re-read the
+ * brains/ tree from disk once a round. */
+typedef struct LobbyBrainCache {
+    /* Sticky "last picked brain" catalogue index. ADD BOT uses this
+     * when in range so new bots inherit whatever brain the host last
+     * selected (via the per-bot AiConfig "Bot Code" dropdown), instead
+     * of always falling back to the server's default brain. 0xFF means
+     * "no sticky yet — use the server default"; valid values index into
+     * the lobby brain catalogue. Process-scoped. */
+    uint8_t        lastChosenBrainIdx = 0xFF;
+
+    LobbyBrainMeta meta[BRAIN_LIST_MAX];
+    int            metaCount          = 0;
+} LobbyBrainCache;
+
+static LobbyBrainCache s_brains = {};
 
 static const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
     if (!name || !name[0]) return NULL;
-    for (int i = 0; i < s_brainMetaCount; i++) {
-        if (SDL_strcasecmp(s_brainMeta[i].name, name) == 0) return &s_brainMeta[i];
+    for (int i = 0; i < s_brains.metaCount; i++) {
+        if (SDL_strcasecmp(s_brains.meta[i].name, name) == 0) return &s_brains.meta[i];
     }
-    if (s_brainMetaCount >= BRAIN_LIST_MAX) return NULL;
-    LobbyBrainMeta *m = &s_brainMeta[s_brainMetaCount++];
+    if (s_brains.metaCount >= BRAIN_LIST_MAX) return NULL;
+    LobbyBrainMeta *m = &s_brains.meta[s_brains.metaCount++];
     SDL_strlcpy(m->name, name, sizeof(m->name));
     brainListLoadMeta(name, m->tagline, sizeof(m->tagline),
                       m->desc, sizeof(m->desc));
@@ -289,12 +330,13 @@ static void lobbySendAddBot(ClientSim *cs,
      * an out-of-range sticky (e.g. catalogue shrunk between picks)
      * falls back to the server-default sentinel. */
     /* First add: default to GoalHunter_1.6 (newest), not the server CLI default;
-     * then stay sticky (the per-bot Bot Code dropdown updates s_lastChosenBrainIdx). */
-    if (s_lastChosenBrainIdx == 0xFF && cs) {
+     * then stay sticky (the per-bot Bot Code dropdown updates
+     * s_brains.lastChosenBrainIdx). */
+    if (s_brains.lastChosenBrainIdx == 0xFF && cs) {
         int def = lobbyDefaultBrainIdx(clientSimGetLobbyBrainList(cs));
-        if (def >= 0) s_lastChosenBrainIdx = (uint8_t)def;
+        if (def >= 0) s_brains.lastChosenBrainIdx = (uint8_t)def;
     }
-    uint8_t stickyBrainIdx = s_lastChosenBrainIdx;
+    uint8_t stickyBrainIdx = s_brains.lastChosenBrainIdx;
     if (stickyBrainIdx != 0xFF && cs) {
         const BrainList *bl = clientSimGetLobbyBrainList(cs);
         if (!bl || stickyBrainIdx >= bl->count) stickyBrainIdx = 0xFF;
@@ -369,7 +411,7 @@ static void lobbySendAddBot(ClientSim *cs,
         serverSimPublishLobbySlot(sim, slot);
         threadsReleaseMutex();
         /* Bot's name came from the pool — not an override. */
-        s_botNameOverridden[slot] = false;
+        s_commands.botNameOverridden[slot] = false;
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             clientSimNetSendTeamSet(cs, slot, teamNumber);
         }
@@ -416,26 +458,6 @@ static void lobbySendAddBot(ClientSim *cs,
     }
 }
 
-/* Add-bot debounce — disables the Add Bot button while a previously-sent
- * request is in flight. Counts current connected lobby slots at click
- * time, locks the button until either (a) the connected count grows to
- * the expected value (server acked) or (b) a 2 s timeout elapses (lost
- * packet / SP path that already returned). Prevents spam-clicks from
- * pushing past MAX_TANKS or otherwise racing the server.
- *
- * Belt-and-suspenders against the lobby-spam crash:
- *   - s_addBotFrame: ImGui frame number of the last successful send.
- *     Hard-blocks any second add-bot in the same frame, even if it
- *     comes from a different button (per-team header + per-row in the
- *     player table) before the debounce-disabled state can propagate.
- *   - All loops over MAX_TANKS guard the slot accessor against NULL
- *     and treat NULL as "not connected" (the SP path can briefly hold
- *     a partially-initialized slot while serverSimCreateBot is
- *     allocating the ClientSim). */
-static Uint32 s_addBotSentMs = 0;
-static int    s_addBotExpectedConn = 0;
-static int    s_addBotFrame = -1;
-
 static int lobbyCountConnectedSlots(ClientSim *cs) {
     int n = 0;
     if (!cs) return 0;
@@ -451,15 +473,15 @@ static bool lobbyAddBotPending(ClientSim *cs) {
     /* In the same ImGui frame as the last send, refuse another no matter
      * what — multiple buttons render before any one's click can update
      * the disabled state of the others. */
-    if (s_addBotFrame == ImGui::GetFrameCount()) return true;
-    if (s_addBotSentMs == 0) return false;
+    if (s_commands.addBotFrame == ImGui::GetFrameCount()) return true;
+    if (s_commands.addBotSentMs == 0) return false;
     Uint32 now = SDL_GetTicks();
-    if (now - s_addBotSentMs > 2000) {
-        s_addBotSentMs = 0;
+    if (now - s_commands.addBotSentMs > 2000) {
+        s_commands.addBotSentMs = 0;
         return false;
     }
-    if (lobbyCountConnectedSlots(cs) >= s_addBotExpectedConn) {
-        s_addBotSentMs = 0;
+    if (lobbyCountConnectedSlots(cs) >= s_commands.addBotExpectedConn) {
+        s_commands.addBotSentMs = 0;
         return false;
     }
     return true;
@@ -470,15 +492,15 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
     if (!cs) return;
     /* Drop the call entirely if anything already added a bot this
      * frame — the visible button was probably stale-clicked. */
-    if (s_addBotFrame == ImGui::GetFrameCount()) return;
+    if (s_commands.addBotFrame == ImGui::GetFrameCount()) return;
     /* Refuse to push past the 16-slot ceiling regardless of how the
      * server would otherwise handle it. Keeps the bot pool / subscriber
      * registry from being torched if MAX_TANKS slots are already in use
      * and a queued click slips through. */
     if (lobbyCountConnectedSlots(cs) >= MAX_TANKS) return;
-    s_addBotFrame = ImGui::GetFrameCount();
-    s_addBotSentMs = SDL_GetTicks();
-    s_addBotExpectedConn = lobbyCountConnectedSlots(cs) + 1;
+    s_commands.addBotFrame = ImGui::GetFrameCount();
+    s_commands.addBotSentMs = SDL_GetTicks();
+    s_commands.addBotExpectedConn = lobbyCountConnectedSlots(cs) + 1;
     lobbySendAddBot(cs, namingPool, teamNumber);
 }
 
@@ -3054,7 +3076,7 @@ static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
         serverSimRemoveBot(sim, slot);
         serverSimPublishLobbySlot(sim, slot);
         threadsReleaseMutex();
-        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
+        if (slot < MAX_TANKS) s_commands.botNameOverridden[slot] = false;
         return;
     }
     clientSimNetSendRemoveBot(cs, slot);
@@ -3179,7 +3201,7 @@ static void lobbySendTeamPool(ClientSim *cs,
             if (!serverSimIsPlayerConnected(sim, slot)) continue;
             if (!serverSimGetLobbyPlayer(sim, slot)->isBot) continue;
             if (serverSimGetLobbyPlayer(sim, slot)->teamNumber != teamId) continue;
-            if (s_botNameOverridden[slot]) continue;
+            if (s_commands.botNameOverridden[slot]) continue;
 
             char pickBuf[32];
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
@@ -3234,7 +3256,7 @@ static void lobbySendTeamPool(ClientSim *cs,
             if (!clientSimGetLobbySlot(cs, (BYTE)(slot))->connected) continue;
             if (!clientSimGetLobbySlot(cs, (BYTE)(slot))->isBot)       continue;
             if (clientSimGetLobbySlot(cs, (BYTE)(slot))->teamNumber != teamId) continue;
-            if (slot < MAX_TANKS && s_botNameOverridden[slot]) continue;
+            if (slot < MAX_TANKS && s_commands.botNameOverridden[slot]) continue;
 
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              assigned[slot], sizeof(assigned[slot]));
@@ -6062,14 +6084,14 @@ static void renderBotAiConfig(ClientSim *cs,
         lobbyBotPoolPick(pool, usedNames, usedCount, pickBuf, sizeof(pickBuf));
         lobbySendBotConfig(cs, (uint8_t)slot,
             clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), pickBuf);
-        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
+        if (slot < MAX_TANKS) s_commands.botNameOverridden[slot] = false;
     }
     if (nameChanged) {
         /* Manual edit — pin the name so a later pool change doesn't
          * overwrite it. */
         lobbySendBotConfig(cs, (uint8_t)slot,
             clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), nameBuf);
-        if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
+        if (slot < MAX_TANKS) s_commands.botNameOverridden[slot] = true;
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
         /* Stash as the sticky default so subsequent Add Bot clicks inherit
@@ -6077,7 +6099,7 @@ static void renderBotAiConfig(ClientSim *cs,
          * player's explicit difficulty preference — persist it so it becomes
          * the default on every future launch (gospel; overrides the SP skill
          * guess). Empty until the player first chooses here. */
-        s_lastChosenBrainIdx = (uint8_t)pendingBrainPick;
+        s_brains.lastChosenBrainIdx = (uint8_t)pendingBrainPick;
         gameFrontSetChosenBotBrain(bl->entries[pendingBrainPick].name);
         lobbySendSetBotBrain(cs, (uint8_t)slot,
                              (uint8_t)pendingBrainPick);
@@ -10061,10 +10083,7 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     lobbyPlayersReset();
 
-    s_addBotSentMs        = 0;
-    s_addBotExpectedConn  = 0;
-    s_addBotFrame         = -1;
-    memset(s_botNameOverridden, 0, sizeof(s_botNameOverridden));
+    lobbyCommandReset();
 
     s_lf.active = false;
 }
