@@ -39,6 +39,7 @@ extern "C" {
                                clientSimManMoveToMap,
                                clientSimGetCurrentBuildSelect */
 #include "../clientmutex.h" /* the build dispatch runs on the sim's data */
+#include "cursor.h"         /* cursorSetCursor — the game's crosshair pointer */
 #include "overview_types.h"
 #include "screentank.h"
 #include "screenlgm.h"
@@ -86,6 +87,13 @@ struct OverviewView {
     SDL_Renderer  *targetRenderer;
     int            targetW;
     int            targetH;
+
+    /* The OS pointer is switched to the game's crosshair while it is over the
+     * map, so the view has to remember that it did the switching — nothing
+     * else will put the system cursor back. dragWasActive carries the drag
+     * one frame further, for the reason in overviewViewHandleInput. */
+    bool           crosshairOn;
+    bool           dragWasActive;
 };
 
 /* (Re)create the offscreen when the host asks for a size — or a renderer —
@@ -319,6 +327,33 @@ static void overviewViewDrawEntities(SDL_Renderer *r, SDL_Texture *tiles, int ss
     float wasScaleX = 1.0f, wasScaleY = 1.0f;
     SDL_GetRenderScale(r, &wasScaleX, &wasScaleY);
     SDL_SetRenderScale(r, perStep, perStep);
+
+    /* Where a build will land, from the same mouse_square sprite the main view
+     * draws. Solid while cursor mode is on; a target that is only locked in
+     * shows faint, which is the split the main view makes too. Ahead of the
+     * sprite passes so tanks and men stand on top of it. */
+    BYTE bcX = 0, bcY = 0;
+    bool cursorSolid = buildCursorGetTile(&bcX, &bcY);
+    if (cursorSolid || buildCursorGetTargetTile(&bcX, &bcY)) {
+        int bbx = (int)bcX * TILE_SIZE_X;
+        int bby = (int)bcY * TILE_SIZE_Y;
+        SDL_FRect src = {
+            (float)(MOUSE_SQUARE_X * ss), (float)(MOUSE_SQUARE_Y * ss),
+            (float)(TILE_SIZE_X * ss),    (float)(TILE_SIZE_Y * ss)
+        };
+        SDL_FRect dst = {
+            (float)(originX - tileW + bbx * OVERVIEW_ENTITY_SUBPX),
+            (float)(originY - tileH + bby * OVERVIEW_ENTITY_SUBPX),
+            (float)(TILE_SIZE_X * OVERVIEW_ENTITY_SUBPX),
+            (float)(TILE_SIZE_Y * OVERVIEW_ENTITY_SUBPX)
+        };
+        if (!cursorSolid) SDL_SetTextureAlphaMod(tiles, 128);
+        SDL_RenderTexture(r, tiles, &src, &dst);
+        /* The sprite passes below draw from this texture, and the terrain
+         * passes will next frame — neither wants a leftover alpha. */
+        SDL_SetTextureAlphaMod(tiles, 255);
+    }
+
     mapViewDrawShells(&ctx, &sb, originX, originY, tileW, tileH, 0, 0);
     mapViewDrawTanks(&ctx, &tks, originX, originY, tileW, tileH, 0, 0);
     mapViewDrawLGMs(&ctx, &lgms, originX, originY, tileW, tileH, 0, 0);
@@ -504,6 +539,30 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
                               -io.MouseDelta.x, -io.MouseDelta.y);
         }
     }
+
+    /* The game's crosshair while the pointer is over the map, the system
+     * cursor back when it leaves. The ImGui SDL3 backend only calls
+     * SDL_SetCursor when its own expected cursor changes, so one set here
+     * holds frame after frame — but the drag above asks for ResizeAll, and
+     * ImGui going back to Arrow once the drag ends is such a change, applied
+     * at the start of the frame after. Setting the crosshair before that
+     * would be wiped, so the drag suppresses it for one frame more and the
+     * set lands the frame after, when the backend has already been through.
+     * The restore is this view's own job: cursorMove only tracks the main
+     * window's pointer and will not undo a crosshair set from here. */
+    bool dragging = ImGui::IsItemActive();
+    if (dragging || v->dragWasActive) {
+        v->crosshairOn = false;
+    } else if (hovered) {
+        if (!v->crosshairOn) {
+            cursorSetCursor(false);
+            v->crosshairOn = true;
+        }
+    } else if (v->crosshairOn) {
+        cursorSetCursor(true);
+        v->crosshairOn = false;
+    }
+    v->dragWasActive = dragging;
 
     if (hovered && io.MouseWheel != 0.0f) {
         ImVec2 rectMin = ImGui::GetItemRectMin();

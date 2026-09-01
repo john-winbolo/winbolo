@@ -33,6 +33,7 @@ typedef struct { long left, top, right, bottom; } RECT;
 
 bool cursorSetup(void) { return true; }
 void cursorCleanup(void) {}
+void cursorSetCursor(bool normalCurs) { (void)normalCurs; }
 void cursorMove(int mouseX, int mouseY) { (void)mouseX; (void)mouseY; }
 bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
                int subPosX, int subPosY) {
