@@ -731,6 +731,8 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wb_theme.cpp
 )
@@ -1282,6 +1284,8 @@ set(CLIENT_SOURCES
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
+    src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c

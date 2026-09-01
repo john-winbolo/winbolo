@@ -70,6 +70,8 @@ extern "C" {
 #include "sdl3imgui.h"
 #include "input_gate.h"
 #include "sdl3draw.h"
+#include "overview_view.h"
+#include "tileloader.h"
 #include "luabrainshandler.h"
 #include "flags.h"
 #include "glyphs.h"
@@ -473,6 +475,55 @@ static PopOutWindow *const s_popOuts[] = {
 #define POPOUT_COUNT ((int)(sizeof(s_popOuts) / sizeof(s_popOuts[0])))
 
 static ImGuiContext *s_mainImguiCtx = nullptr;
+
+/* Map Overview drawing state. An SDL texture only works on the renderer that
+   created it, so the shared game atlas (which belongs to the main window's
+   renderer) cannot be blitted into the pop-out — the overview gets its own
+   sheet on the pop-out's renderer, rebuilt whenever the shared atlas changes
+   scale. Both this and the view are torn down in sdl3ImguiCleanup, ahead of
+   the renderer they were made on. */
+static OverviewView *s_overviewView          = nullptr;
+static SDL_Texture  *s_overviewTiles         = nullptr;
+static SDL_Renderer *s_overviewTilesRenderer = nullptr;
+static int           s_overviewTilesScale    = 0;
+
+static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
+    if (!r) return nullptr;
+
+    int want = sdl3DrawGetSheetScale();
+    if (want < 1) want = 1;
+    /* Records the attempt, not just the result: a build that failed must not
+       be retried — and the SVGs re-rasterized — on every frame after. */
+    if (s_overviewTilesRenderer == r && s_overviewTilesScale == want) {
+        return s_overviewTiles;
+    }
+
+    if (s_overviewTiles) {
+        SDL_DestroyTexture(s_overviewTiles);
+        s_overviewTiles = nullptr;
+    }
+    s_overviewTilesRenderer = r;
+    s_overviewTilesScale    = want;
+
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * want);
+    if (!sheet) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[Overview] tileLoaderBuildSheet failed");
+        return nullptr;
+    }
+    s_overviewTiles = SDL_CreateTextureFromSurface(r, sheet);
+    SDL_DestroySurface(sheet);
+    if (!s_overviewTiles) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[Overview] SDL_CreateTextureFromSurface failed: %s",
+                     SDL_GetError());
+        return nullptr;
+    }
+
+    SDL_SetTextureBlendMode(s_overviewTiles, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(s_overviewTiles, SDL_SCALEMODE_NEAREST);
+    return s_overviewTiles;
+}
 
 static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     /* Re-show an existing pop-out rather than recreating it. We deliberately
@@ -1399,8 +1450,28 @@ static void renderCtrlSendMsg(ClientSim *cs) {
  * Map Overview pop-out
  * ------------------------------------------------------- */
 static void renderMapOverviewContent(ClientSim *cs) {
-    /* The content area is empty — the pop-out draws its clear colour only. */
-    (void)cs;
+    SDL_Texture *tex  = overviewViewGetTexture(s_overviewView);
+    int          texW = 0;
+    int          texH = 0;
+    overviewViewGetSize(s_overviewView, &texW, &texH);
+    if (!tex || texW <= 0 || texH <= 0) return;
+
+    /* Drawn at the offscreen's own size, which is the size it was rendered
+       at, so the blit is 1:1 and point sampling has no fractional scale to
+       fight. */
+    ImVec2 imgMin = ImGui::GetCursorScreenPos();
+    imguiPushNearestSampling();
+    ImGui::Image((ImTextureID)tex, ImVec2((float)texW, (float)texH));
+    imguiPopNearestSampling();
+
+    /* An InvisibleButton over the image rect takes the left-drag as an
+       active item, so dragging pans the map instead of moving the window,
+       and gives the input handler its hover test. */
+    ImGui::SetCursorScreenPos(imgMin);
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH));
+    overviewViewHandleInput(s_overviewView, ImGui::IsItemHovered(),
+                            texW, texH, cs);
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
@@ -4806,8 +4877,26 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         if (s_popMapOverview.open && (cs == nullptr || !clientSimIsRunning(cs))) {
             popOutHide(&s_popMapOverview);
         }
+        /* Draw the map into the view's offscreen before the pop-out's ImGui
+           frame opens: it swaps the render target and re-points the tile
+           sampler, neither of which belongs in the middle of the draw list
+           ImGui is about to build. */
+        if (s_popMapOverview.open && s_popMapOverview.window) {
+            if (!s_overviewView) s_overviewView = overviewViewCreate();
+            SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
+            overviewViewRenderOffscreen(s_overviewView,
+                                        s_popMapOverview.renderer,
+                                        ovTiles, s_overviewTilesScale,
+                                        s_popMapOverview.width,
+                                        s_popMapOverview.height, cs);
+        }
         if (popOutBeginFrame(&s_popMapOverview)) {
+            /* The map fills the window edge to edge: the image is exactly
+               DisplaySize, so the usual window padding would push it into a
+               scrollbar. */
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
             popOutBeginContent();
+            ImGui::PopStyleVar();
             renderMapOverviewContent(cs);
             popOutEndContent(&s_popMapOverview);
             popOutEndFrame(&s_popMapOverview);
@@ -5307,6 +5396,16 @@ void sdl3ImguiShowKeySetup(void) {
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
     inputGamepadShutdown();
+    /* Before the loop: both were made on the Map Overview pop-out's
+       renderer, which popOutDestroy tears down. */
+    overviewViewDestroy(s_overviewView);
+    s_overviewView = nullptr;
+    if (s_overviewTiles) {
+        SDL_DestroyTexture(s_overviewTiles);
+        s_overviewTiles = nullptr;
+    }
+    s_overviewTilesRenderer = nullptr;
+    s_overviewTilesScale    = 0;
     for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
     flagsDestroy();
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }

@@ -31,6 +31,15 @@
 
 #include <stdbool.h>
 
+/* windows.h — reached through WinSock2 — has to be seen at the default
+ * packing: types.h below opens a #pragma pack(push, 4) and includes global.h
+ * from inside it, and winnt.h static-asserts that the pack is default. The
+ * rest of the client gets this for free by including SDL3 ahead of the bolo
+ * headers; the camera has no SDL dependency to lean on. */
+#ifdef _WIN32
+#include <WinSock2.h>
+#endif
+
 #include "types.h"    /* MAP_ARRAY_SIZE */
 #include "../tiles.h" /* TILE_SIZE_X */
 
