@@ -33,9 +33,18 @@ Variants
   E  same arena as D; the assertions are about the TREE ordering — the mine
      must never go down before 21 trees (LGM_COST_BOAT 20 + LGM_COST_MINE 1)
      and 1 mine are both in hand.
-  F  tournament loadout, friendly base with mines, and NO harvestable forest
-     within SEA_TREES_RADIUS of the entrance or the tank.  Expect
-     REJECT no_trees_in_territory, no mine, no LGM trip.
+  F  tournament loadout, friendly base with mines, and the only forest is a
+     ROW that a live hostile pillbox COVERS -- in range, with a clear shell
+     lane onto every tile of it (a row, not a block: a block shadows its own
+     back rows and half of it would read as safe).  Expect
+     REJECT no_safe_trees, no mine, no LGM trip.
+  H  tournament loadout, friendly base with mines, and the only forest is a
+     block in the north with TWO HOSTILE BASES beside it -- the corner is
+     theirs by influence, and no pillbox covers a tile of it.  This is the
+     par2 t=23410 shape: the old rule (cpf.influence_at > SEA_TREES_MIN_
+     INFLUENCE) called that wood unobtainable and rejected the harvest for the
+     rest of the game; the coverage rule funds it.  Expect the harvest to RUN
+     and all three pills to be taken.
   G  tournament loadout with NO mines anywhere (the base stocks none) and an
      existing RIVER tile in the shore column.  The entrance ladder must pick
      the river, skip the mine entirely, farm 20 trees and build the boat
@@ -110,7 +119,33 @@ HOSTILE_SEA_PILL_B2 = (147, 126)
 BREAKWATER_X = 143                     # variant C: building column in the sea
 BREAKWATER_Y = (120, 132)
 RIVER_TILE = (136, 127)                # variant G: existing river in the shore
-FAR_FOREST = (119, 121, 119, 121)      # variant F: forest out of reach
+
+# Variant F: the map's ONLY forest is a single ROW, and a live hostile pillbox
+# north of it can put a shell on every tile.  A row and not a block on purpose:
+# cpf.simulate_shot dies on the first forest tile in a lane, so a block shadows
+# its own back rows and enough of it would read as SAFE to fund the boat.  The
+# pill sits INSIDE the peninsula's y-range (y=118) so it cannot move the map's
+# terrain bounding box - mapCenter lets a pill LOWER bestTop, which at y<118
+# would shift every coordinate in the file.
+COVERED_FOREST_Y = 123
+COVERED_FOREST_X = (129, 136)
+COVER_PILL = (132, 118)
+
+# Variant H: the forest is a block in the NORTH, far from our base and flanked
+# by two HOSTILE bases, so the whole corner reads as enemy influence -- and no
+# pillbox exists anywhere, so nothing covers it.  Exactly the par2 t=23410
+# shape.  FOE_PLAYER is a player number no bot occupies; bases carry an owner
+# byte and the brain classifies any non-ally number as hostile, which is all
+# the influence pass needs.
+NORTH_FOREST_X = (130, 134)
+NORTH_FOREST_Y = (127, 129)
+FOE_BASES = [(128, 127), (128, 130)]
+# H moves OUR base right out of the corner. With the free river entrance H
+# needs no mine and no shells, so the base is not a supply line here - it is
+# only an influence source, and leaving it beside the wood would hand that
+# corner back to us and defeat the point of the variant.
+BASE_OURS_H = (119, 122)
+FOE_PLAYER = 1
 
 # Brain-side constants this arena is designed against (constants.lua).
 SEA_TREES_RADIUS = 12
@@ -118,7 +153,7 @@ SEA_PILL_TREES_TOTAL = 21              # LGM_COST_BOAT 20 + LGM_COST_MINE 1
 SEA_BOAT_TREES = 20
 SEA_TREES_PER_FOREST = 4               # LGM_GATHER_TREE
 
-VARIANTS = ("A", "B", "B2", "C", "D", "E", "F", "G")
+VARIANTS = ("A", "B", "B2", "C", "D", "E", "F", "G", "H")
 
 
 def field_x0(variant):
@@ -137,17 +172,20 @@ def make_map(variant):
     for x in range(x0, FIELD_X1):
         t[ROAD_Y][x] = ROAD
     # Forest strip: the wood supply, and cover for the firing spot.
-    if variant != "F":
-        for y in range(FOREST_Y[0], FOREST_Y[1] + 1):
-            for x in range(FOREST_X[0], FOREST_X[1] + 1):
+    if variant == "F":
+        # Variant F: one ROW, fully inside a hostile pillbox's circle with a
+        # clear lane onto every tile - close enough to harvest, not safe to.
+        for x in range(COVERED_FOREST_X[0], COVERED_FOREST_X[1] + 1):
+            t[COVERED_FOREST_Y][x] = FOREST
+    elif variant == "H":
+        # Variant H: a block in the north, beside the two hostile bases, with
+        # no pillbox anywhere on the map.
+        for y in range(NORTH_FOREST_Y[0], NORTH_FOREST_Y[1] + 1):
+            for x in range(NORTH_FOREST_X[0], NORTH_FOREST_X[1] + 1):
                 t[y][x] = FOREST
     else:
-        # Variant F: the only forest on the map sits in the far NW corner,
-        # more than SEA_TREES_RADIUS from both the entrance and the tank, so
-        # the harvest is not fundable and the plan must say so.
-        fx0, fx1, fy0, fy1 = FAR_FOREST
-        for y in range(fy0, fy1 + 1):
-            for x in range(fx0, fx1 + 1):
+        for y in range(FOREST_Y[0], FOREST_Y[1] + 1):
+            for x in range(FOREST_X[0], FOREST_X[1] + 1):
                 t[y][x] = FOREST
     # The spawn pocket and the land-locked pond are simply unwritten.
     sp = spawn_tile(variant)
@@ -157,7 +195,10 @@ def make_map(variant):
     if variant == "C":
         for y in range(BREAKWATER_Y[0], BREAKWATER_Y[1] + 1):
             t[y][BREAKWATER_X] = BUILDING
-    if variant == "G":
+    if variant in ("G", "H"):
+        # H uses the same free river entrance as G on purpose: it is testing
+        # the WOOD gate, and paying for a mine+crater as well does not fit the
+        # one-minute budget once the forest is six tiles away instead of one.
         t[RIVER_TILE[1]][RIVER_TILE[0]] = RIVER
     return t
 
@@ -182,6 +223,8 @@ def hostile_pill_for(variant):
         return HOSTILE_SEA_PILL_B2
     if variant in ("B", "C"):
         return HOSTILE_SEA_PILL
+    if variant == "F":
+        return COVER_PILL
     return None
 
 
@@ -200,9 +243,17 @@ def bases_for(variant):
         # No mines ANYWHERE: if the plan wrongly needed a crater it would have
         # to reject no_mines_anywhere instead of using the river.
         out = [(BASE_OURS[0], BASE_OURS[1], 0, 90, 90, 0)]
+    elif variant == "H":
+        out = [(BASE_OURS_H[0], BASE_OURS_H[1], 0, 90, 90, 90)]
     else:
         out = [(BASE_OURS[0], BASE_OURS[1], 0, 90, 90, 90)]
-    if variant in ("D", "E", "F", "G"):
+    if variant == "H":
+        # Two HOSTILE bases hugging the north forest. They never shoot - a base
+        # has no gun - they just own the neighbourhood, which is precisely the
+        # thing the retired influence gate used to refuse to farm in.
+        for (bx, by) in FOE_BASES:
+            out.append((bx, by, FOE_PLAYER, 90, 90, 90))
+    if variant in ("D", "E", "F", "G", "H"):
         # A second base the bot captures in passing. It stocks mines too
         # (except in G, which must have none anywhere): a captured base holding
         # nothing is a trap the refuel leg cannot tell from a full one until it
@@ -451,8 +502,8 @@ def write_sidecar(variant, path):
             else '"%s"' % gametype_for(variant))
     text = (SIDECAR
             .replace("{MODE}", mode)
-            .replace("{BASEX}", str(BASE_OURS[0]))
-            .replace("{BASEY}", str(BASE_OURS[1]))
+            .replace("{BASEX}", str((BASE_OURS_H if variant == "H" else BASE_OURS)[0]))
+            .replace("{BASEY}", str((BASE_OURS_H if variant == "H" else BASE_OURS)[1]))
             .replace("{V}", variant)
             .replace("{DEAD}", dead)
             .replace("{HOSTILE}", hostile)

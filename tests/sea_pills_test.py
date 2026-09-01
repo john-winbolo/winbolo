@@ -23,11 +23,18 @@ Variants (see tests/generate_sea_pills_map.py for the arenas):
   D  0 mines, base stocks mines     -> refuel_mines leg first, then A
   E  0 trees                        -> harvest leg first; the mine NEVER goes
                                        down before 21 trees + 1 mine are held
-  F  no forest in our territory     -> REJECT no_trees_in_territory, no mine
+  F  the only forest is a row a live
+     hostile pill COVERS end to end  -> REJECT no_safe_trees, no mine, no LGM
   G  existing river in the shore    -> no mine at all; boat built into the
                                        river; 3 pills taken
+  H  forest in a corner two HOSTILE
+     bases own by influence, covered
+     by nothing                     -> the harvest RUNS; 3 pills taken. The
+                                       par2 t=23410 shape: the retired
+                                       influence gate refused this wood, the
+                                       coverage gate funds it.
 
-Usage: python sea_pills_test.py [--variant A|B|B2|C|D|E|F|G|ALL] [--ticks N]
+Usage: python sea_pills_test.py [--variant A|B|B2|C|D|E|F|G|H|ALL] [--ticks N]
                                 [--build DIR] [--jobs N]
 
 Variants run two at a time by default (--jobs, capped at 2): each one is a full
@@ -98,6 +105,15 @@ CARRY_RE = re.compile(r"ENGINE_DUMP t=(\d+) .*? carry=(\d+)")
 CAPTURE_CAND_RE = re.compile(
     r"CAPTURE_CAND t=(\d+) id=(\S+) @\((\d+),(\d+)\).*?reject=(\S+)")
 LAY_MINE_TREES_RE = re.compile(r"trees (\d+)/(\d+) and mines (\d+)/(\d+)")
+# goals.lua sea_count_safe_forest, one line per scan:
+#   SEA_FOREST t=160 S=(136,128) tank=(132,130) R=12 threats=0 ok=25 covered=0
+#     nearest=(132,129) infl_at_nearest=92
+# infl is REPORTED ONLY - the harvest no longer reads it. It is the number the
+# retired SEA_TREES_MIN_INFLUENCE gate used to test, kept so variant H can show
+# a harvest going ahead on ground that gate called enemy territory.
+SEA_FOREST_RE = re.compile(
+    r"SEA_FOREST t=(\d+) S=\((\d+),(\d+)\) tank=\((\d+),(\d+)\) R=(\d+) "
+    r"threats=(\d+) ok=(\d+) covered=(\d+) nearest=(\S+) infl_at_nearest=(\S+)")
 
 
 def find_ds(build_dir):
@@ -393,13 +409,38 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
           final_carry):
     sub_targets = [s[2] for s in subs]
     reject_reasons = [r[4] for r in rejects]
+    # (ok, covered, influence-at-the-nearest-tile) per forest scan. Influence is
+    # "-" when the scan found no tile at all.
+    forest_scans = [(int(m[7]), int(m[8]),
+                     int(m[10]) if m[10] not in ("-", "nil") else None)
+                    for m in SEA_FOREST_RE.findall(text)]
 
-    if variant in ("A", "C", "D", "E", "G"):
+    if variant == "H":
+        # H exists to prove the gate CHANGED, so it has to show the old gate
+        # would have said no. Influence is reported, never read: if the wood the
+        # scan settled on is on ground cpf.influence_at calls ours, the retired
+        # SEA_TREES_MIN_INFLUENCE test would have funded this harvest too and
+        # the arena is measuring nothing.
+        if not forest_scans:
+            return False, ("no SEA_FOREST scan lines - the harvest never had to "
+                           "count wood, so this variant proves nothing")
+        infls = [f[2] for f in forest_scans if f[2] is not None]
+        if infls and min(infls) > 0:
+            return False, ("every forest tile the scan settled on sits on ground "
+                           f"cpf.influence_at calls OURS (lowest {min(infls)} > 0). "
+                           "The retired SEA_TREES_MIN_INFLUENCE gate would have "
+                           "funded this too - move the hostile bases closer or "
+                           "our base further away.")
+        if max((f[1] for f in forest_scans), default=0) > 0:
+            return False, ("a forest tile read as covered by a pill - variant H "
+                           "must have no pillbox coverage anywhere")
+
+    if variant in ("A", "C", "D", "E", "G", "H"):
         if not plans:
             return False, "no SEA_PLAN line — the deep-sea branch never priced the cluster"
         entrance = plans[0][3]
         S = (int(plans[0][5]), int(plans[0][6]))
-        want_entrance = "existing_river" if variant == "G" else "mine_crater"
+        want_entrance = "existing_river" if variant in ("G", "H") else "mine_crater"
         if entrance != want_entrance:
             return False, f"entrance was {entrance}, expected {want_entrance}"
         # Connectivity: the entrance must belong to the pills' water, never the
@@ -408,7 +449,7 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
             if abs(S[0] - pond[0]) + abs(S[1] - pond[1]) <= 1:
                 return False, (f"entrance S={S} is cardinally adjacent to the "
                                f"land-locked pond {pond} — the connectivity gate failed")
-        if variant == "G":
+        if variant in ("G", "H"):
             if S != RIVER_TILE:
                 return False, f"expected the existing river tile {RIVER_TILE}, got S={S}"
             # The FIRST trip must use the river: no mine before the tank is
@@ -473,7 +514,7 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
                                f"{SEA_PILL_MIN_SHELLS} reserved to detonate it")
             if not shots:
                 return False, "the mine was never shot — the shells were not used"
-        if variant in ("D", "E") and "seek_trees" not in sub_targets:
+        if variant in ("D", "E", "H") and "seek_trees" not in sub_targets:
             return False, "the seek_trees leg never ran (trees started at 0)"
         if variant == "E":
             lm = [s for s in subs if s[2] == "lay_mine"]
@@ -517,6 +558,11 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
                       f"({len(mine_dispatches)} mine, {len(boat_dispatches)} boat, "
                       f"{trees_spent} trees)"
                       + (", refuel leg ran" if variant == "D" else "")
+                      + (", harvest ran on wood two hostile bases own by "
+                         "influence (lowest infl "
+                         + str(min([f[2] for f in forest_scans
+                                    if f[2] is not None] or [0]))
+                         + ")" if variant == "H" else "")
                       + (", harvest leg ran with the mine held back until "
                          "21 trees were in hand" if variant == "E" else ""))
 
@@ -571,16 +617,25 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
         return True, f"whole cluster rejected with {covered[0]}, no mine, no boat"
 
     if variant == "F":
-        if "no_trees_in_territory" not in reject_reasons:
-            return False, ("expected REJECT no_trees_in_territory; got "
+        if "no_safe_trees" not in reject_reasons:
+            return False, ("expected REJECT no_safe_trees; got "
                            f"{sorted(set(reject_reasons))}")
+        # ...and for the right reason: the scan must have FOUND the forest and
+        # thrown it out as covered, not merely failed to see any.
+        covered_seen = max((f[1] for f in forest_scans), default=0)
+        ok_seen = max((f[0] for f in forest_scans), default=0)
+        if covered_seen == 0:
+            return False, ("the reject fired but no forest tile was ever counted "
+                           "as covered_by_pill - the arena is exercising the "
+                           f"wrong gate (SEA_FOREST scans: {forest_scans[:3]})")
         if any_mine_laid:
             return False, "a mine was laid even though the wood is not obtainable"
         if "lay_mine" in sub_targets:
             return False, "entered lay_mine even though the wood is not obtainable"
         if dispatches:
             return False, f"the LGM was dispatched ({dispatches[0]}) with no fundable plan"
-        return True, "rejected no_trees_in_territory, no mine, no LGM trip"
+        return True, (f"rejected no_safe_trees ({covered_seen} forest tile(s) "
+                      f"covered by a pill, {ok_seen} safe), no mine, no LGM trip")
 
     return False, f"unknown variant {variant}"
 
@@ -593,7 +648,7 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
 DEFAULT_TICKS = {v: 6000 for v in VARIANTS}
 SNAP_INTERVAL = 100     # completion-tick resolution
 PORTS = {"A": 50061, "B": 50062, "B2": 50068, "C": 50063, "D": 50064,
-         "E": 50065, "F": 50066, "G": 50067}
+         "E": 50065, "F": 50066, "G": 50067, "H": 50069}
 
 
 # Two at a time, and no more. Each variant is a full WinBoloDS process playing

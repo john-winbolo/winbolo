@@ -1,4 +1,4 @@
--- Scenario sidecar for tests/sea_pills_F.map (auto-loaded as <map>.scenario.lua).
+-- Scenario sidecar for tests/sea_pills_H.map (auto-loaded as <map>.scenario.lua).
 --
 -- Three jobs.
 --
@@ -18,7 +18,7 @@
 --    and our base are then re-owned to whatever slot it landed in.
 --
 -- 3. Trace the terrain of the shore band every tick to
---    sea_pills_terrain_F.log so the test can assert the sequence the harvest
+--    sea_pills_terrain_H.log so the test can assert the sequence the harvest
 --    actually produces: GRASS(7) -> GRASS+MINE(15) -> CRATER(3) -> RIVER(1)
 --    -> BOAT(9).  Values are the ENGINE's (global.h): a mined tile is its base
 --    terrain + MINE_SUBTRACT(8).
@@ -26,10 +26,10 @@
 local T_DEEP_SEA = 0xFF
 local OUR_PLAYER = 0
 local DEAD_PILLS = { { 138, 124 }, { 139, 126 }, { 138, 128 } }
-local HOSTILE_PILLS = { { 132, 118 } }
-local OUR_BASE = { 132, 130 }
+local HOSTILE_PILLS = { }
+local OUR_BASE = { 119, 122 }
 local SPAWN_MODE = "strict"     -- nil = use the -bots tank as it spawned
-local TRACE = "sea_pills_terrain_F.log"
+local TRACE = "sea_pills_terrain_H.log"
 
 local watched = {}
 local last = {}
