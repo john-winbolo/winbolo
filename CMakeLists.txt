@@ -3650,6 +3650,10 @@ set(_unit_test_names
     fx_viewport_cull
     viewport_calc_square_pure
     overview_regions
+    overview_reveal
+    overview_freeze_no_leak
+    overview_pill_capture
+    overview_reset
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid

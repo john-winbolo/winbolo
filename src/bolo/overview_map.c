@@ -94,9 +94,28 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
   return changed;
 }
 
-/* Drops OVERVIEW_F_LIVE over a rect, leaving the tiles alone. Returns TRUE
- * if any square was carrying the flag. */
-static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r) {
+/* TRUE when the square falls inside any of the count rects. There are never
+ * more than OVERVIEW_MAX_REGIONS of them, so the walk is cheap. */
+static bool overviewPointInRects(const OverviewRect *r, int count, int x,
+                                 int y) {
+  int i; /* Looping variable */
+
+  for (i = 0; i < count; i++) {
+    if (x >= r[i].left && x <= r[i].right && y >= r[i].top &&
+        y <= r[i].bottom) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Drops OVERVIEW_F_LIVE over a rect, leaving the tiles alone. Squares that
+ * still fall inside one of the keep rects are left untouched: they have not
+ * left the live set, and stripping the flag off them only to have it put
+ * straight back would report a change on a tick where nothing moved. Returns
+ * TRUE if any square that has genuinely left was carrying the flag. */
+static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r,
+                                  const OverviewRect *keep, int keepCount) {
   bool changed; /* Did any byte move */
   int x;        /* Looping variable */
   int y;        /* Looping variable */
@@ -104,6 +123,9 @@ static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r) {
   changed = FALSE;
   for (x = r->left; x <= r->right; x++) {
     for (y = r->top; y <= r->bottom; y++) {
+      if (overviewPointInRects(keep, keepCount, x, y) == TRUE) {
+        continue;
+      }
       if ((om->flags[x][y] & OVERVIEW_F_LIVE) != 0) {
         om->flags[x][y] = (BYTE)(om->flags[x][y] & ~OVERVIEW_F_LIVE);
         changed = TRUE;
@@ -228,14 +250,20 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     idx++;
   }
 
-  for (i = 0; i < om->prevLiveCount; i++) {
-    if (overviewClearLiveRect(om, &om->prevLive[i]) == TRUE) {
+  for (i = 0; i < om->liveCount; i++) {
+    if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE) == TRUE) {
       changed = TRUE;
     }
   }
 
-  for (i = 0; i < om->liveCount; i++) {
-    if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE) == TRUE) {
+  /* Stripping the stale flag comes after the stamp, and skips whatever is
+   * still live, so a square that was live and stays live is never written
+   * twice for no reason. Only a square that has genuinely dropped out of the
+   * live set reports a change here, which is what keeps generation still on a
+   * tick where nothing moved. */
+  for (i = 0; i < om->prevLiveCount; i++) {
+    if (overviewClearLiveRect(om, &om->prevLive[i], om->live, om->liveCount) ==
+        TRUE) {
       changed = TRUE;
     }
   }

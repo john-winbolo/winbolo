@@ -1,21 +1,41 @@
 /*
- * Overview region geometry (test_overview_map.c).
+ * The overview map memory (test_overview_map.c).
  *
- * overviewMapBuildRegions turns the local player's tank position and the
- * pillboxes they can view through into the set of map squares the overview
- * treats as live. This pins the shape of that set: a 29x29 block on the tank
- * and a 15x15 block on each viewable pill, trimmed at the map edges, the tank
- * rect always first and pills after it in index order, and never more rects
- * than the caller asked for.
+ * run_overview_regions is geometry only: overviewMapBuildRegions turns the
+ * local player's tank position and the pillboxes they can view through into
+ * the set of map squares the overview treats as live, and this pins the shape
+ * of that set — a 29x29 block on the tank and a 15x15 block on each viewable
+ * pill, trimmed at the map edges, the tank rect always first and pills after
+ * it in index order, and never more rects than the caller asked for.
+ *
+ * The rest drive a real ClientSim through clientSimDisplayTick and check what
+ * the memory ends up holding: only live squares are revealed, a square that
+ * leaves a live region keeps the tile it had and never picks up a later
+ * terrain change the client already knows about, a region that stops being
+ * live is stamped once more on the way out so a pill freezes dead or in the
+ * captor's colours rather than a tick stale, and a round reset clears the lot
+ * while a mid-game map resync leaves it alone.
  */
+
+#include <stdint.h>
+#include <string.h>
 
 #include "global.h"
 #include "server_sim.h"
 #include "game_sim.h"
+#include "client_sim.h"
+#include "client_net.h"
+#include "client_sim_internal.h" /* installCompressedMap — the resync path */
+#include "input_packet.h"
 #include "overview_map.h"
+#include "viewport.h" /* viewportCalcSquarePure — the only tile source */
+#include "bolo_map.h" /* mapGetPos / mapSetPos — plant a raw terrain byte */
+#include "tank.h"     /* tankSetWorld / tankDestroy */
+#include "bases.h"
 #include "pillbox.h"
 #include "players.h"
 #include "allience.h"
+#include "everard_map.h" /* E_MAP — the blob the resync reinstalls */
 #include "test_harness.h"
 
 /* Fails the calling test unless the rect is exactly these edges. */
@@ -130,5 +150,617 @@ int run_overview_regions(void) {
     }
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* --------------------------------------------------------------------------
+ * Live cases. A ClientSim wired to an in-process ServerSim and driven through
+ * clientSimDisplayTick, so the assertions below run against the real wiring
+ * rather than a hand-called overviewMapUpdate.
+ * -------------------------------------------------------------------------- */
+
+/* Rounds of the input-pair warm-up to run before the client's tank is
+ * expected, and the ceiling on how long to keep pumping for it. The active
+ * local transport runs two server half-steps per clientSimNetTick, so the
+ * producer has to supply two tick numbers per tick or the stream starves into
+ * substitutes. */
+#define OVERVIEW_WARMUP_TICKS     4
+#define OVERVIEW_MAX_WARMUP_TICKS 32
+
+/* E_MAP's compressed length — the literal ut_make_running_sim hands to
+ * serverSimCreateCompressed. */
+#define OVERVIEW_EMAP_LEN 5097
+
+/* Side of the tank block, for the tile snapshot the tank-removal arm takes. */
+#define OVERVIEW_TANK_SIDE (2 * OVERVIEW_TANK_HALF + 1)
+
+typedef struct OverviewFixture {
+    ServerSim *sim;
+    ClientSim *cs;
+    GameSim   *gs;      /* the client's sim, not the server's */
+    BYTE       me;      /* the slot the local join landed on */
+    BYTE       tankMX;  /* where the client's tank sits, as the overview reads it */
+    BYTE       tankMY;
+} OverviewFixture;
+
+/* Tears the fixture down, in the order test_active_local_input_to_shot uses.
+ * Safe on a half-built fixture so the start path can bail anywhere. */
+static void overviewFixtureStop(OverviewFixture *f) {
+    if (f->cs != NULL) {
+        clientSimDestroy(f->cs);
+        f->cs = NULL;
+    }
+    if (f->sim != NULL) {
+        serverSimDestroy(f->sim);
+        f->sim = NULL;
+    }
+}
+
+/* Brings up a running ServerSim with an in-process ClientSim joined to it and
+ * pumps the local transport until the client's own tank has landed. Returns
+ * NULL on success, or a message naming what failed; either way the caller
+ * finishes with overviewFixtureStop. */
+static const char *overviewFixtureStart(OverviewFixture *f, const char *name) {
+    uint32_t inputTick = 1;
+    int i;
+
+    memset(f, 0, sizeof(*f));
+
+    f->sim = ut_make_running_sim("Host");
+    if (f->sim == NULL) {
+        return "ut_make_running_sim returned NULL";
+    }
+
+    f->cs = clientSimAlloc();
+    if (f->cs == NULL) {
+        return "clientSimAlloc returned NULL";
+    }
+    clientSimCreate(f->cs);
+    if (clientSimConnectLocal(f->cs, f->sim, name, "", 0, 0) != TRUE) {
+        return "clientSimConnectLocal failed";
+    }
+
+    f->me = clientSimGetMyPlayerNum(f->cs);
+    for (i = 0; i < OVERVIEW_MAX_WARMUP_TICKS; i++) {
+        InputPacket a, b;
+
+        memset(&a, 0, sizeof(a));
+        a.tick      = inputTick;
+        a.playerNum = f->me;
+        memset(&b, 0, sizeof(b));
+        b.tick      = inputTick + 1;
+        b.playerNum = f->me;
+        clientSimNetSendInput(f->cs, &a);
+        clientSimNetSendInput(f->cs, &b);
+        clientSimNetTick(f->cs);
+        inputTick += 2;
+
+        if (i + 1 >= OVERVIEW_WARMUP_TICKS &&
+            clientSimGetMyTankMapPos(f->cs, &f->tankMX, &f->tankMY) == TRUE) {
+            break;
+        }
+    }
+
+    f->gs = clientSimGetGameSim(f->cs);
+    if (f->gs == NULL) {
+        return "clientSimGetGameSim returned NULL";
+    }
+    if (clientSimGetMyTankMapPos(f->cs, &f->tankMX, &f->tankMY) != TRUE) {
+        return "the client still has no tank after the warm-up";
+    }
+    return NULL;
+}
+
+/* The direction with room in it: everything below steps away from the nearer
+ * map edge, so a block 60 or 100 squares off the tank still lands on the map
+ * wherever the join dropped the tank. */
+static int overviewAwayFromEdge(BYTE mapCoord) {
+    return (mapCoord < MAP_ARRAY_SIZE / 2) ? 1 : -1;
+}
+
+/* The inclusive block overviewMapBuildRegions builds round a centre, restated
+ * so the assertions have something to check against that is not the code under
+ * test. run_overview_regions is what pins the two together. */
+static OverviewRect overviewTestBlock(int cx, int cy, int half) {
+    OverviewRect r; /* Rect to return */
+
+    r.left = cx - half;
+    r.top = cy - half;
+    r.right = cx + half;
+    r.bottom = cy + half;
+    if (r.left < 0) {
+        r.left = 0;
+    }
+    if (r.top < 0) {
+        r.top = 0;
+    }
+    if (r.right > MAP_ARRAY_SIZE - 1) {
+        r.right = MAP_ARRAY_SIZE - 1;
+    }
+    if (r.bottom > MAP_ARRAY_SIZE - 1) {
+        r.bottom = MAP_ARRAY_SIZE - 1;
+    }
+    return r;
+}
+
+/* TRUE when the square falls inside any of the rects. */
+static bool overviewInAnyRect(const OverviewRect *r, int count, int x, int y) {
+    int i; /* Looping variable */
+
+    for (i = 0; i < count; i++) {
+        if (x >= r[i].left && x <= r[i].right && y >= r[i].top &&
+            y <= r[i].bottom) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* Reports the first square of the rect whose OVERVIEW_F_LIVE bit is not what
+ * was wanted, so a failure can name it. FALSE when every square agrees. */
+static bool overviewRectLiveMismatch(const OverviewMap *om,
+                                     const OverviewRect *r, bool want,
+                                     int *outX, int *outY) {
+    int x; /* Looping variable */
+    int y; /* Looping variable */
+
+    for (x = r->left; x <= r->right; x++) {
+        for (y = r->top; y <= r->bottom; y++) {
+            bool live = (om->flags[x][y] & OVERVIEW_F_LIVE) != 0;
+            if (live != want) {
+                *outX = x;
+                *outY = y;
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
+/* Fails the calling test unless every square of the rect carries (want ==
+ * TRUE) or has dropped (want == FALSE) OVERVIEW_F_LIVE. */
+#define ASSERT_RECT_LIVE(om, r, want, what)                                   \
+    do {                                                                      \
+        int bx_ = 0;                                                          \
+        int by_ = 0;                                                          \
+        UT_ASSERT_MSG(                                                        \
+            overviewRectLiveMismatch((om), &(r), (want), &bx_, &by_) != TRUE, \
+            "%s: square %d,%d is %s live", (what), bx_, by_,                  \
+            ((want) == TRUE) ? "not" : "still");                              \
+    } while (0)
+
+/* A terrain byte that has to read differently from what is there now. Sea and
+ * grass are far enough apart that no adjacency calculation can collapse the
+ * two onto one sprite. */
+static BYTE overviewFlipTerrain(BYTE terrain) {
+    return (terrain == DEEP_SEA) ? (BYTE)GRASS : (BYTE)DEEP_SEA;
+}
+
+/* First square of the rect whose tile actually moves when the terrain under it
+ * is swapped. Pill and base squares render from their owner whatever the
+ * ground says, so a terrain check aimed at one would pass however the memory
+ * behaved. Probes by writing and putting back, leaving the map exactly as it
+ * was found; call it before the first display tick so the memory never sees
+ * the probe. */
+static bool overviewFindTerrainSquare(GameSim *gs, BYTE me,
+                                      const OverviewRect *r, BYTE *outX,
+                                      BYTE *outY) {
+    int x; /* Looping variable */
+    int y; /* Looping variable */
+
+    for (x = r->left; x <= r->right; x++) {
+        for (y = r->top; y <= r->bottom; y++) {
+            bool isMine = FALSE;
+            BYTE was = mapGetPos(&gs->mp, (BYTE)x, (BYTE)y);
+            BYTE before = viewportCalcSquarePure(gs, me, (BYTE)x, (BYTE)y, &isMine);
+            BYTE after;
+
+            mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, overviewFlipTerrain(was),
+                      TRUE, TRUE);
+            after = viewportCalcSquarePure(gs, me, (BYTE)x, (BYTE)y, &isMine);
+            mapSetPos(gs, &gs->mp, (BYTE)x, (BYTE)y, was, TRUE, TRUE);
+            if (after != before) {
+                *outX = (BYTE)x;
+                *outY = (BYTE)y;
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
+int run_overview_reveal(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Reveal");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* One pill of the client's own, a hundred squares off the tank, so the
+     * live set is a union of two disjoint blocks rather than the tank's block
+     * on its own. */
+    BYTE pillX = (BYTE)((int)f.tankMX + overviewAwayFromEdge(f.tankMX) * 100);
+    BYTE pillY = f.tankMY;
+    f.gs->pb->numPills = 1;
+    f.gs->pb->item[0].owner = f.me;
+    f.gs->pb->item[0].armour = PILLBOX_15;
+    f.gs->pb->item[0].inTank = FALSE;
+    f.gs->pb->item[0].x = pillX;
+    f.gs->pb->item[0].y = pillY;
+
+    /* The first display tick of the client's life: everything the memory holds
+     * afterwards was put there by this one update. */
+    clientSimDisplayTick(f.cs, false);
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    OverviewRect expect[OVERVIEW_MAX_REGIONS];
+    int n = overviewMapBuildRegions(f.gs, f.me, TRUE, f.tankMX, f.tankMY,
+                                    expect, OVERVIEW_MAX_REGIONS);
+    UT_ASSERT_MSG(n == 2, "expected the tank block and one pill block, got %d",
+                  n);
+    UT_ASSERT_MSG(om->liveCount == n, "liveCount %d, expected %d",
+                  om->liveCount, n);
+
+    /* Every square of the map, either side of the union: inside it the memory
+     * holds what the per-square calculator says and is flagged live; outside it
+     * nothing has been touched at all. */
+    unsigned unionSize = 0;
+    int x, y;
+    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+            BYTE flags = om->flags[x][y];
+
+            if (overviewInAnyRect(expect, n, x, y) == TRUE) {
+                bool isMine = FALSE;
+                BYTE want = viewportCalcSquarePure(f.gs, f.me, (BYTE)x, (BYTE)y,
+                                                   &isMine);
+                UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) != 0,
+                              "square %d,%d is inside a region but not live",
+                              x, y);
+                UT_ASSERT_MSG(om->tile[x][y] == want,
+                              "square %d,%d holds tile %u, calculator says %u",
+                              x, y, (unsigned)om->tile[x][y], (unsigned)want);
+                UT_ASSERT_MSG(((flags & OVERVIEW_F_MINE) != 0) == (isMine == TRUE),
+                              "square %d,%d mine flag %d, calculator says %d",
+                              x, y, (flags & OVERVIEW_F_MINE) != 0,
+                              isMine == TRUE);
+                unionSize++;
+            } else {
+                UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) == 0,
+                              "square %d,%d is outside every region but live",
+                              x, y);
+                UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
+                              "square %d,%d was never live but holds tile %u",
+                              x, y, (unsigned)om->tile[x][y]);
+                UT_ASSERT_MSG(flags == 0,
+                              "square %d,%d was never live but carries flags %u",
+                              x, y, (unsigned)flags);
+            }
+        }
+    }
+    UT_ASSERT_MSG(om->seenCount == unionSize,
+                  "seenCount %u, the union holds %u squares", om->seenCount,
+                  unionSize);
+
+    /* A second tick with nothing touched in between. generation is what a
+     * renderer reads to decide it can skip a redraw, so a tick where nothing
+     * moved must not advance it. */
+    unsigned genBefore = om->generation;
+    unsigned seenBefore = om->seenCount;
+    int liveBefore = om->liveCount;
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(om->generation == genBefore,
+                  "generation went from %u to %u over a tick where nothing "
+                  "moved", genBefore, om->generation);
+    UT_ASSERT_MSG(om->seenCount == seenBefore,
+                  "seenCount went from %u to %u over a tick where nothing "
+                  "moved", seenBefore, om->seenCount);
+    UT_ASSERT_MSG(om->liveCount == liveBefore,
+                  "liveCount went from %d to %d over a tick where nothing "
+                  "moved", liveBefore, om->liveCount);
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+int run_overview_freeze_no_leak(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Freeze");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* The map's own pills stay out of this one: with the tank block the only
+     * live region, a square that leaves it is genuinely frozen. */
+    f.gs->pb->numPills = 0;
+
+    /* Sixty squares is more than the two 29x29 blocks can span between them,
+     * so the tank's old block and its new one share no square. */
+    int newMX = (int)f.tankMX + overviewAwayFromEdge(f.tankMX) * 60;
+    OverviewRect oldRect = overviewTestBlock(f.tankMX, f.tankMY, OVERVIEW_TANK_HALF);
+    OverviewRect newRect = overviewTestBlock(newMX, f.tankMY, OVERVIEW_TANK_HALF);
+
+    /* Both squares are picked before the first tick, so the picker's probing
+     * never reaches the memory. */
+    BYTE frozenX = 0, frozenY = 0, liveX = 0, liveY = 0;
+    UT_ASSERT_MSG(overviewFindTerrainSquare(f.gs, f.me, &oldRect, &frozenX,
+                                            &frozenY) == TRUE,
+                  "no terrain-driven square in the block at %u,%u",
+                  (unsigned)f.tankMX, (unsigned)f.tankMY);
+    UT_ASSERT_MSG(overviewFindTerrainSquare(f.gs, f.me, &newRect, &liveX,
+                                            &liveY) == TRUE,
+                  "no terrain-driven square in the block at %d,%u", newMX,
+                  (unsigned)f.tankMY);
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG((om->flags[frozenX][frozenY] & OVERVIEW_F_LIVE) != 0,
+                  "square %u,%u is in the tank's block but not live",
+                  (unsigned)frozenX, (unsigned)frozenY);
+    BYTE frozenTile = om->tile[frozenX][frozenY];
+    UT_ASSERT_MSG(frozenTile != OVERVIEW_UNSEEN,
+                  "square %u,%u was live but reads unseen", (unsigned)frozenX,
+                  (unsigned)frozenY);
+
+    /* Drive off, and the square the tank left behind stops being live while
+     * keeping the tile it carried. */
+    tankSetWorld(f.gs, &f.gs->tanks[f.me], (WORLD)(newMX << TANK_SHIFT_MAPSIZE),
+                 (WORLD)((int)f.tankMY << TANK_SHIFT_MAPSIZE), 0, false);
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, newRect, TRUE, "the block the tank drove into");
+    UT_ASSERT_MSG((om->flags[frozenX][frozenY] & OVERVIEW_F_LIVE) == 0,
+                  "square %u,%u is out of every region but still live",
+                  (unsigned)frozenX, (unsigned)frozenY);
+    UT_ASSERT_MSG(om->tile[frozenX][frozenY] == frozenTile,
+                  "square %u,%u changed from tile %u to %u on the way out",
+                  (unsigned)frozenX, (unsigned)frozenY, (unsigned)frozenTile,
+                  (unsigned)om->tile[frozenX][frozenY]);
+
+    /* The leak. The client takes a terrain change on the frozen square — it
+     * knows about every change on the map, wherever it is — and the memory has
+     * to go on showing what was there when the square was last seen. */
+    {
+        bool isMine = FALSE;
+        BYTE was = mapGetPos(&f.gs->mp, frozenX, frozenY);
+        BYTE now = overviewFlipTerrain(was);
+
+        mapSetPos(f.gs, &f.gs->mp, frozenX, frozenY, now, TRUE, TRUE);
+        UT_ASSERT_MSG(mapGetPos(&f.gs->mp, frozenX, frozenY) == now,
+                      "the client did not take the terrain change at %u,%u",
+                      (unsigned)frozenX, (unsigned)frozenY);
+        UT_ASSERT_MSG(viewportCalcSquarePure(f.gs, f.me, frozenX, frozenY,
+                                             &isMine) != frozenTile,
+                      "terrain %u and %u render as the same tile at %u,%u — "
+                      "the leak check would pass on its own",
+                      (unsigned)was, (unsigned)now, (unsigned)frozenX,
+                      (unsigned)frozenY);
+    }
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(om->tile[frozenX][frozenY] == frozenTile,
+                  "the memory picked up a terrain change on frozen square "
+                  "%u,%u: tile %u, expected %u",
+                  (unsigned)frozenX, (unsigned)frozenY,
+                  (unsigned)om->tile[frozenX][frozenY], (unsigned)frozenTile);
+
+    /* The same change inside the live block does reach the memory, so the
+     * freeze above is the region mask at work and not a dead update. */
+    UT_ASSERT_MSG((om->flags[liveX][liveY] & OVERVIEW_F_LIVE) != 0,
+                  "square %u,%u is in the tank's new block but not live",
+                  (unsigned)liveX, (unsigned)liveY);
+    BYTE liveTile = om->tile[liveX][liveY];
+    unsigned genBefore = om->generation;
+    BYTE wantTile;
+    {
+        bool isMine = FALSE;
+        BYTE was = mapGetPos(&f.gs->mp, liveX, liveY);
+        BYTE now = overviewFlipTerrain(was);
+
+        mapSetPos(f.gs, &f.gs->mp, liveX, liveY, now, TRUE, TRUE);
+        wantTile = viewportCalcSquarePure(f.gs, f.me, liveX, liveY, &isMine);
+        UT_ASSERT_MSG(wantTile != liveTile,
+                      "terrain %u and %u render as the same tile at %u,%u — "
+                      "the live check would pass on its own",
+                      (unsigned)was, (unsigned)now, (unsigned)liveX,
+                      (unsigned)liveY);
+    }
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(om->tile[liveX][liveY] == wantTile,
+                  "live square %u,%u holds tile %u, expected %u",
+                  (unsigned)liveX, (unsigned)liveY,
+                  (unsigned)om->tile[liveX][liveY], (unsigned)wantTile);
+    UT_ASSERT_MSG(om->generation > genBefore,
+                  "generation stuck at %u over a changed live square",
+                  genBefore);
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+int run_overview_pill_capture(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Pills");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* One pill, a hundred squares off the tank so its 15x15 block never meets
+     * the tank's 29x29 one, and off any base square — a base renders from its
+     * owner whatever sits on it, which would make the carried-pill arm below
+     * read the wrong thing. */
+    BYTE pillX = (BYTE)((int)f.tankMX + overviewAwayFromEdge(f.tankMX) * 100);
+    BYTE pillY = f.tankMY;
+    int step;
+    for (step = 0; step < 16 && basesExistPos(&f.gs->bs, pillX, pillY) == TRUE;
+         step++) {
+        pillY = (BYTE)(pillY + 1);
+    }
+    UT_ASSERT_MSG(basesExistPos(&f.gs->bs, pillX, pillY) != TRUE,
+                  "no base-free square near %u,%u for the pill",
+                  (unsigned)pillX, (unsigned)f.tankMY);
+
+    f.gs->pb->numPills = 1;
+    f.gs->pb->item[0].x = pillX;
+    f.gs->pb->item[0].y = pillY;
+    f.gs->pb->item[0].inTank = FALSE;
+    f.gs->pb->item[0].armour = PILLBOX_15;
+    f.gs->pb->item[0].owner = NEUTRAL;
+
+    OverviewRect pillRect = overviewTestBlock(pillX, pillY, OVERVIEW_PILL_HALF);
+    OverviewRect tankRect = overviewTestBlock(f.tankMX, f.tankMY, OVERVIEW_TANK_HALF);
+
+    /* Any slot but the client's own is hostile: alliances start empty. */
+    BYTE hostile = (BYTE)((f.me == 0) ? 1 : 0);
+    UT_ASSERT_MSG(playersIsAllie(&f.gs->plyrs, f.me, hostile) != TRUE,
+                  "slots %u and %u are allied — breaks the enemy-pill arm",
+                  (unsigned)f.me, (unsigned)hostile);
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    bool isMine = FALSE;
+
+    /* Neutral: nothing to view through, so the block never lights up. */
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, pillRect, FALSE, "a neutral pill's block");
+
+    /* Captured: the block goes live and the pill draws in the captor's
+     * colours. */
+    f.gs->pb->item[0].owner = f.me;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, pillRect, TRUE, "a captured pill's block");
+    BYTE aliveTile = viewportCalcSquarePure(f.gs, f.me, pillX, pillY, &isMine);
+    UT_ASSERT_MSG(om->tile[pillX][pillY] == aliveTile,
+                  "the live pill holds tile %u, calculator says %u",
+                  (unsigned)om->tile[pillX][pillY], (unsigned)aliveTile);
+
+    /* Killed: the block freezes, and the farewell stamp leaves the pill's own
+     * square dead rather than a tick stale on full armour. */
+    f.gs->pb->item[0].armour = 0;
+    clientSimDisplayTick(f.cs, false);
+    BYTE deadTile = viewportCalcSquarePure(f.gs, f.me, pillX, pillY, &isMine);
+    UT_ASSERT_MSG(deadTile != aliveTile,
+                  "a dead pill renders as tile %u, the same as a live one — "
+                  "nothing here for the farewell stamp to show",
+                  (unsigned)deadTile);
+    ASSERT_RECT_LIVE(om, pillRect, FALSE, "a dead pill's block");
+    UT_ASSERT_MSG(om->tile[pillX][pillY] == deadTile,
+                  "the dead pill froze on tile %u, expected %u",
+                  (unsigned)om->tile[pillX][pillY], (unsigned)deadTile);
+
+    /* Alive again so there is a live block to leave, then handed to someone
+     * hostile: the same freeze, with the enemy's colours stamped in. */
+    f.gs->pb->item[0].armour = PILLBOX_15;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, pillRect, TRUE, "a repaired pill's block");
+    f.gs->pb->item[0].owner = hostile;
+    clientSimDisplayTick(f.cs, false);
+    BYTE enemyTile = viewportCalcSquarePure(f.gs, f.me, pillX, pillY, &isMine);
+    UT_ASSERT_MSG(enemyTile != aliveTile,
+                  "an enemy pill renders as tile %u, the same as an allied one",
+                  (unsigned)enemyTile);
+    ASSERT_RECT_LIVE(om, pillRect, FALSE, "an enemy pill's block");
+    UT_ASSERT_MSG(om->tile[pillX][pillY] == enemyTile,
+                  "the captured pill froze on tile %u, expected %u",
+                  (unsigned)om->tile[pillX][pillY], (unsigned)enemyTile);
+
+    /* Alive and owned again, then picked up: the square goes back to the
+     * ground that was under it. */
+    f.gs->pb->item[0].owner = f.me;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, pillRect, TRUE, "a recaptured pill's block");
+    f.gs->pb->item[0].inTank = TRUE;
+    clientSimDisplayTick(f.cs, false);
+    BYTE groundTile = viewportCalcSquarePure(f.gs, f.me, pillX, pillY, &isMine);
+    UT_ASSERT_MSG(groundTile != aliveTile && groundTile != deadTile &&
+                      groundTile != enemyTile,
+                  "the ground under the pill renders as tile %u, which is one "
+                  "of the pill tiles", (unsigned)groundTile);
+    ASSERT_RECT_LIVE(om, pillRect, FALSE, "a carried pill's block");
+    UT_ASSERT_MSG(om->tile[pillX][pillY] == groundTile,
+                  "the carried pill's square froze on tile %u, expected %u",
+                  (unsigned)om->tile[pillX][pillY], (unsigned)groundTile);
+
+    /* The tank goes the same way: its block stops being live and keeps every
+     * tile it already had. */
+    BYTE saved[OVERVIEW_TANK_SIDE * OVERVIEW_TANK_SIDE];
+    int x, y, i;
+    ASSERT_RECT_LIVE(om, tankRect, TRUE, "the tank's block before it is removed");
+    i = 0;
+    for (x = tankRect.left; x <= tankRect.right; x++) {
+        for (y = tankRect.top; y <= tankRect.bottom; y++) {
+            saved[i] = om->tile[x][y];
+            i++;
+        }
+    }
+
+    tankDestroy(f.gs, &f.gs->tanks[f.me]);
+    f.gs->tanks[f.me] = NULL;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, tankRect, FALSE, "the removed tank's block");
+    UT_ASSERT_MSG(om->liveCount == 0,
+                  "liveCount %d with no tank and the only pill carried",
+                  om->liveCount);
+    i = 0;
+    for (x = tankRect.left; x <= tankRect.right; x++) {
+        for (y = tankRect.top; y <= tankRect.bottom; y++) {
+            UT_ASSERT_MSG(om->tile[x][y] == saved[i],
+                          "square %d,%d changed from tile %u to %u when the "
+                          "tank went", x, y, (unsigned)saved[i],
+                          (unsigned)om->tile[x][y]);
+            i++;
+        }
+    }
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+int run_overview_reset(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Reset");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(om->seenCount > 0, "nothing was seen after a tick");
+
+    /* Round over: the memory of the round that ended goes with it. */
+    clientSimResetWorld(f.cs);
+    UT_ASSERT_MSG(om->seenCount == 0, "seenCount %u after a world reset",
+                  om->seenCount);
+    UT_ASSERT_MSG(om->liveCount == 0, "liveCount %d after a world reset",
+                  om->liveCount);
+    {
+        int x, y;
+        for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+            for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
+                              "square %d,%d holds tile %u after a world reset",
+                              x, y, (unsigned)om->tile[x][y]);
+                UT_ASSERT_MSG(om->flags[x][y] == 0,
+                              "square %d,%d carries flags %u after a world reset",
+                              x, y, (unsigned)om->flags[x][y]);
+            }
+        }
+    }
+
+    clientSimDisplayTick(f.cs, false);
+    unsigned seenAgain = om->seenCount;
+    UT_ASSERT_MSG(seenAgain > 0, "nothing was seen after the reset and a tick");
+
+    /* A mid-game resync reinstalls the same map with the viewport left alone,
+     * and the memory has to survive it — the player has not stopped having
+     * been where they have been. */
+    {
+        BYTE emap[6000] = E_MAP;
+        UT_ASSERT_MSG(installCompressedMap(f.cs, emap, OVERVIEW_EMAP_LEN,
+                                           "Everard Island", false) == TRUE,
+                      "installCompressedMap rejected the Everard Island blob");
+    }
+    UT_ASSERT_MSG(om->seenCount == seenAgain,
+                  "a resync moved seenCount from %u to %u", seenAgain,
+                  om->seenCount);
+
+    overviewFixtureStop(&f);
     return 0;
 }

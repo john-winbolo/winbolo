@@ -804,6 +804,29 @@ int run_viewport_calc_square_pure(void);
  * never writes more rects than the caller allowed for. */
 int run_overview_regions(void);
 
+/* Overview reveal (test_overview_map.c): one display tick on a freshly joined
+ * client marks exactly the squares in the union of its regions live, fills
+ * them with what the per-square calculator produces, and leaves every other
+ * square of the map unseen. */
+int run_overview_reveal(void);
+
+/* Overview freeze (test_overview_map.c): a square the tank drives away from
+ * keeps the tile it carried and never picks up a later terrain change the
+ * client has already applied, while the same change inside the block the tank
+ * drove into does reach the memory. */
+int run_overview_freeze_no_leak(void);
+
+/* Overview farewell stamp (test_overview_map.c): a pill that dies, is
+ * captured or is picked up takes its block out of the live set, and the
+ * block's last stamp shows the pill as it ended rather than as it was a tick
+ * earlier. Removing the tank freezes its block the same way. */
+int run_overview_pill_capture(void);
+
+/* Overview lifetime (test_overview_map.c): clientSimResetWorld empties the
+ * memory back to unseen, and a mid-game map resync leaves what has been seen
+ * exactly where it was. */
+int run_overview_reset(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
