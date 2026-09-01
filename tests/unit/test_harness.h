@@ -846,6 +846,13 @@ int run_overview_camera(void);
  * the block comes back when it respawns. */
 int run_overview_dead_tank(void);
 
+/* Overview entity filter (test_overview_map.c): the per-frame lists
+ * clientSimPrepareOverviewEntities builds cover the whole map, and
+ * overviewEntityIsVisible is what keeps an enemy tank the client still knows
+ * about off the picture once it leaves the block the player can see. The
+ * local player's own tank passes wherever it stands. */
+int run_overview_entities(void);
+
 /* My-tank position accessor (test_overview_map.c): clientSimGetMyTankMapPos
  * reports the tank's square while it is alive, fails while it is dead and
  * waiting to respawn rather than handing back the map origin it reads as, and

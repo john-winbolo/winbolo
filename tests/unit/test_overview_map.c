@@ -21,6 +21,12 @@
  * clientSimGetMyTankMapPos, and pins what it reports for a tank that is dead
  * and waiting to respawn.
  *
+ * Another steps forward to what the memory is for: the per-frame entity lists
+ * the overview draws from cover the whole map, so an enemy tank the client
+ * still knows about has to be dropped by the live-square filter once it
+ * leaves the block the player can see, while the player's own tank is drawn
+ * wherever it is.
+ *
  * The last case runs the reveal checks again over the real UDP transport, where
  * the map arrives as a download and terrain changes arrive out of band as map
  * events, so the mask does not quietly depend on the client and the server
@@ -48,6 +54,7 @@
 #include "players.h"
 #include "allience.h"
 #include "everard_map.h" /* E_MAP — the blob the resync reinstalls */
+#include "overview_camera.h" /* overviewEntityIsVisible — the drawing filter */
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -869,6 +876,152 @@ int run_tank_pos_dead(void) {
                   "a respawned tank reads %u,%u, expected %u,%u",
                   (unsigned)gotX, (unsigned)gotY, (unsigned)f.tankMX,
                   (unsigned)f.tankMY);
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+/* Builds the three per-frame entity lists and keeps the tanks. The other two
+ * are created and thrown away here because clientSimPrepareOverviewEntities
+ * fills all three and the heap lists have to be freed either way. */
+static void overviewEntitiesPrepare(ClientSim *cs, screenTanks *tks) {
+    screenLgm lgms;     /* Built and dropped — this case is about tanks */
+    screenBullets sb;   /* Same */
+
+    screenTanksCreate(tks);
+    screenLgmCreate(&lgms);
+    sb = screenBulletsCreate();
+    clientSimPrepareOverviewEntities(cs, tks, &lgms, &sb);
+    screenBulletsDestroy(&sb);
+    screenLgmDestroy(&lgms);
+}
+
+/* The square a player's tank came back on, or FALSE when the list does not
+ * carry that player at all. */
+static bool overviewFindTank(const screenTanks *tks, BYTE playerNum, BYTE *outX,
+                             BYTE *outY) {
+    BYTE total = screenTanksGetNumEntries(tks);
+    BYTE count; /* Looping variable */
+
+    for (count = 1; count <= total; count++) {
+        BYTE mx;
+        BYTE my;
+        BYTE px;
+        BYTE py;
+        BYTE frame;
+        BYTE pn;
+        char name[PLAYER_NAME_LEN];
+
+        screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &pn, name);
+        if (pn == playerNum) {
+            *outX = mx;
+            *outY = my;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+int run_overview_entities(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Entities");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* No pills, so the tank's 29x29 block is the whole live set and a square
+     * outside it is a square the player genuinely cannot see. */
+    f.gs->pb->numPills = 0;
+
+    /* Any slot but the client's own is hostile: alliances start empty. */
+    BYTE hostile = (BYTE)((f.me == 0) ? 1 : 0);
+    UT_ASSERT_MSG(playersIsAllie(&f.gs->plyrs, f.me, hostile) != TRUE,
+                  "slots %u and %u are allied", (unsigned)f.me,
+                  (unsigned)hostile);
+
+    /* Five squares off is inside the 29x29 block; twenty is outside it and
+     * still inside the 55x55 box the server culls other tanks at, which is
+     * the case the filter exists for — the client is told about the tank and
+     * has to decline to draw it. */
+    int dir = overviewAwayFromEdge(f.tankMX);
+    BYTE nearX = (BYTE)((int)f.tankMX + dir * 5);
+    BYTE farX = (BYTE)((int)f.tankMX + dir * 20);
+    BYTE atY = f.tankMY;
+
+    /* A tank standing in trees is hidden from the list by sight rules that
+     * have nothing to do with the overview, which would leave the far arm
+     * below passing for the wrong reason. Grass under both squares takes that
+     * out of the picture. */
+    mapSetPos(f.gs, &f.gs->mp, nearX, atY, GRASS, TRUE, TRUE);
+    mapSetPos(f.gs, &f.gs->mp, farX, atY, GRASS, TRUE, TRUE);
+
+    /* The hostile tank, driven straight into the client's own player table —
+     * the same state a snapshot would have left behind. pixelX/pixelY of 8
+     * put it in the middle of its square, so the list reports the square it
+     * was placed on. */
+    player *bogey = &f.gs->plyrs->item[hostile];
+    bogey->inUse = TRUE;
+    strcpy(bogey->playerName, "Bogey");
+    bogey->frame = 0;
+    bogey->onBoat = FALSE;
+    bogey->pixelX = 8;
+    bogey->pixelY = 8;
+    bogey->mapY = atY;
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    screenTanks tks;
+    BYTE gotX = 0;
+    BYTE gotY = 0;
+
+    /* Inside the block: in the list, and the filter lets it through. */
+    bogey->mapX = nearX;
+    clientSimDisplayTick(f.cs, false);
+    overviewEntitiesPrepare(f.cs, &tks);
+    UT_ASSERT_MSG(overviewFindTank(&tks, hostile, &gotX, &gotY) == TRUE,
+                  "the hostile tank is missing from the prepared list at "
+                  "%u,%u", (unsigned)nearX, (unsigned)atY);
+    UT_ASSERT_MSG(gotX == nearX && gotY == atY,
+                  "the prepared list puts the hostile tank on %u,%u, expected "
+                  "%u,%u — the full-map rect is not reporting absolute "
+                  "squares", (unsigned)gotX, (unsigned)gotY, (unsigned)nearX,
+                  (unsigned)atY);
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, false) == true,
+                  "square %u,%u is inside the tank's block and the filter "
+                  "still hides an enemy on it", (unsigned)gotX,
+                  (unsigned)gotY);
+
+    /* Our own tank comes back too, and passes wherever it stands. */
+    UT_ASSERT_MSG(overviewFindTank(&tks, f.me, &gotX, &gotY) == TRUE,
+                  "the local tank is missing from the prepared list");
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, true) == true,
+                  "the local tank is filtered out of its own square %u,%u",
+                  (unsigned)gotX, (unsigned)gotY);
+    screenTanksDestroy(&tks);
+
+    /* Twenty squares off: still in the list — the client has lost none of
+     * what it knew — and the filter is what takes it off the picture. The
+     * same square passes for the local tank, which is the one exception. */
+    bogey->mapX = farX;
+    clientSimDisplayTick(f.cs, false);
+    overviewEntitiesPrepare(f.cs, &tks);
+    UT_ASSERT_MSG(overviewFindTank(&tks, hostile, &gotX, &gotY) == TRUE,
+                  "the hostile tank dropped out of the prepared list at %u,%u "
+                  "— this case would then prove absence, not filtering",
+                  (unsigned)farX, (unsigned)atY);
+    UT_ASSERT_MSG(gotX == farX && gotY == atY,
+                  "the prepared list puts the hostile tank on %u,%u, expected "
+                  "%u,%u", (unsigned)gotX, (unsigned)gotY, (unsigned)farX,
+                  (unsigned)atY);
+    UT_ASSERT_MSG((om->flags[farX][atY] & OVERVIEW_F_LIVE) == 0,
+                  "square %u,%u is live — it was meant to be outside the "
+                  "tank's block", (unsigned)farX, (unsigned)atY);
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, false) == false,
+                  "an enemy tank on unseen square %u,%u would be drawn",
+                  (unsigned)gotX, (unsigned)gotY);
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, true) == true,
+                  "the local tank would be hidden on square %u,%u",
+                  (unsigned)gotX, (unsigned)gotY);
+    screenTanksDestroy(&tks);
 
     overviewFixtureStop(&f);
     return 0;

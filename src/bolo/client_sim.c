@@ -2458,6 +2458,41 @@ bool clientSimIsMyTankAlive(const ClientSim *cs) {
   return tankGetArmour(&MY_TANK((ClientSim *)cs)) <= TANK_FULL_ARMOUR;
 }
 
+void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
+                                      screenLgm *lgms, screenBullets *sb) {
+  GameSim *gs; /* The client's own sim, source of the shell and explosion lists */
+
+  /* Nothing to walk the map for without a local tank: screenTanksPrepare
+   * dereferences it, and the two other builders are of no use on their own.
+   * The caller's lists are left as it created them — empty. */
+  if (cs == NULL || MY_TANK(cs) == NULL) {
+    return;
+  }
+
+  /* One rect over the whole map. With leftPos and top at 0 the relative BYTE
+   * positions the builders write out are the absolute map squares, which is
+   * what lets the caller test each entity against the square it stands on.
+   * The last row and column drop out of the LGM and explosion walks, whose
+   * far bound is exclusive, and nothing can ever be there: tanks and LGM
+   * destinations are held inside the mine border, and a shell dies well
+   * short of it. */
+  if (tks != NULL) {
+    screenTanksPrepare(cs, tks, &MY_TANK(cs), 0, MAP_ARRAY_LAST, 0,
+                       MAP_ARRAY_LAST);
+  }
+  if (lgms != NULL) {
+    screenLgmPrepare(cs, lgms, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+  }
+  if (sb != NULL) {
+    gs = clientSimGetGameSim(cs);
+    shellsCalcScreenBullets(&gs->shs, sb, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+    explosionsCalcScreenBullets(&gs->expl, sb, 0, MAP_ARRAY_LAST, 0,
+                                MAP_ARRAY_LAST);
+    tkExplosionCalcScreenBullets(&gs->tankExplosions, sb, 0, MAP_ARRAY_LAST, 0,
+                                 MAP_ARRAY_LAST);
+  }
+}
+
 bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   if (!cs || MY_TANK(cs) == NULL) return false;
   BYTE px, py;

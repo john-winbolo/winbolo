@@ -15,9 +15,10 @@
 /*********************************************************
  * Name:          overview_camera.cpp
  * Purpose:       Implementation of the map overview's camera
- *                maths — see overview_camera.h. Arithmetic
- *                only: no ImGui, no SDL_Renderer, no state
- *                outside the OverviewCamera the caller owns.
+ *                maths and its entity-visibility rule — see
+ *                overview_camera.h. Arithmetic only: no ImGui,
+ *                no SDL_Renderer, no state outside the
+ *                OverviewCamera the caller owns.
  *********************************************************/
 
 #include <cmath>
@@ -239,4 +240,17 @@ bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,
     if (outRight)  *outRight  = right;
     if (outBottom) *outBottom = bottom;
     return true;
+}
+
+bool overviewEntityIsVisible(const OverviewMap *om, int mapX, int mapY,
+                             bool isSelf) {
+    if (mapX < 0 || mapX >= MAP_ARRAY_SIZE ||
+        mapY < 0 || mapY >= MAP_ARRAY_SIZE) {
+        return false;
+    }
+    /* Ahead of the memory read on purpose: the player's own tank is drawn
+     * even on the frame its square has not been stamped live yet. */
+    if (isSelf) return true;
+    if (!om) return false;
+    return (om->flags[mapX][mapY] & OVERVIEW_F_LIVE) != 0;
 }

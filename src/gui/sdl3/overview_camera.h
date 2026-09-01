@@ -20,6 +20,10 @@
  *                pan, follow-the-tank centring and the
  *                range of squares a view covers.
  *
+ *                Plus the rule for which squares an entity
+ *                may be drawn on, which is arithmetic over
+ *                the same state and belongs with it.
+ *
  *                Pure state in, numbers out — no ImGui and
  *                no SDL_Renderer, so it compiles into the
  *                unit-test binary (which links neither) and
@@ -40,8 +44,9 @@
 #include <WinSock2.h>
 #endif
 
-#include "types.h"    /* MAP_ARRAY_SIZE */
-#include "../tiles.h" /* TILE_SIZE_X */
+#include "types.h"           /* MAP_ARRAY_SIZE */
+#include "overview_types.h"  /* OverviewMap, OVERVIEW_F_LIVE */
+#include "../tiles.h"        /* TILE_SIZE_X */
 
 /* Screen pixels one map square occupies at 1x zoom. A square is drawn from
  * one 16x16 cell of the sprite sheet, so this is the sheet's cell size. */
@@ -117,6 +122,16 @@ void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
 bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,
                                 int *outLeft, int *outTop,
                                 int *outRight, int *outBottom);
+
+/* Whether an entity standing on (mapX,mapY) may be drawn. Tanks, men and
+ * shells appear only on squares the player can see this instant, so an enemy
+ * the client has been told about in a corner it has walked away from stays
+ * off the picture — the memory behind a frozen square is terrain, and nothing
+ * that moves belongs on it. isSelf is the one exception: the local player's
+ * own tank is drawn wherever it is. Off-map squares are never drawn, and a
+ * NULL memory shows nothing but the player's own tank. */
+bool overviewEntityIsVisible(const OverviewMap *om, int mapX, int mapY,
+                             bool isSelf);
 
 #ifdef __cplusplus
 }

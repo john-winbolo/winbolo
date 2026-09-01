@@ -35,6 +35,8 @@
 #include "wire_limits.h"  /* For PACKET_MAX_PLAYER_NAME */
 #include "alliance_enums.h" /* For pillAlliance, baseAlliance */
 #include "screentank.h"     /* For tankAlliance */
+#include "screenlgm.h"      /* For screenLgm  — clientSimPrepareOverviewEntities */
+#include "screenbullet.h"   /* For screenBullets — clientSimPrepareOverviewEntities */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
@@ -1005,6 +1007,13 @@ bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
    waiting to respawn. The overview uses this to stop a dead tank's position
    revealing map or dragging the camera. */
 bool         clientSimIsMyTankAlive(const ClientSim *cs);
+
+/* Fill the three per-frame entity lists over the whole map, for a caller that
+   does its own visibility filtering. The caller creates and destroys the
+   lists. Positions come back as absolute map squares, since the rect starts
+   at 0,0. */
+void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
+                                      screenLgm *lgms, screenBullets *sb);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);

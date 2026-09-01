@@ -3668,6 +3668,7 @@ set(_unit_test_names
     overview_loopback
     overview_camera
     overview_dead_tank
+    overview_entities
     tank_pos_dead
     stall_advances_processed_tick
     stall_mine_late_lays_once
