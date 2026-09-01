@@ -3946,24 +3946,34 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     s_icons.pause   = loadWhiteIcon(renderer, "data/ui/pause.svg", iconPx);
 }
 
-/* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
-static int s_expandedBotSlot = -1;
+/* Player-list state: bot-row expansion, the tab-cycle's forced selection
+ * and the two per-row confirm dialogs. */
+typedef struct LobbyPlayersState {
+    /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
+    int expandedBotSlot = -1;
 
-/* Tab the trigger/shoulder tab-cycle wants selected next frame in the
- * tabbed lobby layout, or -1 for "no forced selection". Set from the
- * LT/RT (or native L1/R1) shift, applied via ImGuiTabItemFlags_SetSelected,
- * then cleared after the tab bar. */
-static int s_lobbyForceTab = -1;
+    /* Tab the trigger/shoulder tab-cycle wants selected next frame in the
+     * tabbed lobby layout, or -1 for "no forced selection". Set from the
+     * LT/RT (or native L1/R1) shift, applied via ImGuiTabItemFlags_SetSelected,
+     * then cleared after the tab bar. */
+    int forceTab = -1;
 
-/* Kick-confirm dialog state. Populated when an authorised player picks
- * "Kick" from a row's right-click context menu; the modal at the bottom
- * of renderTeamGroupedPlayers reads it on the next frame. */
-static int  s_kickPendingSlot = -1;
-static char s_kickPendingName[64] = {0};
-static bool s_kickPendingOpen = false;
-static int  s_makeHostPendingSlot = -1;
-static char s_makeHostPendingName[64] = {0};
-static bool s_makeHostPendingOpen = false;
+    /* Kick-confirm dialog state. Populated when an authorised player picks
+     * "Kick" from a row's right-click context menu; the modal at the bottom
+     * of renderTeamGroupedPlayers reads it on the next frame. */
+    int  kickPendingSlot     = -1;
+    char kickPendingName[64] = {0};
+    bool kickPendingOpen     = false;
+    int  makeHostPendingSlot     = -1;
+    char makeHostPendingName[64] = {0};
+    bool makeHostPendingOpen     = false;
+} LobbyPlayersState;
+
+static LobbyPlayersState s_players = {};
+
+static void lobbyPlayersReset(void) {
+    s_players = LobbyPlayersState{};
+}
 
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
@@ -5423,7 +5433,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
                             ImVec2(0, 0), ImVec2(1, 1), gearTint);
                         if (clicked) {
-                            s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                            s_players.expandedBotSlot = (s_players.expandedBotSlot == i) ? -1 : i;
                         }
                         if (ImGui::IsItemHovered()) {
                             lobbyGearTooltip(cs, i, s);
@@ -5432,9 +5442,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         cyAbs(ImGui::GetFrameHeight());
                         char fallId[24];
                         SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
-                                     s_expandedBotSlot == i ? "v" : ">", i);
+                                     s_players.expandedBotSlot == i ? "v" : ">", i);
                         if (ImGui::SmallButton(fallId)) {
-                            s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                            s_players.expandedBotSlot = (s_players.expandedBotSlot == i) ? -1 : i;
                         }
                         if (ImGui::IsItemHovered()) {
                             lobbyGearTooltip(cs, i, s);
@@ -5635,7 +5645,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     ImGuiID rbId = ImGui::GetID(rbStr);
                     if (ImGui::CloseButton(rbId, closePos)) {
                         lobbySendRemoveBot(cs, (uint8_t)i);
-                        if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
+                        if (s_players.expandedBotSlot == i) s_players.expandedBotSlot = -1;
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
@@ -5664,11 +5674,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         ImVec2 br  (mhPos.x + closeSz * 0.85f, mhPos.y + closeSz * 0.80f);
                         mhDl->AddTriangleFilled(apex, bl, br, mhTint);
                         if (mhClicked) {
-                            s_makeHostPendingSlot = i;
-                            SDL_strlcpy(s_makeHostPendingName,
+                            s_players.makeHostPendingSlot = i;
+                            SDL_strlcpy(s_players.makeHostPendingName,
                                         clientSimGetLobbySlot(cs, (BYTE)i)->playerName,
-                                        sizeof(s_makeHostPendingName));
-                            s_makeHostPendingOpen = true;
+                                        sizeof(s_players.makeHostPendingName));
+                            s_players.makeHostPendingOpen = true;
                         }
                         if (ImGui::IsItemHovered()) {
                             ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_MAKE_HOST));
@@ -5688,11 +5698,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     SDL_snprintf(kbStr, sizeof(kbStr), "##kb%d", i);
                     ImGuiID kbId = ImGui::GetID(kbStr);
                     if (ImGui::CloseButton(kbId, closePos)) {
-                        s_kickPendingSlot = i;
-                        SDL_strlcpy(s_kickPendingName,
+                        s_players.kickPendingSlot = i;
+                        SDL_strlcpy(s_players.kickPendingName,
                                     clientSimGetLobbySlot(cs, (BYTE)i)->playerName,
-                                    sizeof(s_kickPendingName));
-                        s_kickPendingOpen = true;
+                                    sizeof(s_players.kickPendingName));
+                        s_players.kickPendingOpen = true;
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_KICK));
@@ -5706,7 +5716,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * full team panel. The horizontal border below this
                  * row groups the form with the bot above it via the
                  * normal inter-row line. */
-                if (isBot && s_expandedBotSlot == i && effectiveHost) {
+                if (isBot && s_players.expandedBotSlot == i && effectiveHost) {
                     ImGui::TableNextRow();
                     /* Inherit the parent bot row's stripe color so the
                      * sub-row reads as a continuation of that row and
@@ -5846,55 +5856,55 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
     /* Deferred-open kick-confirm modal. OpenPopup must happen in the
      * same ID scope as BeginPopupModal, so we set a flag inside the
      * team child windows and pop it open here at the outer scope. */
-    if (s_kickPendingOpen) {
+    if (s_players.kickPendingOpen) {
         ImGui::OpenPopup("##kickConfirm");
-        s_kickPendingOpen = false;
+        s_players.kickPendingOpen = false;
     }
     if (ImGui::BeginPopupModal("##kickConfirm", NULL,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         {
             MessageArgs args = {};
-            SDL_strlcpy(args.playerName, s_kickPendingName, sizeof(args.playerName));
+            SDL_strlcpy(args.playerName, s_players.kickPendingName, sizeof(args.playerName));
             ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_KICK_FMT, &args));
         }
         ImGui::Spacing();
         if (ImGui::Button(langGetText(STR_YES), ImVec2(80.0f * s, 0))) {
-            if (s_kickPendingSlot > 0 && s_kickPendingSlot < MAX_TANKS) {
-                clientSimNetSendLobbyKick(cs, (uint8_t)s_kickPendingSlot);
+            if (s_players.kickPendingSlot > 0 && s_players.kickPendingSlot < MAX_TANKS) {
+                clientSimNetSendLobbyKick(cs, (uint8_t)s_players.kickPendingSlot);
             }
-            s_kickPendingSlot = -1;
+            s_players.kickPendingSlot = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
-            s_kickPendingSlot = -1;
+            s_players.kickPendingSlot = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
 
-    if (s_makeHostPendingOpen) {
+    if (s_players.makeHostPendingOpen) {
         ImGui::OpenPopup("##makeHostConfirm");
-        s_makeHostPendingOpen = false;
+        s_players.makeHostPendingOpen = false;
     }
     if (ImGui::BeginPopupModal("##makeHostConfirm", NULL,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         {
             MessageArgs args = {};
-            SDL_strlcpy(args.playerName, s_makeHostPendingName, sizeof(args.playerName));
+            SDL_strlcpy(args.playerName, s_players.makeHostPendingName, sizeof(args.playerName));
             ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_MAKE_HOST_FMT, &args));
         }
         ImGui::Spacing();
         if (ImGui::Button(langGetText(STR_YES), ImVec2(80.0f * s, 0))) {
-            if (s_makeHostPendingSlot >= 0 && s_makeHostPendingSlot < MAX_TANKS) {
-                clientSimNetSendLobbyTransferHost(cs, (uint8_t)s_makeHostPendingSlot);
+            if (s_players.makeHostPendingSlot >= 0 && s_players.makeHostPendingSlot < MAX_TANKS) {
+                clientSimNetSendLobbyTransferHost(cs, (uint8_t)s_players.makeHostPendingSlot);
             }
-            s_makeHostPendingSlot = -1;
+            s_players.makeHostPendingSlot = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
-            s_makeHostPendingSlot = -1;
+            s_players.makeHostPendingSlot = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -6124,7 +6134,7 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::SetCursorScreenPos(ImVec2(targetScreenX,
                                          ImGui::GetCursorScreenPos().y));
         if (ImGui::Button(doneLbl)) {
-            s_expandedBotSlot = -1;
+            s_players.expandedBotSlot = -1;
         }
         ImGui::EndGroup();
     }
@@ -10037,19 +10047,12 @@ extern "C" void imguiLobbyFrameReset(void) {
     lobbyRatingReset();
 #endif
 
-    s_kickPendingOpen = false;
-    s_kickPendingSlot = -1;
-    s_kickPendingName[0] = '\0';
-    s_makeHostPendingOpen = false;
-    s_makeHostPendingSlot = -1;
-    s_makeHostPendingName[0] = '\0';
+    lobbyPlayersReset();
 
     s_addBotSentMs        = 0;
     s_addBotExpectedConn  = 0;
     s_addBotFrame         = -1;
     memset(s_botNameOverridden, 0, sizeof(s_botNameOverridden));
-
-    s_expandedBotSlot = -1;
 
     s_lf.active = false;
 }
@@ -10603,14 +10606,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     for (int i = 0; i < nVis; i++) {
                         if (vis[i] == activeTab) { cur = i; break; }
                     }
-                    s_lobbyForceTab = vis[(cur + shift + nVis) % nVis];
+                    s_players.forceTab = vis[(cur + shift + nVis) % nVis];
                 }
             }
 
             if (ImGui::BeginTabBar("##LobbyTabs")) {
                 /* --- Players tab --- */
                 if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS), nullptr,
-                        s_lobbyForceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                        s_players.forceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 0;
                     /* Allow New Players row above the player list (mobile). */
                     renderAllowNewPlayersRow(cs, myPlayerNum, s);
@@ -10763,7 +10766,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
                 /* --- Map tab --- */
                 if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB), nullptr,
-                        s_lobbyForceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                        s_players.forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
 
@@ -10943,7 +10946,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * same gsEffectiveHost as the vis[] Settings predicate above. */
                 if (gsEffectiveHost &&
                     ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_SETTINGS_HEADER), nullptr,
-                        s_lobbyForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                        s_players.forceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 2;
                     ImGui::Spacing();
                     renderGameSettingsBody(cs, myPlayerNum, s);
@@ -10959,7 +10962,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         chatTabColorPushed = true;
                     }
                     if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT), nullptr,
-                            s_lobbyForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                            s_players.forceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
                         activeTab = 3;
                         chatUnread = false;
                         if (chatTabColorPushed) {
@@ -10999,7 +11002,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                             teamTabColorPushed = true;
                         }
                         if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM), nullptr,
-                                s_lobbyForceTab == 4 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                                s_players.forceTab == 4 ? ImGuiTabItemFlags_SetSelected : 0)) {
                             activeTab = 4;
                             teamChatUnread = false;
                             if (teamTabColorPushed) {
@@ -11032,7 +11035,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* --- Last round tab (only while a summary exists) --- */
                 if (haveLastRound &&
                     ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_LASTROUND_BTN), nullptr,
-                        s_lobbyForceTab == 5 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                        s_players.forceTab == 5 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 5;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
                     ImGui::BeginChild("##LastRoundTab", ImVec2(availW, tabH),
@@ -11046,7 +11049,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             }
             /* One-shot: the forced selection has been applied (or the bar
              * wasn't drawn this frame), so don't keep re-forcing it. */
-            s_lobbyForceTab = -1;
+            s_players.forceTab = -1;
 
             /* --- Bottom buttons (always visible) --- */
             ImGui::Spacing();
