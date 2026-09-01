@@ -6916,14 +6916,15 @@ static void lobbyReelWbnPoll(void) {
 
 #if BOLO_RECAP_CLIP_GIF
 /* Defined with the clip export below, which needs the reel's own state. */
-static void lobbyClipGifAbort(void);
+static void lobbyClipGifReset(void);
 #endif
 
 static void lobbyReelEnd(void) {
 #if BOLO_RECAP_CLIP_GIF
     /* An export in flight is holding encoder allocations and a playback
-     * position to put back, and the reel it was reading is about to go. */
-    lobbyClipGifAbort();
+     * position to put back, and the reel it was reading is about to go. What
+     * the capture held goes back to its declared values with it. */
+    lobbyClipGifReset();
 #endif
 #if BOLO_REEL_WBN_FETCH
     /* And a WinBolo.net fetch is a thread writing into state this is about to
@@ -7923,17 +7924,25 @@ static const int CLIP_GIF_FRAMES_PER_PASS = 4;
  * so the clip keeps the shape the reel showed. */
 static const int CLIP_GIF_MAX_WIDTH       = 480;
 
-static struct ClipGifCapture {
-    bool        active;
-    bool        failed;
-    MsfGifState enc;
-    int         frame;
-    int         total;
-    SDL_Rect    crop;           /* inside the viewer's render target */
-    uint32_t    restoreMs;      /* where the reel was before we took it */
-    bool        restorePlaying;
-    char        name[96];       /* <map>_<mmss>, the file's base name */
-} s_clipGif = {};
+/* One export, from the moment it is armed to the moment its bytes are handed
+ * over: the encoder itself, how far through the clip it has got, the rectangle
+ * every frame is read back from, where the reel has to go afterwards and what
+ * the file will be called. All of it belongs to that one export, so the reset
+ * below puts the lot back. */
+typedef struct ClipGifCapture {
+    bool        active         = false;
+    bool        failed         = false;
+    MsfGifState enc            = {};
+    int         frame          = 0;
+    int         total          = 0;
+    /* inside the viewer's render target */
+    SDL_Rect    crop           = { 0, 0, 0, 0 };
+    uint32_t    restoreMs      = 0;  /* where the reel was before we took it */
+    bool        restorePlaying = false;
+    char        name[96]       = "";  /* <map>_<mmss>, the file's base name */
+} ClipGifCapture;
+
+static ClipGifCapture s_clipGif = {};
 
 /* <map>_<mmss>, reduced to characters every filesystem here will take — a map
  * name is free text and reaches this straight off the wire. */
@@ -7989,6 +7998,16 @@ static void lobbyClipGifAbort(void) {
     if (s_clipGif.active) {
         lobbyClipGifFinish(NULL);
     }
+}
+
+/* Back to the declared values, encoder included. The abort comes first and is
+ * what makes the write safe: it is the only route to msf_gif_end, and the
+ * buffers a live capture holds are leaked outright if they are overwritten
+ * instead of ended. A capture that was never begun has nothing to end and
+ * nothing to leak. */
+static void lobbyClipGifReset(void) {
+    lobbyClipGifAbort();
+    s_clipGif = ClipGifCapture{};
 }
 
 static bool lobbyClipGifActive(void) {
