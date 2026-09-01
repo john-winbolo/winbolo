@@ -537,17 +537,24 @@ if(MSVC)
     )
     add_link_options(/GUARD:CF /INCREMENTAL:NO /LTCG)
 else()
-    # -Werror=undef makes an undefined macro in #if an error instead of a
-    # silent 0, so a file that tests a feature macro without including the
-    # header defining it fails to build. Not enabled for MSVC: C4668 is
-    # forced to level 1 and fires throughout the Windows SDK headers, where
-    # /external:W3 cannot suppress it and the /WX above would make it fatal.
     add_compile_options(
         -Wall -Wextra
-        -Werror=undef
         -Wno-unused-parameter
         -Wno-sign-compare
         -Wno-implicit-fallthrough
+    )
+    # -Werror=undef makes an undefined macro in #if an error instead of a
+    # silent 0, so a lobby source that tests one of the BOLO_* feature
+    # macros without including lobby_internal.h fails to build. Set on
+    # those sources rather than added above, because add_compile_options
+    # is inherited by every target created later in this directory --
+    # including the FetchContent dependencies, and libplum's log.c tests
+    # an undefined RELEASE. Not set for MSVC: C4668 is forced to level 1
+    # and fires throughout the Windows SDK headers, where /external:W3
+    # cannot suppress it and the /WX above would make it fatal.
+    set_source_files_properties(
+        src/gui/sdl3/dialogs/imgui_lobby.cpp
+        PROPERTIES COMPILE_OPTIONS -Werror=undef
     )
 endif()
 
