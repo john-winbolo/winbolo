@@ -493,6 +493,16 @@ static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
    middle of one — see the auto-hide/reopen in sdl3ImguiRender. */
 static bool          s_overviewWasRunning    = false;
 
+/* Whether the windows the player drives from (main window + Map Overview)
+   held keyboard focus as of the end of the last event poll, and whether any
+   focus event arrived during the current one.  Held keys are dropped only
+   when that set as a whole gains or loses focus, so handing focus between
+   the two windows keeps a key the player is still holding.  Seeded true
+   because the main window is created and raised before events start
+   flowing, so it owns focus by the time the first one is judged. */
+static bool          s_gameInputHadFocus     = true;
+static bool          s_focusEventThisPoll    = false;
+
 static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
     if (!r) return nullptr;
 
@@ -3749,6 +3759,37 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             }
         }
 
+        /* Note that focus moved, whichever window it moved to or from, and
+           decide what it means for the held keys once the queue has drained
+           (below the poll loop).  Only the net change over the whole poll
+           matters, so the order SDL delivers a hand-off's LOST/GAINED pair
+           in — and whether the window flags have settled mid-queue — cannot
+           get it wrong.  Sits above the pop-out routing because that block
+           consumes a pop-out's own focus events; this is the only place the
+           overview gaining or losing focus can be seen.  Consumes nothing:
+           every handler further down still runs exactly as before. */
+        if (ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED ||
+            ev.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            s_focusEventThisPoll = true;
+        }
+
+        /* Meta/Cmd release — re-sync held keys. macOS does not deliver KEY_UP
+           for a non-modifier key that is released while Cmd is held (browsers
+           on macOS inherit this), so tapping Cmd mid-turn and letting go of a
+           movement key under it leaves that key reading as held in
+           SDL_GetKeyboardState, with no focus transition to clear it — the
+           tank turns forever with nothing pressed. Take the modifier's own
+           release as the cue that any key-ups issued under it were swallowed.
+           A player still physically holding a key re-presses it; that beats an
+           unbounded spin.  Ahead of the pop-out routing because that block
+           swallows the Map Overview's key events, and the overview is a window
+           the player drives from — a Cmd release there has to reach this. */
+        if (ev.type == SDL_EVENT_KEY_UP &&
+            (ev.key.scancode == SDL_SCANCODE_LGUI ||
+             ev.key.scancode == SDL_SCANCODE_RGUI)) {
+            inputResetHeldKeys();
+        }
+
         /* Route events to pop-out windows — if the event belongs to a
            pop-out, forward it there and skip the rest of the main loop
            so it doesn't reach the game input. */
@@ -3878,12 +3919,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             /* Retract any open menu-bar dropdown so it isn't left hanging open
                when the user tabs away to another window. */
             s_closeMenuPopups = true;
-            /* Drop held-key / latched edge state. The game polls
-               SDL_GetKeyboardState; a movement key released while we were
-               unfocused (e.g. while typing in the Send Message pop-out, which
-               steals focus without SDL clearing the keyboard) would otherwise
-               read as still held and spin the tank when focus returns. */
-            inputResetHeldKeys();
             if (soundEffects && !backgroundSound) {
                 SDL_Window *focused = SDL_GetKeyboardFocus();
                 bool focusedIsOurs = (focused == s_window);
@@ -3900,26 +3935,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (soundEffects) {
                 soundSetMuted(false);
             }
-            /* Clear held-key state again as input resumes, so a key still down
-               from before focus was lost doesn't immediately drive the tank —
-               the player must re-press it. */
-            inputResetHeldKeys();
             continue;
-        }
-
-        /* Meta/Cmd release — re-sync held keys. macOS does not deliver KEY_UP
-           for a non-modifier key that is released while Cmd is held (browsers
-           on macOS inherit this), so tapping Cmd mid-turn and letting go of a
-           movement key under it leaves that key reading as held in
-           SDL_GetKeyboardState, with no focus transition to clear it — the
-           tank turns forever with nothing pressed. Take the modifier's own
-           release as the cue that any key-ups issued under it were swallowed.
-           A player still physically holding a key re-presses it; that beats an
-           unbounded spin. */
-        if (ev.type == SDL_EVENT_KEY_UP &&
-            (ev.key.scancode == SDL_SCANCODE_LGUI ||
-             ev.key.scancode == SDL_SCANCODE_RGUI)) {
-            inputResetHeldKeys();
         }
 
         /* Suspend / resume — Steam Deck Verified requirement.  Fires on
@@ -4271,6 +4287,25 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Pass RAW event to game handler - it does its own coordinate transform
            using SDL_GetRenderLogicalPresentationRect for resizable window support */
         sdl3DrawHandleEvent(cs, &rawEv);
+    }
+
+    /* Held-key / latched edge state is dropped when the windows the player
+     * drives from gain or lose focus as a set, and kept when focus merely
+     * moves between them.  The game polls SDL_GetKeyboardState, so a movement
+     * key released while another application had focus (or while typing in
+     * the Send Message pop-out, which steals focus without SDL clearing the
+     * keyboard) would otherwise read as still held and spin the tank once
+     * focus came back; clearing on the way back in as well means a key still
+     * physically down from before never drives the tank until re-pressed.
+     * Judged here, after the queue has drained, so a hand-off's LOST and
+     * GAINED cancel out instead of firing a reset in between. */
+    if (s_focusEventThisPoll) {
+        s_focusEventThisPoll = false;
+        bool hasFocus = sdl3ImguiGameInputWindowHasFocus();
+        if (hasFocus != s_gameInputHadFocus) {
+            inputResetHeldKeys();
+        }
+        s_gameInputHadFocus = hasFocus;
     }
 
     /* Consume the window-settings dirty flag: the throttle in
@@ -5290,6 +5325,19 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 
 void sdl3ImguiTogglePlayersPanel(void) {
     sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
+}
+
+bool sdl3ImguiGameInputWindowHasFocus(void) {
+    if (s_window &&
+        (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS)) {
+        return true;
+    }
+    if (s_popMapOverview.open && s_popMapOverview.window &&
+        (SDL_GetWindowFlags(s_popMapOverview.window) &
+         SDL_WINDOW_INPUT_FOCUS)) {
+        return true;
+    }
+    return false;
 }
 
 bool sdl3ImguiWantsKeyboard(void) {

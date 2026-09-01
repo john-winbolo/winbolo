@@ -95,15 +95,14 @@ static bool mineKeyEventsActive = FALSE; /* TRUE once we've seen any event for t
 /*********************************************************
 *NAME:          appHasFocus
 *PURPOSE:
-*  Returns true if the SDL3 window currently has
-*  keyboard focus.
+*  Returns true if keyboard focus is on one of the windows
+*  the player drives the game from: the main window or the
+*  Map Overview pop-out.  The Send Message pop-out and the
+*  info pop-outs are not in that set, so typing in them
+*  never steers the tank.
 *********************************************************/
 static bool appHasFocus(void) {
-  SDL_Window *sdlWin = sdl3DrawGetWindow();
-  if (sdlWin && (SDL_GetWindowFlags(sdlWin) & SDL_WINDOW_INPUT_FOCUS)) {
-    return true;
-  }
-  return false;
+  return sdl3ImguiGameInputWindowHasFocus();
 }
 
 /* Returns non-zero if the key at the given SDL_Scancode is currently held */

@@ -115,6 +115,12 @@ bool sdl3ImguiIsSendMsgOpen(void);
  * always reports closed in tablet mode. */
 bool sdl3ImguiIsMapOverviewOpen(void);
 
+/* True while keyboard focus is on a window the player drives the game
+ * from: the main window, or the Map Overview pop-out. The other pop-outs
+ * are deliberately excluded — typing in Send Message must never steer the
+ * tank. */
+bool sdl3ImguiGameInputWindowHasFocus(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiAllianceReqInCooldown
 *PURPOSE:
