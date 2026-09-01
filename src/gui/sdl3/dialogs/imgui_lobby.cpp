@@ -8365,67 +8365,72 @@ static void lobbyClipGifRender(float s) {
 static const int    RECAP_RATING_RETRY_MAX = 6;
 static const Uint64 RECAP_RATING_RETRY_MS  = 5000;
 
-/* The key everything below belongs to; a different one means the state is
- * for the previous round and is thrown away. */
-static char s_recapRatingKey[ROUND_STATS_LOGKEY_LEN] = "";
+/* Shortest gap between two nudge-driven re-reads of the round's page. */
+static const Uint64 RECAP_RATING_NUDGE_MIN_MS = 10000;
 
-static WbnCommentsFetch       *s_recapFetch         = nullptr;
-static bool                    s_recapFetchComplete = false;
-static int                     s_recapFetchStatus   = 0;
-static char                    s_recapFetchErr[256] = "";
-static std::vector<WbnComment> s_recapComments;
-static float                   s_recapRating10      = 0.0f;
-static int                     s_recapNumRatings    = 0;
+/* The rating and comments the recap is holding for one round: the key they
+ * belong to, the fetch that loaded them, and the add-comment form. */
+typedef struct LobbyRatingState {
+    /* The key everything below belongs to; a different one means the state is
+     * for the previous round and is thrown away. */
+    char ratingKey[ROUND_STATS_LOGKEY_LEN] = "";
 
-static WbnCommentPost *s_recapPost             = nullptr;
-static char            s_recapPostMsg[256]     = "";
-static int             s_recapPostStatus       = 0;
-static char            s_recapCommentText[512] = "";
-static int             s_recapCommentRating    = 0;
+    WbnCommentsFetch       *fetch         = nullptr;
+    bool                    fetchComplete = false;
+    int                     fetchStatus   = 0;
+    char                    fetchErr[256] = "";
+    std::vector<WbnComment> comments;
+    float                   rating10      = 0.0f;
+    int                     numRatings    = 0;
 
-/* Fetches spent on this key, and the earliest tick the next one may go out. */
-static int    s_recapFetchAttempts  = 0;
-static Uint64 s_recapFetchRetryAtMs = 0;
+    char postMsg[256]     = "";
+    int  postStatus       = 0;
+    char commentText[512] = "";
+    int  commentRating    = 0;
 
-/* Another player posting against this round re-reads the page, so their stars
- * and comment show without waiting for the next round. The counter is only
- * watched for movement; it is consumed on every move but acted on at most once
- * per interval, so a burst of nudges cannot queue a re-read up for later. The
- * bound sits here rather than on the server because what it protects is this
- * client's traffic to WinBolo.net, and it holds whatever the server or a
- * modified client sends. */
-static uint32_t     s_recapRatingSeenSeq       = 0;
-static Uint64       s_recapRatingNudgeAtMs     = 0;
-static const Uint64 RECAP_RATING_NUDGE_MIN_MS  = 10000;
+    /* Fetches spent on this key, and the earliest tick the next one may go
+     * out. */
+    int    fetchAttempts  = 0;
+    Uint64 fetchRetryAtMs = 0;
 
-/* Both expands, driven from our own flags the way the highlight and award
- * expands above are, so a new round's recap starts on the closed form. */
-static bool s_recapShowComments   = false;
-static bool s_recapShowAddComment = false;
+    /* Another player posting against this round re-reads the page, so their
+     * stars and comment show without waiting for the next round. The counter is
+     * only watched for movement; it is consumed on every move but acted on at
+     * most once per interval, so a burst of nudges cannot queue a re-read up
+     * for later. The bound sits here rather than on the server because what it
+     * protects is this client's traffic to WinBolo.net, and it holds whatever
+     * the server or a modified client sends. */
+    uint32_t ratingSeenSeq   = 0;
+    Uint64   ratingNudgeAtMs = 0;
 
+    /* Both expands, driven from our own flags the way the highlight and award
+     * expands above are, so a new round's recap starts on the closed form. */
+    bool showComments   = false;
+    bool showAddComment = false;
+} LobbyRatingState;
+
+static LobbyRatingState s_rating = {};
+
+/* Held outside LobbyRatingState: a whole-struct reset would either drop the
+ * pointer, leaking the handle and the worker behind it, or free it — and a
+ * POST cannot be cancelled, so the free would block until the request answers
+ * or times out. It is left to finish instead, and the poll clears it. */
+static WbnCommentPost *s_recapPost = nullptr;
+
+/* The fetch handle is owned here, so it has to be released before the struct
+ * is overwritten. Freeing it cancels the transfer, so the wait is brief. */
 static void lobbyRatingReset(void) {
-    if (s_recapFetch) {
-        wbn_comments_fetch_free(s_recapFetch);
-        s_recapFetch = nullptr;
+    if (s_rating.fetch) {
+        wbn_comments_fetch_free(s_rating.fetch);
     }
-    s_recapComments.clear();
-    s_recapRating10       = 0.0f;
-    s_recapNumRatings     = 0;
-    s_recapFetchComplete  = false;
-    s_recapFetchStatus    = 0;
-    s_recapFetchErr[0]    = '\0';
-    s_recapFetchAttempts  = 0;
-    s_recapFetchRetryAtMs = 0;
-    s_recapPostMsg[0]     = '\0';
-    s_recapPostStatus     = 0;
-    s_recapCommentText[0] = '\0';
-    s_recapCommentRating  = 0;
-    s_recapShowComments   = false;
-    s_recapShowAddComment = false;
-    s_recapRatingKey[0]   = '\0';
+    s_rating = LobbyRatingState{};
     /* An in-flight post is deliberately left running — it may still complete
-     * against the old key, and the only cost is that that round does not
-     * auto-refresh. */
+     * against the old key. Until it does it blocks a new post, because the post
+     * button only arms while s_recapPost is null, and when it lands its result
+     * overwrites the postMsg and postStatus cleared just above; the round it
+     * was posted against also does not auto-refresh. Freeing it here is not the
+     * answer: a POST cannot be cancelled, so the free would block the
+     * round-start path until the request answers or times out. */
 }
 
 /* Point the state at the round the lobby is holding, dropping whatever the
@@ -8438,77 +8443,78 @@ static void lobbyRatingReset(void) {
  * hook and the renderer can call it. */
 static void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st) {
     const char *key = (st && st->wbnLogKey[0] != '\0') ? st->wbnLogKey : "";
-    if (strncmp(s_recapRatingKey, key, sizeof(s_recapRatingKey)) == 0) return;
+    if (strncmp(s_rating.ratingKey, key, sizeof(s_rating.ratingKey)) == 0) return;
 
     lobbyRatingReset();
     /* Latched, not zeroed: the counter belongs to the sim and keeps climbing
      * across rounds, so a new round starting from zero would read the running
      * total as movement and read the page back a second time. */
-    s_recapRatingSeenSeq   = clientSimGetRatingPostedSeq(cs);
-    s_recapRatingNudgeAtMs = 0;
+    s_rating.ratingSeenSeq   = clientSimGetRatingPostedSeq(cs);
+    s_rating.ratingNudgeAtMs = 0;
     if (key[0] != '\0') {
-        SDL_strlcpy(s_recapRatingKey, key, sizeof(s_recapRatingKey));
+        SDL_strlcpy(s_rating.ratingKey, key, sizeof(s_rating.ratingKey));
     }
 }
 
 static void lobbyRatingKick(const char *key) {
-    if (s_recapFetch || s_recapFetchComplete) return;
-    if (s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) return;
-    if (SDL_GetTicks() < s_recapFetchRetryAtMs) return;
+    if (s_rating.fetch || s_rating.fetchComplete) return;
+    if (s_rating.fetchAttempts >= RECAP_RATING_RETRY_MAX) return;
+    if (SDL_GetTicks() < s_rating.fetchRetryAtMs) return;
 
-    s_recapFetch = wbn_comments_fetch_start(key);
-    s_recapFetchAttempts++;
-    if (!s_recapFetch) {
+    s_rating.fetch = wbn_comments_fetch_start(key);
+    s_rating.fetchAttempts++;
+    if (!s_rating.fetch) {
         /* HTTP isn't up yet. Space the next try like a failed one rather than
          * spending the whole budget over six consecutive frames. */
-        s_recapFetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
+        s_rating.fetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
     }
 }
 
 static void lobbyRatingPoll(ClientSim *cs) {
-    if (s_recapFetch && wbn_comments_fetch_done(s_recapFetch)) {
+    if (s_rating.fetch && wbn_comments_fetch_done(s_rating.fetch)) {
         const WbnComment *raw = nullptr;
         size_t count = 0;
-        int status = wbn_comments_fetch_result(s_recapFetch, &raw, &count,
-                                               s_recapFetchErr,
-                                               sizeof(s_recapFetchErr));
-        s_recapComments.clear();
+        int status = wbn_comments_fetch_result(s_rating.fetch, &raw, &count,
+                                               s_rating.fetchErr,
+                                               sizeof(s_rating.fetchErr));
+        s_rating.comments.clear();
         if (raw && count > 0) {
-            s_recapComments.assign(raw, raw + count);
+            s_rating.comments.assign(raw, raw + count);
         }
-        wbn_comments_fetch_rating(s_recapFetch, &s_recapRating10,
-                                  &s_recapNumRatings);
-        s_recapFetchStatus = status;
+        wbn_comments_fetch_rating(s_rating.fetch, &s_rating.rating10,
+                                  &s_rating.numRatings);
+        s_rating.fetchStatus = status;
 
-        wbn_comments_fetch_free(s_recapFetch);
-        s_recapFetch = nullptr;
+        wbn_comments_fetch_free(s_rating.fetch);
+        s_rating.fetch = nullptr;
 
         if (status == 200) {
-            s_recapFetchComplete = true;
+            s_rating.fetchComplete = true;
         } else {
             /* Left incomplete so the kick above comes back for it once the
              * gap has passed, until the budget runs out. */
-            s_recapFetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
+            s_rating.fetchRetryAtMs = SDL_GetTicks() + RECAP_RATING_RETRY_MS;
         }
     }
 
     if (s_recapPost && wbn_comments_post_done(s_recapPost)) {
-        s_recapPostStatus = wbn_comments_post_result(s_recapPost, s_recapPostMsg,
-                                                     sizeof(s_recapPostMsg));
+        s_rating.postStatus =
+            wbn_comments_post_result(s_recapPost, s_rating.postMsg,
+                                     sizeof(s_rating.postMsg));
         wbn_comments_post_free(s_recapPost);
         s_recapPost = nullptr;
 
-        if (s_recapPostStatus == 200 || s_recapPostStatus == 201) {
-            s_recapCommentText[0] = '\0';
-            s_recapCommentRating  = 0;
+        if (s_rating.postStatus == 200 || s_rating.postStatus == 201) {
+            s_rating.commentText[0] = '\0';
+            s_rating.commentRating  = 0;
             /* Read the round back so the new comment and the rating it moved
              * both show. */
-            s_recapFetchComplete  = false;
-            s_recapFetchAttempts  = 0;
-            s_recapFetchRetryAtMs = 0;
+            s_rating.fetchComplete  = false;
+            s_rating.fetchAttempts  = 0;
+            s_rating.fetchRetryAtMs = 0;
             /* And tell the rest of the lobby, so their blocks read it back
              * too instead of listing this round without the new comment. */
-            clientSimNetSendRatingPosted(cs, s_recapRatingKey);
+            clientSimNetSendRatingPosted(cs, s_rating.ratingKey);
         }
     }
 }
@@ -8528,13 +8534,14 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
      * armed behind it, and re-arm only once the interval has passed. */
     {
         uint32_t postedSeq = clientSimGetRatingPostedSeq(cs);
-        if (postedSeq != s_recapRatingSeenSeq) {
-            s_recapRatingSeenSeq = postedSeq;
-            if (SDL_GetTicks() >= s_recapRatingNudgeAtMs) {
-                s_recapFetchComplete   = false;
-                s_recapFetchAttempts   = 0;
-                s_recapFetchRetryAtMs  = 0;
-                s_recapRatingNudgeAtMs = SDL_GetTicks() + RECAP_RATING_NUDGE_MIN_MS;
+        if (postedSeq != s_rating.ratingSeenSeq) {
+            s_rating.ratingSeenSeq = postedSeq;
+            if (SDL_GetTicks() >= s_rating.ratingNudgeAtMs) {
+                s_rating.fetchComplete   = false;
+                s_rating.fetchAttempts   = 0;
+                s_rating.fetchRetryAtMs  = 0;
+                s_rating.ratingNudgeAtMs =
+                    SDL_GetTicks() + RECAP_RATING_NUDGE_MIN_MS;
             }
         }
     }
@@ -8543,20 +8550,20 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
      * destroys them, so re-entering the lobby afterwards has to be able to
      * rebuild them. Once they are up the call is an early-out. */
     imguiStarRatingLoadIcons(sdl3DrawGetRenderer());
-    lobbyRatingKick(s_recapRatingKey);
+    lobbyRatingKick(s_rating.ratingKey);
     lobbyRatingPoll(cs);
 
     ImGui::Separator();
 
-    if (s_recapFetchStatus == 200) {
-        if (s_recapNumRatings > 0) {
-            imguiStarRating(s_recapRating10);
+    if (s_rating.fetchStatus == 200) {
+        if (s_rating.numRatings > 0) {
+            imguiStarRating(s_rating.rating10);
             ImGui::SameLine();
             char ratingBuf[16];
-            SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", s_recapRating10);
+            SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", s_rating.rating10);
             MessageArgs args = {};
             SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
-            args.number = s_recapNumRatings;
+            args.number = s_rating.numRatings;
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
         } else {
             /* Nobody has rated the round, so an average of 0.0 out of 0 is a
@@ -8565,9 +8572,10 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
              * verdict rather than as an absence of one. */
             ImGui::TextDisabled("%s: --", langGetText(STR_DLGWBN_COL_RATING));
         }
-    } else if (!s_recapFetch && s_recapFetchAttempts >= RECAP_RATING_RETRY_MAX) {
-        const char *err = s_recapFetchErr[0] ? s_recapFetchErr
-                                             : langGetText(STR_DLGWBN_NETERR);
+    } else if (!s_rating.fetch &&
+               s_rating.fetchAttempts >= RECAP_RATING_RETRY_MAX) {
+        const char *err = s_rating.fetchErr[0] ? s_rating.fetchErr
+                                               : langGetText(STR_DLGWBN_NETERR);
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", err);
     } else {
         ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
@@ -8575,14 +8583,14 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
 
     {
         MessageArgs args = {};
-        args.number = (int)s_recapComments.size();
+        args.number = (int)s_rating.comments.size();
         char cmtHeader[128];
         snprintf(cmtHeader, sizeof(cmtHeader), "%s###recapWbnComments",
                  langGetTextFmt(STR_DLGWBN_COMMENTS_FMT, &args));
-        ImGui::SetNextItemOpen(s_recapShowComments, ImGuiCond_Always);
-        s_recapShowComments = ImGui::CollapsingHeader(cmtHeader);
+        ImGui::SetNextItemOpen(s_rating.showComments, ImGuiCond_Always);
+        s_rating.showComments = ImGui::CollapsingHeader(cmtHeader);
     }
-    if (s_recapShowComments) {
+    if (s_rating.showComments) {
         /* Height-bounded: the reel is fed whatever the body leaves unused, so
          * a list free to grow with the round's comment count would starve it. */
         ImGui::BeginChild("##recapCommentList",
@@ -8598,10 +8606,10 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
             ImGui::SetScrollY(ImGui::GetScrollY() + sdy * ImGui::GetTextLineHeight());
         }
 
-        if (s_recapComments.empty()) {
+        if (s_rating.comments.empty()) {
             ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOCOMMENTS));
         } else {
-            for (const WbnComment &c : s_recapComments) {
+            for (const WbnComment &c : s_rating.comments) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
                 ImGui::TextUnformatted(c.username);
                 ImGui::PopStyleColor();
@@ -8623,10 +8631,10 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
     /* Closed unless the player opens it, so the text field stays out of the
      * nav graph and the Deck's on-screen keyboard never comes up while the
      * recap is only being read. */
-    ImGui::SetNextItemOpen(s_recapShowAddComment, ImGuiCond_Always);
-    s_recapShowAddComment =
+    ImGui::SetNextItemOpen(s_rating.showAddComment, ImGuiCond_Always);
+    s_rating.showAddComment =
         ImGui::CollapsingHeader(langGetText(STR_DLGWBN_ADDCOMMENT));
-    if (s_recapShowAddComment) {
+    if (s_rating.showAddComment) {
         char wbnToken[256], wbnExpiry[256];
         gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
 
@@ -8643,38 +8651,39 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
             ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_COL_RATING));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80 * s);
-            ImGui::Combo("##recapRating", &s_recapCommentRating,
+            ImGui::Combo("##recapRating", &s_rating.commentRating,
                          "-\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
             ImGui::SetNextItemWidth(cw);
             ImGui::InputTextWithHint("##recapCmtText",
                                      langGetText(STR_DLGWBN_HINT_COMMENT),
-                                     s_recapCommentText,
-                                     sizeof(s_recapCommentText));
+                                     s_rating.commentText,
+                                     sizeof(s_rating.commentText));
 
             /* Until the fetch has found the round, WinBolo.net does not have
              * it yet and a comment posted against the key would be refused. */
-            bool canPost = s_recapCommentText[0] != '\0' &&
+            bool canPost = s_rating.commentText[0] != '\0' &&
                            s_recapPost == nullptr &&
-                           s_recapFetchStatus == 200;
+                           s_rating.fetchStatus == 200;
             if (!canPost) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_DLGWBN_POST), ImVec2(cw, 0))) {
-                s_recapPostStatus = 0;
-                s_recapPostMsg[0] = '\0';
-                s_recapPost = wbn_comments_post_start(s_recapRatingKey, wbnToken,
-                                                      s_recapCommentText,
-                                                      s_recapCommentRating);
+                s_rating.postStatus = 0;
+                s_rating.postMsg[0] = '\0';
+                s_recapPost = wbn_comments_post_start(s_rating.ratingKey, wbnToken,
+                                                      s_rating.commentText,
+                                                      s_rating.commentRating);
             }
             imguiHandOnHover();
             if (!canPost) ImGui::EndDisabled();
 
             if (s_recapPost) {
                 ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
-            } else if (s_recapPostStatus == 200 || s_recapPostStatus == 201) {
+            } else if (s_rating.postStatus == 200 || s_rating.postStatus == 201) {
                 ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s",
                                    langGetText(STR_DLGWBN_POSTED));
-            } else if (s_recapPostStatus != 0) {
-                const char *err = s_recapPostMsg[0] ? s_recapPostMsg
-                                                    : langGetText(STR_DLGWBN_NETERR);
+            } else if (s_rating.postStatus != 0) {
+                const char *err = s_rating.postMsg[0]
+                                      ? s_rating.postMsg
+                                      : langGetText(STR_DLGWBN_NETERR);
                 ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", err);
             }
         }
