@@ -498,17 +498,34 @@ static bool             s_chooseMapOpen          = false;
  * it draws above the scrim windows, but NOT every frame after — that
  * yanks focus away from anything the user clicks into the chat-hole. */
 static bool             s_chooseMapFocusedOnce   = false;
-/* Screen-space rect of the lobby's chat block, captured each frame so
- * the map-chooser scrim can punch a hole over it. We deliberately
- * leave the chat reachable while the chooser is open so players can
- * keep talking while picking / generating a map, but everything else
- * behind the chooser was getting accidental clicks; the scrim
- * windows below (renderChooserScrim) darken + absorb input over the
- * non-chat area. ImVec2(0,0) on both means "no chat rect yet". */
-static ImVec2           s_chatBlockMin           = ImVec2(0.0f, 0.0f);
-static ImVec2           s_chatBlockMax           = ImVec2(0.0f, 0.0f);
-static int              s_chatRefocusFrames      = 0;
-static bool             s_chatHideNav            = false;
+/* Chat state shared between the chat panel and the map chooser.
+ *
+ * blockMin/blockMax are the screen-space rect of the lobby's chat
+ * block, captured each frame so the map-chooser scrim can punch a hole
+ * over it. We deliberately leave the chat reachable while the chooser
+ * is open so players can keep talking while picking / generating a map,
+ * but everything else behind the chooser was getting accidental clicks;
+ * the scrim windows below (renderChooserScrim) darken + absorb input
+ * over the non-chat area. ImVec2(0,0) on both means "no chat rect yet".
+ *
+ * refocusFrames/hideNav drive the refocus-after-send and nav-highlight
+ * suppression in lobbyRenderChatInputAndSend. */
+typedef struct LobbyChatState {
+    ImVec2 blockMin;
+    ImVec2 blockMax;
+    int    refocusFrames;
+    bool   hideNav;
+} LobbyChatState;
+
+static LobbyChatState   s_chat                   = {};
+
+/* Drop the chat rect and the pending refocus / nav-suppression flags on
+ * lobby teardown, so a session left mid-send does not carry a focus
+ * grab or a stale hole position into the next one. */
+static void lobbyChatReset(void) {
+    s_chat = LobbyChatState{};
+}
+
 /* Two chooser instances: one for the Server Maps tab (routes its
  * directory listing through serverSimEnumerateMapDir so it reflects
  * the server's actual map library), one for the Upload tab (always
@@ -9805,17 +9822,17 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     const bool spectator = clientSimIsSpectator(cs);
     float btnW = 60.0f * s;
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
-    if (s_chatRefocusFrames > 0) {
+    if (s_chat.refocusFrames > 0) {
         ImGui::SetKeyboardFocusHere(0);
-        s_chatRefocusFrames--;
+        s_chat.refocusFrames--;
     }
-    if (s_chatHideNav)
+    if (s_chat.hideNav)
         ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
     bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                          ImGuiInputTextFlags_EnterReturnsTrue);
-    if (s_chatHideNav) {
+    if (s_chat.hideNav) {
         ImGui::GetCurrentContext()->NavCursorVisible = false;
-        if (ImGui::IsItemActive()) s_chatHideNav = false;
+        if (ImGui::IsItemActive()) s_chat.hideNav = false;
     }
     ImGui::SameLine();
     bool chatEmpty = (chatInput[0] == '\0');
@@ -9839,8 +9856,8 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
             soundPlayEffect(lobbyChatReceived);
         }
         chatInput[0] = '\0';
-        s_chatRefocusFrames = 2;
-        s_chatHideNav = true;
+        s_chat.refocusFrames = 2;
+        s_chat.hideNav = true;
     }
 }
 
@@ -9913,7 +9930,7 @@ static void lobbyChatInputAppendTime(uint32_t curMs) {
         return;
     }
     SDL_strlcat(s_lf.chatInput, token, CHAT_INPUT_SIZE);
-    s_chatRefocusFrames = 2;
+    s_chat.refocusFrames = 2;
 }
 #endif
 
@@ -9994,6 +10011,8 @@ extern "C" void imguiLobbyFrameReset(void) {
     s_chooseMapWantCloseConfirm = false;
     s_chooseMapPreviewPending   = false;
     s_chooseMapCs               = NULL;
+
+    lobbyChatReset();
 
     /* A lobby re-entered with a summary still stored should open on the
      * recap, not on whatever the last session was left looking at. */
@@ -11514,9 +11533,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * known size — GetItemRectMin/Max after EndChild has been
              * unreliable on some imgui builds when the child is part
              * of a group. */
-            s_chatBlockMin = chatBlockCursor;
-            s_chatBlockMax = ImVec2(chatBlockCursor.x + playerPanelW,
-                                    chatBlockCursor.y + bottomH);
+            s_chat.blockMin = chatBlockCursor;
+            s_chat.blockMax = ImVec2(chatBlockCursor.x + playerPanelW,
+                                     chatBlockCursor.y + bottomH);
 
             ImGui::EndGroup(); /* /left column */
 
@@ -11903,8 +11922,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * keep it from stealing focus from the chooser, which is
          * rendered just below this block (so it draws on top in Z). */
         if (s_chooseMapOpen &&
-            s_chatBlockMax.x > s_chatBlockMin.x &&
-            s_chatBlockMax.y > s_chatBlockMin.y) {
+            s_chat.blockMax.x > s_chat.blockMin.x &&
+            s_chat.blockMax.y > s_chat.blockMin.y) {
             /* NoBringToFrontOnFocus / NoFocusOnAppearing keep the z-order
              * DETERMINISTIC by creation order rather than focus: ##LobbyBg
              * (also flagged NoBringToFrontOnFocus) is begun first, then these
@@ -11942,12 +11961,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
             /* Top strip — above the chat. */
             drawScrim("##chooserScrimTop", 0.0f, 0.0f,
-                      (float)winW, s_chatBlockMin.y);
+                      (float)winW, s_chat.blockMin.y);
             /* Right strip — right of the chat, full remaining height. */
-            drawScrim("##chooserScrimRight", s_chatBlockMax.x,
-                      s_chatBlockMin.y,
-                      (float)winW - s_chatBlockMax.x,
-                      (float)winH - s_chatBlockMin.y);
+            drawScrim("##chooserScrimRight", s_chat.blockMax.x,
+                      s_chat.blockMin.y,
+                      (float)winW - s_chat.blockMax.x,
+                      (float)winH - s_chat.blockMin.y);
 
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
