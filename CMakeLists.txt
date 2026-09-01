@@ -117,10 +117,16 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+# The docking branch (not master) because the log viewer sets
+# ImGuiConfigFlags_DockingEnable, and sdl3imgui.cpp / imgui_lobby.cpp pass
+# ImGuiWindowFlags_NoDocking — none of which exist on master. Pin to a release
+# tag: tracking the branch head silently pulled a backend change that reset the
+# SDL renderer's default sampler to LINEAR and put a dark grid through the map
+# editor canvas.
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        v1.92.9b-docking
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
