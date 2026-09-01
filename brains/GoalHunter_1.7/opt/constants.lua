@@ -2517,11 +2517,19 @@ M.SEA_PILL_ENABLED            = true  -- master switch for the deep-sea branch o
 M.SEA_PILL_SCAN_PERIOD        = 50    -- ticks between full re-plans (matches the pool's own 50t CAPTURE_CAND cadence)
 M.SEA_PILL_CLUSTER_RADIUS     = 3     -- dead sea pills within this many tiles are ONE harvest cluster (one boat trip takes them all)
 M.SEA_PILL_ENTRANCE_MAX_DIST  = 12    -- how far from the cluster we will look for a water entrance S
+M.PILLBOX_RANGE_WU            = 2048  -- pillbox.h PILLBOX_RANGE. util.c utilIsItemInRange is INCLUSIVE and euclidean
+                                      -- in world units, so this is the exact circle a pill can fire into
+M.SEA_COVER_MARGIN_CALM_WU    = 0     -- a CALM pill (anger < HEATED_ANGER) reloads slowly and has to notice us first:
+                                      -- sail right up to its 8-tile line
+M.SEA_COVER_MARGIN_HOT_WU     = 256   -- a HEATED pill is already firing on a short reload: keep one tile of buffer
+                                      -- (covered radius 9.0 tiles instead of 8.0)
 M.SEA_PILL_PILL_SAFE_RANGE    = 9     -- PILL_FIRE_RANGE(8) + 1, measured EUCLIDEAN (U.edist): every hostile/neutral pill
                                       -- this close to a cluster tile or a boat-path tile gets the line-of-fire test
 M.SEA_PILL_ENEMY_TANK_NEAR    = 10    -- a visible enemy tank this close (EUCLIDEAN) to the cluster or the boat path rejects
                                       -- (or aborts) the harvest — a boat is one shell from dead
-M.SEA_PILL_MIN_SHELLS         = 3     -- reserve for detonating the mine (forest eats one, mine landing needs one, +1 slack)
+M.SEA_PILL_MIN_SHELLS         = 3     -- shells reserved to detonate the mine: one to land on it, +1 slack, +1 margin
+M.SEA_PILL_MIN_SHELLS_FOREST  = 5     -- ...and more when a FOREST tile sits in the F->S lane: a shell dies on the first
+                                      -- forest it meets and only turns it to grass (shells.c:803), so that one is wasted
 M.SEA_PILL_FIRE_DIST          = 2     -- F sits exactly this many tiles from S: 512 wu > the 384 wu mine blast box
 M.SEA_PILL_MAX_DETONATE_SHOTS = 4     -- give up (and replan) after this many shells at the mine
 M.SEA_BOAT_TREES              = 20    -- LGM_COST_BOAT (lgm.h:54): a wall built on RIVER is a BOAT and costs 20 trees
@@ -2540,6 +2548,14 @@ M.SEA_TREES_MIN_INFLUENCE     = 0     -- a forest tile only counts when cpf.infl
                                       -- the front. Raise it to demand deeper own territory. 0 also rejects "no influence data yet",
                                       -- which is deliberate: nobody farms 21 trees into unknown ground for a boat.
 M.SEA_PILL_TREE_LEG_PER_TREE  = 6     -- cost charged per missing tree for the seek_trees leg (≈ one LGM farm round trip / 4 trees)
+M.SEA_NOGO_SPEED_CAP          = 16    -- info.speed cap (0..64) while covered water is near: a boat's turn RADIUS grows
+                                      -- with speed (the turn RATE is terrain-fixed), so 52 overshoots a turn by ~1 tile
+                                      -- and 16 by ~0.3. Slowing early is what keeps it out; braking late does not
+M.SEA_NOGO_SLOW_RADIUS        = 1.5   -- tiles: within this of a covered tile, hold the cap
+M.SEA_NOGO_HEADING_RADIUS     = 3     -- tiles: within this, never accelerate while turning hard
+M.SEA_NOGO_TURN_BRADS         = 32    -- 32/256 = 45 degrees off the next waypoint counts as "turning hard"
+M.SEA_NOGO_AVOID_PENALTY      = 30000 -- trace-time cost for covered water in the nav obstacle set: a wall in all but name
+M.SEA_ROUTE_LOOKAHEAD         = 3     -- waypoints ahead on the safe water route the boat steers for while collecting
 M.SEA_PILL_BOAT_STEP_COST     = 12    -- cost per boat-path tile when scoring candidate S tiles (river/boat terrain cost ≈ grass)
 M.SEA_PILL_DANGER_W           = 2.0   -- weight on threat.pill_at along S and the boat path in the S score
 M.SEA_PILL_COST_MULT          = 0.3   -- the pills are FREE, so the whole trip is priced at 30% of its travel

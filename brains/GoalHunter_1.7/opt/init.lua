@@ -414,6 +414,22 @@ end
 
 function Brain.open(info)
   opt.set_tick(0)
+  -- DETERMINISM FOR TESTS. The capacity tier is driven by wall-clock
+  -- lastThinkMs, so the same seed produces different play on a loaded machine:
+  -- two headless servers sharing a CPU both tier down, CAPTURE_ROUTE_MIN_TIER
+  -- stops the route probe, and the bot makes different choices. Running the
+  -- sea-pill variants two at a time turned a raft the bot had correctly split
+  -- into one it sailed straight into. WINBOLO_BRAIN_TIER pins the tier so a
+  -- functional test measures the BRAIN rather than the machine it ran on;
+  -- unset (every real game) the dynamic controller is untouched.
+  if os and os.getenv then
+    local t = tonumber(os.getenv("WINBOLO_BRAIN_TIER") or "")
+    if t and t >= 1 and t <= 10 then
+      _G._BT_TIER_OVERRIDE = math.floor(t)
+      print(string.format(TAG .. " capacity tier PINNED to %d by WINBOLO_BRAIN_TIER",
+                          _G._BT_TIER_OVERRIDE))
+    end
+  end
   -- Host-callable log flush. BrainTest invokes this (via the C side) when
   -- the sim is paused so the batched print2 log is written to disk
   -- immediately for reading. No-op in opt/non-debug runs (force_flush
@@ -5000,7 +5016,69 @@ function Brain.think(info)
   -- both act on the substate this tick set (steering parks at F / drives onto
   -- the boat; the builder dispatches the mine and the boat build).
   goals.sea_update(state, world, info)
+  -- Keeps the covered-water no-go set alive for the whole boat trip, including
+  -- the run home after the harvest plan itself has ended.
+  goals.sea_nogo_tick(state, info)
   local keys, taps = steer.steer(state, world, info, state.goal)
+  -- NO-GO WATER: SLOW DOWN EARLY, do not brake late.
+  -- A boat's turn RATE is terrain-fixed, so its turn RADIUS grows with speed:
+  -- at spd 52 a 90-degree arc overshoots about a tile, at spd 16 about a third
+  -- of one. On tests/sea_pills_B the tank sat at (138,128) turning while
+  -- ACCELERATING 32 -> 52, and the old one-tile-ahead brake did not fire until
+  -- spd 52 with one tile to go — 20 ticks too late to stop a boat. The fix is
+  -- to never carry the speed in the first place: while covered water is near,
+  -- cruise, and never accelerate through a turn.
+  -- Single choke point after steering, like the cliff-safety brake, so no goal
+  -- branch can route around it. Keyed on _sea_nogo, which outlives the plan.
+  if info.inboat and state._sea_nogo and next(state._sea_nogo) ~= nil then
+    local nogo   = state._sea_nogo
+    local tmx0   = bit.rshift(info.tankx, 8)
+    local tmy0   = bit.rshift(info.tanky, 8)
+    local slow_r = C.SEA_NOGO_SLOW_RADIUS or 1.5
+    local near_r = C.SEA_NOGO_HEADING_RADIUS or 3
+    -- Nearest covered tile, over a small box rather than the whole set.
+    local near_d = 1e9
+    local R = math.ceil(near_r)
+    for dy = -R, R do
+      for dx = -R, R do
+        if nogo[(tmy0 + dy) * 256 + (tmx0 + dx)] then
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d < near_d then near_d = d end
+        end
+      end
+    end
+    -- (a) Would we COAST into one? Ask the same engine-exact stopping model the
+    -- cliff brake uses, and treat the stop tile and its neighbours as inside.
+    local stop_in_nogo = false
+    if near_d <= near_r + 2 then
+      local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx0, tmy0)]) or 16
+      local psx, psy = cpf.predict_stop(info.tankx, info.tanky,
+                                        info.tank_angle or info.direction,
+                                        (info.speed or 0) / 4, tcap)
+      local smx0, smy0 = bit.rshift(psx, 8), bit.rshift(psy, 8)
+      for dy = -1, 1 do
+        for dx = -1, 1 do
+          if nogo[(smy0 + dy) * 256 + (smx0 + dx)] then stop_in_nogo = true end
+        end
+      end
+    end
+    local cap = C.SEA_NOGO_SPEED_CAP or 16
+    if near_d <= slow_r or stop_in_nogo then
+      if (info.speed or 0) > cap then
+        keys = bit.bor(bit.band(keys, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+      else
+        keys = bit.band(keys, bit.bnot(KEY_FASTER))
+      end
+    elseif near_d <= near_r and state._steer_lx then
+      -- (b) Never accelerate THROUGH a turn near the set: a wide arc is exactly
+      -- how the boat drifted sideways into the tile it was refusing to enter.
+      local want = U.aim_at(info.tankx, info.tanky,
+                            U.m2w(state._steer_lx), U.m2w(state._steer_ly))
+      if math.abs(U.adiff(info.direction, want)) > (C.SEA_NOGO_TURN_BRADS or 32) then
+        keys = bit.band(keys, bit.bnot(KEY_FASTER))
+      end
+    end
+  end
   -- Cautious-approach speed: when our tank is on (or stepping onto) an ally's
   -- pill-take ring, hold a steady boat-in-a-river cruise — CAP the speed rather
   -- than bleed it to zero. Only decelerate when above the cap; otherwise leave

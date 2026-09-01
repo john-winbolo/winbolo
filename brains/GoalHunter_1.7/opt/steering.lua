@@ -284,6 +284,10 @@ local _path_method       = "dij" -- cpf._last_method captured at search time
 local STUCK_TICKS    = 100   -- ticks of no progress before triggering (~2s)
 local STUCK_MOVE_WU  = 24    -- world-units the tank must move within window
 local STUCK_PENALTY  = 1500  -- overlay cost added to the offending tile
+-- Water a hostile pill can shoot, while a sea harvest is live. Not a
+-- preference: one shell sinks a boat, so the cost is high enough that the
+-- pathfinder treats it as a wall and takes any route at all in preference.
+local SEA_NOGO_PENALTY = 30000
 local STUCK_DURATION = 600   -- ticks the penalty stays active (~12s)
 -- Earlier sub-trigger: if the tank has been not-moving for this long
 -- (less than STUCK_TICKS so it fires BEFORE the blacklist kicks in),
@@ -344,6 +348,28 @@ local function stuck_recovery(state, info, goal)
   if bl == nil then
     bl = {}
     state.stuck_blacklist = bl
+  end
+
+  -- Covered water for a live sea harvest: stamp it as (effectively) wall so
+  -- the boat-layer search routes around it, and un-stamp when the trip ends.
+  -- Same re-stamp-every-tick discipline as the stuck blacklist below, for the
+  -- same reason: init.lua rebuilds the overlay when the threat set changes.
+  do
+    local nogo = state._sea_nogo
+    local prev = state._sea_nogo_stamped
+    if prev then
+      for k in pairs(prev) do
+        if not (nogo and nogo[k]) then
+          cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 0)
+        end
+      end
+    end
+    if nogo then
+      for k in pairs(nogo) do
+        cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), SEA_NOGO_PENALTY)
+      end
+    end
+    state._sea_nogo_stamped = nogo
   end
 
   -- Decay expired entries and re-stamp the rest into the per-tick overlay.
@@ -489,8 +515,25 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   -- from blitz participants we can see) so the Dijkstra tracer veers around them
   -- at trace time — instant, no slate recompute. nil when no blitz is converging.
   local avoid = state._nav_avoid_tiles
+  -- Covered water while a sea harvest is live goes into the SAME dynamic
+  -- obstacle set the ally-tank dodge uses: the Dijkstra tracer veers around it
+  -- at trace time, which is the only mechanism that reaches the boat layer
+  -- without a slate recompute. The overlay stamp alone did not — the slate had
+  -- already been built — so on tests/sea_pills_B the boat routed east through
+  -- the one tile a pillbox was watching and picked up the pill the plan had
+  -- deliberately refused. Merged into a fresh table so the ally set is not
+  -- mutated.
+  local nogo = state._sea_nogo
+  if nogo then
+    local merged = {}
+    if avoid then for k, v in pairs(avoid) do merged[k] = v end end
+    for k in pairs(nogo) do merged[k] = true end
+    avoid = merged
+  end
   local _t_s0 = BRAIN_PROFILE and clock_us() or 0
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid, C.NAV_AVOID_PENALTY)
+  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid,
+                                     nogo and (C.SEA_NOGO_AVOID_PENALTY or 30000)
+                                          or C.NAV_AVOID_PENALTY)
   if BRAIN_PROFILE then
     _path_search_us = _path_search_us + (clock_us() - _t_s0)
     -- Snapshot which method (dij/astar) cpf.path_to actually used
@@ -697,7 +740,7 @@ end
 --   In boat: stop at any water/land boundary.  Cutting diagonals through
 --            a river corridor can clip a land tile and lose the boat.
 --            Also stop at BOAT tiles on water (transition point).
-local function path_lookahead(state, info, nx, ny)
+local function path_lookahead_inner(state, info, nx, ny)
   local pf = state.pf
   local chain = pf.path_chain
   if not chain or #chain < 4 then
@@ -955,6 +998,26 @@ local function path_lookahead(state, info, nx, ny)
   sdbg("lookahead: RESULT (%d,%d)", best_x, best_y)
   return best_x, best_y
 end
+
+-- Covered water is never a lookahead target while a sea harvest is live. The
+-- lookahead's whole job is to SKIP AHEAD along the path chain, which is exactly
+-- how a boat cuts the corner through a tile a pillbox is watching: on
+-- tests/sea_pills_B it entered (139,126), 8.0 tiles from the hostile pill, on
+-- its way from one raft member to the next. The overlay stamp above steers the
+-- SEARCH away; this is the hard stop that keeps the STEERING out.
+local function path_lookahead(state, info, nx, ny)
+  local lx, ly = path_lookahead_inner(state, info, nx, ny)
+  local nogo = state._sea_nogo
+  if not nogo or not lx then return lx, ly end
+  if nogo[ly * 256 + lx] then
+    -- Fall back to the immediate step; if that is covered too, hold on our own
+    -- tile so the next search has to find a way round rather than through.
+    if nx and nx >= 0 and not nogo[ny * 256 + nx] then return nx, ny end
+    return bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+  end
+  return lx, ly
+end
+
 
 -- =========================================================================
 -- Pill placement steering
@@ -3155,6 +3218,30 @@ function M.steer(state, world, info, goal)
     end
     goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(goal.mx), U.m2w(goal.my))
 
+  elseif goal.kind == "capture_pill" and goal.substate == "collect"
+         and goal.sea_route and #goal.sea_route >= 2 then
+    -- ── SEA-PILL HARVEST, afloat ─────────────────────────────────────────
+    -- Follow the planned water ROUTE rather than heading straight at the pill.
+    -- The route was searched with every tile a hostile pill can shoot treated
+    -- as a wall, so the straight line and the safe line are not the same thing
+    -- whenever a pill covers part of the raft. Re-anchor on the nearest
+    -- waypoint each tick (the route is only regenerated per replan, and the
+    -- boat moves in between), then aim a few tiles further along it.
+    local r = goal.sea_route
+    local anchor, ad = 1, nil
+    for i = 1, #r do
+      local d = U.mdist(tmx, tmy, r[i][1], r[i][2])
+      if ad == nil or d < ad then ad, anchor = d, i end
+    end
+    local idx = math.min(#r, anchor + (C.SEA_ROUTE_LOOKAHEAD or 3))
+    local wp = r[idx]
+    state._steer_lx = wp[1]
+    state._steer_ly = wp[2]
+    move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(wp[1]), U.m2w(wp[2]))
+    target_dist = U.wdist(info.tankx, info.tanky, U.m2w(wp[1]), U.m2w(wp[2]))
+    goal_dist   = U.wdist(info.tankx, info.tanky, U.m2w(goal.mx), U.m2w(goal.my))
+    plow_through = true   -- drive OVER the dead pill; that is the pickup
+
   elseif goal.kind == "capture_pill" and goal.sea and goal.substate
          and goal.substate ~= "" and goal.substate ~= "collect" then
     -- ("collect" is the AFLOAT phase: it deliberately falls through to the
@@ -3185,6 +3272,13 @@ function M.steer(state, world, info, goal)
       plow_through = false
     elseif ssub == "approach_F" then
       if goal.sea.F then nav_mx, nav_my = goal.sea.F[1], goal.sea.F[2] end
+      plow_through = false
+    elseif ssub == "build_boat" then
+      -- Close to the water's edge WHILE the LGM builds, not after. An
+      -- unoccupied boat does not keep: leaving the tank at the firing spot two
+      -- tiles back meant the boat was gone before it arrived.
+      local B = goal.sea.B
+      if B then nav_mx, nav_my = B[1], B[2] end
       plow_through = false
     elseif ssub == "board" then
       nav_mx, nav_my = S[1], S[2]
