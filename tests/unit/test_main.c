@@ -431,6 +431,7 @@ static const UnitTestEntry s_tests[] = {
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },
     { "fx_viewport_cull",                        run_fx_viewport_cull                        },
+    { "viewport_calc_square_pure",               run_viewport_calc_square_pure               },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },

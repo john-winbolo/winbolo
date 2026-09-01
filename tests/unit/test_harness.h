@@ -792,6 +792,12 @@ int run_two_clients_full_sync_independent(void);
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
 
+/* Pure viewport square calculator (test_viewport_calc.c):
+ * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
+ * never yields TANK_TRANSPARENT, and resolves pill and base squares by the
+ * alliance of the player being asked about. */
+int run_viewport_calc_square_pure(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

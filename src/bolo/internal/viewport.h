@@ -50,6 +50,12 @@ void viewportUpdateView(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
                         BYTE brainMap[][MAP_ARRAY_SIZE], updateType value);
 BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
                         BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
+/* The tile calculation on its own: reports the mine flag through isMine
+ * instead of writing a view buffer, and leaves the map and the mine overlay
+ * untouched. sim is non-const only because pillsGetScreenHealth and
+ * basesGetAlliancePos take a non-const GameSim *. */
+BYTE viewportCalcSquarePure(struct GameSim *sim, BYTE myPlayerNum,
+                            BYTE xValue, BYTE yValue, bool *isMine);
 void viewportPanX(ViewPort *vp, int dxTiles);
 void viewportPanY(ViewPort *vp, int dyTiles);
 void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank);

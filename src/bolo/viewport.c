@@ -91,11 +91,48 @@ void viewportUpdateView(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
   }
 }
 
-BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
-                        BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
+/* mapIsMine over a caller-supplied terrain byte, so a locally normalised
+ * value can be tested without writing it back to the map. */
+static bool viewportSquareIsMine(BYTE xValue, BYTE yValue, BYTE terrain) {
+  bool returnValue; /* Value to return */
+
+  returnValue = FALSE;
+  if (xValue <= MAP_MINE_EDGE_LEFT || xValue >= MAP_MINE_EDGE_RIGHT ||
+      yValue <= MAP_MINE_EDGE_TOP || yValue >= MAP_MINE_EDGE_BOTTOM) {
+    returnValue = TRUE;
+  } else if (terrain >= MINE_START && terrain <= MINE_END) {
+    returnValue = TRUE;
+  }
+  return returnValue;
+}
+
+/* minesExistPos over a caller-supplied terrain byte; cleared stands in for a
+ * minesRemoveItem the caller only modelled. */
+static bool viewportSquareMineVisible(mines *visMines, BYTE xValue, BYTE yValue,
+                                      BYTE terrain, bool cleared) {
+  bool returnValue; /* Value to return */
+
+  if (xValue <= MAP_MINE_EDGE_LEFT || xValue >= MAP_MINE_EDGE_RIGHT ||
+      yValue <= MAP_MINE_EDGE_TOP || yValue >= MAP_MINE_EDGE_BOTTOM) {
+    returnValue = TRUE;
+  } else if ((*visMines)->minesHiddenMines == TRUE) {
+    if (cleared == TRUE) {
+      returnValue = FALSE;
+    } else {
+      returnValue = (*visMines)->pos[xValue][yValue];
+    }
+  } else {
+    returnValue = (bool)(terrain >= MINE_START && terrain <= MINE_END);
+  }
+  return returnValue;
+}
+
+BYTE viewportCalcSquarePure(struct GameSim *sim, BYTE myPlayerNum,
+                            BYTE xValue, BYTE yValue, bool *isMine) {
   baseAlliance ba;
   BYTE returnValue;
   BYTE currentPos;
+  bool normalised;
   BYTE aboveLeft;
   BYTE above;
   BYTE aboveRight;
@@ -105,7 +142,7 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
   BYTE below;
   BYTE belowRight;
 
-  vp->mineView->mineItem[scrX][scrY] = FALSE;
+  *isMine = FALSE;
   /* Set up Items */
   if ((pillsExistPos(&sim->pb, xValue, yValue)) == TRUE) {
     returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue, myPlayerNum);
@@ -135,21 +172,21 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
     }
   } else {
     currentPos = mapGetPos(&sim->mp, xValue, yValue);
+    normalised = FALSE;
     if (currentPos >= HALFBUILDING + MINE_SUBTRACT && currentPos != DEEP_SEA) {
-      minesRemoveItem(&sim->mns, xValue, yValue);
-      vp->mineView->mineItem[scrX][scrY] = FALSE;
-      currentPos = currentPos - MINE_SUBTRACT;
-      mapSetPos(sim, &sim->mp, xValue, yValue, currentPos, TRUE, TRUE);
+      currentPos = (BYTE)(currentPos - MINE_SUBTRACT);
+      normalised = TRUE;
     }
-    if (mapIsMine(&sim->mp, xValue, yValue) == TRUE) {
-      if (minesExistPos(&sim->mns, &sim->mp, xValue, yValue) == TRUE) {
-        vp->mineView->mineItem[scrX][scrY] = TRUE;
+    if (viewportSquareIsMine(xValue, yValue, currentPos) == TRUE) {
+      if (viewportSquareMineVisible(&sim->mns, xValue, yValue, currentPos,
+                                    normalised) == TRUE) {
+        *isMine = TRUE;
       }
       if (currentPos != DEEP_SEA) {
-        currentPos = currentPos - MINE_SUBTRACT;
+        currentPos = (BYTE)(currentPos - MINE_SUBTRACT);
       }
     } else {
-      vp->mineView->mineItem[scrX][scrY] = FALSE;
+      *isMine = FALSE;
     }
 
     if (basesExistPos(&sim->bs, (BYTE)(xValue - 1), (BYTE)(yValue - 1)) == TRUE) {
@@ -252,6 +289,31 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
   return returnValue;
+}
+
+BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
+                        BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
+  bool isMine = FALSE;
+  BYTE result;
+  BYTE currentPos;
+
+  result = viewportCalcSquarePure(sim, myPlayerNum, xValue, yValue, &isMine);
+  vp->mineView->mineItem[scrX][scrY] = isMine;
+
+  /* Repair a malformed terrain byte; the view is the only path that
+   * normalises these. The tile above was computed from the normalised
+   * value already, so the write-back only fixes the stored map. */
+  if (pillsExistPos(&sim->pb, xValue, yValue) == FALSE &&
+      basesExistPos(&sim->bs, xValue, yValue) == FALSE) {
+    currentPos = mapGetPos(&sim->mp, xValue, yValue);
+    if (currentPos >= HALFBUILDING + MINE_SUBTRACT && currentPos != DEEP_SEA) {
+      minesRemoveItem(&sim->mns, xValue, yValue);
+      mapSetPos(sim, &sim->mp, xValue, yValue,
+                (BYTE)(currentPos - MINE_SUBTRACT), TRUE, TRUE);
+    }
+  }
+
+  return result;
 }
 
 void viewportPanX(ViewPort *vp, int dxTiles) {
