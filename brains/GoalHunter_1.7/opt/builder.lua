@@ -316,6 +316,30 @@ function M.set_mode(state, world, info, goal)
     b.need_trees = goal._trees_for_walls or 0
   end
 
+  -- SEA-PILL HARVEST (capture_pill's deep-sea branch). Three of the substates
+  -- are LGM jobs; the rest must keep him aboard (the mine blast kills an LGM
+  -- caught in it, and a boarding tank must not leave him on the shore).
+  --   seek_trees  -> the ordinary gather machinery, told how much wood the
+  --                  mine + boat need (LGM_COST_BOAT 20 + LGM_COST_MINE 1).
+  --   lay_mine    -> BUILDMODE_MINE on S.
+  --   build_boat  -> BUILDMODE_BUILD on S, which is RIVER by then, and a wall
+  --                  on river IS a boat (lgm.c:377).
+  if kind == "capture_pill" and goal.sea then
+    local sub = goal.substate or ""
+    if sub == "seek_trees" then
+      b.mode       = "gather"
+      b.need_trees = goal.sea.trees_need or (C.SEA_PILL_TREES_TOTAL or 21)
+    elseif sub == "lay_mine" then
+      b.mode = "sea_mine"
+      b.sea_target = { mx = goal.sea.S[1], my = goal.sea.S[2] }
+    elseif sub == "build_boat" then
+      b.mode = "sea_boat"
+      b.sea_target = { mx = goal.sea.S[1], my = goal.sea.S[2] }
+    else
+      b.mode = "suppressed"
+    end
+  end
+
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
   if kind == "attack_pill" and goal.substate == "build_walls" then
   end
@@ -786,6 +810,66 @@ function M.decide(state, world, info, now)
 
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
+
+  -- Priority 0.3: SEA-PILL HARVEST builds (capture_pill's deep-sea branch).
+  -- Highest priority because both are one-shot, plan-critical and already
+  -- gated by the substate machine: goals.sea_update only enters lay_mine once
+  -- the tank is parked on F with mines >= 1 and all 21 trees in hand, and only
+  -- enters build_boat once S has actually flooded to RIVER. Nothing here
+  -- decides WHETHER to harvest — it only executes the current substate.
+  if b.mode == "sea_mine" or b.mode == "sea_boat" then
+    local t = b.sea_target
+    if not t then return bail("sea_no_target") end
+    if not lgm_can_reach(info, t.mx, t.my) then return bail("sea_lgm_unreachable") end
+    if b.mode == "sea_mine" then
+      -- Has our mine already gone down? The map's mine FLAG is not a reliable
+      -- answer — the brain does not always see its own (tests/sea_pills_D
+      -- re-issued BUILDMODE_MINE 2672 times waiting for a bit that never
+      -- arrived). Our own mine COUNT dropping is unambiguous, and the terrain
+      -- turning to crater/river covers the case where it already blew.
+      local sea = state.goal and state.goal.sea
+      if sea and sea._mines_at_lay and (info.mines or 0) < sea._mines_at_lay then
+        return bail("sea_mine_placed")
+      end
+      local ptt = U.ttype(t.mx, t.my)
+      if ptt == C.T_CRATER or ptt == C.T_RIVER or ptt == C.T_BOAT then
+        return bail("sea_already_blown")
+      end
+      if (bit.band(U.traw(t.mx, t.my), TERRAIN_MINE_FLAG)) ~= 0 then
+        return bail("sea_already_mined")
+      end
+      if (info.mines or 0) < 1 then return bail("sea_no_mines") end
+      -- LGM_COST_MINE is 1 tree on top of the boat's 20; refuse to spend the
+      -- boat's wood on the mine.
+      if (info.trees or 0) < (C.SEA_PILL_TREES_TOTAL or 21) then
+        return bail("sea_trees_short")
+      end
+      return { x = t.mx, y = t.my, action = BUILDMODE_MINE }
+    else
+      if U.ttype(t.mx, t.my) ~= C.T_RIVER then return bail("sea_not_river_yet") end
+      if (info.trees or 0) < (C.SEA_BOAT_TREES or 20) then return bail("sea_trees_short") end
+      return { x = t.mx, y = t.my, action = BUILDMODE_BUILD }
+    end
+  end
+
+  -- SEA-PILL HARVEST tree reserve. Once a sea plan is live its 20-21 trees are
+  -- SPOKEN FOR: the boat cannot be built without them and the whole trip is
+  -- wasted if they go elsewhere. sea_pills_G parked at its boarding tile with
+  -- exactly 20 trees and had them roaded away underneath it, then spent another
+  -- 1000 ticks re-harvesting. Everything below this line spends wood, so while
+  -- the reserve is not covered, only the sea builds and the gather may run.
+  -- The drowning road (Priority 1) is exempt — that one is survival.
+  do
+    -- Keyed on the LIVE plan (state._sea_live), not on the current goal: the
+    -- wood stays spoken for while another goal briefly wins the pool, which is
+    -- exactly when it used to get roaded away.
+    local sg = state._sea_live and state._sea_live.sea
+    if sg and not sg.done and not state.water_build
+       and (info.trees or 0) <= (sg.trees_need or 0)
+       and b.mode ~= "gather" and b.mode ~= "sea_mine" and b.mode ~= "sea_boat" then
+      return bail("sea_trees_reserved")
+    end
+  end
 
   -- Priority 0.4: repair_pill dispatch (FORCED mode — no danger gate).
   -- As soon as we're within 5 tiles of the target friendly damaged pill

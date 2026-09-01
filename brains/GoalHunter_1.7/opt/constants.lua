@@ -2509,4 +2509,58 @@ M.TAKE_COVER_REJECT_COST = 1e8 -- sentinel for a rejected pool-14 entry: never w
 -- so 34 at carry=1).
 M.DEFEND_WATCH_COST = 30
 
+-- ── sea-pill harvest (2026-09-01) ─────────────────────────────────────────
+-- Dead pills sitting in DEEP SEA off a shore. capture_pill's deep-sea branch
+-- prices a mine→crater→river→boat entrance instead of the old flat
+-- `deepsea_no_boat` reject. See SEA_PILL_HARVEST_PLAN.md.
+M.SEA_PILL_ENABLED            = true  -- master switch for the deep-sea branch of capture_pill
+M.SEA_PILL_SCAN_PERIOD        = 50    -- ticks between full re-plans (matches the pool's own 50t CAPTURE_CAND cadence)
+M.SEA_PILL_CLUSTER_RADIUS     = 3     -- dead sea pills within this many tiles are ONE harvest cluster (one boat trip takes them all)
+M.SEA_PILL_ENTRANCE_MAX_DIST  = 12    -- how far from the cluster we will look for a water entrance S
+M.SEA_PILL_PILL_SAFE_RANGE    = 9     -- PILL_FIRE_RANGE(8) + 1, measured EUCLIDEAN (U.edist): every hostile/neutral pill
+                                      -- this close to a cluster tile or a boat-path tile gets the line-of-fire test
+M.SEA_PILL_ENEMY_TANK_NEAR    = 10    -- a visible enemy tank this close (EUCLIDEAN) to the cluster or the boat path rejects
+                                      -- (or aborts) the harvest — a boat is one shell from dead
+M.SEA_PILL_MIN_SHELLS         = 3     -- reserve for detonating the mine (forest eats one, mine landing needs one, +1 slack)
+M.SEA_PILL_FIRE_DIST          = 2     -- F sits exactly this many tiles from S: 512 wu > the 384 wu mine blast box
+M.SEA_PILL_MAX_DETONATE_SHOTS = 4     -- give up (and replan) after this many shells at the mine
+M.SEA_BOAT_TREES              = 20    -- LGM_COST_BOAT (lgm.h:54): a wall built on RIVER is a BOAT and costs 20 trees
+M.SEA_MINE_TREES              = 1     -- LGM_COST_MINE (lgm.h:57): laying the mine itself costs 1 tree (plus 1 mine)
+M.SEA_PILL_TREES_TOTAL        = 21    -- 20 + 1 — what a mine-then-boat entrance needs IN HAND before lay_mine may start
+                                      -- (a live mine on our own shore while the LGM is off farming is the failure mode)
+M.SEA_TREES_PER_FOREST        = 4     -- LGM_GATHER_TREE (lgm.h:61): one harvested forest tile yields 4 trees
+M.SEA_TREES_RADIUS            = 12    -- forest is only counted as obtainable within this many tiles of S or of the tank
+M.SEA_COMPONENT_BOX           = 16    -- BFS box (tiles either side of the cluster) for the connected-water scan
+M.SEA_COMPONENT_MIN_WATER     = 3     -- the pills' water must hold at least this many tiles MORE than the pills themselves,
+                                      -- or there is nothing for a boat to sail (a one-tile puddle is not a sea)
+M.SEA_COMPONENT_MAX_TILES     = 1200  -- hard cap on that BFS so an ocean map cannot flood the whole grid each rescan
+M.SEA_FLOOD_WAIT_TICKS        = 900   -- how long to wait after the mine goes off for the crater to flood to RIVER
+                                      -- (floodfill.c counts FLOOD_FILL_WAIT down before it converts; it is not instant)
+M.SEA_TREES_MIN_INFLUENCE     = 0     -- a forest tile only counts when cpf.influence_at is STRICTLY above this — i.e. OUR side of
+                                      -- the front. Raise it to demand deeper own territory. 0 also rejects "no influence data yet",
+                                      -- which is deliberate: nobody farms 21 trees into unknown ground for a boat.
+M.SEA_PILL_TREE_LEG_PER_TREE  = 6     -- cost charged per missing tree for the seek_trees leg (≈ one LGM farm round trip / 4 trees)
+M.SEA_PILL_BOAT_STEP_COST     = 12    -- cost per boat-path tile when scoring candidate S tiles (river/boat terrain cost ≈ grass)
+M.SEA_PILL_DANGER_W           = 2.0   -- weight on threat.pill_at along S and the boat path in the S score
+M.SEA_PILL_COST_MULT          = 0.3   -- the pills are FREE, so the whole trip is priced at 30% of its travel
+M.SEA_PILL_COST_FLOOR         = 5     -- ...but never below this, so a real fight beside us still wins
+M.SEA_PILL_COMMITMENT         = 400   -- hysteresis bonus from lay_mine until the boat exists (a live mine on our own shore must be finished)
+M.SEA_PILL_LEG_COMMITMENT     = 150   -- smaller surcharge for the NON-committed substates of a live plan (fetching a
+                                      -- mine, farming the wood, driving to the firing spot). A plan with resource legs
+                                      -- prices around 25 and loses to routine goals; without this the bot walks off
+                                      -- mid-leg and starts over
+M.SEA_PILL_ABORT_RECHECK      = 25    -- ticks between abort re-checks while holding at F
+M.SEA_PILL_LOG_PERIOD         = 50    -- rate limit for SEA_REJECT lines
+M.SEA_PILL_BLACKLIST_TICKS    = 1500  -- an S that did not flood is off the table this long
+M.SEA_PILL_SUB_TIMEOUT        = 3000  -- no progress in a substate this long → abort and replan. The resource legs
+                                      -- reset it on every tree/mine that arrives, so this only fires on a real stall
+M.POOL_REJECT_COST            = 1e30  -- the ONE cost a rejected pool row displays. Shaping multipliers (influence x2,
+                                      -- suicider, phase weight, hysteresis) skip it and it is pinned back before the
+                                      -- sort, so FINAL_SCORES shows 1e30 instead of an unreadable 5e43
+M.SEA_BASE_STOCK_STALE        = 3000  -- a base whose stock reading is older than this counts as "never read" when
+                                      -- looking for mines: base stock is only reported first-hand up close, so an
+                                      -- unvisited base must not read as empty (that cost sea_pills_D 500 ticks of
+                                      -- explore while sitting 4 tiles from a base holding 90 mines)
+M.SEA_PILL_CLAIM_RADIUS       = 3     -- an ally's deep-sea capture target claims every dead sea pill this close (same as the cluster radius)
+
 return M

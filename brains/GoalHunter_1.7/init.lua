@@ -2975,6 +2975,16 @@ function Brain.think(info)
   local t_percept_upd = clock_us()
   opt(string.format("  percept.update done %.2f ms", (t_percept_upd - t3) / 1000))
 
+  -- SEA-PILL HARVEST plan refresh. Reads perc.deepsea_pill_ids, so it has to
+  -- run after percept.update and before the pools (build_eval_queue prices
+  -- deep-sea capture rows straight out of state._sea) and before sea_update.
+  -- Self-cached: a full re-plan only happens when the cluster set changes, the
+  -- threat grid is rebuilt, or SEA_PILL_SCAN_PERIOD ticks pass — every other
+  -- tick this is a handful of comparisons, and on a map with no dead pills in
+  -- deep sea it returns on the first line.
+  goals.sea_refresh(state, world, info)
+  opt(string.format("  sea_refresh done %.2f ms", (clock_us() - t_percept_upd) / 1000))
+
   -- Track our own fired shots from fire-to-impact (uses info.shells decrement
   -- to detect fires and info.objects OBJECT_SHOT entries to verify in-flight).
   shot_tracker.update(info, now)
@@ -3590,6 +3600,10 @@ function Brain.think(info)
     -- Reposition: parked next to our own pill, deliberately shooting it down.
     or (state.goal.kind == "capture_pill" and state.goal.reposition
         and state.goal.substate == "reposition_shoot")
+    -- Sea-pill harvest: parked on the firing spot while the LGM lays the mine
+    -- / builds the boat, and while we shoot the mine.
+    or (state.goal.kind == "capture_pill" and state.goal.sea
+        and goals.SEA_COMMITTED[state.goal.substate or ""])
     -- Defend heat: parked in range, deliberately tickling our own pill.
     or (state.goal.kind == "defend_pill" and DEFEND_HEAT_STATIONARY_SUBS[state.goal.substate or ""])
     or state.goal.kind == "rescue_lgm"
@@ -3860,8 +3874,14 @@ function Brain.think(info)
       state.water_build = nil
     end
 
-    -- Only override goal with escape_water if A* isn't actively routing us through
-    if not pf_routing then
+    -- SEA-PILL HARVEST: we may be standing in water ON PURPOSE, mid-collect
+    -- (the boat was just consumed picking a pill up and the next one is one
+    -- tile away). Bailing to shore there abandons the trip and costs another
+    -- mine + 21 trees + boat for the pills we came for — sea_pills_A did
+    -- exactly that, three times. goals.sea_update owns the release: it clears
+    -- state._sea_afloat as soon as the cluster is collected or the water is no
+    -- longer safe, and normal escape resumes on the same tick.
+    if not pf_routing and not state._sea_afloat then
       -- state/now let find_dry_land skip destinations the stuck handler
       -- blocked, so a wall-pinned escape target rotates instead of being
       -- re-picked every tick forever (5-8 min idles on river-maze maps).
@@ -5862,7 +5882,23 @@ function Brain.think(info)
   -- goal object is stashed with all context and restored on pop the moment
   -- the mine is cleared). See demine.lua; the arbitration chain above holds
   -- a pushed kill_mine against replans.
-  demine.update(state, world, info)
+  -- SEA-PILL HARVEST exclusion. While capture_pill's deep-sea chain is live,
+  -- demine's two jobs are actively destructive:
+  --   * the kill_mine interrupt targets OUR OWN entrance mine (it is a known
+  --     mine on our own ground, which is exactly what demine hunts) and takes
+  --     the goal away from the substate machine that is about to shoot it;
+  --   * the terrain-repair job treats the crater and the river the mine just
+  --     made as battle damage and PAVES THEM BACK TO ROAD — measured on
+  --     tests/sea_pills_A: boat built, tile roaded over ~90 ticks later, plan
+  --     restarted from scratch.
+  -- Both are right about a stray mine and wrong about this one. The chain is
+  -- short and self-limiting (it drops its plan the moment we are ashore
+  -- again), so demine simply stands down for its duration.
+  local _sea_active = state.goal and state.goal.kind == "capture_pill"
+                      and state.goal.sea and not state.goal.sea.done
+  if not _sea_active then
+    demine.update(state, world, info)
+  end
   if BRAIN_DEBUG_MODE then demine.draw_overlay(state, world, info) end
 
   -- Goal lookahead: when close to a capture goal, pre-compute the next
@@ -5932,6 +5968,10 @@ function Brain.think(info)
     opt(string.format("lookahead done %.2f ms", (t_steer0 - t_goal1) / 1000))
   end
   state._cautious_lookahead_held = nil   -- reset each tick; the cautious near-ally guard sets it
+  -- SEA-PILL HARVEST substate machine. Runs BEFORE steering and the builder so
+  -- both act on the substate this tick set (steering parks at F / drives onto
+  -- the boat; the builder dispatches the mine and the boat build).
+  goals.sea_update(state, world, info)
   local keys, taps = steer.steer(state, world, info, state.goal)
   -- Cautious-approach speed: when our tank is on (or stepping onto) an ally's
   -- pill-take ring, hold a steady boat-in-a-river cruise — CAP the speed rather
@@ -7488,6 +7528,7 @@ function Brain.think(info)
     pill_table.draw(viz, world, state, info)
     goals.draw_pill_spots(viz, state)
     goals.draw_take_cover(viz, state)
+    goals.draw_sea_harvest(viz, state)
     goals.draw_build_viz(viz, state, info)
     attack.draw_pill_eval_progress(viz, state)
     attack.draw_plan_trace(viz, state, info)
