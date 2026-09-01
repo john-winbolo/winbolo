@@ -153,6 +153,21 @@ static float lvDrawMenuBarOffset(void) {
     return SDL_floorf(lv_imgui_get_menu_bar_height());
 }
 
+/* Renderer pixels per window point.
+ *
+ * The window carries SDL_WINDOW_HIGH_PIXEL_DENSITY, so on a Retina display the
+ * framebuffer is larger than the window's point size. Everything that reasons
+ * in points stays in points — the tile-count fit against the window, the zoom
+ * anchor, the mouse-to-texture conversions — and only what is painted straight
+ * to the framebuffer scales by this. Embedded, the host owns the window and
+ * does its own blitting, so nothing here should scale. */
+static float lvDrawPixelScale(void) {
+    float d;
+    if (g_embedded || sdlWindow == NULL) return 1.0f;
+    d = SDL_GetWindowPixelDensity(sdlWindow);
+    return (d > 0.0f) ? d : 1.0f;
+}
+
 /* Paint the world render target into the viewer's own window.
  *
  * Sampling: at zoom >= 1 the blit is a whole-number magnification of pixel
@@ -169,6 +184,12 @@ static float lvDrawMenuBarOffset(void) {
 static void lvDrawBlitTargetToWindow(void) {
     LogViewerState *lv = lv_screenGetState();
     BYTE zoomFactor = lv_windowGetZoomFactor();
+    float pxScale = lvDrawPixelScale();
+    /* The magnification actually applied to the framebuffer. The user picks
+     * g_zoomLevel against a window measured in points; the density folds in on
+     * top so the world keeps its physical size and gains pixels instead of
+     * being stretched by the compositor. */
+    float blitZoom = g_zoomLevel * pxScale;
     SDL_FRect srcRect, dstRect;
 
     /* Sub-tile pan: the texture target is sized (sizeX+1, sizeY+1) tiles and
@@ -181,17 +202,19 @@ static void lvDrawBlitTargetToWindow(void) {
     srcRect.h = (float)(lv_screenGetSizeY() * TILE_SIZE_Y);
 
     /* SDL expects client-area coordinates (0,0), not screen coordinates, and
-     * the menu bar offset leaves the top strip to ImGui. Width/height are
-     * scaled by g_zoomLevel; the texture target stays at native (1x) tile
-     * resolution. */
+     * the menu bar offset leaves the top strip to ImGui — which renders its own
+     * geometry at the framebuffer scale, so that offset converts to pixels too.
+     * Floored after scaling: the origin has to be a whole pixel or every pixel
+     * of the world sits on a half-texel. The texture target stays at native
+     * (1x) tile resolution. */
     dstRect.x = 0.0f;
-    dstRect.y = lvDrawMenuBarOffset();
-    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
-    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
+    dstRect.y = SDL_floorf(lvDrawMenuBarOffset() * pxScale);
+    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * blitZoom;
+    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * blitZoom;
 
     SDL_SetTextureScaleMode(textureTarget,
-                            (g_zoomLevel >= 1.0f) ? SDL_SCALEMODE_NEAREST
-                                                  : SDL_SCALEMODE_LINEAR);
+                            (blitZoom >= 1.0f) ? SDL_SCALEMODE_NEAREST
+                                               : SDL_SCALEMODE_LINEAR);
     SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
 }
 
@@ -461,7 +484,13 @@ BYTE lv_drawSetup(void) {
     width  = lv_screenGetSizeX() * TILE_SIZE_X;
     height = lv_screenGetSizeY() * TILE_SIZE_Y + IMGUI_MENU_BAR_HEIGHT;
 
-    sdlWindow = SDL_CreateWindow("WinBolo Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
+    /* HIGH_PIXEL_DENSITY: without it SDL pins the layer's contentsScale to 1
+     * (SDL_cocoametalview.m), so on a Retina display the whole window renders at
+     * point resolution and the compositor bilinear-upscales it — menu bar,
+     * dialogs and world alike. ImGui reads the density itself and rasterizes
+     * its text to match; the world blit scales by lvDrawPixelScale(). */
+    sdlWindow = SDL_CreateWindow("WinBolo Log Viewer", width, height,
+                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (sdlWindow == NULL) {
         TTF_Quit(); SDL_Quit();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating SDL window", NULL);
@@ -638,10 +667,15 @@ void lv_drawSplashForImGui(void) {
     
     /* Ensure we're rendering to the screen, not to a texture target */
     SDL_SetRenderTarget(sdlRenderer, NULL);
-    
-    /* Get window size for centering */
-    SDL_GetWindowSize(sdlWindow, &windowWidth, &windowHeight);
-    
+
+    /* Centre in framebuffer pixels, and scale the image by the same density so
+     * it keeps its physical size rather than shrinking to a quarter of the
+     * window on a Retina display. */
+    float pxScale = lvDrawPixelScale();
+    SDL_GetRenderOutputSize(sdlRenderer, &windowWidth, &windowHeight);
+    int splashW = (int)(splashWidth * pxScale);
+    int splashH = (int)(splashHeight * pxScale);
+
     /* Clear the screen first */
     SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
     SDL_RenderClear(sdlRenderer);
@@ -657,13 +691,13 @@ void lv_drawSplashForImGui(void) {
     
     if (textureSplash) {
         /* Center the splash image */
-        if (windowWidth > splashWidth) x = (windowWidth - splashWidth) / 2;
-        if (windowHeight > splashHeight) y = (windowHeight - splashHeight) / 2;
-        
+        if (windowWidth > splashW) x = (windowWidth - splashW) / 2;
+        if (windowHeight > splashH) y = (windowHeight - splashH) / 2;
+
         dstRect.x = (float)x;
         dstRect.y = (float)y;
-        dstRect.w = (float)splashWidth;
-        dstRect.h = (float)splashHeight;
+        dstRect.w = (float)splashW;
+        dstRect.h = (float)splashH;
         SDL_RenderTexture(sdlRenderer, textureSplash, NULL, &dstRect);
     }
     
