@@ -35,6 +35,7 @@
 #include "input_packet.h"  /* SnapshotHeader, TankSnapshot, ... MAX_SNAPSHOT_* */
 #include "control_event.h"
 #include "client_command.h"  /* ClientCommand — per-bot pending command queue */
+#include "messages.h"        /* BRAIN_INBOX_MSG_LEN — deferred internal-message queue */
 #include "../gui/sdl3/luabrainshandler.h"  /* LuaBrainInstance */
 
 /* Forward declarations */
@@ -158,6 +159,40 @@ typedef struct {
 #define BOT_PENDING_CMD_MAX 4
     ClientCommand       pendingCmds[BOT_PENDING_CMD_MAX];
     int                 pendingCmdCount;
+    /* Deferred internal (messagedest == 0) bot-to-bot messages.
+     *
+     * These used to be delivered straight from the worker thread:
+     * brainDataExtractInfo called botManagerDeliverInternalMessage, which
+     * pushes into EVERY allied bot's MessageState inbox. That is a write into
+     * another bot's ClientSim from inside the parallel brain-think stage,
+     * while that bot's own worker may be counting, peeking and clearing the
+     * same ring (messageInboxPush / messageInboxClear in messages.c take no
+     * lock). So whether a message landed before or after the receiver read
+     * its inbox was decided by thread interleaving.
+     *
+     * The worker now only writes into its OWN job slot here, and Stage 3
+     * (serial, producer thread) delivers in ascending jobIndices order.
+     *
+     * SEMANTIC CHANGE, deliberate: every internal message now arrives on the
+     * NEXT tick for EVERY receiver. Before this, with jobs run serially
+     * (-threads 1), a receiver with a HIGHER slot number than the sender saw
+     * the message on the SAME tick and a lower-numbered one saw it next tick;
+     * with -threads > 1 which of those happened was a race. Uniform next-tick
+     * delivery is deterministic and independent of thread count, but it is
+     * NOT byte-identical to the old -threads 1 behaviour, so same-seed
+     * reference baselines shift once when this lands.
+     *
+     * Sizing: a brain can only emit ONE internal message per think — the
+     * sendmessage buffer is a single slot that brain_data.c clears after
+     * extraction, and the brain batches several /info lines into it. The
+     * array is headroom for future multi-send paths; on overflow the OLDEST
+     * queued message is dropped (with a debug line) so the freshest state
+     * still gets through, matching what messageInboxPush does when a
+     * receiver's ring fills. */
+#define BOT_PENDING_INTERNAL_MSG_MAX 4
+    char                pendingInternalMsg[BOT_PENDING_INTERNAL_MSG_MAX]
+                                          [BRAIN_INBOX_MSG_LEN];
+    int                 pendingInternalMsgCount;
     /* worker → producer: pool-breakdown JSON prefetched in parallel on the
      * bot's own worker right after its think (see runBotThinkJob). Producer
      * hands ownership to brain_record (brainRecordStashPoolJson) in Stage 3
@@ -419,6 +454,36 @@ void botManagerSetTeams(struct ServerSim *sim,
 void botManagerDeliverInternalMessage(struct ServerSim *sim,
                                       BYTE fromPlayer,
                                       const char *msg);
+
+/*********************************************************
+ *NAME:          botManagerQueueInternalMessage
+ *PURPOSE:
+ *  Thread-safe front end to botManagerDeliverInternalMessage
+ *  for callers running on a bot worker thread (i.e. anything
+ *  reached from brain.think). Copies the message into the
+ *  SENDING bot's own BotJobCtx slot — which only that bot's
+ *  worker touches — instead of writing into every allied
+ *  bot's inbox from inside the parallel stage. Stage 3 of
+ *  botManagerTick then performs the real fan-out serially,
+ *  in ascending jobIndices order.
+ *
+ *  Use this from worker context. Call the Deliver function
+ *  directly only from the producer thread.
+ *
+ *  See the BotJobCtx pendingInternalMsg comment for the
+ *  deliberate semantic change: messages now always arrive on
+ *  the following tick, for every receiver.
+ *
+ *ARGUMENTS:
+ *  sim        - The ServerSim hosting the bot manager
+ *  fromPlayer - Slot of the bot that produced the message
+ *  msg        - C string (no length prefix). Truncated to the
+ *               inbox slot size; on queue overflow the oldest
+ *               pending message is dropped.
+ *********************************************************/
+void botManagerQueueInternalMessage(struct ServerSim *sim,
+                                    BYTE fromPlayer,
+                                    const char *msg);
 
 /* Bot-comms debug logger. Appends to "botmsg_debug.log" in the CWD, but ONLY
  * when bot debug mode is on (set via -braindebug / SetDefaultDebugMode) — a
