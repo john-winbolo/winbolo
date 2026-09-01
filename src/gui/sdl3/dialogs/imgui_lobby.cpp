@@ -3702,33 +3702,43 @@ static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     }
 }
 
-static SDL_Texture *s_iconSuccess = nullptr;
-static SDL_Texture *s_iconError   = nullptr;
-static SDL_Texture *s_iconInfo    = nullptr;
-static SDL_Texture *s_iconSettings = nullptr;
-static SDL_Texture *s_iconBotCpuGreen  = nullptr;
-static SDL_Texture *s_iconBotCpuRed    = nullptr;
-static SDL_Texture *s_iconLocked       = nullptr;
-static SDL_Texture *s_iconSkull        = nullptr;
-static SDL_Texture *s_iconPicture      = nullptr;
-static SDL_Texture *s_iconPlay         = nullptr;
-static SDL_Texture *s_iconPause        = nullptr;
-static bool         s_iconsAttempted = false;
-/* The renderer instance the icons above were created against. SDL_Texture
- * is tied to the renderer that created it, so if the renderer instance
- * pointer changes between calls (e.g. across a game→lobby transition
- * that recreates the renderer) the cached textures reference dead GPU
- * resources. Track it and reload on mismatch — same pattern as
- * imgui_mapchooser's loadViewModeIconsOnce. */
-static SDL_Renderer *s_iconsRenderer = nullptr;
+/* Icon and tank textures the lobby draws, cached for the process rather
+ * than the session: SDL_Texture belongs to the renderer that made it, so
+ * the cache is keyed on the renderer and reloaded when that pointer
+ * changes, not cleared on lobby teardown. */
+typedef struct LobbyIconCache {
+    SDL_Texture  *success;
+    SDL_Texture  *error;
+    SDL_Texture  *info;
+    SDL_Texture  *settings;
+    SDL_Texture  *botCpuGreen;
+    SDL_Texture  *botCpuRed;
+    SDL_Texture  *locked;
+    SDL_Texture  *skull;
+    SDL_Texture  *picture;
+    SDL_Texture  *play;
+    SDL_Texture  *pause;
+    bool          attempted;
+    /* The renderer instance the icons above were created against. SDL_Texture
+     * is tied to the renderer that created it, so if the renderer instance
+     * pointer changes between calls (e.g. across a game→lobby transition
+     * that recreates the renderer) the cached textures reference dead GPU
+     * resources. Track it and reload on mismatch — same pattern as
+     * imgui_mapchooser's loadViewModeIconsOnce. */
+    SDL_Renderer *renderer;
 
-/* Tank sprite used as the team identity badge in the lobby header.
- * Loaded once on first lobby render; tinted with the team color via
- * a darkened semi-transparent overlay. */
-static SDL_Texture *s_tankSelf04 = nullptr;
-static SDL_Texture *s_tankEvil04 = nullptr;
-static SDL_Texture *s_tankGood04 = nullptr;
-static bool         s_tankSelf04Attempted = false;
+    /* Tank sprite used as the team identity badge in the lobby header.
+     * Loaded once on first lobby render; tinted with the team color via
+     * a darkened semi-transparent overlay. */
+    SDL_Texture  *tankSelf04;
+    SDL_Texture  *tankEvil04;
+    SDL_Texture  *tankGood04;
+    bool          tankSelfAttempted;
+    bool          tankEvilAttempted;
+    bool          tankGoodAttempted;
+} LobbyIconCache;
+
+static LobbyIconCache s_icons = {};
 
 /* stb_image entry points — defined in C, declared with C linkage
  * so the C++ linker finds them. Mirror of how imgui_welcome.cpp
@@ -3769,41 +3779,39 @@ static SDL_Texture *loadLobbyPng(SDL_Renderer *renderer, const char *filename) {
 }
 
 static SDL_Texture *getTankSelf04Texture(SDL_Renderer *renderer) {
-    if (s_tankSelf04Attempted) return s_tankSelf04;
-    s_tankSelf04Attempted = true;
-    s_tankSelf04 = loadLobbyPng(renderer, "svg/tank_self_04.png");
-    if (s_tankSelf04) {
-        SDL_SetTextureScaleMode(s_tankSelf04, SDL_SCALEMODE_LINEAR);
+    if (s_icons.tankSelfAttempted) return s_icons.tankSelf04;
+    s_icons.tankSelfAttempted = true;
+    s_icons.tankSelf04 = loadLobbyPng(renderer, "svg/tank_self_04.png");
+    if (s_icons.tankSelf04) {
+        SDL_SetTextureScaleMode(s_icons.tankSelf04, SDL_SCALEMODE_LINEAR);
     }
-    return s_tankSelf04;
+    return s_icons.tankSelf04;
 }
 
 /* Red enemy tank — used next to player rows on teams different from
  * the local player's. Loaded lazily on first use, same pattern as
  * getTankSelf04Texture. */
 static SDL_Texture *getTankEvil04Texture(SDL_Renderer *renderer) {
-    static bool attempted = false;
-    if (attempted) return s_tankEvil04;
-    attempted = true;
-    s_tankEvil04 = loadLobbyPng(renderer, "svg/tank_evil_04.png");
-    if (s_tankEvil04) {
-        SDL_SetTextureScaleMode(s_tankEvil04, SDL_SCALEMODE_LINEAR);
+    if (s_icons.tankEvilAttempted) return s_icons.tankEvil04;
+    s_icons.tankEvilAttempted = true;
+    s_icons.tankEvil04 = loadLobbyPng(renderer, "svg/tank_evil_04.png");
+    if (s_icons.tankEvil04) {
+        SDL_SetTextureScaleMode(s_icons.tankEvil04, SDL_SCALEMODE_LINEAR);
     }
-    return s_tankEvil04;
+    return s_icons.tankEvil04;
 }
 
 /* "Good" ally tank (yellow tone) — used to distinguish the local
  * player's own row from the rest of their team. Falls back to
  * tank_self_04 if the asset isn't there. */
 static SDL_Texture *getTankGood04Texture(SDL_Renderer *renderer) {
-    static bool attempted = false;
-    if (attempted) return s_tankGood04;
-    attempted = true;
-    s_tankGood04 = loadLobbyPng(renderer, "svg/tank_good_04.png");
-    if (s_tankGood04) {
-        SDL_SetTextureScaleMode(s_tankGood04, SDL_SCALEMODE_LINEAR);
+    if (s_icons.tankGoodAttempted) return s_icons.tankGood04;
+    s_icons.tankGoodAttempted = true;
+    s_icons.tankGood04 = loadLobbyPng(renderer, "svg/tank_good_04.png");
+    if (s_icons.tankGood04) {
+        SDL_SetTextureScaleMode(s_icons.tankGood04, SDL_SCALEMODE_LINEAR);
     }
-    return s_tankGood04;
+    return s_icons.tankGood04;
 }
 
 /* Two-path load for a white-mask icon: relative to the working directory
@@ -3828,22 +3836,22 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
      * to do. If the renderer pointer differs (game→lobby may have
      * recreated it; SDL3 textures don't survive that), destroy the
      * stale textures and reload. */
-    if (s_iconsAttempted && s_iconsRenderer == renderer) return;
-    if (s_iconsAttempted && s_iconsRenderer != renderer) {
-        if (s_iconSuccess)     { SDL_DestroyTexture(s_iconSuccess);     s_iconSuccess     = nullptr; }
-        if (s_iconError)       { SDL_DestroyTexture(s_iconError);       s_iconError       = nullptr; }
-        if (s_iconInfo)        { SDL_DestroyTexture(s_iconInfo);        s_iconInfo        = nullptr; }
-        if (s_iconSettings)    { SDL_DestroyTexture(s_iconSettings);    s_iconSettings    = nullptr; }
-        if (s_iconBotCpuGreen) { SDL_DestroyTexture(s_iconBotCpuGreen); s_iconBotCpuGreen = nullptr; }
-        if (s_iconBotCpuRed)   { SDL_DestroyTexture(s_iconBotCpuRed);   s_iconBotCpuRed   = nullptr; }
-        if (s_iconLocked)      { SDL_DestroyTexture(s_iconLocked);      s_iconLocked      = nullptr; }
-        if (s_iconSkull)       { SDL_DestroyTexture(s_iconSkull);       s_iconSkull       = nullptr; }
-        if (s_iconPicture)     { SDL_DestroyTexture(s_iconPicture);     s_iconPicture     = nullptr; }
-        if (s_iconPlay)        { SDL_DestroyTexture(s_iconPlay);        s_iconPlay        = nullptr; }
-        if (s_iconPause)       { SDL_DestroyTexture(s_iconPause);       s_iconPause       = nullptr; }
+    if (s_icons.attempted && s_icons.renderer == renderer) return;
+    if (s_icons.attempted && s_icons.renderer != renderer) {
+        if (s_icons.success)     { SDL_DestroyTexture(s_icons.success);     s_icons.success     = nullptr; }
+        if (s_icons.error)       { SDL_DestroyTexture(s_icons.error);       s_icons.error       = nullptr; }
+        if (s_icons.info)        { SDL_DestroyTexture(s_icons.info);        s_icons.info        = nullptr; }
+        if (s_icons.settings)    { SDL_DestroyTexture(s_icons.settings);    s_icons.settings    = nullptr; }
+        if (s_icons.botCpuGreen) { SDL_DestroyTexture(s_icons.botCpuGreen); s_icons.botCpuGreen = nullptr; }
+        if (s_icons.botCpuRed)   { SDL_DestroyTexture(s_icons.botCpuRed);   s_icons.botCpuRed   = nullptr; }
+        if (s_icons.locked)      { SDL_DestroyTexture(s_icons.locked);      s_icons.locked      = nullptr; }
+        if (s_icons.skull)       { SDL_DestroyTexture(s_icons.skull);       s_icons.skull       = nullptr; }
+        if (s_icons.picture)     { SDL_DestroyTexture(s_icons.picture);     s_icons.picture     = nullptr; }
+        if (s_icons.play)        { SDL_DestroyTexture(s_icons.play);        s_icons.play        = nullptr; }
+        if (s_icons.pause)       { SDL_DestroyTexture(s_icons.pause);       s_icons.pause       = nullptr; }
     }
-    s_iconsAttempted = true;
-    s_iconsRenderer  = renderer;
+    s_icons.attempted = true;
+    s_icons.renderer  = renderer;
 
     int iconPx = (int)(18.0f * scale);
     if (iconPx < 16) iconPx = 16;
@@ -3852,12 +3860,12 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         SDL_Texture **target;
         const char   *relPath;
     } icons[] = {
-        { &s_iconSuccess,  "data/ui/dialog-success.svg" },
-        { &s_iconError,    "data/ui/dialog-error.svg" },
-        { &s_iconInfo,     "data/ui/dialog-info.svg" },
-        { &s_iconSettings, "data/ui/settings.svg" },
-        { &s_iconBotCpuGreen, "data/ui/bot-cpu-green.svg" },
-        { &s_iconBotCpuRed,   "data/ui/bot-cpu-red.svg" },
+        { &s_icons.success,  "data/ui/dialog-success.svg" },
+        { &s_icons.error,    "data/ui/dialog-error.svg" },
+        { &s_icons.info,     "data/ui/dialog-info.svg" },
+        { &s_icons.settings, "data/ui/settings.svg" },
+        { &s_icons.botCpuGreen, "data/ui/bot-cpu-green.svg" },
+        { &s_icons.botCpuRed,   "data/ui/bot-cpu-red.svg" },
     };
 
     for (int i = 0; i < (int)(sizeof(icons) / sizeof(icons[0])); i++) {
@@ -3876,35 +3884,35 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* Lock badge — rasterised as a white alpha mask so the lockBadge
      * theme color tints it at draw time (matches the previous orange
      * "[locked]" pill). */
-    s_iconLocked = imguiLoadSvgIconWhite(renderer, "data/ui/mapeditor/locked.svg", iconPx);
-    if (s_iconLocked == nullptr) {
+    s_icons.locked = imguiLoadSvgIconWhite(renderer, "data/ui/mapeditor/locked.svg", iconPx);
+    if (s_icons.locked == nullptr) {
         char basePathBuf[FILENAME_MAX];
         const char *base = SDL_GetBasePath();
         if (base) {
             SDL_snprintf(basePathBuf, sizeof(basePathBuf),
                          "%sdata/ui/mapeditor/locked.svg", base);
-            s_iconLocked = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+            s_icons.locked = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
         }
     }
 
     /* Skull for the recap scoreboard's death columns — a white alpha mask
      * like the lock badge, so the header can tint it to the text colour. */
-    s_iconSkull = imguiLoadSvgIconWhite(renderer, "data/ui/skull.svg", iconPx);
-    if (s_iconSkull == nullptr) {
+    s_icons.skull = imguiLoadSvgIconWhite(renderer, "data/ui/skull.svg", iconPx);
+    if (s_icons.skull == nullptr) {
         char basePathBuf[FILENAME_MAX];
         const char *base = SDL_GetBasePath();
         if (base) {
             SDL_snprintf(basePathBuf, sizeof(basePathBuf),
                          "%sdata/ui/skull.svg", base);
-            s_iconSkull = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
+            s_icons.skull = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
         }
     }
 
     /* The reel's transport and export glyphs — white alpha masks like the two
      * above, so each button tints them to its surrounding text colour. */
-    s_iconPicture = loadWhiteIcon(renderer, "data/ui/picture.svg", iconPx);
-    s_iconPlay    = loadWhiteIcon(renderer, "data/ui/play.svg", iconPx);
-    s_iconPause   = loadWhiteIcon(renderer, "data/ui/pause.svg", iconPx);
+    s_icons.picture = loadWhiteIcon(renderer, "data/ui/picture.svg", iconPx);
+    s_icons.play    = loadWhiteIcon(renderer, "data/ui/play.svg", iconPx);
+    s_icons.pause   = loadWhiteIcon(renderer, "data/ui/pause.svg", iconPx);
 }
 
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
@@ -4505,7 +4513,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * renderConnectivityBadge, but we now skip that in SP / LAN-only
      * mode where the badge has nothing to report — the bot-cpu PNGs
      * still need to come up though, so trigger it here too. The
-     * helper is idempotent (s_iconsAttempted guard). */
+     * helper is idempotent (s_icons.attempted guard). */
     {
         SDL_Renderer *r = sdl3DrawGetRenderer();
         if (r) loadStatusIconsOnce(r, s);
@@ -4821,8 +4829,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             uint8_t myTeamHdr = (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
                                 ? clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber : 0;
             SDL_Texture *addBtnIcon = (myTeamHdr != 0 && teamId == myTeamHdr)
-                                      ? s_iconBotCpuGreen
-                                      : s_iconBotCpuRed;
+                                      ? s_icons.botCpuGreen
+                                      : s_icons.botCpuRed;
             if (addBtnIcon) {
                 float btnH    = ImGui::GetFrameHeight();
                 float imgSz   = ImGui::GetFontSize();
@@ -5196,8 +5204,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                      * bot-cpu.svg if a tinted variant is missing.
                      * Drawn at the same size as the tank icon so the
                      * two badges line up visually across rows. */
-                    SDL_Texture *botTex = isAlly ? s_iconBotCpuGreen
-                                                 : s_iconBotCpuRed;
+                    SDL_Texture *botTex = isAlly ? s_icons.botCpuGreen
+                                                 : s_icons.botCpuRed;
                     if (botTex) {
                         cyAbs(tankSz);
                         /* Visible pixel mass in the bot-cpu PNGs
@@ -5354,7 +5362,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * widgets (name, Bot Code combo, difficulty) are then
                  * navigable like any other dialog control. */
                 if (showPingCol && isBot && effectiveHost) {
-                    if (s_iconSettings && !uiShouldUseControllerMode()) {
+                    if (s_icons.settings && !uiShouldUseControllerMode()) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
                         /* settings.svg renders 5px above / 2px below
@@ -5379,7 +5387,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             ? IM_COL32_WHITE
                             : IM_COL32(180, 180, 180, 200);
                         ImGui::GetWindowDrawList()->AddImage(
-                            (ImTextureID)s_iconSettings,
+                            (ImTextureID)s_icons.settings,
                             iconStart,
                             ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
                             ImVec2(0, 0), ImVec2(1, 1), gearTint);
@@ -6128,31 +6136,31 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
         case SERVER_PORTMAP_DISABLED:
             return;  /* nothing to show */
         case SERVER_PORTMAP_PENDING:
-            icon      = s_iconInfo;
+            icon      = s_icons.info;
             shortText = langGetText(STR_DLGLOBBY_PORTMAP_CHECKING);
             color     = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_PENDING);
             break;
         case SERVER_PORTMAP_SUCCEEDED:
-            icon      = s_iconSuccess;
+            icon      = s_icons.success;
             shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
             color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED);
             break;
         case SERVER_PORTMAP_HOLE_PUNCH_OK:
-            icon      = s_iconSuccess;
+            icon      = s_icons.success;
             shortText = langGetText(STR_DLGLOBBY_PORTMAP_ACCESSIBLE);
             color     = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH);
             break;
         case SERVER_PORTMAP_SYMMETRIC_NAT:
-            icon      = s_iconError;
+            icon      = s_icons.error;
             shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
             color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC);
             break;
         case SERVER_PORTMAP_FAILED:
-            icon      = s_iconError;
+            icon      = s_icons.error;
             shortText = langGetText(STR_DLGLOBBY_PORTMAP_UNREACHABLE);
             color     = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
             detailFmt = langGetText(STR_DLGLOBBY_PORTMAP_DETAIL_FAILED);
@@ -6495,9 +6503,9 @@ static bool s_recapShowHighlights = false;
  * shouting. Returns false when the asset is missing, which is the caller's
  * cue to fall back to the column's written label. */
 static bool lastRoundDrawSkull(void) {
-    if (!s_iconSkull) return false;
+    if (!s_icons.skull) return false;
     float sz = ImGui::GetTextLineHeight();
-    ImGui::ImageWithBg((ImTextureID)s_iconSkull, ImVec2(sz, sz),
+    ImGui::ImageWithBg((ImTextureID)s_icons.skull, ImVec2(sz, sz),
                        ImVec2(0, 0), ImVec2(1, 1),
                        ImVec4(0, 0, 0, 0),
                        ImGui::GetStyleColorVec4(ImGuiCol_Text));
@@ -6908,7 +6916,7 @@ static void lobbyRenderReelStatus(int state, uint8_t percent, ImVec2 rect,
 
     switch (state) {
         case CLIENT_ROUND_LOG_WAITING:
-            ico = s_iconInfo;
+            ico = s_icons.info;
             msg = langGetText(STR_DLGLOBBY_REEL_WAITING);
             break;
         case CLIENT_ROUND_LOG_DOWNLOADING: {
@@ -6922,15 +6930,15 @@ static void lobbyRenderReelStatus(int state, uint8_t percent, ImVec2 rect,
             break;
         }
         case CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED:
-            ico = s_iconError;
+            ico = s_icons.error;
             msg = langGetText(STR_DLGLOBBY_REEL_DISABLED);
             break;
         case CLIENT_ROUND_LOG_UNAVAILABLE_NONE:
-            ico = s_iconError;
+            ico = s_icons.error;
             msg = langGetText(STR_DLGLOBBY_REEL_NONE);
             break;
         case CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE:
-            ico = s_iconError;
+            ico = s_icons.error;
             msg = langGetText(STR_DLGLOBBY_REEL_TOO_LARGE);
             break;
         default:
@@ -7631,7 +7639,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * stays as the tooltip — it is already translated, and a bare glyph does
      * not say what it does for someone meeting it the first time. */
     const bool reelPlaying = lvEmbedIsPlaying();
-    SDL_Texture *transportIcon = reelPlaying ? s_iconPause : s_iconPlay;
+    SDL_Texture *transportIcon = reelPlaying ? s_icons.pause : s_icons.play;
     const char  *transportText = langGetText(reelPlaying ? STR_LV_PAUSE
                                                          : STR_LV_PLAY_BTN);
     bool transportClicked;
@@ -8016,12 +8024,12 @@ static bool lobbyClipGifButton(const char *id, bool compact) {
     const float lineH = ImGui::GetTextLineHeight();
     bool clicked;
 
-    if (s_iconPicture) {
+    if (s_icons.picture) {
         if (compact) {
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                                 ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
         }
-        clicked = ImGui::ImageButton(id, (ImTextureID)s_iconPicture,
+        clicked = ImGui::ImageButton(id, (ImTextureID)s_icons.picture,
                                      ImVec2(lineH, lineH),
                                      ImVec2(0, 0), ImVec2(1, 1),
                                      ImVec4(0, 0, 0, 0),
@@ -8042,7 +8050,7 @@ static bool lobbyClipGifButton(const char *id, bool compact) {
 
 /* Width the control above will take, for a caller placing it by hand. */
 static float lobbyClipGifButtonWidth(void) {
-    return (s_iconPicture ? ImGui::GetTextLineHeight()
+    return (s_icons.picture ? ImGui::GetTextLineHeight()
                           : ImGui::CalcTextSize(CLIP_GIF_TITLE).x)
            + ImGui::GetStyle().FramePadding.x * 2.0f;
 }
@@ -9111,9 +9119,9 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
  * when the server has flagged it in serverLocks. Cosmetic + tooltip. */
 static void renderLockBadge(void) {
     ImGui::SameLine();
-    if (s_iconLocked) {
+    if (s_icons.locked) {
         float sz = ImGui::GetTextLineHeight();
-        ImGui::ImageWithBg((ImTextureID)s_iconLocked, ImVec2(sz, sz),
+        ImGui::ImageWithBg((ImTextureID)s_icons.locked, ImVec2(sz, sz),
                           ImVec2(0, 0), ImVec2(1, 1),
                           ImVec4(0, 0, 0, 0),
                           wbThemeColor(g_theme->lockBadge));

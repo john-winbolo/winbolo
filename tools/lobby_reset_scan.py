@@ -65,11 +65,9 @@ ALLOWLIST_NAMES = (
      "settings-backed splitter position, persists across sessions"),
     ("s_lobbySplitOffsetInit",
      "one-shot latch guarding the settings-backed splitter load"),
-    ("s_icon*",
-     "icon texture cache, keyed on the renderer and valid process-wide "
-     "(covers s_iconsAttempted and s_iconsRenderer)"),
-    ("s_tank*",
-     "tank texture cache, keyed on the renderer and valid process-wide"),
+    ("s_icons",
+     "icon and tank texture cache, keyed on the renderer and valid "
+     "process-wide"),
 )
 
 # Statics whose declared type makes them non-assignable. Matched on the
