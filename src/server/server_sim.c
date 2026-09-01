@@ -157,6 +157,68 @@ static void publishServerMessage(ServerSim *sim, const char *message);
  * access sim state directly instead of using legacy globals. */
 static THREAD_LOCAL ServerSim *activeSim = NULL;
 
+/* Live-sim registry.
+ *
+ * activeSim is per-thread (the gym runs one sim per worker thread), so
+ * serverSimDestroy can only ever clear the slot belonging to the thread
+ * that runs it.  Every OTHER thread that armed its slot for that sim —
+ * SDL's timer thread ticking a hosted server, a WBN worker that published
+ * through serverSimPublishControl — is left pointing at freed memory, and
+ * the next serverSimGetActive() there hands a dangling pointer to a caller
+ * that dereferences it (transportUdpServerGetPlayerName -> serverSimIsBot
+ * -> botManagerIsBot).
+ *
+ * Clearing the other threads' slots from here is not an option: that means
+ * writing into the TLS block of a thread that may already have exited.  So
+ * the read side validates instead — a pointer no longer registered is not
+ * handed out, and the stale slot is dropped on the spot.
+ *
+ * Registration is create/destroy scoped, so the array holds one entry per
+ * concurrently live sim: one or two for the game, one per environment for
+ * the gym.  Overflow degrades to the old unchecked behaviour rather than
+ * making a live sim invisible to its own routing functions. */
+#define SERVER_SIM_LIVE_MAX 256
+static ServerSim *s_liveSims[SERVER_SIM_LIVE_MAX];
+static SDL_AtomicInt s_liveSimsOverflowed;
+
+static void serverSimRegisterLive(ServerSim *sim) {
+    int i;
+    for (i = 0; i < SERVER_SIM_LIVE_MAX; i++) {
+        if (SDL_CompareAndSwapAtomicPointer((void **)&s_liveSims[i],
+                                            NULL, sim)) {
+            return;
+        }
+    }
+    SDL_SetAtomicInt(&s_liveSimsOverflowed, 1);
+    WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                 "serverSim live registry full (%d slots) — stale activeSim "
+                 "detection is now disabled for this process",
+                 SERVER_SIM_LIVE_MAX);
+}
+
+static void serverSimUnregisterLive(ServerSim *sim) {
+    int i;
+    for (i = 0; i < SERVER_SIM_LIVE_MAX; i++) {
+        if (SDL_GetAtomicPointer((void **)&s_liveSims[i]) == (void *)sim) {
+            SDL_SetAtomicPointer((void **)&s_liveSims[i], NULL);
+            return;
+        }
+    }
+}
+
+static bool serverSimIsLive(ServerSim *sim) {
+    int i;
+    if (SDL_GetAtomicInt(&s_liveSimsOverflowed) != 0) {
+        return true;
+    }
+    for (i = 0; i < SERVER_SIM_LIVE_MAX; i++) {
+        if (SDL_GetAtomicPointer((void **)&s_liveSims[i]) == (void *)sim) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Map change callback: records terrain changes into the dedicated map event
  * buffer so they never compete with sound/game events for slots. */
 static void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
@@ -172,6 +234,12 @@ static void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain) {
 }
 
 ServerSim *serverSimGetActive(void) {
+    /* A slot armed for a sim that has since been destroyed — necessarily by
+     * some other thread, since destroy clears its own — must never be handed
+     * out.  Drop it so subsequent calls on this thread are a plain read. */
+    if (activeSim != NULL && !serverSimIsLive(activeSim)) {
+        activeSim = NULL;
+    }
     return activeSim;
 }
 
@@ -655,6 +723,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         }
         sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
     }
+
+    /* Publish the sim as live before any caller can arm an activeSim slot
+     * for it.  Paired with serverSimUnregisterLive in serverSimDestroy,
+     * which the failure paths of the three creators also route through. */
+    serverSimRegisterLive(sim);
 }
 
 ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
@@ -982,7 +1055,11 @@ void serverSimDestroy(ServerSim *sim) {
         sim->previousMapDataLen = 0;
     }
 
-    /* Clear the active sim pointer if it points to this sim */
+    /* Retire the sim before the free.  Clearing our own thread's slot is
+     * only half of it — every other thread's slot still names this sim, and
+     * dropping the registration is what makes serverSimGetActive() refuse
+     * to hand those out. */
+    serverSimUnregisterLive(sim);
     if (activeSim == sim) {
         activeSim = NULL;
     }
@@ -1330,6 +1407,17 @@ static void simRunHalfStep(ServerSim *sim) {
     InputPacket currentInputs[MAX_TANKS];
     bool hasInput[MAX_TANKS];
 
+    /* Arm this thread's active-sim slot BEFORE the state gate, not after
+     * it.  The non-running branches below are not inert: they run
+     * serverSimGameVoteTick and logWriteTick, and logWriteTick's pre-tick
+     * hook is where the dedicated-log writer drains work queued from
+     * another thread (handleLobbyEnter), which reaches back for the sim
+     * through serverSimGetActive().  With the assignment after the switch,
+     * a lobby tick ran that drain against whatever sim this thread last
+     * touched — on the SDL timer thread, a sim from an earlier server in
+     * the same process. */
+    activeSim = sim;
+
     /* In-game vote driver — runs in every state so timeouts, heartbeats,
      * and the post-pass 3/2/1 countdown keep firing in SP, host, and
      * dedicated builds alike (independent of transport tick). */
@@ -1360,9 +1448,6 @@ static void simRunHalfStep(ServerSim *sim) {
     }
 
     playersRejoinUpdate();
-
-    /* Set active sim so servercore.c routing functions access sim state directly */
-    activeSim = sim;
 
     /* Install map change callback to emit EVENT_MAP_CHANGE during tick */
     mapSetChangeCallback(simMapChangeCallback);

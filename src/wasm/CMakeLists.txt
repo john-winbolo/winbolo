@@ -38,7 +38,7 @@ set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 include(FetchContent)
 FetchContent_Declare(sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.2
+    GIT_TAG        release-3.4.14
 )
 FetchContent_Declare(sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
@@ -517,7 +517,7 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.6@/Brains/GoalHunter_1.6"
     # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
     # EM_ASYNC_JS fetch transport to hand response bodies back to C.
-    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel']"
+    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel','_wbWasmResetHeldKeys']"
     "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','lengthBytesUTF8','stringToUTF8','UTF8ToString','setValue']"
     -sALLOW_MEMORY_GROWTH=1
     "-sINITIAL_MEMORY=67108864"

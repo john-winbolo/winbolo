@@ -173,6 +173,19 @@ void wbWasmWheel(double deltaY) {
   inputBumpGunsight(deltaY < 0.0 ? +1 : -1);
 }
 
+extern void inputResetHeldKeys(void);               /* gui/sdl3/input.h */
+
+/* Held-key safety reset for browser blur paths that never reach SDL. The game
+ * polls SDL_GetKeyboardState; if the browser stops delivering keyup (tab
+ * hidden, window blurred) a movement key reads as held forever and the client
+ * keeps sending the turn button. shell.html calls this on visibilitychange
+ * (hidden) and on window blur; inputResetHeldKeys clears SDL's key array and
+ * the input module's latched edge state. */
+EMSCRIPTEN_KEEPALIVE
+void wbWasmResetHeldKeys(void) {
+  inputResetHeldKeys();
+}
+
 /* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
