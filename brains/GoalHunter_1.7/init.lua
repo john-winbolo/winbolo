@@ -3594,6 +3594,10 @@ function Brain.think(info)
     or (state.goal.kind == "defend_pill" and DEFEND_HEAT_STATIONARY_SUBS[state.goal.substate or ""])
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
+    -- take_cover parks ON PURPOSE once it reaches the chosen tile; the whole
+    -- goal is "stand here instead of there", so stuck detection must not read
+    -- the hold as a wedged tank and fire flee_pill.
+    or state.goal.kind == "take_cover"
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -4279,7 +4283,13 @@ function Brain.think(info)
       -- Only definitional invalidation: pill gone, no longer the team's
       -- (own or allied), or dead. Attack state plays no part — the pool
       -- scores every built team pill and replans re-compete naturally.
-      local p = W.pill_at(world, gmx, gmy)
+      -- A WATCH win (heat blocked at the arrival radius) holds on a tile
+      -- NEXT TO the pill, so goal.mx/my is not the pill's tile; goal.pill_mx/
+      -- pill_my carries the real target and is what gets validated. Without
+      -- this the watch goal would be invalid on the very tick it was chosen.
+      local pmx = state.goal.pill_mx or gmx
+      local pmy = state.goal.pill_my or gmy
+      local p = W.pill_at(world, pmx, pmy)
       if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
          or p.health == 0 then goal_valid = false end
     elseif gk == "repair_pill" then
@@ -4296,6 +4306,21 @@ function Brain.think(info)
       else
         local p = W.pill_at(world, gmx, gmy)
         if p and p.owner == "friendly" and p.health > 0 then goal_valid = false end
+      end
+    elseif gk == "take_cover" then
+      -- The only thing that can invalidate a cover tile is the tile itself:
+      -- terrain changed under it (a wall went up, a crater flooded) so it is
+      -- no longer somewhere a tank can stand. Whether it is still the SAFEST
+      -- tile is the pool's question, re-asked every replan — and the LGM
+      -- APPEARED urgent replan already re-runs the pool the moment the
+      -- builder is back, which is when place/panic should take over.
+      local tt = U.ttype(gmx, gmy)
+      if tt == C.T_DEEPSEA or tt == C.T_BUILDING or tt == C.T_HALFBUILD
+         or (tt == C.T_RIVER and not info.inboat) then
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[14] = nil end
+        state._cover_spot = nil
+        state._cover_scan = nil
       end
     elseif gk == "attack_tank" then
       -- Invalid if no enemy tanks visible (target escaped) or we're too weak.
@@ -7462,6 +7487,7 @@ function Brain.think(info)
     end
     pill_table.draw(viz, world, state, info)
     goals.draw_pill_spots(viz, state)
+    goals.draw_take_cover(viz, state)
     goals.draw_build_viz(viz, state, info)
     attack.draw_pill_eval_progress(viz, state)
     attack.draw_plan_trace(viz, state, info)

@@ -369,6 +369,13 @@ local function odds_weight(d)
   return 0, false
 end
 
+-- Published so goals.lua's take_cover scorer prices a CANDIDATE TILE with the
+-- exact same distance bands imdanger prices the tank's own tile with. Two
+-- copies of these ladders would drift and the panel numbers would stop
+-- reconciling with the SCORES line.
+M.cover_weight = cover_weight
+M.odds_weight  = odds_weight
+
 -- Is some ally already engaging enemy tank `id`? Read from the /info state
 -- slate. Two guards matter: gate on goal == "attack_tank" FIRST, because
 -- `target` is a PILL id when the ally's goal is attack_pill (an ally attacking
@@ -561,6 +568,18 @@ function M.should_panic_build(state, info)
   if info.man_status ~= C.LGM_INTANK then return false, nil, "lgm_out" end
   if info.inboat then return false, nil, "inboat" end
 
+  return M.panic_scores(state)
+end
+
+-- M.panic_scores(state) -> bool, threshold, why
+--
+-- The SCORE half of should_panic_build, with the builder/carry/boat gates
+-- left out. should_panic_build calls it after its own gates, so the two can
+-- never disagree about the numbers; take_cover calls it directly to ask "do
+-- the scores say panic?" for the case where the answer is yes but the panic
+-- REACTION (a build) is impossible -- lgm_out / not_carrying / inboat. That
+-- combination is exactly incident A: panic true, no builder, nothing happened.
+function M.panic_scores(state)
   local v = state.vuln
   local i = state.imdanger
   if v == nil or i == nil then return false, nil, "no_scores" end

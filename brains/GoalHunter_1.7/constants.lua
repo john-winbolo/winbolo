@@ -2439,4 +2439,74 @@ M.HARVEST_RESUME_MARGIN_FRAC = 0.15 -- than max(ABS, dispatch_score x FRAC)
 M.HARVEST_RESUME_MAX_TICKS   = 25   -- resume request not dispatched within this
                                     -- many ticks (decide() early-returned every
                                     -- tick, e.g. water_build): drop it (stalled)
+-- =========================================================================
+-- take_cover (2026-09-01)
+-- =========================================================================
+-- A goal whose whole job is "stand somewhere less lethal".  Two field
+-- incidents drove it (20260901_000042_1_loss_b6 bot3):
+--   A t=11075 -- carrying 2 pills with a DEAD builder, two enemy tanks
+--     closing.  The only "get out of here" reaction the brain had was a
+--     BUILD (danger.should_panic_build), which returns false with "lgm_out"
+--     when the builder is gone, so the bot stood still and then died 1v2.
+--   B t=16625 -- full tank, one tile from a forest, parked inside an ANGRY
+--     hostile pill's range for 130 ticks: defend_pill produced no bid
+--     (heat blocked), attack_tank was gated by pill_crossfire, repair
+--     needed the LGM, and the haul flee's destination picker rejected every
+--     base as "empty" because a full tank needs nothing.
+--
+-- take_cover is ALWAYS evaluated and ALWAYS emits a pool row (pool 14), so
+-- its score is visible even when it loses; when it genuinely shouldn't be
+-- considered the row carries a reject reason instead of vanishing.
+--
+-- Per-tile safety, every term hand-computable from the printed row:
+--   safety(t) = W_COVER*cover(t) - W_EXPO*expo(t)
+--               - W_ENEMY*enemy(t) + W_ALLY*ally(t)
+--   pick      = argmax over candidates of safety(t) - W_TRAVEL*travel(t)
+--   margin    = safety(pick) - safety(here)
+M.TAKE_COVER_W_COVER   = 8     -- per cover UNIT (danger.cover_weight sum, capped at
+                               -- IMD_COVER_MAX/IMD_COVER_PER_UNIT = 3): one pill
+                               -- inside 4 tiles is worth 8 safety points.
+M.TAKE_COVER_W_EXPO    = 0.15  -- per point of threat.pill_at: an angry pill's ~204
+                               -- at its centre costs ~30 (= one covering own pill
+                               -- x4), a calm pill's 8 costs ~1.
+M.TAKE_COVER_W_ENEMY   = 20    -- per danger.odds_weight unit of visible enemy tank:
+                               -- one enemy inside 8 tiles (w 0.75) costs 15.
+M.TAKE_COVER_W_ALLY    = 4     -- per odds_weight unit of visible allied tank: a
+                               -- friend nearby helps, but a quarter as much as an
+                               -- enemy hurts (we are the one being shot at).
+M.TAKE_COVER_W_TRAVEL  = 0.6   -- per unit of smart_cost. Grass is 2.0/tile in
+                               -- brain_pathfinder.c, so a 6-tile grass drive costs
+                               -- ~7 points -- roughly one own-pill's worth of cover.
+M.TAKE_COVER_MIN_MARGIN = 8    -- with NO trigger, only bid when the best tile is at
+                               -- least this much safer than standing still (about
+                               -- one covering pill); otherwise REJECT no_safer_tile.
+M.TAKE_COVER_BASE_COST = 60    -- untriggered/bad-ground bid before the margin
+                               -- discount: loses to a real attack (20-30) and to
+                               -- capture work, beats seek_trees filler at 34+.
+M.TAKE_COVER_K         = 1.0   -- cost = max(1, BASE_COST - K * margin)
+M.TAKE_COVER_HAUL_FLOOR = 10   -- the "get the cargo out" / "panic but cannot build"
+                               -- floor. Below attack_tank's engage band on purpose:
+                               -- when this fires, leaving IS the plan.
+M.TAKE_COVER_BAD_GROUND_PILL_AT = M.TANK_COMBAT_DEFENDED_DANGER  -- 30 = "an angry
+                               -- pill covers this tile"; same line attack_tank
+                               -- disengages on, so the two agree about bad ground.
+M.TAKE_COVER_SCAN_TICKS   = 10   -- reuse the last scan for this many ticks
+M.TAKE_COVER_STICKY_TICKS = 500  -- keep a chosen tile this long (as pick_wait_spot)
+M.TAKE_COVER_STICKY_DIST  = 12   -- ...unless the tank wandered further than this
+M.TAKE_COVER_HOLD_RELEASE_MARGIN = 4  -- while holding, release once standing here is
+                               -- within this much of how safe the pick looked
+M.TAKE_COVER_PILL_NEIGHBOUR_RANGE = 15  -- own/allied pills within this many tiles
+                               -- contribute their 8 neighbours as candidates
+M.TAKE_COVER_BASE_TILE_RANGE      = 15  -- friendly base tiles within this many
+M.TAKE_COVER_REJECT_COST = 1e8 -- sentinel for a rejected pool-14 entry: never wins,
+                               -- but < 1e29 so the WINNERS strip still renders it
+                               -- (same trick as REPOSITION_REJECT_COST)
+
+-- defend_pill ARRIVED-but-heat-blocked "watch" bid. Previously that case
+-- produced NO bid at all, which is how incident B ended up on seek_trees
+-- inside an angry pill's range. Must LOSE to a real attack_tank (~20-30)
+-- and to take_cover's haul floor (10), and BEAT seek_trees (40 - carry*6,
+-- so 34 at carry=1).
+M.DEFEND_WATCH_COST = 30
+
 return M

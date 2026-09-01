@@ -3344,10 +3344,17 @@ function M.steer(state, world, info, goal)
   -- attack_pill: plan_position just visualizes, no steering needed.
   -- Falls through to general navigation for position substate.
 
-  elseif goal.kind == "wait_for_lgm"
+  elseif (goal.kind == "wait_for_lgm" or goal.kind == "take_cover")
          and goal.mx == (bit.rshift(info.tankx, 8)) and goal.my == (bit.rshift(info.tanky, 8)) then
-    -- ON the wait spot: stand still and let the LGM finish whatever he's
-    -- doing (farming, opportunistic build) before chasing new goals.
+    -- ON the wait/cover spot: stand still. For wait_for_lgm, let the LGM
+    -- finish whatever he's doing (farming, opportunistic build) before
+    -- chasing new goals. For take_cover the hold IS the goal — this tile was
+    -- chosen because standing on it is safer than standing where we were, so
+    -- there is nothing further to do but stop (no plow, no creep).
+    --
+    -- Both kinds reach this branch only once they are ON the tile; while
+    -- driving there the goal falls through to general navigation like any
+    -- other destination.
     -- When goal.mx/my is a danger-aware SAFE SPOT elsewhere (picked by
     -- pick_wait_spot — parked tile under fire), this branch doesn't match
     -- and the goal falls through to general navigation, which drives to

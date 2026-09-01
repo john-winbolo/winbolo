@@ -541,12 +541,18 @@ M.ATTACK_SAFE_RADIUS        = 3    -- tiles around standoff to check for danger/
 M.ATTACK_DANGER_THRESHOLD   = 30   -- max total score to be considered safe
 M.ATTACK_DANGER_HOTSPOT     = 15   -- any tile in maneuver area above this triggers B penalty
 
--- Soldier self-planning for a standoff spot (blitz/pill-take): prefer a spot
--- whose shot to the pill CENTER crosses fewer trees and is not blocked by an
--- already-built wall (the commander rejects center-blocked spots, so favoring
--- center-clear here converges the negotiation faster).
-M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the center shot path
-M.STANDOFF_SHOT_BLOCKED_PENALTY = 200  -- center shot blocked by a built wall (T_BUILDING/HALFBUILD)
+-- Standoff-spot scoring for a pill take. The spot scan now picks, per spot, the
+-- point on the pill it can actually hit (centre or one of the 4 corners) and
+-- REJECTS the spot outright when no aim point has a clean shell path — see
+-- attack.spot_clear_aim. So the only thing left to score is how many trees sit
+-- on the chosen line: each one eats a shell before the pill takes any.
+M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the CHOSEN aim path
+-- RETIRED (kept so old saves / any stray reference still resolve): a live pill,
+-- a base or a wall on the line used to be a 200-point nudge on the CENTRE path.
+-- A nudge is not a defence — 20260831_173448 bot2 took a spot with our own pill
+-- dead on the centre line anyway because the rest of it scored well. Blocked
+-- spots are now hard-rejected instead of penalized.
+M.STANDOFF_SHOT_BLOCKED_PENALTY = 200
 
 -- Pill-take spots that sit deep inside enemy influence are much harder to
 -- hold during the take. In mid/late game (phase != "opening"), multiply
@@ -586,7 +592,9 @@ M.WALL_SHIELD_LGM_MAX_TICKS   = 2000 -- max ticks to simulate LGM travel
 M.PPT_BLOCKERS_ENOUGH         = 1   -- protected-take build phase ends in SUCCESS as soon as this many blockers are NEWLY placed (wall or dropped pillbox) ??? but ONLY when a blitz is underway (see PPT_BLOCKERS_ENOUGH_MIN_INWAIT / BLITZ_MIN_READY_TO_CHARGE). Solo, the full planned shield is built. 1 = one blocker is enough cover once the squad is overwhelming the pill.
 M.PPT_BLOCKERS_ENOUGH_MIN_INWAIT = 1  -- the one-blocker early-success also applies while the commander is still building IF at least this many soldiers are already parked in blitz_wait (sharing the pill's fire). Pairs with BLITZ_MIN_READY_TO_CHARGE (the ready-to-charge quorum) as the other trigger.
 M.SHIELD_ADJ_FRIENDLY_PENALTY = 3  -- shield-slot score: per would-be blocker slot that touches (8-neighbour) an existing friendly pill. A PENALTY, not a ban: a pill on such a slot doubles the double-take exposure of both pills and rarely adds cover the neighbour doesn't already give, but there are takes where it is still the right slot. Under a wall's 5 cover so it only breaks near-ties. (20260831_092854 bot2 t=8413: pill #5 dropped at (127,140) beside pill 6 at (127,139).)
-M.SANITY_PILL_REPLANS_MAX = 3      -- attack_pill: consecutive shot-path sanity replans caused by a FRIENDLY pill in the line before the take is abandoned (each one also bans the angle; this is the backstop)
+M.SANITY_PILL_REPLANS_MAX = 3      -- attack_pill: consecutive shot-path sanity replans caused by a FRIENDLY pill in the line before the take is abandoned (each one also bans the angle; this is the backstop). SHARED counter across every blocked-line site (standoff sanity, blitz GO gate, charge, shoot_pill) so "spots tried" is one number for the whole take, not one per site.
+M.CHARGE_SHOT_CHECK_AT_SPOT_TILES = 1.0  -- charge: how close (tiles) the tank must be to its standoff before the impassable-obstacle shot-path check is allowed to fire at all. While still driving in, the live gun line swings across whatever happens to be beside the target and clears itself on arrival — checking early binned whole takes (loss_b6 bot3 t=9483: a pill at (130,131) crossed the line to pill (129,130) 8 tiles out). Being closer to the pill than the standoff is also counts as "at spot".
+M.BLOCKED_AIM_RETRY_TICKS = 10     -- blocked-line ladder: minimum ticks between two 5-aim-point clear-line searches at the SAME site on one goal. The search costs five shell simulations, and after a successful re-aim the gun needs a few ticks to swing onto the new corner, during which the live line is still blocked — so we hold rather than re-search (or abort) every tick.
 M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
 M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
 M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
@@ -635,6 +643,7 @@ M.HARDLINE_ENGAGE_RANGE   = 10    -- only switch to kill_hardline within this ma
 M.HARDLINE_FIRE_AIM_TOL   = 8     -- kill_hardline fires only when the tank's heading is within this many degrees of the pill, so the shot we fire matches the pill-aimed line shot_path_clear validated (never lob a shell off-axis into a stray pillbox/base while driving).
 
 -- Swerve durations (confirmed-kill swerve: pill dead or bullets_fired >= needed)
+M.SWERVE_COVER_EXTEND_TILES = 0.5 -- swerve side-pick cover lines: extend the OUTER end (the 2-tile perpendicular sample point) this far further from the pill; the pill end stays the origin
 M.SWERVE_TOTAL_TICKS      = 95  -- total swerve duration
 M.SWERVE_TURN_TICKS       = 35  -- ticks of turning at start of swerve
 
@@ -815,6 +824,19 @@ M.FLEE_HAUL_FULL_PILLS       = 4    -- have-builder haul protection ramps from c
 -- sometimes over-brakes when plow + lookahead swing move_dir 132??.
 -- Set false to let the tank carry momentum through sharp reorientations.
 M.FACING_AWAY_BRAKE_ENABLED  = false
+-- U-turn commitment (navigate). When the nav target is nearly straight
+-- behind, the shortest-turn side flips with tiny waypoint/heading jitter:
+-- the path is re-rooted from the tank's tile every tick, and an equal-cost
+-- diagonal alternative makes the next tile alternate NE/SE of the tank,
+-- swinging move_dir ~70 brad. Re-deciding L/R each tick then alternates
+-- the turn key every ~10 ticks and the tank drives AWAY from its goal at
+-- full speed (loss_b5 bot2 t=10203-10370: 6 tiles the wrong way; 23-28
+-- such episodes per bot per game). Once |heading_err| exceeds COMMIT the
+-- turn side is latched and held while |heading_err| stays >= HOLD; below
+-- HOLD the plain shortest-side rule resumes. The latch also drops when
+-- the goal changes or another steering mode ran last tick.
+M.UTURN_COMMIT_BRAD = 96   -- latch the turn side beyond this |heading_err|
+M.UTURN_HOLD_BRAD   = 80   -- keep the latched side down to this |heading_err|
 -- Stay-for-LGM: when tank is at a base and LGM is returning soon, make the
 -- refuel_at_base goal cheap enough to usually win but interruptible by an
 -- immediate combat opportunity (close capture / close tank).
@@ -1053,6 +1075,14 @@ M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy 
 -- lookahead cliff guard's L-step decomposition, not by this brake.
 -- With the 768 wu look-ahead clamp this is at most 12 terrain lookups.
 M.CLIFF_SCAN_STEP_WU = 64
+-- Brake look-ahead (steering.lua) = cpf.predict_stop's stopping distance (the
+-- calibrated engine model shared with the charge/approach brakes) + a
+-- margin, capped. On 20260831_173448 bot2 the old speed*6 look-ahead let a
+-- speed-52 tank slide 317 wu into deep sea after the brake fired.
+M.CLIFF_MIN_SPEED       = 1      -- any motion: cliff brake + evade whenever the centre path crosses deep sea within the scan. Was a hard-coded 12, then 6; a swerve creeping at speed 4-8 on the shore (20260831_230309 bot2 t=7816) oscillated between "too slow for the brake" and "brake, no turn" and drifted into the water. With the evasive turn the old stuck-at-water's-edge worry no longer applies: a slow tank facing water turns away instead of freezing.
+M.CLIFF_EVADE_BRADS     = 32     -- evasive turn: compare clear runway on rays rotated +-this (32 brads = 45 deg) and turn toward the freer side while braking
+M.CLIFF_STOP_MARGIN_WU  = 64     -- a quarter tile: the travel between the sample that sees water and the brake biting
+M.CLIFF_LOOK_MAX_WU     = 1280   -- 5 tiles: scan-cost bound (was 768)
 
 -- -------------------------------------------------------------------------
 -- Shell trajectory prediction
@@ -1158,7 +1188,8 @@ M.ANGRY_REFUEL_THRESHOLD   = 0.6   -- pill anger above which we flee the base
 -- Goal replan scheduling
 -- -------------------------------------------------------------------------
 M.GOAL_REPLAN_INTERVAL     = 50    -- ticks between goal decisions
-M.WARMUP_MIN_REAL_GOALS    = 10    -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
+M.WARMUP_CAPTURE_MAX_COST  = 150   -- warm-up exemption: a capture_pill (dead pill pickup) priced at or below this wins even before the pools are warm. ~13 tiles by sea cost 34; a cross-map pickup is far above this. (20260831_173448 bot3: respawned in a boat, cost-34 water pickup lost to the explore fallback, landed, pills unreachable thereafter.)
+M.WARMUP_MIN_REAL_GOALS    = 10   -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
 M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain start so the eval queue warms up before we commit to a direction
@@ -2408,4 +2439,74 @@ M.HARVEST_RESUME_MARGIN_FRAC = 0.15 -- than max(ABS, dispatch_score x FRAC)
 M.HARVEST_RESUME_MAX_TICKS   = 25   -- resume request not dispatched within this
                                     -- many ticks (decide() early-returned every
                                     -- tick, e.g. water_build): drop it (stalled)
+-- =========================================================================
+-- take_cover (2026-09-01)
+-- =========================================================================
+-- A goal whose whole job is "stand somewhere less lethal".  Two field
+-- incidents drove it (20260901_000042_1_loss_b6 bot3):
+--   A t=11075 -- carrying 2 pills with a DEAD builder, two enemy tanks
+--     closing.  The only "get out of here" reaction the brain had was a
+--     BUILD (danger.should_panic_build), which returns false with "lgm_out"
+--     when the builder is gone, so the bot stood still and then died 1v2.
+--   B t=16625 -- full tank, one tile from a forest, parked inside an ANGRY
+--     hostile pill's range for 130 ticks: defend_pill produced no bid
+--     (heat blocked), attack_tank was gated by pill_crossfire, repair
+--     needed the LGM, and the haul flee's destination picker rejected every
+--     base as "empty" because a full tank needs nothing.
+--
+-- take_cover is ALWAYS evaluated and ALWAYS emits a pool row (pool 14), so
+-- its score is visible even when it loses; when it genuinely shouldn't be
+-- considered the row carries a reject reason instead of vanishing.
+--
+-- Per-tile safety, every term hand-computable from the printed row:
+--   safety(t) = W_COVER*cover(t) - W_EXPO*expo(t)
+--               - W_ENEMY*enemy(t) + W_ALLY*ally(t)
+--   pick      = argmax over candidates of safety(t) - W_TRAVEL*travel(t)
+--   margin    = safety(pick) - safety(here)
+M.TAKE_COVER_W_COVER   = 8     -- per cover UNIT (danger.cover_weight sum, capped at
+                               -- IMD_COVER_MAX/IMD_COVER_PER_UNIT = 3): one pill
+                               -- inside 4 tiles is worth 8 safety points.
+M.TAKE_COVER_W_EXPO    = 0.15  -- per point of threat.pill_at: an angry pill's ~204
+                               -- at its centre costs ~30 (= one covering own pill
+                               -- x4), a calm pill's 8 costs ~1.
+M.TAKE_COVER_W_ENEMY   = 20    -- per danger.odds_weight unit of visible enemy tank:
+                               -- one enemy inside 8 tiles (w 0.75) costs 15.
+M.TAKE_COVER_W_ALLY    = 4     -- per odds_weight unit of visible allied tank: a
+                               -- friend nearby helps, but a quarter as much as an
+                               -- enemy hurts (we are the one being shot at).
+M.TAKE_COVER_W_TRAVEL  = 0.6   -- per unit of smart_cost. Grass is 2.0/tile in
+                               -- brain_pathfinder.c, so a 6-tile grass drive costs
+                               -- ~7 points -- roughly one own-pill's worth of cover.
+M.TAKE_COVER_MIN_MARGIN = 8    -- with NO trigger, only bid when the best tile is at
+                               -- least this much safer than standing still (about
+                               -- one covering pill); otherwise REJECT no_safer_tile.
+M.TAKE_COVER_BASE_COST = 60    -- untriggered/bad-ground bid before the margin
+                               -- discount: loses to a real attack (20-30) and to
+                               -- capture work, beats seek_trees filler at 34+.
+M.TAKE_COVER_K         = 1.0   -- cost = max(1, BASE_COST - K * margin)
+M.TAKE_COVER_HAUL_FLOOR = 10   -- the "get the cargo out" / "panic but cannot build"
+                               -- floor. Below attack_tank's engage band on purpose:
+                               -- when this fires, leaving IS the plan.
+M.TAKE_COVER_BAD_GROUND_PILL_AT = M.TANK_COMBAT_DEFENDED_DANGER  -- 30 = "an angry
+                               -- pill covers this tile"; same line attack_tank
+                               -- disengages on, so the two agree about bad ground.
+M.TAKE_COVER_SCAN_TICKS   = 10   -- reuse the last scan for this many ticks
+M.TAKE_COVER_STICKY_TICKS = 500  -- keep a chosen tile this long (as pick_wait_spot)
+M.TAKE_COVER_STICKY_DIST  = 12   -- ...unless the tank wandered further than this
+M.TAKE_COVER_HOLD_RELEASE_MARGIN = 4  -- while holding, release once standing here is
+                               -- within this much of how safe the pick looked
+M.TAKE_COVER_PILL_NEIGHBOUR_RANGE = 15  -- own/allied pills within this many tiles
+                               -- contribute their 8 neighbours as candidates
+M.TAKE_COVER_BASE_TILE_RANGE      = 15  -- friendly base tiles within this many
+M.TAKE_COVER_REJECT_COST = 1e8 -- sentinel for a rejected pool-14 entry: never wins,
+                               -- but < 1e29 so the WINNERS strip still renders it
+                               -- (same trick as REPOSITION_REJECT_COST)
+
+-- defend_pill ARRIVED-but-heat-blocked "watch" bid. Previously that case
+-- produced NO bid at all, which is how incident B ended up on seek_trees
+-- inside an angry pill's range. Must LOSE to a real attack_tank (~20-30)
+-- and to take_cover's haul floor (10), and BEAT seek_trees (40 - carry*6,
+-- so 34 at carry=1).
+M.DEFEND_WATCH_COST = 30
+
 return M
