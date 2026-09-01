@@ -106,10 +106,19 @@ int main(int argc, char *argv[]) {
         prefsInit(prefsPath);
     }
 
-    /* Create window */
+    /* Create window.
+     *
+     * HIGH_PIXEL_DENSITY: without it SDL sets the layer's contentsScale to 1
+     * (SDL_cocoametalview.m), so on a Retina display the whole window is
+     * rendered at point resolution and the compositor bilinear-upscales it —
+     * text, chrome and canvas alike. NSHighResolutionCapable is already true
+     * in the bundle plist; this flag is what makes SDL use the backing size.
+     * Canvas code takes its viewport from SDL_GetRenderOutputSize and scales
+     * pointer coordinates by SDL_GetWindowPixelDensity to match. */
     SDL_Window *window = SDL_CreateWindow("WinBolo Map Editor",
                                           DEFAULT_WINDOW_W, DEFAULT_WINDOW_H,
-                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
+                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED |
+                                          SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();

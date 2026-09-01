@@ -1682,6 +1682,38 @@ static void meCommitPaste(MapEditorState *ed, int originX, int originY) {
     ed->isPasting = false;
 }
 
+/* Largest texture this renderer will allocate, for the sub-1x offscreen.
+   Cached — one renderer per process, and this is read per frame and per
+   pointer event. Metal and modern GL report 16384; the 4096 fallback is
+   what the sub-1x path used to hardcode. */
+static int meMaxOffscreen(SDL_Renderer *renderer) {
+    static int cached = 0;
+    if (cached == 0) {
+        SDL_PropertiesID props = SDL_GetRendererProperties(renderer);
+        cached = (int)SDL_GetNumberProperty(
+            props, SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 4096);
+        if (cached < 1024) cached = 1024;
+    }
+    return cached;
+}
+
+/* Size of the offscreen texture the sub-1x path renders into for a given
+   viewport. Shared by the renderer and the pointer mapping: when the cap
+   bites, the offscreen holds less than a windowful of map, and the two must
+   agree about that or clicks land on the wrong tile. */
+static void meSubZoomRenderSize(MapEditorState *ed, int screenW, int screenH,
+                                int *outW, int *outH) {
+    int maxTex = meMaxOffscreen(ed->renderer);
+    int w = (int)(screenW / ed->zoomLevel);
+    int h = (int)(screenH / ed->zoomLevel);
+    if (w > maxTex) w = maxTex;
+    if (h > maxTex) h = maxTex;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    *outW = w;
+    *outH = h;
+}
+
 /* Ensure offscreen render target exists at the given dimensions. */
 static void meEnsureOffscreen(MapEditorState *ed, int needW, int needH) {
     if (ed->offscreenTex && ed->offscreenW == needW && ed->offscreenH == needH)
@@ -1689,6 +1721,12 @@ static void meEnsureOffscreen(MapEditorState *ed, int needW, int needH) {
     if (ed->offscreenTex) SDL_DestroyTexture(ed->offscreenTex);
     ed->offscreenTex = SDL_CreateTexture(ed->renderer,
         SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, needW, needH);
+    /* This texture only ever blits down (it exists for the sub-1x steps), and
+       LINEAR's average is the right filter for a non-integer downscale — 0.75x
+       is 1.33:1, where NEAREST drifts the sampling phase and makes identical
+       tiles look different across the map. State it rather than inheriting it
+       from SDL3's renderer default. */
+    SDL_SetTextureScaleMode(ed->offscreenTex, SDL_SCALEMODE_LINEAR);
     ed->offscreenW = needW;
     ed->offscreenH = needH;
 }
@@ -1698,12 +1736,14 @@ static void meEnsureOffscreen(MapEditorState *ed, int needW, int needH) {
 static bool meScreenToMap(MapEditorState *ed, float sx, float sy,
                           int screenW, int screenH,
                           int *outMX, int *outMY) {
-    /* For sub-1x zoom, convert screen coords and viewport to offscreen-texture space */
+    /* For sub-1x zoom, convert screen coords and viewport to offscreen-texture
+       space. The blit is an exact zoomLevel scale, so the coordinate divides by
+       it; the viewport comes from meSubZoomRenderSize so a capped offscreen is
+       mapped the same way it was drawn. */
     if (ed->zoomLevel < 1.0f) {
         sx /= ed->zoomLevel;
         sy /= ed->zoomLevel;
-        screenW = (int)(screenW / ed->zoomLevel);
-        screenH = (int)(screenH / ed->zoomLevel);
+        meSubZoomRenderSize(ed, screenW, screenH, &screenW, &screenH);
     }
 
     int zf = ed->zoomFactor;
@@ -3008,6 +3048,16 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->window = window;
     ed->renderer = renderer;
     ed->fromMainMenu = fromMainMenu;
+
+    {
+        int winW = 0, winH = 0, outW = 0, outH = 0;
+        SDL_GetWindowSize(window, &winW, &winH);
+        SDL_GetRenderOutputSize(renderer, &outW, &outH);
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+            "mapEditorRun: window %dx%d pt, render output %dx%d px, density %.2f",
+            winW, winH, outW, outH, SDL_GetWindowPixelDensity(window));
+    }
+
     ed->zoomFactor = 2;
     ed->zoomStepIndex = ZOOM_STEP_1X + 1;  /* 2x = index 6 */
     ed->zoomLevel = 2.0f;
@@ -3122,6 +3172,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     const bool *keystate = SDL_GetKeyboardState(NULL);
 
     while (!ed->quit) {
+        /* Canvas coordinates are renderer pixels; SDL reports mouse positions
+           in window points. With SDL_WINDOW_HIGH_PIXEL_DENSITY those differ by
+           the window's pixel density (2 on a Retina display), so convert every
+           pointer coordinate at the boundary and take the viewport from the
+           renderer rather than the window. Re-read per frame: dragging the
+           window to a display with a different density changes it. */
+        float pxScale = SDL_GetWindowPixelDensity(window);
+        if (pxScale <= 0.0f) pxScale = 1.0f;
+
         /* Process events */
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
@@ -3349,15 +3408,17 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             }
 
             case SDL_EVENT_MOUSE_MOTION: {
-                ed->mouseX = ev.motion.x;
-                ed->mouseY = ev.motion.y;
+                float motionX = ev.motion.x * pxScale;
+                float motionY = ev.motion.y * pxScale;
+                ed->mouseX = motionX;
+                ed->mouseY = motionY;
 
                 /* Tool-specific mouse motion handling */
                 if (!mapEditorImguiWantMouse()) {
                     int screenW2, screenH2;
-                    SDL_GetWindowSize(window, &screenW2, &screenH2);
+                    SDL_GetRenderOutputSize(renderer, &screenW2, &screenH2);
                     int mx, my;
-                    if (meScreenToMap(ed, ev.motion.x, ev.motion.y, screenW2, screenH2, &mx, &my)) {
+                    if (meScreenToMap(ed, motionX, motionY, screenW2, screenH2, &mx, &my)) {
                         /* Pencil: paint along drag using Bresenham */
                         if (ed->isPainting && ed->activeTool == ME_TOOL_PENCIL) {
                             if (ed->brushSize > 0)
@@ -3411,10 +3472,10 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
                 if (ed->rightDown) ed->rightDragged = true;
                 if (ed->dragging) {
-                    float dx = ev.motion.x - ed->dragLastX;
-                    float dy = ev.motion.y - ed->dragLastY;
-                    ed->dragLastX = ev.motion.x;
-                    ed->dragLastY = ev.motion.y;
+                    float dx = motionX - ed->dragLastX;
+                    float dy = motionY - ed->dragLastY;
+                    ed->dragLastX = motionX;
+                    ed->dragLastY = motionY;
                     float tilePixelsF = 16.0f * ed->zoomLevel;
                     int wmoveX = (int)(dx * 256.0f / tilePixelsF);
                     int wmoveY = (int)(dy * 256.0f / tilePixelsF);
@@ -3434,23 +3495,24 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 if (mapEditorImguiWantMouse()) break;
                 if (ev.button.button == SDL_BUTTON_MIDDLE) {
                     ed->dragging = true;
-                    ed->dragLastX = ev.button.x;
-                    ed->dragLastY = ev.button.y;
+                    ed->dragLastX = ev.button.x * pxScale;
+                    ed->dragLastY = ev.button.y * pxScale;
                     break;
                 }
                 if (ev.button.button == SDL_BUTTON_RIGHT) {
                     ed->rightDown = true;
                     ed->rightDragged = false;
                     ed->dragging = true;
-                    ed->dragLastX = ev.button.x;
-                    ed->dragLastY = ev.button.y;
+                    ed->dragLastX = ev.button.x * pxScale;
+                    ed->dragLastY = ev.button.y * pxScale;
                     break;
                 }
                 if (ev.button.button == SDL_BUTTON_LEFT) {
                     int screenW2, screenH2;
-                    SDL_GetWindowSize(window, &screenW2, &screenH2);
+                    SDL_GetRenderOutputSize(renderer, &screenW2, &screenH2);
                     int mx, my;
-                    if (!meScreenToMap(ed, ev.button.x, ev.button.y, screenW2, screenH2, &mx, &my))
+                    if (!meScreenToMap(ed, ev.button.x * pxScale, ev.button.y * pxScale,
+                                       screenW2, screenH2, &mx, &my))
                         break;
 
                     /* Handle paste mode click */
@@ -3656,9 +3718,10 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                     if (ed->isDraggingObj) {
                         ed->isDraggingObj = false;
                         int screenW2, screenH2;
-                        SDL_GetWindowSize(window, &screenW2, &screenH2);
+                        SDL_GetRenderOutputSize(renderer, &screenW2, &screenH2);
                         int mx, my;
-                        if (meScreenToMap(ed, ev.button.x, ev.button.y, screenW2, screenH2, &mx, &my)) {
+                        if (meScreenToMap(ed, ev.button.x * pxScale, ev.button.y * pxScale,
+                                          screenW2, screenH2, &mx, &my)) {
                             /* Drop on original = no-op */
                             if (mx != ed->dragObjOrigX || my != ed->dragObjOrigY) {
                                 const char *err = NULL;
@@ -3831,19 +3894,22 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             ed->mapStats.spatialValid = false;
         }
 
-        /* Render */
+        /* Render. The viewport is the renderer's, not the window's: under
+           SDL_WINDOW_HIGH_PIXEL_DENSITY they differ by the pixel density. */
         int screenW, screenH;
-        SDL_GetWindowSize(window, &screenW, &screenH);
+        SDL_GetRenderOutputSize(renderer, &screenW, &screenH);
 
         /* Sub-1x zoom: render at 1x into larger offscreen texture, then blit scaled-down */
         bool subZoom = (ed->zoomLevel < 1.0f);
         int renderW = screenW, renderH = screenH;
 
         if (subZoom) {
-            renderW = (int)(screenW / ed->zoomLevel);
-            renderH = (int)(screenH / ed->zoomLevel);
-            if (renderW > 4096) renderW = 4096;
-            if (renderH > 4096) renderH = 4096;
+            meSubZoomRenderSize(ed, screenW, screenH, &renderW, &renderH);
+            /* Clear the window as well: when renderW/H hit the texture-size
+               cap the blit below covers less than the whole window, and the
+               remainder would otherwise show the previous frame. */
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderFillRect(renderer, NULL);
             meEnsureOffscreen(ed, renderW, renderH);
             SDL_SetRenderTarget(renderer, ed->offscreenTex);
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -3916,8 +3982,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         if (subZoom) {
             SDL_SetRenderTarget(renderer, NULL);
+            /* Destination is renderW/H scaled by exactly zoomLevel, not the
+               whole window. They are the same thing until the offscreen hits
+               the texture-size cap; past it, stretching a short texture across
+               the full window would put the view at some scale other than
+               zoomLevel, which meScreenToMap cannot account for. */
             SDL_FRect src = { 0, 0, (float)renderW, (float)renderH };
-            SDL_FRect dst = { 0, 0, (float)screenW, (float)screenH };
+            SDL_FRect dst = { 0, 0,
+                              (float)renderW * ed->zoomLevel,
+                              (float)renderH * ed->zoomLevel };
             SDL_RenderTexture(renderer, ed->offscreenTex, &src, &dst);
         }
 
