@@ -225,6 +225,13 @@ struct ClientSim {
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 
+    /* Overview fog memory — what this player has seen, and what is live now.
+     * Maintained every display tick whether or not the overview is shown.
+     * Distinct from brainMap above: that one is the brains' terrain fog and
+     * is revealed by map changes anywhere; this one only ever records what
+     * was inside a live region. */
+    OverviewMap overview;
+
     /* Per-instance message state (was messages.c globals) */
     MessageState messages;
 

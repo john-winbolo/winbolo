@@ -60,6 +60,7 @@
 #include "tankexp.h"
 #include "log.h"
 #include "screenbrainmap.h"
+#include "overview_map.h"
 #include "util.h"
 #include "netpacks.h"
 #include "transport.h"
@@ -306,6 +307,8 @@ bool clientSimCreate(ClientSim *cs) {
   }
   pillsCreate(&cs->sim.pb);
   screenBrainMapCreate(cs);
+  /* Not covered by the memset above: an unseen square is 0xFF, not 0. */
+  overviewMapReset(&cs->overview);
   
   /* Initialize brain state (now per-instance in the struct).
    * memset above already zeroed the scalar fields. */
@@ -692,7 +695,23 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
   }
 }
 
+/* Feeds the overview its per-tick view of the world. Reads the local tank's
+ * map square, or reports that there isn't one. */
+static void overviewMapTick(ClientSim *cs) {
+  BYTE mx = 0, my = 0;
+  bool haveTank = clientSimGetMyTankMapPos(cs, &mx, &my);
+
+  overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank, mx, my);
+}
+
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
+  if (cs == NULL) {
+    return;
+  }
+  /* The overview memory is the one consumer that needs the no-tank tick:
+   * that is when a dead player's regions get their last stamp and a
+   * spectating player keeps seeing what they saw. */
+  overviewMapTick(cs);
   /* Master gate for the per-frame game-render pipeline.  Both
    * clientUiOnTick and basesTickMessageQueue assume the local tank
    * exists — clientUiOnTick reads MY_TANK at ~7 sites for scroll,
@@ -704,7 +723,7 @@ void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
    * the lobby/menu rendering paths run elsewhere, gated by inLobby/
    * netStatus, so the user just sees the previous frame for a tick
    * or two rather than a NULL dereference. */
-  if (cs == NULL || cs->sim.tanks[cs->myPlayerNum] == NULL) {
+  if (cs->sim.tanks[cs->myPlayerNum] == NULL) {
     return;
   }
   /* Decay the render-only error offset one display-tick step. Display
@@ -1690,6 +1709,13 @@ const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
   return cs->brainEvents;
 }
 
+const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
+  if (cs == NULL) {
+    return NULL;
+  }
+  return &cs->overview;
+}
+
 struct in_addr clientSimGetServerAddress(const ClientSim *cs) {
   return cs->serverAddress;
 }
@@ -1853,6 +1879,8 @@ void clientSimResetWorld(ClientSim *cs) {
 
   treeGrowReset(gs);
 
+  overviewMapReset(&cs->overview);
+
   /* Client-only round-scoped render/predict state (interp reset above
    * alongside the per-player clear). */
   cs->serverShellCount = 0;
@@ -1900,6 +1928,9 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
    * terrain either way, so the swapped-in map still renders in place. */
   if (initViewport) {
     viewportInit(clientSimViewportMut(cs));
+    /* New map, so nothing seen on the old one still means anything. The
+     * resync path keeps the memory. */
+    overviewMapReset(&cs->overview);
   }
 
   {

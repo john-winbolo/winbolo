@@ -1328,6 +1328,20 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
   return returnValue;
 }
 
+/* The one pill-view predicate — see internal/pillbox.h. */
+bool pillsCanView(GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer) {
+  bool returnValue; /* Value to return */
+
+  returnValue = FALSE;
+  if (pillIdx < (*value)->numPills) {
+    if ((playersIsAllie(&sim->plyrs, viewPlayer, (*value)->item[pillIdx].owner) == TRUE) && ((*value)->item[pillIdx].armour) != 0 && ((*value)->item[pillIdx].inTank) == FALSE) {
+      returnValue = TRUE;
+    }
+  }
+
+  return returnValue;
+}
+
 /*********************************************************
 *NAME:          pillsCheckView
 *AUTHOR:        John Morrison
@@ -1344,24 +1358,15 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
 *  my    - Y Map position
 *********************************************************/
 bool pillsCheckView(GameSim *sim, pillboxes *value, BYTE mx, BYTE my) {
-  bool returnValue; /* Value to return */
-  BYTE playNumber;  /* My player number */
-  BYTE pillNum;     /* The pillbox number */
+  BYTE pillNum; /* The pillbox number */
 
-    returnValue = TRUE;
   pillNum = pillsGetPillNum(value, mx, my, FALSE, FALSE);
-  playNumber = sim->viewPlayer;
-
   if (pillNum == PILL_NOT_FOUND || pillNum == (PILL_NOT_FOUND-1)) {
-    returnValue = FALSE;
-  } else {
-    pillNum--;
-    if ((playersIsAllie(&sim->plyrs, playNumber, (*value)->item[pillNum].owner) == FALSE) || ((*value)->item[pillNum].armour) == 0 || ((*value)->item[pillNum].inTank) == TRUE) {
-      returnValue = FALSE;
-    }
+    return FALSE;
   }
-  
-  return returnValue;
+  pillNum--;
+
+  return pillsCanView(sim, value, pillNum, sim->viewPlayer);
 }
 
 /*********************************************************

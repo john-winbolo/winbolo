@@ -2992,6 +2992,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_viewport_calc.c
+    tests/unit/test_overview_map.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -3648,6 +3649,7 @@ set(_unit_test_names
     two_clients_full_sync_independent
     fx_viewport_cull
     viewport_calc_square_pure
+    overview_regions
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid

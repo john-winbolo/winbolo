@@ -798,6 +798,12 @@ int run_fx_viewport_cull(void);
  * alliance of the player being asked about. */
 int run_viewport_calc_square_pure(void);
 
+/* Overview region geometry (test_overview_map.c): overviewMapBuildRegions
+ * gives the tank a 29x29 block and every viewable pillbox a 15x15 one,
+ * trimmed at the map edges, tank rect first and pills in index order, and
+ * never writes more rects than the caller allowed for. */
+int run_overview_regions(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

@@ -31,6 +31,7 @@
 #include "input_packet.h"
 #include "client_enums.h" /* For aiType, buildSelect, gameType, labelLen, netType, netStatus */
 #include "viewport_types.h" /* For screen, screenMines, screenGunsight */
+#include "overview_types.h" /* For OverviewMap — clientSimGetOverviewMap return */
 #include "wire_limits.h"  /* For PACKET_MAX_PLAYER_NAME */
 #include "alliance_enums.h" /* For pillAlliance, baseAlliance */
 #include "screentank.h"     /* For tankAlliance */
@@ -660,6 +661,11 @@ const ShellSnapshot  *clientSimGetServerShellSnaps(const ClientSim *cs);
 const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
 const ProjectedShell *clientSimGetProjectedShells(const ClientSim *cs);
 const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
+
+/* The overview's fog memory: the tile every square carried the last time the
+ * player could see it, plus the regions they can see right now. Maintained
+ * every display tick. NULL when cs is NULL. */
+const OverviewMap    *clientSimGetOverviewMap(const ClientSim *cs);
 
 /* Struct-by-value accessor. */
 struct in_addr clientSimGetServerAddress(const ClientSim *cs);

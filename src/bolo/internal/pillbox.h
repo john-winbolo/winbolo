@@ -494,6 +494,13 @@ BYTE pillsGetArmourPos(pillboxes *value, BYTE mx, BYTE my);
 *********************************************************/
 bool pillsGetNextView(struct GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool prev);
 
+/* Whether viewPlayer may look through pillbox pillIdx: the pill is allied to
+ * them (own pills are allied to themselves), it still has armour, and it is
+ * not being carried. FALSE for an index past the end of the array. This is
+ * the one pill-view predicate — pillsCheckView below answers it for
+ * sim->viewPlayer, callers wanting another player ask directly. */
+bool pillsCanView(struct GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer);
+
 /*********************************************************
 *NAME:          pillsCheckView
 *AUTHOR:        John Morrison

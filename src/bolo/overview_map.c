@@ -1,0 +1,256 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ *Name:          Overview Map
+ *Filename:      overview_map.c
+ *Purpose:
+ *  Keeps an OverviewMap in step with the sim. Every update
+ *  works out which squares the player can see right now -
+ *  the block their tank could scroll over plus a block round
+ *  each pillbox they can view through - and rewrites those
+ *  squares from the current map. Squares that have dropped
+ *  out of that set keep the tile they last carried, so what
+ *  the player has walked past stays as they left it and what
+ *  they have never reached stays OVERVIEW_UNSEEN.
+ *********************************************************/
+
+#include "global.h"
+#include "overview_map.h"
+#include "game_sim.h"
+#include "pillbox.h"
+#include "viewport.h"
+
+/* An inclusive square block centred on (cx,cy), trimmed to the map. The
+ * centre and half-width are ints so a block over the top or left edge
+ * clamps instead of wrapping through zero. */
+static OverviewRect overviewRectAround(int cx, int cy, int half) {
+  OverviewRect r; /* Rect to return */
+
+  r.left = cx - half;
+  r.top = cy - half;
+  r.right = cx + half;
+  r.bottom = cy + half;
+  if (r.left < 0) {
+    r.left = 0;
+  }
+  if (r.top < 0) {
+    r.top = 0;
+  }
+  if (r.right > MAP_ARRAY_SIZE - 1) {
+    r.right = MAP_ARRAY_SIZE - 1;
+  }
+  if (r.bottom > MAP_ARRAY_SIZE - 1) {
+    r.bottom = MAP_ARRAY_SIZE - 1;
+  }
+  return r;
+}
+
+/* Rewrites every square of an inclusive rect from the current sim state.
+ * This is the only writer of OverviewMap::tile in the codebase - nothing
+ * else may touch it, or the memory stops being a record of what was seen.
+ * Returns TRUE if any byte came out different. */
+static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
+                              const OverviewRect *r, bool setLive) {
+  bool changed;  /* Did any byte move */
+  bool isMine;   /* Mine visible on this square */
+  BYTE tileNum;  /* Tile the square shows now */
+  BYTE flagBits; /* Flags the square carries now */
+  int x;         /* Looping variable */
+  int y;         /* Looping variable */
+
+  changed = FALSE;
+  for (x = r->left; x <= r->right; x++) {
+    for (y = r->top; y <= r->bottom; y++) {
+      isMine = FALSE;
+      tileNum = viewportCalcSquarePure(sim, me, (BYTE)x, (BYTE)y, &isMine);
+      flagBits = (BYTE)((setLive == TRUE ? OVERVIEW_F_LIVE : 0) |
+                        (isMine == TRUE ? OVERVIEW_F_MINE : 0));
+
+      if (om->tile[x][y] == OVERVIEW_UNSEEN && tileNum != OVERVIEW_UNSEEN) {
+        om->seenCount++;
+      }
+      if (om->tile[x][y] != tileNum) {
+        om->tile[x][y] = tileNum;
+        changed = TRUE;
+      }
+      if (om->flags[x][y] != flagBits) {
+        om->flags[x][y] = flagBits;
+        changed = TRUE;
+      }
+    }
+  }
+  return changed;
+}
+
+/* Drops OVERVIEW_F_LIVE over a rect, leaving the tiles alone. Returns TRUE
+ * if any square was carrying the flag. */
+static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r) {
+  bool changed; /* Did any byte move */
+  int x;        /* Looping variable */
+  int y;        /* Looping variable */
+
+  changed = FALSE;
+  for (x = r->left; x <= r->right; x++) {
+    for (y = r->top; y <= r->bottom; y++) {
+      if ((om->flags[x][y] & OVERVIEW_F_LIVE) != 0) {
+        om->flags[x][y] = (BYTE)(om->flags[x][y] & ~OVERVIEW_F_LIVE);
+        changed = TRUE;
+      }
+    }
+  }
+  return changed;
+}
+
+/* TRUE when the two region sets are not the same rects in the same order. */
+static bool overviewRegionsDiffer(const OverviewRect *a, int aCount,
+                                  const OverviewRect *b, int bCount) {
+  int i; /* Looping variable */
+
+  if (aCount != bCount) {
+    return TRUE;
+  }
+  for (i = 0; i < aCount; i++) {
+    if (a[i].left != b[i].left || a[i].top != b[i].top ||
+        a[i].right != b[i].right || a[i].bottom != b[i].bottom) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+void overviewMapReset(OverviewMap *om) {
+  if (om == NULL) {
+    return;
+  }
+
+  memset(om->tile, OVERVIEW_UNSEEN, sizeof(om->tile));
+  memset(om->flags, 0, sizeof(om->flags));
+  memset(om->live, 0, sizeof(om->live));
+  om->liveCount = 0;
+  memset(om->prevLive, 0, sizeof(om->prevLive));
+  om->prevLiveCount = 0;
+  om->tankWasLive = FALSE;
+  memset(om->pillWasLive, 0, sizeof(om->pillWasLive));
+  om->generation = 0;
+  om->seenCount = 0;
+}
+
+int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
+                            bool haveTank, BYTE tankMX, BYTE tankMY,
+                            OverviewRect *out, int maxOut) {
+  int count;     /* Rects written so far */
+  BYTE numPills; /* Pills on the map */
+  BYTE i;        /* Looping variable */
+
+  count = 0;
+  if (sim == NULL || out == NULL || maxOut <= 0) {
+    return 0;
+  }
+
+  if (haveTank == TRUE && count < maxOut) {
+    out[count] = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_TANK_HALF);
+    count++;
+  }
+
+  numPills = pillsGetNumPills(&sim->pb);
+  for (i = 0; i < numPills && count < maxOut; i++) {
+    if (pillsCanView(sim, &sim->pb, i, myPlayerNum) == TRUE) {
+      out[count] = overviewRectAround((int)sim->pb->item[i].x,
+                                      (int)sim->pb->item[i].y,
+                                      OVERVIEW_PILL_HALF);
+      count++;
+    }
+  }
+
+  return count;
+}
+
+void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
+                       bool haveTank, BYTE tankMX, BYTE tankMY) {
+  bool changed;  /* Did anything move this update */
+  BYTE numPills; /* Pills on the map */
+  int idx;       /* Which prevLive rect the replay is up to */
+  int i;         /* Looping variable */
+
+  if (om == NULL || sim == NULL) {
+    return;
+  }
+
+  memcpy(om->prevLive, om->live, sizeof(om->prevLive));
+  om->prevLiveCount = om->liveCount;
+
+  om->liveCount = overviewMapBuildRegions(sim, myPlayerNum, haveTank, tankMX,
+                                          tankMY, om->live,
+                                          OVERVIEW_MAX_REGIONS);
+  changed = overviewRegionsDiffer(om->live, om->liveCount, om->prevLive,
+                                  om->prevLiveCount);
+
+  /* Farewell stamp. A region that has just stopped being live gets one last
+   * write from the state as it is now, so an allied pill that has died
+   * freezes dead and one that has been captured freezes in the captor's
+   * colour rather than a tick stale. overviewMapBuildRegions emits the tank
+   * rect first and then pills in ascending index, so walking the same order
+   * over last update's owners pairs each stale rect with the region that
+   * produced it. */
+  idx = 0;
+  if (om->tankWasLive == TRUE) {
+    if (haveTank == FALSE && idx < om->prevLiveCount) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
+          TRUE) {
+        changed = TRUE;
+      }
+    }
+    idx++;
+  }
+  for (i = 0; i < MAX_PILLS; i++) {
+    if (om->pillWasLive[i] == FALSE) {
+      continue;
+    }
+    if (idx < om->prevLiveCount &&
+        pillsCanView(sim, &sim->pb, (BYTE)i, myPlayerNum) == FALSE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
+          TRUE) {
+        changed = TRUE;
+      }
+    }
+    idx++;
+  }
+
+  for (i = 0; i < om->prevLiveCount; i++) {
+    if (overviewClearLiveRect(om, &om->prevLive[i]) == TRUE) {
+      changed = TRUE;
+    }
+  }
+
+  for (i = 0; i < om->liveCount; i++) {
+    if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE) == TRUE) {
+      changed = TRUE;
+    }
+  }
+
+  om->tankWasLive = haveTank;
+  numPills = pillsGetNumPills(&sim->pb);
+  for (i = 0; i < MAX_PILLS; i++) {
+    if (i < (int)numPills) {
+      om->pillWasLive[i] = pillsCanView(sim, &sim->pb, (BYTE)i, myPlayerNum);
+    } else {
+      om->pillWasLive[i] = FALSE;
+    }
+  }
+
+  if (changed == TRUE) {
+    om->generation++;
+  }
+}
