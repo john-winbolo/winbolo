@@ -37,9 +37,12 @@ typedef struct {
 } ExportConfig;
 
 /* Export the map as a PNG file.
+ * Builds its own 1x tile atlas rather than borrowing the editor's: that one is
+ * rasterized to match the current zoom and display density, and the export is
+ * defined as 16px per tile regardless of what the canvas happens to be showing.
  * Returns true on success. */
 bool mapExportPNG(const char *filePath, ExportConfig *cfg,
-                  SDL_Renderer *renderer, SDL_Texture *tilesTex, int tileSize,
+                  SDL_Renderer *renderer,
                   map mp, bases bs, pillboxes pb, starts ss);
 
 #ifdef __cplusplus

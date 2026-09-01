@@ -28,6 +28,7 @@
 
 /* From starts.h */
 extern BYTE startsConvertDir(BYTE dir);
+extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
 
 /* Boat sprite atlas coordinates (same table as in mapeditor.c) */
 static const int exportBoatAtlasX[16] = {
@@ -430,13 +431,25 @@ static bool exportPreview(const char *filePath, ExportConfig *cfg,
  * Public API
  * ----------------------------------------------------------------------- */
 bool mapExportPNG(const char *filePath, ExportConfig *cfg,
-                  SDL_Renderer *renderer, SDL_Texture *tilesTex, int tileSize,
+                  SDL_Renderer *renderer,
                   map mp, bases bs, pillboxes pb, starts ss) {
     if (!filePath || !cfg || !mp || !bs || !pb || !ss) return false;
 
-    if (cfg->mode == ME_EXPORT_FULL) {
-        return exportFull(filePath, cfg, renderer, tilesTex, tileSize, mp, bs, pb, ss);
-    } else {
+    if (cfg->mode != ME_EXPORT_FULL) {
         return exportPreview(filePath, cfg, mp, bs, pb, ss);
     }
+
+    /* A 1x atlas of our own: the editor's is rasterized for the current zoom
+     * and display density, and the atlas cell coordinates below are 1x. */
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
+    if (!sheet) return false;
+    SDL_Texture *tilesTex = SDL_CreateTextureFromSurface(renderer, sheet);
+    SDL_DestroySurface(sheet);
+    if (!tilesTex) return false;
+    SDL_SetTextureScaleMode(tilesTex, SDL_SCALEMODE_NEAREST);
+
+    bool ok = exportFull(filePath, cfg, renderer, tilesTex, TILE_SIZE_X,
+                         mp, bs, pb, ss);
+    SDL_DestroyTexture(tilesTex);
+    return ok;
 }

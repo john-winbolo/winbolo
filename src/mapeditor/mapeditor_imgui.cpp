@@ -1214,7 +1214,7 @@ void mapEditorImguiObjectList(void *basesPtr, void *pillsPtr,
 
 void mapEditorImguiOverview(void *minimapTex,
                              int viewCenterX, int viewCenterY,
-                             float zoomLevel, int screenW, int screenH,
+                             float tilePixels, int screenW, int screenH,
                              int *navX, int *navY,
                              bool *p_open) {
     *navX = -1;
@@ -1255,7 +1255,7 @@ void mapEditorImguiOverview(void *minimapTex,
 
     /* Draw viewport rectangle */
     ImDrawList *drawList = ImGui::GetWindowDrawList();
-    float tilePixelsF = 16.0f * zoomLevel;
+    float tilePixelsF = (tilePixels > 0.0f) ? tilePixels : (float)TILE_SIZE_X;
     float tilesW = (float)screenW / tilePixelsF;
     float tilesH = (float)screenH / tilePixelsF;
     float camTX = (float)(viewCenterX >> 8);
