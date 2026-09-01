@@ -827,6 +827,11 @@ int run_overview_pill_capture(void);
  * exactly where it was. */
 int run_overview_reset(void);
 
+/* Overview over the wire (test_overview_map.c): the same reveal checks against
+ * a world delivered by a real UDP join and map download, plus a staged map
+ * event that reaches a live square's tile and leaves an unseen one alone. */
+int run_overview_loopback(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

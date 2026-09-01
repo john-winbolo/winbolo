@@ -437,6 +437,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_freeze_no_leak",                 run_overview_freeze_no_leak                 },
     { "overview_pill_capture",                   run_overview_pill_capture                   },
     { "overview_reset",                          run_overview_reset                          },
+    { "overview_loopback",                       run_overview_loopback                       },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },

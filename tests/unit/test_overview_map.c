@@ -15,6 +15,11 @@
  * live is stamped once more on the way out so a pill freezes dead or in the
  * captor's colours rather than a tick stale, and a round reset clears the lot
  * while a mid-game map resync leaves it alone.
+ *
+ * The last case runs the reveal checks again over the real UDP transport, where
+ * the map arrives as a download and terrain changes arrive out of band as map
+ * events, so the mask does not quietly depend on the client and the server
+ * sharing a process.
  */
 
 #include <stdint.h>
@@ -25,8 +30,10 @@
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_net.h"
+#include "client_connect_state.h" /* CLIENT_CONNECT_CONNECTED */
 #include "client_sim_internal.h" /* installCompressedMap — the resync path */
 #include "input_packet.h"
+#include "transport_udp.h" /* the server-side staged map event and its readiness flag */
 #include "overview_map.h"
 #include "viewport.h" /* viewportCalcSquarePure — the only tile source */
 #include "bolo_map.h" /* mapGetPos / mapSetPos — plant a raw terrain byte */
@@ -37,6 +44,7 @@
 #include "allience.h"
 #include "everard_map.h" /* E_MAP — the blob the resync reinstalls */
 #include "test_harness.h"
+#include "loopback_harness.h"
 
 /* Fails the calling test unless the rect is exactly these edges. */
 #define ASSERT_RECT(r, l, t, rt, b)                                           \
@@ -762,5 +770,306 @@ int run_overview_reset(void) {
                   om->seenCount);
 
     overviewFixtureStop(&f);
+    return 0;
+}
+
+/* --------------------------------------------------------------------------
+ * The same reveal over the real UDP path, where the map arrives as a download
+ * and terrain changes arrive out of band as map events rather than being
+ * written into the client's own sim. The mask has to come out the same.
+ * -------------------------------------------------------------------------- */
+
+/* Convergence ceilings for a clean path. Every pump costs a millisecond of
+ * SDL_Delay, so these are bounds to report a failure against, not expected
+ * counts - the harness contract is "converges within N pumps", never a packet
+ * trace. */
+#define OVERVIEW_LOOP_CONNECT_MAX 2000
+#define OVERVIEW_LOOP_READY_MAX   2000
+#define OVERVIEW_LOOP_MAP_MAX     2000
+
+/* Seeds the harness's bolo_rand stream. Nothing on a clean path draws from it;
+ * it keeps the run reproducible regardless. */
+#define OVERVIEW_LOOP_SEED 0x5EED0Fu
+
+/* Half-width of the block the hidden square is picked from, far enough off the
+ * tank that the tank's own 29x29 block cannot reach it. */
+#define OVERVIEW_LOOP_FAR_HALF 4
+
+static bool overviewLoopConnected(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
+}
+
+/* The server only flips its own download-complete flag once the map's bytes
+ * are acked back on CHANNEL_BULK, a round-trip after the client reports
+ * CONNECTED. Waiting for it means snapshots have been flowing for a while, so
+ * the tank position read below is one the wire delivered rather than whatever
+ * the slot-assignment path left on a freshly created tank. */
+static bool overviewLoopServerReady(LoopbackHarness *h, void *user) {
+    (void)user;
+    return transportUdpServerTestDownloadComplete(
+        (int)clientSimGetMyPlayerNum(h->cs));
+}
+
+static bool overviewLoopHaveTank(LoopbackHarness *h, void *user) {
+    BYTE mx = 0; /* Discarded - the position is read again once settled */
+    BYTE my = 0;
+
+    (void)user;
+    return clientSimGetMyTankMapPos(h->cs, &mx, &my) == TRUE;
+}
+
+/* The square and terrain overviewLoopTerrainApplied is waiting on. */
+typedef struct OverviewTerrainWait {
+    BYTE x;
+    BYTE y;
+    BYTE terrain;
+} OverviewTerrainWait;
+
+static bool overviewLoopTerrainApplied(LoopbackHarness *h, void *user) {
+    const OverviewTerrainWait *w = (const OverviewTerrainWait *)user;
+
+    return clientSimGetMapTerrain(h->cs, w->x, w->y) == w->terrain;
+}
+
+int run_overview_loopback(void) {
+    LoopbackHarness h;
+    int at; /* Pump the last wait converged on, or -1 */
+
+    if (loopbackHarnessStart(&h, "Loop", /*lobbyMode*/ false,
+                             /*impairSpec*/ NULL, OVERVIEW_LOOP_SEED) != true) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start (overview loopback) failed");
+    }
+
+    at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_CONNECT_MAX,
+                                  overviewLoopConnected, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never reached CONNECTED within %d pumps",
+                OVERVIEW_LOOP_CONNECT_MAX);
+    }
+    at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_READY_MAX,
+                                  overviewLoopServerReady, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the server never saw the map download acked within %d pumps",
+                OVERVIEW_LOOP_READY_MAX);
+    }
+    at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_READY_MAX,
+                                  overviewLoopHaveTank, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never got a tank within %d pumps",
+                OVERVIEW_LOOP_READY_MAX);
+    }
+
+    GameSim *gs = clientSimGetGameSim(h.cs);
+    BYTE me = clientSimGetMyPlayerNum(h.cs);
+    int slot = (int)me;
+    BYTE tankMX = 0;
+    BYTE tankMY = 0;
+    if (gs == NULL || clientSimGetMyTankMapPos(h.cs, &tankMX, &tankMY) != TRUE) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no client sim or tank position after convergence");
+    }
+
+    /* Nothing below touches pills or terrain before the assertions: the world
+     * being checked is the one the download and the snapshots delivered. Any
+     * pill the map ships that the player can view through simply adds its block
+     * to the expected set. */
+    clientSimDisplayTick(h.cs, false);
+
+    const OverviewMap *om = clientSimGetOverviewMap(h.cs);
+    if (om == NULL) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("clientSimGetOverviewMap returned NULL");
+    }
+
+    OverviewRect expect[OVERVIEW_MAX_REGIONS];
+    int n = overviewMapBuildRegions(gs, me, TRUE, tankMX, tankMY, expect,
+                                    OVERVIEW_MAX_REGIONS);
+    if (n < 1) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a client with a tank produced %d regions", n);
+    }
+    if (om->liveCount != n) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("liveCount %d, expected %d", om->liveCount, n);
+    }
+
+    /* Every square of the map, either side of the union. The mismatch is
+     * carried out of the loop rather than asserted in it, so the harness is
+     * always torn down before the failure returns. */
+    const char *bad = NULL;
+    int badX = 0;
+    int badY = 0;
+    unsigned badGot = 0;
+    unsigned badWant = 0;
+    unsigned unionSize = 0;
+    int x, y;
+    for (x = 0; x < MAP_ARRAY_SIZE && bad == NULL; x++) {
+        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+            BYTE flags = om->flags[x][y];
+
+            if (overviewInAnyRect(expect, n, x, y) == TRUE) {
+                bool isMine = FALSE;
+                BYTE want = viewportCalcSquarePure(gs, me, (BYTE)x, (BYTE)y,
+                                                   &isMine);
+                unionSize++;
+                if ((flags & OVERVIEW_F_LIVE) == 0) {
+                    bad = "is inside a region but not live";
+                } else if (om->tile[x][y] != want) {
+                    bad = "holds a tile the calculator disagrees with";
+                    badGot = om->tile[x][y];
+                    badWant = want;
+                } else if (((flags & OVERVIEW_F_MINE) != 0) !=
+                           (isMine == TRUE)) {
+                    bad = "carries the wrong mine flag";
+                    badGot = (flags & OVERVIEW_F_MINE) != 0;
+                    badWant = (isMine == TRUE);
+                }
+            } else {
+                if ((flags & OVERVIEW_F_LIVE) != 0) {
+                    bad = "is outside every region but live";
+                } else if (om->tile[x][y] != OVERVIEW_UNSEEN) {
+                    bad = "was never live but holds a tile";
+                    badGot = om->tile[x][y];
+                    badWant = OVERVIEW_UNSEEN;
+                } else if (flags != 0) {
+                    bad = "was never live but carries flags";
+                    badGot = flags;
+                    badWant = 0;
+                }
+            }
+            if (bad != NULL) {
+                badX = x;
+                badY = y;
+                break;
+            }
+        }
+    }
+    if (bad != NULL) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("square %d,%d %s (got %u, expected %u)", badX, badY, bad,
+                badGot, badWant);
+    }
+    if (om->seenCount != unionSize) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("seenCount %u, the union holds %u squares", om->seenCount,
+                unionSize);
+    }
+
+    /* One square the tank can see and one nothing has revealed. Both are found
+     * by probing for a tile that actually moves when the ground under it is
+     * swapped, which steps off pill and base squares - those render from their
+     * owner, so a terrain change on one would prove nothing either way. The
+     * probe puts back what it wrote and no pump runs during it, so the client's
+     * map is untouched by the time the events are staged. */
+    OverviewRect liveRect = expect[0]; /* the tank's rect is written first */
+    OverviewRect farRect = overviewTestBlock(
+        (int)tankMX + overviewAwayFromEdge(tankMX) * 100, (int)tankMY,
+        OVERVIEW_LOOP_FAR_HALF);
+    BYTE liveX = 0, liveY = 0, farX = 0, farY = 0;
+
+    if (overviewFindTerrainSquare(gs, me, &liveRect, &liveX, &liveY) != TRUE) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no terrain-driven square in the tank's block at %u,%u",
+                (unsigned)tankMX, (unsigned)tankMY);
+    }
+    if (overviewFindTerrainSquare(gs, me, &farRect, &farX, &farY) != TRUE) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no terrain-driven square in the block 100 off the tank");
+    }
+    if (om->tile[farX][farY] != OVERVIEW_UNSEEN ||
+        overviewInAnyRect(expect, n, farX, farY) == TRUE) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the square meant to stay hidden, %u,%u, is already revealed",
+                (unsigned)farX, (unsigned)farY);
+    }
+
+    BYTE liveTileBefore = om->tile[liveX][liveY];
+    OverviewTerrainWait wait;
+
+    /* Both changes go out the way a sim tick emits one: the server's own map
+     * moves and an EVENT_MAP_CHANGE rides CHANNEL_MAP to the client. */
+    wait.x = liveX;
+    wait.y = liveY;
+    wait.terrain = overviewFlipTerrain(clientSimGetMapTerrain(h.cs, liveX, liveY));
+    if (transportUdpServerTestAddMapEvent(h.sim, slot, liveX, liveY,
+                                          wait.terrain) != true) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("staging a map event on the live square %u,%u was rejected",
+                (unsigned)liveX, (unsigned)liveY);
+    }
+    at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_MAP_MAX,
+                                  overviewLoopTerrainApplied, &wait);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the change on live square %u,%u never reached the client "
+                "within %d pumps", (unsigned)liveX, (unsigned)liveY,
+                OVERVIEW_LOOP_MAP_MAX);
+    }
+
+    wait.x = farX;
+    wait.y = farY;
+    wait.terrain = overviewFlipTerrain(clientSimGetMapTerrain(h.cs, farX, farY));
+    if (transportUdpServerTestAddMapEvent(h.sim, slot, farX, farY,
+                                          wait.terrain) != true) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("staging a map event on the hidden square %u,%u was rejected",
+                (unsigned)farX, (unsigned)farY);
+    }
+    at = loopbackHarnessPumpUntil(&h, OVERVIEW_LOOP_MAP_MAX,
+                                  overviewLoopTerrainApplied, &wait);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the change on hidden square %u,%u never reached the client "
+                "within %d pumps", (unsigned)farX, (unsigned)farY,
+                OVERVIEW_LOOP_MAP_MAX);
+    }
+
+    clientSimDisplayTick(h.cs, false);
+
+    /* The live square follows the change. The tile it should now show is
+     * recomputed here rather than before the pumps, so tree growth landing on
+     * or beside it while the events were in flight moves the memory and the
+     * expectation together instead of breaking the comparison. */
+    if ((om->flags[liveX][liveY] & OVERVIEW_F_LIVE) == 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("square %u,%u dropped out of the live set while the change was "
+                "in flight - did the tank move?", (unsigned)liveX,
+                (unsigned)liveY);
+    }
+    {
+        bool isMine = FALSE;
+        BYTE wantTile = viewportCalcSquarePure(gs, me, liveX, liveY, &isMine);
+
+        if (wantTile == liveTileBefore) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("terrain %u renders as tile %u at %u,%u either way - the "
+                    "live check would pass on its own",
+                    (unsigned)wait.terrain, (unsigned)wantTile,
+                    (unsigned)liveX, (unsigned)liveY);
+        }
+        if (om->tile[liveX][liveY] != wantTile) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("live square %u,%u holds tile %u, expected %u",
+                    (unsigned)liveX, (unsigned)liveY,
+                    (unsigned)om->tile[liveX][liveY], (unsigned)wantTile);
+        }
+    }
+
+    /* The hidden square does not. The client has the new terrain - the pump
+     * above waited for it - and the memory still says nothing was ever seen
+     * there. */
+    if (om->tile[farX][farY] != OVERVIEW_UNSEEN) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a map event revealed %u,%u on its own: tile %u",
+                (unsigned)farX, (unsigned)farY,
+                (unsigned)om->tile[farX][farY]);
+    }
+
+    loopbackHarnessStop(&h);
     return 0;
 }
