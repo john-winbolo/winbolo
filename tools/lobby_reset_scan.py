@@ -80,6 +80,9 @@ ALLOWLIST_NAMES = (
     ("s_wbnMaps",
      "WinBolo.net folder listing and search cache behind the chooser tab "
      "that keeps its position, deliberately kept across sessions"),
+    ("s_recapPost",
+     "in-flight comment post, left running because a POST cannot be "
+     "cancelled and freeing it would block the round-start path"),
 )
 
 # Statics whose declared type makes them non-assignable. Matched on the
