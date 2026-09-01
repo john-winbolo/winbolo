@@ -8119,26 +8119,25 @@ function Brain.think(info)
     -- carried on /info state) never went out and the soldier sat in blitz_wait.
     -- Reposition position-scan scheduler: keep the heavy O(pills^2) coverage
     -- scan OFF the replan tick. Once the cache is stale (>= INTERVAL) run the
-    -- rescan on the first QUIET tick; force it after +MAX_DEFER so it can't
-    -- starve. "Quiet" = measured RIGHT HERE — this tick's own elapsed-so-far
-    -- (clock_us() - t_tick_start, which already includes perception / world /
-    -- goal-selection / steering) is at/below the rolling average. We measure the
-    -- CURRENT tick, not the previous one: a replan tick reliably follows a quiet
-    -- tick, so last tick's cost says nothing about this one. The average folds in
-    -- the PRE-rescan elapsed so a rescan's own cost never inflates the baseline.
+    -- rescan on the first NON-REPLAN tick; force it after +MAX_DEFER so it
+    -- can't starve.
+    -- Determinism note (20260831): this used to also require a "quiet" tick,
+    -- judged by comparing this tick's wall-clock elapsed (clock_us()) against
+    -- a rolling average — a real-time read steering WHICH tick the rescan ran
+    -- on. The cached scores are functions of that tick (act_pen decay, live
+    -- enemy positions, roles) and feed the goal pool and the /info rvo
+    -- broadcast, so the timing coin-flip could fork same-seed games (seed
+    -- 586261041 forked 50/50 at one late decision). Replan ticks are the
+    -- expensive ones; skipping only those keeps most of the load-spreading
+    -- with zero wall-clock input.
     do
-      local _elapsed = clock_us() - t_tick_start
-      local _avg     = state._repo_sched_avg or _elapsed
-      local _age     = now - ((state._repo_score and state._repo_score.tick) or -1000000)
+      local _age = now - ((state._repo_score and state._repo_score.tick) or -1000000)
       if _age >= (C.REPOSITION_SCORE_INTERVAL or 50) then
-        local _quiet = _elapsed <= _avg
         local _force = _age >= (C.REPOSITION_SCORE_INTERVAL or 50) + (C.REPOSITION_SCORE_MAX_DEFER or 40)
-        if (_quiet and not state.replan_this_tick) or _force then
+        if (not state.replan_this_tick) or _force then
           goals.rescan_reposition(state, world, info)
         end
       end
-      state._repo_sched_avg = state._repo_sched_avg
-                              and (state._repo_sched_avg * 0.96 + _elapsed * 0.04) or _elapsed
     end
 
     -- Reposition vote: drive the consensus state machine. Runs after goal

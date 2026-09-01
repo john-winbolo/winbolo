@@ -541,12 +541,18 @@ M.ATTACK_SAFE_RADIUS        = 3    -- tiles around standoff to check for danger/
 M.ATTACK_DANGER_THRESHOLD   = 30   -- max total score to be considered safe
 M.ATTACK_DANGER_HOTSPOT     = 15   -- any tile in maneuver area above this triggers B penalty
 
--- Soldier self-planning for a standoff spot (blitz/pill-take): prefer a spot
--- whose shot to the pill CENTER crosses fewer trees and is not blocked by an
--- already-built wall (the commander rejects center-blocked spots, so favoring
--- center-clear here converges the negotiation faster).
-M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the center shot path
-M.STANDOFF_SHOT_BLOCKED_PENALTY = 200  -- center shot blocked by a built wall (T_BUILDING/HALFBUILD)
+-- Standoff-spot scoring for a pill take. The spot scan now picks, per spot, the
+-- point on the pill it can actually hit (centre or one of the 4 corners) and
+-- REJECTS the spot outright when no aim point has a clean shell path — see
+-- attack.spot_clear_aim. So the only thing left to score is how many trees sit
+-- on the chosen line: each one eats a shell before the pill takes any.
+M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the CHOSEN aim path
+-- RETIRED (kept so old saves / any stray reference still resolve): a live pill,
+-- a base or a wall on the line used to be a 200-point nudge on the CENTRE path.
+-- A nudge is not a defence — 20260831_173448 bot2 took a spot with our own pill
+-- dead on the centre line anyway because the rest of it scored well. Blocked
+-- spots are now hard-rejected instead of penalized.
+M.STANDOFF_SHOT_BLOCKED_PENALTY = 200
 
 -- Pill-take spots that sit deep inside enemy influence are much harder to
 -- hold during the take. In mid/late game (phase != "opening"), multiply
@@ -635,6 +641,7 @@ M.HARDLINE_ENGAGE_RANGE   = 10    -- only switch to kill_hardline within this ma
 M.HARDLINE_FIRE_AIM_TOL   = 8     -- kill_hardline fires only when the tank's heading is within this many degrees of the pill, so the shot we fire matches the pill-aimed line shot_path_clear validated (never lob a shell off-axis into a stray pillbox/base while driving).
 
 -- Swerve durations (confirmed-kill swerve: pill dead or bullets_fired >= needed)
+M.SWERVE_COVER_EXTEND_TILES = 0.5 -- swerve side-pick cover lines: extend the OUTER end (the 2-tile perpendicular sample point) this far further from the pill; the pill end stays the origin
 M.SWERVE_TOTAL_TICKS      = 95  -- total swerve duration
 M.SWERVE_TURN_TICKS       = 35  -- ticks of turning at start of swerve
 
@@ -815,6 +822,19 @@ M.FLEE_HAUL_FULL_PILLS       = 4    -- have-builder haul protection ramps from c
 -- sometimes over-brakes when plow + lookahead swing move_dir 132??.
 -- Set false to let the tank carry momentum through sharp reorientations.
 M.FACING_AWAY_BRAKE_ENABLED  = false
+-- U-turn commitment (navigate). When the nav target is nearly straight
+-- behind, the shortest-turn side flips with tiny waypoint/heading jitter:
+-- the path is re-rooted from the tank's tile every tick, and an equal-cost
+-- diagonal alternative makes the next tile alternate NE/SE of the tank,
+-- swinging move_dir ~70 brad. Re-deciding L/R each tick then alternates
+-- the turn key every ~10 ticks and the tank drives AWAY from its goal at
+-- full speed (loss_b5 bot2 t=10203-10370: 6 tiles the wrong way; 23-28
+-- such episodes per bot per game). Once |heading_err| exceeds COMMIT the
+-- turn side is latched and held while |heading_err| stays >= HOLD; below
+-- HOLD the plain shortest-side rule resumes. The latch also drops when
+-- the goal changes or another steering mode ran last tick.
+M.UTURN_COMMIT_BRAD = 96   -- latch the turn side beyond this |heading_err|
+M.UTURN_HOLD_BRAD   = 80   -- keep the latched side down to this |heading_err|
 -- Stay-for-LGM: when tank is at a base and LGM is returning soon, make the
 -- refuel_at_base goal cheap enough to usually win but interruptible by an
 -- immediate combat opportunity (close capture / close tank).
@@ -1053,6 +1073,14 @@ M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy 
 -- lookahead cliff guard's L-step decomposition, not by this brake.
 -- With the 768 wu look-ahead clamp this is at most 12 terrain lookups.
 M.CLIFF_SCAN_STEP_WU = 64
+-- Brake look-ahead (steering.lua) = cpf.predict_stop's stopping distance (the
+-- calibrated engine model shared with the charge/approach brakes) + a
+-- margin, capped. On 20260831_173448 bot2 the old speed*6 look-ahead let a
+-- speed-52 tank slide 317 wu into deep sea after the brake fired.
+M.CLIFF_MIN_SPEED       = 1      -- any motion: cliff brake + evade whenever the centre path crosses deep sea within the scan. Was a hard-coded 12, then 6; a swerve creeping at speed 4-8 on the shore (20260831_230309 bot2 t=7816) oscillated between "too slow for the brake" and "brake, no turn" and drifted into the water. With the evasive turn the old stuck-at-water's-edge worry no longer applies: a slow tank facing water turns away instead of freezing.
+M.CLIFF_EVADE_BRADS     = 32     -- evasive turn: compare clear runway on rays rotated +-this (32 brads = 45 deg) and turn toward the freer side while braking
+M.CLIFF_STOP_MARGIN_WU  = 64     -- a quarter tile: the travel between the sample that sees water and the brake biting
+M.CLIFF_LOOK_MAX_WU     = 1280   -- 5 tiles: scan-cost bound (was 768)
 
 -- -------------------------------------------------------------------------
 -- Shell trajectory prediction
@@ -1158,7 +1186,8 @@ M.ANGRY_REFUEL_THRESHOLD   = 0.6   -- pill anger above which we flee the base
 -- Goal replan scheduling
 -- -------------------------------------------------------------------------
 M.GOAL_REPLAN_INTERVAL     = 50    -- ticks between goal decisions
-M.WARMUP_MIN_REAL_GOALS    = 10    -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
+M.WARMUP_CAPTURE_MAX_COST  = 150   -- warm-up exemption: a capture_pill (dead pill pickup) priced at or below this wins even before the pools are warm. ~13 tiles by sea cost 34; a cross-map pickup is far above this. (20260831_173448 bot3: respawned in a boat, cost-34 water pickup lost to the explore fallback, landed, pills unreachable thereafter.)
+M.WARMUP_MIN_REAL_GOALS    = 10   -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
 M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain start so the eval queue warms up before we commit to a direction

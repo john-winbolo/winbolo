@@ -5343,7 +5343,16 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
         for idx = 0, 3 do
           local s = slates[idx]
           if s and s.started_tick >= min_tick then
-            local c = cpf.dijkstra_cost_at(idx, ax, ay, 0)
+            -- Cheapest arrival in EITHER layer. This used to read only the
+            -- land layer (boat=0): a dead pill surrounded by water has only
+            -- water neighbours, whose land-layer nodes never exist, so every
+            -- open-water pill priced as unreachable even from a tank sitting
+            -- in a boat (20260831_173448 bot3 t=6819: two dead team pills 13
+            -- tiles away by sea, pool never offered them). A shore-touching
+            -- pill worked only because one neighbour was land.
+            local c0 = cpf.dijkstra_cost_at(idx, ax, ay, 0)
+            local c1 = cpf.dijkstra_cost_at(idx, ax, ay, 1)
+            local c = (c1 and c1 < c0) and c1 or c0
             if c and c < ac then ac = c end
           end
         end
@@ -5833,10 +5842,18 @@ function M.build_eval_queue(state, world, info)
 
   -- Sort queue by euclidean distance (closest evaluated first).
   -- tmx/tmy already in scope from line 2110-2111.
+  -- Tie-break on (pool, id): squared tile distances are integers, so exact
+  -- ties are common, and a comparator that returns false for ties leaves
+  -- their order to the pre-sort array order. This queue decides which
+  -- candidates get a full eval within the per-tick step budget, so tie
+  -- order is behaviour — make it a total order, immune to any upstream
+  -- ordering perturbation (determinism hardening, 20260831).
   table.sort(queue, function(a, b)
     local da = (a.obj.mx - tmx)^2 + (a.obj.my - tmy)^2
     local db = (b.obj.mx - tmx)^2 + (b.obj.my - tmy)^2
-    return da < db
+    if da ~= db then return da < db end
+    if a.pool ~= b.pool then return a.pool < b.pool end
+    return (a.id or -1) < (b.id or -1)
   end)
 
   -- Prioritize the current goal's target: move it to the front of the queue
@@ -10649,7 +10666,22 @@ local function goal_selection(state, world, info, quiet)
       end
     end
     -- ── Sort by cost, pick winner ──
-    table.sort(pool, function(a, b) return a.cost < b.cost end)
+    -- Total order: bare cost comparison leaves exact-cost ties (floors and
+    -- flat penalties make them common) in pre-sort array order, which turns
+    -- any upstream ordering wobble into a different goal. Tie-break on kind
+    -- then tile then id so the winner is a pure function of the entries
+    -- (determinism hardening, 20260831). Shared by the two re-sorts below.
+    local function pool_cost_lt(a, b)
+      if a.cost ~= b.cost then return a.cost < b.cost end
+      local ak, bk = a.kind or "", b.kind or ""
+      if ak ~= bk then return ak < bk end
+      local at = (a.my or 0) * 256 + (a.mx or 0)
+      local bt = (b.my or 0) * 256 + (b.mx or 0)
+      if at ~= bt then return at < bt end
+      return (a.id or -1) < (b.id or -1)
+    end
+    state._pool_cost_lt = pool_cost_lt
+    table.sort(pool, pool_cost_lt)
     -- Save the post-penalty competition for the pool breakdown display.
     -- Phase 0 scaffolding: loc_mult/density/pickup/wsim_add are carried
     -- through with safe defaults; Phases 1–4 will populate them on `c`
@@ -10963,12 +10995,12 @@ local function goal_selection(state, world, info, quiet)
           end
         end
       end
-      -- Re-sort after sim adjustments
-      table.sort(pool, function(a, b) return a.cost < b.cost end)
+      -- Re-sort after sim adjustments (same total order as the first sort)
+      table.sort(pool, state._pool_cost_lt)
     elseif _persist_applied then
       -- wsim didn't run this tick, but a persisted KILL changed costs — re-sort
       -- so the lethal goal can't win just because the live pass was skipped.
-      table.sort(pool, function(a, b) return a.cost < b.cost end)
+      table.sort(pool, state._pool_cost_lt)
     end
 
     -- ── Ammoless: reject attack_pill #N unless #N is an ongoing blitz ──
@@ -11444,6 +11476,30 @@ function M.pick_goal(state, world, info, quiet)
   -- keeps warming regardless of the current goal, and warm_ready latches (incl.
   -- a sparse-map "queue fully swept" escape) so this can never stall. The
   -- command_goal path above is exempt (explicit orders always run).
+  -- Warm-up exemption: a CHEAP dead-pill pickup wins even while the pools are
+  -- still warming. The warm gate below exists so a half-evaluated pool can't
+  -- lock hysteresis onto a poor goal — but a capture_pill a few tiles away is
+  -- never that goal: it's short, has no commitment lock-in worth fearing, and
+  -- is the best first move a fresh tank can make. Without this, 20260831_173448
+  -- bot3 respawned IN A BOAT at sea with two dead team pills 13 tiles away by
+  -- water (capture_pill cost 34 already in the pool), rode the explore
+  -- fallback to land instead, and once ashore the water pills were
+  -- unreachable for the rest of the game. The nearest-candidate eval has
+  -- already priced it via the current slate (boat or land), so the cost is a
+  -- real travel cost, not a guess.
+  if not M.warm_ready(state) then
+    local pce = state.pool_cache and state.pool_cache[4]
+    if pce and pce.goal and pce.goal.kind == "capture_pill"
+       and (pce.cost or math.huge) <= (C.WARMUP_CAPTURE_MAX_COST or 150) then
+      if BRAIN_DEBUG_MODE then
+        print2(string.format("WARMUP_CAPTURE t=%d capture_pill#%s@(%d,%d) cost=%.0f <= %d -> taking it before warm-up",
+          state.tick or 0, tostring(pce.goal.target_id), pce.goal.mx or 0, pce.goal.my or 0,
+          pce.cost or -1, C.WARMUP_CAPTURE_MAX_COST or 150))
+      end
+      return pce.goal
+    end
+  end
+
   if M.warm_ready(state) then
     -- R4 harasser mission + R3 circle reinforcement (flag-gated). Preempts
     -- routine goals but yields to refuel/attack_tank/kill_lgm (restricted set)
