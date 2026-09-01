@@ -97,7 +97,16 @@ SPAWN = (133, 130)                     # one-tile deep-sea pocket (Bolo starts
                                        # one while creeping onto its parking
                                        # tile and respawned with an empty tank,
                                        # losing the boat's 20 trees.
-HOSTILE_SEA_PILL = (147, 126)          # variants B and C
+HOSTILE_SEA_PILL = (147, 126)          # variants B and C: 8.0 tiles from the
+                                       # MIDDLE pill, 9.2 from the outer two —
+                                       # so it covers exactly one of the three
+# Variant B2 needs ALL THREE members inside the circle. With the calm-pill rule
+# that is a hard 8.0 tiles (no margin), and the default raft spans +-2 rows, so
+# B2 uses a tighter raft further out: every member is <= 7.07 tiles from the
+# pill, and the pill is 11 tiles from the shore — beyond the tank's own reach,
+# so it cannot simply be shot away before the test means anything.
+SEA_PILLS_B2 = [(140, 125), (141, 126), (140, 127)]
+HOSTILE_SEA_PILL_B2 = (147, 126)
 BREAKWATER_X = 143                     # variant C: building column in the sea
 BREAKWATER_Y = (120, 132)
 RIVER_TILE = (136, 127)                # variant G: existing river in the shore
@@ -109,7 +118,7 @@ SEA_PILL_TREES_TOTAL = 21              # LGM_COST_BOAT 20 + LGM_COST_MINE 1
 SEA_BOAT_TREES = 20
 SEA_TREES_PER_FOREST = 4               # LGM_GATHER_TREE
 
-VARIANTS = ("A", "B", "C", "D", "E", "F", "G")
+VARIANTS = ("A", "B", "B2", "C", "D", "E", "F", "G")
 
 
 def field_x0(variant):
@@ -161,11 +170,27 @@ def spawn_tile(variant):
     return SPAWN
 
 
+def sea_pills_for(variant):
+    """The dead raft this variant places."""
+    return SEA_PILLS_B2 if variant == "B2" else SEA_PILLS
+
+
+def hostile_pill_for(variant):
+    """The live NEUTRAL pill out at sea, or None. B covers ONE cluster member,
+    B2 covers all three, C is B's pill with a breakwater in the way."""
+    if variant == "B2":
+        return HOSTILE_SEA_PILL_B2
+    if variant in ("B", "C"):
+        return HOSTILE_SEA_PILL
+    return None
+
+
 def pills_for(variant):
     """(x, y, owner, armour, speed). owner 0 = the bot's player, armour 0 = dead."""
-    pills = [(x, y, 0, 0, 50) for (x, y) in SEA_PILLS]
-    if variant in ("B", "C"):
-        pills.append((HOSTILE_SEA_PILL[0], HOSTILE_SEA_PILL[1], NEUTRAL, 15, 50))
+    pills = [(x, y, 0, 0, 50) for (x, y) in sea_pills_for(variant)]
+    hp = hostile_pill_for(variant)
+    if hp:
+        pills.append((hp[0], hp[1], NEUTRAL, 15, 50))
     return pills
 
 
@@ -178,20 +203,21 @@ def bases_for(variant):
     else:
         out = [(BASE_OURS[0], BASE_OURS[1], 0, 90, 90, 90)]
     if variant in ("D", "E", "F", "G"):
-        # tournament shells are a fraction of the NEUTRAL bases on the map;
-        # with none the tank would spawn with 0 shells. It also stocks mines
-        # (except in G, which must have none anywhere): the bot captures it in
-        # passing, and a captured base holding nothing is a trap the refuel leg
-        # cannot tell from a full one until it is standing on it.
+        # A second base the bot captures in passing. It stocks mines too
+        # (except in G, which must have none anywhere): a captured base holding
+        # nothing is a trap the refuel leg cannot tell from a full one until it
+        # is standing on it.
         out.append((BASE_NEUTRAL[0], BASE_NEUTRAL[1], NEUTRAL, 90, 90,
                     0 if variant == "G" else 90))
     return out
 
 
 def gametype_for(variant):
-    # open        -> 40 shells / 40 mines / 40 trees
-    # tournament  -> shells scale with neutral bases, mines 0, trees 0
-    return "open" if variant in ("A", "B", "C") else "tournament"
+    # open    -> 40 shells / 40 mines / 40 trees
+    # strict  -> 0 shells / 0 mines / 0 trees (gametype.c gameStrictTournament).
+    #            Plain tournament still hands out shells (2 x the neutral-base
+    #            ratio), so D started with 16 and never really had to refuel.
+    return "open" if variant in ("A", "B", "B2", "C") else "strict"
 
 
 def encode_map_runs(terrain):
@@ -261,7 +287,7 @@ def build(variant, output):
     sp = spawn_tile(variant)
     starts = [(sp[0], sp[1], 4)]          # dir 4 = east, toward the shore
 
-    for (x, y) in SEA_PILLS:
+    for (x, y) in sea_pills_for(variant):
         assert terrain[y][x] is DEEP_SEA, f"sea pill ({x},{y}) must be in deep sea"
     assert terrain[sp[1]][sp[0]] is DEEP_SEA, "the spawn must be a water tile"
     for (x, y) in ISOLATED_POND:
@@ -418,11 +444,9 @@ end
 
 
 def write_sidecar(variant, path):
-    dead = "{ " + ", ".join("{ %d, %d }" % p for p in SEA_PILLS) + " }"
-    if variant in ("B", "C"):
-        hostile = "{ { %d, %d } }" % HOSTILE_SEA_PILL
-    else:
-        hostile = "{ }"
+    dead = "{ " + ", ".join("{ %d, %d }" % p for p in sea_pills_for(variant)) + " }"
+    hp = hostile_pill_for(variant)
+    hostile = ("{ { %d, %d } }" % hp) if hp else "{ }"
     mode = ("nil" if gametype_for(variant) == "open"
             else '"%s"' % gametype_for(variant))
     text = (SIDECAR
@@ -469,7 +493,7 @@ def main_one(variant, output):
           f"gametype={gametype_for(variant)} addX={add_x} addY={add_y}")
     print(f"  peninsula x={field_x0(variant)}..{FIELD_X1} y={FIELD_Y0}..{FIELD_Y1}, "
           f"shore column x={FIELD_X1}, sea from x={FIELD_X1 + 1}")
-    print(f"  dead sea pills {SEA_PILLS}, isolated pond {ISOLATED_POND}, "
+    print(f"  dead sea pills {sea_pills_for(variant)}, isolated pond {ISOLATED_POND}, "
           f"spawn {spawn_tile(variant)}")
 
 

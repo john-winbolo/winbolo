@@ -839,6 +839,13 @@ function M.decide(state, world, info, now)
         return bail("sea_already_mined")
       end
       if (info.mines or 0) < 1 then return bail("sea_no_mines") end
+      -- Never lay a mine we cannot set off: the shells are part of the plan's
+      -- reserve, and a live mine on our own shore with a dry gun is the worst
+      -- state this whole chain exists to avoid.
+      local _sg = state._sea_live and state._sea_live.sea
+      if _sg and (info.shells or 0) < (_sg.shells_need or 0) then
+        return bail("sea_shells_short")
+      end
       -- LGM_COST_MINE is 1 tree on top of the boat's 20; refuse to spend the
       -- boat's wood on the mine.
       if (info.trees or 0) < (C.SEA_PILL_TREES_TOTAL or 21) then
@@ -847,6 +854,12 @@ function M.decide(state, world, info, now)
       return { x = t.mx, y = t.my, action = BUILDMODE_MINE }
     else
       if U.ttype(t.mx, t.my) ~= C.T_RIVER then return bail("sea_not_river_yet") end
+      -- Wait until the tank is at the water's edge before spending the wood:
+      -- the boat has to be stepped onto almost immediately after it appears.
+      -- CHEBYSHEV: the boarding tile is often a DIAGONAL neighbour of the
+      -- entrance, which Manhattan calls distance 2 — that read as "not
+      -- adjacent" and the boat was never built at all.
+      if U.cdist(tmx, tmy, t.mx, t.my) > 1 then return bail("sea_boat_not_adjacent") end
       if (info.trees or 0) < (C.SEA_BOAT_TREES or 20) then return bail("sea_trees_short") end
       return { x = t.mx, y = t.my, action = BUILDMODE_BUILD }
     end

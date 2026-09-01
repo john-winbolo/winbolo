@@ -28,7 +28,7 @@ local OUR_PLAYER = 0
 local DEAD_PILLS = { { 138, 124 }, { 139, 126 }, { 138, 128 } }
 local HOSTILE_PILLS = { }
 local OUR_BASE = { 132, 130 }
-local SPAWN_MODE = "tournament"     -- nil = use the -bots tank as it spawned
+local SPAWN_MODE = "strict"     -- nil = use the -bots tank as it spawned
 local TRACE = "sea_pills_terrain_E.log"
 
 local watched = {}

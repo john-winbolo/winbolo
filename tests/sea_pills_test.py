@@ -27,16 +27,24 @@ Variants (see tests/generate_sea_pills_map.py for the arenas):
   G  existing river in the shore    -> no mine at all; boat built into the
                                        river; 3 pills taken
 
-Usage: python sea_pills_test.py [--variant A|B|C|D|E|F|G|ALL] [--ticks N]
-                                [--build DIR]
+Usage: python sea_pills_test.py [--variant A|B|B2|C|D|E|F|G|ALL] [--ticks N]
+                                [--build DIR] [--jobs N]
+
+Variants run two at a time by default (--jobs, capped at 2): each one is a full
+WinBoloDS process and the sim is CPU bound, so more workers make every run
+slower rather than the set faster. Output is buffered per variant and printed
+whole, in order, once everything finishes.
 Exit 0 on PASS, 1 on FAIL.
 """
 
+import concurrent.futures as cf
 import json
+import math
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -47,8 +55,11 @@ BRAIN = REPO / "brains" / "GoalHunter_1.7" / "init.lua"
 sys.path.insert(0, str(HERE))
 from generate_sea_pills_map import (            # noqa: E402
     SEA_PILLS, ISOLATED_POND, RIVER_TILE, FIELD_X1, SEA_PILL_TREES_TOTAL,
-    SEA_TREES_PER_FOREST,
+    SEA_TREES_PER_FOREST, hostile_pill_for, sea_pills_for,
     gametype_for, VARIANTS)
+
+PILLBOX_RANGE_TILES = 8.0   # pillbox.h PILLBOX_RANGE 2048 wu, inclusive
+SEA_PILL_MIN_SHELLS = 3     # constants.lua — reserved to detonate the mine
 
 # Engine terrain values (src/bolo/public/global.h). A mined tile is its base
 # terrain + MINE_SUBTRACT(8), so 10..15 are the mined forms of SWAMP..GRASS.
@@ -70,7 +81,8 @@ SEA_PLAN_RE = re.compile(
     r"SEA_PLAN t=(\d+) cluster=(\d+) n=(\d+) entrance=(\S+) comp=(\d+) "
     r"S=\((\d+),(\d+)\) F=(\S+) mine=(\S+) boat=(\S+) "
     r"trees=(\d+)/(\d+) short=(\d+) need_tiles=(\d+) forest_ok=(\d+) "
-    r"mines=(\d+)/(\d+) refuel=(\S+) travel=(\S+) legs=(\S+)/(\S+) "
+    r"mines=(\d+)/(\d+) shells=(\d+)/(\d+) dropped=\[([^\]]*)\] "
+    r"covwater=(\d+) refuel=(\S+) travel=(\S+) legs=(\S+)/(\S+) "
     r"boat_path=(\S+) cost=(\S+)")
 SEA_SUB_RE = re.compile(r"SEA_SUB t=(\d+) from=(\S+) to=(\S+) reason=(.*)")
 SEA_REJECT_RE = re.compile(
@@ -79,6 +91,10 @@ SEA_ABORT_RE = re.compile(r"SEA_ABORT t=(\d+) reason=(\S+)")
 SEA_SHOT_RE = re.compile(r"SEA_SHOT t=(\d+) #(\d+) at S=\((\d+),(\d+)\)")
 SEA_DISPATCH_RE = re.compile(r"SEA_DISPATCH t=(\d+) action=(\S+) S=\((\d+),(\d+)\)")
 TREES_RE = re.compile(r"ENGINE_DUMP t=\d+ .*? tr=(\d+)")
+DUMP_RE = re.compile(
+    r"ENGINE_DUMP t=(\d+) self=\((\d+),(\d+)\).*?arm=(\d+) sh=(\d+) mn=(\d+) "
+    r"tr=(\d+).*?boat=(\w+)")
+CARRY_RE = re.compile(r"ENGINE_DUMP t=(\d+) .*? carry=(\d+)")
 CAPTURE_CAND_RE = re.compile(
     r"CAPTURE_CAND t=(\d+) id=(\S+) @\((\d+),(\d+)\).*?reject=(\S+)")
 LAY_MINE_TREES_RE = re.compile(r"trees (\d+)/(\d+) and mines (\d+)/(\d+)")
@@ -117,10 +133,18 @@ def read_trace(path):
 
 
 def run_one(variant, ticks, build_dir, port):
+    # Output is BUFFERED, not printed: variants run in parallel and their
+    # lines would otherwise interleave into nonsense. main() prints each
+    # block whole, in canonical order.
+    out = []
+
+    def emit(*a):
+        out.append(" ".join(str(x) for x in a))
+
     ds = find_ds(build_dir)
     if not ds:
-        print(f"FAIL: WinBoloDS not found under {build_dir}")
-        return 1
+        emit(f"FAIL: WinBoloDS not found under {build_dir}")
+        return 1, out
     subprocess.run([sys.executable, str(HERE / "generate_sea_pills_map.py"),
                     "--variant", variant],
                    check=True, stdout=subprocess.DEVNULL)
@@ -130,14 +154,23 @@ def run_one(variant, ticks, build_dir, port):
     stderr = HERE / f"sea_pills_{variant}_stderr.txt"
     trace = build_dir / f"sea_pills_terrain_{variant}.log"
     label = f"sea_pills_{variant}"
+    # Windows holds a just-exited process's files open for a moment, and with
+    # variants running concurrently that moment lands on a sibling's cleanup.
+    # Retry briefly; only a file still locked after that is a real "previous run
+    # still going".
     for p in (final, snap, stderr, trace):
-        if p.exists():
+        for attempt in range(20):
+            if not p.exists():
+                break
             try:
                 p.unlink()
+                break
             except PermissionError:
-                print(f"FAIL: {p.name} is locked — a previous WinBoloDS run is "
-                      f"still going. Wait for it to exit, then retry.")
-                return 1
+                if attempt == 19:
+                    emit(f"FAIL: {p.name} is still locked after 5s — a previous "
+                         f"WinBoloDS run is probably still going.")
+                    return 1, out
+                time.sleep(0.25)
 
     # A map with a sidecar boots as gameScripted, which hands a -bots tank the
     # OPEN loadout (40/40/40) whatever -gametype says. The variants that need an
@@ -145,7 +178,12 @@ def run_one(variant, ticks, build_dir, port):
     # bot with an explicit loadout mode (game.spawn_bot arms sim->spawnLoadout
     # before tankCreate). -noemptyreset keeps the round alive until it lands.
     scripted_spawn = gametype_for(variant) != "open"
-    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label)
+    # The brain's capacity tier is driven by wall-clock lastThinkMs, so under
+    # load it tiers down and plays differently from the same seed — running two
+    # variants at once was enough to change which pills the bot fetched. Pin it
+    # so the test measures the brain, not the machine.
+    env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label,
+               WINBOLO_BRAIN_TIER="10")
     cmd = [str(ds), "-map", str(mapfile), "-port", str(port), "-nolobby",
            "-gametype", gametype_for(variant),
            "-bots", "0" if scripted_spawn else "1",
@@ -168,22 +206,22 @@ def run_one(variant, ticks, build_dir, port):
 
     sess = newest_session(build_dir, label)
     if not sess:
-        print("FAIL: no debug session produced (is the cwd on a drive with "
+        emit("FAIL: no debug session produced (is the cwd on a drive with "
               ">50 GB free? -brain-debug silently records nothing otherwise)")
-        return 1
+        return 1, out
     crashes = list(sess.glob("brain_crash_*.log"))
     if crashes:
-        print(f"FAIL: brain crashed — see {crashes[0]}")
-        print(Path(crashes[0]).read_text(errors="ignore")[:2000])
-        return 1
+        emit(f"FAIL: brain crashed — see {crashes[0]}")
+        emit(Path(crashes[0]).read_text(errors="ignore")[:2000])
+        return 1, out
     # The scripted-spawn variants land in whatever slot spawn_bot picked (it
     # fills from the TOP down), so find the log rather than assuming bot0.
     logs = sorted(sess.glob("print2_bot*.log"), key=lambda p2: p2.stat().st_size)
     if not logs:
-        print(f"FAIL: no print2_bot*.log under {sess}")
-        return 1
+        emit(f"FAIL: no print2_bot*.log under {sess}")
+        return 1, out
     log = logs[-1]
-    print(f"  brain log: {log.name}")
+    emit(f"  brain log: {log.name}")
     text = log.read_text(errors="ignore")
 
     plans = SEA_PLAN_RE.findall(text)
@@ -194,39 +232,39 @@ def run_one(variant, ticks, build_dir, port):
     dispatches = SEA_DISPATCH_RE.findall(text)
     tr = read_trace(trace)
 
-    print(f"  SEA_PLAN lines: {len(plans)}   SEA_SUB: {len(subs)}   "
+    emit(f"  SEA_PLAN lines: {len(plans)}   SEA_SUB: {len(subs)}   "
           f"SEA_REJECT: {len(rejects)}   SEA_ABORT: {len(aborts)}   "
           f"SEA_SHOT: {len(shots)}   SEA_DISPATCH: {len(dispatches)}")
     if plans:
-        p = plans[0]
-        print(f"  first plan: t={p[0]} cluster={p[1]} n={p[2]} entrance={p[3]} "
-              f"comp={p[4]} S=({p[5]},{p[6]}) F={p[7]} mine={p[8]} boat={p[9]} "
-              f"trees={p[10]}/{p[11]} short={p[12]} need_tiles={p[13]} "
-              f"forest_ok={p[14]} mines={p[15]}/{p[16]} refuel={p[17]} "
-              f"travel={p[18]} legs={p[19]}/{p[20]} boat_path={p[21]} cost={p[22]}")
+        for line in text.splitlines():
+            if "SEA_PLAN t=" in line:
+                emit("  first plan: " + line.split("SEA_PLAN ", 1)[1].strip())
+                break
     for r in dict.fromkeys((r[4], r[5]) for r in rejects):
-        print(f"  reject: {r[0]} — {r[1][:150]}")
+        emit(f"  reject: {r[0]} — {r[1][:150]}")
     for s in subs:
-        print(f"  SEA_SUB t={s[0]} {s[1]} -> {s[2]}  ({s[3][:90]})")
+        emit(f"  SEA_SUB t={s[0]} {s[1]} -> {s[2]}  ({s[3][:90]})")
     for a in aborts:
-        print(f"  SEA_ABORT t={a[0]} reason={a[1]}")
+        emit(f"  SEA_ABORT t={a[0]} reason={a[1]}")
 
     # ── Terrain trace at the entrance ──────────────────────────────────
     ent_S = (int(plans[0][5]), int(plans[0][6])) if plans else None
     if ent_S and ent_S in tr:
         seq = [(t, tname(v)) for (t, v) in tr[ent_S]]
-        print(f"  terrain at S{ent_S}: " +
+        emit(f"  terrain at S{ent_S}: " +
               " -> ".join(f"{n}@{t}" for (t, n) in seq))
     any_mine_laid = any(MINE_START <= v <= MINE_END
                         for hist in tr.values() for (_, v) in hist)
     boats = sorted({xy for xy, hist in tr.items()
                     if any(v == T_BOAT for (_, v) in hist)})
-    print(f"  mined tile ever seen: {any_mine_laid}    boats appeared at: {boats}")
+    emit(f"  mined tile ever seen: {any_mine_laid}    boats appeared at: {boats}")
 
     # -- Pills collected, and WHEN --------------------------------------
+    pills_here = sea_pills_for(variant)
+
     def collected_in(snapshot):
         n = 0
-        for (x, y) in SEA_PILLS:
+        for (x, y) in pills_here:
             lying = False
             for pb in snapshot.get("pillboxes", []):
                 if (pb.get("tx"), pb.get("ty")) == (x, y)                         and not pb.get("in_tank") and (pb.get("armor") or 0) == 0:
@@ -236,8 +274,15 @@ def run_one(variant, ticks, build_dir, port):
         return n
 
     collected = 0
+    per_pill = {}
     if final.exists():
-        collected = collected_in(json.load(open(final)))
+        fd = json.load(open(final))
+        collected = collected_in(fd)
+        for (x, y) in pills_here:
+            lying = any((pb.get("tx"), pb.get("ty")) == (x, y)
+                        and not pb.get("in_tank") and (pb.get("armor") or 0) == 0
+                        for pb in fd.get("pillboxes", []))
+            per_pill[(x, y)] = not lying
     # First snapshot at which the WHOLE cluster was out of the water. Snapshots
     # land every SNAP_INTERVAL sim ticks, so this is the completion tick to that
     # resolution; the brain tick is half the sim tick.
@@ -247,10 +292,10 @@ def run_one(variant, ticks, build_dir, port):
             if not line.strip():
                 continue
             sn = json.loads(line)
-            if collected_in(sn) >= len(SEA_PILLS):
+            if collected_in(sn) >= len(pills_here):
                 done_tick = sn.get("tick")
                 break
-    print(f"  sea pills collected: {collected}/{len(SEA_PILLS)}"
+    emit(f"  sea pills collected: {collected}/{len(pills_here)}"
           + (f"   COMPLETED by sim tick {done_tick} (brain tick ~{done_tick // 2})"
              if done_tick is not None else ""))
 
@@ -262,17 +307,56 @@ def run_one(variant, ticks, build_dir, port):
     for a, b in zip(trees, trees[1:]):
         if b < a:
             trees_spent += a - b
-    print(f"  cluster cost: {len(mine_dispatches)} mine dispatch(es), "
+    emit(f"  cluster cost: {len(mine_dispatches)} mine dispatch(es), "
           f"{len(boat_dispatches)} boat build(s), {trees_spent} trees spent")
+    for (x, y), got in sorted(per_pill.items()):
+        emit(f"    pill ({x},{y}): {'collected' if got else 'LEFT at sea'}")
+
+    # Loadout + refuel trace: what the tank started with, and what it had when
+    # the mine went down.
+    dumps = DUMP_RE.findall(text)
+    start = dumps[0] if dumps else None
+    if start:
+        emit(f"  start loadout: armour={start[3]} shells={start[4]} "
+              f"mines={start[5]} trees={start[6]}")
+    lay = next((s2 for s2 in subs if s2[2] == "lay_mine"), None)
+    refuel_span = None
+    rin = next((int(s2[0]) for s2 in subs if s2[2] == "refuel_mines"), None)
+    rout = None
+    if rin is not None:
+        rout = next((int(s2[0]) for s2 in subs
+                     if int(s2[0]) > rin and s2[1] == "refuel_mines"), None)
+        if rout:
+            refuel_span = rout - rin
+            emit(f"  refuel leg: t={rin}..{rout} ({refuel_span} brain ticks)")
+
+    carries = CARRY_RE.findall(text)
+    final_carry = int(carries[-1][1]) if carries else None
+    emit(f"  pills carried at the end: {final_carry}")
+
+    # Never inside a hostile pill's firing circle while afloat.
+    hp = hostile_pill_for(variant)
+    closest_afloat = None
+    if hp:
+        for d2 in dumps:
+            if d2[7] == "true":
+                dist = math.hypot(int(d2[1]) - hp[0], int(d2[2]) - hp[1])
+                if closest_afloat is None or dist < closest_afloat:
+                    closest_afloat = dist
+        emit(f"  closest the boat ever came to hostile pill {hp}: "
+              + (f"{closest_afloat:.2f} tiles" if closest_afloat is not None
+                 else "never afloat"))
 
     ok, why = check(variant, plans, subs, rejects, aborts, dispatches,
                     tr, any_mine_laid, boats, collected,
-                    done_tick, mine_dispatches, boat_dispatches, trees_spent)
+                    done_tick, mine_dispatches, boat_dispatches, trees_spent,
+                    per_pill, dumps, closest_afloat, text, refuel_span, shots,
+                    final_carry)
     if ok:
-        print(f"PASS ({variant}): {why}")
-        return 0
-    print(f"FAIL ({variant}): {why}")
-    return 1
+        emit(f"PASS ({variant}): {why}")
+        return 0, out
+    emit(f"FAIL ({variant}): {why}")
+    return 1, out
 
 
 def _ordered_terrain(tr, xy):
@@ -304,7 +388,9 @@ def _flood_sequence_ok(vals):
 
 def check(variant, plans, subs, rejects, aborts, dispatches,
           tr, any_mine_laid, boats, collected,
-          done_tick, mine_dispatches, boat_dispatches, trees_spent):
+          done_tick, mine_dispatches, boat_dispatches, trees_spent,
+          per_pill, dumps, closest_afloat, text, refuel_span, shots,
+          final_carry):
     sub_targets = [s[2] for s in subs]
     reject_reasons = [r[4] for r in rejects]
 
@@ -358,8 +444,35 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
             return False, f"no boat was ever built at the entrance {S}"
         if variant == "G" and "seek_trees" not in sub_targets:
             return False, "the seek_trees leg never ran (trees started at 0)"
-        if variant == "D" and "refuel_mines" not in sub_targets:
-            return False, "the refuel_mines leg never ran (mines started at 0)"
+        if variant == "D":
+            if "refuel_mines" not in sub_targets:
+                return False, "the refuel_mines leg never ran (mines started at 0)"
+            # STRICT tournament: the tank spawns with nothing at all, so the
+            # leg has to fetch BOTH the mine and the shells that set it off.
+            if dumps:
+                s0 = dumps[0]
+                if int(s0[4]) != 0 or int(s0[5]) != 0 or int(s0[6]) != 0:
+                    return False, (f"strict loadout expected 0/0/0, got shells="
+                                   f"{s0[4]} mines={s0[5]} trees={s0[6]}")
+            lay_t = next((int(x[0]) for x in subs if x[2] == "lay_mine"), None)
+            if lay_t is None:
+                return False, "never reached lay_mine"
+            at_lay = None
+            for d2 in dumps:
+                if int(d2[0]) <= lay_t:
+                    at_lay = d2
+                else:
+                    break
+            if at_lay is None:
+                return False, "no ENGINE_DUMP at the moment the mine went down"
+            sh, mn = int(at_lay[4]), int(at_lay[5])
+            if mn < 1:
+                return False, f"the mine went down with mines={mn}"
+            if sh < SEA_PILL_MIN_SHELLS:
+                return False, (f"the mine went down with shells={sh}, below the "
+                               f"{SEA_PILL_MIN_SHELLS} reserved to detonate it")
+            if not shots:
+                return False, "the mine was never shot — the shells were not used"
         if variant in ("D", "E") and "seek_trees" not in sub_targets:
             return False, "the seek_trees leg never ran (trees started at 0)"
         if variant == "E":
@@ -379,8 +492,8 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
             order_ok = sub_targets.index("seek_trees") < sub_targets.index("lay_mine")
             if not order_ok:
                 return False, "lay_mine came before the harvest leg"
-        if collected < len(SEA_PILLS):
-            return False, (f"only {collected}/{len(SEA_PILLS)} sea pills were "
+        if collected < len(sea_pills_for(variant)):
+            return False, (f"only {collected}/{len(sea_pills_for(variant))} sea pills were "
                            f"collected within one game minute")
         if done_tick is None:
             return False, "the cluster was never all out of the water in a snapshot"
@@ -399,7 +512,7 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
             return False, (f"{trees_spent} trees spent on one cluster "
                            f"(expected <= {budget} = 21 + one harvest overshoot)")
         return True, (f"entrance={entrance} S={S}, boat built, "
-                      f"{collected}/{len(SEA_PILLS)} pills taken by brain tick "
+                      f"{collected}/{len(sea_pills_for(variant))} pills taken by brain tick "
                       f"~{done_tick // 2} "
                       f"({len(mine_dispatches)} mine, {len(boat_dispatches)} boat, "
                       f"{trees_spent} trees)"
@@ -408,17 +521,54 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
                          "21 trees were in hand" if variant == "E" else ""))
 
     if variant == "B":
+        # ONE member (the middle pill, exactly 8.0 tiles from the hostile pill)
+        # is inside its firing circle; the outer two at 9.2 tiles are not. The
+        # raft must SPLIT: two pills fetched, one left, and the boat must never
+        # enter the circle on the way.
+        hp = hostile_pill_for("B")
+        covered_pill = SEA_PILLS[1]
+        want_taken = [SEA_PILLS[0], SEA_PILLS[2]]
+        member_rejects = [r for r in reject_reasons
+                          if r.startswith("covered_by_pill#")]
+        if not member_rejects and f"covered_by_pill#" not in text:
+            return False, ("no per-pill covered_by_pill reject — the raft was "
+                           f"not split (rejects seen: {sorted(set(reject_reasons))})")
+        for xy in want_taken:
+            if not per_pill.get(xy):
+                d = math.hypot(xy[0] - hp[0], xy[1] - hp[1])
+                return False, (f"pill {xy} ({d:.1f} tiles from the hostile pill, "
+                               f"outside its {PILLBOX_RANGE_TILES}-tile circle) "
+                               f"was not collected")
+        if per_pill.get(covered_pill):
+            return False, (f"pill {covered_pill} sits 8.0 tiles from the hostile "
+                           f"pill — inside PILLBOX_RANGE — and must be left alone")
+        if closest_afloat is not None and closest_afloat <= PILLBOX_RANGE_TILES:
+            return False, (f"the boat came within {closest_afloat:.2f} tiles of "
+                           f"the hostile pill (its circle is {PILLBOX_RANGE_TILES})")
+        if final_carry is not None and final_carry != 2:
+            return False, (f"the tank ended carrying {final_carry} pills; the "
+                           f"split raft is worth exactly 2")
+        if done_tick is None:
+            done_tick = 0
+        return True, (f"raft SPLIT: {want_taken[0]} and {want_taken[1]} taken, "
+                      f"{covered_pill} left (covered_by_pill#), boat never closer "
+                      f"than {closest_afloat:.2f} tiles to the hostile pill")
+
+    if variant == "B2":
         covered = [r for r in reject_reasons if r.startswith("pills_covered_by_pill#")]
         if not covered:
-            return False, ("no pills_covered_by_pill reject — the line-of-fire "
-                           f"gate did not fire (rejects seen: {sorted(set(reject_reasons))})")
+            return False, ("no pills_covered_by_pill reject — with every member "
+                           f"inside the circle the whole cluster must go "
+                           f"(rejects seen: {sorted(set(reject_reasons))})")
         if any_mine_laid:
-            return False, "a mine was laid despite the cluster being covered"
+            return False, "a mine was laid despite every member being covered"
         if "lay_mine" in sub_targets:
-            return False, "entered lay_mine despite the cluster being covered"
+            return False, "entered lay_mine despite every member being covered"
         if boats:
-            return False, f"a boat was built at {boats} despite the cluster being covered"
-        return True, f"rejected with {covered[0]}, no mine, no boat"
+            return False, f"a boat was built at {boats} despite every member being covered"
+        if any(per_pill.values()):
+            return False, "a covered pill was collected"
+        return True, f"whole cluster rejected with {covered[0]}, no mine, no boat"
 
     if variant == "F":
         if "no_trees_in_territory" not in reject_reasons:
@@ -442,14 +592,24 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
 # that is a bug in the plan, not a budget to raise.
 DEFAULT_TICKS = {v: 6000 for v in VARIANTS}
 SNAP_INTERVAL = 100     # completion-tick resolution
-PORTS = {"A": 50061, "B": 50062, "C": 50063, "D": 50064,
+PORTS = {"A": 50061, "B": 50062, "B2": 50068, "C": 50063, "D": 50064,
          "E": 50065, "F": 50066, "G": 50067}
+
+
+# Two at a time, and no more. Each variant is a full WinBoloDS process playing
+# a game to completion; the machine has other work to do and the runs are only
+# independent because every variant owns its port, its map, its logs and its
+# debug-session label. Raising this is not a free speed-up — the sim is CPU
+# bound and over-subscribing just makes every run slower and the wall-clock
+# worse. MAX_JOBS is a hard ceiling, not a default.
+MAX_JOBS = 2
 
 
 def main():
     variant = "ALL"
     ticks = None
     build = DEFAULT_BUILD
+    jobs = MAX_JOBS
     args = sys.argv[1:]
     i = 0
     while i < len(args):
@@ -459,18 +619,43 @@ def main():
             ticks = int(args[i + 1]); i += 2
         elif args[i] == "--build":
             build = Path(args[i + 1]); i += 2
+        elif args[i] == "--jobs":
+            jobs = max(1, min(MAX_JOBS, int(args[i + 1]))); i += 2
         else:
             i += 1
     todo = list(VARIANTS) if variant == "ALL" else [variant]
+
+    def one(v):
+        try:
+            return run_one(v, ticks or DEFAULT_TICKS[v], build, PORTS[v])
+        except subprocess.TimeoutExpired:
+            return 1, [f"FAIL ({v}): run timed out"]
+        except Exception as e:                     # noqa: BLE001
+            return 1, [f"FAIL ({v}): {type(e).__name__}: {e}"]
+
+    results = {}
+    t0 = time.time()
+    if len(todo) == 1 or jobs == 1:
+        for v in todo:
+            results[v] = one(v)
+            print(f"[{time.time() - t0:6.1f}s] {v} done", flush=True)
+    else:
+        with cf.ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures = {pool.submit(one, v): v for v in todo}
+            for fut in cf.as_completed(futures):
+                v = futures[fut]
+                results[v] = fut.result()
+                print(f"[{time.time() - t0:6.1f}s] {v} done", flush=True)
+
     rc = 0
     for v in todo:
+        r, lines = results[v]
         print(f"-- variant {v} ({gametype_for(v)}) " + "-" * 40)
-        try:
-            r = run_one(v, ticks or DEFAULT_TICKS[v], build, PORTS[v])
-        except subprocess.TimeoutExpired:
-            print(f"FAIL ({v}): run timed out")
-            r = 1
+        for line in lines:
+            print(line)
         rc |= r
+    print(f"-- {len(todo)} variant(s) in {time.time() - t0:.1f}s "
+          f"({jobs} at a time) " + "-" * 20)
     sys.exit(rc)
 
 
