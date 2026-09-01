@@ -2474,8 +2474,8 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
    * what lets the caller test each entity against the square it stands on.
    * The last row and column drop out of the LGM and explosion walks, whose
    * far bound is exclusive, and nothing can ever be there: tanks and LGM
-   * destinations are held inside the mine border, and a shell dies well
-   * short of it. */
+   * destinations are held inside the mine border, and nothing a shell can
+   * reach and blow up on is further out. */
   if (tks != NULL) {
     screenTanksPrepare(cs, tks, &MY_TANK(cs), 0, MAP_ARRAY_LAST, 0,
                        MAP_ARRAY_LAST);
@@ -2484,8 +2484,66 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
     screenLgmPrepare(cs, lgms, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
   }
   if (sb != NULL) {
+    int si;              /* Looping variable */
+    BYTE myPlayer = cs->interpCtx.localPlayer;
+
     gs = clientSimGetGameSim(cs);
-    shellsCalcScreenBullets(&gs->shs, sb, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+
+    /* Shells do not come from gs->shs. A client's shs list is not where the
+     * shells it can see live: other players' arrive as the forward-projected
+     * layer and the local player's own as client-side predictions, which is
+     * why the main view walks those two arrays rather than calling
+     * shellsCalcScreenBullets. Same two arrays here, minus the viewport
+     * bounds test — the caller wants the whole map and filters per square,
+     * and minus the offset subtraction, so the squares stay absolute like
+     * the rest of what this fills in. */
+    for (si = 0; si < clientSimGetProjectedShellCount(cs); si++) {
+      const ProjectedShell *ps = &clientSimGetProjectedShells(cs)[si];
+      WORLD sx = (WORLD)(int)ps->fx;
+      WORLD sy = (WORLD)(int)ps->fy;
+      WORLD conv;
+      BYTE spx, spy, sframe;
+
+      /* Ours come from the predicted array below. */
+      if (ps->owner == myPlayer) {
+        continue;
+      }
+      conv = sx;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      spx = (BYTE)conv;
+      conv = sy;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      spy = (BYTE)conv;
+      sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
+      screenBulletsAddItem(sb, (BYTE)(sx >> TANK_SHIFT_MAPSIZE),
+                           (BYTE)(sy >> TANK_SHIFT_MAPSIZE), spx, spy, sframe);
+    }
+
+    for (si = 0; si < clientSimGetPredictedShellCount(cs); si++) {
+      const PredictedShell *ps = &clientSimGetPredictedShells(cs)[si];
+      WORLD conv;
+      BYTE ppx, ppy, pframe;
+
+      /* An expired shell would draw a ghost frame beside its own explosion. */
+      if (ps->length <= SHELL_DEATH) {
+        continue;
+      }
+      conv = ps->x;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      ppx = (BYTE)conv;
+      conv = ps->y;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      ppy = (BYTE)conv;
+      pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
+      screenBulletsAddItem(sb, (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE),
+                           (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE), ppx, ppy,
+                           pframe);
+    }
+
     explosionsCalcScreenBullets(&gs->expl, sb, 0, MAP_ARRAY_LAST, 0,
                                 MAP_ARRAY_LAST);
     tkExplosionCalcScreenBullets(&gs->tankExplosions, sb, 0, MAP_ARRAY_LAST, 0,
