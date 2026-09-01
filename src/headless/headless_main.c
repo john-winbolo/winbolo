@@ -810,6 +810,31 @@ static const char *verboseOwnerStr(BYTE owner, BYTE self, PlayerBitMap alliesBit
   return "enemy";
 }
 
+/* Fingerprint of the tiles the overview has remembered. The state log carries
+ * this one number per tick rather than the 65536-byte array, so a baseline
+ * diff still trips the moment any remembered square changes. FNV-1a, over
+ * tile[][] alone: seen and live ride alongside it as their own fields, and the
+ * flags say nothing those two do not. Returns 0 for a client with no memory to
+ * read, so that line still has all three members. */
+static uint32_t overviewTileHash(const OverviewMap *om) {
+  const unsigned char *p; /* The tile array as a flat byte run */
+  size_t n;               /* Bytes in it */
+  size_t i;               /* Looping variable */
+  uint32_t h;             /* Hash so far */
+
+  if (om == NULL) {
+    return 0;
+  }
+  p = (const unsigned char *)om->tile;
+  n = sizeof(om->tile);
+  h = 2166136261u; /* FNV-1a offset basis */
+  for (i = 0; i < n; i++) {
+    h ^= (uint32_t)p[i];
+    h *= 16777619u; /* FNV-1a prime */
+  }
+  return h;
+}
+
 static void logStateVerbose(int tickNum) {
   static bool needMapInit = TRUE;
   FILE *f;
@@ -1097,6 +1122,18 @@ static void logStateVerbose(int tickNum) {
     }
   }
   fprintf(f, "]");
+
+  /* What the player has been shown of the map, as counts plus a fingerprint of
+   * the remembered tiles. The pre-loop tick-0 record is written before the
+   * first display tick has run, so it reports nothing seen and no live region;
+   * every later record describes the tick that just ran. */
+  {
+    const OverviewMap *om = clientSimGetOverviewMap(humanSim);
+    fprintf(f, ",\"overview\":{\"seen\":%u,\"live\":%d,\"hash\":%u}",
+            om != NULL ? om->seenCount : 0u,
+            om != NULL ? om->liveCount : 0,
+            (unsigned)overviewTileHash(om));
+  }
 
   fprintf(f, "}\n");
   fflush(f);
