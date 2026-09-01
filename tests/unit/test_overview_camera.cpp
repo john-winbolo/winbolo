@@ -438,6 +438,49 @@ static int camera_visible_range_at_edges(void) {
     return 0;
 }
 
+/* Setting the zoom by scale is the inverse of reading it: every rung on the
+   ladder survives a round trip, a scale off either end lands on that end, and
+   a scale between two rungs takes the nearer one. This is the conversion the
+   saved [WINDOW] Overview Zoom preference goes through on the way back in. */
+static int camera_set_zoom_scale(void) {
+    OverviewCamera cam;
+    overviewCameraInit(&cam);
+
+    for (int i = 0; i < overviewCameraZoomCount(); i++) {
+        OverviewCamera restored;
+        overviewCameraInit(&restored);
+        cam.zoomIndex = i;
+        float s = overviewCameraZoomScale(&cam);
+        overviewCameraSetZoomScale(&restored, s);
+        UT_ASSERT_MSG(overviewCameraZoomScale(&restored) == s,
+                      "zoom index %d has scale %.4f, but setting that scale "
+                      "gave back %.4f",
+                      i, (double)s, (double)overviewCameraZoomScale(&restored));
+    }
+
+    /* Below the ladder's floor. */
+    overviewCameraSetZoomScale(&cam, 0.1f);
+    UT_ASSERT_MSG(overviewCameraZoomScale(&cam) == 0.5f,
+                  "scale 0.1 clamped to %.4f, expected 0.5",
+                  (double)overviewCameraZoomScale(&cam));
+
+    /* Above its ceiling. */
+    overviewCameraSetZoomScale(&cam, 99.0f);
+    UT_ASSERT_MSG(overviewCameraZoomScale(&cam) == 4.0f,
+                  "scale 99 clamped to %.4f, expected 4.0",
+                  (double)overviewCameraZoomScale(&cam));
+
+    /* Between 1.0 and 1.5, and nearer 1.0: 0.2 below against 0.3 above. */
+    overviewCameraSetZoomScale(&cam, 1.2f);
+    UT_ASSERT_MSG(overviewCameraZoomScale(&cam) == 1.0f,
+                  "scale 1.2 snapped to %.4f, expected 1.0",
+                  (double)overviewCameraZoomScale(&cam));
+
+    /* A NULL camera is a no-op, like the rest of the camera calls. */
+    overviewCameraSetZoomScale(NULL, 1.0f);
+    return 0;
+}
+
 extern "C" int run_overview_camera(void) {
     int rc;
     rc = camera_round_trip_every_zoom();    if (rc) return rc;
@@ -445,5 +488,6 @@ extern "C" int run_overview_camera(void) {
     rc = camera_follow_centres_on_tank();   if (rc) return rc;
     rc = camera_clamps_zoom_and_centre();   if (rc) return rc;
     rc = camera_visible_range_at_edges();   if (rc) return rc;
+    rc = camera_set_zoom_scale();           if (rc) return rc;
     return 0;
 }

@@ -85,6 +85,11 @@ float overviewCameraZoomScale(const OverviewCamera *cam);
 /* Number of ladder positions; valid zoomIndex values are 0..count-1. */
 int overviewCameraZoomCount(void);
 
+/* Snap the zoom to the ladder rung nearest `scale`, clamped to the ladder's
+ * ends. Preferences store the zoom as a scale rather than a ladder index, so
+ * a saved value keeps its meaning if the ladder ever gains a rung. */
+void overviewCameraSetZoomScale(OverviewCamera *cam, float scale);
+
 /* Top-left corner of map square (mapX,mapY) in view pixels. Fractional
  * coordinates are meaningful: pass mapX + 0.5f for the square's centre. */
 void overviewCameraWorldToScreen(const OverviewCamera *cam, int viewW, int viewH,

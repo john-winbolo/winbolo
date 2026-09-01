@@ -295,6 +295,18 @@ int gameFrontLobbyH = -1;
 float gameFrontLobbySplit = 0.0f;
 float gameFrontLobbySplitRecap = 0.0f;
 
+/* Map overview pop-out geometry, camera state and last-open flag. The
+   defaults are the size the window was created at before it had preferences,
+   1x zoom with follow on (what overviewCameraInit picks), no saved position
+   and closed. */
+int   gameFrontOverviewW = 640;
+int   gameFrontOverviewH = 640;
+int   gameFrontOverviewX = -1;
+int   gameFrontOverviewY = -1;
+float gameFrontOverviewZoom = 1.0f;
+bool  gameFrontOverviewFollow = TRUE;
+bool  gameFrontShowMapOverview = FALSE;
+
 /* Dialog states */
 openingStates dlgState = openStart;
 
@@ -3133,6 +3145,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showBaseLabels = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX);
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
+  gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
 #if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
 #else
@@ -3184,6 +3198,22 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("WINDOW", "Lobby Split Recap", splitDefault, buff, FILENAME_MAX);
     gameFrontLobbySplitRecap = (float)atof(buff);
   }
+
+  /* Map overview pop-out: size, position, and the camera state it reopens
+     with. -1 for either coordinate means no saved position, so the window
+     lands wherever the OS puts it. */
+  prefsGetString("WINDOW", "Overview Width",  "640", buff, FILENAME_MAX);
+  gameFrontOverviewW = atoi(buff);
+  prefsGetString("WINDOW", "Overview Height", "640", buff, FILENAME_MAX);
+  gameFrontOverviewH = atoi(buff);
+  prefsGetString("WINDOW", "Overview X", "-1", buff, FILENAME_MAX);
+  gameFrontOverviewX = atoi(buff);
+  prefsGetString("WINDOW", "Overview Y", "-1", buff, FILENAME_MAX);
+  gameFrontOverviewY = atoi(buff);
+  prefsGetString("WINDOW", "Overview Zoom", "1", buff, FILENAME_MAX);
+  gameFrontOverviewZoom = (float)atof(buff);
+  prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
+  gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -3404,6 +3434,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels));
   prefsSetString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels));
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
+  prefsSetString("MENU", "Show Map Overview",
+                 TRUEFALSE_TO_STR(gameFrontShowMapOverview));
   /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
      bypassing debounce since this is the shutdown save path. */
   gameFrontFlushWindowSettings();
@@ -3474,6 +3506,21 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Lobby Split", buff);
   SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplitRecap);
   prefsSetString("WINDOW", "Lobby Split Recap", buff);
+
+  intToStr(gameFrontOverviewW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview Width", buff);
+  intToStr(gameFrontOverviewH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview Height", buff);
+  intToStr(gameFrontOverviewX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview X", buff);
+  intToStr(gameFrontOverviewY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Overview Y", buff);
+  /* The zoom is one of a handful of ladder rungs — 0.5 to 4, the finest gap
+     being 0.25 — so two decimals name every one of them exactly. */
+  SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontOverviewZoom);
+  prefsSetString("WINDOW", "Overview Zoom", buff);
+  prefsSetString("WINDOW", "Overview Follow",
+                 TRUEFALSE_TO_STR(gameFrontOverviewFollow));
 
   s_windowSettingsDirty = false;
 }

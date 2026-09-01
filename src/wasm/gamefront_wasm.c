@@ -187,6 +187,18 @@ int gameFrontDialogY = -1;
 float gameFrontLobbySplit = 0.0f;
 float gameFrontLobbySplitRecap = 0.0f;
 
+/* Map overview pop-out geometry and camera state ([WINDOW] section on
+   desktop). The wasm build never opens the pop-out — a browser tab has no
+   second OS window — but sdl3imgui.cpp is shared and references the
+   symbols. */
+int   gameFrontOverviewW = 640;
+int   gameFrontOverviewH = 640;
+int   gameFrontOverviewX = -1;
+int   gameFrontOverviewY = -1;
+float gameFrontOverviewZoom = 1.0f;
+bool  gameFrontOverviewFollow = TRUE;
+bool  gameFrontShowMapOverview = FALSE;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;

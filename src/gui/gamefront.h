@@ -918,6 +918,23 @@ extern int gameFrontLobbyH;
 extern float gameFrontLobbySplit;
 extern float gameFrontLobbySplitRecap;
 
+/* Map overview pop-out geometry and camera state ([WINDOW] section), plus
+ * whether it was open when the last game ended ([MENU] section). The overview
+ * is its own OS window, so unlike the lobby it needs a position of its own.
+ * The zoom is stored as a camera scale rather than a ladder index so the
+ * saved value keeps its meaning if the ladder changes. Written through the
+ * debounced gameFrontSaveWindowSettings path as the player drags, resizes,
+ * zooms and toggles follow. gameFrontShowMapOverview survives the hide the
+ * end of a game triggers, which is what reopens the window with the next
+ * one; an explicit close clears it. */
+extern int   gameFrontOverviewW;        /* pop-out size, logical px */
+extern int   gameFrontOverviewH;
+extern int   gameFrontOverviewX;        /* -1 = never saved */
+extern int   gameFrontOverviewY;
+extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
+extern bool  gameFrontOverviewFollow;
+extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
+
 extern bool gameFrontUseUpnp;
 extern bool gameFrontUseNatTraversal;
 

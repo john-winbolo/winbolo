@@ -105,6 +105,25 @@ int overviewCameraZoomCount(void) {
     return OVERVIEW_ZOOM_COUNT;
 }
 
+void overviewCameraSetZoomScale(OverviewCamera *cam, float scale) {
+    if (!cam) return;
+    /* Nearest rung by absolute difference. The ladder runs 0.5x to 4x, so a
+     * scale outside it is nearest to whichever end it passed and the clamp
+     * falls out of the same walk — nothing below or above needs its own
+     * case. */
+    int best = 0;
+    float bestDelta = fabsf(kOverviewZoomSteps[0] - scale);
+    for (int i = 1; i < OVERVIEW_ZOOM_COUNT; i++) {
+        float delta = fabsf(kOverviewZoomSteps[i] - scale);
+        if (delta < bestDelta) {
+            bestDelta = delta;
+            best = i;
+        }
+    }
+    cam->zoomIndex = best;
+    overviewCameraClamp(cam);
+}
+
 void overviewCameraWorldToScreen(const OverviewCamera *cam, int viewW, int viewH,
                                  float mapX, float mapY,
                                  float *outSX, float *outSY) {

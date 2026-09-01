@@ -486,6 +486,9 @@ static OverviewView *s_overviewView          = nullptr;
 static SDL_Texture  *s_overviewTiles         = nullptr;
 static SDL_Renderer *s_overviewTilesRenderer = nullptr;
 static int           s_overviewTilesScale    = 0;
+/* Last frame's running state, so the start of a game can be told from the
+   middle of one — see the auto-hide/reopen in sdl3ImguiRender. */
+static bool          s_overviewWasRunning    = false;
 
 static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
     if (!r) return nullptr;
@@ -659,6 +662,50 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint
     } else {
         popOutCreate(pw, title, w, h, flags);
     }
+}
+
+/* The overview is the one pop-out whose geometry is remembered, so every
+ * place that opens it comes through here rather than calling popOutCreate
+ * with a fixed size. A saved size below 200 px is treated as junk and
+ * replaced by the default — the window would be too small to read a map in.
+ *
+ * The window is created hidden so a restored position can be applied before
+ * it is ever shown; without that it would appear at the OS default and jump.
+ * That only applies to the first create: popOutCreate's re-show path keeps
+ * the window the player last dragged, position included.
+ *
+ * The saved position is honoured only while SDL still finds a display under
+ * it, so a monitor that has been unplugged since the last run cannot strand
+ * the window off-screen. Same test the main window does in winbolo.c. */
+static void mapOverviewOpen(void) {
+    bool firstCreate = (s_popMapOverview.window == nullptr);
+    int w = gameFrontOverviewW;
+    int h = gameFrontOverviewH;
+    if (w < 200) w = 640;
+    if (h < 200) h = 640;
+    Uint32 flags = SDL_WINDOW_RESIZABLE |
+                   (firstCreate ? SDL_WINDOW_HIDDEN : 0);
+    if (!popOutCreate(&s_popMapOverview,
+                      langGetText(STR_MENU_MAP_OVERVIEW), w, h, flags))
+        return;
+    if (firstCreate) {
+        if (gameFrontOverviewX >= 0 && gameFrontOverviewY >= 0) {
+            SDL_Point pt = { gameFrontOverviewX, gameFrontOverviewY };
+            if (SDL_GetDisplayForPoint(&pt))
+                SDL_SetWindowPosition(s_popMapOverview.window, pt.x, pt.y);
+        }
+        SDL_ShowWindow(s_popMapOverview.window);
+        SDL_RaiseWindow(s_popMapOverview.window);
+    }
+    gameFrontShowMapOverview = true;
+}
+
+/* An explicit close: the window goes away and is not brought back with the
+ * next game. The auto-hide at the end of a game deliberately does not come
+ * through here — see the comment there. */
+static void mapOverviewClose(void) {
+    if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+    gameFrontShowMapOverview = false;
 }
 
 /* -------------------------------------------------------
@@ -1472,6 +1519,21 @@ static void renderMapOverviewContent(ClientSim *cs) {
     ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH));
     overviewViewHandleInput(s_overviewView, ImGui::IsItemHovered(),
                             texW, texH, cs);
+
+    /* Persist zoom and follow the moment the player changes either. The
+       comparison is exact on purpose: the stored zoom came out of the same
+       ladder table it is being compared against, so equal values are
+       bit-identical and there is no drift for an epsilon to absorb. */
+    OverviewCamera *cam = overviewViewCamera(s_overviewView);
+    if (cam) {
+        float zoom = overviewCameraZoomScale(cam);
+        if (zoom != gameFrontOverviewZoom ||
+            cam->follow != gameFrontOverviewFollow) {
+            gameFrontOverviewZoom   = zoom;
+            gameFrontOverviewFollow = cam->follow;
+            gameFrontSaveWindowSettings();
+        }
+    }
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
@@ -2813,8 +2875,9 @@ static void renderMenuBar(ClientSim *cs) {
             /* The overview draws the map the player has seen, so it stays
                greyed out until a game is running. */
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
-                                cs != nullptr && clientSimIsRunning(cs)))
-                togglePopOut(&s_popMapOverview, langGetText(STR_MENU_MAP_OVERVIEW), 640, 640, SDL_WINDOW_RESIZABLE);
+                                cs != nullptr && clientSimIsRunning(cs))) {
+                if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
+            }
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
@@ -3715,11 +3778,30 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                         ev.window.data1 > 0 && ev.window.data2 > 0) {
                         pw->width  = ev.window.data1;
                         pw->height = ev.window.data2;
+                        if (pw == &s_popMapOverview) {
+                            gameFrontOverviewW = pw->width;
+                            gameFrontOverviewH = pw->height;
+                            gameFrontSaveWindowSettings();
+                        }
                     }
+                }
+
+                /* Handled out here rather than in the switch above because
+                   the switch decides which events a pop-out consumes, and a
+                   move is not one of them: adding it would have all five
+                   pop-outs swallow SDL_EVENT_WINDOW_MOVED and skip
+                   sdl3DrawHandleEvent, which needs to see the main window
+                   move. Only the overview remembers where it was put. */
+                if (ev.type == SDL_EVENT_WINDOW_MOVED &&
+                    ev.window.windowID == pwID && pw == &s_popMapOverview) {
+                    gameFrontOverviewX = ev.window.data1;
+                    gameFrontOverviewY = ev.window.data2;
+                    gameFrontSaveWindowSettings();
                 }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
                     popOutHide(pw);
+                    if (pw == &s_popMapOverview) gameFrontShowMapOverview = false;
                     consumedByPopOut = true;
                 }
 
@@ -3733,6 +3815,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     ev.key.windowID == pwID &&
                     ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                     popOutHide(pw);
+                    if (pw == &s_popMapOverview) gameFrontShowMapOverview = false;
                     consumedByPopOut = true;
                 }
             }
@@ -4873,16 +4956,35 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
         /* The overview shows what this game has revealed, so it goes away
            with the game rather than sitting over the lobby. Hidden, not
-           destroyed — see popOutHide. */
-        if (s_popMapOverview.open && (cs == nullptr || !clientSimIsRunning(cs))) {
-            popOutHide(&s_popMapOverview);
+           destroyed — see popOutHide. That hide leaves
+           gameFrontShowMapOverview alone, so a player who had the overview up
+           gets it back when the next game starts; only an explicit close
+           forgets it. Going through sdl3ImguiShowMapOverview rather than
+           mapOverviewOpen keeps the reopen behind the same platform and
+           tablet tests every other caller uses. */
+        bool overviewRunning = (cs != nullptr && clientSimIsRunning(cs));
+        if (!overviewRunning) {
+            if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+        } else if (!s_overviewWasRunning && gameFrontShowMapOverview) {
+            sdl3ImguiShowMapOverview(true);
         }
+        s_overviewWasRunning = overviewRunning;
         /* Draw the map into the view's offscreen before the pop-out's ImGui
            frame opens: it swaps the render target and re-points the tile
            sampler, neither of which belongs in the middle of the draw list
            ImGui is about to build. */
         if (s_popMapOverview.open && s_popMapOverview.window) {
-            if (!s_overviewView) s_overviewView = overviewViewCreate();
+            if (!s_overviewView) {
+                s_overviewView = overviewViewCreate();
+                /* The view is made once per process, so this is the one
+                   moment the saved camera state is applied — after it, the
+                   camera is whatever the player has since done to it. */
+                OverviewCamera *cam = overviewViewCamera(s_overviewView);
+                if (cam) {
+                    overviewCameraSetZoomScale(cam, gameFrontOverviewZoom);
+                    cam->follow = gameFrontOverviewFollow;
+                }
+            }
             SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
@@ -5070,14 +5172,7 @@ bool sdl3ImguiIsSendMsgOpen(void) {
 void sdl3ImguiShowMapOverview(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
-        if (open) {
-            if (!s_popMapOverview.open) {
-                popOutCreate(&s_popMapOverview, langGetText(STR_MENU_MAP_OVERVIEW), 640, 640,
-                             SDL_WINDOW_RESIZABLE);
-            }
-        } else {
-            if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
-        }
+        if (open) mapOverviewOpen(); else mapOverviewClose();
         return;
     }
 #endif
