@@ -832,6 +832,14 @@ int run_overview_reset(void);
  * event that reaches a live square's tile and leaves an unseen one alone. */
 int run_overview_loopback(void);
 
+/* Overview camera maths (test_overview_camera.cpp): a square's centre
+ * round-trips through view pixels at every step of the 0.5x-4x zoom ladder,
+ * a zoom step holds the world point under the cursor still unless follow
+ * owns the centre, centre-on-tank puts the tank at the view centre, zoom and
+ * pan stop at the ladder's and the map's bounds, and the visible-square
+ * range matches hand-worked spans at the map edges. */
+int run_overview_camera(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
