@@ -369,7 +369,7 @@ target_compile_definitions(winbolo PRIVATE
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
-target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
+target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
 target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)

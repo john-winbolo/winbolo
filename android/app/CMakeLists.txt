@@ -299,5 +299,6 @@ target_compile_options(main PRIVATE
     -Wno-implicit-fallthrough
     -Wno-implicit-function-declaration
     -Wno-nonportable-include-path
+    -Werror=undef
     -fcommon
 )
