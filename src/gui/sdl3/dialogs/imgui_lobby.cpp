@@ -6546,20 +6546,37 @@ static langid lastRoundHighlightLabel(const HighlightWindow *h) {
     }
 }
 
-/* Which of the two views the desktop map panel is showing between rounds.
- * False is the recap, where every new summary starts; the button at the top
- * of the panel flips it. */
-static bool s_recapShowMap = false;
+/* Recap panel view state: the two per-summary view toggles the panel keeps
+ * between rounds. Both belong to the summary on screen, so lobbyRecapReset()
+ * puts them back whenever that summary goes away. */
+typedef struct LobbyRecapState {
+    /* Which of the two views the desktop map panel is showing between rounds.
+     * False is the recap, where every new summary starts; the button at the top
+     * of the panel flips it. */
+    bool showMap        = false;
+
+    /* Whether the highlight-clip list is expanded. Per-summary like showMap,
+     * and closed to begin with: the clips are a place to go looking once
+     * something in the round is worth finding again, and the replay above them
+     * is what the recap is for. Folded away, the reel gets the rows' height. */
+    bool showHighlights = false;
+} LobbyRecapState;
+
+static LobbyRecapState s_recap = {};
+
+static void lobbyRecapReset(void) {
+    s_recap = LobbyRecapState{};
+}
 
 /* Is the right panel showing the replay reel right now? Exactly the negation
- * of the panel's own showMapPanel test (`!lobbyShowLastRound || s_recapShowMap`
+ * of the panel's own showMapPanel test (`!lobbyShowLastRound || s_recap.showMap`
  * at the ##MapPanel render): the reel is up when a last-round summary exists
  * AND the panel has not been flipped to its Map tab. With the recap withheld
  * at build level there is no reel, so this is constant false — matching the
  * same #if the lobby uses to compute lobbyShowLastRound. */
 static bool lobbyRecapReelVisible(ClientSim *cs) {
 #if POSTGAME_STATS_ENABLED
-    return (clientSimGetLastRoundStats(cs) != NULL) && !s_recapShowMap;
+    return (clientSimGetLastRoundStats(cs) != NULL) && !s_recap.showMap;
 #else
     (void)cs;
     return false;
@@ -6570,12 +6587,6 @@ static bool lobbyRecapReelVisible(ClientSim *cs) {
  * leads with. A round can win all eighteen, and a list that long buries the
  * ones worth reading. */
 static const int RECAP_AWARDS_RANDOM = 4;
-
-/* Whether the highlight-clip list is expanded. Per-summary like s_recapShowMap,
- * and closed to begin with: the clips are a place to go looking once something
- * in the round is worth finding again, and the replay above them is what the
- * recap is for. Folded away, the reel gets the rows' height. */
-static bool s_recapShowHighlights = false;
 
 /* Skull for the scoreboard's death columns, drawn square at text height and
  * tinted to the text colour so it sits with the other header art rather than
@@ -8726,9 +8737,9 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
         /* Driven from our own flag rather than ImGui's storage, so the next
          * round's recap starts closed again instead of inheriting this one's
          * state. */
-        ImGui::SetNextItemOpen(s_recapShowHighlights, ImGuiCond_Always);
-        s_recapShowHighlights = ImGui::CollapsingHeader(hlHeader);
-        if (s_recapShowHighlights) {
+        ImGui::SetNextItemOpen(s_recap.showHighlights, ImGuiCond_Always);
+        s_recap.showHighlights = ImGui::CollapsingHeader(hlHeader);
+        if (s_recap.showHighlights) {
             for (int i = 0; i < hc; i++) {
                 const HighlightWindow *h = &st->highlights[i];
                 /* The summary carries the clip's round-relative milliseconds, so
@@ -10066,8 +10077,7 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     /* A lobby re-entered with a summary still stored should open on the
      * recap, not on whatever the last session was left looking at. */
-    s_recapShowMap              = false;
-    s_recapShowHighlights       = false;
+    lobbyRecapReset();
 
 #if !BOLO_MOBILE
     /* The reel holds the viewer's decoder singleton — never leave it running
@@ -10562,8 +10572,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * clip expand, so the next round's recap opens on itself rather than on
          * wherever the player left the panel. */
         if (!lobbyShowLastRound) {
-            s_recapShowMap        = false;
-            s_recapShowHighlights = false;
+            lobbyRecapReset();
         }
         /* Fold the settings header away for the post-game view and put it
          * back when the countdown clears the summary. Called every frame,
@@ -11626,7 +11635,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * countdown. With no summary there is no button and showMapPanel
              * stays true, so the panel is exactly the map panel. The child
              * keeps its id so the map chooser's scrim still finds it. */
-            bool showMapPanel = !lobbyShowLastRound || s_recapShowMap;
+            bool showMapPanel = !lobbyShowLastRound || s_recap.showMap;
             if (lobbyShowLastRound) {
                 /* The flip lands on the next frame, so the caption and what is
                  * under it always describe the same view. */
@@ -11634,7 +11643,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                                                   ? STR_DLGLOBBY_LASTROUND_BTN
                                                   : STR_DLGLOBBY_MAP_TAB),
                                   ImVec2(-1, 0))) {
-                    s_recapShowMap = !s_recapShowMap;
+                    s_recap.showMap = !s_recap.showMap;
                 }
                 if (!showMapPanel) {
                     renderLastRoundBody(cs, s);
