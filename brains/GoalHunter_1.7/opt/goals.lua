@@ -6038,6 +6038,1426 @@ function M.kill_pickup_score(state, world, info, pill)
   return c or 1e30
 end
 
+-- =========================================================================
+-- SEA-PILL HARVEST — the DEEP-SEA branch of capture_pill
+--
+-- A dead pill lying in open deep sea used to be a flat `deepsea_no_boat`
+-- reject: the tank would drown walking to it and nothing in the brain knew
+-- how to get afloat (20260901_000042 bot2, three dead pills off the east
+-- shore of DH-Oil Rig rejected every 50 ticks for 5000 ticks).
+--
+-- The engine already gives us the tools:
+--   * a mine explodes into a CRATER (minesexp.c),
+--   * a crater with a CARDINAL deep-sea/river neighbour floods to RIVER
+--     (floodfill.c) — diagonal is not enough,
+--   * BUILDMODE_BUILD (a wall) on RIVER builds a BOAT for LGM_COST_BOAT (20)
+--     trees (lgm.c),
+--   * and once we are afloat compute_pool4_cost already prices the pill
+--     through the boat Dijkstra layer and the ordinary drive-over pickup
+--     takes it (fixed 2026-08-31, tests/water_pills_test.py).
+--
+-- So this is not a new goal. It is capture_pill on the same target_id with a
+-- substate chain in FRONT of the pickup:
+--
+--   entrance_plan -> (refuel_mines) -> (seek_trees) -> approach_F
+--                 -> lay_mine -> detonate -> build_boat -> board -> pickup
+--
+-- The whole plan is priced ONCE per cluster (dead sea pills within
+-- SEA_PILL_CLUSTER_RADIUS of each other — one boat trip takes them all) and
+-- every member pill's pool row shows the same plan and the same cluster id.
+-- Rejections are named, never silent: a row always exists.
+--
+-- The make-or-break question is line of fire. One shell sinks a boat, so a
+-- hostile pill that can put a shell on the pills or on any tile of the boat
+-- path rejects the whole cluster — STRICTLY, calm pills included.
+-- =========================================================================
+
+-- Terrain that stops a shell dead (mapIsPassable == FALSE with onBoat FALSE,
+-- bolo_map.c:921). Water is PASSABLE: shells fly over river and deep sea.
+local SEA_SHOT_STOPPERS = {
+  [C.T_BUILDING]  = true,
+  [C.T_HALFBUILD] = true,
+  [C.T_FOREST]    = true,
+  [C.T_BOAT]      = true,
+}
+
+-- Terrain an LGM may drop a mine on (lgm.c LGM_REQUEST_MINE refuses
+-- DEEP_SEA / RIVER / BUILDING / BOAT / HALFBUILDING and any pill/base tile).
+local SEA_MINABLE = {
+  [C.T_GRASS]  = true,
+  [C.T_ROAD]   = true,
+  [C.T_FOREST] = true,
+  [C.T_SWAMP]  = true,
+  [C.T_RUBBLE] = true,
+  [C.T_CRATER] = true,
+}
+
+-- Terrain a tank can park on (the firing spot F).
+local SEA_STANDABLE = {
+  [C.T_GRASS]  = true,
+  [C.T_ROAD]   = true,
+  [C.T_FOREST] = true,
+  [C.T_SWAMP]  = true,
+  [C.T_RUBBLE] = true,
+  [C.T_CRATER] = true,
+}
+
+local SEA_CARD = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+local SEA_D8   = { { 0, -1 }, { 1, -1 }, { 1, 0 }, { 1, 1 },
+                   { 0, 1 }, { -1, 1 }, { -1, 0 }, { -1, -1 } }
+
+-- Substates of capture_pill that belong to the sea chain. Exposed so
+-- init.lua / steering / the hysteresis block can recognise them without
+-- duplicating the list.
+local SEA_SUBS = {
+  entrance_plan = true, refuel_mines = true, seek_trees = true,
+  approach_F = true, lay_mine = true, detonate = true,
+  build_boat = true, board = true,
+}
+M.SEA_SUBS = SEA_SUBS
+-- From lay_mine until the boat exists we are COMMITTED: there is a live mine
+-- on our own shore and half-done is worse than not started.
+local SEA_COMMITTED = { lay_mine = true, detonate = true, build_boat = true }
+M.SEA_COMMITTED = SEA_COMMITTED
+-- Every substate of a live plan. These get a SMALLER surcharge than the
+-- committed ones, but they need one: a plan with resource legs prices at ~25,
+-- which loses to routine goals, and the bot then wanders off mid-leg and comes
+-- back to start again (tests/sea_pills_D milled around a base for 2000 ticks
+-- with the refuel leg nominally active). Once a harvest has started, finishing
+-- it is worth more than re-deciding it every replan.
+local SEA_ENGAGED = {
+  refuel_mines = true, seek_trees = true, approach_F = true,
+  lay_mine = true, detonate = true, build_boat = true,
+  board = true, collect = true,
+}
+M.SEA_ENGAGED = SEA_ENGAGED
+
+-- Rate-limited SEA_* logging (one line per (key, message) per
+-- SEA_PILL_LOG_PERIOD ticks) so a stable reject doesn't print 50x/second.
+local function sea_log(state, key, msg)
+  local now = state.tick or 0
+  state._sea_log = state._sea_log or {}
+  local last = state._sea_log[key]
+  if last and (now - last) < (C.SEA_PILL_LOG_PERIOD or 50) then return end
+  state._sea_log[key] = now
+end
+
+-- Does a shell fired from (owx,owy) world units at tile (tmx,tmy) actually
+-- REACH that tile? cpf.simulate_shot walks the real shell physics but is
+-- purely geometric — it reports the tiles crossed and stops for nothing — so
+-- terrain and object collision are applied here, exactly as shells.c does:
+-- the shell dies on the first impassable tile (building / half-building /
+-- forest / boat) or the first LIVE pill or base. A DEAD pill does not block
+-- (it is rubble the shell flies over), which is what lets us test a line onto
+-- the dead sea pills at all.
+-- Returns reached (bool), stop_mx, stop_my (the tile that ate it, or nil when
+-- the shell simply ran out of range).
+local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter)
+  if owx == U.m2w(tmx) and owy == U.m2w(tmy) then return true, tmx, tmy end
+  local ok, tiles = pcall(cpf.simulate_shot, owx, owy, U.m2w(tmx), U.m2w(tmy),
+                          shooter or cpf.SHOT_PILL, 0)
+  if not ok or not tiles then return false, nil, nil end
+  local omx = bit.rshift(owx, 8)
+  local omy = bit.rshift(owy, 8)
+  for i = 1, #tiles do
+    local st = tiles[i]
+    if st.mx == tmx and st.my == tmy then return true, tmx, tmy end
+    if st.mx ~= omx or st.my ~= omy then
+      local tt = U.ttype(st.mx, st.my)
+      if SEA_SHOT_STOPPERS[tt] then return false, st.mx, st.my end
+      local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
+      if plist then
+        for _, pe in ipairs(plist) do
+          if pe.pill and (pe.pill.health or 0) > 0 and not pe.pill.in_tank then
+            return false, st.mx, st.my
+          end
+        end
+      end
+      if world.base_at and world.base_at[st.my * 256 + st.mx] then
+        return false, st.mx, st.my
+      end
+    end
+  end
+  return false, nil, nil   -- ran out of range without reaching
+end
+M.sea_shot_reaches = sea_shot_reaches
+
+-- Every LIVE hostile/neutral pill within `range` tiles of ANY tile in
+-- `tiles` ({{mx,my},...}). Sorted by pill id — this list decides rejections,
+-- so its order must not depend on pairs().
+local function sea_threat_pills(world, tiles, range)
+  local ids = {}
+  for pid, p in pairs(world.pills) do
+    if (p.owner == "hostile" or p.owner == "neutral")
+       and (p.health or 0) > 0 and not p.in_tank then
+      for _, t in ipairs(tiles) do
+        -- EUCLIDEAN. A pillbox's 8-tile reach is a circle; Manhattan calls a
+        -- diagonal neighbour distance 2, so an mdist test silently drops the
+        -- whole diagonal band a pill really can shoot. On the DH-Oil Rig
+        -- incident that is the difference between seeing hostile pill #10 at
+        -- (141,114) — 7.8 tiles from the cluster, inside its range — and not
+        -- seeing it at all (Manhattan 11).
+        if U.edist(p.mx, p.my, t[1], t[2]) <= range then
+          ids[#ids + 1] = pid
+          break
+        end
+      end
+    end
+  end
+  table.sort(ids)
+  local out = {}
+  for i = 1, #ids do out[i] = { id = ids[i], pill = world.pills[ids[i]] } end
+  return out
+end
+
+-- First threatening pill with a clear line onto (mx,my), or nil.
+-- `rays` (optional) collects every ray for the overlay.
+local function sea_tile_covered(world, threats, mx, my, rays)
+  for _, tp in ipairs(threats) do
+    local p = tp.pill
+    local reached, sx, sy = sea_shot_reaches(world, U.m2w(p.mx), U.m2w(p.my),
+                                             mx, my, cpf.SHOT_PILL)
+    if rays then
+      rays[#rays + 1] = { pmx = p.mx, pmy = p.my, tmx = mx, tmy = my,
+                          reached = reached, smx = sx, smy = sy, id = tp.id }
+    end
+    if reached then return tp.id end
+  end
+  return nil
+end
+
+-- A visible enemy tank within `range` of any tile in `tiles`.
+local function sea_enemy_tank_near(state, tiles, range)
+  local ets = state.perc and state.perc.enemy_tanks
+  if not ets then return nil end
+  for _, et in ipairs(ets) do
+    for _, t in ipairs(tiles) do
+      -- Euclidean for the same reason as sea_threat_pills: this is a physical
+      -- reach, not a walking distance.
+      if U.edist(et.mx, et.my, t[1], t[2]) <= range then return et end
+    end
+  end
+  return nil
+end
+
+-- Is (mx,my) free of live pills and of any base?
+local function sea_tile_object_free(world, mx, my)
+  local plist = world.pill_at and world.pill_at[my * 256 + mx]
+  if plist then
+    for _, pe in ipairs(plist) do
+      if pe.pill and (pe.pill.health or 0) > 0 and not pe.pill.in_tank then
+        return false
+      end
+    end
+  end
+  if world.base_at and world.base_at[my * 256 + mx] then return false end
+  return true
+end
+
+-- Bresenham tile list, used only as the boat-path fallback when the A* from
+-- the water entrance cannot be run (see sea_boat_path).
+local function sea_line_tiles(x0, y0, x1, y1)
+  local out = {}
+  local dx = math.abs(x1 - x0)
+  local dy = math.abs(y1 - y0)
+  local sx = (x0 < x1) and 1 or -1
+  local sy = (y0 < y1) and 1 or -1
+  local err = dx - dy
+  local x, y = x0, y0
+  for _ = 1, 512 do
+    out[#out + 1] = { x, y }
+    if x == x1 and y == y1 then break end
+    local e2 = 2 * err
+    if e2 > -dy then err = err - dy; x = x + sx end
+    if e2 <  dx then err = err + dx; y = y + sy end
+  end
+  return out
+end
+
+-- Boat-layer path from the water tile (swx,swy) to (dmx,dmy). Returns a tile
+-- list {{mx,my},...} and the path cost. The trace has to run IMMEDIATELY
+-- after the cost_to call (it reads the parent chain that call left behind),
+-- which is why the two are welded together here.
+local function sea_boat_path(info, swx, swy, dmx, dmy)
+  local ok, cost = pcall(cpf.cost_to_astar, swx, swy, dmx, dmy, 1,
+                         info.shells or 32, info.trees or 0,
+                         info.mines or 0, info.armour or 40, 8000, true)
+  local tiles = nil
+  if ok and cost and cost < 1e29 then
+    local ok2, p = pcall(cpf.trace_last_search, dmx, dmy)
+    if ok2 and p and #p >= 2 then
+      tiles = {}
+      for i = 1, #p - 1, 2 do tiles[#tiles + 1] = { p[i], p[i + 1] } end
+    end
+  end
+  if not tiles then
+    -- No boat-layer A* (budget, or the C search refuses a deep-sea source):
+    -- fall back to the straight line, which is what an open-water crossing
+    -- looks like anyway. The line is only used for the line-of-fire test and
+    -- a length-based cost, never for steering.
+    tiles = sea_line_tiles(swx, swy, dmx, dmy)
+    cost  = #tiles * (C.SEA_PILL_BOAT_STEP_COST or 12)
+  end
+  return tiles, cost
+end
+
+-- Firing spot F for a mine at S: a standable tile exactly SEA_PILL_FIRE_DIST
+-- (2) tiles away on a straight cardinal or diagonal line, so the centre-to-
+-- centre distance is 512 wu on at least one axis and the 384 wu mine blast
+-- box (tank.c tankMineDamage: |dx| < 384 AND |dy| < 384) cannot reach us.
+-- A BUILDING between eats the shell for good; a FOREST between only costs one
+-- extra shell, so it is allowed. Forest UNDER F is preferred: pillboxes skip
+-- a tank hidden in trees (pillbox.c:388), and we are standing still to shoot.
+local function sea_pick_F(world, smx, smy, threats)
+  local d = C.SEA_PILL_FIRE_DIST or 2
+  local best, best_key = nil, nil
+  for i = 1, 8 do
+    local fx = smx + SEA_D8[i][1] * d
+    local fy = smy + SEA_D8[i][2] * d
+    if U.in_map(fx, fy) then
+      local tt = U.ttype(fx, fy)
+      if SEA_STANDABLE[tt] and sea_tile_object_free(world, fx, fy)
+         and bit.band(U.traw(fx, fy), TERRAIN_MINE_FLAG) == 0 then
+        -- Nothing solid in the lane. Only tiles strictly between count.
+        local blocked = false
+        for step = 1, d - 1 do
+          local bx = smx + SEA_D8[i][1] * step
+          local by = smy + SEA_D8[i][2] * step
+          local btt = U.ttype(bx, by)
+          if btt == C.T_BUILDING or btt == C.T_HALFBUILD
+             or not sea_tile_object_free(world, bx, by) then
+            blocked = true
+            break
+          end
+        end
+        if not blocked then
+          local hot = threat.pill_at(fx, fy) or 0
+          -- Lower is better. Forest is worth a big discount (it hides us);
+          -- pill heat on the spot is the main cost. The tile key makes ties
+          -- a total order so the pick is deterministic.
+          local key = hot - (tt == C.T_FOREST and 100 or 0)
+          local exposed = sea_tile_covered(world, threats, fx, fy, nil)
+          if exposed then key = key + 200 end
+          if best_key == nil or key < best_key
+             or (key == best_key and (fy * 256 + fx) < (best.my * 256 + best.mx)) then
+            best_key = key
+            best = { mx = fx, my = fy, tt = tt, hot = hot, exposed = exposed }
+          end
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- Count forest tiles we could actually harvest for the boat, stopping as soon
+-- as `want` of them are found. Gates mirror find_safe_forest (the seek_trees
+-- scan): pill heat below the bad-ground line, threat.at within
+-- SEEK_TREES_MAX_THREAT, not deep in enemy influence — plus the tank being
+-- able to get there at all. Scanned in a box around S; a tile also qualifies
+-- when it is close to the TANK, because the harvest happens on the way.
+-- Scan order is a plain row-major sweep, so the count is deterministic.
+-- Returns (count, nearest_mx, nearest_my) — "nearest" measured from the TANK,
+-- with the tile key as a deterministic tie-break. The whole box is scanned
+-- (no early exit) so the nearest tile is really the nearest, which is what the
+-- seek_trees substate parks on; the box is at most 25x25 on a 50-tick cadence.
+local function sea_count_safe_forest(state, info, smx, smy, tmx, tmy)
+  local R    = C.SEA_TREES_RADIUS or 12
+  local BAD  = C.TAKE_COVER_BAD_GROUND_PILL_AT or C.TANK_COMBAT_DEFENDED_DANGER or 30
+  local MAXT = C.SEEK_TREES_MAX_THREAT or 8
+  -- OUR ground only. seek_trees is allowed to reach into contested ground
+  -- (it only skips forest below -SEEK_TREES_MIN_INFLUENCE); a boat harvest is
+  -- not. cpf.influence_at is positive on our side of the front and 0 when the
+  -- influence pass has not run yet — and "no data" must read as "not ours",
+  -- because nobody should farm 21 trees into unknown ground for a boat.
+  local MINI = C.SEA_TREES_MIN_INFLUENCE or 0
+  local n = 0
+  local bx, by, bd = nil, nil, 1e9
+  for my = math.max(0, smy - R), math.min(255, smy + R) do
+    for mx = math.max(0, smx - R), math.min(255, smx + R) do
+      if U.mdist(mx, my, smx, smy) <= R or U.mdist(mx, my, tmx, tmy) <= R then
+        if U.ttype(mx, my) == C.T_FOREST then
+          local hot = threat.pill_at(mx, my) or 0
+          if hot < BAD and (threat.at(mx, my) or 0) <= MAXT then
+            local infl = cpf.influence_at(mx, my) or 0
+            if infl > MINI then
+              local tc = cpf.smart_cost_dij_only(KIND_NORMAL, mx, my, 0)
+              -- INF only means "the slate has not expanded here yet"; a forest
+              -- tile this close to a shore we can already reach is not really
+              -- unreachable, so fall back to the geometric test.
+              if (tc and tc < 1e29) or U.mdist(mx, my, tmx, tmy) <= R then
+                n = n + 1
+                local d = U.mdist(mx, my, tmx, tmy)
+                if d < bd or (d == bd and (my * 256 + mx) < ((by or 0) * 256 + (bx or 0))) then
+                  bd = d; bx = mx; by = my
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return n, bx, by
+end
+
+-- The connected body of water the cluster floats in. BFS out from the pill
+-- tiles over water only (DEEP_SEA / RIVER / BOAT), 4-connected — the same
+-- adjacency floodfill.c uses when it decides whether a crater becomes river.
+-- The pill tiles themselves read T_PILLBOX in the brain map (the overlay hides
+-- the terrain under a pill), so they are seeded as water explicitly.
+-- Bounded by a box around the cluster and a hard tile cap so an ocean map
+-- cannot turn this into a map-wide flood every rescan.
+-- Returns a set keyed by my*256+mx, and the tile count.
+local function sea_water_component(cl)
+  local R   = C.SEA_COMPONENT_BOX or 40
+  local CAP = C.SEA_COMPONENT_MAX_TILES or 4000
+  local x0, x1, y0, y1 = 255, 0, 255, 0
+  for _, t in ipairs(cl.tiles) do
+    if t[1] < x0 then x0 = t[1] end
+    if t[1] > x1 then x1 = t[1] end
+    if t[2] < y0 then y0 = t[2] end
+    if t[2] > y1 then y1 = t[2] end
+  end
+  x0 = math.max(0, x0 - R); x1 = math.min(255, x1 + R)
+  y0 = math.max(0, y0 - R); y1 = math.min(255, y1 + R)
+  local seen, n = {}, 0
+  local q, qh = {}, 1
+  for _, t in ipairs(cl.tiles) do
+    local k = t[2] * 256 + t[1]
+    if not seen[k] then seen[k] = true; n = n + 1; q[#q + 1] = { t[1], t[2] } end
+  end
+  while qh <= #q and n < CAP do
+    local cur = q[qh]; qh = qh + 1
+    for _, d in ipairs(SEA_CARD) do
+      local nx2, ny2 = cur[1] + d[1], cur[2] + d[2]
+      if nx2 >= x0 and nx2 <= x1 and ny2 >= y0 and ny2 <= y1 then
+        local k = ny2 * 256 + nx2
+        if not seen[k] then
+          local tt = U.ttype(nx2, ny2)
+          if tt == C.T_DEEPSEA or tt == C.T_RIVER or tt == C.T_BOAT then
+            seen[k] = true
+            n = n + 1
+            q[#q + 1] = { nx2, ny2 }
+          end
+        end
+      end
+    end
+  end
+  return seen, n
+end
+
+-- The land tile a tank drives to in order to step onto a river/boat entrance,
+-- and that the LGM builds the boat from. Cheapest-looking standable neighbour
+-- of the water tile; ties broken by tile key so the pick is deterministic.
+local function sea_pick_board_from(world, wmx, wmy)
+  local best, best_key = nil, nil
+  for i = 1, 8 do
+    local nx2, ny2 = wmx + SEA_D8[i][1], wmy + SEA_D8[i][2]
+    if U.in_map(nx2, ny2) then
+      local tt = U.ttype(nx2, ny2)
+      if SEA_STANDABLE[tt] and sea_tile_object_free(world, nx2, ny2)
+         and bit.band(U.traw(nx2, ny2), TERRAIN_MINE_FLAG) == 0 then
+        local key = threat.pill_at(nx2, ny2) or 0
+        if best_key == nil or key < best_key
+           or (key == best_key and (ny2 * 256 + nx2) < (best.my * 256 + best.mx)) then
+          best_key = key
+          best = { mx = nx2, my = ny2, tt = tt, hot = key }
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- Cluster the dead deep-sea pills. Greedy over SORTED ids so the clustering
+-- (and therefore every cluster id in the log and the panel) is deterministic.
+local function sea_build_clusters(state, world)
+  local perc = state.perc
+  if not perc or not perc.deepsea_pill_ids then return {}, {} end
+  local ids = {}
+  for pid in pairs(perc.deepsea_pill_ids) do
+    local p = world.pills[pid]
+    if p and (p.health or 0) == 0 and not p.in_tank and not p.carrier
+       and not p._synth_carry then
+      ids[#ids + 1] = pid
+    end
+  end
+  table.sort(ids)
+  local R = C.SEA_PILL_CLUSTER_RADIUS or 3
+  local clusters, by_pill = {}, {}
+  for _, pid in ipairs(ids) do
+    local p = world.pills[pid]
+    local home = nil
+    for ci = 1, #clusters do
+      for _, t in ipairs(clusters[ci].tiles) do
+        if U.mdist(p.mx, p.my, t[1], t[2]) <= R then home = ci break end
+      end
+      if home then break end
+    end
+    if not home then
+      clusters[#clusters + 1] = { id = #clusters + 1, ids = {}, tiles = {} }
+      home = #clusters
+    end
+    local cl = clusters[home]
+    cl.ids[#cl.ids + 1] = pid
+    cl.tiles[#cl.tiles + 1] = { p.mx, p.my }
+    by_pill[pid] = home
+  end
+  for _, cl in ipairs(clusters) do
+    cl.n = #cl.ids
+    -- LEAD pill: the lowest id in the cluster. One boat trip takes the whole
+    -- cluster, so the cluster is ONE goal identity — only the lead is priced
+    -- and can win; the others ride along as visible `cluster_member_of` rows.
+    -- Without this the three members priced identically, the pool tie-break
+    -- flipped the target every replan, and each flip restarted the plan at
+    -- entrance_plan (~850 ticks lost before the first mine on sea_pills_A).
+    cl.lead = cl.ids[1]
+  end
+  return clusters, by_pill
+end
+
+-- Price ONE cluster: safety of the pills, the entrance S, the firing spot F,
+-- the boat path, the resource legs, and the final cost. Fills cl in place.
+local function sea_plan_cluster(state, world, info, cl, tmx, tmy)
+  local now = state.tick or 0
+  cl.cands = {}
+  cl.rays  = {}
+  local function rej(reason, detail)
+    cl.reject = reason
+    cl.reject_detail = detail
+    return cl
+  end
+
+  -- ── Preconditions on us ────────────────────────────────────────────────
+  -- Only a DEAD LGM kills the plan. An LGM merely out on a job (LGM_MOVING —
+  -- farming, roading) comes back in a few seconds, and rejecting on that made
+  -- the row flicker between a price and a REJECT every rescan, churning the
+  -- goal. The dispatches themselves already wait for him: builder.decide bails
+  -- with lgm_not_in_tank, and the substate machine only leaves lay_mine /
+  -- build_boat once he is aboard again.
+  if info.man_status == C.LGM_DEAD then
+    return rej("lgm_dead", "the LGM lays the mine and builds the boat, and he is dead")
+  end
+  -- ── Are the pills themselves safe to sit beside in a boat? ─────────────
+  local safe_range = C.SEA_PILL_PILL_SAFE_RANGE or 9
+  local threats = sea_threat_pills(world, cl.tiles, safe_range)
+  cl.threats = threats
+  for _, t in ipairs(cl.tiles) do
+    local by = sea_tile_covered(world, threats, t[1], t[2], cl.rays)
+    if by then
+      return rej("pills_covered_by_pill#" .. by,
+        string.format("pill #%d has a clear shell line onto the cluster tile (%d,%d) — one hit sinks the boat",
+                      by, t[1], t[2]))
+    end
+  end
+  local et = sea_enemy_tank_near(state, cl.tiles, C.SEA_PILL_ENEMY_TANK_NEAR or 10)
+  if et then
+    return rej("enemy_tank_near",
+      string.format("enemy tank at (%d,%d) is within %d tiles of the cluster",
+                    et.mx, et.my, C.SEA_PILL_ENEMY_TANK_NEAR or 10))
+  end
+
+  -- ── The cluster's WATER COMPONENT ──────────────────────────────────────
+  -- A boat is only useful on the water the pills actually float in. BFS out
+  -- from the pill tiles over water (DEEP_SEA / RIVER / BOAT, 4-connected —
+  -- the same adjacency floodfill.c uses), bounded by a box and a tile cap so
+  -- an ocean map cannot turn this into a map-wide flood. Every entrance below
+  -- has to touch THIS component; a separate pond next to the tank is useless
+  -- however convenient it looks.
+  local comp, comp_n = sea_water_component(cl)
+  cl.comp = comp
+  cl.comp_n = comp_n
+  -- A pill on a one-tile puddle is NOT a sea pill in any useful sense: there is
+  -- no water to sail. perception flags it (rightly — it beaches a boat and
+  -- strands a tank), but the answer is to leave it alone, not to mine our own
+  -- shore next to a puddle. tests/blocked_aim keeps two of our pills on
+  -- single-tile deep-sea pedestals exactly so they stay put; without this the
+  -- harvest planned a crater beside one (comp=1) and spent the take's budget on
+  -- it. Demand real water: more tiles in the component than the pills occupy.
+  local min_water = C.SEA_COMPONENT_MIN_WATER or 3
+  if comp_n < #cl.tiles + min_water then
+    return rej("pills_landlocked", string.format(
+      "the water these %d pill(s) sit in is only %d tiles — no boat can sail it (need at least %d more than the pills themselves)",
+      #cl.tiles, comp_n, min_water))
+  end
+
+  -- ── Candidate water entrances S ────────────────────────────────────────
+  -- Preference LADDER, not a score (the cheap options are strictly better —
+  -- they skip a mine, a crater and up to 4 shells):
+  --   1 existing_boat  — a boat already floating in the component: drive on.
+  --   2 existing_river — build the boat straight into it (BUILDMODE_BUILD on
+  --                      RIVER = a boat, lgm.c:377). 20 trees, NO mine.
+  --   3 mine_crater    — mine a shore tile CARDINALLY adjacent to the
+  --                      component, shoot it, let it flood, then build.
+  --                      21 trees + 1 mine + shells.
+  -- Only when a whole rung is empty do we drop to the next.
+  local MAXD = C.SEA_PILL_ENTRANCE_MAX_DIST or 12
+  local x0, x1, y0, y1 = 255, 0, 255, 0
+  for _, t in ipairs(cl.tiles) do
+    if t[1] < x0 then x0 = t[1] end
+    if t[1] > x1 then x1 = t[1] end
+    if t[2] < y0 then y0 = t[2] end
+    if t[2] > y1 then y1 = t[2] end
+  end
+  x0 = math.max(0, x0 - MAXD); x1 = math.min(255, x1 + MAXD)
+  y0 = math.max(0, y0 - MAXD); y1 = math.min(255, y1 + MAXD)
+  local BAD = C.TAKE_COVER_BAD_GROUND_PILL_AT or C.TANK_COMBAT_DEFENDED_DANGER or 30
+  -- Best candidate per rung, plus a flag for "something was rejected ONLY for
+  -- connectivity" so the reject reason can say so.
+  local best = { existing_boat = nil, existing_river = nil, mine_crater = nil }
+  local best_score = { }
+  local saw_unconnected = false
+  for my = y0, y1 do
+    for mx = x0, x1 do
+      local cdist = 1e9
+      for _, t in ipairs(cl.tiles) do
+        local d = U.mdist(mx, my, t[1], t[2])
+        if d < cdist then cdist = d end
+      end
+      if cdist <= MAXD and cdist > 0 then
+        local tt = U.ttype(mx, my)
+        local kind = nil
+        if tt == C.T_BOAT then kind = "existing_boat"
+        elseif tt == C.T_RIVER then kind = "existing_river"
+        elseif SEA_MINABLE[tt] then kind = "mine_crater" end
+        if kind then
+          -- Connectivity. A water entrance must BE in the component; a land
+          -- entrance must have a CARDINAL neighbour in it, because that is the
+          -- only adjacency that turns the crater into river (floodfill.c).
+          local wmx, wmy = nil, nil
+          if kind == "mine_crater" then
+            for _, d in ipairs(SEA_CARD) do
+              local nx2, ny2 = mx + d[1], my + d[2]
+              if comp[ny2 * 256 + nx2] then wmx, wmy = nx2, ny2 break end
+            end
+          elseif comp[my * 256 + mx] then
+            wmx, wmy = mx, my
+          end
+          local touches_any_water = wmx ~= nil
+          if not touches_any_water then
+            -- Only record it as a candidate (grey, with a reason) when it at
+            -- least touches SOME water — otherwise every inland tile in the
+            -- box would be listed.
+            local near_water = (kind ~= "mine_crater")
+            if not near_water then
+              for _, d in ipairs(SEA_CARD) do
+                local t2 = U.ttype(mx + d[1], my + d[2])
+                if t2 == C.T_DEEPSEA or t2 == C.T_RIVER or t2 == C.T_BOAT then
+                  near_water = true
+                  break
+                end
+              end
+            end
+            if near_water then
+              saw_unconnected = true
+              cl.cands[#cl.cands + 1] = { mx = mx, my = my, kind = kind,
+                                          reject = "unconnected" }
+            end
+          else
+            local reject = nil
+            local needs_mine = (kind == "mine_crater")
+            if needs_mine and bit.band(U.traw(mx, my), TERRAIN_MINE_FLAG) ~= 0 then
+              reject = "mined"
+            elseif not sea_tile_object_free(world, mx, my) then
+              reject = "occupied"
+            elseif state._sea_blacklist and (state._sea_blacklist[my * 256 + mx] or 0) > now then
+              reject = "blacklisted"
+            end
+            local hot = 0
+            if not reject then
+              hot = threat.pill_at(mx, my) or 0
+              if hot >= BAD then reject = "hot" end
+            end
+            -- Where the TANK parks while the LGM works, and where it drives
+            -- from when it boards.
+            --   mine_crater: the firing spot F, 2 tiles out (mine blast).
+            --   river/boat : a standable land tile beside the water tile, so
+            --                the LGM can reach it and the tank can step on.
+            local park = nil
+            if not reject then
+              if needs_mine then
+                park = sea_pick_F(world, mx, my, threats)
+                if not park then reject = "no_F" end
+              elseif tt == C.T_RIVER then
+                park = sea_pick_board_from(world, mx, my)
+                if not park then reject = "no_land_access" end
+              else
+                -- An existing BOAT tile needs no LGM work at all; we still
+                -- want a land tile to approach from so the drive is sane.
+                park = sea_pick_board_from(world, mx, my)
+                if not park then reject = "no_land_access" end
+              end
+            end
+            if not reject then
+              if sea_tile_covered(world, threats, mx, my, nil) then reject = "lof" end
+            end
+            local travel = nil
+            if not reject then
+              -- Travel is measured to the tile the TANK actually drives to:
+              -- the water tile itself is not on the land layer.
+              local tx2 = needs_mine and mx or park.mx
+              local ty2 = needs_mine and my or park.my
+              travel = cpf.smart_cost_dij_only(KIND_NORMAL, tx2, ty2, 0)
+              if not travel or travel >= 1e29 then
+                -- The slate has not expanded here yet; keep the candidate with
+                -- an estimate and let the winner pay for a real A*.
+                travel = U.mdist(tmx, tmy, tx2, ty2) * 16
+              end
+            end
+            if not reject
+               and not danger.lgm_path_safe(info, mx, my, C.LGM_DANGER_MED or 20, now, world) then
+              reject = "lgm_unsafe"
+            end
+            local score = nil
+            if not reject then
+              score = travel
+                    + cdist * (C.SEA_PILL_BOAT_STEP_COST or 12)
+                    + hot * (C.SEA_PILL_DANGER_W or 2.0)
+            end
+            cl.cands[#cl.cands + 1] = { mx = mx, my = my, reject = reject,
+                                        kind = kind,
+                                        score = score, travel = travel, hot = hot,
+                                        needs_mine = needs_mine,
+                                        fmx = park and park.mx, fmy = park and park.my }
+            if not reject then
+              local cur = best[kind]
+              if cur == nil or score < best_score[kind]
+                 or (score == best_score[kind] and (my * 256 + mx) < (cur.my * 256 + cur.mx)) then
+                best_score[kind] = score
+                best[kind] = { mx = mx, my = my, kind = kind,
+                               needs_mine = needs_mine, F = park,
+                               wmx = wmx, wmy = wmy,
+                               travel = travel, hot = hot, cdist = cdist }
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  local best_s = best.existing_boat or best.existing_river or best.mine_crater
+  if not best_s then
+    if saw_unconnected then
+      return rej("no_connected_entrance", string.format(
+        "every water tile within %d tiles of the cluster belongs to a DIFFERENT water body (the cluster's component is %d tiles); a boat launched there could never reach the pills",
+        MAXD, comp_n))
+    end
+    return rej("no_entrance", string.format(
+      "nothing within %d tiles of the cluster passed the entrance gates (%d candidates scanned; no existing river/boat in the component and no minable shore tile cardinally touching it)",
+      MAXD, #cl.cands))
+  end
+  -- Shells are only spent DETONATING a mine. An entrance that needs no crater
+  -- (an existing boat or river) is fine on an empty gun, so this gate belongs
+  -- after the ladder has chosen, not before it.
+  if best_s.needs_mine and (info.shells or 0) < (C.SEA_PILL_MIN_SHELLS or 3) then
+    return rej("low_shells", string.format(
+      "the entrance needs a crater and shells=%d < %d reserved to detonate the mine",
+      info.shells or 0, C.SEA_PILL_MIN_SHELLS or 3))
+  end
+  cl.S = best_s
+  cl.F = best_s.F
+  cl.entrance = best_s.kind
+  -- Why the cheaper rungs were not taken — the row says so rather than leaving
+  -- "why did it mine when there was a river over there?" unanswered.
+  cl.entrance_why =
+      (best_s.kind == "existing_boat") and "a boat is already floating in the cluster's water"
+   or (best_s.kind == "existing_river") and "no existing boat in the component; building into an existing river needs no mine"
+   or string.format("no existing boat or river in the cluster's water component within %d tiles", MAXD)
+
+  -- Real travel cost to the tile the tank drives to (the scan used the cheap
+  -- slate lookup, which can be INF simply because the slate had not expanded).
+  local drive_mx = best_s.needs_mine and best_s.mx or best_s.F.mx
+  local drive_my = best_s.needs_mine and best_s.my or best_s.F.my
+  local travel = smart_cost(KIND_NORMAL, tmx, tmy, drive_mx, drive_my, 0,
+                            info.shells or 32, info.trees or 0,
+                            info.mines or 0, info.armour or 40)
+  if not travel or travel >= 1e29 then
+    return rej("entrance_unreachable", string.format(
+      "S=(%d,%d) [%s]: the tank cannot reach (%d,%d) — A* and the Dijkstra slate both INF",
+      best_s.mx, best_s.my, best_s.kind, drive_mx, drive_my))
+  end
+  cl.travel = travel
+
+  -- ── Is the boat path safe? ─────────────────────────────────────────────
+  -- The boat starts on the entrance's water tile: the river/boat tile itself,
+  -- or the cardinal component neighbour the crater will flood into.
+  local swx, swy = best_s.wmx, best_s.wmy
+  local path, boat_cost = {}, 0
+  local seen_tile = {}
+  for _, pid in ipairs(cl.ids) do
+    local p = world.pills[pid]
+    local tiles, c = sea_boat_path(info, swx, swy, p.mx, p.my)
+    if c and c > boat_cost then boat_cost = c end
+    for _, t in ipairs(tiles) do
+      local k = t[2] * 256 + t[1]
+      if not seen_tile[k] then
+        seen_tile[k] = true
+        path[#path + 1] = t
+      end
+    end
+  end
+  cl.path = path
+  local path_threats = sea_threat_pills(world, path, safe_range)
+  for _, t in ipairs(path) do
+    local by = sea_tile_covered(world, path_threats, t[1], t[2], cl.rays)
+    if by then
+      return rej("path_covered_by_pill#" .. by, string.format(
+        "pill #%d has a clear shell line onto boat-path tile (%d,%d)", by, t[1], t[2]))
+    end
+  end
+  local pet = sea_enemy_tank_near(state, path, C.SEA_PILL_ENEMY_TANK_NEAR or 10)
+  if pet then
+    return rej("path_enemy_tank", string.format(
+      "enemy tank at (%d,%d) is within %d tiles of the boat path",
+      pet.mx, pet.my, C.SEA_PILL_ENEMY_TANK_NEAR or 10))
+  end
+  cl.boat_cost = boat_cost
+
+  -- ── Resources ──────────────────────────────────────────────────────────
+  -- WOOD. A wall on river (the boat) costs LGM_COST_BOAT = 20 trees and the
+  -- mine placement itself costs LGM_COST_MINE = 1 (lgm.h:54,57), so the whole
+  -- plan needs 21 trees IN HAND before the mine goes down. That ordering is
+  -- not cosmetic: a live mine on our own shore while the LGM is off farming
+  -- is exactly the half-done state the commitment rule exists to prevent.
+  -- The boat is only built when S is not ALREADY a boat tile.
+  local needs_boat  = U.ttype(best_s.mx, best_s.my) ~= C.T_BOAT
+  local trees_need  = (needs_boat and (C.SEA_BOAT_TREES or 20) or 0)
+                    + (best_s.needs_mine and (C.SEA_MINE_TREES or 1) or 0)
+  local trees_short = math.max(0, trees_need - (info.trees or 0))
+  cl.needs_mine  = best_s.needs_mine
+  cl.needs_boat  = needs_boat
+  cl.trees_need  = trees_need
+  cl.mines_need  = best_s.needs_mine and 1 or 0
+
+  local leg_mines, refuel_base = 0, nil
+  if cl.needs_mine and (info.mines or 0) < 1 then
+    local bids = {}
+    for bid in pairs(world.bases) do bids[#bids + 1] = bid end
+    table.sort(bids)
+    -- Prefer a base we have SEEN holding mines. Fall back to a reachable
+    -- friendly base whose stock we have simply never read: base stock only
+    -- becomes known once the tank is close enough for the engine to report it
+    -- (world.lua obs_mines), so on a fresh map every base looks empty and the
+    -- plan rejected `no_mines_anywhere` for 500 ticks of explore while sitting
+    -- 4 tiles from a base with 90 mines (tests/sea_pills_D). Only when every
+    -- reachable friendly base has been OBSERVED empty is the answer really no.
+    local best_bc, best_seen = nil, -1
+    for _, bid in ipairs(bids) do
+      local b = world.bases[bid]
+      -- Rank, do not veto. Base stock is only reported first-hand when the
+      -- tank is close (world.lua obs_*), and a base that reads empty restocks
+      -- on its own — so "observed 0 mines" is a preference, not a fact about
+      -- the future. Vetoing on it cost tests/sea_pills_D a thousand ticks of
+      -- explore while sitting five tiles from a base holding ninety.
+      --   tier 2  seen holding mines
+      --   tier 1  stock never read (or read long enough ago to be meaningless)
+      --   tier 0  read empty — still worth the drive if it is all there is
+      local stocked = (b.obs_mines or 0) > 0
+      local unknown = (b.obs_tick == nil)
+                   or ((now - b.obs_tick) > (C.SEA_BASE_STOCK_STALE or 3000))
+      local tier = stocked and 2 or (unknown and 1 or 0)
+      if (b.owner == "friendly" or b.owner == "allied") then
+        local c1 = smart_cost(KIND_NORMAL, tmx, tmy, b.mx, b.my, 0,
+                              info.shells or 32, info.trees or 0,
+                              info.mines or 0, info.armour or 40)
+        if c1 and c1 < 1e29 then
+          -- Detour = the base leg plus the base->S leg, minus the direct run
+          -- we would have made anyway. base->S is estimated as the straight
+          -- tile distance at road cost; the term breakdown says so.
+          local back = U.mdist(b.mx, b.my, best_s.mx, best_s.my) * 16
+          local detour = math.max(0, c1 + back - travel)
+          local better = (best_bc == nil)
+                      or (tier > best_seen)
+                      or (tier == best_seen and (detour < best_bc
+                          or (detour == best_bc and bid < refuel_base)))
+          if better then
+            best_bc = detour
+            best_seen = tier
+            refuel_base = bid
+          end
+        end
+      end
+    end
+    if not refuel_base then
+      return rej("no_mines_anywhere",
+        "mines=0 and there is no reachable friendly/allied base at all to fetch one from")
+    end
+    cl.refuel_guess = (best_seen < 2)
+    leg_mines = best_bc or 0
+  end
+  cl.refuel_base = refuel_base
+  cl.leg_mines   = leg_mines
+
+  local leg_trees = 0
+  local per_tile   = C.SEA_TREES_PER_FOREST or 4
+  local need_tiles = math.ceil(trees_short / per_tile)
+  local forest_ok  = 0
+  if trees_short > 0 then
+    -- Wood comes from FOREST, not from a base, and one harvested tile yields
+    -- LGM_GATHER_TREE = 4 trees (lgm.c:999). So the shortfall s needs
+    -- ceil(s/4) harvestable tiles. "Harvestable" uses the same gates
+    -- seek_trees' find_safe_forest applies — pill heat below the bad-ground
+    -- line, threat within SEEK_TREES_MAX_THREAT, not deep in enemy influence
+    -- — plus tank reachability, within SEA_TREES_RADIUS of the entrance OR of
+    -- the tank (the harvest happens on the way). If we cannot count enough,
+    -- the plan is not fundable: REJECT rather than march out and stall.
+    -- (The LGM's own walk is re-gated at dispatch by builder.decide's gather
+    -- priority — lgm_can_reach + lgm_path_safe_enhanced — which is the
+    -- authoritative check the moment the trip actually starts.)
+    local fmx, fmy
+    forest_ok, fmx, fmy = sea_count_safe_forest(state, info, best_s.mx, best_s.my,
+                                                tmx, tmy)
+    cl.tree_spot = fmx and { fmx, fmy } or nil
+    if forest_ok < need_tiles then
+      return rej("no_trees_in_territory", string.format(
+        "trees %d/%d short %d -> need %d forest tiles (%d trees each, LGM_GATHER_TREE), found %d inside our influence (> %d) and safe within %d tiles of S(%d,%d) or the tank",
+        info.trees or 0, trees_need, trees_short, need_tiles, per_tile,
+        forest_ok, C.SEA_TREES_MIN_INFLUENCE or 0,
+        C.SEA_TREES_RADIUS or 12, best_s.mx, best_s.my))
+    end
+    leg_trees = trees_short * (C.SEA_PILL_TREE_LEG_PER_TREE or 6)
+  end
+  cl.trees_short = trees_short
+  cl.need_tiles  = need_tiles
+  cl.forest_ok   = forest_ok
+  cl.leg_trees   = leg_trees
+
+  -- ── Cost ───────────────────────────────────────────────────────────────
+  local mult  = C.SEA_PILL_COST_MULT or 0.3
+  local floor = C.SEA_PILL_COST_FLOOR or 5
+  local gross = travel + leg_mines + leg_trees + boat_cost
+  cl.gross = gross
+  cl.cost  = math.max(floor, gross * mult / math.max(1, cl.n))
+  cl.reject = nil
+  return cl
+end
+
+-- Refresh the whole sea plan. Cached: re-planned only when the cluster
+-- membership changes, the threat grid is rebuilt, the tank moves to a new
+-- tile, or SEA_PILL_SCAN_PERIOD ticks pass. Everything the pool, the substate
+-- machine and the overlay read comes out of state._sea.
+function M.sea_refresh(state, world, info)
+  if not C.SEA_PILL_ENABLED then state._sea = nil; return end
+  local now = state.tick or 0
+  local perc = state.perc
+  if not perc or not perc.deepsea_pill_ids then state._sea = nil; return end
+  -- Afloat: nothing to plan. compute_pool4_cost already prices the pills
+  -- through the boat layer and the ordinary pickup drive takes them.
+  if info.inboat then state._sea = nil; return end
+
+  local sig_ids = {}
+  for pid in pairs(perc.deepsea_pill_ids) do
+    local p = world.pills[pid]
+    if p and (p.health or 0) == 0 and not p.in_tank then sig_ids[#sig_ids + 1] = pid end
+  end
+  table.sort(sig_ids)
+  if #sig_ids == 0 then state._sea = nil; return end
+  local sig = table.concat(sig_ids, ",")
+
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local s = state._sea
+  -- Cache key: the cluster membership, the threat rebuild, and the clock. NOT
+  -- the tank tile — a moving tank changes tile every few ticks and keying on it
+  -- turned a 625-tile scan plus a component BFS plus up to three boat A*s into
+  -- per-tile work for the whole drive. Travel costs move slowly; the 50-tick
+  -- period is the right cadence for them.
+  if s and s.sig == sig and s.rebuild == threat.last_rebuild_tick
+     and (now - (s.tick or -1e9)) < (C.SEA_PILL_SCAN_PERIOD or 50) then
+    return
+  end
+
+  local clusters, by_pill = sea_build_clusters(state, world)
+  for _, cl in ipairs(clusters) do
+    sea_plan_cluster(state, world, info, cl, tmx, tmy)
+    if cl.reject then
+      sea_log(state, "rej:" .. cl.id .. ":" .. cl.reject, string.format(
+        "SEA_REJECT t=%d cluster=%d n=%d pills=[%s] reason=%s (%s)",
+        now, cl.id, cl.n, table.concat(cl.ids, ","), cl.reject,
+        tostring(cl.reject_detail)))
+    else
+      sea_log(state, "plan:" .. cl.id, string.format(
+        "SEA_PLAN t=%d cluster=%d n=%d entrance=%s comp=%d S=(%d,%d) F=%s mine=%s boat=%s trees=%d/%d short=%d need_tiles=%d forest_ok=%d mines=%d/%d refuel=%s travel=%.0f legs=%.0f/%.0f boat_path=%.0f cost=%.1f",
+        now, cl.id, cl.n, tostring(cl.entrance), cl.comp_n or 0, cl.S.mx, cl.S.my,
+        cl.F and string.format("(%d,%d)", cl.F.mx, cl.F.my) or "-",
+        tostring(cl.needs_mine), tostring(cl.needs_boat),
+        info.trees or 0, cl.trees_need, cl.trees_short or 0,
+        cl.need_tiles or 0, cl.forest_ok or 0,
+        info.mines or 0, cl.mines_need or 0,
+        cl.refuel_base and (tostring(cl.refuel_base) .. (cl.refuel_guess and "?" or "")) or "nil",
+        cl.travel, cl.leg_mines, cl.leg_trees,
+        cl.boat_cost, cl.cost))
+    end
+  end
+  state._sea = { tick = now, sig = sig, rebuild = threat.last_rebuild_tick,
+                 tmx = tmx, tmy = tmy, clusters = clusters, by_pill = by_pill }
+end
+
+-- The plan covering pill `pid`, or nil.
+function M.sea_cluster_for(state, pid)
+  local s = state._sea
+  if not s then return nil end
+  local ci = s.by_pill[pid]
+  return ci and s.clusters[ci] or nil
+end
+
+-- Snapshot of a plan to hang on the goal. The goal must not alias the live
+-- plan table: the scan rebuilds it every SEA_PILL_SCAN_PERIOD ticks and the
+-- committed substates need the S/F they actually mined, not the newest pick.
+local function sea_goal_plan(cl)
+  local ids = {}
+  for i, v in ipairs(cl.ids) do ids[i] = v end
+  local path = {}
+  for i, t in ipairs(cl.path or {}) do path[i] = { t[1], t[2] } end
+  return {
+    cluster = cl.id, ids = ids, n = cl.n,
+    S = { cl.S.mx, cl.S.my },
+    -- Where the tank parks: the firing spot F for a mine entrance, the
+    -- boarding tile beside the water for a river/boat entrance.
+    F = cl.F and { cl.F.mx, cl.F.my } or nil,
+    -- The water tile the boat starts on (the entrance itself for river/boat,
+    -- the cardinal component neighbour the crater floods into for a mine).
+    W = cl.S.wmx and { cl.S.wmx, cl.S.wmy } or nil,
+    entrance = cl.entrance,
+    needs_mine = cl.needs_mine and true or false,
+    needs_boat = cl.needs_boat and true or false,
+    trees_need = cl.trees_need or 0,
+    mines_need = cl.mines_need or 0,
+    -- Where the seek_trees substate parks: the nearest forest tile that passed
+    -- the influence/threat/reach gates. The builder's gather machinery takes
+    -- over from there (it re-finds forest within its own deploy radius).
+    tree_spot = cl.tree_spot and { cl.tree_spot[1], cl.tree_spot[2] } or nil,
+    refuel_base = cl.refuel_base,
+    path = path,
+    cost = cl.cost,
+    shots = 0,
+  }
+end
+M.sea_goal_plan = sea_goal_plan
+
+-- =========================================================================
+-- Substate machine. Called once per tick from init.lua, after goal selection
+-- and BEFORE steering/builder so both see the substate this tick set.
+-- =========================================================================
+-- ── The LIVE plan, kept on STATE, not only on the goal ───────────────────
+-- A capture_pill goal object is rebuilt constantly — every finalize_pools, and
+-- by several override paths that construct their own {kind="capture_pill"}
+-- table. Hanging the plan solely off the goal meant any of those rebuilds
+-- dropped it and the chain restarted at entrance_plan. The plan lives on
+-- state._sea_live and is re-attached to whichever capture_pill goal targets
+-- this cluster, so a target change WITHIN the cluster is not a new plan.
+local function sea_live_store(state, g)
+  if not (g and g.sea) then return end
+  state._sea_live = {
+    cluster       = g.sea.cluster,
+    sea           = g.sea,
+    substate      = g.substate,
+    sub_tick      = g._sea_sub_tick,
+    seen_tick     = g._sea_seen_tick,
+    recheck       = g._sea_recheck,
+    hold          = g._sea_hold,
+    shot_eta      = g._sea_shot_eta,
+    tick          = state.tick or 0,
+  }
+end
+M.sea_live_store = sea_live_store
+
+-- Re-attach the live plan to a goal for the same cluster. Returns true when it
+-- adopted one.
+local function sea_live_attach(state, g, cluster_id)
+  local L = state._sea_live
+  if not (L and L.sea and L.cluster == cluster_id) then return false end
+  g.sea            = L.sea
+  g.substate       = L.substate
+  g._sea_sub_tick  = L.sub_tick
+  g._sea_seen_tick = L.seen_tick
+  g._sea_recheck   = L.recheck
+  g._sea_hold      = L.hold
+  g._sea_shot_eta  = L.shot_eta
+  return true
+end
+M.sea_live_attach = sea_live_attach
+
+-- The substate to enter once the resource legs are done: park first when the
+-- plan has a parking tile (the firing spot, or the boarding tile beside an
+-- existing river), otherwise straight to the build / the boarding drive.
+local function sea_next_after_resources(sea)
+  if sea.F then return "approach_F" end
+  if sea.needs_boat then return "build_boat" end
+  return "board"
+end
+
+local function sea_set_sub(state, g, to, reason)
+  local from = g.substate or "-"
+  if from == to then return end
+  g.substate = to
+  g._sea_sub_tick = state.tick or 0
+end
+
+local function sea_abort(state, g, reason, blacklist_S)
+  local now = state.tick or 0
+  if blacklist_S and g.sea and g.sea.S then
+    state._sea_blacklist = state._sea_blacklist or {}
+    state._sea_blacklist[g.sea.S[2] * 256 + g.sea.S[1]] =
+      now + (C.SEA_PILL_BLACKLIST_TICKS or 1500)
+  end
+  g.sea = nil
+  g.substate = nil
+  state._sea = nil          -- force a fresh plan next tick
+  state._sea_live = nil
+  state._sea_afloat = nil
+  attack.clear_attack_goal(state, "sea harvest abort: " .. tostring(reason))
+end
+
+-- Re-run the safety gates that made this plan legal in the first place.
+-- Called at `board` (the point of no return: a boat is one shell from death)
+-- and while holding at F.
+local function sea_still_safe(state, world, info, sea)
+  local tiles = {}
+  for _, pid in ipairs(sea.ids) do
+    local p = world.pills[pid]
+    if p then tiles[#tiles + 1] = { p.mx, p.my } end
+  end
+  for _, t in ipairs(sea.path or {}) do tiles[#tiles + 1] = { t[1], t[2] } end
+  if #tiles == 0 then return false, "cluster_gone" end
+  local threats = sea_threat_pills(world, tiles, C.SEA_PILL_PILL_SAFE_RANGE or 9)
+  for _, t in ipairs(tiles) do
+    local by = sea_tile_covered(world, threats, t[1], t[2], nil)
+    if by then return false, "covered_by_pill#" .. by end
+  end
+  if sea_enemy_tank_near(state, tiles, C.SEA_PILL_ENEMY_TANK_NEAR or 10) then
+    return false, "enemy_tank_near"
+  end
+  return true, nil
+end
+M.sea_still_safe = sea_still_safe
+
+-- How many pills of this cluster are still lying dead in the water.
+local function sea_remaining(world, sea)
+  local n = 0
+  for _, pid in ipairs(sea.ids or {}) do
+    local p = world.pills[pid]
+    if p and (p.health or 0) == 0 and not p.in_tank and not p.carrier
+       and not p._synth_carry then
+      n = n + 1
+    end
+  end
+  return n
+end
+M.sea_remaining = sea_remaining
+
+function M.sea_update(state, world, info)
+  local g = state.goal
+  -- Adopt the live plan when the goal is a capture_pill for a cluster we are
+  -- already working (any member, not just the one the plan started on).
+  if g and g.kind == "capture_pill" and not g.sea and state._sea_live then
+    local cid = state._sea_live.cluster
+    local mine = false
+    for _, pid in ipairs(state._sea_live.sea.ids or {}) do
+      if pid == g.target_id then mine = true break end
+    end
+    if mine then sea_live_attach(state, g, cid) end
+  end
+  if not (g and g.kind == "capture_pill" and g.sea) then
+    state._sea_afloat = nil
+    return
+  end
+  local sea = g.sea
+  local now = state.tick or 0
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+  local smx, smy = sea.S[1], sea.S[2]
+
+  local sub0 = g.substate or "entrance_plan"
+  -- ── AFLOAT: the collect phase ─────────────────────────────────────────
+  -- One boat trip takes the WHOLE cluster. While we are afloat with cluster
+  -- pills still in the water and the water still safe, the harvest OWNS the
+  -- goal (substate "collect", enforced in pick_goal) and the brain must not be
+  -- talked ashore: escape_water, a competing pool winner or a second entrance
+  -- plan each cost a full mine + 21 trees + boat cycle. On sea_pills_A that
+  -- turned "three free pills" into three mines and 60 trees.
+  if info.inboat and not (sub0 == "board" or sub0 == "collect") then
+    -- Afloat, but not on OUR trip: the spawn boat still under us in its
+    -- landlocked pocket, a river crossing, a boat picked up in passing. The
+    -- collect phase is only ever entered from `board`. Without this the plan
+    -- declared victory in a one-tile pond it had never left (sea_pills_G sat
+    -- there in "collect" for 1560 ticks with the pills untouched).
+    state._sea_afloat = nil
+    sea_live_store(state, g)
+    return
+  end
+  if info.inboat then
+    sea.boarded = true
+    local remain = sea_remaining(world, sea)
+    local safe, why = sea_still_safe(state, world, info, sea)
+    if remain > 0 and safe then
+      state._sea_afloat = true
+      if g.substate ~= "collect" then
+        sea_set_sub(state, g, "collect", string.format(
+          "afloat with %d cluster pill(s) still in the water", remain))
+      end
+      sea_live_store(state, g)
+      return
+    end
+    -- Cluster collected, or the water turned dangerous: release. The ordinary
+    -- boat handling (nearest land / escape_water) takes it from here.
+    state._sea_afloat = nil
+    if g.substate then
+      sea_set_sub(state, g, nil, (remain == 0)
+        and "cluster collected — releasing the boat to normal handling"
+        or ("unsafe afloat: " .. tostring(why)))
+    end
+    g.substate = nil
+    sea.done = true
+    sea_live_store(state, g)
+    return
+  end
+  state._sea_afloat = nil
+  -- Spent plan, and we are back on land: DROP it rather than walking the chain
+  -- again from entrance_plan, which is what beaching after a pickup would
+  -- otherwise do (mine our own shore a second time for pills already aboard).
+  -- Dropping it is not the same as giving up: perception still flags whatever
+  -- is left in the water, and the next rescan prices a fresh plan for it.
+  if sea.done then
+    g.sea = nil
+    g.substate = nil
+    state._sea = nil
+    state._sea_live = nil
+    return
+  end
+  -- The LGM does both builds. Losing it mid-chain ends the plan.
+  if info.man_status == C.LGM_DEAD then
+    return sea_abort(state, g, "lgm_dead", false)
+  end
+
+  local sub = g.substate or "entrance_plan"
+  g._sea_sub_tick = g._sea_sub_tick or now
+  -- The watchdog clock only runs while the sea goal is actually OURS. Another
+  -- goal can win the pool mid-chain (tests/sea_pills_C spent 3000 ticks
+  -- elsewhere with the mine already down and then "timed out" on a substate
+  -- that had never had a chance to run), and time under someone else's goal is
+  -- not this substate failing to progress.
+  local away = now - (g._sea_seen_tick or now)
+  if away > 2 then g._sea_sub_tick = g._sea_sub_tick + away end
+  g._sea_seen_tick = now
+  -- Progress watchdog: any substate that makes no progress for
+  -- SEA_PILL_SUB_TIMEOUT ticks is a stall, not a plan.
+  if (now - g._sea_sub_tick) > (C.SEA_PILL_SUB_TIMEOUT or 1500) then
+    return sea_abort(state, g, "timeout:" .. sub, false)
+  end
+
+  local trees_ok = (info.trees or 0) >= (sea.trees_need or 0)
+  local mines_ok = (not sea.needs_mine) or (info.mines or 0) >= 1
+
+  -- Precision nav for every substate that has to SETTLE on one exact tile: the
+  -- firing spot, the boarding tile, the forest the LGM harvests from, and above
+  -- all the base — a base only refuels a tank standing ON it, and normal
+  -- braking left the tank hovering one tile short of it for 2200 ticks
+  -- (tests/sea_pills_D) while the refuel leg waited for a mine that could never
+  -- arrive.
+  g.nav_mode = (sub == "approach_F" or sub == "refuel_mines"
+                or sub == "seek_trees") and "precision" or nil
+
+  if sub == "entrance_plan" then
+    if not mines_ok and sea.refuel_base then
+      sea_set_sub(state, g, "refuel_mines", "mines=0, base #" .. tostring(sea.refuel_base) .. " has some")
+    elseif not trees_ok then
+      sea_set_sub(state, g, "seek_trees", string.format("trees %d < %d for the boat",
+        info.trees or 0, sea.trees_need or 0))
+    elseif sea.F then
+      sea_set_sub(state, g, "approach_F", "resources in hand — park at "
+        .. (sea.needs_mine and "the firing spot" or "the boarding tile"))
+    elseif sea.needs_boat then
+      sea_set_sub(state, g, "build_boat", "entrance is already river — no mine needed")
+    else
+      sea_set_sub(state, g, "board", "entrance is already a boat")
+    end
+
+  elseif sub == "refuel_mines" then
+    -- Any stock arriving IS progress: reset the stall watchdog so a slow leg
+    -- (the base is across the map, or the wood needs six LGM round trips)
+    -- isn't mistaken for a stuck plan.
+    if (info.mines or 0) > (sea._seen_mines or -1) then
+      sea._seen_mines = info.mines or 0
+      g._sea_sub_tick = now
+    end
+    if mines_ok then
+      if not trees_ok then
+        sea_set_sub(state, g, "seek_trees", "mines aboard, still short of wood")
+      else
+        sea_set_sub(state, g, sea_next_after_resources(sea), "mines aboard")
+      end
+    end
+
+  elseif sub == "seek_trees" then
+    if (info.trees or 0) > (sea._seen_trees or -1) then
+      sea._seen_trees = info.trees or 0
+      g._sea_sub_tick = now
+    end
+    if trees_ok then
+      sea_set_sub(state, g, sea_next_after_resources(sea),
+                  string.format("trees %d >= %d", info.trees or 0, sea.trees_need or 0))
+    end
+
+  elseif sub == "approach_F" then
+    -- Hold here (and only here) while a threat is loitering: F is normally the
+    -- forest spot, the safest place to wait.
+    local ok = true
+    if (now - (g._sea_recheck or -1e9)) >= (C.SEA_PILL_ABORT_RECHECK or 25) then
+      g._sea_recheck = now
+      local why
+      ok, why = sea_still_safe(state, world, info, sea)
+      g._sea_hold = (not ok) and why or nil
+      if not ok then
+      end
+    else
+      ok = (g._sea_hold == nil)
+    end
+    -- HARD ordering rule: the mine only goes down once BOTH the mine and all
+    -- 21 trees (LGM_COST_BOAT 20 + LGM_COST_MINE 1) are in hand. A live mine
+    -- on our own shore while the LGM is away farming is the failure mode.
+    if not (trees_ok and mines_ok) then
+      sea_set_sub(state, g, (not mines_ok) and "refuel_mines" or "seek_trees",
+        string.format("resources slipped: trees %d/%d mines %d/%d",
+          info.trees or 0, sea.trees_need or 0, info.mines or 0, sea.mines_need or 0))
+    -- Arrival is GEOMETRY, not one exact tile. What the shot needs is to be
+    -- clear of the 384 wu mine blast box — i.e. at least 2 tiles from S on one
+    -- axis (Chebyshev >= SEA_PILL_FIRE_DIST) — and to be at the firing spot we
+    -- picked. Demanding the exact F tile left the tank parked one tile short
+    -- for 1200 ticks on sea_pills_A, long enough for stuck-recovery to
+    -- blacklist the goal tile and hand the game to explore. The shot itself is
+    -- still gated by shot_path_clear and the landing test in steering, so a
+    -- neighbouring tile is safe, not sloppy.
+    -- The blast clearance applies ONLY to a mine entrance. For an existing
+    -- river or boat there is nothing to detonate and the parking tile is
+    -- deliberately ADJACENT to the water (that is where the LGM builds from and
+    -- where we step aboard), so demanding 2 tiles of clearance there made the
+    -- arrival test unsatisfiable — sea_pills_G sat at its boarding tile and
+    -- never entered build_boat.
+    elseif sea.F
+           and (not sea.needs_mine
+                or U.cdist(tmx, tmy, smx, smy) >= (C.SEA_PILL_FIRE_DIST or 2))
+           and U.mdist(tmx, tmy, sea.F[1], sea.F[2]) <= 1
+           and U.ttype(tmx, tmy) ~= C.T_RIVER and U.ttype(tmx, tmy) ~= C.T_BOAT
+           and ok and info.man_status == C.LGM_INTANK then
+      sea_set_sub(state, g,
+        sea.needs_mine and "lay_mine" or (sea.needs_boat and "build_boat" or "board"),
+        string.format("parked at (%d,%d) with trees %d/%d and mines %d/%d",
+          sea.F[1], sea.F[2], info.trees or 0, sea.trees_need or 0,
+          info.mines or 0, sea.mines_need or 0))
+    end
+
+  elseif sub == "lay_mine" then
+    -- "Is the mine down?" is answered by OUR MINE COUNT, not by the map's mine
+    -- flag. The flag is a per-player visibility bit and the brain does not
+    -- reliably see its own (tests/sea_pills_D: the LGM laid it, the flag never
+    -- appeared, the builder re-issued BUILDMODE_MINE 2672 times and the
+    -- substate timed out). The count dropping by one is unambiguous.
+    -- Re-baselined on every ENTRY to lay_mine (keyed on the substate's own
+    -- entry tick), so a replanned second attempt does not compare against the
+    -- first attempt's count.
+    if sea._mines_at_lay_tick ~= g._sea_sub_tick then
+      sea._mines_at_lay_tick = g._sea_sub_tick
+      sea._mines_at_lay = info.mines or 0
+    end
+    local spent = (info.mines or 0) < sea._mines_at_lay
+    local flagged = bit.band(U.traw(smx, smy), TERRAIN_MINE_FLAG) ~= 0
+    if (spent or flagged) and info.man_status == C.LGM_INTANK then
+      sea_set_sub(state, g, "detonate", string.format(
+        "mine is down (%s) and the LGM is back aboard",
+        spent and string.format("mines %d -> %d", sea._mines_at_lay, info.mines or 0)
+              or "map flag"))
+    end
+
+  elseif sub == "detonate" then
+    -- Everything here reads TERRAIN, never the mine flag (see lay_mine).
+    local tt = U.ttype(smx, smy)
+    if tt == C.T_RIVER then
+      sea_set_sub(state, g, "build_boat", "S flooded to river")
+    elseif tt == C.T_BOAT then
+      sea_set_sub(state, g, "board", "S is already a boat")
+    elseif tt == C.T_CRATER then
+      -- The mine has gone off. The crater does NOT become river on the same
+      -- tick: floodAddItem queues it and floodUpdate counts FLOOD_FILL_WAIT
+      -- down first (floodfill.c), so there is a real wait before the tile
+      -- turns. Give it a grace window — measured on tests/sea_pills_A this is
+      -- a couple of hundred ticks — and only then call the tile wrong,
+      -- blacklist it and replan.
+      sea.flood_since = sea.flood_since or now
+      if (now - sea.flood_since) > (C.SEA_FLOOD_WAIT_TICKS or 900) then
+        return sea_abort(state, g, "crater_never_flooded", true)
+      end
+    elseif (sea.shots or 0) >= (C.SEA_PILL_MAX_DETONATE_SHOTS or 4) then
+      -- Every shell spent and the tile is still dry land: either the mine was
+      -- never really placed or we cannot land a shell on it from here.
+      sea.dry_since = sea.dry_since or now
+      if (now - sea.dry_since) > (C.SEA_FLOOD_WAIT_TICKS or 900) then
+        return sea_abort(state, g, "no_flood_after_shots", true)
+      end
+    end
+
+  elseif sub == "build_boat" then
+    -- The LGM has to be BACK ABOARD before we drive onto the boat: sailing off
+    -- with him still ashore strands him, and on the first run of
+    -- tests/sea_pills_A that killed him 24 ticks after the boat went up and
+    -- cost the plan 2500 ticks of waiting for a replacement.
+    if U.ttype(smx, smy) == C.T_BOAT and info.man_status == C.LGM_INTANK then
+      sea_set_sub(state, g, "board", "boat built and the LGM is back aboard")
+    end
+
+  elseif sub == "board" then
+    local ok, why = sea_still_safe(state, world, info, sea)
+    if not ok then
+      return sea_abort(state, g, "unsafe_before_boarding:" .. tostring(why), false)
+    end
+  end
+  sea_live_store(state, g)
+end
+
+-- =========================================================================
+-- Overlay: sea_harvest_viz
+-- =========================================================================
+function M.draw_sea_harvest(viz, state)
+  if not viz or not viz.is_on or not viz.is_on("sea_harvest_viz") then return end
+  local s = state._sea
+  if not s then return end
+  for _, cl in ipairs(s.clusters or {}) do
+    -- The connected water the pills float in. Everything the plan may use has
+    -- to touch THIS; a pond next to the tank is shaded differently by being
+    -- absent, which is exactly what makes a wrong pick visible.
+    for k in pairs(cl.comp or {}) do
+      local cx, cy = k % 256, __idiv(k, 256)
+    end
+    for _, t in ipairs(cl.tiles) do
+    end
+    for _, r in ipairs(cl.rays or {}) do
+      if r.reached then
+      else
+        if r.smx then
+        end
+      end
+    end
+    for _, c in ipairs(cl.cands or {}) do
+      if c.reject then
+        if c.reject == "unconnected" then
+        end
+      else
+      end
+    end
+    for _, t in ipairs(cl.path or {}) do
+    end
+    if cl.S then
+    end
+    if cl.F then
+      if cl.S then
+      end
+    end
+    if cl.reject and cl.tiles[1] then
+    end
+  end
+end
+
 -- build_eval_queue — called at the start of each replan cycle.
 -- Iterates all incremental pools, applies filters, and builds a flat
 -- work queue of candidates to evaluate (2 per tick).
@@ -6255,12 +7675,37 @@ function M.build_eval_queue(state, world, info)
   if not state.cost_cache then state.cost_cache = {} end
   for id, obj in pairs(world.pills) do
     local reject = filter_capture_pill(obj, state)
+    -- state.blocked is a DRIVING cooldown: "we failed to reach this tile on
+    -- foot recently". For a pill in deep sea that is not news — we were never
+    -- going to walk there, which is the whole point of the harvest. Letting it
+    -- veto the plan cost sea_pills_A 680 ticks of explore while the lead pill
+    -- sat rejected as `blocked`.
+    if reject and reject.reason == "blocked" and perc and perc.deepsea_pill_ids
+       and perc.deepsea_pill_ids[id] and not (info and info.inboat) then
+      reject = nil
+    end
     -- Deep-sea "bait" pills: a dead pill sitting on deep water can't be taken on
     -- foot (the tank/LGM would drown). Reject for capture_pill unless we're
     -- afloat. (perc.deepsea_pill_ids flags them; the bait_pill_marker viz.)
+    -- SEA-PILL HARVEST: on land this used to be a flat `deepsea_no_boat`
+    -- reject. It is now a priced-or-named-reject row — sea_refresh has already
+    -- planned the mine->crater->river->boat entrance for this pill's cluster
+    -- (or recorded why it can't). Afloat there is nothing to plan: the ordinary
+    -- pricing reads the boat Dijkstra layer and the drive-over pickup runs.
+    local sea_cl = nil
     if not reject and perc and perc.deepsea_pill_ids and perc.deepsea_pill_ids[id]
        and not (info and info.inboat) then
-      reject = { reason = "deepsea_no_boat" }
+      sea_cl = M.sea_cluster_for(state, id)
+      if not sea_cl then
+        reject = { reason = "deepsea_no_boat" }
+      elseif sea_cl.reject then
+        reject = { reason = sea_cl.reject }
+      elseif sea_cl.lead ~= id then
+        -- Same plan, same boat, same cost: let ONLY the lead compete so the
+        -- pool cannot flip the target between members and restart the chain.
+        reject = { reason = "cluster_member_of#" .. tostring(sea_cl.lead) }
+        sea_cl = nil
+      end
     end
     if not reject or reject.reason ~= "alive" then
       queue[#queue + 1] = { pool = 4, id = id, obj = obj, reject = reject }
@@ -6278,8 +7723,19 @@ function M.build_eval_queue(state, world, info)
         else
           local c, _draw, dscore, dval, intcpt, _lm4, _dm4, _free4, _rdmg4, _rfar4 =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
+          -- Deep-sea pill with a live harvest plan: the plan's cost REPLACES
+          -- the land formula (the tank cannot walk there at all — what it
+          -- actually pays is the entrance trip, the resource legs and the
+          -- boat crossing, shared across the cluster).
+          if sea_cl and not sea_cl.reject then
+            c = sea_cl.cost
+            _draw = sea_cl.gross
+          end
           state.cost_cache[ck] = {
             cost = c, raw = _draw, tick = now, _p = 4, _id = id,
+            _sea = sea_cl and not sea_cl.reject and sea_cl or nil,
+            _sea_trees_have = info.trees or 0,
+            _sea_mines_have = info.mines or 0,
             _mx = obj.mx, _my = obj.my,
             _ds = dscore, _dv = dval, _intcpt = intcpt,
             _dist_method = _dm4, _free = _free4,  -- _free = scaled value bonus subtracted
@@ -6836,11 +8292,96 @@ local function get_formula_inner(e)
         in_tank = "pill is in flight (picked up by a tank)",
         blocked = "tile on retry cooldown (recent stuck-escape or pathfinder failed to reach it)",
         stale   = "not seen recently — fog of war",
-      })[e._reject] or "pill exists on the map but cannot be picked this tick"
+        -- SEA-PILL HARVEST rejects (goals.lua sea_plan_cluster). Every one of
+        -- these means "the pill is in deep sea and the mine->river->boat
+        -- entrance is not on", named so the panel says which gate failed.
+        deepsea_no_boat = "pill lies in DEEP SEA and no harvest plan exists for it (sea harvest disabled, or the cluster scan has not run yet)",
+        lgm_dead = "pill lies in DEEP SEA: the harvest needs the LGM to lay the mine and build the boat, and he is dead",
+        low_shells = string.format("pill lies in DEEP SEA: fewer than %d shells left, and detonating the mine needs a reserve", C.SEA_PILL_MIN_SHELLS or 3),
+        enemy_tank_near = string.format("pill lies in DEEP SEA: a visible enemy tank is within %d tiles of the cluster — a boat is one shell from dead", C.SEA_PILL_ENEMY_TANK_NEAR or 10),
+        path_enemy_tank = string.format("pill lies in DEEP SEA: a visible enemy tank is within %d tiles of the boat path", C.SEA_PILL_ENEMY_TANK_NEAR or 10),
+        pills_landlocked = "pill lies in a one-tile puddle, not in navigable water — a boat could not sail from any entrance to it, so there is nothing to harvest (the tile is still lethal to walk onto, which is why perception flags it)",
+        no_entrance = string.format("pill lies in DEEP SEA and no land tile with a CARDINAL deep-sea neighbour within %d tiles passed the gates (pill heat / line of fire / tank or LGM reach / no firing spot)", C.SEA_PILL_ENTRANCE_MAX_DIST or 12),
+        entrance_unreachable = "pill lies in DEEP SEA: the chosen entrance has no tank route (Dijkstra and A* both INF)",
+        no_mines_anywhere = "pill lies in DEEP SEA, we carry no mine, and there is no reachable friendly/allied base at all to fetch one from — nothing can crater the shore. (A base that merely READ empty is still offered: stock is only reported up close and bases restock.)",
+        no_trees_in_territory = string.format("pill lies in DEEP SEA: short of the %d trees the mine+boat need (LGM_COST_BOAT 20 + LGM_COST_MINE 1) and there are not enough harvestable forest tiles INSIDE OUR INFLUENCE within %d tiles of the entrance (%d trees per tile)", C.SEA_PILL_TREES_TOTAL or 21, C.SEA_TREES_RADIUS or 12, C.SEA_TREES_PER_FOREST or 4),
+      })[e._reject]
+      -- The three reject reasons that name a pill id.
+      if not desc and type(e._reject) == "string" then
+        local pn = e._reject:match("^cluster_member_of#(%d+)$")
+        if pn then
+          desc = string.format("pill lies in DEEP SEA and dead pill #%s of the SAME cluster is carrying the harvest plan — one boat trip takes them all, so only the lowest-id member competes for the goal (same plan, same cost, shown here for visibility)", pn)
+        end
+        if not desc then
+          pn = e._reject:match("^pills_covered_by_pill#(%d+)$")
+          if pn then
+            desc = string.format("pill lies in DEEP SEA and hostile pill #%s has a CLEAR shell line onto it — one hit sinks the boat, so the whole cluster is off (calm pills count: they wake when we sail into range)", pn)
+          end
+        end
+        if not desc then
+          pn = e._reject:match("^path_covered_by_pill#(%d+)$")
+          if pn then
+            desc = string.format("pill lies in DEEP SEA and hostile pill #%s has a CLEAR shell line onto a tile of the boat path", pn)
+          end
+        end
+      end
+      desc = desc or "pill exists on the map but cannot be picked this tick"
       f = string.format(
         "REJECT %s%s @(%d,%d)||reject:%s%s — %s",
         e._reject, rem_tok, e._mx or 0, e._my or 0,
         e._reject, rem_tok, desc)
+    elseif e._sea then
+      -- SEA-PILL HARVEST row. The land distance formula does not apply: the
+      -- tank cannot walk to a pill in deep sea at all. What it pays is the
+      -- drive to the entrance S, the resource legs, and the boat crossing —
+      -- all shared across the cluster, all at SEA_PILL_COST_MULT because the
+      -- pills themselves are free. Every factor below appears in the term
+      -- list, so the final number is hand-computable from this row alone.
+      local sc = e._sea
+      local mult  = C.SEA_PILL_COST_MULT or 0.3
+      local floor = C.SEA_PILL_COST_FLOOR or 5
+      local gross = sc.gross or 0
+      local scaled = gross * mult / math.max(1, sc.n or 1)
+      f = string.format(
+        "SEA c%d (travel{%.0f} + refuel_leg{%.0f} + tree_leg{%.0f} + boat_path{%.0f}) x %.2f[SEA_PILL_COST_MULT] / n{%d} = %.1f%s"
+        .. "||sea:cluster %d, %d dead pill(s) in deep sea at %s — entrance{%s} S=(%d,%d)%s water_component{%d tiles}, park=%s, mine=%s, boat=%s (%s)"
+        .. "|travel:danger-weighted route tank -> S(%d,%d) = %.0f"
+        .. "|refuel_leg:%s"
+        .. "|tree_leg:trees{%d}/%d[SEA_PILL_TREES_TOTAL = LGM_COST_BOAT 20 + LGM_COST_MINE 1] short{%d} need_tiles{%d} (LGM_GATHER_TREE %d trees per forest tile) forest_ok{%d} (in_influence, within %dt) -> %d x %.0f[SEA_PILL_TREE_LEG_PER_TREE] = %.0f"
+        .. "|mines:mines{%d}/%d needed for the crater"
+        .. "|boat_path:boat-layer A* from the water tile beside S to the farthest pill = %.0f"
+        .. "|n:cost is split across the %d pill(s) one boat trip collects"
+        .. "|floor:%.0f[SEA_PILL_COST_FLOOR] — a real fight beside us must still win"
+        .. "|substate:%s",
+        sc.id or 0, sc.travel or 0, sc.leg_mines or 0, sc.leg_trees or 0,
+        sc.boat_cost or 0, mult, sc.n or 1, sc.cost or 0,
+        (scaled < floor) and string.format(" -> FLOOR %.0f", floor) or "",
+        sc.id or 0, sc.n or 1,
+        table.concat((function()
+          local t = {}
+          for i, tt in ipairs(sc.tiles or {}) do t[i] = string.format("(%d,%d)", tt[1], tt[2]) end
+          return t
+        end)(), " "),
+        tostring(sc.entrance),
+        sc.S and sc.S.mx or 0, sc.S and sc.S.my or 0,
+        sc.S and string.format(" pill_at=%.0f", sc.S.hot or 0) or "",
+        sc.comp_n or 0,
+        sc.F and string.format("(%d,%d)", sc.F.mx, sc.F.my) or "-",
+        tostring(sc.needs_mine), tostring(sc.needs_boat),
+        tostring(sc.entrance_why),
+        sc.S and sc.S.mx or 0, sc.S and sc.S.my or 0, sc.travel or 0,
+        sc.refuel_base
+          and string.format("mines=0, detour via base #%s%s = %.0f", tostring(sc.refuel_base),
+                            sc.refuel_guess and " (stock not confirmed — nearest reachable friendly base)" or "",
+                            sc.leg_mines or 0)
+          or "0 (a mine is already aboard, or the entrance needs none)",
+        (e._sea_trees_have or 0), sc.trees_need or 0, sc.trees_short or 0,
+        sc.need_tiles or 0, C.SEA_TREES_PER_FOREST or 4, sc.forest_ok or 0,
+        C.SEA_TREES_RADIUS or 12,
+        sc.trees_short or 0, C.SEA_PILL_TREE_LEG_PER_TREE or 6, sc.leg_trees or 0,
+        (e._sea_mines_have or 0), sc.mines_need or 0,
+        sc.boat_cost or 0, sc.n or 1, floor,
+        tostring(e._sea_sub or "-"))
     else
       local _lgm_mult_c = e._lgm_mult or 1
       local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult_c
@@ -7994,6 +9535,7 @@ function M.step_eval_queue(state, world, info)
       local _cpill_free_disc = 0  -- value-bonus semantics: 0 = no free-grab bonus
       local _cpill_route_dmg = 0  -- wsim damage on the probed direct route
       local _cpill_route_far = nil -- set = beyond CAPTURE_ROUTE_MAX_TILES, never probed
+      local _cpill_sea = nil
       if pool_idx == 4 then
         c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method, _cpill_free_disc, _cpill_route_dmg, _cpill_route_far =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
@@ -8001,6 +9543,19 @@ function M.step_eval_queue(state, world, info)
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
         -- formula breakdown showing a meaningful raw value.
         raw_cost = _cpill_dist_raw
+        -- SEA-PILL HARVEST override: a dead pill in deep sea is not reachable
+        -- on the land surface at all, so the land formula above is meaningless
+        -- for it. When sea_refresh produced a live plan, the plan's cost IS
+        -- this candidate's cost and the plan rides along for the breakdown.
+        if not info.inboat and state.perc and state.perc.deepsea_pill_ids
+           and state.perc.deepsea_pill_ids[id] then
+          local scl = M.sea_cluster_for(state, id)
+          if scl and not scl.reject and scl.lead == id then
+            _cpill_sea = scl
+            c = scl.cost
+            raw_cost = scl.gross
+          end
+        end
       end
 
       -- Pool 5 (repair_pill): the UNIFIED repair formula, per candidate.
@@ -8110,6 +9665,17 @@ function M.step_eval_queue(state, world, info)
       -- Fields are flattened directly into the cache entry (no sub-table) to
       -- avoid an extra Lua table allocation per candidate per tick.
       local entry = { cost = c, raw = raw_cost, tick = now, _p = pool_idx, _mx = obj.mx, _my = obj.my, _id = id }
+      -- nil for everything but a priced deep-sea capture. The have-counts are
+      -- snapshot alongside so the row's tree/mine accounting is readable even
+      -- when the panel renders it several ticks later.
+      entry._sea = _cpill_sea
+      if _cpill_sea then
+        entry._sea_trees_have = info.trees or 0
+        entry._sea_mines_have = info.mines or 0
+        entry._sea_sub = (state.goal and state.goal.kind == "capture_pill"
+                          and state.goal.sea and state.goal.sea.cluster == _cpill_sea.id)
+                         and state.goal.substate or nil
+      end
       if _ac_pen > 0 then
         entry.ally_claimed_pen = _ac_pen
         entry.ally_claimed_by  = _ac_by
@@ -8312,6 +9878,63 @@ local function sync_ally_claimed_rejects(state, info)
   state.pill_priority_set = state.pill_priority_set or {}
   local pill_priority_set = state.pill_priority_set
 
+  -- SEA-PILL HARVEST claim. An ally's `goal=capture_pill target=N` already
+  -- becomes an ally_claimed REJECT for pill N below. A deep-sea target is
+  -- different: the ally is mining a shore and building ONE boat, and that boat
+  -- takes the whole CLUSTER — so the claim has to cover every dead sea pill
+  -- within SEA_PILL_CLAIM_RADIUS of N, from entrance_plan onward, or two bots
+  -- mine the same shore for the same three pills. Our OWN cluster members are
+  -- never claimed against us: we are the claimant.
+  local sea_ally_claim = nil
+  do
+    local perc = state.perc
+    if perc and perc.deepsea_pill_ids and next(perc.deepsea_pill_ids) ~= nil then
+      local ours = nil
+      local g = state.goal
+      if g and g.kind == "capture_pill" and g.sea then
+        ours = {}
+        for _, pid in ipairs(g.sea.ids or {}) do ours[pid] = true end
+      end
+      local R = C.SEA_PILL_CLAIM_RADIUS or 3
+      -- Sorted ally ids: the claim decides rejections, so pairs() order must
+      -- not choose which ally "wins" a pill claimed by two.
+      local apns = {}
+      for apn in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+        if apn ~= self_pn then apns[#apns + 1] = apn end
+      end
+      table.sort(apns)
+      for _, apn in ipairs(apns) do
+        local slot = ally_state.get(apn)
+        local h = slot and slot.active and slot.info
+        if h and h.goal == "capture_pill" then
+          -- Positions come from the cost_cache rows themselves (they carry
+          -- _mx/_my for every pool-4 pill), so no world reference is needed.
+          local aid = tonumber(h.target)
+          if aid and perc.deepsea_pill_ids[aid] then
+            local amx, amy
+            for _, ce in pairs(cache) do
+              if ce._p == 4 and ce._id == aid then amx, amy = ce._mx, ce._my break end
+            end
+            if amx then
+              for _, ce in pairs(cache) do
+                if ce._p == 4 and ce._id and perc.deepsea_pill_ids[ce._id]
+                   and ce._mx and U.mdist(ce._mx, ce._my, amx, amy) <= R
+                   and not (ours and ours[ce._id]) then
+                  sea_ally_claim = sea_ally_claim or {}
+                  if sea_ally_claim[ce._id] == nil then
+                    sea_ally_claim[ce._id] = { by = apn,
+                      remaining = math.max(0, (C.SQUAD_ALLY_MAX_AGE or 1750) - (now - (slot.last_tick or now))),
+                      root = aid }
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
   for _, e in pairs(cache) do
     local pool_idx = e._p
     -- Diagnostic: log every pool-6 cache entry we visit, so we can see
@@ -8340,6 +9963,19 @@ local function sync_ally_claimed_rejects(state, info)
         and (g.kind == "attack_pill" or g.kind == "capture_pill")
         and ((g.target_id and g.target_id == e._id)
              or (g.mx == e._mx and g.my == e._my))
+      -- Sea-cluster claim (see sea_ally_claim above): an ally harvesting a
+      -- deep-sea cluster owns every pill in it, not just its broadcast target.
+      local sac = sea_ally_claim and sea_ally_claim[e._id]
+      if sac and not we_targeted_it then
+        if e._reject ~= "ally_claimed" then
+          e._reject = "ally_claimed"
+          e.formula = nil
+        end
+        e._reject_remaining = sac.remaining or 0
+        e._ally_by          = sac.by
+        e._ally_score       = nil
+        goto continue_entry
+      end
       -- First-sight snapshot per pill_id.  Mark "checked" even when no
       -- priority applies so we don't re-scan ally_state every tick.
       -- Gate on "actually a capture candidate": entries with _reject
@@ -9331,12 +10967,37 @@ function M.finalize_pools(state, world, info)
     -- TODO: Phase 6 race-loss should clear race_mode on captures we've decided not to win.
     -- See note on race_mode above (line ~644). Same dead-branch.
     local race_mode4 = C.CAPTURE_RACE_MODE_CAPTURE
+    local goal4 = { kind = "capture_pill", mx = pill.mx, my = pill.my,
+                    wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid,
+                    race_mode = race_mode4 }
+    -- SEA-PILL HARVEST: a deep-sea target carries the whole entrance plan on
+    -- the goal and enters the substate chain. The plan is SNAPSHOT (not
+    -- aliased): once the mine is down, the committed substates must keep the
+    -- S/F they actually mined, not whatever the next 50-tick rescan prefers.
+    -- Already afloat = no chain; today's pickup drive owns it.
+    if not info.inboat then
+      local scl = M.sea_cluster_for(state, pid)
+      if scl and not scl.reject then
+        -- Hold the plan we are ALREADY executing rather than swapping in a
+        -- freshly-scanned one for the same cluster mid-chain.
+        -- The live plan wins over a fresh snapshot, and it is keyed on the
+        -- CLUSTER, not on target_id: pill #0 -> #1 inside the same cluster is
+        -- the same job, not a new one. (It also carries a FINISHED plan, so an
+        -- already-loaded tank is never sent back to mine the shore again.)
+        if not sea_live_attach(state, goal4, scl.id) then
+          goal4.sea = M.sea_goal_plan(scl)
+          goal4.substate = "entrance_plan"
+        end
+        if BRAIN_POOL_VIZ then
+          desc4 = desc4 .. string.format(" SEA(c%d n=%d sub=%s S=(%d,%d))",
+                    scl.id, scl.n, tostring(goal4.substate), scl.S.mx, scl.S.my)
+        end
+      end
+    end
     pc[4] = {
       cost = raw_cost4,
       imminent = imminent4,
-      goal = { kind = "capture_pill", mx = pill.mx, my = pill.my,
-               wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid,
-               race_mode = race_mode4 },
+      goal = goal4,
       desc = desc4,
       cands = pr4.candidates,
     }
@@ -10697,6 +12358,17 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Pin REJECT sentinels ──
+    -- A rejected row's cost is a DISPLAY sentinel (1e30), not a score. Running
+    -- it through the influence x2, the suicider multiplier, the phase weight
+    -- and the hysteresis ratio produced totals like 5e43 in FINAL_SCORES and
+    -- the WINNERS panel — unreadable, and different for every rejected row for
+    -- no reason. Tag them here and pin them back to the one sentinel after the
+    -- shaping passes, the way take_cover's TAKE_COVER_REJECT_COST row stays put.
+    for _, c in ipairs(pool) do
+      if (c.cost or 0) >= 1e29 then c._reject_sentinel = true end
+    end
+
     -- ── Influence-based cost scaling ──
     -- Goals in hostile territory (influence < -50) cost 2×; goals in
     -- friendly territory (influence > 50) cost 0.5×. Skipped during
@@ -10712,7 +12384,7 @@ local function goal_selection(state, world, info, quiet)
       if C.REPAIR_FIX_ENABLED then INF_EXEMPT.repair_pill = true end
       for _, c in ipairs(pool) do
         if c.goal and c.goal.mx and c.goal.my
-           and not INF_EXEMPT[c.goal.kind] then
+           and not INF_EXEMPT[c.goal.kind] and not c._reject_sentinel then
           local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
           if inf < -50 then
             c.cost = c.cost * 2.0
@@ -10738,7 +12410,7 @@ local function goal_selection(state, world, info, quiet)
     if state.is_pill_suicider then
       for _, c in ipairs(pool) do
         local sm = suicider_cost_mult(state, c.goal and c.goal.kind)
-        if sm ~= 1.0 and c.cost and c.cost > 0 then
+        if sm ~= 1.0 and c.cost and c.cost > 0 and not c._reject_sentinel then
           c.cost = c.cost * sm
           c._suicider_mult = sm
         end
@@ -10797,6 +12469,17 @@ local function goal_selection(state, world, info, quiet)
     local cur_sub = state.goal and state.goal.substate
     if cur_sub and WS_SUBS[cur_sub] then
       commitment = commitment + C.WALL_SHIELD_COMMITMENT
+    end
+    -- SEA-PILL HARVEST: from lay_mine until the boat exists there is a LIVE
+    -- MINE sitting on our own shore and 21 trees already committed. Walking
+    -- away leaves the mine there for our own tank to drive over, so the same
+    -- kind of surcharge WS_SUBS gets applies until build_boat completes.
+    if cur_sub and state.goal.sea then
+      if SEA_COMMITTED[cur_sub] then
+        commitment = commitment + (C.SEA_PILL_COMMITMENT or 400)
+      elseif SEA_ENGAGED[cur_sub] then
+        commitment = commitment + (C.SEA_PILL_LEG_COMMITMENT or 150)
+      end
     end
     -- Track per-goal commitment bonuses. Bonuses stack on TOP of the capped
     -- base commitment so they aren't swallowed by GOAL_COMMITMENT_CAP.
@@ -11230,6 +12913,12 @@ local function goal_selection(state, world, info, quiet)
         end
       end
       -- Re-sort after sim adjustments (same total order as the first sort)
+      for _, c in ipairs(pool) do
+        if c._reject_sentinel then
+          c.cost = C.POOL_REJECT_COST or 1e30
+          c._base_cost = c.cost
+        end
+      end
       table.sort(pool, state._pool_cost_lt)
     elseif _persist_applied then
       -- wsim didn't run this tick, but a persisted KILL changed costs — re-sort
@@ -11302,6 +12991,15 @@ local function goal_selection(state, world, info, quiet)
     -- post-wsim totals and the +wsim{N} breakdown row.
     -- Pool-grid panel data + diagnostic prints + viz paths — wrapped so
     -- lua_strip removes it from opt/.
+
+    for _, c in ipairs(pool) do
+      if c._reject_sentinel then
+        c.cost = C.POOL_REJECT_COST or 1e30
+        -- _base_cost is snapshotted mid-shaping, so pin it too or the row
+        -- prints a readable total next to an unreadable base.
+        c._base_cost = c.cost
+      end
+    end
 
     if #pool > 0 then
       -- Dump the FINAL post-everything scores for every candidate so a
@@ -11514,6 +13212,41 @@ function M.pick_goal(state, world, info, quiet)
     player_names = info.player_names,
     armour = info.armour, shells = info.shells,
   }
+  -- SEA-PILL HARVEST, collect phase. Afloat, on purpose, with cluster pills
+  -- still in the water and the water still safe: this OWNS the goal. Anything
+  -- else winning the pool here means going ashore, and going ashore costs
+  -- another mine, another 21 trees and another boat for the pills we came for.
+  -- Released the moment the cluster is collected or the water turns unsafe
+  -- (M.sea_update clears state._sea_afloat), after which normal boat handling
+  -- resumes. Sits above the command goal deliberately: a command cannot make a
+  -- boat trip safe to abandon halfway.
+  if state._sea_afloat and state._sea_live and info.inboat then
+    local L = state._sea_live
+    local tmx = bit.rshift(info.tankx, 8)
+    local tmy = bit.rshift(info.tanky, 8)
+    local best, bd = nil, nil
+    for _, pid in ipairs(L.sea.ids or {}) do
+      local p = world.pills[pid]
+      if p and (p.health or 0) == 0 and not p.in_tank and not p.carrier then
+        local d = U.mdist(tmx, tmy, p.mx, p.my)
+        if bd == nil or d < bd or (d == bd and pid < best.target_id) then
+          bd = d
+          best = { kind = "capture_pill", mx = p.mx, my = p.my,
+                   wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = pid,
+                   race_mode = C.CAPTURE_RACE_MODE_CAPTURE }
+        end
+      end
+    end
+    if best then
+      sea_live_attach(state, best, L.cluster)
+      best.substate = "collect"
+      if not quiet and BRAIN_DEBUG_MODE then
+      end
+      return best
+    end
+    state._sea_afloat = nil
+  end
+
   -- Command goal overrides everything
   if state.command_goal then
     local cg  = state.command_goal

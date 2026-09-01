@@ -318,6 +318,15 @@ local function intentionally_stationary(goal, info)
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
   if goal.kind == "attack_tank" and _at_stationary[s] then return true end
   if goal.kind == "rescue_lgm" or goal.kind == "none" then return true end
+  -- SEA-PILL HARVEST: while the LGM is out laying the mine or building the
+  -- boat, and while we are shooting the mine, the tank is parked ON PURPOSE.
+  -- Without this the stuck detector escalates and clears the goal — leaving a
+  -- live mine on our own shore, which is exactly what the commitment rule and
+  -- these substates exist to prevent.
+  if goal.kind == "capture_pill" and goal.sea
+     and (s == "lay_mine" or s == "detonate" or s == "build_boat") then
+    return true
+  end
   -- Refueling: once parked ON (or right beside) the refuel base we sit still
   -- while the base tops us up — that's intentional, NOT stuck. (En route to the
   -- base it's still subject to normal stuck recovery.) Without this, the
@@ -3145,6 +3154,111 @@ function M.steer(state, world, info, goal)
       end
     end
     goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(goal.mx), U.m2w(goal.my))
+
+  elseif goal.kind == "capture_pill" and goal.sea and goal.substate
+         and goal.substate ~= "" and goal.substate ~= "collect" then
+    -- ("collect" is the AFLOAT phase: it deliberately falls through to the
+    --  ordinary capture navigation, which already plows a boat onto a dead
+    --  pill's tile through the boat Dijkstra layer.)
+    -- ── SEA-PILL HARVEST (capture_pill's deep-sea branch) ────────────────
+    -- Same target_id the whole way; only the destination changes per substate.
+    --   refuel_mines : drive to the base that stocks mines and sit on it
+    --   seek_trees   : park on the nearest safe forest tile so the builder's
+    --                  gather can reach it (LGM deploy radius is ~5 tiles)
+    --   approach_F   : drive to the firing spot and STOP on it
+    --   lay_mine     : hold still while the LGM walks out and back
+    --   detonate     : stand on F, put the crosshair ON the mine, fire
+    --   build_boat   : hold still while the LGM builds the wall-on-river
+    --   board        : drive onto S — it is a BOAT tile now, and the existing
+    --                  water/boat lookahead already steps ONTO such tiles
+    local ssub = goal.substate
+    local S = goal.sea.S
+    local nav_mx, nav_my = nil, nil
+    if ssub == "refuel_mines" then
+      local rb = goal.sea.refuel_base and world.bases and world.bases[goal.sea.refuel_base]
+      if rb then nav_mx, nav_my = rb.mx, rb.my end
+      plow_through = false
+    elseif ssub == "seek_trees" then
+      local ts = goal.sea.tree_spot
+      if ts then nav_mx, nav_my = ts[1], ts[2]
+      elseif goal.sea.F then nav_mx, nav_my = goal.sea.F[1], goal.sea.F[2] end
+      plow_through = false
+    elseif ssub == "approach_F" then
+      if goal.sea.F then nav_mx, nav_my = goal.sea.F[1], goal.sea.F[2] end
+      plow_through = false
+    elseif ssub == "board" then
+      nav_mx, nav_my = S[1], S[2]
+      plow_through = true
+    end
+
+    if ssub == "detonate" then
+      -- The shell only detonates the mine when it ENDS on the mined square
+      -- (shells.c calls minesExpAddItem at BOTH shell-death paths: collision
+      -- and range expiry), so this is kill_mine's aim exactly — heading AND
+      -- gunsight length onto S. F is 2 tiles out, well clear of the 384 wu
+      -- blast box. A FOREST tile in the lane eats one shell and turns to
+      -- grass, which is why the cap is 4 and not 1.
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+      local swx, swy = U.m2w(S[1]), U.m2w(S[2])
+      local dist = U.wdist(info.tankx, info.tanky, swx, swy)
+      local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                                 S[1] + 0.5, S[2] + 0.5)
+      local corr = U.adiff(info.direction, aim_dir)
+      local h, t = U.aim_turn_bits(corr, 6, 1)
+      keys = bit.bor(keys, h); taps = bit.bor(taps, t)
+      local target_sl = KL.sightlen_for(dist)
+      keys = bit.bor(keys, KL.gunrange_key(info.gunrange, target_sl))
+      local cur_sl = info.gunrange or 14
+      local travel = 128 * cur_sl
+      local rad    = (info.direction or 0) * C.TWO_PI / 256
+      local ex_wx  = info.tankx + math.sin(rad) * travel
+      local ex_wy  = info.tanky - math.cos(rad) * travel
+      local off_dx, off_dy = ex_wx - swx, ex_wy - swy
+      local land_off = math.sqrt(off_dx * off_dx + off_dy * off_dy)
+      local now_t = state.tick or 0
+      local in_flight = goal._sea_shot_eta and now_t < goal._sea_shot_eta
+      -- Stop the moment the tile stops being dry land: the mine has gone off,
+      -- the crater floods on the engine's own schedule, and more shells at it
+      -- are pure waste. Judged on TERRAIN, not the map's mine flag — the brain
+      -- does not reliably see its own mine bit (tests/sea_pills_D), and gating
+      -- fire on the flag meant the shot was never taken at all.
+      local stt = U.ttype(S[1], S[2])
+      local still_mined = stt ~= C.T_CRATER and stt ~= C.T_RIVER
+                          and stt ~= C.T_BOAT
+                          and (goal.sea.shots or 0) < (C.SEA_PILL_MAX_DETONATE_SHOTS or 4)
+      -- One shell per flight: only the LANDING detonates, so shells fired
+      -- while the first is in the air are pure waste. max_walls = 1 lets the
+      -- forest in the lane count as the allowed casualty.
+      if still_mined and not in_flight and land_off <= (C.DEMINE_LAND_WU or 100)
+         and (info.shells or 0) > 0
+         and shot_path_clear(info, world, swx, swy, S[1], S[2], 1) then
+        keys = bit.bor(keys, KEY_SHOOT)
+        goal._sea_shot_eta = now_t + math.ceil(dist / (C.SHELL_SPEED or 32)) + 10
+        goal.sea.shots = (goal.sea.shots or 0) + 1
+      end
+      return keys, taps
+    end
+
+    if not nav_mx then
+      -- lay_mine / build_boat (and any substate with nothing to drive to):
+      -- hold still. The LGM is out; moving would drag him along and the
+      -- pacing slowdown is the builder's job, not ours.
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+      return keys, taps
+    end
+    if tmx == nav_mx and tmy == nav_my and ssub ~= "board" then
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+      return keys, taps
+    end
+    local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
+    if nx then
+      local lx, ly = path_lookahead(state, info, nx, ny)
+      state._steer_lx = lx
+      state._steer_ly = ly
+      move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+      target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+    end
+    goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(nav_mx), U.m2w(nav_my))
 
   elseif goal.kind == "refuel_at_base" then
     -- wait_for_ally: an ally is camping our target base, so we park at

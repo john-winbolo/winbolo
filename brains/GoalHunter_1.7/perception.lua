@@ -428,12 +428,32 @@ function M.update(state, world, info)
       -- open water (or on a 1-tile pedestal in it, which beaches a boat and
       -- strands a tank just the same).
       if not at_sea then
+        -- Read the four cardinal neighbours DIRECTLY (U.ttype, which also
+        -- fills terrain_prev) instead of trusting whatever the shared cache
+        -- happened to hold. The cache only knows tiles some other subsystem
+        -- has already looked at, so on a map where nothing has pathed near the
+        -- water the pill was never flagged at all — and the sea-pill harvest
+        -- branch of capture_pill is keyed entirely off this flag. Four
+        -- get_terrain reads per DEAD pill per tick is noise.
         local n, seen = 0, 0
         for _, d in ipairs({ {1,0}, {-1,0}, {0,1}, {0,-1} }) do
-          local t = terrain_prev[U.mkey(p.mx + d[1], p.my + d[2])]
-          if t ~= nil then
+          local nx, ny = p.mx + d[1], p.my + d[2]
+          if U.in_map(nx, ny) then
+            local t = U.ttype(nx, ny)
             seen = seen + 1
-            if t == C.T_DEEPSEA then n = n + 1 end
+            -- Another dead pill of the same raft reads T_PILLBOX (the overlay
+            -- hides the terrain under it) — count it as water too, or a tight
+            -- 3-pill cluster hides its own neighbours from the test.
+            if t == C.T_DEEPSEA then
+              n = n + 1
+            elseif t == C.T_PILLBOX then
+              local op = world.pill_at and world.pill_at[ny * 256 + nx]
+              if op then
+                for _, oe in ipairs(op) do
+                  if oe.pill and (oe.pill.health or 0) == 0 then n = n + 1 break end
+                end
+              end
+            end
           end
         end
         at_sea = (seen >= 3 and n >= 3)
