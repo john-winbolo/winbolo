@@ -504,7 +504,7 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
     lobbySendAddBot(cs, namingPool, teamNumber);
 }
 
-/* ── Map chooser helpers ───────────────────────────────────────────
+/* ── Map chooser helpers ──────────────────────────────────────────
  * The map chooser is a separate draggable ImGui window opened from the
  * lobby's Map tab. Selection triggers PACKET_LOBBY_SET_MAP in MP, or a
  * direct serverSimReloadMap call when the lobby is SP-host. State
@@ -512,14 +512,51 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
  * remembered for the session.
  *
  * State has to be declared before the helpers that reference it.
- * s_chooseMapPrevName captures the map that was active when the
- * window opened so Cancel can restore it (no undo packet is wired
- * yet — the field is reserved for that future work). */
-static bool             s_chooseMapOpen          = false;
-/* Edge-trigger: SetNextWindowFocus the chooser on the frame it opens so
- * it draws above the scrim windows, but NOT every frame after — that
- * yanks focus away from anything the user clicks into the chat-hole. */
-static bool             s_chooseMapFocusedOnce   = false;
+ *
+ * Everything here belongs to one lobby session — the window's
+ * visibility, its focus edge-trigger, the pending-action flags and the
+ * cached ClientSim — so lobbyChooserReset() clears it on teardown. The
+ * browsers themselves live in LobbyChooserTabs below and are kept. */
+typedef struct LobbyChooserState {
+    bool       open             = false;
+    /* Edge-trigger: SetNextWindowFocus the chooser on the frame it opens
+     * so it draws above the scrim windows, but NOT every frame after —
+     * that yanks focus away from anything the user clicks into the
+     * chat-hole. */
+    bool       focusedOnce      = false;
+    /* The map that was active when the window opened, so Cancel can
+     * restore it (no undo packet is wired yet — the field is reserved
+     * for that future work). */
+    char       prevName[128]    = "";
+    /* Source tab the trigger/shoulder tab-cycle wants selected next frame
+     * in the map chooser, or -1 for "no forced selection". Applied via
+     * ImGuiTabItemFlags_SetSelected, then cleared once after the tab bar. */
+    int        forceTab         = -1;
+    /* When true, the chooser window is force-sized to almost the full
+     * lobby window — leaving a few chat lines visible at the bottom.
+     * Toggled by the corner icon button, or by pressing Esc while the
+     * chooser window has focus. */
+    bool       maximized        = false;
+    /* True when the user has fired at least one live-preview from a tab
+     * since opening the chooser (file pick, upload kick, generate config
+     * change). Drives the close-confirmation modal: dismissing the
+     * window with the X (or Esc) while pending opens a "Use This Map /
+     * Cancel / Keep Picking" prompt instead of silently reverting. */
+    bool       previewPending   = false;
+    bool       wantCloseConfirm = false;
+    /* Cached ClientSim pointer for the chooser. Captured by
+     * lobbyChooseMapOpen so the listProvider (which only gets a void*
+     * ctx) can reach into the cs's lobbyMapList* state without each
+     * call site rethreading the pointer. */
+    ClientSim *cs               = NULL;
+} LobbyChooserState;
+
+static LobbyChooserState s_chooser = {};
+
+static void lobbyChooserReset(void) {
+    s_chooser = LobbyChooserState{};
+}
+
 /* Chat state shared between the chat panel and the map chooser.
  *
  * blockMin/blockMax are the screen-space rect of the lobby's chat
@@ -548,51 +585,41 @@ static void lobbyChatReset(void) {
     s_chat = LobbyChatState{};
 }
 
-/* Two chooser instances: one for the Server Maps tab (routes its
- * directory listing through serverSimEnumerateMapDir so it reflects
- * the server's actual map library), one for the Upload tab (always
- * uses the LOCAL filesystem so the user can browse their own files
- * before sending them up). Keeping the state separate means each tab
- * remembers its own folder / selection / search filter independently. */
-static MapChooserState  s_chooseMapState         = {};
-static MapChooserState  s_chooseMapUploadState   = {};
-/* Third chooser instance for the Random tab — runs in randomTabOnly
- * mode so the widget renders generator controls + a live preview.
- * Config changes ripple to the server via genSeq edge detection. */
-static MapChooserState  s_chooseMapRandomState   = {};
-static uint32_t         s_chooseMapRandomLastSeq = 0;
-/* Fourth chooser instance for the Winbolo.net Maps tab — same widget
- * the Upload / Server Maps tabs use, with a listProvider that fetches
- * folders from /api/v1/maps/{id} instead of from a local directory.
- * The WASM build has no libcurl/WBN HTTP backend, so the whole tab —
- * state, providers, async fetch threads — is compiled out there. */
+/* Map-browser state that outlives any one lobby session: the four
+ * chooser instances, the tab the user was last on and the one-shot init
+ * latch. Deliberately has no reset function — imguiLobbyFrameReset runs
+ * on every lobby→game edge, so clearing this would tear down the preview
+ * textures, re-scan the map directories once a round and throw away the
+ * user's folder position, selection and search filter every time.
+ *
+ * Keeping the four instances separate means each tab remembers its own
+ * folder / selection / search filter independently. */
+typedef struct LobbyChooserTabs {
+    /* Server Maps tab — routes its directory listing through
+     * serverSimEnumerateMapDir so it reflects the server's actual map
+     * library. */
+    MapChooserState server        = {};
+    /* Upload tab — always uses the LOCAL filesystem so the user can
+     * browse their own files before sending them up. */
+    MapChooserState upload        = {};
+    /* Random tab — runs in randomTabOnly mode so the widget renders
+     * generator controls + a live preview. Config changes ripple to the
+     * server via genSeq edge detection against randomLastSeq. */
+    MapChooserState random        = {};
+    uint32_t        randomLastSeq = 0;
+    /* Winbolo.net Maps tab — same widget the Upload / Server Maps tabs
+     * use, with a listProvider that fetches folders from
+     * /api/v1/maps/{id} instead of from a local directory. The WASM build
+     * has no libcurl/WBN HTTP backend, so the whole tab — state,
+     * providers, async fetch threads — is compiled out there. */
 #ifndef __EMSCRIPTEN__
-static MapChooserState  s_chooseMapWbnState      = {};
+    MapChooserState wbn           = {};
 #endif
-static bool             s_chooseMapStateInited   = false;
-static char             s_chooseMapPrevName[128] = "";
-static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
-/* Source tab the trigger/shoulder tab-cycle wants selected next frame in the
- * map chooser, or -1 for "no forced selection". Applied via
- * ImGuiTabItemFlags_SetSelected, then cleared once after the tab bar. */
-static int              s_chooseMapForceTab      = -1;
-/* When true, the chooser window is force-sized to almost the full
- * lobby window — leaving a few chat lines visible at the bottom.
- * Toggled by the corner icon button, or by pressing Esc while the
- * chooser window has focus. */
-static bool             s_chooseMapMaximized     = false;
-/* True when the user has fired at least one live-preview from a tab
- * since opening the chooser (file pick, upload kick, generate config
- * change). Drives the close-confirmation modal: dismissing the
- * window with the X (or Esc) while pending opens a "Use This Map /
- * Cancel / Keep Picking" prompt instead of silently reverting. */
-static bool             s_chooseMapPreviewPending = false;
-static bool             s_chooseMapWantCloseConfirm = false;
-/* Cached ClientSim pointer for the chooser. Captured by
- * lobbyChooseMapOpen so the listProvider (which only gets a void*
- * ctx) can reach into the cs's lobbyMapList* state without each
- * call site rethreading the pointer. */
-static ClientSim       *s_chooseMapCs             = NULL;
+    bool            inited        = false;
+    int             activeTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
+} LobbyChooserTabs;
+
+static LobbyChooserTabs s_chooserTabs = {};
 
 /* enumerate for the Server Maps provider. Routes through the server's
  * directory enumeration so the chooser browses the SERVER's map
@@ -874,7 +901,7 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
             threadsWaitForMutex();
             bool ok = serverSimReloadMap(sim, sel);
             threadsReleaseMutex();
-            if (ok) s_chooseMapPreviewPending = true;
+            if (ok) s_chooser.previewPending = true;
         }
     } else {
         const char *relPath = sel;
@@ -889,7 +916,7 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
          * MAP_PREVIEW response (drained by lobbyServerMapsPumpPreview)
          * does. */
         clientSimNetSendLobbyMapPreviewRequest(cs, relPath);
-        s_chooseMapPreviewPending = true;
+        s_chooser.previewPending = true;
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[MAPPICK] server-maps SET_MAP relPath='%s' previewPending=1",
                     relPath);
@@ -1055,11 +1082,11 @@ static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
      * "wbnmem:" marker over selectedPath for that tab's loading-spinner
      * check, so preserve the row path the click already put there. */
     char keepPath[FILENAME_MAX];
-    SDL_strlcpy(keepPath, s_chooseMapState.selectedPath, sizeof(keepPath));
-    mapChooserSetSelectedMapBytes(&s_chooseMapState, renderer,
+    SDL_strlcpy(keepPath, s_chooserTabs.server.selectedPath, sizeof(keepPath));
+    mapChooserSetSelectedMapBytes(&s_chooserTabs.server, renderer,
                                   bytes, (int)blen, disp);
-    SDL_strlcpy(s_chooseMapState.selectedPath, keepPath,
-                sizeof(s_chooseMapState.selectedPath));
+    SDL_strlcpy(s_chooserTabs.server.selectedPath, keepPath,
+                sizeof(s_chooserTabs.server.selectedPath));
     clientSimClearLobbyMapPreview(cs);
 }
 
@@ -1099,7 +1126,7 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
             threadsReleaseMutex();
         }
         if (ok) {
-            s_chooseMapPreviewPending = true;
+            s_chooser.previewPending = true;
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] upload SP reload ok previewPending=1");
         } else {
@@ -1114,7 +1141,7 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
                     (unsigned)upStatus, (int)inFlight);
         if (!inFlight) {
             if (clientSimNetSendLobbyMapUpload(cs, picked)) {
-                s_chooseMapPreviewPending = true;
+                s_chooser.previewPending = true;
                 WB_LOG_INFO(WB_LOG_CAT_GUI,
                             "[MAPPICK] upload kicked previewPending=1");
             } else {
@@ -1692,7 +1719,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
             displayName.resize(displayName.size() - 4);
         }
         mapChooserSetSelectedMapBytes(
-            &s_chooseMapWbnState, renderer,
+            &s_chooserTabs.wbn, renderer,
             reinterpret_cast<const uint8_t *>(res.bytes.data()),
             (int)res.bytes.size(), displayName.c_str());
     }
@@ -1743,7 +1770,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         return;
     }
     clientSimSetLobbyWbnPreviewStatus(cs, 2);
-    s_chooseMapPreviewPending = true;
+    s_chooser.previewPending = true;
     if (clientSimIsSinglePlayer(cs)) {
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-SP] applied '%s' (%zu bytes)",
@@ -2317,7 +2344,7 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
  * action bar out of the window. */
 static const char *lobbyGetActiveTabError(ClientSim *cs) {
     if (!cs) return NULL;
-    switch (s_chooseMapActiveTab) {
+    switch (s_chooserTabs.activeTab) {
         case 1: /* Local upload */
             if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
                 clientSimGetLobbyMapUploadStatus(cs) == 4) {
@@ -2352,20 +2379,26 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
 }
 
 static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
-    if (!s_chooseMapStateInited) {
-        mapChooserInit(&s_chooseMapState, renderer);
+    if (!s_chooserTabs.inited) {
+        mapChooserInit(&s_chooserTabs.server, renderer);
         /* Let the chooser draw the maximize toggle overlay on the
          * preview image — it knows where the image actually lives,
-         * which the surrounding lobby code doesn't. */
-        s_chooseMapState.maximizePtr = &s_chooseMapMaximized;
+         * which the surrounding lobby code doesn't.
+         *
+         * All four instances point at the one shared flag, wired once
+         * here. s_chooser is a file-scope static, so the address is
+         * stable for the life of the process: lobbyChooserReset()
+         * assigns a fresh value through the object rather than
+         * replacing it, and the pointer stays valid across teardown. */
+        s_chooserTabs.server.maximizePtr = &s_chooser.maximized;
         /* Server Maps provider: list comes from the server. */
-        s_chooseMapState.provider.enumerate            = lobbyServerMapsListProvider;
-        s_chooseMapState.provider.onSelect             = lobbyServerMapsOnSelect;
-        s_chooseMapState.provider.onFolderJump         = lobbyServerMapsOnFolderJump;
-        s_chooseMapState.provider.refreshTooltipPrefix = lobbyServerMapsTooltipPrefix;
-        s_chooseMapState.provider.generatePreview      = lobbyServerMapsGeneratePreview;
-        s_chooseMapState.provider.cacheScope           = "server";
-        s_chooseMapState.provider.ctx                  = s_chooseMapCs;
+        s_chooserTabs.server.provider.enumerate            = lobbyServerMapsListProvider;
+        s_chooserTabs.server.provider.onSelect             = lobbyServerMapsOnSelect;
+        s_chooserTabs.server.provider.onFolderJump         = lobbyServerMapsOnFolderJump;
+        s_chooserTabs.server.provider.refreshTooltipPrefix = lobbyServerMapsTooltipPrefix;
+        s_chooserTabs.server.provider.generatePreview      = lobbyServerMapsGeneratePreview;
+        s_chooserTabs.server.provider.cacheScope           = "server";
+        s_chooserTabs.server.provider.ctx                  = s_chooser.cs;
         /* Network clients fetch the map list over the wire via
          * PACKET_LOBBY_MAP_LIST_REQ; the response lands asynchronously
          * after lobbyChooseMapEnsureInit's one-shot discoverMaps has
@@ -2375,106 +2408,106 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * gate prevents request spam. SP-host's synchronous branch
          * pays a no-op per-frame discoverMaps; the in-process scan
          * is already cheap so leave the flag on unconditionally. */
-        s_chooseMapState.provider.refreshEveryFrame    = true;
-        SDL_strlcpy(s_chooseMapState.crumbsRootLabel, "Maps",
-                    sizeof(s_chooseMapState.crumbsRootLabel));
+        s_chooserTabs.server.provider.refreshEveryFrame    = true;
+        SDL_strlcpy(s_chooserTabs.server.crumbsRootLabel, "Maps",
+                    sizeof(s_chooserTabs.server.crumbsRootLabel));
         /* Upload provider: local-filesystem scan via the chooser's
          * built-in helper. */
-        mapChooserInit(&s_chooseMapUploadState, renderer);
-        s_chooseMapUploadState.maximizePtr = &s_chooseMapMaximized;
-        s_chooseMapUploadState.provider.enumerate            = mapChooserLocalFsEnumerate;
-        s_chooseMapUploadState.provider.onSelect             = lobbyUploadOnSelect;
-        s_chooseMapUploadState.provider.onFolderJump         = lobbyUploadOnFolderJump;
-        s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
-        s_chooseMapUploadState.provider.generatePreview      = lobbyUploadGeneratePreview;
-        s_chooseMapUploadState.provider.cacheScope           = "upload";
-        SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
-                    sizeof(s_chooseMapUploadState.crumbsRootLabel));
+        mapChooserInit(&s_chooserTabs.upload, renderer);
+        s_chooserTabs.upload.maximizePtr = &s_chooser.maximized;
+        s_chooserTabs.upload.provider.enumerate            = mapChooserLocalFsEnumerate;
+        s_chooserTabs.upload.provider.onSelect             = lobbyUploadOnSelect;
+        s_chooserTabs.upload.provider.onFolderJump         = lobbyUploadOnFolderJump;
+        s_chooserTabs.upload.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
+        s_chooserTabs.upload.provider.generatePreview      = lobbyUploadGeneratePreview;
+        s_chooserTabs.upload.provider.cacheScope           = "upload";
+        SDL_strlcpy(s_chooserTabs.upload.crumbsRootLabel, "Maps",
+                    sizeof(s_chooserTabs.upload.crumbsRootLabel));
         /* "Load from device" + "Generate Random Map" exist as dedicated
          * tabs in this window, so suppress the in-widget buttons that
          * would duplicate them. */
-        s_chooseMapState.hideExtras       = true;
-        s_chooseMapUploadState.hideExtras = true;
+        s_chooserTabs.server.hideExtras       = true;
+        s_chooserTabs.upload.hideExtras = true;
         /* ...but the local/upload tab still offers a single-file picker
          * at the top of its list, so the host can grab a .map straight
          * off disk. In multiplayer the whole tab is gated on uploads
          * being enabled, so the button only appears when it can act. */
-        s_chooseMapUploadState.showDeviceLoad = true;
+        s_chooserTabs.upload.showDeviceLoad = true;
         /* Random tab — third chooser instance, runs in randomTabOnly
          * mode so the widget renders generator controls on the left
          * and the procedural preview on the right. */
-        mapChooserInit(&s_chooseMapRandomState, renderer);
-        s_chooseMapRandomState.maximizePtr   = &s_chooseMapMaximized;
-        s_chooseMapRandomState.hideExtras    = true;
-        s_chooseMapRandomState.randomTabOnly = true;
-        s_chooseMapRandomLastSeq             = 0;
+        mapChooserInit(&s_chooserTabs.random, renderer);
+        s_chooserTabs.random.maximizePtr   = &s_chooser.maximized;
+        s_chooserTabs.random.hideExtras    = true;
+        s_chooserTabs.random.randomTabOnly = true;
+        s_chooserTabs.randomLastSeq             = 0;
         /* Keep the map list narrow so the preview can claim most of
          * the row width. ~300 px fits a column of names comfortably
          * without crowding the preview. The Random tab uses a wider
          * left panel because the generator controls need more room
          * than a single column of names. */
-        s_chooseMapState.leftPanelMaxW        = 300.0f;
-        s_chooseMapUploadState.leftPanelMaxW  = 300.0f;
-        s_chooseMapRandomState.leftPanelMaxW  = 360.0f;
+        s_chooserTabs.server.leftPanelMaxW        = 300.0f;
+        s_chooserTabs.upload.leftPanelMaxW  = 300.0f;
+        s_chooserTabs.random.leftPanelMaxW  = 360.0f;
         /* WBN provider — walks the WBN HTTP catalogue. refreshEveryFrame
          * because the listing lands asynchronously on a worker thread;
          * the tab needs to surface cache updates without user action.
          * Absent in the WASM build (no WBN HTTP backend). */
 #ifndef __EMSCRIPTEN__
-        mapChooserInit(&s_chooseMapWbnState, renderer);
-        s_chooseMapWbnState.maximizePtr      = &s_chooseMapMaximized;
-        s_chooseMapWbnState.hideExtras       = true;
-        s_chooseMapWbnState.leftPanelMaxW    = 300.0f;
-        s_chooseMapWbnState.provider.enumerate            = wbnMapsListProvider;
-        s_chooseMapWbnState.provider.onSelect             = lobbyWbnMapsOnSelect;
-        s_chooseMapWbnState.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
-        s_chooseMapWbnState.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
-        s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
-        s_chooseMapWbnState.provider.generatePreview      = lobbyWbnGeneratePreview;
-        s_chooseMapWbnState.provider.cacheScope           = "wbn";
-        s_chooseMapWbnState.provider.refreshEveryFrame    = true;
-        SDL_strlcpy(s_chooseMapWbnState.crumbsRootLabel, "Maps",
-                    sizeof(s_chooseMapWbnState.crumbsRootLabel));
+        mapChooserInit(&s_chooserTabs.wbn, renderer);
+        s_chooserTabs.wbn.maximizePtr      = &s_chooser.maximized;
+        s_chooserTabs.wbn.hideExtras       = true;
+        s_chooserTabs.wbn.leftPanelMaxW    = 300.0f;
+        s_chooserTabs.wbn.provider.enumerate            = wbnMapsListProvider;
+        s_chooserTabs.wbn.provider.onSelect             = lobbyWbnMapsOnSelect;
+        s_chooserTabs.wbn.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
+        s_chooserTabs.wbn.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
+        s_chooserTabs.wbn.provider.tick                 = lobbyWbnMapsTick;
+        s_chooserTabs.wbn.provider.generatePreview      = lobbyWbnGeneratePreview;
+        s_chooserTabs.wbn.provider.cacheScope           = "wbn";
+        s_chooserTabs.wbn.provider.refreshEveryFrame    = true;
+        SDL_strlcpy(s_chooserTabs.wbn.crumbsRootLabel, "Maps",
+                    sizeof(s_chooserTabs.wbn.crumbsRootLabel));
 #endif /* __EMSCRIPTEN__ */
         /* Force an initial discover for each provider — mapChooserInit
          * ran discoverMaps before the providers were wired, so the
          * states landed empty. */
-        s_chooseMapState.currentDir[0]       = '\0';
-        s_chooseMapUploadState.currentDir[0] = '\0';
-        mapChooserRefresh(&s_chooseMapState);
-        mapChooserRefresh(&s_chooseMapUploadState);
+        s_chooserTabs.server.currentDir[0]       = '\0';
+        s_chooserTabs.upload.currentDir[0] = '\0';
+        mapChooserRefresh(&s_chooserTabs.server);
+        mapChooserRefresh(&s_chooserTabs.upload);
         /* Land the selection on Everard if it's still entry 0. */
-        if (s_chooseMapState.numMaps > 0) {
-            s_chooseMapState.selectedIdx = 0;
-            SDL_strlcpy(s_chooseMapState.selectedPath,
-                        s_chooseMapState.maps[0].path,
-                        sizeof(s_chooseMapState.selectedPath));
-            SDL_strlcpy(s_chooseMapState.selectedName,
-                        s_chooseMapState.maps[0].name,
-                        sizeof(s_chooseMapState.selectedName));
+        if (s_chooserTabs.server.numMaps > 0) {
+            s_chooserTabs.server.selectedIdx = 0;
+            SDL_strlcpy(s_chooserTabs.server.selectedPath,
+                        s_chooserTabs.server.maps[0].path,
+                        sizeof(s_chooserTabs.server.selectedPath));
+            SDL_strlcpy(s_chooserTabs.server.selectedName,
+                        s_chooserTabs.server.maps[0].name,
+                        sizeof(s_chooserTabs.server.selectedName));
         }
-        s_chooseMapStateInited = true;
+        s_chooserTabs.inited = true;
     }
 }
 
 static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     /* Cache the cs for providers before EnsureInit so the first
      * synchronous discover sees the network ctx. */
-    s_chooseMapCs = cs;
+    s_chooser.cs = cs;
     lobbyChooseMapEnsureInit(renderer);
     /* Refresh each provider's cs ctx every time the chooser opens —
      * EnsureInit only runs once, but cs rebinds across game sessions.
      * All three providers use cs as ctx in their onSelect path. */
-    s_chooseMapState.provider.ctx        = cs;
-    s_chooseMapUploadState.provider.ctx  = cs;
+    s_chooserTabs.server.provider.ctx        = cs;
+    s_chooserTabs.upload.provider.ctx  = cs;
 #ifndef __EMSCRIPTEN__
-    s_chooseMapWbnState.provider.ctx     = cs;
+    s_chooserTabs.wbn.provider.ctx     = cs;
 #endif
     /* Snapshot the currently active map so Cancel can restore it
      * once an undo packet exists. */
     const char *cur = cs ? clientSimGetMapName(cs) : "";
-    SDL_strlcpy(s_chooseMapPrevName, cur ? cur : "",
-                sizeof(s_chooseMapPrevName));
+    SDL_strlcpy(s_chooser.prevName, cur ? cur : "",
+                sizeof(s_chooser.prevName));
 
     /* Default the chooser's highlighted entry to whatever map is
      * currently active — so SP (which loads Everard by default) opens
@@ -2483,32 +2516,32 @@ static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
      * (Everard) if the current map isn't in the list. */
     int matchedIdx = 0;
     if (cur && cur[0] != '\0') {
-        for (int i = 0; i < s_chooseMapState.numMaps; i++) {
-            if (SDL_strcasecmp(s_chooseMapState.maps[i].name, cur) == 0) {
+        for (int i = 0; i < s_chooserTabs.server.numMaps; i++) {
+            if (SDL_strcasecmp(s_chooserTabs.server.maps[i].name, cur) == 0) {
                 matchedIdx = i;
                 break;
             }
         }
     }
-    if (matchedIdx != s_chooseMapState.selectedIdx) {
-        s_chooseMapState.selectedIdx = matchedIdx;
-        SDL_strlcpy(s_chooseMapState.selectedPath,
-                    s_chooseMapState.maps[matchedIdx].path,
-                    sizeof(s_chooseMapState.selectedPath));
-        SDL_strlcpy(s_chooseMapState.selectedName,
-                    s_chooseMapState.maps[matchedIdx].name,
-                    sizeof(s_chooseMapState.selectedName));
-        s_chooseMapState.randomMapSelected = false;
+    if (matchedIdx != s_chooserTabs.server.selectedIdx) {
+        s_chooserTabs.server.selectedIdx = matchedIdx;
+        SDL_strlcpy(s_chooserTabs.server.selectedPath,
+                    s_chooserTabs.server.maps[matchedIdx].path,
+                    sizeof(s_chooserTabs.server.selectedPath));
+        SDL_strlcpy(s_chooserTabs.server.selectedName,
+                    s_chooserTabs.server.maps[matchedIdx].name,
+                    sizeof(s_chooserTabs.server.selectedName));
+        s_chooserTabs.server.randomMapSelected = false;
     }
 
-    s_chooseMapOpen = true;
-    s_chooseMapPreviewPending   = false;
-    s_chooseMapWantCloseConfirm = false;
+    s_chooser.open = true;
+    s_chooser.previewPending   = false;
+    s_chooser.wantCloseConfirm = false;
 }
 
 /* Maximized chooser — separate ImGui window with its own ID so its
  * (small amount of) state lives independently of the normal one. X
- * here just un-maximizes (sets s_chooseMapMaximized = false). The
+ * here just un-maximizes (sets s_chooser.maximized = false). The
  * normal window is hidden while maximized is up. */
 static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
                                                  SDL_Renderer *renderer,
@@ -2540,7 +2573,7 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     /* X closes the maximized window → restore the normal one. The
      * dialog remains open the whole time. */
     if (!open) {
-        s_chooseMapMaximized = false;
+        s_chooser.maximized = false;
     }
     if (!visible) {
         ImGui::End();
@@ -2550,17 +2583,17 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     /* Esc — same effect as the X. */
     if (ImGui::IsWindowFocused() &&
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        s_chooseMapMaximized = false;
+        s_chooser.maximized = false;
     }
 
     /* Mirror the visible tab — without this we'd always show the
      * server-list chooser's map even when the user was previewing
      * a generated map on the Generate tab. */
-    MapChooserState *activeChooser = &s_chooseMapState;
-    if (s_chooseMapActiveTab == 1)      activeChooser = &s_chooseMapUploadState;
-    else if (s_chooseMapActiveTab == 2) activeChooser = &s_chooseMapRandomState;
+    MapChooserState *activeChooser = &s_chooserTabs.server;
+    if (s_chooserTabs.activeTab == 1)      activeChooser = &s_chooserTabs.upload;
+    else if (s_chooserTabs.activeTab == 2) activeChooser = &s_chooserTabs.random;
 #ifndef __EMSCRIPTEN__
-    else if (s_chooseMapActiveTab == 3) activeChooser = &s_chooseMapWbnState;
+    else if (s_chooserTabs.activeTab == 3) activeChooser = &s_chooserTabs.wbn;
 #endif
 
     if (activeChooser->previewView &&
@@ -2614,15 +2647,15 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
 static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                        float s, int screenW, int screenH) {
     /* Stop the preview worker on the close edge — any of the six
-     * paths that flip s_chooseMapOpen to false land here on the next
+     * paths that flip s_chooser.open to false land here on the next
      * frame, and the worker auto-restarts on the next preview request
      * if the user reopens the chooser. */
     static bool s_prevOpen = false;
-    if (s_prevOpen && !s_chooseMapOpen) {
+    if (s_prevOpen && !s_chooser.open) {
         mapChooserStopPreviewWorker();
     }
-    s_prevOpen = s_chooseMapOpen;
-    if (!s_chooseMapOpen) return;
+    s_prevOpen = s_chooser.open;
+    if (!s_chooser.open) return;
     lobbyChooseMapEnsureInit(renderer);
 
     /* Maximized lives in its own ImGui window with a different ID so
@@ -2631,7 +2664,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * per-window state across frames as long as nothing calls Begin
      * with the same ID, and our windowmask covers exactly one each
      * frame. */
-    if (s_chooseMapMaximized) {
+    if (s_chooser.maximized) {
         lobbyChooseMapRenderMaximizedWindow(cs, renderer, s,
                                              screenW, screenH);
         return;
@@ -2717,7 +2750,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f * s, 320.0f * s),
                                         ImVec2(FLT_MAX, FLT_MAX));
 
-    bool open = s_chooseMapOpen;
+    bool open = s_chooser.open;
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings
                            | ImGuiWindowFlags_NoCollapse
                            | ImGuiWindowFlags_NoScrollbar
@@ -2727,7 +2760,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                  langGetText(STR_DLGLOBBY_CHOOSEMAP_TITLE));
     if (!ImGui::Begin(titleBuf, &open, flags)) {
         ImGui::End();
-        if (!open) s_chooseMapOpen = false;
+        if (!open) s_chooser.open = false;
         return;
     }
     /* Snapshot the window's current rect for the next-frame clamp
@@ -2751,7 +2784,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     /* Tab switch detection. Clearing the new tab's preview on entry
      * stops the prior visit's stale selection from showing through. */
     static int s_lastActiveTab = -1;
-    int activeTabBefore = s_chooseMapActiveTab;
+    int activeTabBefore = s_chooserTabs.activeTab;
     /* When the server is in our own process (SP, or LAN/internet host
      * binding to a local ServerSim), "Server Maps" and "Upload" both
      * read from data/maps/ — they're the same directory by definition.
@@ -2783,37 +2816,37 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
 #endif
             int cur = 0;
             for (int i = 0; i < nVis; i++) {
-                if (vis[i] == s_chooseMapActiveTab) { cur = i; break; }
+                if (vis[i] == s_chooserTabs.activeTab) { cur = i; break; }
             }
-            s_chooseMapForceTab = vis[(cur + shift + nVis) % nVis];
+            s_chooser.forceTab = vis[(cur + shift + nVis) % nVis];
         }
     }
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
         if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), nullptr,
-                s_chooseMapForceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            s_chooseMapActiveTab = 0;
+                s_chooser.forceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_chooserTabs.activeTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
-                lobbyMapTabClearSelection(&s_chooseMapState);
+                lobbyMapTabClearSelection(&s_chooserTabs.server);
             }
             /* Drain any streamed MAP_PREVIEW bytes into the preview pane
              * (MP only; SP serves previews synchronously). */
             lobbyServerMapsPumpPreview(cs, renderer);
-            lobbyRenderMapTab(&s_chooseMapState, renderer, s);
+            lobbyRenderMapTab(&s_chooserTabs.server, renderer, s);
             ImGui::EndTabItem();
         }
         if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
             ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD), nullptr,
-                s_chooseMapForceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            s_chooseMapActiveTab = 1;
+                s_chooser.forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_chooserTabs.activeTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
-                lobbyMapTabClearSelection(&s_chooseMapUploadState);
+                lobbyMapTabClearSelection(&s_chooserTabs.upload);
             }
-            lobbyRenderMapTab(&s_chooseMapUploadState, renderer, s);
+            lobbyRenderMapTab(&s_chooserTabs.upload, renderer, s);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), nullptr,
-                s_chooseMapForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            s_chooseMapActiveTab = 2;
+                s_chooser.forceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_chooserTabs.activeTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y;
             if (availH < 120.0f) availH = 120.0f;
@@ -2823,14 +2856,14 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
              * code path. Every config change increments genSeq —
              * we forward that to the server below so other clients
              * see the live preview. */
-            mapChooserRender(&s_chooseMapRandomState, renderer,
+            mapChooserRender(&s_chooserTabs.random, renderer,
                              availW, availH, s);
-            if (cs && s_chooseMapRandomState.genSeq != s_chooseMapRandomLastSeq) {
-                s_chooseMapRandomLastSeq = s_chooseMapRandomState.genSeq;
+            if (cs && s_chooserTabs.random.genSeq != s_chooserTabs.randomLastSeq) {
+                s_chooserTabs.randomLastSeq = s_chooserTabs.random.genSeq;
                 /* selectedPath is "randommap:<seed>" — strip the
                  * prefix to get the bare seed string the server
                  * expects in PACKET_LOBBY_PREVIEW_RANDOM. */
-                const char *path = s_chooseMapRandomState.selectedPath;
+                const char *path = s_chooserTabs.random.selectedPath;
                 const char *seedStr = path;
                 static const char kPrefix[] = "randommap:";
                 if (strncmp(path, kPrefix, sizeof(kPrefix) - 1) == 0) {
@@ -2842,27 +2875,27 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     if (sim) {
                         threadsWaitForMutex();
                         ok = serverSimReloadRandomMap(sim,
-                                &s_chooseMapRandomState.genConfig);
+                                &s_chooserTabs.random.genConfig);
                         threadsReleaseMutex();
                     }
                     if (ok) {
-                        s_chooseMapPreviewPending = true;
+                        s_chooser.previewPending = true;
                     }
                 } else {
                     clientSimNetSendLobbyPreviewRandom(cs, seedStr);
-                    s_chooseMapPreviewPending = true;
+                    s_chooser.previewPending = true;
                 }
             }
             ImGui::EndTabItem();
         }
 #ifndef __EMSCRIPTEN__
         if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
-                s_chooseMapForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            s_chooseMapActiveTab = 3;
+                s_chooser.forceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_chooserTabs.activeTab = 3;
             if (s_lastActiveTab != 3 && activeTabBefore != 3) {
-                lobbyMapTabClearSelection(&s_chooseMapWbnState);
+                lobbyMapTabClearSelection(&s_chooserTabs.wbn);
             }
-            lobbyRenderMapTab(&s_chooseMapWbnState, renderer, s);
+            lobbyRenderMapTab(&s_chooserTabs.wbn, renderer, s);
 
             ImGui::EndTabItem();
         }
@@ -2871,8 +2904,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     }
     /* One-shot: the forced selection has been applied (or the bar wasn't
      * drawn this frame), so don't keep re-forcing it. */
-    s_chooseMapForceTab = -1;
-    s_lastActiveTab = s_chooseMapActiveTab;
+    s_chooser.forceTab = -1;
+    s_lastActiveTab = s_chooserTabs.activeTab;
     ImGui::EndChild(); /* ##MapChooserBody */
     /* The child window becomes the "last item" after EndChild — its
      * screen rect is what we want to anchor the error overlay to. */
@@ -2931,7 +2964,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] action-bar Cancel sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
-                        (int)s_chooseMapPreviewPending);
+                        (int)s_chooser.previewPending);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2944,15 +2977,15 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
             }
-            s_chooseMapPreviewPending = false;
-            s_chooseMapOpen = false;
+            s_chooser.previewPending = false;
+            s_chooser.open = false;
         }
         ImGui::SameLine();
         if (ImGui::Button(setLbl)) {
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
                         cs ? (int)clientSimIsSinglePlayer(cs) : -1,
-                        (int)s_chooseMapPreviewPending);
+                        (int)s_chooser.previewPending);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2965,8 +2998,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
             }
-            s_chooseMapPreviewPending = false;
-            s_chooseMapOpen = false;
+            s_chooser.previewPending = false;
+            s_chooser.open = false;
         }
     }
 
@@ -2997,10 +3030,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         wantClose = true;
     }
     if (wantClose) {
-        if (s_chooseMapPreviewPending) {
-            s_chooseMapWantCloseConfirm = true;
+        if (s_chooser.previewPending) {
+            s_chooser.wantCloseConfirm = true;
         } else {
-            s_chooseMapOpen = false;
+            s_chooser.open = false;
         }
     }
 
@@ -3009,9 +3042,9 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      *  - Use This Map → commit preview, close chooser.
      *  - Cancel       → revert preview to the pre-open map, close.
      *  - Keep Picking → dismiss the popup, keep the chooser open. */
-    if (s_chooseMapWantCloseConfirm) {
+    if (s_chooser.wantCloseConfirm) {
         ImGui::OpenPopup("##MapPreviewCloseConfirm");
-        s_chooseMapWantCloseConfirm = false;
+        s_chooser.wantCloseConfirm = false;
     }
     static bool s_mpccOpen = true; s_mpccOpen = true;
     if (ImGui::BeginPopupModal("##MapPreviewCloseConfirm", &s_mpccOpen,
@@ -3035,8 +3068,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
             }
-            s_chooseMapPreviewPending = false;
-            s_chooseMapOpen           = false;
+            s_chooser.previewPending = false;
+            s_chooser.open           = false;
             ImGui::CloseCurrentPopup();
         } else if (f == WBUI::FOOTER_DESTRUCTIVE) {
             if (cs) {
@@ -3051,14 +3084,14 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
             }
-            s_chooseMapPreviewPending = false;
-            s_chooseMapOpen           = false;
+            s_chooser.previewPending = false;
+            s_chooser.open           = false;
             ImGui::CloseCurrentPopup();
         } else if (f == WBUI::FOOTER_CANCEL) {
             /* Re-open the chooser window — Begin's `open` flag was
              * flipped false when the user hit X, so without this
              * we'd close on the very next frame. */
-            s_chooseMapOpen = true;
+            s_chooser.open = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -10108,12 +10141,7 @@ extern "C" void imguiLobbyFrameReset(void) {
     lobbyMapPreviewReset();
     mapPreviewPopupDestroy();
 
-    s_chooseMapOpen             = false;
-    s_chooseMapFocusedOnce      = false;
-    s_chooseMapMaximized        = false;
-    s_chooseMapWantCloseConfirm = false;
-    s_chooseMapPreviewPending   = false;
-    s_chooseMapCs               = NULL;
+    lobbyChooserReset();
 
     lobbyChatReset();
 
@@ -10536,7 +10564,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !s_chooseMapOpen && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !s_chooser.open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -10664,7 +10692,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
             const bool haveLastRound = lobbyShowLastRound;
-            if (!s_chooseMapOpen) {
+            if (!s_chooser.open) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
@@ -11209,7 +11237,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !s_chooseMapOpen && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !s_chooser.open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -12012,7 +12040,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * eat the mouse click. NoBringToFrontOnFocus + NoFocusOnAppearing
          * keep it from stealing focus from the chooser, which is
          * rendered just below this block (so it draws on top in Z). */
-        if (s_chooseMapOpen &&
+        if (s_chooser.open &&
             s_chat.blockMax.x > s_chat.blockMin.x &&
             s_chat.blockMax.y > s_chat.blockMin.y) {
             /* NoBringToFrontOnFocus / NoFocusOnAppearing keep the z-order
@@ -12067,18 +12095,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * chat-hole (the chat InputText loses its cursor on the very
              * next frame). Once the chooser is on top, ImGui's natural
              * focus follows the click. */
-            if (!s_chooseMapFocusedOnce) {
+            if (!s_chooser.focusedOnce) {
                 ImGui::SetNextWindowFocus();
-                s_chooseMapFocusedOnce = true;
+                s_chooser.focusedOnce = true;
             }
         } else {
             /* Reset the edge-trigger so re-opening focuses again. */
-            s_chooseMapFocusedOnce = false;
+            s_chooser.focusedOnce = false;
         }
 
         /* Map chooser sub-window (Phase 1). Rendered after the main
          * lobby End() so it's a top-level ImGui window that the user
-         * can drag around freely. Only renders when s_chooseMapOpen is
+         * can drag around freely. Only renders when s_chooser.open is
          * true, set by the "Choose Map" button on the Map tab.
          * Pass the *live* winW/winH (updated each frame from
          * SDL_GetWindowSize) — screenW/screenH is cached at lobby

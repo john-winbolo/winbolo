@@ -74,6 +74,9 @@ ALLOWLIST_NAMES = (
     ("s_brains",
      "sticky bot-brain pick and the brain about.txt metadata cache, "
      "process-scoped by design"),
+    ("s_chooserTabs",
+     "map browsers' folder, selection and remembered tab, deliberately "
+     "kept across sessions"),
 )
 
 # Statics whose declared type makes them non-assignable. Matched on the
