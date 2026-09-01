@@ -9237,12 +9237,19 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 /* Open state of the settings CollapsingHeader. File-scope rather than a
  * panel-local static because the lobby's post-game edge handler below
  * drives it from outside the panel. */
-static bool s_settingsOpen     = true;
-static bool s_settingsOpenInit = false;
-/* Set while the header sits collapsed on the post-game view's initiative,
- * so the recap clearing knows there is something to put back. */
-static bool s_settingsAutoCollapsed = false;
-static bool s_settingsPreCollapse   = true;
+typedef struct LobbySettingsState {
+    bool open     = true;
+    bool openInit = false;
+    /* Set while the header sits collapsed on the post-game view's initiative,
+     * so the recap clearing knows there is something to put back. */
+    bool autoCollapsed = false;
+    bool preCollapse   = true;
+    /* Last frame's post-game-view flag, so the handler below can act on the
+     * transitions into and out of that view rather than every frame. */
+    bool prevShowLastRound = false;
+} LobbySettingsState;
+
+static LobbySettingsState s_settings = {};
 
 /* Default collapsed on the Steam Deck: its small screen needs the
  * vertical room for the player list and the Ready button, and the
@@ -9251,9 +9258,9 @@ static bool s_settingsPreCollapse   = true;
  * post-game edge handler comes first, so a first-frame init can't
  * clobber an auto-collapse that already happened. */
 static void lobbySettingsHeaderInit(void) {
-    if (s_settingsOpenInit) return;
-    s_settingsOpen     = !uiModeIsSteamDeck();
-    s_settingsOpenInit = true;
+    if (s_settings.openInit) return;
+    s_settings.open     = !uiModeIsSteamDeck();
+    s_settings.openInit = true;
 }
 
 /* The post-game recap needs the vertical room the settings form takes,
@@ -9266,20 +9273,19 @@ static void lobbySettingsHeaderInit(void) {
  * so a manual choice outranks the remembered state and survives into the
  * next round. */
 static void lobbySettingsPostGameEdge(bool showLastRound) {
-    static bool s_prevShowLastRound = false;
     lobbySettingsHeaderInit();
-    if (showLastRound && !s_prevShowLastRound) {
-        s_settingsPreCollapse   = s_settingsOpen;
+    if (showLastRound && !s_settings.prevShowLastRound) {
+        s_settings.preCollapse   = s_settings.open;
         /* Already collapsed → nothing was taken away, nothing to give back. */
-        s_settingsAutoCollapsed = s_settingsOpen;
-        s_settingsOpen          = false;
+        s_settings.autoCollapsed = s_settings.open;
+        s_settings.open          = false;
     } else if (showLastRound) {
-        if (s_settingsOpen) s_settingsAutoCollapsed = false;
-    } else if (s_prevShowLastRound) {
-        if (s_settingsAutoCollapsed) s_settingsOpen = s_settingsPreCollapse;
-        s_settingsAutoCollapsed = false;
+        if (s_settings.open) s_settings.autoCollapsed = false;
+    } else if (s_settings.prevShowLastRound) {
+        if (s_settings.autoCollapsed) s_settings.open = s_settings.preCollapse;
+        s_settings.autoCollapsed = false;
     }
-    s_prevShowLastRound = showLastRound;
+    s_settings.prevShowLastRound = showLastRound;
 }
 
 static void renderGameSettingsPanel(ClientSim *cs,
@@ -9304,7 +9310,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * configuration. The chevron still toggles it either way; see
      * lobbySettingsHeaderInit / lobbySettingsPostGameEdge above. */
     lobbySettingsHeaderInit();
-    ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
+    ImGui::SetNextItemOpen(s_settings.open, ImGuiCond_Always);
     /* Capture screen-Y of the header before drawing so the
      * right-aligned openHost control can be overlaid on the same
      * line via SetCursorScreenPos. */
@@ -9333,10 +9339,10 @@ static void renderGameSettingsPanel(ClientSim *cs,
     }
 
     if (!headerOpen) {
-        s_settingsOpen = false;
+        s_settings.open = false;
         return;
     }
-    s_settingsOpen = true;
+    s_settings.open = true;
 
     /* The openHost ("Allow all players to change settings") state is
      * intentionally invisible to regular players — they shouldn't even
@@ -9612,7 +9618,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         float btnW = ImGui::CalcTextSize(label).x + 16.0f * s;
         ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btnW);
         if (ImGui::Button(label)) {
-            s_settingsOpen = false;
+            s_settings.open = false;
         }
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(3);

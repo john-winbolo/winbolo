@@ -68,6 +68,9 @@ ALLOWLIST_NAMES = (
     ("s_icons",
      "icon and tank texture cache, keyed on the renderer and valid "
      "process-wide"),
+    ("s_settings",
+     "settings header open state, deliberately carried across rounds by "
+     "lobbySettingsPostGameEdge"),
 )
 
 # Statics whose declared type makes them non-assignable. Matched on the
