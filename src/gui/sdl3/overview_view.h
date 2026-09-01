@@ -38,6 +38,12 @@
 extern "C" {
 #endif
 
+/* keyItems, the player's in-game bindings. Included after overview_camera.h
+   so the WinSock2 guard there has already been seen at the default struct
+   packing, and from inside the extern "C" so the input declarations it
+   carries keep C linkage in a C++ host that has not included it yet. */
+#include "../input.h"
+
 #ifndef CLIENTSIM_TYPEDEF
 #define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
@@ -64,9 +70,13 @@ OverviewCamera *overviewViewCamera(OverviewView *v);
 /* Wheel / drag / keyboard, read from the current ImGui context — so the host
    calls this inside its own frame, right after submitting the pan
    InvisibleButton over the image. `cs` supplies the tank square that the
-   centre-on-tank key needs; NULL just disables that key. */
+   centre-on-tank key needs; NULL just disables that key. `keys` is the
+   player's in-game bindings: the view's own keys are checked against them so
+   it never shadows a game action, and NULL means no bindings are known, in
+   which case every key is the view's. */
 void          overviewViewHandleInput(OverviewView *v, bool hovered,
-                                      int viewW, int viewH, ClientSim *cs);
+                                      int viewW, int viewH, ClientSim *cs,
+                                      const keyItems *keys);
 
 #ifdef __cplusplus
 }

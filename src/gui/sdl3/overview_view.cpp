@@ -28,6 +28,7 @@
 #include "imgui.h"
 
 #include "overview_view.h"
+#include "key_claims.h"     /* keyIsClaimedByGame */
 
 extern "C" {
 #include "global.h"
@@ -432,8 +433,41 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
     SDL_SetRenderTarget(r, NULL);
 }
 
+/* The overview's own keys as SDL scancodes — ImGui numbers its keys its own
+ * way, and the bindings are scancodes. 0 for any key the overview does not
+ * read, which keyIsClaimedByGame never claims. */
+static int overviewScancodeForKey(ImGuiKey key) {
+    switch (key) {
+        case ImGuiKey_Equal:          return SDL_SCANCODE_EQUALS;
+        case ImGuiKey_KeypadAdd:      return SDL_SCANCODE_KP_PLUS;
+        case ImGuiKey_Minus:          return SDL_SCANCODE_MINUS;
+        case ImGuiKey_KeypadSubtract: return SDL_SCANCODE_KP_MINUS;
+        case ImGuiKey_LeftArrow:      return SDL_SCANCODE_LEFT;
+        case ImGuiKey_RightArrow:     return SDL_SCANCODE_RIGHT;
+        case ImGuiKey_UpArrow:        return SDL_SCANCODE_UP;
+        case ImGuiKey_DownArrow:      return SDL_SCANCODE_DOWN;
+        case ImGuiKey_Home:           return SDL_SCANCODE_HOME;
+        case ImGuiKey_C:              return SDL_SCANCODE_C;
+        default:                      return 0;
+    }
+}
+
+/* A key the player has bound to an in-game action belongs to the game: the
+ * overview reads it as unpressed and does without it, rather than panning or
+ * zooming while the same press also drives the tank. */
+static bool overviewKeyPressed(const keyItems *keys, ImGuiKey key) {
+    if (keyIsClaimedByGame(keys, overviewScancodeForKey(key))) return false;
+    return ImGui::IsKeyPressed(key);
+}
+
+static bool overviewKeyDown(const keyItems *keys, ImGuiKey key) {
+    if (keyIsClaimedByGame(keys, overviewScancodeForKey(key))) return false;
+    return ImGui::IsKeyDown(key);
+}
+
 extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
-                                        int viewW, int viewH, ClientSim *cs) {
+                                        int viewW, int viewH, ClientSim *cs,
+                                        const keyItems *keys) {
     if (!v || viewW <= 0 || viewH <= 0) return;
 
     ImGuiIO &io = ImGui::GetIO();
@@ -464,12 +498,12 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
     /* Keyboard zoom has no cursor to hold onto, so it anchors the centre. */
     float midX = (float)viewW * 0.5f;
     float midY = (float)viewH * 0.5f;
-    if (ImGui::IsKeyPressed(ImGuiKey_Equal) ||
-        ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) {
+    if (overviewKeyPressed(keys, ImGuiKey_Equal) ||
+        overviewKeyPressed(keys, ImGuiKey_KeypadAdd)) {
         overviewCameraZoomAt(cam, viewW, viewH, midX, midY, 1);
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Minus) ||
-        ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) {
+    if (overviewKeyPressed(keys, ImGuiKey_Minus) ||
+        overviewKeyPressed(keys, ImGuiKey_KeypadSubtract)) {
         overviewCameraZoomAt(cam, viewW, viewH, midX, midY, -1);
     }
 
@@ -477,10 +511,10 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * for you — while it is on they would fight it for one frame and lose. */
     if (!cam->follow) {
         float dx = 0.0f, dy = 0.0f;
-        if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
-        if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;
-        if (ImGui::IsKeyDown(ImGuiKey_UpArrow))    dy -= OVERVIEW_ARROW_STEP_PX;
-        if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  dy += OVERVIEW_ARROW_STEP_PX;
+        if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
+        if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;
+        if (overviewKeyDown(keys, ImGuiKey_UpArrow))    dy -= OVERVIEW_ARROW_STEP_PX;
+        if (overviewKeyDown(keys, ImGuiKey_DownArrow))  dy += OVERVIEW_ARROW_STEP_PX;
         if (dx != 0.0f || dy != 0.0f) {
             overviewCameraPan(cam, viewW, viewH, dx, dy);
         }
@@ -488,7 +522,8 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
 
     /* Nothing to centre on while the tank is dead, so the key does nothing
      * rather than throwing the view at wherever the corpse reads. */
-    if (ImGui::IsKeyPressed(ImGuiKey_Home) || ImGui::IsKeyPressed(ImGuiKey_C)) {
+    if (overviewKeyPressed(keys, ImGuiKey_Home) ||
+        overviewKeyPressed(keys, ImGuiKey_C)) {
         BYTE tankX = 0, tankY = 0;
         if (clientSimIsMyTankAlive(cs) &&
             clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {

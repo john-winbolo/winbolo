@@ -1555,8 +1555,13 @@ static void renderMapOverviewContent(ClientSim *cs) {
     ImGui::SetCursorScreenPos(imgMin);
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH));
+    /* The live bindings, so a key the player has bound to an in-game action
+       drives the tank and does nothing to the overview. Fetched each frame —
+       Key Setup can change them while the pop-out is open. */
+    keyItems keys;
+    windowGetKeys(&keys);
     overviewViewHandleInput(s_overviewView, ImGui::IsItemHovered(),
-                            texW, texH, cs);
+                            texW, texH, cs, &keys);
 
     /* Persist zoom and follow the moment the player changes either. The
        comparison is exact on purpose: the stored zoom came out of the same

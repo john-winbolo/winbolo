@@ -3160,6 +3160,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, plus the small-explosion sweep's off-by-one.
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
+    tests/unit/test_key_claims.c
     tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
@@ -3772,6 +3773,7 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    key_claims
     addrparse_host_only
     addrparse_host_port
     addrparse_scheme

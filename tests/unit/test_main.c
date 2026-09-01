@@ -512,6 +512,7 @@ static const UnitTestEntry s_tests[] = {
     { "ping_kick_defers_teardown",               run_ping_kick_defers_teardown               },
     { "tkexp_lgm_pairing",                       run_tkexp_lgm_pairing                       },
     { "input_gate_taxonomy",                     run_input_gate_taxonomy                     },
+    { "key_claims",                              run_key_claims                              },
     { "addrparse_host_only",                     run_addrparse_host_only                     },
     { "addrparse_host_port",                     run_addrparse_host_port                     },
     { "addrparse_scheme",                        run_addrparse_scheme                        },

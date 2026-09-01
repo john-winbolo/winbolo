@@ -1083,6 +1083,12 @@ int run_tkexp_lgm_pairing(void);
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
 
+/* Game-binding claims (test_key_claims.c). keyIsClaimedByGame() must report
+ * every keyItems field as owned by the game, so a second window that drives
+ * the game — the Map Overview pop-out — never shadows a bound key, and must
+ * leave scancode 0 and unbound keys free. */
+int run_key_claims(void);
+
 /* Pasted server-address splitting for the manual join dialog
  * (test_server_address_parse.c). */
 int run_addrparse_host_only(void);
