@@ -3289,33 +3289,48 @@ struct MapBounds {
     int minX, minY, maxX, maxY;
 };
 
-/* Compressed map data — stashed when map download completes so the popup
- * can decompress on demand (transportUdpClientGetMapData() is only called
- * in the one-shot preview-build block; the pointer may not remain valid). */
-static BYTE        *popupCompressedData = NULL;
-static int          popupCompressedLen  = 0;
+/* Map-preview state: the stashed compressed map bytes plus the per-start
+ * cache derived from them. */
+typedef struct LobbyMapPreviewState {
+    /* Compressed map data — stashed when map download completes so the popup
+     * can decompress on demand (transportUdpClientGetMapData() is only called
+     * in the one-shot preview-build block; the pointer may not remain valid). */
+    BYTE       *popupCompressedData = NULL;
+    int         popupCompressedLen  = 0;
 
-/* Cached compass octant (an STR_COMPASS_* lang id, 0 = unknown) per map
- * start, indexed 1-based by startIdx. MAX_STARTS is 16, so [17] covers
- * indices 1..16. Rebuilt only when the lobby map bytes change (see
- * rebuildStartCompassCache), so the player-list column never decompresses
- * the map per frame. */
-static int          s_startCompassId[MAX_STARTS + 1] = {0};
+    /* Cached compass octant (an STR_COMPASS_* lang id, 0 = unknown) per map
+     * start, indexed 1-based by startIdx. MAX_STARTS is 16, so [17] covers
+     * indices 1..16. Rebuilt only when the lobby map bytes change (see
+     * rebuildStartCompassCache), so the player-list column never decompresses
+     * the map per frame. */
+    int         startCompassId[MAX_STARTS + 1] = {0};
 
-/* Cached start map-square positions (1-based, parallel to s_startCompassId)
- * plus the start bounding box and count, for the ownership-marker overlay
- * on the map previews. Rebuilt alongside the compass cache on map change so
- * the overlay never decompresses the map per frame. */
-static BYTE         s_startMapX[MAX_STARTS + 1] = {0};
-static BYTE         s_startMapY[MAX_STARTS + 1] = {0};
-static int          s_startBboxMinX = 0, s_startBboxMinY = 0;
-static int          s_startBboxMaxX = 0, s_startBboxMaxY = 0;
-static BYTE         s_startCount = 0;
+    /* Cached start map-square positions (1-based, parallel to startCompassId)
+     * plus the start bounding box and count, for the ownership-marker overlay
+     * on the map previews. Rebuilt alongside the compass cache on map change so
+     * the overlay never decompresses the map per frame. */
+    BYTE        startMapX[MAX_STARTS + 1] = {0};
+    BYTE        startMapY[MAX_STARTS + 1] = {0};
+    int         startBboxMinX = 0, startBboxMinY = 0;
+    int         startBboxMaxX = 0, startBboxMaxY = 0;
+    BYTE        startCount = 0;
 
-/* 1-based start currently hovered in a start dropdown (the combo in the
- * player list), so the inline preview can outline it. Set while a dropdown
- * entry is hovered; consumed (cleared) by the preview overlay each frame. */
-static int          s_hoveredStartChoice = -1;
+    /* 1-based start currently hovered in a start dropdown (the combo in the
+     * player list), so the inline preview can outline it. Set while a dropdown
+     * entry is hovered; consumed (cleared) by the preview overlay each frame. */
+    int         hoveredStartChoice = -1;
+} LobbyMapPreviewState;
+
+static LobbyMapPreviewState s_mapPreview = {};
+
+/* The compressed map buffer is owned here, so it has to be released before
+ * the struct is overwritten. */
+static void lobbyMapPreviewReset(void) {
+    if (s_mapPreview.popupCompressedData) {
+        SDL_free(s_mapPreview.popupCompressedData);
+    }
+    s_mapPreview = LobbyMapPreviewState{};
+}
 
 /* Compass octant of a start at (sx,sy) within the start bounding box
  * [minX..maxX, minY..maxY]. Map Y increases downward, so north = smaller
@@ -3350,17 +3365,17 @@ static int lobbyStartCompassStr(int sx, int sy, int minX, int minY,
     return kSectorStr[sector];
 }
 
-/* Rebuild s_startCompassId from a runtime compressed map buffer. Loads a
- * transient MapPreview (the same bytes buildMapPreview consumes), computes
- * the bounding box over all starts, then fills one compass id per start.
+/* Rebuild s_mapPreview.startCompassId from a runtime compressed map buffer.
+ * Loads a transient MapPreview (the same bytes buildMapPreview consumes),
+ * computes the bounding box over all starts, then fills one compass id per start.
  * Clears the cache on failure or an empty start list. */
 static void rebuildStartCompassCache(const BYTE *data, int len) {
-    memset(s_startCompassId, 0, sizeof(s_startCompassId));
-    memset(s_startMapX, 0, sizeof(s_startMapX));
-    memset(s_startMapY, 0, sizeof(s_startMapY));
-    s_startCount = 0;
-    s_startBboxMinX = s_startBboxMinY = 0;
-    s_startBboxMaxX = s_startBboxMaxY = 0;
+    memset(s_mapPreview.startCompassId, 0, sizeof(s_mapPreview.startCompassId));
+    memset(s_mapPreview.startMapX, 0, sizeof(s_mapPreview.startMapX));
+    memset(s_mapPreview.startMapY, 0, sizeof(s_mapPreview.startMapY));
+    s_mapPreview.startCount = 0;
+    s_mapPreview.startBboxMinX = s_mapPreview.startBboxMinY = 0;
+    s_mapPreview.startBboxMaxX = s_mapPreview.startBboxMaxY = 0;
     MapPreview *mp = clientMapPreviewLoadFromBuffer(data, len);
     if (!mp) {
         return;
@@ -3384,16 +3399,16 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
     for (i = 1; i <= n; i++) {
         BYTE x, y, dir;
         if (!clientMapPreviewGetStart(mp, i, &x, &y, &dir)) continue;
-        s_startMapX[i] = x;
-        s_startMapY[i] = y;
-        s_startCompassId[i] =
+        s_mapPreview.startMapX[i] = x;
+        s_mapPreview.startMapY[i] = y;
+        s_mapPreview.startCompassId[i] =
             lobbyStartCompassStr(x, y, minX, minY, maxX, maxY);
     }
-    s_startCount    = n;
-    s_startBboxMinX = minX;
-    s_startBboxMinY = minY;
-    s_startBboxMaxX = maxX;
-    s_startBboxMaxY = maxY;
+    s_mapPreview.startCount    = n;
+    s_mapPreview.startBboxMinX = minX;
+    s_mapPreview.startBboxMinY = minY;
+    s_mapPreview.startBboxMaxX = maxX;
+    s_mapPreview.startBboxMaxY = maxY;
     clientMapPreviewDestroy(mp);
 }
 
@@ -3453,16 +3468,16 @@ static int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
 static int lobbyPreviewStartAtScreen(ImVec2 imgMin, float previewSize,
                                      int bx0, int by0, int bx1, int by1,
                                      ImVec2 pt, float radiusPx) {
-    if (s_startCount == 0) return -1;
+    if (s_mapPreview.startCount == 0) return -1;
     float spanX = (float)((bx1 + 1) - bx0);
     float spanY = (float)((by1 + 1) - by0);
     if (spanX <= 0.0f || spanY <= 0.0f) return -1;
     int best = -1;
     float bestD2 = 0.0f;
     float r2 = radiusPx * radiusPx;
-    for (int i = 1; i <= (int)s_startCount; i++) {
-        float fx = imgMin.x + (((float)s_startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
-        float fy = imgMin.y + (((float)s_startMapY[i] + 0.5f - by0) / spanY) * previewSize;
+    for (int i = 1; i <= (int)s_mapPreview.startCount; i++) {
+        float fx = imgMin.x + (((float)s_mapPreview.startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
+        float fy = imgMin.y + (((float)s_mapPreview.startMapY[i] + 0.5f - by0) / spanY) * previewSize;
         float ex = fx - pt.x, ey = fy - pt.y, d2 = ex * ex + ey * ey;
         if (d2 > r2) continue;
         if (best < 0 || d2 < bestD2) { best = i; bestD2 = d2; }
@@ -3481,7 +3496,7 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
                                          ImVec2 imgMin, float previewSize,
                                          int bx0, int by0, int bx1, int by1) {
     const bool spectator = clientSimIsSpectator(cs);
-    if (s_startCount == 0) return;
+    if (s_mapPreview.startCount == 0) return;
     float spanX = (float)((bx1 + 1) - bx0);
     float spanY = (float)((by1 + 1) - by0);
     if (spanX <= 0.0f || spanY <= 0.0f) return;
@@ -3491,7 +3506,7 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
     int holderOf[MAX_STARTS + 1];
     int nameListIdx[MAX_STARTS + 1];
     int nHolders = 0;
-    for (int i = 1; i <= (int)s_startCount; i++) {
+    for (int i = 1; i <= (int)s_mapPreview.startCount; i++) {
         holderOf[i]    = lobbyStartHolderSlot(cs, i);
         nameListIdx[i] = -1;
         if (holderOf[i] >= 0) {
@@ -3508,10 +3523,10 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
     float fsz      = ImGui::GetFontSize() * 0.85f;
     float tilePx   = (spanX > 0.0f) ? (previewSize / spanX) : 1.0f;
 
-    for (int i = 1; i <= (int)s_startCount; i++) {
+    for (int i = 1; i <= (int)s_mapPreview.startCount; i++) {
         /* Start map-square centre -> displayed image pixel. */
-        float fx = imgMin.x + (((float)s_startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
-        float fy = imgMin.y + (((float)s_startMapY[i] + 0.5f - by0) / spanY) * previewSize;
+        float fx = imgMin.x + (((float)s_mapPreview.startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
+        float fy = imgMin.y + (((float)s_mapPreview.startMapY[i] + 0.5f - by0) / spanY) * previewSize;
         if (fx < imgMin.x || fx > imgMin.x + previewSize ||
             fy < imgMin.y || fy > imgMin.y + previewSize) continue;
 
@@ -3534,8 +3549,9 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
          * so the centre point is the same whether or not an initial is
          * present. */
         LobbyCompassDir dir = lobbyStartCompassDir(
-            s_startMapX[i], s_startMapY[i],
-            s_startBboxMinX, s_startBboxMinY, s_startBboxMaxX, s_startBboxMaxY);
+            s_mapPreview.startMapX[i], s_mapPreview.startMapY[i],
+            s_mapPreview.startBboxMinX, s_mapPreview.startBboxMinY,
+            s_mapPreview.startBboxMaxX, s_mapPreview.startBboxMaxY);
         float ox, oy;
         lobbyCompassOffset(dir, &ox, &oy);
         int dirX = (ox > 0.3f) ? 1 : (ox < -0.3f ? -1 : 0);
@@ -3574,9 +3590,9 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
      * the start under the cursor (~25px catch, also the drag-drop target)
      * and the start whose dropdown entry is currently hovered. */
     auto outlineStart = [&](int st) {
-        if (st < 1 || st > (int)s_startCount) return;
-        float fx = imgMin.x + (((float)s_startMapX[st] + 0.5f - bx0) / spanX) * previewSize;
-        float fy = imgMin.y + (((float)s_startMapY[st] + 0.5f - by0) / spanY) * previewSize;
+        if (st < 1 || st > (int)s_mapPreview.startCount) return;
+        float fx = imgMin.x + (((float)s_mapPreview.startMapX[st] + 0.5f - bx0) / spanX) * previewSize;
+        float fy = imgMin.y + (((float)s_mapPreview.startMapY[st] + 0.5f - by0) / spanY) * previewSize;
         float dotPx = 3.0f * previewSize / spanX;
         float half  = dotPx * 0.5f + 1.5f;
         if (half < 4.0f) half = 4.0f;
@@ -3585,8 +3601,8 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
     };
     outlineStart(lobbyPreviewStartAtScreen(imgMin, previewSize, bx0, by0, bx1, by1,
                                            ImGui::GetMousePos(), 25.0f));
-    outlineStart(s_hoveredStartChoice);
-    s_hoveredStartChoice = -1;   /* consume */
+    outlineStart(s_mapPreview.hoveredStartChoice);
+    s_mapPreview.hoveredStartChoice = -1;   /* consume */
 }
 
 /* Interaction layer for the inline map preview. Called right after the map
@@ -4496,9 +4512,9 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
         return;
     }
 
-    if (!popupCompressedData || popupCompressedLen <= 0) return;
+    if (!s_mapPreview.popupCompressedData || s_mapPreview.popupCompressedLen <= 0) return;
     int start1 = (int)ls->startIdx;
-    if (start1 < 1 || start1 > (int)s_startCount || start1 > MAX_STARTS) return;
+    if (start1 < 1 || start1 > (int)s_mapPreview.startCount || start1 > MAX_STARTS) return;
     if (!ImGui::IsItemHovered()) return;
 
     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -4509,12 +4525,12 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
         ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
 
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        int sqX = (int)s_startMapX[start1];
-        int sqY = (int)s_startMapY[start1];
+        int sqX = (int)s_mapPreview.startMapX[start1];
+        int sqY = (int)s_mapPreview.startMapY[start1];
         /* Bounds are only the pre-parse framing hint; the explicit centre in
          * mapPreviewPopupFocusMapSquare overrides them once the map parses,
          * so a tight box around the target is all this needs. */
-        mapPreviewPopupFocusMapSquare(popupCompressedData, popupCompressedLen,
+        mapPreviewPopupFocusMapSquare(s_mapPreview.popupCompressedData, s_mapPreview.popupCompressedLen,
                                       sqX - 8, sqY - 8, sqX + 8, sqY + 8,
                                       sqX, sqY);
     }
@@ -5469,7 +5485,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * the otherwise-empty spacer column so the label sits
                  * between the ping and ready cells without a table-wide
                  * column reshuffle. The octant comes from the cached
-                 * s_startCompassId table (rebuilt on map change). */
+                 * s_mapPreview.startCompassId table (rebuilt on map change). */
                 ImGui::TableSetColumnIndex(4);
                 rowTopY = ImGui::GetCursorPosY();
                 /* Spacer-column left edge == right edge of the ping/gear
@@ -5490,8 +5506,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (!canEditStart) {
                         const char *startLbl = "—";
                         if (cslot->connected && sIdx != 0xFF &&
-                            sIdx <= MAX_STARTS && s_startCompassId[sIdx] != 0) {
-                            startLbl = langGetText(s_startCompassId[sIdx]);
+                            sIdx <= MAX_STARTS && s_mapPreview.startCompassId[sIdx] != 0) {
+                            startLbl = langGetText(s_mapPreview.startCompassId[sIdx]);
                         }
                         cyTextAbs();
                         if (appliedStartCenterX > 0.0f) {
@@ -5504,10 +5520,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     } else {
                         char preview[64];
                         if (sIdx != 0xFF && sIdx <= MAX_STARTS &&
-                            s_startCompassId[sIdx] != 0) {
+                            s_mapPreview.startCompassId[sIdx] != 0) {
                             SDL_snprintf(preview, sizeof(preview),
                                          "#%u \xC2\xB7 %s", (unsigned)sIdx,
-                                         langGetText(s_startCompassId[sIdx]));
+                                         langGetText(s_mapPreview.startCompassId[sIdx]));
                         } else {
                             SDL_snprintf(preview, sizeof(preview), "%s",
                                          langGetText(STR_DLGLOBBY_START_UNASSIGNED));
@@ -5529,7 +5545,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::SetNextItemWidth(comboW);
                         if (ImGui::BeginCombo(comboId, preview)) {
                             for (int k = 1; k <= MAX_STARTS; k++) {
-                                if (s_startCompassId[k] == 0) continue;
+                                if (s_mapPreview.startCompassId[k] == 0) continue;
                                 /* Connected holder of start k, if any. */
                                 int holder = -1;
                                 for (int h = 0; h < MAX_TANKS; h++) {
@@ -5547,12 +5563,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 if (occupiedByOther) {
                                     SDL_snprintf(entry, sizeof(entry),
                                                  "#%u \xC2\xB7 %s (%s)", (unsigned)k,
-                                                 langGetText(s_startCompassId[k]),
+                                                 langGetText(s_mapPreview.startCompassId[k]),
                                                  clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
                                 } else {
                                     SDL_snprintf(entry, sizeof(entry),
                                                  "#%u \xC2\xB7 %s", (unsigned)k,
-                                                 langGetText(s_startCompassId[k]));
+                                                 langGetText(s_mapPreview.startCompassId[k]));
                                 }
                                 bool selected = (sIdx == (uint8_t)k);
                                 if (ImGui::Selectable(entry, selected)) {
@@ -5560,7 +5576,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 }
                                 /* Outline this start on the preview while its
                                  * dropdown entry is hovered. */
-                                if (ImGui::IsItemHovered()) s_hoveredStartChoice = k;
+                                if (ImGui::IsItemHovered()) s_mapPreview.hoveredStartChoice = k;
                                 if (selected) ImGui::SetItemDefaultFocus();
                             }
                             bool relSel = (sIdx == 0xFF);
@@ -10014,11 +10030,7 @@ extern "C" void imguiLobbyFrameReset(void) {
         SDL_DestroyTexture(s_lf.mapPreviewTex);
         s_lf.mapPreviewTex = NULL;
     }
-    if (popupCompressedData) {
-        SDL_free(popupCompressedData);
-        popupCompressedData = NULL;
-        popupCompressedLen = 0;
-    }
+    lobbyMapPreviewReset();
     mapPreviewPopupDestroy();
 
     s_chooseMapOpen             = false;
@@ -10198,7 +10210,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * if the user has it open we want it to seamlessly update
              * to the new map (handled in the rebuild block below via
              * mapPreviewPopupRefreshOpen). */
-            if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; popupCompressedLen = 0; }
+            if (s_mapPreview.popupCompressedData) { SDL_free(s_mapPreview.popupCompressedData); s_mapPreview.popupCompressedData = NULL; s_mapPreview.popupCompressedLen = 0; }
         }
         /* mapPreviewBuilt — open the rebuild gate ONLY when we have
          * a real data signal (seq tick OR download-complete edge).
@@ -10295,23 +10307,23 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     mapBounds.minX, mapBounds.maxX,
                     mapBounds.minY, mapBounds.maxY);
                 /* Stash for popup decompression */
-                if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; }
-                popupCompressedData = (BYTE *)SDL_malloc(mapLen);
-                if (popupCompressedData) {
-                    SDL_memcpy(popupCompressedData, mapData, mapLen);
-                    popupCompressedLen = mapLen;
+                if (s_mapPreview.popupCompressedData) { SDL_free(s_mapPreview.popupCompressedData); s_mapPreview.popupCompressedData = NULL; }
+                s_mapPreview.popupCompressedData = (BYTE *)SDL_malloc(mapLen);
+                if (s_mapPreview.popupCompressedData) {
+                    SDL_memcpy(s_mapPreview.popupCompressedData, mapData, mapLen);
+                    s_mapPreview.popupCompressedLen = mapLen;
                     /* Recompute the per-start compass cache from the new
                      * map bytes — only here, so the player-list column
                      * never decompresses the map per frame. */
-                    rebuildStartCompassCache(popupCompressedData,
-                                             popupCompressedLen);
+                    rebuildStartCompassCache(s_mapPreview.popupCompressedData,
+                                             s_mapPreview.popupCompressedLen);
                     /* If the user has the big map-preview popup open
                      * right now, refresh its underlying data in place
                      * so it seamlessly updates to the new map instead
                      * of closing on every server-side map change. */
                     if (mapPreviewPopupIsOpen()) {
-                        mapPreviewPopupRefreshOpen(popupCompressedData,
-                                                    popupCompressedLen);
+                        mapPreviewPopupRefreshOpen(s_mapPreview.popupCompressedData,
+                                                    s_mapPreview.popupCompressedLen);
                     }
                 }
             }
@@ -10322,7 +10334,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * Claims don't trigger a map re-download, so the build-once path
          * above won't catch them. Cheap: rebuilds the 256² minimap only when
          * the ownership signature actually moves. */
-        if (mapPreviewTex && popupCompressedData && popupCompressedLen > 0) {
+        if (mapPreviewTex && s_mapPreview.popupCompressedData && s_mapPreview.popupCompressedLen > 0) {
             uint8_t owners[MAX_STARTS];
             uint32_t sig = 0;
             int nOwn = lobbyComputeStartOwners(cs, spectator ? -1 : (int)gameFrontGetPlayerNum(),
@@ -10337,8 +10349,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 mapPreviewOwnerStable = 0;
             }
             if (sig != mapPreviewOwnerSig && mapPreviewOwnerStable >= 3) {
-                SDL_Texture *fresh = buildMapPreview(renderer, popupCompressedData,
-                                                     popupCompressedLen, &mapBounds,
+                SDL_Texture *fresh = buildMapPreview(renderer, s_mapPreview.popupCompressedData,
+                                                     s_mapPreview.popupCompressedLen, &mapBounds,
                                                      nOwn ? owners : NULL, nOwn);
                 if (fresh) {
                     SDL_DestroyTexture(mapPreviewTex);
@@ -10864,13 +10876,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                          * popup (which in controller mode shows the start list).
                          * The pad has no click, so the mouse onClick path below
                          * can't reach it; Space/A on this item does. */
-                        if (uiShouldUseControllerMode() && popupCompressedData) {
+                        if (uiShouldUseControllerMode() && s_mapPreview.popupCompressedData) {
                             ImGui::SetCursorScreenPos(miniMin);
                             ImGui::SetNextItemAllowOverlap();
                             if (ImGui::InvisibleButton("##openStartPicker",
                                                        ImVec2(innerSize, innerSize))) {
-                                mapPreviewPopupOpenCompressed(popupCompressedData,
-                                                              popupCompressedLen,
+                                mapPreviewPopupOpenCompressed(s_mapPreview.popupCompressedData,
+                                                              s_mapPreview.popupCompressedLen,
                                                               mapBounds.minX, mapBounds.minY,
                                                               mapBounds.maxX, mapBounds.maxY);
                             }
@@ -10879,9 +10891,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::SetCursorPosY(boxTopY + previewSize);
                         /* A click that didn't land on a start opens the zoomed
                          * popup (clicking a free start moves you there). */
-                        if (popupCompressedData && !miniConsumed &&
+                        if (s_mapPreview.popupCompressedData && !miniConsumed &&
                             !uiShouldUseControllerMode()) {
-                            mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
+                            mapPreviewPopupOnClick(s_mapPreview.popupCompressedData, s_mapPreview.popupCompressedLen,
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
@@ -11717,9 +11729,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* A click that didn't land on a start opens the zoomed popup
                  * (clicking a free start moves you there instead). Mouse only;
                  * this two-column layout is never used in controller mode. */
-                if (popupCompressedData && !miniConsumed &&
+                if (s_mapPreview.popupCompressedData && !miniConsumed &&
                     !uiShouldUseControllerMode()) {
-                    mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
+                    mapPreviewPopupOnClick(s_mapPreview.popupCompressedData, s_mapPreview.popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);
                 }
