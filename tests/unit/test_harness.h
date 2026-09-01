@@ -846,6 +846,12 @@ int run_overview_camera(void);
  * the block comes back when it respawns. */
 int run_overview_dead_tank(void);
 
+/* My-tank position accessor (test_overview_map.c): clientSimGetMyTankMapPos
+ * reports the tank's square while it is alive, fails while it is dead and
+ * waiting to respawn rather than handing back the map origin it reads as, and
+ * leaves the caller's out-params alone when it fails. */
+int run_tank_pos_dead(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

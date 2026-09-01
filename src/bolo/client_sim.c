@@ -2445,7 +2445,7 @@ void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {
 }
 
 bool clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
-  if (!cs || MY_TANK(cs) == NULL) return false;
+  if (!clientSimIsMyTankAlive(cs)) return false;
   if (mapX) *mapX = tankGetMX(&MY_TANK(cs));
   if (mapY) *mapY = tankGetMY(&MY_TANK(cs));
   return true;

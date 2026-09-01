@@ -992,7 +992,12 @@ void         clientSimSetScrollMechanism(int mech);
 
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank
- * is destroyed / not yet spawned. */
+ * is destroyed / not yet spawned.
+ *
+ * clientSimGetMyTankMapPos also returns false while the tank is dead and
+ * waiting to respawn: the underlying read gives the map origin then rather
+ * than anywhere the tank is. It leaves *mapX / *mapY alone when it fails, so
+ * a caller keeps whatever fallback it seeded them with. */
 bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 

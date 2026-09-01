@@ -440,6 +440,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_loopback",                       run_overview_loopback                       },
     { "overview_camera",                         run_overview_camera                         },
     { "overview_dead_tank",                      run_overview_dead_tank                      },
+    { "tank_pos_dead",                           run_tank_pos_dead                           },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },

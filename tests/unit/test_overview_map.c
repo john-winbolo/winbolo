@@ -17,6 +17,10 @@
  * counting as somewhere the player is, and a round reset clears the lot while
  * a mid-game map resync leaves it alone.
  *
+ * One case steps outside the memory to the accessor that feeds it,
+ * clientSimGetMyTankMapPos, and pins what it reports for a tank that is dead
+ * and waiting to respawn.
+ *
  * The last case runs the reveal checks again over the real UDP transport, where
  * the map arrives as a download and terrain changes arrive out of band as map
  * events, so the mask does not quietly depend on the client and the server
@@ -818,6 +822,53 @@ int run_overview_dead_tank(void) {
     ASSERT_RECT_LIVE(om, tankRect, TRUE, "a respawned tank's block");
     UT_ASSERT_MSG(om->liveCount == 1, "liveCount %d after the tank came back",
                   om->liveCount);
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+/* Seeded into the out-params before every read below. Non-zero, so the map
+ * origin a dead tank's position used to read as shows up as a write. */
+#define TANK_POS_SENTINEL 0xEE
+
+int run_tank_pos_dead(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "TankPos");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    BYTE gotX = TANK_POS_SENTINEL;
+    BYTE gotY = TANK_POS_SENTINEL;
+
+    UT_ASSERT_MSG(clientSimGetMyTankMapPos(f.cs, &gotX, &gotY) == TRUE,
+                  "a living tank reported no map position");
+    UT_ASSERT_MSG(gotX == f.tankMX && gotY == f.tankMY,
+                  "a living tank reads %u,%u, expected %u,%u", (unsigned)gotX,
+                  (unsigned)gotY, (unsigned)f.tankMX, (unsigned)f.tankMY);
+
+    /* Dead but still in its slot, which is where the server leaves it for the
+     * whole of deathWait. The position underneath reads as the map origin, so
+     * the accessor has nothing true to report. */
+    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    gotX = TANK_POS_SENTINEL;
+    gotY = TANK_POS_SENTINEL;
+    UT_ASSERT_MSG(clientSimGetMyTankMapPos(f.cs, &gotX, &gotY) != TRUE,
+                  "a dead tank reported a map position");
+    /* A caller that ignores the return value should at least not be handed a
+     * square the tank is not on. */
+    UT_ASSERT_MSG(gotX == TANK_POS_SENTINEL && gotY == TANK_POS_SENTINEL,
+                  "a failed read overwrote the caller's variables with %u,%u",
+                  (unsigned)gotX, (unsigned)gotY);
+
+    /* Respawned: the accessor answers again, with the square it had. */
+    tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    gotX = TANK_POS_SENTINEL;
+    gotY = TANK_POS_SENTINEL;
+    UT_ASSERT_MSG(clientSimGetMyTankMapPos(f.cs, &gotX, &gotY) == TRUE,
+                  "a respawned tank reported no map position");
+    UT_ASSERT_MSG(gotX == f.tankMX && gotY == f.tankMY,
+                  "a respawned tank reads %u,%u, expected %u,%u",
+                  (unsigned)gotX, (unsigned)gotY, (unsigned)f.tankMX,
+                  (unsigned)f.tankMY);
 
     overviewFixtureStop(&f);
     return 0;
