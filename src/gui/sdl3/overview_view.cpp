@@ -29,12 +29,16 @@
 
 #include "overview_view.h"
 #include "key_claims.h"     /* keyIsClaimedByGame */
+#include "build_cursor.h"   /* buildCursorSetTile */
 
 extern "C" {
 #include "global.h"
 #include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPos,
                                clientSimIsMyTankAlive,
-                               clientSimPrepareOverviewEntities */
+                               clientSimPrepareOverviewEntities,
+                               clientSimManMoveToMap,
+                               clientSimGetCurrentBuildSelect */
+#include "../clientmutex.h" /* the build dispatch runs on the sim's data */
 #include "overview_types.h"
 #include "screentank.h"
 #include "screenlgm.h"
@@ -465,6 +469,20 @@ static bool overviewKeyDown(const keyItems *keys, ImGuiKey key) {
     return ImGui::IsKeyDown(key);
 }
 
+/* The map square under the mouse pointer, taken against the item the caller
+ * submitted immediately before this — the same rect the wheel zoom anchors
+ * to. False when the pointer is off the map; the square is still written, so
+ * callers have to test the return rather than the values. */
+static bool overviewSquareUnderMouse(const OverviewCamera *cam,
+                                     int viewW, int viewH,
+                                     int *outMapX, int *outMapY) {
+    ImVec2 rectMin = ImGui::GetItemRectMin();
+    ImVec2 mouse   = ImGui::GetMousePos();
+    return overviewCameraScreenToWorld(cam, viewW, viewH,
+                                       mouse.x - rectMin.x, mouse.y - rectMin.y,
+                                       outMapX, outMapY);
+}
+
 extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
                                         int viewW, int viewH, ClientSim *cs,
                                         const keyItems *keys) {
@@ -493,6 +511,43 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
         int steps = (io.MouseWheel > 0.0f) ? 1 : -1;
         overviewCameraZoomAt(cam, viewW, viewH,
                              mouse.x - rectMin.x, mouse.y - rectMin.y, steps);
+    }
+
+    /* Moving the pointer over the map drives the one shared build cursor, the
+     * way moving it over the main view does, so toggling build mode picks up
+     * where the pointer is. Only on real movement, and only while the pointer
+     * is over a square that exists — past the map edge it stays where it was
+     * rather than jumping to a clamped square.
+     *
+     * While cursor mode is ON, buildCursorClampToView drags the cursor back
+     * inside the main view's 15x15 each frame, so a square set from here
+     * outside that area does not survive to the next one. Cursor mode is the
+     * keyboard/gamepad affordance; with a mouse it is off and the clamp is a
+     * no-op. The click below dispatches from the pointer's square rather than
+     * from the cursor, so building is unaffected either way. */
+    if (hovered && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
+        int mx = 0, my = 0;
+        if (overviewSquareUnderMouse(cam, viewW, viewH, &mx, &my)) {
+            buildCursorSetTile((BYTE)mx, (BYTE)my);
+        }
+    }
+
+    /* Left-click builds at the square under the pointer. The pan item claims
+     * the right button, so the left one arrives here unswallowed. Range,
+     * terrain and cost are the server's to refuse, exactly as for a build
+     * dispatched from the main view; clientSimManMoveToMap already drops the
+     * request for a dead tank or a failed connection. */
+    if (hovered && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        int mx = 0, my = 0;
+        if (overviewSquareUnderMouse(cam, viewW, viewH, &mx, &my)) {
+            clientMutexWaitFor();
+            clientSimManMoveToMap(cs, (BYTE)mx, (BYTE)my,
+                                  clientSimGetCurrentBuildSelect(cs));
+            clientMutexRelease();
+            /* Leave the shared cursor on the square just built, as pointer
+             * motion over the main view would have. */
+            buildCursorSetTile((BYTE)mx, (BYTE)my);
+        }
     }
 
     /* Keyboard zoom has no cursor to hold onto, so it anchors the centre. */

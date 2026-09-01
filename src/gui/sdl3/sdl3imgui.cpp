@@ -1549,12 +1549,15 @@ static void renderMapOverviewContent(ClientSim *cs) {
     ImGui::Image((ImTextureID)tex, ImVec2((float)texW, (float)texH));
     imguiPopNearestSampling();
 
-    /* An InvisibleButton over the image rect takes the left-drag as an
-       active item, so dragging pans the map instead of moving the window,
-       and gives the input handler its hover test. */
+    /* An InvisibleButton over the image rect takes the right-drag as an
+       active item, so dragging with the right button pans the map instead of
+       moving the window, and gives the input handler its hover test. The left
+       button is left unclaimed on purpose — it builds at the square under the
+       pointer, and an active item would swallow the click. */
     ImGui::SetCursorScreenPos(imgMin);
     ImGui::SetNextItemAllowOverlap();
-    ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH));
+    ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH),
+                           ImGuiButtonFlags_MouseButtonRight);
     /* The live bindings, so a key the player has bound to an in-game action
        drives the tank and does nothing to the overview. Fetched each frame —
        Key Setup can change them while the pop-out is open. */

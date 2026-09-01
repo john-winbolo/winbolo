@@ -67,10 +67,13 @@ SDL_Texture  *overviewViewGetTexture(const OverviewView *v);
 void          overviewViewGetSize(const OverviewView *v, int *outW, int *outH);
 OverviewCamera *overviewViewCamera(OverviewView *v);
 
-/* Wheel / drag / keyboard, read from the current ImGui context — so the host
-   calls this inside its own frame, right after submitting the pan
-   InvisibleButton over the image. `cs` supplies the tank square that the
-   centre-on-tank key needs; NULL just disables that key. `keys` is the
+/* Wheel / drag / click / keyboard, read from the current ImGui context — so
+   the host calls this inside its own frame, right after submitting the pan
+   InvisibleButton over the image. Pointer motion over the map moves the shared
+   build cursor and a left-click builds at the square under it, so the pan item
+   has to claim the right mouse button and leave the left one free. `cs`
+   supplies the tank square that the centre-on-tank key needs and takes the
+   build request; NULL disables both. `keys` is the
    player's in-game bindings: the view's own keys are checked against them so
    it never shadows a game action, and NULL means no bindings are known, in
    which case every key is the view's. */
