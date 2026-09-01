@@ -226,12 +226,12 @@ void mapEditorImguiObjectList(void *bases, void *pills,
 /* Render the Overview minimap window.
  * minimapTex: 256x256 streaming texture (SDL_Texture* cast to void*)
  * viewCenterX/Y: camera center in world coords (tile << 8)
- * zoomLevel: current zoom level (e.g. 0.5, 1.0, 2.0)
- * screenW/H: main window dimensions
+ * tilePixels: on-screen size of one map tile, in the same units as screenW/H
+ * screenW/H: canvas dimensions in renderer pixels
  * navX/navY: output tile coords if the user clicked to navigate (-1 if none) */
 void mapEditorImguiOverview(void *minimapTex,
                              int viewCenterX, int viewCenterY,
-                             float zoomLevel, int screenW, int screenH,
+                             float tilePixels, int screenW, int screenH,
                              int *navX, int *navY,
                              bool *p_open);
 

@@ -1116,6 +1116,19 @@ static int meRenderZoom(const MapEditorState *ed, float pxScale) {
     return base * density;
 }
 
+/* On-screen size of one map tile, in renderer pixels.
+
+   At zoom >= 1 that is the render zoom outright. Below 1x the canvas is drawn
+   at the render zoom into the offscreen and then blitted down by zoomLevel, so
+   both factors apply. Anything turning a screen distance into a map distance
+   divides by this: the drag-pan and the overview's viewport rectangle. Both
+   used 16 * zoomLevel, which was right while the canvas was measured in points
+   and is short by the pixel density now that it is measured in pixels. */
+static float meScreenTilePixels(const MapEditorState *ed) {
+    float sub = (ed->zoomLevel < 1.0f) ? ed->zoomLevel : 1.0f;
+    return (float)TILE_SIZE_X * (float)ed->zoomFactor * sub;
+}
+
 /* Atlas scale to rasterize at for a given render zoom. Capped, and reduced to
    a divisor of the render zoom: whatever the atlas does not supply is made up
    by magnifying it, and only a whole-number ratio magnifies evenly. A render
@@ -3506,7 +3519,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                     float dy = motionY - ed->dragLastY;
                     ed->dragLastX = motionX;
                     ed->dragLastY = motionY;
-                    float tilePixelsF = 16.0f * ed->zoomLevel;
+                    float tilePixelsF = meScreenTilePixels(ed);
                     int wmoveX = (int)(dx * 256.0f / tilePixelsF);
                     int wmoveY = (int)(dy * 256.0f / tilePixelsF);
                     int cx = (int)ed->viewCenterX - wmoveX;
@@ -4345,7 +4358,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (ed->showOverview) {
             int navX = -1, navY = -1;
             mapEditorImguiOverview(ed->minimapTex, ed->viewCenterX, ed->viewCenterY,
-                                    ed->zoomLevel, screenW, screenH,
+                                    meScreenTilePixels(ed), screenW, screenH,
                                     &navX, &navY,
                                     &ed->showOverview);
             if (navX >= 0 && navY >= 0) {
