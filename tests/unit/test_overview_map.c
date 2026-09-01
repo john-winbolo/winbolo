@@ -13,8 +13,9 @@
  * leaves a live region keeps the tile it had and never picks up a later
  * terrain change the client already knows about, a region that stops being
  * live is stamped once more on the way out so a pill freezes dead or in the
- * captor's colours rather than a tick stale, and a round reset clears the lot
- * while a mid-game map resync leaves it alone.
+ * captor's colours rather than a tick stale, a tank waiting to respawn stops
+ * counting as somewhere the player is, and a round reset clears the lot while
+ * a mid-game map resync leaves it alone.
  *
  * The last case runs the reveal checks again over the real UDP transport, where
  * the map arrives as a download and terrain changes arrive out of band as map
@@ -181,6 +182,11 @@ int run_overview_regions(void) {
 
 /* Side of the tank block, for the tile snapshot the tank-removal arm takes. */
 #define OVERVIEW_TANK_SIDE (2 * OVERVIEW_TANK_HALF + 1)
+
+/* The map corner the overview was seen jumping to when the local player died.
+ * The dead-tank case parks the tank there itself, so what it asserts does not
+ * rest on how a dead tank's position goes bad. */
+#define OVERVIEW_DEAD_TANK_M 0
 
 typedef struct OverviewFixture {
     ServerSim *sim;
@@ -716,6 +722,102 @@ int run_overview_pill_capture(void) {
             i++;
         }
     }
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+int run_overview_dead_tank(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Dead");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* No pills: the tank's block is the only live region, so a tick that
+     * discounts the tank has nothing left to keep live. */
+    f.gs->pb->numPills = 0;
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    OverviewRect tankRect =
+        overviewTestBlock(f.tankMX, f.tankMY, OVERVIEW_TANK_HALF);
+    OverviewRect deadRect = overviewTestBlock(OVERVIEW_DEAD_TANK_M,
+                                              OVERVIEW_DEAD_TANK_M,
+                                              OVERVIEW_TANK_HALF);
+    int x, y, i;
+
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, tankRect, TRUE, "a living tank's block");
+    UT_ASSERT_MSG(om->liveCount == 1,
+                  "liveCount %d with a living tank and no pills",
+                  om->liveCount);
+
+    /* Every tile of the tank's block, to check the memory freezes rather than
+     * being wiped when the tank stops counting. */
+    BYTE saved[OVERVIEW_TANK_SIDE * OVERVIEW_TANK_SIDE];
+    i = 0;
+    for (x = tankRect.left; x <= tankRect.right; x++) {
+        for (y = tankRect.top; y <= tankRect.bottom; y++) {
+            saved[i] = om->tile[x][y];
+            i++;
+        }
+    }
+
+    /* The block the tank is about to be sent to. Checked unseen rather than
+     * assumed, so a join that dropped the tank within reach of the corner says
+     * so instead of leaving the case proving nothing. */
+    for (x = deadRect.left; x <= deadRect.right; x++) {
+        for (y = deadRect.top; y <= deadRect.bottom; y++) {
+            UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
+                          "square %d,%d of the corner the dead tank is sent to "
+                          "is already revealed: tile %u",
+                          x, y, (unsigned)om->tile[x][y]);
+        }
+    }
+
+    /* Dead but still in its slot, which is what the server leaves behind for
+     * the whole of deathWait: over full armour, the way a drowning writes it.
+     * The move to the corner is what the live bug does implicitly. */
+    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    tankSetWorld(f.gs, &f.gs->tanks[f.me],
+                 (WORLD)(OVERVIEW_DEAD_TANK_M << TANK_SHIFT_MAPSIZE),
+                 (WORLD)(OVERVIEW_DEAD_TANK_M << TANK_SHIFT_MAPSIZE), 0, false);
+    clientSimDisplayTick(f.cs, false);
+
+    /* A dead tank reveals nothing, wherever it reads. */
+    for (x = deadRect.left; x <= deadRect.right; x++) {
+        for (y = deadRect.top; y <= deadRect.bottom; y++) {
+            UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
+                          "a dead tank revealed square %d,%d: tile %u", x, y,
+                          (unsigned)om->tile[x][y]);
+        }
+    }
+    UT_ASSERT_MSG(om->liveCount == 0,
+                  "liveCount %d with a dead tank and no pills", om->liveCount);
+
+    /* The block it had while alive froze: out of the live set, tiles intact. */
+    ASSERT_RECT_LIVE(om, tankRect, FALSE, "a dead tank's old block");
+    i = 0;
+    for (x = tankRect.left; x <= tankRect.right; x++) {
+        for (y = tankRect.top; y <= tankRect.bottom; y++) {
+            UT_ASSERT_MSG(om->tile[x][y] == saved[i],
+                          "square %d,%d changed from tile %u to %u when the "
+                          "tank died", x, y, (unsigned)saved[i],
+                          (unsigned)om->tile[x][y]);
+            i++;
+        }
+    }
+
+    /* Respawned where it started: the block comes back, so discounting a dead
+     * tank is not a one-way door. */
+    tankSetWorld(f.gs, &f.gs->tanks[f.me],
+                 (WORLD)((int)f.tankMX << TANK_SHIFT_MAPSIZE),
+                 (WORLD)((int)f.tankMY << TANK_SHIFT_MAPSIZE), 0, false);
+    tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, tankRect, TRUE, "a respawned tank's block");
+    UT_ASSERT_MSG(om->liveCount == 1, "liveCount %d after the tank came back",
+                  om->liveCount);
 
     overviewFixtureStop(&f);
     return 0;

@@ -29,7 +29,8 @@
 
 extern "C" {
 #include "global.h"
-#include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPos */
+#include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPos,
+                               clientSimIsMyTankAlive */
 #include "overview_types.h"
 #include "../tiles.h"       /* MINE_X / MINE_Y, TILE_SIZE_X / TILE_SIZE_Y */
 #include "sprite_positions.h"
@@ -184,8 +185,11 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * one-off NEAREST at build time does not survive to here. */
         SDL_SetTextureScaleMode(tiles, SDL_SCALEMODE_NEAREST);
 
+        /* A tank waiting to respawn has a position but is not anywhere the
+         * player is, so follow mode holds the centre it already had. */
         BYTE tankX = 0, tankY = 0;
-        if (clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {
+        if (clientSimIsMyTankAlive(cs) &&
+            clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {
             overviewCameraFollowTick(&v->cam, w, h, tankX, tankY);
         }
 
@@ -258,9 +262,12 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
         }
     }
 
+    /* Nothing to centre on while the tank is dead, so the key does nothing
+     * rather than throwing the view at wherever the corpse reads. */
     if (ImGui::IsKeyPressed(ImGuiKey_Home) || ImGui::IsKeyPressed(ImGuiKey_C)) {
         BYTE tankX = 0, tankY = 0;
-        if (clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {
+        if (clientSimIsMyTankAlive(cs) &&
+            clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {
             overviewCameraCenterOnTank(cam, viewW, viewH, tankX, tankY);
         }
     }

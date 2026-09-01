@@ -696,10 +696,13 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
 }
 
 /* Feeds the overview its per-tick view of the world. Reads the local tank's
- * map square, or reports that there isn't one. */
+ * map square, or reports that there isn't one. A tank waiting to respawn
+ * counts as not having one: its square is wherever it died or worse, and
+ * stamping a block there would reveal map the player has never reached. */
 static void overviewMapTick(ClientSim *cs) {
   BYTE mx = 0, my = 0;
-  bool haveTank = clientSimGetMyTankMapPos(cs, &mx, &my);
+  bool haveTank = clientSimIsMyTankAlive(cs) &&
+                  clientSimGetMyTankMapPos(cs, &mx, &my);
 
   overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank, mx, my);
 }
@@ -2446,6 +2449,13 @@ bool clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   if (mapX) *mapX = tankGetMX(&MY_TANK(cs));
   if (mapY) *mapY = tankGetMY(&MY_TANK(cs));
   return true;
+}
+
+bool clientSimIsMyTankAlive(const ClientSim *cs) {
+  if (!cs || MY_TANK((ClientSim *)cs) == NULL) return false;
+  /* Over full armour is how a dead tank waiting on deathWait reads, the same
+   * test viewportCenterOnTank makes before it re-centres the main view. */
+  return tankGetArmour(&MY_TANK((ClientSim *)cs)) <= TANK_FULL_ARMOUR;
 }
 
 bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {

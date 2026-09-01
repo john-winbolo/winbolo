@@ -840,6 +840,12 @@ int run_overview_loopback(void);
  * range matches hand-worked spans at the map edges. */
 int run_overview_camera(void);
 
+/* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to
+ * respawn stops feeding the memory a position — the corner it reads from
+ * reveals nothing, the block it held while alive freezes with its tiles, and
+ * the block comes back when it respawns. */
+int run_overview_dead_tank(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

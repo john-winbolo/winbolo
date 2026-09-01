@@ -995,6 +995,12 @@ void         clientSimSetScrollMechanism(int mech);
  * is destroyed / not yet spawned. */
 bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
+
+/* False when the local player has no tank, or has one that is dead and
+   waiting to respawn. The overview uses this to stop a dead tank's position
+   revealing map or dragging the camera. */
+bool         clientSimIsMyTankAlive(const ClientSim *cs);
+
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 
