@@ -379,14 +379,45 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     value->view_top = clientSimGetPillViewY(csPtr)-7;
     value->view_height = 15;
   } else {
+    /* Keep the 29x29 tank-centred window on the map.
+     *
+     * BUG THIS FIXES: view_left/view_top are MAP_X (uint8_t). With tx < 14 the
+     * old `tx-14` wrapped to 242..255, and the right edge passed below
+     * (view_left+view_width) wrapped back round to 15..28. That made
+     * leftPos > rightPos, so brainDataMakeViewData's inclusive
+     * `count2 <= rightPos` loop never ran for ANY row and the malloc'd buffer
+     * was handed to the brain completely unwritten — 900 bytes of raw heap
+     * read as terrain. Heap contents vary with allocation history, so on a
+     * threaded bot host this was also a source of run-to-run divergence.
+     *
+     * SHIFT the origin rather than shrinking the window: the fill below is
+     * inclusive on both ends (30x30 into the 30x30 buffer), so shrinking
+     * would leave part of the buffer unwritten and change the stride the
+     * brain reads with. Shifting keeps every row full, keeps view_width /
+     * view_height at their long-standing 29, and still contains the tank
+     * (which is at most 14 tiles from an edge). Behaviour for a tank away
+     * from the edges is bit-for-bit unchanged. */
     *(value->pillview) = 0x8000;
-    value->view_left = tx-14;
+    {
+      BYTE vleft = (tx > 14) ? (BYTE)(tx - 14) : 0;
+      BYTE vtop  = (ty > 14) ? (BYTE)(ty - 14) : 0;
+      /* 255 - 29 = 226: the largest origin whose inclusive right/bottom edge
+       * (origin + 29) still fits in a BYTE without wrapping. */
+      if (vleft > 226) vleft = 226;
+      if (vtop  > 226) vtop  = 226;
+      value->view_left = vleft;
+      value->view_top  = vtop;
+    }
     value->view_width = 29;
-    value->view_top = ty-14;
     value->view_height = 29;
   }
   //value->viewdata = malloc((value->view_width+1) * (value->view_height+1));
   value->viewdata = malloc(30 * 30);
+  /* Belt-and-braces: no path may ever hand the brain uninitialised heap as
+   * terrain, even if some future view rect comes out empty. */
+  if (value->viewdata != NULL) {
+    memset(value->viewdata, 0, 30 * 30);
+  }
   brainDataMakeViewData(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
 
   /* From Bolo Version History:
@@ -667,8 +698,18 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
       } else {
         botMsgDebugLog("BOTMSG p%d send dest=0 (internal): %.48s",
                        (int)clientSimGetMyPlayerNum(csPtr), msg);
-        botManagerDeliverInternalMessage(bound,
-                                         clientSimGetMyPlayerNum(csPtr), msg);
+        /* QUEUE, don't deliver. This runs on the bot's worker thread inside
+         * the parallel brain-think stage; delivering here would push into
+         * every allied bot's MessageState inbox while those bots' own
+         * workers may be reading and clearing the same unlocked ring, so
+         * whether a message arrived before or after the receiver looked was
+         * decided by thread interleaving. Queueing writes only into this
+         * bot's own job slot; Stage 3 of botManagerTick fans it out
+         * serially. Consequence: internal messages now always arrive on the
+         * NEXT tick for every receiver (previously same-tick for
+         * higher-numbered slots under -threads 1). */
+        botManagerQueueInternalMessage(bound,
+                                       clientSimGetMyPlayerNum(csPtr), msg);
       }
     } else {
       /* Send this message to the appropriate players */

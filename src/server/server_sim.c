@@ -520,6 +520,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ticksRun = 0;
     sim->gameTickLimit = 0;
     sim->gameTicksRun = 0;
+    sim->snapshotCb = NULL;
+    sim->snapshotInterval = 0;
+    sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -1366,6 +1369,18 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->tick++;
         mapSetChangeCallback(NULL);
         return;
+    }
+
+    /* Periodic state snapshot (-snapjson). Counted over exactly the same
+     * running half-steps as ticksRun below — placed ahead of the limit
+     * checks on purpose, so the last interval boundary still fires on the
+     * tick that then trips the tick limit and returns. Runs before this
+     * half-step touches anything, i.e. on fully settled state. */
+    if (sim->snapshotInterval > 0 && sim->snapshotCb != NULL) {
+        sim->snapshotTicks++;
+        if ((sim->snapshotTicks % sim->snapshotInterval) == 0) {
+            sim->snapshotCb(sim);
+        }
     }
 
     if (sim->gameLength > 0) {
@@ -2991,6 +3006,21 @@ void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
     sim->gameTicksRun = 0;
 }
 
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks) {
+    if (sim == NULL) {
+        return;
+    }
+    if (cb == NULL || intervalTicks <= 0) {
+        sim->snapshotCb = NULL;
+        sim->snapshotInterval = 0;
+    } else {
+        sim->snapshotCb = cb;
+        sim->snapshotInterval = intervalTicks;
+    }
+    sim->snapshotTicks = 0;
+}
+
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
     if (name == NULL || name[0] == '\0') {
         sim->userLogFileName[0] = '\0';
@@ -3234,6 +3264,11 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     }
 }
 
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return 0;
+    return (uint16_t)sim->roundStats[slot].kills;
+}
+
 const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) {
     if (slot >= MAX_TANKS) return NULL;
     return &sim->roundStats[slot];
@@ -3414,12 +3449,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         ts->firstRight = tankGetFirstRight(&sim->sim.tanks[i]);
         ts->pingMs = sim->playerPing[i];
         ts->clientFlags = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
-        { static bool _snaplg[16] = {0};
-          if (!_snaplg[i] && ts->clientFlags != 0) {
-            _snaplg[i] = 1;
-            WB_LOG_DEBUG(WB_LOG_CAT_SERVER, "[WBN SNAP] player %d clientFlags=0x%02x", i, ts->clientFlags);
-          }
-        }
 
         /* Resources: only send to the owning player */
         if (i == clientIdx) {
@@ -4489,6 +4518,53 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     }
 }
 
+/* Pre-compute start indices for the whole roster in one pass so the players
+ * are spread across the map's start regions and rivals don't grab adjacent
+ * squares (the tankCreate loops that follow run synchronously, so without a
+ * batch pass each player's per-position checks would be blind to siblings
+ * being created in the same loop). startsGetStart consumes the slot lazily,
+ * doing scatter and direction conversion at consumption time so the
+ * per-square nudge sees siblings already placed earlier in that loop. */
+static void serverSimRunStartBatch(ServerSim *sim) {
+    BYTE batchTeam[MAX_TANKS];
+    BYTE reserved0[MAX_TANKS];
+    BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
+        batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+        reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
+                     ? MAX_STARTS                  /* none / stale-after-map-change */
+                     : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
+    }
+    startsAssignBatch(&sim->sim, &sim->sim.ss,
+                      sim->playerConnected, batchTeam,
+                      sim->sim.pendingStartIdx, reserved0);
+}
+
+void serverSimReassignStarts(ServerSim *sim) {
+    BYTE i;
+
+    if (sim == NULL || sim->state != serverStateRunning) {
+        return;
+    }
+    serverSimRunStartBatch(sim);
+
+    /* Re-place every connected tank from the fresh batch. Destroy-and-create
+     * is what the game-start paths do; this is the same loop, and it is safe
+     * here because the caller runs before the first tick. */
+    activeSim = sim;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        tankCreate(&sim->sim, &sim->sim.tanks[i]);
+        basesUpdateTimer(&sim->sim, i);
+    }
+}
+
 /* On game start, honour autoLockOnGameStart: if the lobby is still open to
  * new players, close it and raise the transport admin lock so the locked
  * state reaches connected clients and WinBolo.net (winboloNetSendLock).
@@ -4541,23 +4617,9 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
 
-    /* Pre-compute start indices for the whole batch so teammates land
-     * near each other (see serverSimStartGame for the rationale). */
-    {
-        BYTE batchTeam[MAX_TANKS];
-        BYTE reserved0[MAX_TANKS];
-        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
-        for (i = 0; i < MAX_TANKS; i++) {
-            BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
-            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
-            reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
-                         ? MAX_STARTS                  /* none / stale-after-map-change */
-                         : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
-        }
-        startsAssignBatch(&sim->sim, &sim->sim.ss,
-                          sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0);
-    }
+    /* Pre-compute start indices for the whole batch (see
+     * serverSimRunStartBatch for the rationale). */
+    serverSimRunStartBatch(sim);
 
     /* Create tanks for all connected players */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -4674,28 +4736,9 @@ void serverSimStartGame(ServerSim *sim) {
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
 
-    /* Pre-compute start indices for the whole batch so teammates land
-     * near each other and rivals don't grab adjacent squares (the tankCreate
-     * loop below runs synchronously, so without a batch pass each player's
-     * per-position checks would be blind to siblings being created in the
-     * same loop). startsGetStart consumes the slot lazily, doing scatter
-     * and direction conversion at consumption time so the per-square nudge
-     * sees siblings already placed earlier in this loop. */
-    {
-        BYTE batchTeam[MAX_TANKS];
-        BYTE reserved0[MAX_TANKS];
-        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
-        for (i = 0; i < MAX_TANKS; i++) {
-            BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
-            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
-            reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
-                         ? MAX_STARTS                  /* none / stale-after-map-change */
-                         : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
-        }
-        startsAssignBatch(&sim->sim, &sim->sim.ss,
-                          sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx, reserved0);
-    }
+    /* Pre-compute start indices for the whole batch (see
+     * serverSimRunStartBatch for the rationale). */
+    serverSimRunStartBatch(sim);
 
     /* Create tanks for all connected players */
     for (i = 0; i < MAX_TANKS; i++) {

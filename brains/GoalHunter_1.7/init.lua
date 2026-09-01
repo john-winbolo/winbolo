@@ -2878,10 +2878,48 @@ function Brain.think(info)
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
                                  C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
       state._tail_sig, state._tail_tick = _tsig, now
+      state._tail_rebuilt_tick = now
       print2(string.format("TAIL_REBUILD t=%d sig=%d %.2fms",
         now, _tsig, (clock_us() - _t_tail) / 1000))
     end
     cpf.merge_influence_tail()
+    -- What the tail did this rebuild: how much ground each side's tail
+    -- covers, how much of it actually won the merge (was not already
+    -- stamped), and the front line -- sign-change cells -- on the stamps
+    -- alone vs on the merged grid. front_after > front_before is the tail
+    -- making a line the discs could not; won=0 means it claimed nothing new.
+    if BRAIN_DEBUG_MODE and state._tail_rebuilt_tick == now then
+      local tp, tn, wp, wn, fb, fa, tie = cpf.influence_tail_stats()
+      print2(string.format(
+        "TAIL_STATS t=%d tail_cells +%d -%d | won_merge +%d -%d | front stamps=%d merged=%d (%+d) | ties=%d",
+        now, tp, tn, wp, wn, fb, fa, fa - fb, tie))
+      -- ASCII picture of the merged grid, 64x64 around the tank, one char
+      -- per tile:  '#' friendly stamp  '+' friendly tail  '=' hostile stamp
+      -- '-' hostile tail  'F' front-line cell (sign change)  ' ' unclaimed.
+      if C.EXPAND_DEBUG_MAP then
+        local cx, cy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+        local x0, y0 = math.max(0, cx - 32), math.max(0, cy - 32)
+        print2(string.format("TAIL_MAP t=%d origin=(%d,%d) 64x64", now, x0, y0))
+        for y = y0, math.min(255, y0 + 63) do
+          local row = {}
+          for x = x0, math.min(255, x0 + 63) do
+            local v = cpf.influence_at(x, y)
+            local ch = " "
+            if v ~= 0 then
+              local n, s, w, e = cpf.influence_at(x, y - 1), cpf.influence_at(x, y + 1),
+                                 cpf.influence_at(x - 1, y), cpf.influence_at(x + 1, y)
+              local front = (v > 0 and (n < 0 or s < 0 or w < 0 or e < 0))
+                         or (v < 0 and (n > 0 or s > 0 or w > 0 or e > 0))
+              if front then ch = "F"
+              elseif cpf.influence_tail_at(x, y) ~= 0 then ch = (v > 0) and "+" or "-"
+              else ch = (v > 0) and "#" or "=" end
+            end
+            row[#row + 1] = ch
+          end
+          print2("TAIL_MAP " .. table.concat(row))
+        end
+      end
+    end
   end
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).
@@ -3556,6 +3594,10 @@ function Brain.think(info)
     or (state.goal.kind == "defend_pill" and DEFEND_HEAT_STATIONARY_SUBS[state.goal.substate or ""])
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
+    -- take_cover parks ON PURPOSE once it reaches the chosen tile; the whole
+    -- goal is "stand here instead of there", so stuck detection must not read
+    -- the hold as a wedged tank and fire flee_pill.
+    or state.goal.kind == "take_cover"
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -4241,7 +4283,13 @@ function Brain.think(info)
       -- Only definitional invalidation: pill gone, no longer the team's
       -- (own or allied), or dead. Attack state plays no part — the pool
       -- scores every built team pill and replans re-compete naturally.
-      local p = W.pill_at(world, gmx, gmy)
+      -- A WATCH win (heat blocked at the arrival radius) holds on a tile
+      -- NEXT TO the pill, so goal.mx/my is not the pill's tile; goal.pill_mx/
+      -- pill_my carries the real target and is what gets validated. Without
+      -- this the watch goal would be invalid on the very tick it was chosen.
+      local pmx = state.goal.pill_mx or gmx
+      local pmy = state.goal.pill_my or gmy
+      local p = W.pill_at(world, pmx, pmy)
       if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
          or p.health == 0 then goal_valid = false end
     elseif gk == "repair_pill" then
@@ -4258,6 +4306,21 @@ function Brain.think(info)
       else
         local p = W.pill_at(world, gmx, gmy)
         if p and p.owner == "friendly" and p.health > 0 then goal_valid = false end
+      end
+    elseif gk == "take_cover" then
+      -- The only thing that can invalidate a cover tile is the tile itself:
+      -- terrain changed under it (a wall went up, a crater flooded) so it is
+      -- no longer somewhere a tank can stand. Whether it is still the SAFEST
+      -- tile is the pool's question, re-asked every replan — and the LGM
+      -- APPEARED urgent replan already re-runs the pool the moment the
+      -- builder is back, which is when place/panic should take over.
+      local tt = U.ttype(gmx, gmy)
+      if tt == C.T_DEEPSEA or tt == C.T_BUILDING or tt == C.T_HALFBUILD
+         or (tt == C.T_RIVER and not info.inboat) then
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[14] = nil end
+        state._cover_spot = nil
+        state._cover_scan = nil
       end
     elseif gk == "attack_tank" then
       -- Invalid if no enemy tanks visible (target escaped) or we're too weak.
@@ -5039,8 +5102,41 @@ function Brain.think(info)
     -- base waiting for our LGM to come home (see the release block below).
     local refuel_lgm_hold = false
     if state.goal.kind == "refuel_at_base" then
-      local need_armour = info.armour < state.armour_target
-      local need_shells = info.shells < state.shell_target
+      -- Yield-to-starved-ally: once we are at/above BOTH COMBAT lines
+      -- (30/30) and an ally below one of them is claiming THIS base, cap
+      -- our targets at the COMBAT lines -- topping off to 40 while a
+      -- starved teammate waits is hogging. Mines never hold us here
+      -- anyway (REFUEL_MIN_MINES 0); they only fill while we sit, and
+      -- this makes us sit less.
+      local armour_target = state.armour_target
+      local shell_target  = state.shell_target
+      if info.armour >= (C.ARMOUR_COMBAT or 30)
+         and info.shells >= (C.SHELLS_COMBAT or 30) then
+        for ally_pn, slot in ally_state.iter_active(now, 1750) do
+          if ally_pn ~= info.player_number then
+            local h = slot.info
+            if h and h.goal == "refuel_at_base" and h.low == "1" then
+              local aid = tonumber(h.target)
+              local amx, amy = tonumber(h.mx), tonumber(h.my)
+              if (aid and state.goal.target_id and aid == state.goal.target_id)
+                 or (amx and amx == state.goal.mx and amy == state.goal.my) then
+                armour_target = C.ARMOUR_COMBAT or 30
+                shell_target  = C.SHELLS_COMBAT or 30
+                -- Read by both anti-base-hop sites in goals.lua: while this
+                -- stamp is fresh the +500 stay-on-base penalty is waived, so
+                -- the yield actually moves us off the base.
+                state._refuel_yield_tick = now
+                print2(string.format("REFUEL_YIELD t=%d base=(%d,%d) to p%d (low) -- targets capped at %d/%d",
+                  now, state.goal.mx or -1, state.goal.my or -1, ally_pn,
+                  armour_target, shell_target))
+                break
+              end
+            end
+          end
+        end
+      end
+      local need_armour = info.armour < armour_target
+      local need_shells = info.shells < shell_target
       -- Mines never hold the bot at base (REFUEL_MIN_MINES defaults 0). The
       -- mine-hoard surcharge in goals.lua handles "don't linger for mines".
       local need_mines  = info.mines < (C.REFUEL_MIN_MINES or 0)
@@ -7391,6 +7487,7 @@ function Brain.think(info)
     end
     pill_table.draw(viz, world, state, info)
     goals.draw_pill_spots(viz, state)
+    goals.draw_take_cover(viz, state)
     goals.draw_build_viz(viz, state, info)
     attack.draw_pill_eval_progress(viz, state)
     attack.draw_plan_trace(viz, state, info)
@@ -7950,6 +8047,14 @@ function Brain.think(info)
     end
     if state.goal and state.goal.kind and state.goal.kind ~= "none" then
       bsi.goal = state.goal.kind
+      -- Resource-need flag: below either COMBAT line (armour/shells 30).
+      -- Receivers use it to resolve refuel claims: a needy tank beats a
+      -- topping-off one for a base regardless of who is closer, so a
+      -- close-but-full tank cannot hog the stock (stacked-bot games).
+      if (info.armour or 0) < (C.ARMOUR_COMBAT or 30)
+         or (info.shells or 0) < (C.SHELLS_COMBAT or 30) then
+        bsi.low = "1"
+      end
       if state.goal.substate and state.goal.substate ~= "" then
         bsi.sub = state.goal.substate
       end
@@ -8040,26 +8145,25 @@ function Brain.think(info)
     -- carried on /info state) never went out and the soldier sat in blitz_wait.
     -- Reposition position-scan scheduler: keep the heavy O(pills^2) coverage
     -- scan OFF the replan tick. Once the cache is stale (>= INTERVAL) run the
-    -- rescan on the first QUIET tick; force it after +MAX_DEFER so it can't
-    -- starve. "Quiet" = measured RIGHT HERE — this tick's own elapsed-so-far
-    -- (clock_us() - t_tick_start, which already includes perception / world /
-    -- goal-selection / steering) is at/below the rolling average. We measure the
-    -- CURRENT tick, not the previous one: a replan tick reliably follows a quiet
-    -- tick, so last tick's cost says nothing about this one. The average folds in
-    -- the PRE-rescan elapsed so a rescan's own cost never inflates the baseline.
+    -- rescan on the first NON-REPLAN tick; force it after +MAX_DEFER so it
+    -- can't starve.
+    -- Determinism note (20260831): this used to also require a "quiet" tick,
+    -- judged by comparing this tick's wall-clock elapsed (clock_us()) against
+    -- a rolling average — a real-time read steering WHICH tick the rescan ran
+    -- on. The cached scores are functions of that tick (act_pen decay, live
+    -- enemy positions, roles) and feed the goal pool and the /info rvo
+    -- broadcast, so the timing coin-flip could fork same-seed games (seed
+    -- 586261041 forked 50/50 at one late decision). Replan ticks are the
+    -- expensive ones; skipping only those keeps most of the load-spreading
+    -- with zero wall-clock input.
     do
-      local _elapsed = clock_us() - t_tick_start
-      local _avg     = state._repo_sched_avg or _elapsed
-      local _age     = now - ((state._repo_score and state._repo_score.tick) or -1000000)
+      local _age = now - ((state._repo_score and state._repo_score.tick) or -1000000)
       if _age >= (C.REPOSITION_SCORE_INTERVAL or 50) then
-        local _quiet = _elapsed <= _avg
         local _force = _age >= (C.REPOSITION_SCORE_INTERVAL or 50) + (C.REPOSITION_SCORE_MAX_DEFER or 40)
-        if (_quiet and not state.replan_this_tick) or _force then
+        if (not state.replan_this_tick) or _force then
           goals.rescan_reposition(state, world, info)
         end
       end
-      state._repo_sched_avg = state._repo_sched_avg
-                              and (state._repo_sched_avg * 0.96 + _elapsed * 0.04) or _elapsed
     end
 
     -- Reposition vote: drive the consensus state machine. Runs after goal

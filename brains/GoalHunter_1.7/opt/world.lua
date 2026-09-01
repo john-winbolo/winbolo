@@ -287,6 +287,11 @@ function M.update(world, info, tick)
           p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
           p.anger_tick = tick
           p.last_hit_tick = tick   -- only on REAL damage (never on decay)
+          -- Short hit history (last 8 hit ticks): defend_pill measures the
+          -- live damage rate from it (hits inside DEFEND_ACTIVE_WINDOW).
+          p.hit_log = p.hit_log or {}
+          p.hit_log[#p.hit_log + 1] = tick
+          if #p.hit_log > 8 then table.remove(p.hit_log, 1) end
         elseif p.anger > 0 and tick > p.anger_tick then
           local elapsed = tick - p.anger_tick
           p.anger = math.max(0, p.anger - elapsed / C.PILL_ANGER_DECAY)
@@ -472,6 +477,9 @@ function M.process_events(world, info, state)
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
             p.anger_tick = tick
             p.last_hit_tick = tick   -- only on REAL damage (never on decay)
+            p.hit_log = p.hit_log or {}
+            p.hit_log[#p.hit_log + 1] = tick
+            if #p.hit_log > 8 then table.remove(p.hit_log, 1) end
           end
 
           local _hs_win = C.HEAT_SELF_STAMP_TICKS or 150
@@ -809,7 +817,18 @@ function M.build_kw_message(world)
   if not dirty then return nil end
   local PREFIX, BUDGET = "/info kw ", 120
   local toks, len, drained = {}, #PREFIX, {}
-  for key, r in pairs(dirty) do
+  -- Walk the dirty set in sorted key order, not pairs() order. pairs() order is
+  -- a per-process thing (LuaJIT hashes strings with a process seed and tables by
+  -- memory address), and this walk stops early on the byte budget -- so the raw
+  -- order decided WHICH knowledge shipped this tick. Two same-seed games queued
+  -- the same entries and shipped different subsets, allies learned different
+  -- things, and the games forked. Sorting first makes replays exact; the dirty
+  -- set is at most dozens of entries, so it costs microseconds.
+  local keys = {}
+  for key in pairs(dirty) do keys[#keys + 1] = key end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    local r   = dirty[key]
     local tok = kw_rec_token(r)
     local add = #tok + (#toks > 0 and 1 or 0)   -- +1 for the joining comma
     if len + add > BUDGET then break end

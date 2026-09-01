@@ -694,6 +694,38 @@ local function corridor_path_clipped(info, tmx, tmy, cand_cx, cand_cy)
   return clip_x >= 0, clip_x, clip_y
 end
 
+-- Which tile does the straight line from the tank's actual position to the
+-- centre of a DIAGONAL next tile pass through on the way?  The tank sits
+-- off-centre in its own tile, so the line leaves tile (tmx,tmy) across either
+-- the x boundary or the y boundary first, and the tile it enters in between
+-- is (nx,tmy) or (tmx,ny) accordingly.
+-- Returns that middle tile, or nil,nil when the line runs dead through the
+-- shared corner point (crosses both boundaries at once) and so enters
+-- neither cleanly.
+-- Callers must only pass a true diagonal step (nx ~= tmx and ny ~= tmy);
+-- the denominators are then at least 0.5 tiles, so no divide-by-zero.
+local function diag_mid_tile(twx, twy, tmx, tmy, nx, ny)
+  local ex, ey = nx + 0.5, ny + 0.5
+  -- Boundary of the tank's own tile on the side we are heading for.
+  local bx = (nx > tmx) and (tmx + 1) or tmx
+  local by = (ny > tmy) and (tmy + 1) or tmy
+  local tx = (bx - twx) / (ex - twx)   -- fraction of the line at the x crossing
+  local ty = (by - twy) / (ey - twy)   -- ...and at the y crossing
+  if tx < ty then return nx, tmy end   -- x boundary first
+  if ty < tx then return tmx, ny end   -- y boundary first
+  return nil, nil                      -- straight through the corner point
+end
+
+-- Is this tile OK to aim at as an interim waypoint on the way round a deep
+-- corner?  Anything drivable will do (road/grass/forest/swamp/river/crater),
+-- we only need to rule out drowning and solid tiles we would just grind into.
+local function cliff_step_ok(mx, my)
+  if not U.in_map(mx, my) then return false end
+  local tt = U.ttype(mx, my)
+  return tt ~= C.T_DEEPSEA and tt ~= C.T_BUILDING
+     and tt ~= C.T_HALFBUILD and tt ~= C.T_PILLBOX
+end
+
 -- Path lookahead: given the next A* step (nx, ny), walk pf.path_chain
 -- forward and return the furthest waypoint reachable in a clear straight
 -- line from the tank.  This eliminates per-tile wiggle on straight runs.
@@ -744,6 +776,46 @@ local function path_lookahead(state, info, nx, ny)
     end
     if cliff_near then
       sdbg("lookahead: DEEPSEA within 1 tile, holding to nx=(%d,%d)", nx, ny)
+      -- Holding to the immediate A* step is not enough on its own when that
+      -- step is DIAGONAL. The tank is off-centre in its own tile, so the
+      -- straight line from where it actually is to the centre of (nx,ny) can
+      -- cut the corner through a deep tile even though both endpoints are
+      -- land. That is how a bot drowned on the DH-Oil Rig NE staircase: a
+      -- legal (142,113) -> (141,112) step, tank hugging the top edge at
+      -- (142.42,113.01), centre crossed into (142,112) = deep sea.
+      -- Decompose the diagonal into an L through the safe corner instead.
+      if nx ~= tmx and ny ~= tmy then
+        local twx = info.tankx / 256.0
+        local twy = info.tanky / 256.0
+        local cmx, cmy = diag_mid_tile(twx, twy, tmx, tmy, nx, ny)
+        local clips
+        if cmx then
+          clips = U.in_map(cmx, cmy) and U.ttype(cmx, cmy) == C.T_DEEPSEA
+        else
+          -- Dead through the corner point: which tile the engine rounds us
+          -- into is a coin flip, so treat either deep neighbour as a clip.
+          clips = (U.in_map(nx, tmy) and U.ttype(nx, tmy) == C.T_DEEPSEA)
+               or (U.in_map(tmx, ny) and U.ttype(tmx, ny) == C.T_DEEPSEA)
+        end
+        if clips then
+          local sx, sy
+          if cliff_step_ok(nx, tmy) then
+            sx, sy = nx, tmy
+          elseif cliff_step_ok(tmx, ny) then
+            sx, sy = tmx, ny
+          end
+          if sx then
+            sdbg("lookahead: diagonal (%d,%d)->(%d,%d) clips deep water, "
+                 .. "L-step via (%d,%d)", tmx, tmy, nx, ny, sx, sy)
+            return sx, sy
+          end
+          -- Neither corner is safe: aim at our own centre so the engine
+          -- re-centres us in this tile. The global cliff brake backstops.
+          sdbg("lookahead: diagonal (%d,%d)->(%d,%d) clips deep water, no "
+               .. "safe corner, holding to own tile", tmx, tmy, nx, ny)
+          return tmx, tmy
+        end
+      end
       return nx, ny
     end
   end
@@ -1252,6 +1324,26 @@ local function demine_steer(state, world, info, goal)
   return keys, taps
 end
 
+-- The point on the target pill this take is aiming at, in FLOAT TILE coords.
+--
+-- plan_position picks the standoff spot AND the aim point on the pill (centre
+-- or a corner) whose shell path from that spot is actually clear — see
+-- attack.lua's spot_clear_aim. It rides the goal as aim_wx/aim_wy in WORLD
+-- units rather than in aim_mx/aim_my because init.lua rewrites aim_mx/aim_my
+-- from near-edge geometry on every tick of a non-PPT take, which would throw
+-- the planned corner away. Falls back to aim_mx/aim_my (the shield scan's
+-- corner, or init's near-edge point) and finally the pill centre.
+--
+-- 20260831_173448 bot2: the spot was screened on the CENTRE line but the charge
+-- also aimed at the centre with our own pill #6 sitting on it. Planner and
+-- steering have to be looking at the same line.
+local function planned_aim_tile(goal)
+  if goal.aim_wx and goal.aim_wy then
+    return goal.aim_wx / 256.0, goal.aim_wy / 256.0
+  end
+  return goal.aim_mx or (goal.mx + 0.5), goal.aim_my or (goal.my + 0.5)
+end
+
 local function attack_pill_steer(state, world, info, goal)
   if goal.kind ~= "attack_pill" then return nil end
   local keys = 0
@@ -1331,11 +1423,17 @@ local function attack_pill_steer(state, world, info, goal)
     -- enemy base, or a half-wall. simulate_shot_angle is bit-exact with the
     -- engine and terminates at the first obstacle, so a path that reaches the
     -- target tile is unobstructed by construction. Falls back to the planned
-    -- aim dot (center) when every sub-point is blocked.
-    local aim_tx = goal.aim_mx or (goal.mx + 0.5)
-    local aim_ty = goal.aim_my or (goal.my + 0.5)
+    -- aim dot when every sub-point is blocked.
+    --
+    -- The PLANNED aim (goal.aim_wx/aim_wy — the point the spot scan proved this
+    -- standoff can hit) is both the default and the first candidate tried, so a
+    -- charge holds the line the planner screened instead of re-deriving one from
+    -- wherever the tank happens to be mid-approach. The remaining candidates are
+    -- the live fallback for when the world moved under us.
+    local aim_tx, aim_ty = planned_aim_tile(goal)
     do
       local cands = {
+        {aim_tx, aim_ty},
         {goal.mx + 0.5, goal.my + 0.5},
         {goal.mx + 0.2, goal.my + 0.2}, {goal.mx + 0.8, goal.my + 0.2},
         {goal.mx + 0.2, goal.my + 0.8}, {goal.mx + 0.8, goal.my + 0.8},
@@ -1576,8 +1674,9 @@ local function attack_pill_steer(state, world, info, goal)
 
   -- ── aim: turn to face pill, no shooting, no movement ───────────────
   if goal.substate == "aim" then
-    local aim_tx = goal.aim_mx or (goal.mx + 0.5)
-    local aim_ty = goal.aim_my or (goal.my + 0.5)
+    -- Turn onto the aim the planner screened (centre or corner), not the pill
+    -- centre — otherwise the charge that follows starts from the wrong heading.
+    local aim_tx, aim_ty = planned_aim_tile(goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
 
@@ -1599,10 +1698,11 @@ local function attack_pill_steer(state, world, info, goal)
     return keys, taps
   end
 
-  -- ── engage: aim at pill near-edge and fire ─────────────────────────
+  -- ── engage: aim at the planned aim point and fire ──────────────────
   if goal.substate == "engage" then
-    local aim_tx = goal.aim_mx or (goal.mx + 0.5)
-    local aim_ty = goal.aim_my or (goal.my + 0.5)
+    -- Same line the standoff was chosen for (goal.aim_wx/aim_wy), falling back
+    -- to the near-edge point init.lua keeps in aim_mx/aim_my.
+    local aim_tx, aim_ty = planned_aim_tile(goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
 
@@ -2935,35 +3035,97 @@ function M.steer(state, world, info, goal)
   -- is tight (~stopping distance), and we only brake if water is within
   -- the minimum runway needed.
   -- escape_water is explicitly exempt (it's how we recover FROM water).
-  local CLIFF_MIN_SPEED = 12   -- below this, no preemptive brake
+  -- Below CLIFF_MIN_SPEED no preemptive brake. Was a hard-coded 12; now a
+  -- constant and lower (6), because the brake also TURNS now — at creep
+  -- speed the old floor left a boundary-hugging tank with neither brake nor
+  -- evasion for the last half tile before the water.
+  local CLIFF_MIN_SPEED = C.CLIFF_MIN_SPEED or 6
   if not info.inboat and goal.kind ~= "escape_water"
      and info.speed >= CLIFF_MIN_SPEED then
-    -- Stopping distance ≈ speed * 6 wu; clamp to at most 3 tiles of look.
-    local look_wu = math.min(info.speed * 6, 768)
-    local steps   = math.max(1, math.ceil(look_wu / 256))
+    -- Look-ahead = the REAL stopping distance, from cpf.predict_stop — the
+    -- same engine-exact decel + residual-move model (terrain-capped by the
+    -- tile under the tank, with the calibrated realism scale) that the
+    -- charge / approach brakes use. Was `speed * 6 wu` (1.2 tiles at
+    -- speed 52) — too short: on 20260831_173448 bot2 the brake fired
+    -- correctly at speed 52 with ~0.9 tiles of runway to the deep corner at
+    -- (140,110), held for 27 ticks, and the tank still slid in at speed 24
+    -- (it needed ~1.25 tiles). info.speed is engine speed x4, so divide
+    -- before handing it to the model (see the charge brake). Plus a
+    -- quarter-tile margin for the tick of travel between the sample that
+    -- sees the water and the brake biting; capped so the scan stays a few
+    -- lookups.
+    local look_wu
+    do
+      local tmx0, tmy0 = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+      local tcap  = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx0, tmy0)]) or 16
+      -- The stop happens on the tiles AHEAD, not the one under the tank. The
+      -- model's over-cap drag depends on the cap, so forest under the tank
+      -- with road ahead would assume drag the road never provides and
+      -- under-predict the slide. Safety brake -> take the LEAST-drag
+      -- (highest) cap among the current tile and the next two along the
+      -- heading; over-predicting only brakes earlier.
+      do
+        local sd, cd = U.bsin(info.direction), U.bcos(info.direction)
+        for i = 1, 2 do
+          local ax = bit.rshift(info.tankx + sd * 2 * i, 8)
+          local ay = bit.rshift(info.tanky - cd * 2 * i, 8)
+          if U.in_map(ax, ay) then
+            local c = C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(ax, ay)]
+            if c and c > tcap then tcap = c end
+          end
+        end
+      end
+      local ang_f = info.tank_angle or info.direction
+      local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f,
+                                        (info.speed or 0) / 4, tcap)
+      look_wu = U.wdist(info.tankx, info.tanky, psx, psy)
+                + (C.CLIFF_STOP_MARGIN_WU or 64)
+      look_wu = math.min(look_wu, C.CLIFF_LOOK_MAX_WU or 1280)
+    end
     local sdir    = U.bsin(info.direction)
     local cdir    = U.bcos(info.direction)
     local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-    local trigger_step, trigger_mx, trigger_my
-    for i = 1, steps do
-      local amx = bit.rshift((info.tankx + sdir * 2 * i), 8)
-      local amy = bit.rshift((info.tanky - cdir * 2 * i), 8)
-      if U.ttype(amx, amy) == C.T_DEEPSEA then
-        trigger_step, trigger_mx, trigger_my = i, amx, amy
-        break
+    -- Walk the heading ray in quarter-tile hops instead of one sample per
+    -- whole tile, so we see EVERY tile the tank's centre is about to cross.
+    -- The old whole-tile sampling stepped clean over deep corner tiles on a
+    -- diagonal heading: on the DH-Oil Rig NE staircase its one sample landed
+    -- on road at (141,112) while the centre path clipped deep sea at
+    -- (142,112) on the way there, and the tank drowned.
+    -- scan_wu keeps the OLD reach exactly (look_wu rounded up to a whole
+    -- tile, at least one tile); only the sample density changes. We still
+    -- only look at tiles the centre actually drives through, so this does
+    -- not brake for water merely sitting beside the ray.
+    local scan_wu = math.max(256, math.ceil(look_wu / 256) * 256)
+    local trigger_d, trigger_mx, trigger_my
+    local last_mx = bit.rshift(info.tankx, 8)
+    local last_my = bit.rshift(info.tanky, 8)
+    local d = C.CLIFF_SCAN_STEP_WU
+    while d <= scan_wu do
+      -- sdir/cdir are the heading's unit vector scaled by 128, so
+      -- sdir*d/128 is the X offset in world units at ray distance d.
+      local amx = bit.rshift(info.tankx + __idiv(sdir * d, 128), 8)
+      local amy = bit.rshift(info.tanky - __idiv(cdir * d, 128), 8)
+      -- Only look up a tile when the ray has actually moved into a new one.
+      if amx ~= last_mx or amy ~= last_my then
+        last_mx, last_my = amx, amy
+        if U.ttype(amx, amy) == C.T_DEEPSEA then
+          trigger_d, trigger_mx, trigger_my = d, amx, amy
+          break
+        end
+        -- Pale yellow square for scanned-clear tiles + small label so
+        -- they're not confused with the bright pf.next overlay.
+        if BRAIN_DEBUG_MODE then
+          viz.rect("cliff_safety",
+                   amx + 0.15, amy + 0.15, amx + 0.85, amy + 0.85,
+                   255, 255, 150, 50)
+          viz.text("cliff_safety",
+                   amx + 0.5, amy + 0.95, "cliff safety",
+                   "center", 255, 255, 150, 180, 0.5)
+        end
       end
-      -- Pale yellow square for scanned-clear tiles + small label so
-      -- they're not confused with the bright pf.next overlay.
-      if BRAIN_DEBUG_MODE then
-        viz.rect("cliff_safety",
-                 amx + 0.15, amy + 0.15, amx + 0.85, amy + 0.85,
-                 255, 255, 150, 50)
-        viz.text("cliff_safety",
-                 amx + 0.5, amy + 0.95, "cliff safety",
-                 "center", 255, 255, 150, 180, 0.5)
-      end
+      d = d + C.CLIFF_SCAN_STEP_WU
     end
-    if trigger_step then
+    if trigger_d then
       -- Trigger viz: orange tile + line from tank + CLIFF BRAKE label.
       -- The braking BEHAVIOR still fires (return KEY_SLOWER below) —
       -- only the visual markers are gated.
@@ -2976,14 +3138,14 @@ function M.steer(state, world, info, goal)
                  255, 140, 0, 200)
         viz.text("cliff_safety",
                  trigger_mx + 0.5, trigger_my - 0.4,
-                 string.format("CLIFF BRAKE  step=%d  speed=%d  look=%.1ft",
-                               trigger_step, info.speed, look_wu / 256.0),
+                 string.format("CLIFF BRAKE  at=%.2ft  speed=%d  look=%.1ft",
+                               trigger_d / 256.0, info.speed, scan_wu / 256.0),
                  "center", 255, 160, 40, 255)
       end
       log.reason("steer", {
         mode = "global_cliff_brake", goal_kind = goal.kind,
         tile_mx = trigger_mx, tile_my = trigger_my,
-        step = trigger_step, speed = info.speed,
+        dist_wu = trigger_d, speed = info.speed,
       })
       if BRAIN_PROFILE then
         opt(string.format("  steer/cliff_safety done %.2f ms",
@@ -2993,7 +3155,38 @@ function M.steer(state, world, info, goal)
       -- cautious guard tagged the creep earlier this tick, clear it so init's
       -- TAKE_CRAWL leaves THIS KEY_SLOWER intact instead of sailing into the water.
       state._cautious_lookahead_held = nil
-      return KEY_SLOWER, 0
+      -- EVASIVE TURN: brake AND steer away. Braking alone returned early with
+      -- no turn key, so on every brake tick the tank held its heading; at
+      -- creep speed (20260831_222819 bot2, speed 8-12 hugging the row
+      -- boundary at (142,113)) the brake/accelerate oscillation walked it
+      -- straight into the deep corner while the L-step aim only got applied
+      -- on the non-brake ticks. Pick the side with more clear runway: walk
+      -- the same ray rotated +-CLIFF_EVADE_BRADS and take the side whose first
+      -- deep tile is further away (none = best). Ties turn right.
+      do
+        local ev  = C.CLIFF_EVADE_BRADS or 32
+        local function free_dist(dirv)
+          local s2, c2 = U.bsin(dirv), U.bcos(dirv)
+          local lx, ly = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+          local dd = C.CLIFF_SCAN_STEP_WU
+          while dd <= scan_wu do
+            local ax = bit.rshift(info.tankx + __idiv(s2 * dd, 128), 8)
+            local ay = bit.rshift(info.tanky - __idiv(c2 * dd, 128), 8)
+            if ax ~= lx or ay ~= ly then
+              lx, ly = ax, ay
+              if not U.in_map(ax, ay) or U.ttype(ax, ay) == C.T_DEEPSEA then return dd end
+            end
+            dd = dd + C.CLIFF_SCAN_STEP_WU
+          end
+          return scan_wu + 1   -- clear all the way
+        end
+        local right = free_dist((info.direction + ev) % 256)
+        local left  = free_dist((info.direction - ev) % 256)
+        local turn  = (left > right) and KEY_TURNLEFT or KEY_TURNRIGHT
+        log.reason("steer", { mode = "global_cliff_evade",
+                              left_free = left, right_free = right })
+        return bit.bor(KEY_SLOWER, turn), 0
+      end
     end
   end
   if BRAIN_PROFILE then
@@ -3151,10 +3344,17 @@ function M.steer(state, world, info, goal)
   -- attack_pill: plan_position just visualizes, no steering needed.
   -- Falls through to general navigation for position substate.
 
-  elseif goal.kind == "wait_for_lgm"
+  elseif (goal.kind == "wait_for_lgm" or goal.kind == "take_cover")
          and goal.mx == (bit.rshift(info.tankx, 8)) and goal.my == (bit.rshift(info.tanky, 8)) then
-    -- ON the wait spot: stand still and let the LGM finish whatever he's
-    -- doing (farming, opportunistic build) before chasing new goals.
+    -- ON the wait/cover spot: stand still. For wait_for_lgm, let the LGM
+    -- finish whatever he's doing (farming, opportunistic build) before
+    -- chasing new goals. For take_cover the hold IS the goal — this tile was
+    -- chosen because standing on it is safer than standing where we were, so
+    -- there is nothing further to do but stop (no plow, no creep).
+    --
+    -- Both kinds reach this branch only once they are ON the tile; while
+    -- driving there the goal falls through to general navigation like any
+    -- other destination.
     -- When goal.mx/my is a danger-aware SAFE SPOT elsewhere (picked by
     -- pick_wait_spot — parked tile under fire), this branch doesn't match
     -- and the goal falls through to general navigation, which drives to
@@ -3878,10 +4078,32 @@ function M.steer(state, world, info, goal)
     -- Turn toward move_dir
     local correction = U.adiff(info.direction, move_dir)
 
-    if     correction >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
-    elseif correction < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
-    elseif correction >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
-    elseif correction <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
+    -- U-turn commitment: latch the turn side when the target is nearly
+    -- straight behind, so waypoint jitter can't flip L/R every few ticks
+    -- (see C.UTURN_COMMIT_BRAD). `turn_corr` is only used for the turn
+    -- keys; `correction` keeps its true value for the throttle math.
+    local turn_corr = correction
+    do
+      local abs_c   = math.abs(correction)
+      local gkey    = (goal.kind or "?") .. ":" .. tostring(goal.mx) .. ":" .. tostring(goal.my)
+      local ut      = state._uturn
+      local held    = ut and ut.t == state.tick - 1 and ut.gkey == gkey
+                      and abs_c >= (C.UTURN_HOLD_BRAD or 80)
+      if held then
+        turn_corr = ut.side * 128          -- keep turning the latched way
+      elseif abs_c > (C.UTURN_COMMIT_BRAD or 96) then
+        ut = { side = (correction > 0) and 1 or -1 }
+      else
+        ut = nil
+      end
+      if ut then ut.t = state.tick; ut.gkey = gkey end
+      state._uturn = ut
+    end
+
+    if     turn_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif turn_corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif turn_corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif turn_corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
 
     local eff_dist = goal_dist
@@ -4502,6 +4724,7 @@ function M.steer(state, world, info, goal)
         lgm_cap = lgm_speed_cap,
         lookahead = lookahead_active or nil,
         under_fire = under_fire or nil,
+        uturn = state._uturn and state._uturn.side or nil,
       })
     end
 

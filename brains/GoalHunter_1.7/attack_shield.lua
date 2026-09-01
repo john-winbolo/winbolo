@@ -369,6 +369,30 @@ end
 
 -- Score one candidate position fully (all 5 aims + return fire).
 -- Returns the populated candidate table.
+-- Is a live, deployed friendly pill in the 8 tiles around (mx,my)? Used to
+-- penalise (and build last) shield slots that would put a new pill right
+-- beside an existing one. Shared with attack.lua's build-order sort.
+function M.adjacent_friendly_pill(world, mx, my)
+  local pill_at = world and world.pill_at
+  if not pill_at then return false end
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if not (dx == 0 and dy == 0) then
+        local plist = pill_at[(my + dy) * 256 + (mx + dx)]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0
+               and not e.pill.in_tank then
+              return true
+            end
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
 local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, num_pill_blockers, pill_we)
   local pmx, pmy = pill.mx, pill.my
   local mx, my = cand.mx, cand.my
@@ -468,6 +492,16 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
       local target = C.PPT_COVER_TARGET_SHOTS or 15
       if cover > target then cover = target end
       aim_score = cover + M.BUILT_BONUS * actual_n - (potential_n)
+      -- Would-be blocker slots touching an existing friendly pill: a
+      -- penalty (SHIELD_ADJ_FRIENDLY_PENALTY each), never a rejection --
+      -- see constants.lua. Tagged on the slot too, so the build order
+      -- can put them last.
+      for _, pb in ipairs(potential_blockers) do
+        pb.adj_friendly = M.adjacent_friendly_pill(world, pb.mx, pb.my) or nil
+        if pb.adj_friendly then
+          aim_score = aim_score - (C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)
+        end
+      end
     end
     cand.aims[ai] = {
       tiles               = out_tiles,
@@ -500,6 +534,39 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, 
   return cand
 end
 
+-- Is this approach angle currently banned on the target pill?
+--
+-- `banned` is state.banned_pill_angles[pmy*256+pmx] -- the same table
+-- ban_current_pill_angle writes and the 5-degree sweep in attack.lua's
+-- evaluate_pill_difficulty already honours. The shield scan did NOT honour it,
+-- and that is a real bug: the sweep picks the first UNBANNED angle, then the
+-- scan nudges up to +/-(NUM/2)*STEP_DEG degrees off it along the standoff
+-- circle and can land straight back inside the banned bucket. Measured in
+-- 20260901_032030 bot0: SANITY_BAN t=506 banned 140..150, the very next
+-- PP_TO_APPROACH came back with deg=146.25, and t=531 banned the same bucket
+-- again -- two of the three "spots tried" before SANITY_ABANDON were the SAME
+-- spot. The 146.25 is the tell: it is not a multiple of 5, so it can only have
+-- come from the scan's nudge, not the sweep.
+--
+-- Same 5-degree bucket arithmetic as the sweep, so the two agree exactly.
+local function angle_banned(banned, now, deg)
+  if not banned then return false end
+  local exp = banned[math.floor((deg % 360) / 5) * 5]
+  return exp ~= nil and now < exp
+end
+
+-- Does this pill have ANY live ban right now? Used to decide whether the C
+-- fast path is safe to take (it builds and scores its candidate ring inside C,
+-- where we cannot filter angles), mirroring how evaluate_pill_difficulty gates
+-- its own gh_attack fast path on "no banned angles".
+local function any_ban_live(banned, now)
+  if not banned then return false end
+  for _, exp in pairs(banned) do
+    if exp and now < exp then return true end
+  end
+  return false
+end
+
 -- Build an empty candidate skeleton at the given (cx, cy, deg).
 local function make_candidate(cx, cy, deg, offset_deg, kind)
   return {
@@ -525,7 +592,7 @@ end
 -- score. attack.lua passes this when info.man_status == LGM_DEAD.
 function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                 standoff_cx, standoff_cy, radius, no_builder, tank_armour,
-                positions, step_deg, num_pill_blockers)
+                positions, step_deg, num_pill_blockers, banned, ban_now)
   if not pill or not world then return { candidates = {}, best = nil } end
   -- How many friendly pillboxes we can drop onto buildable slots (carried pills,
   -- capped by the caller). The combo scorer counts each as PILL_WE walls of cover.
@@ -559,7 +626,15 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   local _want_full_scan_viz = BRAIN_DEBUG_MODE
     and (viz.is_on("shield_blocker_union") or viz.is_on("shield_scan_candidates")
          or _G._BT_SHOTSIM_OPEN)
-  if gh_shield and gh_shield.scan_c and _pill_hit and not _want_full_scan_viz then
+  -- The C scan builds AND scores its own candidate ring inside gh_shield, so
+  -- there is no point at which Lua could drop a banned angle from it. When this
+  -- pill has a live ban, fall through to the Lua path below, which filters the
+  -- ring before scoring. Exactly the gate evaluate_pill_difficulty puts on its
+  -- own gh_attack fast path, and for the same reason. Bans are rare and
+  -- short-lived (a few per take, ~9000 ticks), so the slow path is not hot.
+  local _ban_live = any_ban_live(banned, ban_now or 0)
+  if gh_shield and gh_shield.scan_c and _pill_hit and not _want_full_scan_viz
+     and not _ban_live then
     local pill_hp = pill.health or 0
     -- HP-dependent neighbor bonus params (passed to scan_c as args 13..19).
     local n_fav, fs1, fb1, fs2, fb2 = 0, 0, 0.0, 0, 0.0
@@ -612,7 +687,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       no_builder and true or false,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
       NUM, SDG,
-      num_pill_blockers, PILL_WE)
+      num_pill_blockers, PILL_WE,
+      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)   -- arg 24: C mirror of the adjacency penalty
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,
@@ -632,6 +708,9 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       end
       for k = 0, n_pot - 1 do
         pot[k+1] = { mx = pmx + r[22+k], my = pmy + r[27+k] }
+        -- Same tag the Lua scorer sets: the build order puts these last.
+        -- (The C scorer's SHIELD_ADJ_FRIENDLY_PENALTY mirror is in gh_shield.)
+        pot[k+1].adj_friendly = M.adjacent_friendly_pill(world, pot[k+1].mx, pot[k+1].my) or nil
       end
       local best = {
         kind = "candidate",
@@ -659,15 +738,34 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   -- the float center rounds differently).
   candidates[1].mx = standoff_mx
   candidates[1].my = standoff_my
+  -- candidates[1] is also this scan's `standoff` return value, so it always
+  -- stays in the list even when banned -- the caller needs it as the fallback
+  -- spot. It is flagged instead, and the winner loop below skips flagged
+  -- candidates. (The sweep hands us an unbanned angle by construction, so this
+  -- only trips if a ban landed between the sweep and the scan.)
+  candidates[1].banned_angle = angle_banned(banned, ban_now or 0, standoff_deg) or nil
 
   local half = NUM * 0.5
+  local n_banned = 0
   for i = 1, NUM do
     local offset = (i - half - 0.5) * SDG
     local deg = standoff_deg + offset
-    local rad = math.rad(deg)
-    local cx = pcx + math.sin(rad) * R
-    local cy = pcy - math.cos(rad) * R
-    candidates[#candidates + 1] = make_candidate(cx, cy, deg, offset, "candidate")
+    -- Drop banned angles BEFORE scoring: the nudged ring reaches up to
+    -- +/-(NUM/2)*SDG degrees off the standoff, which is easily far enough to
+    -- re-enter the bucket the take just banned. See angle_banned's note.
+    if angle_banned(banned, ban_now or 0, deg) then
+      n_banned = n_banned + 1
+    else
+      local rad = math.rad(deg)
+      local cx = pcx + math.sin(rad) * R
+      local cy = pcy - math.cos(rad) * R
+      candidates[#candidates + 1] = make_candidate(cx, cy, deg, offset, "candidate")
+    end
+  end
+  if n_banned > 0 then
+    print2(string.format("SHIELD_BAN_FILTER pill=(%d,%d) standoff_deg=%.2f dropped=%d/%d candidates=%d%s",
+      pmx, pmy, standoff_deg, n_banned, NUM, #candidates,
+      candidates[1].banned_angle and " (standoff itself banned)" or ""))
   end
 
   -- ── Nudge infrastructure ─────────────────────────────────────────────────
@@ -955,7 +1053,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       #candidates, #AIM_OFFSETS,
       M.SCORE_PER_SLOT, M.BUILT_BONUS, M.NEIGHBOR_BONUS,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
-      num_pill_blockers, PILL_WE)
+      num_pill_blockers, PILL_WE,
+      C.SHIELD_ADJ_FRIENDLY_PENALTY or 3)   -- arg 15: C mirror of the adjacency penalty
 
     local RS = 29  -- RESULT_STRIDE (9 scalars + 5*2 actual + 5*2 potential)
     for ci = 1, #candidates do
@@ -1282,7 +1381,10 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
 
   local best
   for _, c in ipairs(candidates) do
-    if c.score > 0 and (not best or c.score > best.score) then
+    -- Never crown a banned angle (only candidates[1] can be one -- the ring is
+    -- filtered above -- but the take must not be handed back the line it just
+    -- banned under any circumstances).
+    if not c.banned_angle and c.score > 0 and (not best or c.score > best.score) then
       best = c
     end
   end

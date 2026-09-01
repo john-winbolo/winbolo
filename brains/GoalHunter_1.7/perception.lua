@@ -415,8 +415,30 @@ function M.update(state, world, info)
   local terrain_prev = U.terrain_prev
   perc.deepsea_pill_ids = {}
   for pid, p in pairs(world.pills) do
-    if p.health == 0 and terrain_prev[U.mkey(p.mx, p.my)] == C.T_DEEPSEA then
-      perc.deepsea_pill_ids[pid] = true
+    if p.health == 0 then
+      local k = U.mkey(p.mx, p.my)
+      local at_sea = terrain_prev[k] == C.T_DEEPSEA
+      -- The pill tile itself reads T_PILLBOX in the brain map (the pill
+      -- overlay hides the terrain under it), so the direct test above only
+      -- fires for a pill the cache saw BEFORE it landed there. A pill that
+      -- was already in the water when we first looked never matched, and
+      -- 20260831_222819 bot3 drove on foot at speed 64 onto dead pill #3 in
+      -- the sea at the spawn and drowned. So also call it deep-sea when at
+      -- least 3 of its 4 cardinal neighbours are deep sea: a pill afloat in
+      -- open water (or on a 1-tile pedestal in it, which beaches a boat and
+      -- strands a tank just the same).
+      if not at_sea then
+        local n, seen = 0, 0
+        for _, d in ipairs({ {1,0}, {-1,0}, {0,1}, {0,-1} }) do
+          local t = terrain_prev[U.mkey(p.mx + d[1], p.my + d[2])]
+          if t ~= nil then
+            seen = seen + 1
+            if t == C.T_DEEPSEA then n = n + 1 end
+          end
+        end
+        at_sea = (seen >= 3 and n >= 3)
+      end
+      if at_sea then perc.deepsea_pill_ids[pid] = true end
     end
   end
 

@@ -230,6 +230,9 @@ end
 function M.merge_influence_tail() cpf_merge_influence_tail() end
 --- Tail value at (x,y) if the tail won the merge there, else 0 (viz).
 function M.influence_tail_at(x, y) return cpf_influence_tail_at(x, y) end
+--- After a merge: tail cells (+,-), cells the tail won (+,-), front cells on
+--- stamps alone, front cells on the merged grid, cells at the -1 tie value.
+function M.influence_tail_stats() return cpf_influence_tail_stats() end
 
 function M.set_overlay(x, y, value)
   cpf_set_overlay(x, y, value)

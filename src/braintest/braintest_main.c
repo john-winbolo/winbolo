@@ -925,6 +925,25 @@ static void btLoadProfileTicks(BrainTestApp *app, const char *btrPath) {
             assigned, lines, lines ? minT : 0, lines ? maxT : 0);
 }
 
+/* Parse a flat {"<idx>":"<name>",...} object into remap[idx] = BrainTest
+ * registry index for that name (OVERLAY_VIZ_IDX_NONE when unknown). Minimal
+ * scanner: pairs of quoted strings; the first of each pair is the index. */
+static void btParseLegendPairs(const char *lj, uint8_t remap[256]) {
+    const char *p = lj;
+    while ((p = strchr(p, '"')) != NULL) {
+        int idx = atoi(p + 1);
+        const char *q = strchr(p + 1, '"'); if (!q) break;     /* end of idx */
+        const char *n1 = strchr(q + 1, '"'); if (!n1) break;   /* open name */
+        const char *n2 = strchr(n1 + 1, '"'); if (!n2) break;  /* close name */
+        char name[VIZ_REG_ID_MAX]; int nl = (int)(n2 - n1 - 1);
+        if (nl < 0) nl = 0; if (nl >= (int)sizeof name) nl = (int)sizeof name - 1;
+        memcpy(name, n1 + 1, nl); name[nl] = '\0';
+        int reg = vizRegistryFind(name);
+        if (idx >= 0 && idx < 256) remap[idx] = (reg >= 0 && reg < 255) ? (uint8_t)reg : OVERLAY_VIZ_IDX_NONE;
+        p = n2 + 1;
+    }
+}
+
 static int btLoadSession(BrainTestApp *app, const char *path) {
     gzFile g = gzopen(path, "rb");
     if (!g) return -1;
@@ -933,27 +952,61 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
         || hdr.version != BRAINREC_VERSION) { gzclose(g); return -1; }
 
-    /* Legend: recorded viz_idx -> category name. Remap to BrainTest's own
-     * registry index by name (the bots registered the same categories). */
-    uint8_t vizRemap[256];
+    /* Legend: recorded viz_idx -> category name, remapped to BrainTest's own
+     * registry index by name. PER SLOT: every brain self-assigns its indices
+     * from its own sorted id list, so a 1.6 bot and a 1.7 bot in the same
+     * game number the same category differently. The blob is
+     *   {"<idx>":"<name>",...[,"slots":{"<slot>":{"<idx>":"<name>",...},...}]}
+     * -- the leading global map (older recordings have only that) seeds every
+     * slot's table, then each slot's own map overrides it. */
+    static uint8_t vizRemap[MAX_TANKS][256];
     memset(vizRemap, OVERLAY_VIZ_IDX_NONE, sizeof vizRemap);
     uint32_t llen = bt_gz_u32(g);
     if (llen) {
         char *lj = (char *)malloc(llen + 1);
         gzread(g, lj, llen); lj[llen] = '\0';
-        /* Parse {"<idx>":"<name>",...} with a minimal scanner. */
-        const char *p = lj;
-        while ((p = strchr(p, '"')) != NULL) {
-            int idx = atoi(p + 1);
-            const char *q = strchr(p + 1, '"'); if (!q) break;     /* end of idx */
-            const char *n1 = strchr(q + 1, '"'); if (!n1) break;   /* open name */
-            const char *n2 = strchr(n1 + 1, '"'); if (!n2) break;  /* close name */
-            char name[VIZ_REG_ID_MAX]; int nl = (int)(n2 - n1 - 1);
-            if (nl < 0) nl = 0; if (nl >= (int)sizeof name) nl = (int)sizeof name - 1;
-            memcpy(name, n1 + 1, nl); name[nl] = '\0';
-            int reg = vizRegistryFind(name);
-            if (idx >= 0 && idx < 256) vizRemap[idx] = (reg >= 0 && reg < 255) ? (uint8_t)reg : OVERLAY_VIZ_IDX_NONE;
-            p = n2 + 1;
+        char *slots = strstr(lj, "\"slots\"");
+        /* Global part: everything before "slots" (or the whole blob). */
+        {
+            char saved = 0;
+            if (slots) { saved = *slots; *slots = '\0'; }
+            btParseLegendPairs(lj, vizRemap[0]);
+            if (slots) *slots = saved;
+        }
+        for (int s = 1; s < MAX_TANKS; s++) memcpy(vizRemap[s], vizRemap[0], 256);
+        if (slots) {
+            /* "slots":{"2":{...},"3":{...}} -- walk each slot's object. Each
+             * entry is  "<slot>":{flat pairs}  ; after one object the cursor
+             * sits past its closing brace, and the next key (if any) is the
+             * next quote BEFORE the next brace. (The first version searched
+             * for the key from the next object's brace and read its first
+             * index as the slot number -- only slot 0 ever parsed.) */
+            const char *p = strchr(slots + 7, '{');   /* the slots object's own brace */
+            if (p) p++;
+            int nslots = 0;
+            while (p) {
+                const char *k1 = strchr(p, '"');
+                const char *ob = strchr(p, '{');
+                if (!k1 || !ob || k1 > ob) break;         /* no more "<slot>":{ pairs */
+                int slot = atoi(k1 + 1);
+                const char *oe = strchr(ob, '}'); if (!oe) break;
+                if (slot >= 0 && slot < MAX_TANKS) {
+                    size_t ol = (size_t)(oe - ob + 1);
+                    char *one = (char *)malloc(ol + 1);
+                    memcpy(one, ob, ol); one[ol] = '\0';
+                    memset(vizRemap[slot], OVERLAY_VIZ_IDX_NONE, 256);
+                    btParseLegendPairs(one, vizRemap[slot]);
+                    free(one);
+                    int mapped = 0;
+                    for (int i = 0; i < 256; i++) if (vizRemap[slot][i] != OVERLAY_VIZ_IDX_NONE) mapped++;
+                    fprintf(stderr, "Load session: viz legend for slot %d: %d categories\n", slot, mapped);
+                    nslots++;
+                }
+                p = oe + 1;
+            }
+            if (!nslots) fprintf(stderr, "Load session: no per-slot viz legends parsed (using the global one)\n");
+        } else {
+            fprintf(stderr, "Load session: single viz legend (older recording) -- bots on a different brain than slot 0 may be mislabelled\n");
         }
         free(lj);
     }
@@ -1082,7 +1135,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                     pk = (uint8_t *)realloc(pk, pcap);
                 }
                 gzread(g, pk + plen, 28);                    /* 27 fixed + textLen */
-                pk[plen + 26] = vizRemap[pk[plen + 26]];     /* remap viz_idx */
+                pk[plen + 26] = vizRemap[keepBot ? slot : 0][pk[plen + 26]];  /* remap viz_idx, this slot's table */
                 uint8_t tl = pk[plen + 27];
                 if (tl) gzread(g, pk + plen + 28, tl);
                 plen += 28u + tl;
@@ -6154,6 +6207,11 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
+        /* Redo the start placement now the roster and its teams are final.
+         * The batch pass at round start ran before any bot was added, so
+         * every one of them fell back to the team-blind per-player pick and
+         * rivals could land on adjacent squares. No-op unless running. */
+        serverSimReassignStarts(app.sim);
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so

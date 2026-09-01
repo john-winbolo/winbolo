@@ -75,6 +75,23 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   local lfy = tcy + ux * 2
   local rfx = tcx + uy * 2
   local rfy = tcy + (-ux) * 2
+  -- Push the far end of each cover line SWERVE_COVER_EXTEND_TILES further
+  -- out along the pill->sample direction. The pill end is the origin and
+  -- stays put; only the outer end grows, so the walk also scores the tile
+  -- just beyond the sample point (cover or hazard sitting right where the
+  -- swerve arc ends). Viz uses the extended points so the overlay is the
+  -- line actually walked.
+  do
+    local ext = C.SWERVE_COVER_EXTEND_TILES or 0.5
+    local function extend(fx, fy)
+      local ex, ey = fx - pcx, fy - pcy
+      local l = math.sqrt(ex * ex + ey * ey)
+      if l <= 0.01 then return fx, fy end
+      return fx + ex / l * ext, fy + ey / l * ext
+    end
+    lfx, lfy = extend(lfx, lfy)
+    rfx, rfy = extend(rfx, rfy)
+  end
 
   local fire_r2 = C.PILL_FIRE_RANGE * C.PILL_FIRE_RANGE
   local function in_fire_range(bx, by)
@@ -658,9 +675,15 @@ local water_corridor_to = U.water_corridor_to
 local function standoff_shot_obstacle(goal, pill, world)
   if not (goal.standoff_fx and goal.standoff_fy) then return nil end
   local pmx, pmy = pill.mx, pill.my
-  -- Aim: winning PPT corner if available, otherwise pill center.
+  -- Aim: the point on the pill the planner proved we can actually hit from this
+  -- spot (goal.aim_wx/aim_wy — centre or a corner, set by plan_position's
+  -- clear-aim gate and by the shield scan), then the winning PPT corner, then
+  -- the pill centre. Testing the CENTRE line on a take that is deliberately
+  -- aiming at a corner is what made this check ban perfectly good spots.
   local target_wx, target_wy
-  if goal._shield_scan and goal._shield_scan.best then
+  if goal.aim_wx and goal.aim_wy then
+    target_wx, target_wy = goal.aim_wx, goal.aim_wy
+  elseif goal._shield_scan and goal._shield_scan.best then
     local w   = goal._shield_scan.best
     local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
                 or shield.AIM_OFFSETS_TILE_FIRE[1]
@@ -710,7 +733,7 @@ end
 -- target pill tile. Returns (shots_needed, reason_str) where
 -- shots_needed is the extra shots to clear the path (0 = clear path),
 -- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
-local function shot_path_obstacle_count(info, goal, world)
+local function shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy)
   local pmx, pmy = goal.mx, goal.my
   -- Fire the tank's LIVE float gun angle (info.tank_angle, straight from the
   -- engine's MY_TANK->angle) — bit-exact with the shot the engine will actually
@@ -719,9 +742,21 @@ local function shot_path_obstacle_count(info, goal, world)
   -- spot->pill, brad-quantized), but here the tank is parked and aimed, so
   -- inferring/quantizing an angle to the aim-point diverged from the real shot
   -- and false-aborted takes that actually land. Use the known heading instead.
-  local tiles = cpf.simulate_shot_angle(info.tankx, info.tanky,
-                                        info.tank_angle or 0,
-                                        cpf.SHOT_TANK, 0)
+  --
+  -- Optional aim override (aim_wx/aim_wy, world coords): for a caller that must
+  -- test a line the gun is not pointing down YET. The blitz GO gate asks "if we
+  -- charge from here, aiming at the pill CENTRE the way steering's charge does,
+  -- is anything solid in the way?" while the gun is still settling inside
+  -- SQUAD_BLITZ_AIM_TOL. Pass nothing and the behaviour is exactly as before.
+  local tiles
+  if aim_wx and aim_wy then
+    tiles = cpf.simulate_shot(info.tankx, info.tanky, aim_wx, aim_wy,
+                              cpf.SHOT_TANK, 0)
+  else
+    tiles = cpf.simulate_shot_angle(info.tankx, info.tanky,
+                                    info.tank_angle or 0,
+                                    cpf.SHOT_TANK, 0)
+  end
   if not tiles then return 0, "no sim" end
   local origin_mx = bit.rshift(info.tankx, 8)
   local origin_my = bit.rshift(info.tanky, 8)
@@ -781,6 +816,53 @@ local function shot_path_obstacle_count(info, goal, world)
     local lastt = tiles[#tiles]
   end
   return shots, nil, reached_pill
+end
+
+-- Ban the approach angle we are CURRENTLY using on this pill (the 5° bucket of
+-- goal._chosen_deg plus its two neighbours) so the next plan_position sweep has
+-- to pick a different line, and drop the caches that would otherwise hand the
+-- same angle straight back. Returns the banned centre bucket, or nil if we have
+-- no chosen angle to ban.
+--
+-- Factored out of the per-tick standoff sanity check (SANITY_BAN) because the
+-- blitz GO gate needs exactly the same thing: both discover mid-take that the
+-- line we picked is blocked by something that will NOT move (one of our own
+-- pills), so replanning on the same angle would just loop.
+local function ban_current_pill_angle(state, goal, pmx, pmy, now, ttl)
+  if not (state and goal and goal._chosen_deg) then return nil end
+  ttl = ttl or 9000                              -- ~3 min @ 50 Hz
+  local pkey = pmy * 256 + pmx
+  state.banned_pill_angles = state.banned_pill_angles or {}
+  local pill_bans = state.banned_pill_angles[pkey]
+  if not pill_bans then
+    pill_bans = {}
+    state.banned_pill_angles[pkey] = pill_bans
+  end
+  local bucket = math.floor((goal._chosen_deg % 360) / 5) * 5
+  for _, off in ipairs({ -5, 0, 5 }) do
+    pill_bans[(bucket + off) % 360] = now + ttl
+  end
+  -- The ban is honoured by the angle SWEEP, but plan_position reuses this
+  -- pill's cached sweep (state._pill_eval_cache, TTL 250) and the pool's spot
+  -- cache -- both computed before the ban -- so the same angle came straight
+  -- back (g9fix bot3 t=29069..29177: 90..100 deg re-picked three times inside
+  -- one ban). Drop both caches so the next plan_position sweeps afresh with the
+  -- ban in force.
+  local pid = goal.target_id
+  if pid ~= nil then
+    if state._pill_eval_cache    then state._pill_eval_cache[pid]    = nil end
+    if state._pill_eval_progress then state._pill_eval_progress[pid] = nil end
+  end
+  if state._pill_diff_cache then
+    state._pill_diff_cache[pmx .. ":" .. pmy .. ":" .. (state.phase or "")] = nil
+  end
+  -- The SHIELD scan is cached too, keyed partly on the standoff we are about to
+  -- move off. If the sweep happens to hand back the same standoff tile the key
+  -- matches and a scan computed BEFORE this ban -- whose nudged candidate ring
+  -- still contains the banned bucket -- would be reused wholesale. Drop it so
+  -- the next plan_position rescans with the ban in force.
+  state._shield_scan_cache = nil
+  return bucket
 end
 
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
@@ -2070,6 +2152,265 @@ function M.draw_plan_trace(viz, state, info)
   end
 end
 
+-- ── Per-spot clear-aim test ──────────────────────────────────────────────
+-- Which point on the target pill can THIS standoff spot actually hit?
+--
+-- Walks the same five aim points the shielded PPT scan fires at (pill centre
+-- plus the four corners — shield.AIM_OFFSETS_TILE_FIRE, one table so planner,
+-- commander and soldier all aim at the same sub-tile points) and simulates the
+-- real shell from the spot's precise position to each one. Every line comes
+-- back as one of three things:
+--   CLEAR       shell reaches the pill tile with nothing in between
+--   TREES_ONLY  only forest in the way — we can shoot the trees down first
+--   BLOCKED     a live deployed pill of ANY owner, a base of any owner, or a
+--               built wall / half-wall stops the shell, or it never gets there
+-- A wall counts as BLOCKED even though we could shell it down: the planner has
+-- a whole circle of angles to choose from, so there is no reason to take a line
+-- that costs five shells before the pill takes one.
+--
+-- Order of preference: a CLEAR centre (simplest aim, and the cheapest answer —
+-- one simulation and we are done, which is the common case), then a CLEAR
+-- corner, then the TREES_ONLY line with the fewest trees.
+--
+-- Why this exists: 20260831_173448 bot2 — a blitz spot at (133,141) on pill
+-- (124,139) was accepted with our OWN pill #6 at (126,139) straight down the
+-- middle, the charge aimed at the centre, and the take died one tick after GO.
+-- 20260831_222819 bot2 — 467 blocked GOs in a row, re-picking the same spot
+-- every time. Rejecting the spot outright (see the caller) stops both.
+--
+-- Returns aim_idx, aim_wx, aim_wy (world units), aim_trees — or nil when every
+-- aim point is blocked, and the caller must drop the spot.
+
+-- One aim point, one shell simulation. Returns the forest-tile count on the
+-- line (0 = perfectly clear) plus the aim point in world units, or nil when the
+-- line is BLOCKED / never reaches the pill.
+--
+-- Split out of spot_clear_aim (below) as a plain module-level local rather than
+-- a closure so the per-spot scan, which calls this five times per candidate,
+-- allocates nothing extra.
+local function aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
+  local off = shield.AIM_OFFSETS_TILE_FIRE[i]
+  local awx = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
+  local awy = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
+  local tiles = cpf.simulate_shot(ox, oy, awx, awy, cpf.SHOT_TANK, 0)
+  if not tiles then return nil end
+  local pill_at = world and world.pill_at
+  local base_at = world and world.base_at
+  local pills   = world and world.pills
+  local blocked, reached, trees = false, false, 0
+  for ti = 1, #tiles do
+    local t = tiles[ti]
+    if t.mx == pmx and t.my == pmy then reached = true; break end
+    -- Our own tile never obstructs our own shot.
+    if t.mx ~= omx or t.my ~= omy then
+      local tt = U.ttype(t.mx, t.my)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+        blocked = true; break
+      elseif tt == C.T_FOREST then
+        trees = trees + 1
+      end
+      local key = t.my * 256 + t.mx
+      local be = base_at and base_at[key]
+      if be and be.base then blocked = true; break end
+      local plist = pill_at and pill_at[key]
+      if plist then
+        for _, e in ipairs(plist) do
+          -- Live-table check (see shot_path_obstacle_count): a pill_at entry
+          -- can point at a stale copy of a pill an ally has since driven
+          -- over, and a phantom hp-15 blocker would throw away good spots.
+          local p = (e.id and pills and pills[e.id]) or e.pill
+          if p and not p.in_tank and (p.health or 0) > 0
+             and (p.mx == nil or (p.mx == t.mx and p.my == t.my)) then
+            blocked = true; break
+          end
+        end
+        if blocked then break end
+      end
+    end
+  end
+  if reached and not blocked then return trees, awx, awy end
+  return nil
+end
+
+-- Same test, from an arbitrary ORIGIN in world units (not just a planned
+-- standoff tile). This is the shared "which point on this pill can I hit from
+-- HERE?" primitive: the spot scan asks it about a candidate tile, and the
+-- blocked-line ladder (try_reaim, below) asks it about the tank's live position
+-- when a firing site finds its current line blocked. One implementation so the
+-- planner and the fire-time re-aim never disagree about what is shootable.
+--
+-- prefer_idx (optional): try this aim point FIRST and return it the moment it
+-- comes back clear, even if another point has fewer trees. Callers pass the aim
+-- the take is already committed to, so a line that is still fine does not get
+-- swapped out from under a gun that is halfway through turning onto it.
+local function clear_aim_from_world(ox, oy, pmx, pmy, world, prefer_idx)
+  local omx, omy = bit.rshift(ox, 8), bit.rshift(oy, 8)
+  if prefer_idx and shield.AIM_OFFSETS_TILE_FIRE[prefer_idx] then
+    local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, prefer_idx)
+    if trees then return prefer_idx, awx, awy, trees end
+  end
+  local best_i, best_trees, best_wx, best_wy = nil, nil, nil, nil
+  for i = 1, 5 do
+    if i ~= prefer_idx then
+      local trees, awx, awy = aim_line_trees(ox, oy, omx, omy, pmx, pmy, world, i)
+      if trees then
+        if i == 1 and trees == 0 then
+          return 1, awx, awy, 0            -- clear centre: one simulation, done
+        end
+        if best_trees == nil or trees < best_trees then
+          best_i, best_trees, best_wx, best_wy = i, trees, awx, awy
+          if trees == 0 then break end     -- clear corner: nothing beats it
+        end
+      end
+    end
+  end
+  if not best_i then return nil end
+  return best_i, best_wx, best_wy, best_trees
+end
+
+local function spot_clear_aim(sfx, sfy, pmx, pmy, world)
+  return clear_aim_from_world(math.floor(sfx * 256 + 0.5),
+                              math.floor(sfy * 256 + 0.5),
+                              pmx, pmy, world)
+end
+
+-- ── Blocked-line ladder ──────────────────────────────────────────────────
+-- Every site that is about to fire tests its shot line first, and every one of
+-- them used to bin the WHOLE take the moment something impassable was on it.
+-- loss_b6 bot3 t=9483: the blitz COMMANDER had just broadcast GO, was still 8
+-- tiles short of its standoff on pill #14 at (129,130), and a second pill at
+-- (130,131) — diagonally in front of the target — crossed the live gun line for
+-- one tick. CHARGE_ABORT_OBSTACLE dropped the take and the soldier charged in
+-- alone. Two things were wrong: we asked the question before arriving, and a
+-- "no" meant giving up rather than aiming somewhere else on the same pill.
+--
+-- The ladder that replaces it, used at every blocked-line site:
+--   0. (charge only) do not even ask until the tank is AT its standoff — a line
+--      that is bad while driving in usually clears itself on arrival.
+--   1. try_reaim: try the other aim points on the pill (centre + four corners)
+--      from where we actually are. A different corner is very often clear when
+--      the centre is not, and swapping the aim keeps the take alive with no
+--      repositioning at all.
+--   2. blocked_line_replan: only when NO aim point works, ban this approach
+--      angle and go back to plan_position for a different SPOT. Give the take
+--      up only after SANITY_PILL_REPLANS_MAX spots have failed.
+
+-- Write one aim point onto the goal in every representation the pipeline reads.
+-- Steering's PPT substates (in_range_aim / shoot_pill) read aim_mx/aim_my, while
+-- charge / aim / engage read aim_wx/aim_wy through planned_aim_tile — set only
+-- half and the gun keeps turning onto the line we just rejected.
+local function set_goal_aim(goal, pmx, pmy, idx, awx, awy)
+  local off = shield.AIM_OFFSETS_TILE_FIRE[idx] or shield.AIM_OFFSETS_TILE_FIRE[1]
+  goal.aim_idx = idx
+  goal.aim_wx  = awx
+  goal.aim_wy  = awy
+  goal.aim_mx  = pmx + off[1]
+  goal.aim_my  = pmy + off[2]
+end
+
+-- Step 1. Returns:
+--   "ok"      a clear aim was found (already written onto the goal) — carry on
+--   "wait"    we searched too recently — carry on, do NOT abort or re-search
+--   "blocked" nothing on this pill is shootable from here — caller runs step 2
+-- (ox,oy) is the origin in WORLD units: the tank's live position for the sites
+-- that are already at their firing position, the planned standoff for the
+-- standoff sanity check. `tag` names the site and keys the rate limiter.
+local function try_reaim(state, goal, world, ox, oy, pmx, pmy, now, tag, obstacle)
+  -- Rate limit: the search is five shell simulations, and right after a
+  -- successful re-aim the gun still needs a few ticks to swing onto the new
+  -- corner — so the live line reads blocked again next tick. Hold instead of
+  -- re-searching (or aborting) every tick.
+  local key  = "_reaim_tick_" .. tag
+  local last = goal[key]
+  if last and (now - last) < (C.BLOCKED_AIM_RETRY_TICKS or 10) then return "wait" end
+  goal[key] = now
+  local cur  = goal.aim_idx
+  local from = (cur and (shield.AIM_NAMES[cur] or tostring(cur))) or "planned"
+  local idx, awx, awy, trees = clear_aim_from_world(ox, oy, pmx, pmy, world, cur)
+  if not idx then return "blocked" end
+  set_goal_aim(goal, pmx, pmy, idx, awx, awy)
+  -- Keep the shield scan's own choice in step. On a PPT take the wall list is
+  -- w.aims[best_aim_idx].potential_blockers, so leaving best_aim_idx on the old
+  -- corner would build the shield around a lane we no longer fire down (and
+  -- standoff_shot_obstacle's fallback would still test the old line). Only when
+  -- the scan actually evaluated this aim — otherwise leave it alone.
+  local w = goal._shield_scan and goal._shield_scan.best
+  if w and w.aims and w.aims[idx] then w.best_aim_idx = idx end
+  return "ok"
+end
+
+-- Step 2. Count this SPOT as tried, ban the approach angle (the blocker is a
+-- pill — it will not move, so replanning onto the same line just loops) and
+-- reset to plan_position for a fresh spot. _sanity_pill_replans is the one
+-- SHARED counter for the whole take (the standoff sanity check, the blitz GO
+-- gate, charge and shoot_pill all bump it) so "spots tried" is a single number
+-- instead of one per site.
+-- Returns (abandon, banned_bucket, tries). When abandon is true the pill has
+-- already been blacklisted and the caller must clear the goal and return.
+--
+-- The reset set itself lives in reset_to_plan_position so the one site that
+-- replans WITHOUT counting a spot against the take (the standoff sanity check's
+-- 2+-walls reason, which has always just re-planned) uses exactly the same list.
+local function reset_to_plan_position(state, goal)
+  goal.substate                 = "plan_position"
+  goal.scan_spots               = nil
+  goal._shield_scan             = nil
+  -- Also clear the DEFERRED scan flag: left set, the next plan_position would
+  -- take the "scan already pending" branch instead of re-deciding it for the
+  -- spot it is about to pick. plan_position sets it fresh when it wants a scan.
+  goal._shield_scan_pending     = nil
+  goal._plan_show_tick          = nil
+  goal._plan_logged             = nil
+  goal._approach_start          = nil
+  goal._approach_last_progress  = nil
+  goal._approach_last_dist      = nil
+  goal._wall_build_list         = nil
+  goal._wall_build_idx          = nil
+  -- We are not parked at an engage spot any more. _blitz and _blitz_committed
+  -- STAY: we are still this take's commander, or a soldier that already got GO.
+  -- Only the handshake timers go, so the re-approach doesn't inherit this one's
+  -- clock (same set the old BLITZ_GO_BLOCKED path cleared).
+  goal._blitz_ready_since       = nil
+  goal._blitz_timeout_ext       = nil
+  goal._blitz_prog_bd           = nil
+  goal._blitz_prog_tick         = nil
+  goal._blitz_wait_since        = nil
+  state.squad_blitz_in_position = nil
+  -- A re-entered charge has to start its own accounting. Left set, the stall
+  -- backstop would still be measuring progress against the FIRST charge and
+  -- could fire the moment we arrive at the new spot. (commit_soak_finish is
+  -- memoized on goal._soak_finish, so the re-entry does not re-decide the soak.)
+  goal._charge_shells           = nil
+  goal._charge_last_progress    = nil
+  goal._charge_best_d2          = nil
+  goal._charge_best_hp          = nil
+  goal._charge_armour           = nil
+  goal._charge_hits_total       = nil
+  -- New spot, new geometry: let every site search again immediately.
+  goal._reaim_tick_CHARGE       = nil
+  goal._reaim_tick_SHOOT_PILL   = nil
+  goal._reaim_tick_BLITZ_GO     = nil
+  goal._reaim_tick_SANITY       = nil
+end
+
+local function blocked_line_replan(state, goal, pmx, pmy, now)
+  goal._sanity_pill_replans = (goal._sanity_pill_replans or 0) + 1
+  local tries  = goal._sanity_pill_replans
+  local bucket = ban_current_pill_angle(state, goal, pmx, pmy, now)
+  if tries >= (C.SANITY_PILL_REPLANS_MAX or 3) then
+    -- Hold the pill off the pool too, or pick_goal re-adopts it within a few
+    -- ticks and the whole cycle repeats.
+    local pid = goal.target_id
+    if pid ~= nil then
+      state._pp_blacklist = state._pp_blacklist or {}
+      state._pp_blacklist[pid] = now + (C.PP_BLACKLIST_TICKS or 500)
+    end
+    return true, bucket, tries
+  end
+  reset_to_plan_position(state, goal)
+  return false, bucket, tries
+end
+
 function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy,
                                      start_deg, end_deg, acc)
   -- Per-section diagnostic accumulators. Sub-µs to update; enables
@@ -2207,6 +2548,23 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
                                     cpf.SHOT_TANK, 0)
     end
     _t_los = _t_los + (clock_us() - _t_los0)
+
+    -- ── Clear-aim gate ──
+    -- A spot we cannot actually shoot the pill from is no spot at all, so it is
+    -- rejected here the same way an impassable or banned tile is — it never
+    -- enters spots/all_valid, and nothing downstream can pick it. The stamp LOS
+    -- above is only a cheap pre-filter (walls + pills, tile centres, no bases,
+    -- no trees, no shell physics); this is the real shell simulation from the
+    -- spot's precise float position, and it also decides WHICH point on the pill
+    -- this spot will aim at. Only spots that got past the stamp pay for it, and
+    -- a clear centre costs a single simulation.
+    local aim_idx, aim_wx, aim_wy, aim_trees
+    if has_los then
+      local _t_aim0 = clock_us()
+      aim_idx, aim_wx, aim_wy, aim_trees = spot_clear_aim(cx, cy, pmx, pmy, world)
+      _t_los = _t_los + (clock_us() - _t_aim0)
+      if not aim_idx then goto next_spot end
+    end
 
     local score_a, score_b, score_d, score_e, total_score = 0, 0, 0, 0, 999
     local maneuver_tiles = nil  -- only populated in BRAIN_DEBUG_MODE
@@ -2381,26 +2739,17 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       end
       score_d = terrain_penalty
       total_score = score_a + score_b + score_d + score_e
-      -- Soldier self-planning: prefer a spot whose shot to the pill CENTER
-      -- crosses fewer trees (each tree eats a shot before LOS opens).
-      -- A built WALL on the center path is NO LONGER penalized: the blitz
-      -- blocker / clear-aim system lets the soldier aim at a pill CORNER that
-      -- dodges the commander's shield walls, and the commander now accepts a
-      -- center-blocked-but-corner-clear spot (blitz_spot_shot_blocked checks all
-      -- 5 aim points). Penalizing wall-blocked center shots here wrongly rejected
-      -- spots the commander would take. A base still stops the shell with no
-      -- corner workaround, so a base on the path still blocks.
-      do
-        local center_trees, center_blocked = 0, false
-        U.line_walk(cx, cy, pmx + 0.5, pmy + 0.5, function(wx, wy)
-          if wx == pmx and wy == pmy then return end
-          if _ttype(wx, wy) == C.T_FOREST then center_trees = center_trees + 1 end
-          -- A base of ANY owner on the center path stops the shell.
-          local be = world.base_at and world.base_at[wy * 256 + wx]
-          if be and be.base then center_blocked = true end
-        end)
-        total_score = total_score + center_trees * (C.STANDOFF_SHOT_TREE_PENALTY or 8)
-        if center_blocked then total_score = total_score + (C.STANDOFF_SHOT_BLOCKED_PENALTY or 200) end
+      -- Prefer a spot whose CHOSEN aim line crosses fewer trees — each tree eats
+      -- a shell before the pill takes one. This is the line we will really
+      -- shoot down (the clear-aim gate above picked it), not the pill centre.
+      -- Pills, bases and walls no longer score anything here: a spot with no
+      -- clean line to ANY of the five aim points was rejected outright by the
+      -- gate, so there is nothing left for STANDOFF_SHOT_BLOCKED_PENALTY to
+      -- soften. It used to be the only defence, and a 200-point nudge is not a
+      -- defence — 20260831_173448 bot2 took a spot with our own pill dead on the
+      -- centre line anyway, because the rest of the spot scored well enough.
+      if aim_trees and aim_trees > 0 then
+        total_score = total_score + aim_trees * (C.STANDOFF_SHOT_TREE_PENALTY or 8)
       end
       -- Mid/late-game spots deep in enemy influence are much riskier to
       -- hold during the take — boost their cost so we prefer takes
@@ -2420,6 +2769,10 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
           has_los = has_los,
           score_a = score_a, score_b = score_b, score_d = score_d, score_e = score_e,
           total_score = total_score, deg = deg,
+          -- The point on the pill this spot can actually hit (world units) plus
+          -- how many trees are in the way. plan_position copies these onto the
+          -- goal so charge/engage and the blitz GO gate all use the same line.
+          aim_idx = aim_idx, aim_wx = aim_wx, aim_wy = aim_wy, aim_trees = aim_trees,
           maneuver_tiles = BRAIN_DEBUG_MODE and maneuver_tiles or nil,
         }
         spots[#spots + 1] = spot_ref
@@ -2427,6 +2780,7 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       all_valid[#all_valid + 1] = {
         mx = mx, my = my, cx = cx, cy = cy, score = total_score, deg = deg,
         hostile_inf_mult = hostile_inf_mult,
+        aim_idx = aim_idx, aim_wx = aim_wx, aim_wy = aim_wy, aim_trees = aim_trees,
         spot = spot_ref,
       }
       _angles_pass = _angles_pass + 1
@@ -2930,6 +3284,11 @@ local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
   -- dodges the commander's shield walls); fall back to pill center when none set.
   goal.aim_mx = state.squad_blitz_aim_fx or (pmx + 0.5)
   goal.aim_my = state.squad_blitz_aim_fy or (pmy + 0.5)
+  -- Same point in world units — that is the copy steering, the GO gate and the
+  -- standoff sanity check read (aim_mx/aim_my get rewritten every tick by
+  -- init.lua's near-edge fallback on a non-PPT take).
+  goal.aim_wx = math.floor(goal.aim_mx * 256 + 0.5)
+  goal.aim_wy = math.floor(goal.aim_my * 256 + 0.5)
   -- Setup point: identical to every other pill-take mode (see plan_position) —
   -- the SETUP sits at the standoff RADIUS + ATTACK_APPROACH_OFFSET from the pill,
   -- along this spot's direction. We use the ideal radius (ATTACK_PILL_STANDOFF),
@@ -3020,7 +3379,13 @@ local function blitz_pick_from_scan(spots, state, tmx, tmy, wallset, pmx, pmy, w
   for _, s in ipairs(spots) do
     if s.has_los and s.mx and not (rej and rej[U.mkey(s.mx, s.my)]) then
       local afx, afy
-      if need_clear then afx, afy = blitz_clear_aim(s.mx + 0.5, s.my + 0.5, pmx, pmy, wallset, world) end
+      if need_clear then
+        afx, afy = blitz_clear_aim(s.mx + 0.5, s.my + 0.5, pmx, pmy, wallset, world)
+      elseif s.aim_wx and s.aim_wy then
+        -- No commander walls to dodge, so take the aim the spot scan already
+        -- proved is shootable from here instead of defaulting to the centre.
+        afx, afy = s.aim_wx / 256.0, s.aim_wy / 256.0
+      end
       if (not need_clear) or afx then elig[#elig + 1] = { s = s, afx = afx, afy = afy } end
     end
   end
@@ -3535,6 +3900,9 @@ function M.update_attack_substate(goal, state, world, info)
       goal.approach_mx          = nil
       goal.approach_my          = nil
       goal._chosen_deg          = nil
+      goal.aim_wx               = nil
+      goal.aim_wy               = nil
+      goal.aim_idx              = nil
       goal._plan_show_tick      = nil
       goal._plan_logged         = nil
       goal._plan_position_cleared = true
@@ -3720,6 +4088,14 @@ function M.update_attack_substate(goal, state, world, info)
         goal.standoff_fx = best.cx  -- precise float for charge/engage
         goal.standoff_fy = best.cy
         goal._chosen_deg = best.deg
+        -- The aim point the spot scan proved this spot can hit (pill centre or
+        -- one of its corners). It rides the goal in WORLD units as
+        -- aim_wx/aim_wy rather than aim_mx/aim_my because init.lua rewrites
+        -- aim_mx/aim_my from near-edge geometry on EVERY tick of a non-PPT take,
+        -- which would throw the planned corner away before we ever fired.
+        goal.aim_wx  = best.aim_wx
+        goal.aim_wy  = best.aim_wy
+        goal.aim_idx = best.aim_idx
         goal._scan_tick = state.tick   -- frame stamp for staged overlay reveal
         -- Approach position: extend line from pill through standoff by
         -- APPROACH_OFFSET. Stored as both float (precise final target)
@@ -3929,7 +4305,22 @@ function M.update_attack_substate(goal, state, world, info)
                              goal._chosen_deg or 0,
                              goal.standoff_fx, goal.standoff_fy,
                              scan_radius, no_builder, info.armour,
-                             _sb_pos, _sb_step, _num_pill_blockers)
+                             _sb_pos, _sb_step, _num_pill_blockers,
+                             -- Banned approach angles on THIS pill. The 5-degree
+                             -- sweep already honours them; without passing them
+                             -- here the shield scan nudges the standoff several
+                             -- degrees along the standoff circle and lands back
+                             -- inside the bucket the take just banned, so the
+                             -- same spot gets "tried" twice and the take burns
+                             -- its SANITY_PILL_REPLANS_MAX budget on one line
+                             -- (20260901_032030 bot0: banned 140..150 at t=506,
+                             -- deg=146.25 adopted at t=510, banned again t=531;
+                             -- 146.25 is not a multiple of 5 -- that is the tell
+                             -- that it came from the scan's nudge, not the sweep).
+                             state.banned_pill_angles
+                               and state.banned_pill_angles[pmy * 256 + pmx]
+                               or nil,
+                             state.tick or 0)
         end, debug.traceback)
         if _ok then
           state._shield_scan_attempt = nil
@@ -3960,6 +4351,21 @@ function M.update_attack_substate(goal, state, world, info)
       goal._shield_scan = sscan
       if sscan and sscan.best then
         local w = sscan.best
+        -- Belt and braces on top of the filter inside shield.scan: never adopt a
+        -- winner whose 5-degree bucket is banned on this pill. If one ever gets
+        -- through (a cached scan from before the ban, a future scoring path that
+        -- builds its own ring), keep the sweep's standoff -- unbanned by
+        -- construction -- and say so.
+        local _wb = state.banned_pill_angles
+                    and state.banned_pill_angles[pmy * 256 + pmx]
+        if _wb and w.deg then
+          local _bucket = math.floor((w.deg % 360) / 5) * 5
+          local _exp = _wb[_bucket]
+          if _exp and (state.tick or 0) < _exp then
+            w = nil
+          end
+        end
+        if w then
         goal.standoff_mx = w.mx
         goal.standoff_my = w.my
         goal.standoff_fx = w.cx
@@ -3980,6 +4386,13 @@ function M.update_attack_substate(goal, state, world, info)
                     or shield.AIM_OFFSETS_TILE_FIRE[1]
         goal.aim_mx = pmx + off[1]
         goal.aim_my = pmy + off[2]
+        -- The shield scan moved the standoff, so the spot scan's aim is stale.
+        -- Keep the world-unit aim in step with the corner the shield picked, or
+        -- the GO gate and steering would still be testing the old line.
+        goal.aim_wx  = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
+        goal.aim_wy  = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
+        goal.aim_idx = w.best_aim_idx or 1
+        end  -- if w (winner not on a banned angle)
       end
     end
 
@@ -4157,18 +4570,68 @@ function M.update_attack_substate(goal, state, world, info)
         reason = standoff_shot_obstacle(goal, pill, world)
       end
       if reason then
+        -- Step 1 of the blocked-line ladder (loss_b6 bot3 t=9483): before giving
+        -- up this spot, ask whether a DIFFERENT point on the same pill — another
+        -- corner, or the centre — is shootable from the standoff we already
+        -- picked. Same origin the sanity check itself uses (the planned spot, not
+        -- the moving tank), so a "yes" is a line this spot can genuinely hold.
+        local ladder = try_reaim(state, goal, world,
+                                 math.floor(goal.standoff_fx * 256 + 0.5),
+                                 math.floor(goal.standoff_fy * 256 + 0.5),
+                                 pill.mx, pill.my, now, "SANITY", reason)
+        if ladder ~= "blocked" then
+          -- Re-aimed (or we searched a moment ago and are letting the gun catch
+          -- up): the take carries on from the same spot, no replan at all.
+          reason = nil
+          if ladder == "ok" and
+             (sub == "in_range_aim" or sub == "in_range_aim_pre" or
+              sub == "in_range_aim_finetune") then
+            -- The PPT aim substates latch _aim_locked / _pre_aim_locked against
+            -- the OLD corner. Moving the aim without dropping those would let
+            -- in_range_aim advance on a stale lock (and finetune keep tapping
+            -- off a heading it verified for a line we just abandoned), so restart
+            -- the aim leg on the new corner.
+            goal.substate              = "in_range_aim"
+            goal.aim_tick              = now
+            goal._aim_locked           = nil
+            goal._pre_aim_locked       = nil
+            goal._finetune_taps        = 0
+            goal._finetune_start       = nil
+            goal._finetune_reached_tap = nil
+            goal._finetune_path        = nil
+            goal._finetune_on_pill     = nil
+          end
+        end
+      end
+      if reason then
         print(string.format(TAG ..
           " SANITY: shot path blocked (%s) in %s — replanning", reason, sub))
-        goal.substate                 = "plan_position"
-        goal.scan_spots               = nil
-        goal._shield_scan             = nil
-        goal._plan_show_tick          = nil
-        goal._plan_logged             = nil
-        goal._approach_start          = nil
-        goal._approach_last_progress  = nil
-        goal._approach_last_dist      = nil
-        goal._wall_build_list         = nil
-        goal._wall_build_idx          = nil
+        -- Step 2. A PILL in the line does not move: replanning to the same angle
+        -- just loops (20260831_092854 bot2: four SANITY_REPLANs on pill 6 at
+        -- (127,139), same standoff every time, then a blocker dropped beside
+        -- it and the LGM stranded). Ban the chosen angle bucket and its two
+        -- neighbours on this pill -- same mechanism as the approach timeout,
+        -- which the spot scan honours -- so the next plan_position picks a
+        -- line the pill is not in. Give the take up only after
+        -- SANITY_PILL_REPLANS_MAX different SPOTS have failed with no clear aim
+        -- on any of them.
+        if reason:sub(1, 7) == "pill at" then
+          -- Ladder step 1 already ran above and found NO clear aim from this
+          -- standoff. Tag it the way the three firing sites tag theirs, so
+          -- "the ladder ran" is one greppable shape across all four.
+          local abandon, bucket, tries =
+            blocked_line_replan(state, goal, pill.mx, pill.my, now)
+          if bucket then
+          end
+          if abandon then
+            clear_attack_goal(state, "shot path blocked by our own pill on every tried angle")
+            return
+          end
+        else
+          -- 2+ walls on the line: never counted as a spot tried and never
+          -- abandons the take (unchanged) — just replan.
+          reset_to_plan_position(state, goal)
+        end
       end
     end
   end
@@ -4214,7 +4677,11 @@ function M.update_attack_substate(goal, state, world, info)
     -- back rdy, so on GO every soldier can fire/charge immediately rather than
     -- burning the strike window spinning to face the target.
     do
-      local _ad = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, pmx + 0.5, pmy + 0.5)
+      -- Measure against the aim we will actually fire down (centre or the corner
+      -- the spot scan picked), so readiness agrees with where the gun is turning.
+      local _atx = goal.aim_wx and (goal.aim_wx / 256.0) or (pmx + 0.5)
+      local _aty = goal.aim_wy and (goal.aim_wy / 256.0) or (pmy + 0.5)
+      local _ad = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, _atx, _aty)
       state.squad_blitz_aimed = math.abs(U.adiff(info.direction, _ad)) <= (C.SQUAD_BLITZ_AIM_TOL or 8)
     end
 
@@ -4233,6 +4700,69 @@ function M.update_attack_substate(goal, state, world, info)
     -- (blitz_2plus): with an ally rushing we overwhelm together instead of the
     -- commander hanging back threading its shield while the soldier charges alone.
     local function commit_fire()
+      -- ── GO gate: never commit to a charge line we cannot shoot down. ──
+      -- 20260831_173448 bot2 t6150: solo blitz on pill #4 at (124,139), we GO'd
+      -- from (133,141) with our OWN pill #6 sitting at (126,139) dead on the
+      -- line. The charge's per-tick shot-path check caught it one tick later
+      -- (CHARGE_ABORT_OBSTACLE) and binned the whole take. Check it HERE, before
+      -- we enter charge, with the SAME simulation the charge aborts on, so we
+      -- never target a line we can't hit.
+      --   * Only the charging branch needs this. The shielded/PPT branch below
+      --     fires from behind its walls and threads its own corner aim.
+      --   * We test the aim the PLANNER chose (goal.aim_wx/aim_wy — pill centre
+      --     or the corner the spot scan proved shootable from this spot), not
+      --     the pill centre, because that is the line the charge now steers
+      --     down. Falls back to the centre when no aim was planned.
+      --   * Still re-checked at the GO moment against the LIVE world: an ally
+      --     can drop a pill into the corridor long after our standoff was
+      --     chosen, so screening at spot-selection time alone is not enough.
+      --     The scan hard-rejects blocked spots now, so this should fire rarely
+      --     instead of looping (20260831_222819 bot2: 467 blocked GOs).
+      -- A wall on the line is fine (shells clear it) — only the impassable set
+      -- shot_path_obstacle_count returns math.huge for (a live deployed pill)
+      -- stops us.
+      if not (goal._blitz_shielded and goal._shield_scan) then
+        local aim_wx = goal.aim_wx or bit.bor((bit.lshift(pmx, 8)), 128)
+        local aim_wy = goal.aim_wy or bit.bor((bit.lshift(pmy, 8)), 128)
+        local go_obs, go_why = shot_path_obstacle_count(info, goal, world, aim_wx, aim_wy)
+        if go_obs == math.huge then
+          -- Step 1 of the blocked-line ladder: we are PARKED at our standoff
+          -- here, so this is a real answer about a real spot — but a blocked
+          -- CENTRE (or blocked planned corner) says nothing about the pill's
+          -- other three corners. Try them from the live tank position before
+          -- touching the plan (loss_b6 bot3 t=9483 is the charge-side twin of
+          -- this: a neighbouring pill clipped one aim line and binned the take).
+          local ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
+                                   pmx, pmy, now, "BLITZ_GO", go_why)
+          if ladder ~= "blocked" then
+            -- Re-aimed on the spot (or holding while the gun swings onto the new
+            -- corner): GO stands, fall through and commit.
+            go_obs = 0
+          end
+        end
+        if go_obs == math.huge then
+          -- Step 2. Ban this approach angle the way SANITY_BAN does — the
+          -- blocker is a pill, it will not move, so replanning on the same line
+          -- just loops — and go back to plan_position on the SAME pill for a
+          -- fresh SPOT.
+          -- Escalate like SANITY_ABANDON. A friendly pill sitting between us and
+          -- the target blocks every line from this side, and plan_position kept
+          -- re-picking the same eastern spot every 10 ticks (loss_b2 bot2: 467
+          -- BLITZ_GO_BLOCKED on pill (128,139), ally pill at (130,139), ~90 s
+          -- burned). After SANITY_PILL_REPLANS_MAX SPOTS with no clear aim on
+          -- any of them, give the take up and blacklist the pill for a while.
+          -- The counter is _sanity_pill_replans, shared with the standoff sanity
+          -- check and the two firing substates: one "spots tried" number for the
+          -- whole take rather than one per site.
+          local abandon, bucket, tries =
+            blocked_line_replan(state, goal, pmx, pmy, now)
+          if abandon then
+            clear_attack_goal(state, "blitz GO blocked by a friendly pill on every tried line")
+            return
+          end
+          return
+        end
+      end
       goal._blitz_committed    = true
       goal._blitz_start_armour = info.armour or 0  -- baseline for damage-gated swerve
       if goal._blitz_shielded and goal._shield_scan then
@@ -4274,6 +4804,17 @@ function M.update_attack_substate(goal, state, world, info)
       goal._blitz = false
       goal._blitz_solo = true
       state.squad_blitz_go = true
+      commit_fire()
+      return
+    end
+
+    -- Already committed and back here? Then the blocked-line ladder sent us from
+    -- charge / shoot_pill / the GO gate to plan_position, we re-approached, and
+    -- the in-position decision routed us into blitz_wait a second time. GO is
+    -- already out — the soldiers are charging — so do NOT run the handshake
+    -- again and make everyone wait on a commander who has already said go.
+    -- Re-run the fire gate straight away from the new standoff.
+    if goal._blitz_committed then
       commit_fire()
       return
     end
@@ -4589,6 +5130,10 @@ function M.update_attack_substate(goal, state, world, info)
                         or shield.AIM_OFFSETS_TILE_FIRE[1]
             goal.aim_mx = pmx + off[1]
             goal.aim_my = pmy + off[2]
+            -- Same aim in world units, for the GO gate / steering / sanity check.
+            goal.aim_wx  = bit.lshift(pmx, 8) + math.floor(off[1] * 256)
+            goal.aim_wy  = bit.lshift(pmy, 8) + math.floor(off[2] * 256)
+            goal.aim_idx = target_for_build.best_aim_idx
           else
             why_no_build = "target has no clean aim (all blocked by wall)"
             -- No clean shot through any aim means PPT can't function
@@ -4785,7 +5330,14 @@ function M.update_attack_substate(goal, state, world, info)
       pots = pots or {}
       local sorted = {}
       for _, p in ipairs(pots) do sorted[#sorted + 1] = p end
+      -- Closest-to-pill first, but slots that touch an existing friendly
+      -- pill go AFTER the rest (they were already penalised in the scan;
+      -- here they simply get built last, so a carried pill lands on a
+      -- slot that adds cover before one that mostly adds exposure).
       table.sort(sorted, function(a, b)
+        local aa = a.adj_friendly and 1 or 0
+        local ab = b.adj_friendly and 1 or 0
+        if aa ~= ab then return aa < ab end
         local da = (a.mx - pmx) * (a.mx - pmx) + (a.my - pmy) * (a.my - pmy)
         local db = (b.mx - pmx) * (b.mx - pmx) + (b.my - pmy) * (b.my - pmy)
         return da < db
@@ -5136,10 +5688,54 @@ function M.update_attack_substate(goal, state, world, info)
       local pill_hp_live = pill and pill.health or 0
       local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
       if obstacle_shots == math.huge then
-        -- Impassable (pill in path) — abort regardless
-        print(string.format(TAG .. " CHARGE: impassable obstacle — %s, aborting", obstacle_reason))
-        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
-        return
+        -- ── Step 0 of the blocked-line ladder: are we even there yet? ──
+        -- loss_b6 bot3 t=9483: the blitz commander was 8 tiles short of its
+        -- standoff on pill (129,130), still driving in with the gun swinging,
+        -- when the live line clipped a second pill at (130,131) for a single
+        -- tick. This check fired, binned the whole take, and the soldier charged
+        -- alone. A bad angle mid-approach usually resolves itself further in, so
+        -- do not ask the question until the tank is actually at its firing spot.
+        -- The 250-tick CHARGE_ABORT_STALL above stays the safety net for a
+        -- charge that never gets anywhere.
+        local sfx = goal.standoff_fx or (goal.standoff_mx and (goal.standoff_mx + 0.5))
+        local sfy = goal.standoff_fy or (goal.standoff_my and (goal.standoff_my + 0.5))
+        local at_spot = true
+        if sfx and sfy then
+          local tfx, tfy = info.tankx / 256.0, info.tanky / 256.0
+          local sdx, sdy = tfx - sfx, tfy - sfy
+          local tol = C.CHARGE_SHOT_CHECK_AT_SPOT_TILES or 1.0
+          at_spot = (sdx * sdx + sdy * sdy) <= (tol * tol)
+          if not at_spot then
+            -- Driven PAST the standoff (a charge often overshoots inward) counts
+            -- as arrived too: we are as close to the pill as the plan wanted.
+            local pcx, pcy = pmx + 0.5, pmy + 0.5
+            local tdx, tdy = tfx - pcx, tfy - pcy
+            local qdx, qdy = sfx - pcx, sfy - pcy
+            at_spot = (tdx * tdx + tdy * tdy) <= (qdx * qdx + qdy * qdy)
+          end
+        end
+        if at_spot then
+          -- Step 1: try the pill's other aim points from where we are standing.
+          local ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
+                                   pmx, pmy, now, "CHARGE", obstacle_reason)
+          if ladder == "blocked" then
+            -- Step 2: nothing on this pill is shootable from this spot. Ban the
+            -- angle and go find another spot; only give the take up once
+            -- SANITY_PILL_REPLANS_MAX spots have failed.
+            local abandon, bucket, tries =
+              blocked_line_replan(state, goal, pmx, pmy, now)
+            if abandon then
+              print(string.format(TAG .. " CHARGE: impassable obstacle — %s, no clear aim from %d spots, aborting", obstacle_reason, tries))
+              clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+              return
+            end
+            return
+          end
+        end
+        -- Blocked but not aborting: skip the ammo bookkeeping this tick
+        -- (obstacle_shots is math.huge, so total_needed would be nonsense and
+        -- CHARGE_ABORT_SHELLS would fire on a line we are still fixing).
+        reached = false
       end
       if reached then
         local total_needed = obstacle_shots + pill_hp_live
@@ -5675,9 +6271,48 @@ function M.update_attack_substate(goal, state, world, info)
       local in_flight = goal._on_target_in_flight or 0
       local avail_shots = info.shells + in_flight
       if obstacle_shots == math.huge then
-        print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, aborting", obstacle_reason))
-        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
-        return
+        -- Blocked-line ladder (loss_b6 bot3 t=9483 is the charge-side twin).
+        -- We are parked behind the shield at our engage spot, so a blocked line
+        -- is a real answer — but only about THIS aim point. Step 1: try the
+        -- pill's other corners/centre from here. A hit means re-lining the gun,
+        -- which is the PPT aim path (in_range_aim -> finetune -> shoot_pill),
+        -- not a plain aim swap: steering's shoot_pill only taps a few brad of
+        -- correction, so it would never swing all the way onto a new corner.
+        local ladder = try_reaim(state, goal, world, info.tankx, info.tanky,
+                                 pmx, pmy, now, "SHOOT_PILL", obstacle_reason)
+        if ladder == "ok" then
+          goal.substate             = "in_range_aim"
+          goal.aim_tick             = now
+          goal._aim_locked          = nil
+          goal._pre_aim_locked      = nil
+          goal._finetune_taps       = 0
+          goal._finetune_start      = nil
+          goal._finetune_reached_tap = nil
+          goal._finetune_path       = nil
+          goal._finetune_on_pill    = nil
+          goal._shoot_reach_checked = nil
+          goal._shoot_first_steer   = nil
+          -- _shoot_progress_hp/_shoot_progress_tick deliberately survive: they
+          -- are the 200-tick no-progress backstop, and resetting them on every
+          -- re-aim would let a pill we can never actually hurt loop forever.
+          return
+        elseif ladder == "blocked" then
+          -- Step 2: no aim point works from this spot — replan onto another one,
+          -- and only abandon after SANITY_PILL_REPLANS_MAX spots have failed.
+          local abandon, bucket, tries =
+            blocked_line_replan(state, goal, pmx, pmy, now)
+          if abandon then
+            print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, no clear aim from %d spots, aborting", obstacle_reason, tries))
+            clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+            return
+          end
+          return
+        end
+        -- ladder == "wait": we searched a moment ago and are letting the gun
+        -- settle. Don't abort and don't feed math.huge into the ammo estimate —
+        -- just leave _bullets_needed alone this tick. The 200-tick no-progress
+        -- timeout below is the backstop.
+        total_needed = goal._bullets_needed or pill_hp
       elseif not reached and first_shoot_tick then
         print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
         clear_attack_goal(state, "shot does not reach pill")
@@ -5898,6 +6533,9 @@ function M.update_attack_substate(goal, state, world, info)
       goal._finetune_on_pill     = nil
       goal.aim_mx                = nil
       goal.aim_my                = nil
+      goal.aim_wx                = nil
+      goal.aim_wy                = nil
+      goal.aim_idx               = nil
       goal._shoot_armour         = nil
       goal._shoot_shells         = nil
       goal._shoot_hits_total     = nil

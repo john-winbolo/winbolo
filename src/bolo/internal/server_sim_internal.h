@@ -93,6 +93,15 @@ struct ServerSim {
     int32_t      gameTickLimit;      /* 0 = unlimited; ends the running game when reached (no loop exit). */
     int32_t      gameTicksRun;       /* Running-state tick counter paired with gameTickLimit; resets each game. */
 
+    /* Periodic state-snapshot hook (-snapjson/-snapinterval in WinBoloDS).
+     * snapshotTicks counts exactly the same running half-steps ticksRun
+     * does; the callback fires from inside simRunHalfStep every
+     * snapshotInterval of them, before the half-step does any work, so the
+     * observer sees fully settled state. 0 interval = disabled. */
+    void       (*snapshotCb)(ServerSim *sim);
+    int32_t      snapshotInterval;
+    int32_t      snapshotTicks;
+
     /* Server state machine */
     ServerState  state;
     bool         lobbyEnabled;       /* false = no-lobby mode (skip lobby, play immediately) */

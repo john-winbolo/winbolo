@@ -1089,6 +1089,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         j->hasInput   = false;
         j->wasKilled  = false;
         j->pendingCmdCount = 0;
+        j->pendingInternalMsgCount = 0;
 
         sim->botMgr.jobIndices[activeCount++] = i;
     }
@@ -1161,6 +1162,26 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         if (j->poolJson) {
             brainRecordStashPoolJson((BYTE)i, j->poolJson);
             j->poolJson = NULL;
+        }
+
+        /* Fan out this bot's deferred internal (dest=0) messages into every
+         * allied bot's inbox. Serial, on the producer thread, walking
+         * jobIndices in ascending slot order — so both WHEN a message lands
+         * (always the next tick) and the ORDER senders are processed in are
+         * fixed, whatever the workers did. Doing this on the worker was the
+         * cross-bot race: it wrote into another bot's MessageState while that
+         * bot's worker was reading and clearing the same unlocked ring.
+         *
+         * Placed BEFORE the skip-continues below for the same reason as the
+         * poolJson stash: a bot whose think was budget-killed or produced no
+         * input may still have queued a message earlier in the tick, and
+         * dropping it here would be a silent comms loss. */
+        if (j->pendingInternalMsgCount > 0) {
+            for (int m = 0; m < j->pendingInternalMsgCount; m++) {
+                botManagerDeliverInternalMessage(sim, (BYTE)i,
+                                                 j->pendingInternalMsg[m]);
+            }
+            j->pendingInternalMsgCount = 0;
         }
 
         if (j->needRemove) {
@@ -1365,6 +1386,37 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
      * were never allied (no -allybots / no lobby teams) -> comms can't work. */
     botMsgDebugLog("BOTMSG fan-out from p%u: allies=0x%X delivered=%d: %.48s",
                    (unsigned)fromPlayer, (unsigned)allies, delivered, msg);
+}
+
+/* Worker-safe front end to the fan-out above. Writes ONLY into the sending
+ * bot's own job slot, which no other thread touches during Stage 2, so it
+ * cannot race with a receiver reading its inbox. Stage 3 does the real
+ * delivery serially. See botManagerQueueInternalMessage in bot_manager.h and
+ * the BotJobCtx pendingInternalMsg comment for the next-tick semantics. */
+void botManagerQueueInternalMessage(ServerSim *sim, BYTE fromPlayer,
+                                    const char *msg) {
+    BotJobCtx *j;
+
+    if (sim == NULL || msg == NULL || msg[0] == '\0') return;
+    if (fromPlayer >= MAX_TANKS) return;
+
+    j = &sim->botMgr.jobs[fromPlayer];
+
+    if (j->pendingInternalMsgCount >= BOT_PENDING_INTERNAL_MSG_MAX) {
+        /* Drop the OLDEST so the freshest coordination state still ships —
+         * a stale /info slate is worth less than the current one. Shift the
+         * survivors down one slot. */
+        botMsgDebugLog("BOTMSG p%u internal queue full (%d) -> oldest dropped: %.48s",
+                       (unsigned)fromPlayer, BOT_PENDING_INTERNAL_MSG_MAX,
+                       j->pendingInternalMsg[0]);
+        memmove(j->pendingInternalMsg[0], j->pendingInternalMsg[1],
+                (size_t)(BOT_PENDING_INTERNAL_MSG_MAX - 1) * BRAIN_INBOX_MSG_LEN);
+        j->pendingInternalMsgCount = BOT_PENDING_INTERNAL_MSG_MAX - 1;
+    }
+
+    SDL_strlcpy(j->pendingInternalMsg[j->pendingInternalMsgCount], msg,
+                BRAIN_INBOX_MSG_LEN);
+    j->pendingInternalMsgCount++;
 }
 
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {

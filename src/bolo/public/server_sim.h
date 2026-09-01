@@ -700,6 +700,44 @@ void serverSimSetTickLimit(ServerSim *sim, int32_t ticks);
 void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks);
 
 /*********************************************************
+ *NAME:          serverSimSetSnapshotHook
+ *PURPOSE:
+ *  Registers a periodic observer that is invoked every
+ *  intervalTicks running ticks (the same ticks
+ *  serverSimSetTickLimit counts), from inside the sim step
+ *  before that step does any work — so the callback always
+ *  sees fully settled state and never a half-applied tick.
+ *  It runs on whatever thread drives the sim (the dedicated
+ *  server's game timer), under that driver's tick lock.
+ *
+ *  The callback must only read the sim. intervalTicks of 0,
+ *  or a NULL cb, disables the hook. Follows the same
+ *  register-a-callback pattern as mapSetChangeCallback.
+ *
+ *  Used by WinBoloDS -snapjson/-snapinterval to build a
+ *  JSONL time series of global game state.
+ *********************************************************/
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks);
+
+/*********************************************************
+ *NAME:          serverSimGetPlayerKills
+ *PURPOSE:
+ *  The server's authoritative kill count for a slot in the
+ *  current round (roundStats[slot].kills, credited in the
+ *  shell-death path).
+ *
+ *  Not the same number as TankInfo.kills: that reads
+ *  tank->numKills, which only tankAddKill writes, and
+ *  tankAddKill is called solely from the client snapshot
+ *  path for the local player. On a dedicated server nothing
+ *  ever calls it, so TankInfo.kills is permanently 0 —
+ *  server-side readers want this instead. Returns 0 for an
+ *  out-of-range slot.
+ *********************************************************/
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot);
+
+/*********************************************************
  *NAME:          serverSimSetUserLogFileName
  *PURPOSE:
  *  Copies name into the user log file buffer. NULL or
@@ -963,6 +1001,26 @@ void serverSimClearBalanceProposal(ServerSim *sim);
  *  will let the external call site go away.
  *********************************************************/
 void serverSimReapplyTeamAlliances(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimReassignStarts
+ *PURPOSE:
+ *  Re-runs the batch start placement over the currently
+ *  connected players and re-creates their tanks at the new
+ *  positions. No-op unless the sim is running.
+ *
+ *  TECH DEBT: the twin of serverSimReapplyTeamAlliances
+ *  above, and there for the same reason. -nolobby (and the
+ *  SP-host flow) call serverSimStartGame before the bots
+ *  have been added and their team numbers set, so the batch
+ *  pass inside it sees an empty roster; every bot added
+ *  afterwards then falls back to the team-blind per-player
+ *  pick, which put two rivals two squares apart in the same
+ *  corner. Call this once the roster and teams are final.
+ *  It goes away with the alliance pass when players are
+ *  added before serverSimStartGame is called.
+ *********************************************************/
+void serverSimReassignStarts(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimResetGameWorld
