@@ -6608,57 +6608,102 @@ static bool lastRoundDrawSkull(void) {
  * into an SDL render target; the recap blits the visible slice of that
  * target as an image and feeds wheel/drag input back. The viewer owns a
  * process-wide decoder singleton, so the reel is torn down whenever the
- * recap stops drawing it or the summary clears. */
-static bool  s_reelActive     = false;
-static bool  s_reelTried      = false;  /* one load attempt per summary */
-/* The one attempt came to nothing — the viewer refused this summary's bytes,
- * or there were none to hand it. There is nothing further to try for this
- * round, so the recap says so instead of going back round for more bytes. */
-static bool  s_reelLoadFailed = false;
-static bool  s_reelDrawn      = false;  /* body drew the reel this frame */
-/* True when the pause was ours (the recap stopped being drawn), not the
- * player's — the reel resumes on its own when the recap comes back, but only
- * then. */
-static bool  s_reelAutoPaused = false;
-static float s_reelViewW      = 0.0f;
-static float s_reelViewH      = 0.0f;
-/* Where the seek slider sits, and whether the player is dragging it. Held
- * apart from the playhead so a drag is not fought by the reel advancing under
- * it. The reel follows the handle live while it is dragged — see the scrub
- * block in the transport row for what each direction costs. */
-static float s_reelSeekRatio  = 0.0f;
-static bool  s_reelSeeking    = false;
-/* Last ratio actually handed to the decoder, and when. Tracks the playhead
- * while idle so a drag starts from the truth. */
-static float  s_reelSeekApplied    = 0.0f;
-static Uint64 s_reelSeekAppliedMs  = 0;
-/* Playing state latched when a drag began, restored when it ends: a scrub
- * pauses the reel for its duration rather than letting every applied seek
- * tear down and rebuild the two SDL playback timers. */
-static bool  s_reelSeekWasPlaying  = false;
+ * recap stops drawing it or the summary clears.
+ *
+ * Everything the reel holds belongs to one round's recap — what is playing,
+ * how it is being scrubbed, the optional crop frame over it, where a round
+ * still on its way from the server stands, the slack the body hands back and
+ * the zoom gesture banks — so lobbyReelEnd clears the lot. */
+typedef struct LobbyReelState {
+    bool  active     = false;
+    bool  tried      = false;  /* one load attempt per summary */
+    /* The one attempt came to nothing — the viewer refused this summary's
+     * bytes, or there were none to hand it. There is nothing further to try
+     * for this round, so the recap says so instead of going back round for
+     * more bytes. */
+    bool  loadFailed = false;
+    bool  drawn      = false;  /* body drew the reel this frame */
+    /* True when the pause was ours (the recap stopped being drawn), not the
+     * player's — the reel resumes on its own when the recap comes back, but
+     * only then. */
+    bool  autoPaused = false;
+    float viewW      = 0.0f;
+    float viewH      = 0.0f;
+    /* Where the seek slider sits, and whether the player is dragging it. Held
+     * apart from the playhead so a drag is not fought by the reel advancing
+     * under it. The reel follows the handle live while it is dragged — see the
+     * scrub block in the transport row for what each direction costs. */
+    float  seekRatio      = 0.0f;
+    bool   seeking        = false;
+    /* Last ratio actually handed to the decoder, and when. Tracks the playhead
+     * while idle so a drag starts from the truth. */
+    float  seekApplied    = 0.0f;
+    Uint64 seekAppliedMs  = 0;
+    /* Playing state latched when a drag began, restored when it ends: a scrub
+     * pauses the reel for its duration rather than letting every applied seek
+     * tear down and rebuild the two SDL playback timers. */
+    bool   seekWasPlaying = false;
 
 #if BOLO_RECAP_CLIP_GIF
-/* Crop frame: an optional rectangle over the reel that an export takes instead
- * of the whole visible view, so a clip can be posted without the map around it.
- * Off by default, and off is the untouched full-view path.
- *
- * Held normalized to the displayed image rather than in pixels, so resizing the
- * lobby or zooming the reel keeps the same framing rather than leaving the box
- * pointing at a different part of the map. Session-only, by design — a crop is
- * chosen for the clip being taken, not kept as a preference. */
-static bool  s_reelCropOn = false;
-static float s_reelCropX0 = 0.25f;
-static float s_reelCropY0 = 0.25f;
-static float s_reelCropX1 = 0.75f;
-static float s_reelCropY1 = 0.75f;
+    /* Crop frame: an optional rectangle over the reel that an export takes
+     * instead of the whole visible view, so a clip can be posted without the
+     * map around it. Off by default, and off is the untouched full-view path.
+     *
+     * Held normalized to the displayed image rather than in pixels, so resizing
+     * the lobby or zooming the reel keeps the same framing rather than leaving
+     * the box pointing at a different part of the map. Session-only, by design
+     * — a crop is chosen for the clip being taken, not kept as a preference,
+     * which is what the reset below makes true. */
+    bool  cropOn = false;
+    float cropX0 = 0.25f;
+    float cropY0 = 0.25f;
+    float cropX1 = 0.75f;
+    float cropY1 = 0.75f;
 
-/* The slice the reel last blitted, in render-target pixels: origin plus the
- * whole-pixel visible extent the draw computed. The crop frame is normalized
- * against this extent, so a capture can map the frame back onto exactly the
- * pixels the outline was drawn over rather than re-deriving the mapping and
- * risking a different answer. */
-static SDL_Rect s_reelLastSlice = { 0, 0, 0, 0 };
+    /* The slice the reel last blitted, in render-target pixels: origin plus the
+     * whole-pixel visible extent the draw computed. The crop frame is
+     * normalized against this extent, so a capture can map the frame back onto
+     * exactly the pixels the outline was drawn over rather than re-deriving the
+     * mapping and risking a different answer. */
+    SDL_Rect lastSlice = { 0, 0, 0, 0 };
+#endif
 
+    /* Where a client that did not record the round stands in getting it from
+     * the server that did: the transfer's state as a ClientRoundLogState, the
+     * percent that goes with it while bytes are arriving, and the latch that
+     * keeps the request to one send per summary. Read by the recap so it can
+     * say what is happening in place of a reel it has no bytes for yet. A
+     * process replaying its own recording never asks, and leaves these idle. */
+    bool    logAsked   = false;
+    int     logState   = CLIENT_ROUND_LOG_IDLE;
+    uint8_t logPercent = 0;
+    /* Last state and ten-percent step written to winbolo.log, so the transfer
+     * is traced as it moves instead of once a frame. */
+    int     logStateSeen = -1;
+    int     logStepSeen  = -1;
+
+    /* Vertical room the recap left unused on the previous frame, accumulated.
+     * The reel adds it to its own height, which is what stops the body ending
+     * well short of the bottom of a tall panel. Immediate mode gives no way to
+     * know what the content below the reel will cost before drawing it, so this
+     * is a one-frame feedback loop: renderLastRoundBody measures the shortfall
+     * at the end of the frame and this grows or shrinks by that much. It has to
+     * accumulate rather than hold the raw shortfall — a raw value would be
+     * spent, measure zero, and collapse back the next frame. */
+    float recapSlack = 0.0f;
+
+    /* Banked wheel and pinch travel, and the frame they were last spent on, so
+     * a gesture is stepped a whole notch at a time and a bank left over from a
+     * gesture aimed elsewhere is dropped. See the zoom-input block below for
+     * what the two units are and why the banks exist at all. */
+    float wheelAccum = 0.0f;
+    float pinchAccum = 0.0f;
+    int   zoomFrame  = -1;
+} LobbyReelState;
+
+static LobbyReelState s_reel = {};
+
+#if BOLO_RECAP_CLIP_GIF
 /* Smallest crop the frame will shrink to, in displayed pixels. */
 static const float REEL_CROP_MIN_PX = 16.0f;
 /* Grab margin either side of an edge, in displayed pixels. */
@@ -6670,20 +6715,6 @@ static const float REEL_CROP_GRAB_PX = 6.0f;
  * for. Forward scrubs are incremental and run every frame. */
 #define RECAP_SCRUB_BACK_MS 90
 
-/* Where a client that did not record the round stands in getting it from the
- * server that did: the transfer's state as a ClientRoundLogState, the percent
- * that goes with it while bytes are arriving, and the latch that keeps the
- * request to one send per summary. Read by the recap so it can say what is
- * happening in place of a reel it has no bytes for yet. A process replaying
- * its own recording never asks, and leaves these idle. */
-static bool    s_reelLogAsked   = false;
-static int     s_reelLogState   = CLIENT_ROUND_LOG_IDLE;
-static uint8_t s_reelLogPercent = 0;
-/* Last state and ten-percent step written to winbolo.log, so the transfer is
- * traced as it moves instead of once a frame. */
-static int     s_reelLogStateSeen = -1;
-static int     s_reelLogStepSeen  = -1;
-
 #if BOLO_REEL_WBN_FETCH
 /* Where a round shared through WinBolo.net comes from. A host registered with
  * WinBolo.net uploads its log there rather than serving it over the game
@@ -6693,61 +6724,69 @@ static int     s_reelLogStepSeen  = -1;
  * exist; a bounded ladder covers that lag without becoming a request a frame.
  *
  * Under the curl transport the worker writes buf/len/status and then releases
- * s_reelWbnDone; the render thread reads those three only after acquiring it,
+ * s_reelWbn.done; the render thread reads those three only after acquiring it,
  * which is the whole hand-off — one producer, one consumer, no mutex. Every
- * other field here is the render thread's own, s_reelWbnRunning included, so
+ * other field here is the render thread's own, s_reelWbn.running included, so
  * the guards that decide whether to start another attempt never read a field a
  * worker is writing. The fetch transport has no second thread at all and fills
  * the same three fields from its poll. */
 static const int    REEL_WBN_RETRY_MAX = 12;
 static const Uint64 REEL_WBN_RETRY_MS  = 5000;
 
-static char                   s_reelWbnKey[ROUND_STATS_LOGKEY_LEN] = "";
+typedef struct LobbyReelWbnFetch {
+    char                   key[ROUND_STATS_LOGKEY_LEN] = "";
 #if BOLO_REEL_WBN_FETCH_CURL
-/* The worker and the two fields that coordinate with it. Nothing outside the
- * curl transport has a second thread to coordinate with. */
-static std::thread            s_reelWbnThread;
-static std::atomic<bool>      s_reelWbnDone{false};
-static volatile int           s_reelWbnCancel = 0;
+    /* The worker and the two fields that coordinate with it. Nothing outside
+     * the curl transport has a second thread to coordinate with. */
+    std::thread            thread;
+    std::atomic<bool>      done{false};
+    volatile int           cancel = 0;
 #endif
-/* What the transfer has moved, for the reading below. Curl fills both from its
- * worker as bytes arrive; fetch resolves the whole body at once and leaves them
- * at zero, which that reading already treats as "nothing to report yet". */
-static std::atomic<long long> s_reelWbnBytesNow{0};
-static std::atomic<long long> s_reelWbnBytesTotal{0};
-static bool                   s_reelWbnRunning   = false;
-static uint8_t               *s_reelWbnBuf       = nullptr;
-static size_t                 s_reelWbnLen       = 0;
-static int                    s_reelWbnStatus    = 0;
-static int                    s_reelWbnAttempts  = 0;
-static Uint64                 s_reelWbnRetryAtMs = 0;
+    /* What the transfer has moved, for the reading below. Curl fills both from
+     * its worker as bytes arrive; fetch resolves the whole body at once and
+     * leaves them at zero, which that reading already treats as "nothing to
+     * report yet". */
+    std::atomic<long long> bytesNow{0};
+    std::atomic<long long> bytesTotal{0};
+    bool                   running   = false;
+    uint8_t               *buf       = nullptr;
+    size_t                 len       = 0;
+    int                    status    = 0;
+    int                    attempts  = 0;
+    Uint64                 retryAtMs = 0;
+} LobbyReelWbnFetch;
+
+/* Cleared a field at a time by lobbyReelWbnAbort and never as a whole: the
+ * worker handle and the two counters are not assignable, and the thread has to
+ * be cancelled and joined before any of the rest may be touched. */
+static LobbyReelWbnFetch s_reelWbn;
 
 /* Stop whatever is in flight and forget the round it belonged to. The curl
- * worker is joined and never detached: it writes into the statics above, and a
+ * worker is joined and never detached: it writes into the fields above, and a
  * lobby that has gone away leaves nothing for it to write into. Cancelling
  * first is what keeps the join short, since curl polls the flag as bytes
  * arrive. The fetch transport aborts its request and drops the slot its reply
  * would have landed in, which is the same thing without the join. */
 static void lobbyReelWbnAbort(void) {
 #if BOLO_REEL_WBN_FETCH_CURL
-    s_reelWbnCancel = 1;
-    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+    s_reelWbn.cancel = 1;
+    if (s_reelWbn.thread.joinable()) s_reelWbn.thread.join();
 #else
     wbRoundLogFetchCancel();
 #endif
-    free(s_reelWbnBuf);
-    s_reelWbnBuf       = nullptr;
-    s_reelWbnLen       = 0;
-    s_reelWbnStatus    = 0;
-    s_reelWbnRunning   = false;
-    s_reelWbnAttempts  = 0;
-    s_reelWbnRetryAtMs = 0;
-    s_reelWbnKey[0]    = '\0';
-    s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
-    s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+    free(s_reelWbn.buf);
+    s_reelWbn.buf       = nullptr;
+    s_reelWbn.len       = 0;
+    s_reelWbn.status    = 0;
+    s_reelWbn.running   = false;
+    s_reelWbn.attempts  = 0;
+    s_reelWbn.retryAtMs = 0;
+    s_reelWbn.key[0]    = '\0';
+    s_reelWbn.bytesNow.store(0, std::memory_order_relaxed);
+    s_reelWbn.bytesTotal.store(0, std::memory_order_relaxed);
 #if BOLO_REEL_WBN_FETCH_CURL
-    s_reelWbnDone.store(false, std::memory_order_relaxed);
-    s_reelWbnCancel = 0;
+    s_reelWbn.done.store(false, std::memory_order_relaxed);
+    s_reelWbn.cancel = 0;
 #endif
 }
 
@@ -6755,32 +6794,32 @@ static void lobbyReelWbnAbort(void) {
  * fetch pointless is a guard rather than a condition at the call site, so the
  * caller can ask every frame. */
 static void lobbyReelWbnKick(void) {
-    if (s_reelWbnRunning || s_reelWbnBuf) return;
-    if (s_reelWbnKey[0] == '\0') return;
+    if (s_reelWbn.running || s_reelWbn.buf) return;
+    if (s_reelWbn.key[0] == '\0') return;
     /* The key is pasted into the request path below, so it never goes out
      * unless it is the 32-hex shape WBN issues. The codec already drops a
      * malformed one off the wire; this is the backstop on the path itself,
      * the same one wbn_comments_fetch_start applies to its own. */
-    if (!winbolonetKeyIsValid(s_reelWbnKey)) return;
+    if (!winbolonetKeyIsValid(s_reelWbn.key)) return;
     /* The load below gets one attempt per summary; once it has spent it there
      * is nothing left to play another copy of the same round. */
-    if (s_reelTried) return;
-    if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) return;
-    if (SDL_GetTicks() < s_reelWbnRetryAtMs) return;
+    if (s_reel.tried) return;
+    if (s_reelWbn.attempts >= REEL_WBN_RETRY_MAX) return;
+    if (SDL_GetTicks() < s_reelWbn.retryAtMs) return;
 #if BOLO_REEL_WBN_FETCH_CURL
     /* A worker that finished without the poll below seeing it still owns a
      * thread handle; std::thread destructs hard on a joinable one. */
-    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
+    if (s_reelWbn.thread.joinable()) s_reelWbn.thread.join();
 
     /* The one WinBolo.net entry point that does not bring HTTP up on its own:
      * it fails outright when nothing has called httpCreate, where the GET and
      * POST paths create lazily. Reentrant, so the browser's own create/destroy
      * pair is unaffected. Once a round is enough. */
-    if (s_reelWbnAttempts == 0) httpCreate();
+    if (s_reelWbn.attempts == 0) httpCreate();
 #endif
 
     char keyCopy[ROUND_STATS_LOGKEY_LEN];
-    SDL_strlcpy(keyCopy, s_reelWbnKey, sizeof(keyCopy));
+    SDL_strlcpy(keyCopy, s_reelWbn.key, sizeof(keyCopy));
 
 #if BOLO_REEL_WBN_FETCH_CURL
     /* Curl's byte sink, running on the worker. Non-capturing so it converts to
@@ -6788,31 +6827,31 @@ static void lobbyReelWbnKick(void) {
      * curl reports zero until it has read a Content-Length. */
     WbnProgressFn progressFn = [](void *user, int64_t now, int64_t total) {
         (void)user;
-        s_reelWbnBytesNow.store((long long)now, std::memory_order_relaxed);
+        s_reelWbn.bytesNow.store((long long)now, std::memory_order_relaxed);
         if (total > 0) {
-            s_reelWbnBytesTotal.store((long long)total, std::memory_order_relaxed);
+            s_reelWbn.bytesTotal.store((long long)total, std::memory_order_relaxed);
         }
     };
 #endif
 
-    s_reelWbnAttempts++;
-    s_reelWbnRunning = true;
-    s_reelWbnStatus  = 0;
+    s_reelWbn.attempts++;
+    s_reelWbn.running = true;
+    s_reelWbn.status  = 0;
 #if BOLO_REEL_WBN_FETCH_CURL
-    s_reelWbnDone.store(false, std::memory_order_relaxed);
+    s_reelWbn.done.store(false, std::memory_order_relaxed);
 #endif
-    s_reelWbnBytesNow.store(0, std::memory_order_relaxed);
-    s_reelWbnBytesTotal.store(0, std::memory_order_relaxed);
+    s_reelWbn.bytesNow.store(0, std::memory_order_relaxed);
+    s_reelWbn.bytesTotal.store(0, std::memory_order_relaxed);
     WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[REEL] winbolo.net round log attempt %d/%d, key prefix '%.6s'",
-                s_reelWbnAttempts, REEL_WBN_RETRY_MAX, keyCopy);
+                s_reelWbn.attempts, REEL_WBN_RETRY_MAX, keyCopy);
 
 #if !BOLO_REEL_WBN_FETCH_CURL
     /* Returns at once; the reply lands in the page and the poll below takes it
      * on a later frame. The ceiling is applied there, where the bytes are. */
     wbRoundLogFetchStart(keyCopy);
 #else
-    s_reelWbnThread = std::thread([keyCopy, progressFn]() {
+    s_reelWbn.thread = std::thread([keyCopy, progressFn]() {
         char path[128];
         SDL_snprintf(path, sizeof(path), "logs/%s/download", keyCopy);
         uint8_t *data = nullptr;
@@ -6824,17 +6863,17 @@ static void lobbyReelWbnKick(void) {
         int status = wbn_api_download_to_memory_progress(path, &data, &size,
                                                          ROUND_LOG_MAX_BYTES,
                                                          progressFn, nullptr,
-                                                         &s_reelWbnCancel);
+                                                         &s_reelWbn.cancel);
         if (status != 200 || size == 0) {
             free(data);
             data = nullptr;
             size = 0;
         }
-        s_reelWbnBuf    = data;
-        s_reelWbnLen    = size;
-        s_reelWbnStatus = status;
+        s_reelWbn.buf    = data;
+        s_reelWbn.len    = size;
+        s_reelWbn.status = status;
         /* Last, and releasing: the three writes above are published by it. */
-        s_reelWbnDone.store(true, std::memory_order_release);
+        s_reelWbn.done.store(true, std::memory_order_release);
     });
 #endif
 }
@@ -6843,9 +6882,9 @@ static void lobbyReelWbnKick(void) {
  * below to take; anything else arms the next rung. */
 static void lobbyReelWbnPoll(void) {
 #if BOLO_REEL_WBN_FETCH_CURL
-    if (!s_reelWbnDone.load(std::memory_order_acquire)) return;
-    if (s_reelWbnThread.joinable()) s_reelWbnThread.join();
-    s_reelWbnDone.store(false, std::memory_order_relaxed);
+    if (!s_reelWbn.done.load(std::memory_order_acquire)) return;
+    if (s_reelWbn.thread.joinable()) s_reelWbn.thread.join();
+    s_reelWbn.done.store(false, std::memory_order_relaxed);
 #else
     /* Still in flight reads as 0; any other answer settles the attempt, and
      * brings the bytes with it when there are any to bring. */
@@ -6853,37 +6892,27 @@ static void lobbyReelWbnPoll(void) {
     int      fetchedLen = 0;
     int      fetchedStatus = wbRoundLogFetchPoll(&fetched, &fetchedLen);
     if (fetchedStatus == 0) return;
-    s_reelWbnBuf    = fetched;
-    s_reelWbnLen    = (fetched != nullptr) ? (size_t)fetchedLen : 0;
-    s_reelWbnStatus = fetchedStatus;
+    s_reelWbn.buf    = fetched;
+    s_reelWbn.len    = (fetched != nullptr) ? (size_t)fetchedLen : 0;
+    s_reelWbn.status = fetchedStatus;
 #endif
-    s_reelWbnRunning = false;
+    s_reelWbn.running = false;
 
     WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[REEL] winbolo.net round log attempt %d done: status %d, "
                 "%zu bytes",
-                s_reelWbnAttempts, s_reelWbnStatus, s_reelWbnLen);
-    if (s_reelWbnBuf) return;
+                s_reelWbn.attempts, s_reelWbn.status, s_reelWbn.len);
+    if (s_reelWbn.buf) return;
 
-    s_reelWbnLen       = 0;
-    s_reelWbnRetryAtMs = SDL_GetTicks() + REEL_WBN_RETRY_MS;
-    if (s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) {
+    s_reelWbn.len       = 0;
+    s_reelWbn.retryAtMs = SDL_GetTicks() + REEL_WBN_RETRY_MS;
+    if (s_reelWbn.attempts >= REEL_WBN_RETRY_MAX) {
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[REEL] winbolo.net round log gave up after %d attempts",
-                    s_reelWbnAttempts);
+                    s_reelWbn.attempts);
     }
 }
 #endif /* BOLO_REEL_WBN_FETCH */
-
-/* Vertical room the recap left unused on the previous frame, accumulated.
- * The reel adds it to its own height, which is what stops the body ending
- * well short of the bottom of a tall panel. Immediate mode gives no way to
- * know what the content below the reel will cost before drawing it, so this
- * is a one-frame feedback loop: renderLastRoundBody measures the shortfall
- * at the end of the frame and this grows or shrinks by that much. It has to
- * accumulate rather than hold the raw shortfall — a raw value would be
- * spent, measure zero, and collapse back the next frame. */
-static float s_recapSlack = 0.0f;
 
 #if BOLO_RECAP_CLIP_GIF
 /* Defined with the clip export below, which needs the reel's own state. */
@@ -6901,27 +6930,16 @@ static void lobbyReelEnd(void) {
      * zero, so it is cancelled and joined here too. */
     lobbyReelWbnAbort();
 #endif
-    if (s_reelActive) {
+    /* The viewer owns a process-wide decoder singleton, so it is torn down
+     * before the state that says a reel is up is overwritten. */
+    if (s_reel.active) {
         lvEmbedEnd();
-        s_reelActive = false;
     }
-    s_reelTried      = false;
-    s_reelLoadFailed = false;
-    s_reelDrawn      = false;
-    s_reelAutoPaused = false;
-    s_reelSeekRatio  = 0.0f;
-    s_reelSeeking    = false;
-    s_reelSeekApplied   = 0.0f;
-    s_reelSeekAppliedMs = 0;
-    s_reelSeekWasPlaying = false;
-    s_recapSlack     = 0.0f;
-    /* The next summary asks for its own round's log, and reports nothing about
-     * a transfer until it has one. */
-    s_reelLogAsked     = false;
-    s_reelLogState     = CLIENT_ROUND_LOG_IDLE;
-    s_reelLogPercent   = 0;
-    s_reelLogStateSeen = -1;
-    s_reelLogStepSeen  = -1;
+    /* Everything else goes back to its declared value in one write. The next
+     * summary asks for its own round's log and reports nothing about a
+     * transfer until it has one, and a crop frame belongs to the clip it was
+     * drawn for rather than to the session. */
+    s_reel = LobbyReelState{};
 }
 
 /* Trace the transfer as it moves, so winbolo.log tells a slow download apart
@@ -6930,9 +6948,9 @@ static void lobbyReelEnd(void) {
  * handful of lines. */
 static void lobbyReelLogTransfer(int state, uint8_t percent) {
     const int step = (state == CLIENT_ROUND_LOG_DOWNLOADING) ? percent / 10 : -1;
-    if (state == s_reelLogStateSeen && step == s_reelLogStepSeen) return;
-    s_reelLogStateSeen = state;
-    s_reelLogStepSeen  = step;
+    if (state == s_reel.logStateSeen && step == s_reel.logStepSeen) return;
+    s_reel.logStateSeen = state;
+    s_reel.logStepSeen  = step;
     switch (state) {
         case CLIENT_ROUND_LOG_WAITING:
             WB_LOG_INFO(WB_LOG_CAT_GUI,
@@ -7147,7 +7165,7 @@ static const char *const REEL_CROP_TITLE = "Crop";
 static bool lobbyReelCropButton(const char *id) {
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float lineH = ImGui::GetTextLineHeight();
-    const bool  on    = s_reelCropOn;
+    const bool  on    = s_reel.cropOn;
 
     if (on) {
         ImGui::PushStyleColor(ImGuiCol_Button,
@@ -7192,15 +7210,15 @@ static bool lobbyReelCropButton(const char *id) {
  * view nor invert. */
 static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
                                  bool panHoldsMouse) {
-    if (!s_reelCropOn || imgSize.x < 1.0f || imgSize.y < 1.0f) {
+    if (!s_reel.cropOn || imgSize.x < 1.0f || imgSize.y < 1.0f) {
         return false;
     }
     const bool locked = lobbyClipGifActive();
 
-    float x0 = imgMin.x + s_reelCropX0 * imgSize.x;
-    float y0 = imgMin.y + s_reelCropY0 * imgSize.y;
-    float x1 = imgMin.x + s_reelCropX1 * imgSize.x;
-    float y1 = imgMin.y + s_reelCropY1 * imgSize.y;
+    float x0 = imgMin.x + s_reel.cropX0 * imgSize.x;
+    float y0 = imgMin.y + s_reel.cropY0 * imgSize.y;
+    float x1 = imgMin.x + s_reel.cropX1 * imgSize.x;
+    float y1 = imgMin.y + s_reel.cropY1 * imgSize.y;
 
     ImDrawList *dl = ImGui::GetWindowDrawList();
     /* Dim the frame while a capture is running: it is showing what the GIF is
@@ -7314,10 +7332,10 @@ static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
             if (x0 < imgMin.x) { x0 = imgMin.x; if (x1 < x0 + minW) x1 = x0 + minW; }
             if (y0 < imgMin.y) { y0 = imgMin.y; if (y1 < y0 + minW) y1 = y0 + minW; }
         }
-        s_reelCropX0 = (x0 - imgMin.x) / imgSize.x;
-        s_reelCropY0 = (y0 - imgMin.y) / imgSize.y;
-        s_reelCropX1 = (x1 - imgMin.x) / imgSize.x;
-        s_reelCropY1 = (y1 - imgMin.y) / imgSize.y;
+        s_reel.cropX0 = (x0 - imgMin.x) / imgSize.x;
+        s_reel.cropY0 = (y0 - imgMin.y) / imgSize.y;
+        s_reel.cropX1 = (x1 - imgMin.x) / imgSize.x;
+        s_reel.cropY1 = (y1 - imgMin.y) / imgSize.y;
     } else if (s_dragging) {
         s_dragging = false;
         s_grab = 0;
@@ -7355,10 +7373,6 @@ static bool lobbyReelCropOverlay(ImVec2 imgMin, ImVec2 imgSize,
 #define REEL_WHEEL_STEP 1.0f  /* a mouse notch, the unit the wheel reports in */
 #define REEL_PINCH_STEP 0.15f /* magnification per step; matches the map views */
 
-static float s_reelWheelAccum = 0.0f;
-static float s_reelPinchAccum = 0.0f;
-static int   s_reelZoomFrame  = -1;
-
 static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
     if (!hovered) {
         return;
@@ -7366,11 +7380,11 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
 
     /* Anything banked before a gap belongs to a gesture that has ended. */
     const int frame = ImGui::GetFrameCount();
-    const bool continuing = (s_reelZoomFrame == frame - 1);
-    s_reelZoomFrame = frame;
+    const bool continuing = (s_reel.zoomFrame == frame - 1);
+    s_reel.zoomFrame = frame;
     if (!continuing) {
-        s_reelWheelAccum = 0.0f;
-        s_reelPinchAccum = 0.0f;
+        s_reel.wheelAccum = 0.0f;
+        s_reel.pinchAccum = 0.0f;
     }
 
     const ImVec2 mp = ImGui::GetMousePos();
@@ -7382,17 +7396,17 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
         /* A reversal is a new gesture, not a continuation of the old one: drop
          * what the other direction had banked so turning around answers on the
          * next notch instead of paying the leftover back first. */
-        if ((wheel > 0.0f) != (s_reelWheelAccum > 0.0f)) {
-            s_reelWheelAccum = 0.0f;
+        if ((wheel > 0.0f) != (s_reel.wheelAccum > 0.0f)) {
+            s_reel.wheelAccum = 0.0f;
         }
-        s_reelWheelAccum += wheel;
-        while (s_reelWheelAccum >= REEL_WHEEL_STEP) {
+        s_reel.wheelAccum += wheel;
+        while (s_reel.wheelAccum >= REEL_WHEEL_STEP) {
             lvEmbedWheel(localX, localY, 1.0f);
-            s_reelWheelAccum -= REEL_WHEEL_STEP;
+            s_reel.wheelAccum -= REEL_WHEEL_STEP;
         }
-        while (s_reelWheelAccum <= -REEL_WHEEL_STEP) {
+        while (s_reel.wheelAccum <= -REEL_WHEEL_STEP) {
             lvEmbedWheel(localX, localY, -1.0f);
-            s_reelWheelAccum += REEL_WHEEL_STEP;
+            s_reel.wheelAccum += REEL_WHEEL_STEP;
         }
     }
 
@@ -7401,14 +7415,14 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
      * what a gap changes is that it is thrown away rather than spent. */
     const float pinch = macOSPinchZoomConsume();
     if (pinch != 0.0f && continuing) {
-        s_reelPinchAccum += pinch;
-        while (s_reelPinchAccum >= REEL_PINCH_STEP) {
+        s_reel.pinchAccum += pinch;
+        while (s_reel.pinchAccum >= REEL_PINCH_STEP) {
             lvEmbedWheel(localX, localY, 1.0f);
-            s_reelPinchAccum -= REEL_PINCH_STEP;
+            s_reel.pinchAccum -= REEL_PINCH_STEP;
         }
-        while (s_reelPinchAccum <= -REEL_PINCH_STEP) {
+        while (s_reel.pinchAccum <= -REEL_PINCH_STEP) {
             lvEmbedWheel(localX, localY, -1.0f);
-            s_reelPinchAccum += REEL_PINCH_STEP;
+            s_reel.pinchAccum += REEL_PINCH_STEP;
         }
     }
 }
@@ -7437,7 +7451,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * drawn yet either way, so the room measured here is the room the reel gets
      * once there is one. */
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC + s_recapSlack);
+    ImVec2 rect(avail.x, avail.y * REEL_HEIGHT_FRAC + s_reel.recapSlack);
     if (rect.y < REEL_HEIGHT_MIN * s) rect.y = REEL_HEIGHT_MIN * s;
     /* Cap last, so a container too short for the floor is still not overrun. */
     if (rect.y > avail.y * REEL_HEIGHT_MAX_FRAC) {
@@ -7452,7 +7466,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * the block below would otherwise re-read the transfer state and re-kick
      * the WinBolo.net fetch every frame, leaving the recap on "asking the
      * server" for the rest of the lobby. */
-    if (s_reelLoadFailed) {
+    if (s_reel.loadFailed) {
         lobbyRenderReelStatus(CLIENT_ROUND_LOG_UNAVAILABLE_NONE, 0, rect, s);
         return;
     }
@@ -7475,15 +7489,15 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * instead of a reel. A host or single-player session that recorded the
      * round never reaches this: it resolves to its own file above and goes
      * straight to playing it, asking for nothing and drawing no overlay. */
-    if (!s_reelActive && !haveLocalFile) {
-        if (!s_reelLogAsked && clientSimNetSendRoundLogRequest(cs)) {
-            s_reelLogAsked = true;
+    if (!s_reel.active && !haveLocalFile) {
+        if (!s_reel.logAsked && clientSimNetSendRoundLogRequest(cs)) {
+            s_reel.logAsked = true;
         }
-        s_reelLogState = clientSimGetRoundLogState(cs);
-        s_reelLogPercent = (s_reelLogState == CLIENT_ROUND_LOG_DOWNLOADING)
+        s_reel.logState = clientSimGetRoundLogState(cs);
+        s_reel.logPercent = (s_reel.logState == CLIENT_ROUND_LOG_DOWNLOADING)
                                ? clientSimGetRoundLogPercent(cs)
                                : 0;
-        lobbyReelLogTransfer(s_reelLogState, s_reelLogPercent);
+        lobbyReelLogTransfer(s_reel.logState, s_reel.logPercent);
 
         /* A host registered with WinBolo.net hands the round there instead of
          * serving it itself, so its refusal is the cue to go and get the same
@@ -7491,20 +7505,20 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
          * still moving is left alone to finish. Without a key there is nowhere
          * to go, and the refusal stands as the thing the recap says. */
         const bool serverRefused =
-            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED ||
-            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_NONE ||
-            s_reelLogState == CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE;
+            s_reel.logState == CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED ||
+            s_reel.logState == CLIENT_ROUND_LOG_UNAVAILABLE_NONE ||
+            s_reel.logState == CLIENT_ROUND_LOG_UNAVAILABLE_TOO_LARGE;
         bool haveWbnBytes = false;
         if (serverRefused && st && st->wbnLogKey[0] != '\0') {
             /* A key that is not the one being fetched belongs to a later
              * round, and whatever the previous one gathered is stale. */
-            if (strncmp(s_reelWbnKey, st->wbnLogKey, sizeof(s_reelWbnKey)) != 0) {
+            if (strncmp(s_reelWbn.key, st->wbnLogKey, sizeof(s_reelWbn.key)) != 0) {
                 lobbyReelWbnAbort();
-                SDL_strlcpy(s_reelWbnKey, st->wbnLogKey, sizeof(s_reelWbnKey));
+                SDL_strlcpy(s_reelWbn.key, st->wbnLogKey, sizeof(s_reelWbn.key));
             }
             lobbyReelWbnKick();
             lobbyReelWbnPoll();
-            haveWbnBytes = (s_reelWbnBuf != nullptr);
+            haveWbnBytes = (s_reelWbn.buf != nullptr);
             if (!haveWbnBytes) {
                 /* Said in the states the overlay already draws, so the fetch
                  * costs no state of its own and no string of its own: a
@@ -7512,19 +7526,19 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                  * fraction of the bytes, a spent ladder is a round with no
                  * replay to be had, and anything else is still waiting. */
                 const long long got =
-                    s_reelWbnBytesNow.load(std::memory_order_relaxed);
+                    s_reelWbn.bytesNow.load(std::memory_order_relaxed);
                 const long long total =
-                    s_reelWbnBytesTotal.load(std::memory_order_relaxed);
+                    s_reelWbn.bytesTotal.load(std::memory_order_relaxed);
                 int     wbnState = CLIENT_ROUND_LOG_WAITING;
                 uint8_t wbnPct   = 0;
-                if (s_reelWbnRunning && total > 0) {
+                if (s_reelWbn.running && total > 0) {
                     long long pct = got * 100 / total;
                     if (pct < 0) pct = 0;
                     if (pct > 100) pct = 100;
                     wbnState = CLIENT_ROUND_LOG_DOWNLOADING;
                     wbnPct   = (uint8_t)pct;
-                } else if (!s_reelWbnRunning &&
-                           s_reelWbnAttempts >= REEL_WBN_RETRY_MAX) {
+                } else if (!s_reelWbn.running &&
+                           s_reelWbn.attempts >= REEL_WBN_RETRY_MAX) {
                     wbnState = CLIENT_ROUND_LOG_UNAVAILABLE_NONE;
                 }
                 lobbyRenderReelStatus(wbnState, wbnPct, rect, s);
@@ -7532,18 +7546,18 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
             }
         }
 
-        if (!haveWbnBytes && s_reelLogState != CLIENT_ROUND_LOG_READY) {
-            lobbyRenderReelStatus(s_reelLogState, s_reelLogPercent, rect, s);
+        if (!haveWbnBytes && s_reel.logState != CLIENT_ROUND_LOG_READY) {
+            lobbyRenderReelStatus(s_reel.logState, s_reel.logPercent, rect, s);
             return;
         }
     }
 
-    if (!s_reelActive && !s_reelTried) {
+    if (!s_reel.active && !s_reel.tried) {
         /* One attempt per summary either way — a failed load must not be
          * retried every frame. */
-        s_reelTried = true;
-        s_reelViewW = rect.x;
-        s_reelViewH = rect.y;
+        s_reel.tried = true;
+        s_reel.viewW = rect.x;
+        s_reel.viewH = rect.y;
         if (haveLocalFile) {
             SDL_IOStream *io = SDL_IOFromFile(replayPath, "rb");
             if (io) {
@@ -7554,7 +7568,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                 uint8_t *buf = (len > 0) ? (uint8_t *)malloc((size_t)len) : NULL;
                 if (buf) {
                     if (SDL_ReadIO(io, buf, (size_t)len) == (size_t)len) {
-                        s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                        s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(),
                                                     sdl3DrawGetRenderer(),
                                                     buf, (size_t)len,
                                                     (int)rect.x, (int)rect.y);
@@ -7576,16 +7590,16 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
              * else may. */
             size_t   len = 0;
             uint8_t *buf = nullptr;
-            if (s_reelWbnBuf) {
-                buf          = s_reelWbnBuf;
-                len          = s_reelWbnLen;
-                s_reelWbnBuf = nullptr;
-                s_reelWbnLen = 0;
+            if (s_reelWbn.buf) {
+                buf          = s_reelWbn.buf;
+                len          = s_reelWbn.len;
+                s_reelWbn.buf = nullptr;
+                s_reelWbn.len = 0;
             } else {
                 buf = clientSimTakeRoundLog(cs, &len);
             }
             if (buf) {
-                s_reelActive = lvEmbedBegin(sdl3DrawGetWindow(),
+                s_reel.active = lvEmbedBegin(sdl3DrawGetWindow(),
                                             sdl3DrawGetRenderer(),
                                             buf, len,
                                             (int)rect.x, (int)rect.y);
@@ -7609,23 +7623,23 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
          * came up short, would not fit in memory, no bytes were handed over,
          * or the viewer refused the ones that were. They all read the same to
          * the player, and none of them get better by being tried again. */
-        s_reelLoadFailed = !s_reelActive;
+        s_reel.loadFailed = !s_reel.active;
     }
-    if (!s_reelActive) return;
+    if (!s_reel.active) return;
 
     /* The frame-end hook pauses a reel the recap stopped drawing, which is
      * every frame the panel's Map tab is up. Drawing again undoes that pause
      * — but only when the pause was ours, so a deliberate one survives a
      * round trip through the other tab. */
-    if (s_reelAutoPaused) {
-        s_reelAutoPaused = false;
+    if (s_reel.autoPaused) {
+        s_reel.autoPaused = false;
         lvEmbedPlay();
     }
 
-    if (rect.x != s_reelViewW || rect.y != s_reelViewH) {
+    if (rect.x != s_reel.viewW || rect.y != s_reel.viewH) {
         lvEmbedSetViewportSize((int)rect.x, (int)rect.y);
-        s_reelViewW = rect.x;
-        s_reelViewH = rect.y;
+        s_reel.viewW = rect.x;
+        s_reel.viewH = rect.y;
     }
 
     void *tex = NULL;
@@ -7671,10 +7685,10 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
         /* Publish the exact slice this blit used. The crop frame is normalized
          * against it, so an export maps the frame back through the same
          * numbers the picture was drawn with. */
-        s_reelLastSlice.x = srcX;
-        s_reelLastSlice.y = srcY;
-        s_reelLastSlice.w = visW;
-        s_reelLastSlice.h = visH;
+        s_reel.lastSlice.x = srcX;
+        s_reel.lastSlice.y = srcY;
+        s_reel.lastSlice.w = visW;
+        s_reel.lastSlice.h = visH;
 #endif
     } else {
         ImGui::Dummy(rect);
@@ -7746,7 +7760,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
     if (transportClicked) {
         /* Whichever way it goes, the player has now said what they want —
          * drop any claim we had on the transport. */
-        s_reelAutoPaused = false;
+        s_reel.autoPaused = false;
         if (reelPlaying) {
             lvEmbedPause();
         } else {
@@ -7780,7 +7794,7 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * the framed rectangle instead of the whole visible view. */
     ImGui::SameLine();
     if (lobbyReelCropButton("##reelcrop")) {
-        s_reelCropOn = !s_reelCropOn;
+        s_reel.cropOn = !s_reel.cropOn;
     }
 #endif
 
@@ -7788,12 +7802,12 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * of the width. Times are the presented window's, which with the lobby
      * hidden is the round itself. */
     ImGui::SameLine();
-    if (!s_reelSeeking) {
-        s_reelSeekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
-        if (s_reelSeekRatio > 1.0f) s_reelSeekRatio = 1.0f;
+    if (!s_reel.seeking) {
+        s_reel.seekRatio = (totalMs > 0) ? ((float)curMs / (float)totalMs) : 0.0f;
+        if (s_reel.seekRatio > 1.0f) s_reel.seekRatio = 1.0f;
         /* Idle: the applied value is wherever the reel actually is, so the
          * next drag measures its first step from the truth. */
-        s_reelSeekApplied = s_reelSeekRatio;
+        s_reel.seekApplied = s_reel.seekRatio;
     }
     unsigned curSecs = (unsigned)(curMs / 1000u);
     char seekLabel[48];
@@ -7810,17 +7824,17 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      * ("01:12 / 04:30"), not a numeric printf format. Without the flag ImGui
      * rounds the dragged value by round-tripping it through that label, which
      * parses back to 0 and pins every seek to the start of the log. */
-    if (ImGui::SliderFloat("##ReelSeek", &s_reelSeekRatio, 0.0f, 1.0f, seekLabel,
+    if (ImGui::SliderFloat("##ReelSeek", &s_reel.seekRatio, 0.0f, 1.0f, seekLabel,
                            ImGuiSliderFlags_NoRoundToFormat)) {
-        if (!s_reelSeeking) {
+        if (!s_reel.seeking) {
             /* Freeze playback for the scrub instead of letting every applied
              * seek pause and resume it — lvEmbedSeekRatio does that by
              * removing and re-adding the two SDL playback timers, which is
              * not something to do sixty times a second. */
-            s_reelSeeking        = true;
-            s_reelSeekWasPlaying = lvEmbedIsPlaying();
-            if (s_reelSeekWasPlaying) lvEmbedPause();
-            s_reelSeekAppliedMs  = 0;
+            s_reel.seeking        = true;
+            s_reel.seekWasPlaying = lvEmbedIsPlaying();
+            if (s_reel.seekWasPlaying) lvEmbedPause();
+            s_reel.seekAppliedMs  = 0;
         }
     }
     /* Live scrub: the tanks follow the handle as it is dragged, not only when
@@ -7839,36 +7853,36 @@ static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
      *
      * The release below always applies the exact dropped value, so where it
      * lands is never a throttled approximation. */
-    if (s_reelSeeking && ImGui::IsItemActive()) {
+    if (s_reel.seeking && ImGui::IsItemActive()) {
         Uint64 nowMs = SDL_GetTicks();
         bool   apply = false;
-        if (s_reelSeekRatio > s_reelSeekApplied) {
+        if (s_reel.seekRatio > s_reel.seekApplied) {
             apply = true;                       /* forward: incremental */
-        } else if (s_reelSeekRatio < s_reelSeekApplied) {
-            apply = (nowMs - s_reelSeekAppliedMs >= RECAP_SCRUB_BACK_MS);
+        } else if (s_reel.seekRatio < s_reel.seekApplied) {
+            apply = (nowMs - s_reel.seekAppliedMs >= RECAP_SCRUB_BACK_MS);
         }
         if (apply) {
-            lvEmbedSeekRatio(s_reelSeekRatio);
-            s_reelSeekApplied   = s_reelSeekRatio;
-            s_reelSeekAppliedMs = nowMs;
+            lvEmbedSeekRatio(s_reel.seekRatio);
+            s_reel.seekApplied   = s_reel.seekRatio;
+            s_reel.seekAppliedMs = nowMs;
         }
     }
     /* IsItemDeactivated, not ...AfterEdit: this also has to un-pause, and a
      * release that ImGui does not count as an edit would otherwise leave the
      * reel frozen for good. */
-    if (s_reelSeeking && ImGui::IsItemDeactivated()) {
-        s_reelSeeking = false;
+    if (s_reel.seeking && ImGui::IsItemDeactivated()) {
+        s_reel.seeking = false;
         /* Land exactly on the dropped value. A no-op when the last live apply
          * already got there — a forward seek to the current time decodes
          * nothing. */
-        lvEmbedSeekRatio(s_reelSeekRatio);
-        s_reelSeekApplied = s_reelSeekRatio;
-        if (s_reelSeekWasPlaying) lvEmbedPlay();
-        s_reelSeekWasPlaying = false;
+        lvEmbedSeekRatio(s_reel.seekRatio);
+        s_reel.seekApplied = s_reel.seekRatio;
+        if (s_reel.seekWasPlaying) lvEmbedPlay();
+        s_reel.seekWasPlaying = false;
     }
     ImGui::PopItemWidth();
 
-    s_reelDrawn = true;
+    s_reel.drawn = true;
 }
 
 #if BOLO_RECAP_CLIP_GIF
@@ -8021,7 +8035,7 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
         return;
     }
     int cropW, cropH;
-    if (s_reelCropOn && s_reelLastSlice.w > 0 && s_reelLastSlice.h > 0) {
+    if (s_reel.cropOn && s_reel.lastSlice.w > 0 && s_reel.lastSlice.h > 0) {
         /* The frame the player drew is what this takes. It is normalized
          * against the slice the reel blitted, so mapping it back is that same
          * slice's extent times the fractions — the identical arithmetic the
@@ -8032,14 +8046,14 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
          * change) while the origin is the fresh one read above, because the
          * seek this export just did may have moved the camera and the frame
          * names a place on the view, not on the map. */
-        int visW = s_reelLastSlice.w;
-        int visH = s_reelLastSlice.h;
+        int visW = s_reel.lastSlice.w;
+        int visH = s_reel.lastSlice.h;
         if (visW > srcW) visW = srcW;
         if (visH > srcH) visH = srcH;
-        int fx0 = (int)(s_reelCropX0 * (float)visW + 0.5f);
-        int fy0 = (int)(s_reelCropY0 * (float)visH + 0.5f);
-        int fx1 = (int)(s_reelCropX1 * (float)visW + 0.5f);
-        int fy1 = (int)(s_reelCropY1 * (float)visH + 0.5f);
+        int fx0 = (int)(s_reel.cropX0 * (float)visW + 0.5f);
+        int fy0 = (int)(s_reel.cropY0 * (float)visH + 0.5f);
+        int fx1 = (int)(s_reel.cropX1 * (float)visW + 0.5f);
+        int fy1 = (int)(s_reel.cropY1 * (float)visH + 0.5f);
         if (fx0 < 0) fx0 = 0;
         if (fy0 < 0) fy0 = 0;
         if (fx1 > visW) fx1 = visW;
@@ -9207,9 +9221,9 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
      * container: with no replay to show, the reel draws nothing and there is
      * nothing to absorb the shortfall, so an unbounded total would climb for
      * as long as the recap is on screen. */
-    s_recapSlack += bodyAvailH - (ImGui::GetCursorPosY() - bodyStartY);
-    if (s_recapSlack < 0.0f)       s_recapSlack = 0.0f;
-    if (s_recapSlack > bodyAvailH) s_recapSlack = bodyAvailH;
+    s_reel.recapSlack += bodyAvailH - (ImGui::GetCursorPosY() - bodyStartY);
+    if (s_reel.recapSlack < 0.0f)       s_reel.recapSlack = 0.0f;
+    if (s_reel.recapSlack > bodyAvailH) s_reel.recapSlack = bodyAvailH;
 #endif
 }
 
@@ -12065,11 +12079,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     if (!clientSimGetLastRoundStats(cs)) {
         lobbyReelDropRoundLog(cs);
         lobbyReelEnd();
-    } else if (s_reelActive && !s_reelDrawn && lvEmbedIsPlaying()) {
+    } else if (s_reel.active && !s_reel.drawn && lvEmbedIsPlaying()) {
         lvEmbedPause();
-        s_reelAutoPaused = true;
+        s_reel.autoPaused = true;
     }
-    s_reelDrawn = false;
+    s_reel.drawn = false;
 #endif
 
     if (leftLobby) return LOBBY_FRAME_LEFT;
