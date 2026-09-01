@@ -5616,7 +5616,8 @@ static void appRender(BrainTestApp *app) {
     mainImGuiRenderShortcuts(&app->showShortcuts);
     vizDetailWindowRender((int)app->followBot);
     {
-        int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount);
+        int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount,
+                                    optLoadSession);
         if (sel >= 0 && sel < g_sessionCount) relaunchWithSession(g_sessionList[sel].dir);
     }
     mainImGuiEndFrame(app->renderer);
