@@ -77,6 +77,9 @@ ALLOWLIST_NAMES = (
     ("s_chooserTabs",
      "map browsers' folder, selection and remembered tab, deliberately "
      "kept across sessions"),
+    ("s_wbnMaps",
+     "WinBolo.net folder listing and search cache behind the chooser tab "
+     "that keeps its position, deliberately kept across sessions"),
 )
 
 # Statics whose declared type makes them non-assignable. Matched on the

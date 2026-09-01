@@ -1266,32 +1266,47 @@ struct WbnMapsEntry  {
                                  * column lights up. */
 };
 
-static std::mutex                s_wbnMapsMutex;
-static std::atomic<bool>         s_wbnMapsFetching{false};
-static std::atomic<uint32_t>     s_wbnMapsFetchSeq{0}; /* invalidates late results */
-static int                       s_wbnMapsCurrentFolderId = 0;       /* 0 = root collection */
-static std::string               s_wbnMapsCurrentPath;               /* canonical friendly path of cached folder */
-static std::vector<WbnMapsCrumb> s_wbnMapsCrumbs;
-static std::vector<WbnMapsFolder>s_wbnMapsSubfolders;
-static std::vector<WbnMapsEntry> s_wbnMapsEntries;
-static std::string               s_wbnMapsError;
-static bool                      s_wbnMapsHasData = false;
-/* Path → folder ID. Built up as folders are fetched: each response's
- * subfolders[] gives us (childName, childId) pairs which combine
- * with the parent path to form each child's full friendly path.
- * "" maps to 0 (the root collection). */
-static std::map<std::string,int> s_wbnPathToId;
+/* The WinBolo.net catalogue the tab browses: the cached folder listing,
+ * the path → id map built up alongside it, and a separate search-result
+ * cache. Deliberately has no reset function — imguiLobbyFrameReset runs
+ * on every lobby→game edge, and the chooser keeps this tab's folder
+ * position and selection across sessions (see LobbyChooserTabs), so
+ * clearing the listing behind it would leave the tab sitting on an empty
+ * folder and re-fetch from WinBolo.net once a round.
+ *
+ * Written by detached fetch threads under the mutex for the life of the
+ * process, and never assigned as a whole: the mutex and the two pairs of
+ * atomics are not assignable, and a detached thread cannot be joined to
+ * make a whole-struct write safe. */
+typedef struct LobbyWbnMapsCache {
+    std::mutex                 mutex;
+    std::atomic<bool>          fetching{false};
+    std::atomic<uint32_t>      fetchSeq{0}; /* invalidates late results */
+    int                        currentFolderId = 0; /* 0 = root collection */
+    std::string                currentPath;         /* canonical friendly path of cached folder */
+    std::vector<WbnMapsCrumb>  crumbs;
+    std::vector<WbnMapsFolder> subfolders;
+    std::vector<WbnMapsEntry>  entries;
+    std::string                error;
+    bool                       hasData = false;
+    /* Path → folder ID. Built up as folders are fetched: each response's
+     * subfolders[] gives us (childName, childId) pairs which combine
+     * with the parent path to form each child's full friendly path.
+     * "" maps to 0 (the root collection). */
+    std::map<std::string,int>  pathToId;
+    /* Separate search-result cache so clearing the recursive-search
+     * checkbox doesn't blow away the folder listing the user was just
+     * browsing. Populated by wbnMapsParseSearchJson when the search
+     * branch fires. */
+    std::string                searchQuery; /* last query we got results for */
+    std::vector<WbnMapsEntry>  searchResults;
+    bool                       searchHasData = false;
+    std::atomic<bool>          searchFetching{false};
+    std::atomic<uint32_t>      searchFetchSeq{0};
+    std::string                searchError;
+} LobbyWbnMapsCache;
 
-/* Separate search-result cache so clearing the recursive-search
- * checkbox doesn't blow away the folder listing the user was just
- * browsing. Populated by wbnMapsParseSearchJson when the search
- * branch fires. */
-static std::string                s_wbnSearchQuery;     /* last query we got results for */
-static std::vector<WbnMapsEntry>  s_wbnSearchResults;
-static bool                       s_wbnSearchHasData = false;
-static std::atomic<bool>          s_wbnSearchFetching{false};
-static std::atomic<uint32_t>      s_wbnSearchFetchSeq{0};
-static std::string                s_wbnSearchError;
+static LobbyWbnMapsCache s_wbnMaps;
 
 /* Extract an int from a cJSON node that may be either a JSON
  * number or a JSON string. The WBN root listing returns id and
@@ -1341,9 +1356,9 @@ static int64_t wbnParseUploadedToNs(const char *s) {
 static void wbnMapsParseFolderJson(const char *json) {
     cJSON *root = cJSON_Parse(json);
     if (!root) {
-        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-        s_wbnMapsError = langGetText(STR_DLGLOBBY_WBN_ERR_BADRESPONSE);
-        s_wbnMapsHasData = false;
+        std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+        s_wbnMaps.error = langGetText(STR_DLGLOBBY_WBN_ERR_BADRESPONSE);
+        s_wbnMaps.hasData = false;
         return;
     }
     std::vector<WbnMapsCrumb>  crumbs;
@@ -1416,23 +1431,23 @@ static void wbnMapsParseFolderJson(const char *json) {
     }
 
     {
-        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-        s_wbnMapsCrumbs        = std::move(crumbs);
-        s_wbnMapsSubfolders    = subs;          /* copy — also used below */
-        s_wbnMapsEntries       = std::move(entries);
-        s_wbnMapsCurrentFolderId = newFolderId;
-        s_wbnMapsCurrentPath   = canonicalPath;
-        s_wbnMapsError.clear();
-        s_wbnMapsHasData       = true;
+        std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+        s_wbnMaps.crumbs        = std::move(crumbs);
+        s_wbnMaps.subfolders    = subs;          /* copy — also used below */
+        s_wbnMaps.entries       = std::move(entries);
+        s_wbnMaps.currentFolderId = newFolderId;
+        s_wbnMaps.currentPath   = canonicalPath;
+        s_wbnMaps.error.clear();
+        s_wbnMaps.hasData       = true;
 
         /* Stamp every (path, id) pair we now know — current folder
          * and each subfolder — so the listProvider can resolve
          * any seen path back to a numeric ID for fetching. */
-        s_wbnPathToId[canonicalPath] = newFolderId;
+        s_wbnMaps.pathToId[canonicalPath] = newFolderId;
         for (const auto &f : subs) {
             std::string childPath = canonicalPath.empty()
                 ? f.name : (canonicalPath + "/" + f.name);
-            s_wbnPathToId[childPath] = f.id;
+            s_wbnMaps.pathToId[childPath] = f.id;
         }
     }
     /* Log the first few subfolders so we can confirm what the
@@ -1453,8 +1468,8 @@ static void wbnMapsParseFolderJson(const char *json) {
 static void wbnMapsParseSearchJson(const char *json, const char *query) {
     cJSON *root = cJSON_Parse(json);
     if (!root) {
-        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-        s_wbnSearchError = langGetText(STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE);
+        std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+        s_wbnMaps.searchError = langGetText(STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE);
         return;
     }
     std::vector<WbnMapsEntry> entries;
@@ -1484,7 +1499,7 @@ static void wbnMapsParseSearchJson(const char *json, const char *query) {
              * segment names with '/' for folderName (skipping the
              * synthetic "Collections" root crumb whose id is null);
              * folderId = the leaf folder's id (the actual enclosing
-             * folder). Each prefix gets stamped into s_wbnPathToId
+             * folder). Each prefix gets stamped into s_wbnMaps.pathToId
              * just below so breadcrumb clicks navigate without a
              * second round-trip. */
             if (cJSON_IsArray(pa)) {
@@ -1508,7 +1523,7 @@ static void wbnMapsParseSearchJson(const char *json, const char *query) {
         }
     }
     /* Walk the path[] arrays a second time to stamp every prefix
-     * (not just the leaf) into s_wbnPathToId — breadcrumb buttons
+     * (not just the leaf) into s_wbnMaps.pathToId — breadcrumb buttons
      * under the preview let the user click any segment, so each
      * intermediate "Collections/X" → folderId must resolve too. */
     std::vector<std::pair<std::string,int>> prefixIds;
@@ -1537,14 +1552,14 @@ static void wbnMapsParseSearchJson(const char *json, const char *query) {
     }
     cJSON_Delete(root);
     {
-        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+        std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
         for (const auto &p : prefixIds) {
-            s_wbnPathToId[p.first] = p.second;
+            s_wbnMaps.pathToId[p.first] = p.second;
         }
-        s_wbnSearchResults  = std::move(entries);
-        s_wbnSearchQuery    = query ? query : "";
-        s_wbnSearchHasData  = true;
-        s_wbnSearchError.clear();
+        s_wbnMaps.searchResults  = std::move(entries);
+        s_wbnMaps.searchQuery    = query ? query : "";
+        s_wbnMaps.searchHasData  = true;
+        s_wbnMaps.searchError.clear();
     }
 }
 
@@ -1564,30 +1579,54 @@ struct SpWbnResult {
     bool     valid;
 };
 
-static std::mutex          s_spWbnMutex;
-static std::atomic<bool>   s_spWbnFetching{false};
-static std::atomic<uint32_t> s_spWbnFetchSeq{0};
-static volatile int        s_spWbnCancel = 0; /* CURLOPT_XFERINFO sink */
-static SpWbnResult         s_spWbnResult;
+typedef struct LobbySpWbnState {
+    std::mutex             mutex;
+    std::atomic<bool>      fetching{false};
+    std::atomic<uint32_t>  fetchSeq{0};
+    volatile int           cancel = 0; /* CURLOPT_XFERINFO sink */
+    SpWbnResult            result;
+} LobbySpWbnState;
+
+/* Cleared a field at a time by lobbySpWbnReset and never as a whole: the
+ * mutex and the two atomics are not assignable, and the worker is detached
+ * so there is no join that would make a whole-struct write safe. */
+static LobbySpWbnState s_spWbn;
+
+/* Drop a download the lobby is walking away from, so a map's bytes do not
+ * sit in the result slot until the next single-player pick drains it. The
+ * worker is detached and cannot be stopped, so the fetch is superseded the
+ * same way spWbnSubmit supersedes one: the cancel flag aborts curl mid
+ * transfer and the seq bump makes any completion that still lands get
+ * dropped. The flag stays raised — every attempt lowers it for itself
+ * before the transfer starts. fetching belongs to the worker, which clears
+ * it on its way out whichever branch it takes. */
+static void lobbySpWbnReset(void) {
+    s_spWbn.cancel = 1;
+    ++s_spWbn.fetchSeq;
+    {
+        std::lock_guard<std::mutex> lk(s_spWbn.mutex);
+        s_spWbn.result = SpWbnResult{};
+    }
+}
 
 static void spWbnSubmit(uint32_t mapId) {
     /* Supersede any in-flight call. The cancel flag aborts curl;
      * the seq bump invalidates the completion. */
-    s_spWbnCancel = 1;
-    uint32_t seq = ++s_spWbnFetchSeq;
+    s_spWbn.cancel = 1;
+    uint32_t seq = ++s_spWbn.fetchSeq;
     /* Drop any undrained previous result. */
     {
-        std::lock_guard<std::mutex> lk(s_spWbnMutex);
-        s_spWbnResult = SpWbnResult{};
+        std::lock_guard<std::mutex> lk(s_spWbn.mutex);
+        s_spWbn.result = SpWbnResult{};
     }
     std::thread([mapId, seq]() {
         /* Wait briefly for previous thread to clear the fetching
          * flag — both threads race the same flag. */
-        for (int i = 0; i < 50 && s_spWbnFetching.load(); i++) {
+        for (int i = 0; i < 50 && s_spWbn.fetching.load(); i++) {
             SDL_Delay(10);
         }
-        s_spWbnFetching.store(true);
-        s_spWbnCancel = 0; /* reset for this attempt */
+        s_spWbn.fetching.store(true);
+        s_spWbn.cancel = 0; /* reset for this attempt */
 
         SpWbnResult out;
         out.mapId = mapId;
@@ -1599,9 +1638,9 @@ static void spWbnSubmit(uint32_t mapId) {
                     "[WBN-SP] info fetch: /api/v1/%s", infoPath);
         char *infoJson = nullptr;
         int infoStatus = wbn_api_get(infoPath, &infoJson);
-        if (seq != s_spWbnFetchSeq.load()) {
+        if (seq != s_spWbn.fetchSeq.load()) {
             free(infoJson);
-            s_spWbnFetching.store(false);
+            s_spWbn.fetching.store(false);
             return;
         }
         if (infoStatus == 200 && infoJson) {
@@ -1630,14 +1669,14 @@ static void spWbnSubmit(uint32_t mapId) {
         uint8_t *bytes = nullptr;
         size_t   bytesLen = 0;
         int dlStatus = wbn_api_download_to_memory_cancellable(
-            filePath, &bytes, &bytesLen, &s_spWbnCancel);
+            filePath, &bytes, &bytesLen, &s_spWbn.cancel);
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-SP] file fetch result: /api/v1/%s -> %d (%zu bytes)",
                     filePath, dlStatus, bytesLen);
 
-        if (seq != s_spWbnFetchSeq.load() || dlStatus == -2) {
+        if (seq != s_spWbn.fetchSeq.load() || dlStatus == -2) {
             free(bytes);
-            s_spWbnFetching.store(false);
+            s_spWbn.fetching.store(false);
             return;
         }
         out.httpStatus = dlStatus;
@@ -1656,10 +1695,10 @@ static void spWbnSubmit(uint32_t mapId) {
         free(bytes);
         out.valid = true;
         {
-            std::lock_guard<std::mutex> lk(s_spWbnMutex);
-            s_spWbnResult = std::move(out);
+            std::lock_guard<std::mutex> lk(s_spWbn.mutex);
+            s_spWbn.result = std::move(out);
         }
-        s_spWbnFetching.store(false);
+        s_spWbn.fetching.store(false);
     }).detach();
 }
 
@@ -1670,10 +1709,10 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
     if (!cs) return;
     SpWbnResult res;
     {
-        std::lock_guard<std::mutex> lk(s_spWbnMutex);
-        if (!s_spWbnResult.valid) return;
-        res = std::move(s_spWbnResult);
-        s_spWbnResult = SpWbnResult{};
+        std::lock_guard<std::mutex> lk(s_spWbn.mutex);
+        if (!s_spWbn.result.valid) return;
+        res = std::move(s_spWbn.result);
+        s_spWbn.result = SpWbnResult{};
     }
     if (res.httpStatus != 200 || res.bytes.empty()) {
         clientSimSetLobbyWbnPreviewStatus(cs, 3);
@@ -1783,8 +1822,8 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
 }
 
 static void wbnMapsKickFolderFetch(int folderId) {
-    if (s_wbnMapsFetching.exchange(true)) return; /* one at a time */
-    uint32_t seq = ++s_wbnMapsFetchSeq;
+    if (s_wbnMaps.fetching.exchange(true)) return; /* one at a time */
+    uint32_t seq = ++s_wbnMaps.fetchSeq;
     std::thread([folderId, seq]() {
         char path[64];
         if (folderId > 0) SDL_snprintf(path, sizeof(path), "maps/%d", folderId);
@@ -1798,29 +1837,29 @@ static void wbnMapsKickFolderFetch(int folderId) {
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] folder fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path, status);
-        if (seq == s_wbnMapsFetchSeq.load()) {
+        if (seq == s_wbnMaps.fetchSeq.load()) {
             if (status == 200 && resp) {
                 wbnMapsParseFolderJson(resp);
             } else {
-                std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+                std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
                 char err[512];
                 SDL_snprintf(err, sizeof(err),
                              "Folder fetch failed (HTTP %d) for %s/api/v1/%s",
                              status,
                              (base && *base) ? base : "(no base)",
                              path);
-                s_wbnMapsError = err;
+                s_wbnMaps.error = err;
             }
         }
         free(resp);
-        s_wbnMapsFetching.store(false);
+        s_wbnMaps.fetching.store(false);
     }).detach();
 }
 
 static void wbnMapsKickSearchFetch(const char *queryRaw) {
     if (!queryRaw || !*queryRaw) return;
-    if (s_wbnSearchFetching.exchange(true)) return;
-    uint32_t seq = ++s_wbnSearchFetchSeq;
+    if (s_wbnMaps.searchFetching.exchange(true)) return;
+    uint32_t seq = ++s_wbnMaps.searchFetchSeq;
     std::string qcopy = queryRaw;
     /* Very basic URL-encode of space and a few common specials so
      * typical map titles work without pulling in a full encoder. */
@@ -1849,7 +1888,7 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
                     "[WBN-TAB] search fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path.c_str(),
                     status);
-        if (seq == s_wbnSearchFetchSeq.load()) {
+        if (seq == s_wbnMaps.searchFetchSeq.load()) {
             if (status == 200 && resp) {
                 /* Dump the first ~600 chars of the raw response
                  * so we can see exactly what shape the search
@@ -1860,25 +1899,25 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
                     resp);
                 wbnMapsParseSearchJson(resp, qcopy.c_str());
             } else {
-                std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+                std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
                 char err[512];
                 SDL_snprintf(err, sizeof(err),
                              "Search failed (HTTP %d) for %s/api/v1/%s",
                              status,
                              (base && *base) ? base : "(no base)",
                              path.c_str());
-                s_wbnSearchError = err;
+                s_wbnMaps.searchError = err;
             }
         }
         free(resp);
-        s_wbnSearchFetching.store(false);
+        s_wbnMaps.searchFetching.store(false);
     }).detach();
 }
 
 /* listProvider for the Winbolo.net Maps tab. The chooser hands us
  * relPath (the chooser's currentDir — a friendly slash-separated
  * path like "ClassicMap's Maps/classics-popular"). We:
- *   - resolve it to a numeric folder ID via s_wbnPathToId,
+ *   - resolve it to a numeric folder ID via s_wbnMaps.pathToId,
  *   - kick a fetch if the cache doesn't already hold that folder,
  *   - populate state->maps[] from whatever's currently cached
  *     (synchronous return; the next frame will pick up fresh data).
@@ -1903,14 +1942,14 @@ static void wbnMapsListProvider(MapChooserState *state,
         std::string query;
         std::vector<WbnMapsEntry> results;
         bool hasResults  = false;
-        bool srchInFlight = s_wbnSearchFetching.load();
+        bool srchInFlight = s_wbnMaps.searchFetching.load();
         std::string srchErr;
         {
-            std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-            query       = s_wbnSearchQuery;
-            results     = s_wbnSearchResults;
-            hasResults  = s_wbnSearchHasData;
-            srchErr     = s_wbnSearchError;
+            std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+            query       = s_wbnMaps.searchQuery;
+            results     = s_wbnMaps.searchResults;
+            hasResults  = s_wbnMaps.searchHasData;
+            srchErr     = s_wbnMaps.searchError;
         }
         /* Kick a fetch if the query changed. Throttled per query
          * string — typing fast doesn't pile up requests. */
@@ -1997,15 +2036,15 @@ static void wbnMapsListProvider(MapChooserState *state,
     bool hasData = false;
     std::string errMsg;
     {
-        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-        auto it = s_wbnPathToId.find(relPath);
-        if (it != s_wbnPathToId.end()) targetId = it->second;
-        cachedId   = s_wbnMapsCurrentFolderId;
-        cachedPath = s_wbnMapsCurrentPath;
-        subs       = s_wbnMapsSubfolders;
-        entries    = s_wbnMapsEntries;
-        hasData    = s_wbnMapsHasData;
-        errMsg     = s_wbnMapsError;
+        std::lock_guard<std::mutex> lk(s_wbnMaps.mutex);
+        auto it = s_wbnMaps.pathToId.find(relPath);
+        if (it != s_wbnMaps.pathToId.end()) targetId = it->second;
+        cachedId   = s_wbnMaps.currentFolderId;
+        cachedPath = s_wbnMaps.currentPath;
+        subs       = s_wbnMaps.subfolders;
+        entries    = s_wbnMaps.entries;
+        hasData    = s_wbnMaps.hasData;
+        errMsg     = s_wbnMaps.error;
     }
 
     /* Kick a fetch if the cache doesn't match what the chooser
@@ -2013,7 +2052,7 @@ static void wbnMapsListProvider(MapChooserState *state,
      * rapid folder clicks while one is in flight don't pile up. */
     static int s_wbnMapsLastRequested = -2;
     bool cacheMatches = hasData && (cachedPath == relPath);
-    bool inFlight = s_wbnMapsFetching.load();
+    bool inFlight = s_wbnMaps.fetching.load();
     static int s_wbnLogTick = 0;
     if (++s_wbnLogTick % 60 == 1) {
         WB_LOG_INFO(WB_LOG_CAT_GUI,
@@ -2188,7 +2227,7 @@ static void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
 /* onFolderJump for the WBN provider. The chooser prepends "Maps" as
  * the clickable root indicator. "Maps" alone (or "Maps/") jumps back
  * to the WBN catalogue root; anything else is a friendly path the
- * provider resolves via s_wbnPathToId on the next frame. */
+ * provider resolves via s_wbnMaps.pathToId on the next frame. */
 static void lobbyWbnMapsOnFolderJump(MapChooserState *state,
                                       const char *jumpPath, void *ctx) {
     (void)ctx;
@@ -10159,6 +10198,12 @@ extern "C" void imguiLobbyFrameReset(void) {
      * stay: they belong to the WBN browser as much as to the recap, and the
      * loader rebuilds them on demand. */
     lobbyRatingReset();
+#endif
+
+#ifndef __EMSCRIPTEN__
+    /* A single-player map fetch left in flight holds a whole map's bytes in
+     * its result slot; nothing drains it once the lobby is gone. */
+    lobbySpWbnReset();
 #endif
 
     lobbyPlayersReset();
