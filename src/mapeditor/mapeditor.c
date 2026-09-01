@@ -59,6 +59,10 @@ extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
 #define ME_MIN_ZOOM 1
 #define ME_MAX_ZOOM 16
 #define ME_SCROLL_SPEED 4
+/* Ceiling on how large the tile atlas is rasterized. At 4 the sheet is
+   1984x704 (5.6MB) and one rebuild rasterizes 307 SVGs; past that the extra
+   detail is beyond what the eye gets back out of a magnified tile. */
+#define ME_ATLAS_MAX_SCALE 4
 #define ME_MAX_RECENT_FILES 10
 #define ME_FILL_LIMIT 65536
 
@@ -90,6 +94,10 @@ typedef struct {
     SDL_Window   *window;
     SDL_Renderer *renderer;
     SDL_Texture  *tilesTex;
+    /* Tile size the atlas is rasterized at, as a multiple of TILE_SIZE_X.
+       Atlas cell coordinates (mapViewPosX/Y and the mine/boat constants) are
+       expressed at 1x, so every source rect scales by this — see meAtlasSrc. */
+    int          sheetScale;
 
     /* Map data — heap-allocated, owned by the editor */
     map       mp;
@@ -1093,6 +1101,61 @@ static void meCommitPreview(MapEditorState *ed) {
 }
 
 /* -------------------------------------------------------
+ * Tile atlas scaling
+ * ------------------------------------------------------- */
+
+/* Integer magnification the canvas is drawn at, in renderer pixels.
+   zoomLevel is what the user picked; the window's pixel density folds in on
+   top so a tile keeps the same physical size on a HiDPI display and simply
+   gets more pixels to say it with. Sub-1x levels magnify by 1 (times density)
+   and reach their size through the offscreen downscale instead. */
+static int meRenderZoom(const MapEditorState *ed, float pxScale) {
+    int base = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+    int density = (int)(pxScale + 0.5f);
+    if (density < 1) density = 1;
+    return base * density;
+}
+
+/* Atlas scale to rasterize at for a given render zoom. Capped, and reduced to
+   a divisor of the render zoom: whatever the atlas does not supply is made up
+   by magnifying it, and only a whole-number ratio magnifies evenly. A render
+   zoom of 6 takes a 3x atlas doubled, not a 4x atlas at 1.5:1. */
+static int meAtlasScaleFor(int renderZoom) {
+    int s = (renderZoom > ME_ATLAS_MAX_SCALE) ? ME_ATLAS_MAX_SCALE : renderZoom;
+    while (s > 1 && (renderZoom % s) != 0) s--;
+    return (s < 1) ? 1 : s;
+}
+
+/* Re-rasterize the tile atlas when the size a tile is drawn at changes. The
+   sprites are SVG, so rasterizing at the drawn size keeps detail that
+   magnifying a 16px sheet cannot recover — what sdl3LoadTiles already does for
+   the game with gZoomFactor. Costs one pass over 307 sprites, so it runs only
+   when the scale actually moves, and keeps the existing atlas on failure. */
+static void meEnsureAtlas(MapEditorState *ed, int renderZoom) {
+    int want = meAtlasScaleFor(renderZoom);
+    if (want == ed->sheetScale && ed->tilesTex) return;
+
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * want);
+    if (!sheet) return;
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(ed->renderer, sheet);
+    SDL_DestroySurface(sheet);
+    if (!tex) return;
+    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+
+    if (ed->tilesTex) SDL_DestroyTexture(ed->tilesTex);
+    ed->tilesTex = tex;
+    ed->sheetScale = want;
+}
+
+/* Source rect for one atlas cell, given its 1x coordinates. */
+static SDL_FRect meAtlasSrc(const MapEditorState *ed, int x1x, int y1x) {
+    float s = (float)ed->sheetScale;
+    SDL_FRect r = { (float)x1x * s, (float)y1x * s,
+                    (float)TILE_SIZE_X * s, (float)TILE_SIZE_Y * s };
+    return r;
+}
+
+/* -------------------------------------------------------
  * Render preview tiles (semi-transparent)
  * ------------------------------------------------------- */
 static void meRenderPreview(MapEditorState *ed, int screenW, int screenH) {
@@ -1144,10 +1207,7 @@ static void meRenderPreview(MapEditorState *ed, int screenW, int screenH) {
                     placeMine = meRandomMineAt(mx, my);
 
                 if (placeMine) {
-                    SDL_FRect mineSrc = {
-                        (float)MINE_X, (float)MINE_Y,
-                        (float)tileSize, (float)tileSize
-                    };
+                    SDL_FRect mineSrc = meAtlasSrc(ed, MINE_X, MINE_Y);
                     SDL_RenderTexture(ed->renderer, ed->tilesTex, &mineSrc, &dest);
                 }
             }
@@ -1168,12 +1228,8 @@ static void meRenderPreview(MapEditorState *ed, int screenW, int screenH) {
             if (dx + scaledTile < 0 || dx > screenW ||
                 dy + scaledTile < 0 || dy > screenH) continue;
 
-            SDL_FRect src = {
-                (float)mapViewPosX[iconTile],
-                (float)mapViewPosY[iconTile],
-                (float)tileSize,
-                (float)tileSize
-            };
+            SDL_FRect src = meAtlasSrc(ed, mapViewPosX[iconTile],
+                                       mapViewPosY[iconTile]);
             SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
             SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
         }
@@ -1212,12 +1268,8 @@ static void meRenderMazePreview(MapEditorState *ed, int screenW, int screenH) {
 
         BYTE iconTile = meTerrainToIconTile(ed->mazePreviewTerrain[i]);
 
-        SDL_FRect src = {
-            (float)mapViewPosX[iconTile],
-            (float)mapViewPosY[iconTile],
-            (float)tileSize,
-            (float)tileSize
-        };
+        SDL_FRect src = meAtlasSrc(ed, mapViewPosX[iconTile],
+                                   mapViewPosY[iconTile]);
         SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
     }
@@ -1337,12 +1389,8 @@ static void meRenderGenPreview(MapEditorState *ed, int screenW, int screenH) {
 
         BYTE iconTile = meTerrainToIconTile(ed->genPreviewTerrain[i]);
 
-        SDL_FRect src = {
-            (float)mapViewPosX[iconTile],
-            (float)mapViewPosY[iconTile],
-            (float)tileSize,
-            (float)tileSize
-        };
+        SDL_FRect src = meAtlasSrc(ed, mapViewPosX[iconTile],
+                                   mapViewPosY[iconTile]);
         SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
     }
@@ -1431,12 +1479,8 @@ static void meRenderPastePreview(MapEditorState *ed, int screenW, int screenH,
             if (dx + scaledTile < 0 || dx > screenW ||
                 dy + scaledTile < 0 || dy > screenH) continue;
 
-            SDL_FRect src = {
-                (float)mapViewPosX[iconTile],
-                (float)mapViewPosY[iconTile],
-                (float)tileSize,
-                (float)tileSize
-            };
+            SDL_FRect src = meAtlasSrc(ed, mapViewPosX[iconTile],
+                                       mapViewPosY[iconTile]);
             SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
             SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
         }
@@ -2327,12 +2371,8 @@ static void meRenderTiles(MapEditorState *ed, int screenW, int screenH) {
                 tileNum = meCalcTile(ed, (BYTE)mapX, (BYTE)mapY);
             }
 
-            SDL_FRect src = {
-                (float)(mapViewPosX[tileNum]),
-                (float)(mapViewPosY[tileNum]),
-                (float)tileSize,
-                (float)tileSize
-            };
+            SDL_FRect src = meAtlasSrc(ed, mapViewPosX[tileNum],
+                                       mapViewPosY[tileNum]);
             SDL_FRect dest = {
                 (float)(x * scaledTile - edgeX),
                 (float)(y * scaledTile - edgeY),
@@ -2352,12 +2392,7 @@ static void meRenderTiles(MapEditorState *ed, int screenW, int screenH) {
                     hasMine = true;
                 }
                 if (hasMine) {
-                    SDL_FRect mineSrc = {
-                        (float)MINE_X,
-                        (float)MINE_Y,
-                        (float)tileSize,
-                        (float)tileSize
-                    };
+                    SDL_FRect mineSrc = meAtlasSrc(ed, MINE_X, MINE_Y);
                     SDL_RenderTexture(ed->renderer, ed->tilesTex, &mineSrc, &dest);
                 }
             }
@@ -2443,12 +2478,7 @@ static void meRenderStarts(MapEditorState *ed, int screenW, int screenH) {
             dy + scaledTile < 0 || dy > screenH) continue;
 
         int dir = startsConvertDir((s->dir < 16) ? s->dir : 0);
-        SDL_FRect src = {
-            (float)meBoatAtlasX[dir],
-            (float)meBoatAtlasY[dir],
-            (float)tileSize,
-            (float)tileSize
-        };
+        SDL_FRect src = meAtlasSrc(ed, meBoatAtlasX[dir], meBoatAtlasY[dir]);
         SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
     }
@@ -2615,19 +2645,10 @@ static void meRenderObjPreview(MapEditorState *ed, int screenW, int screenH,
 
     SDL_FRect src;
     if (boatDir >= 0) {
-        src = (SDL_FRect){
-            (float)meBoatAtlasX[boatDir],
-            (float)meBoatAtlasY[boatDir],
-            (float)tileSize,
-            (float)tileSize
-        };
+        src = meAtlasSrc(ed, meBoatAtlasX[boatDir], meBoatAtlasY[boatDir]);
     } else {
-        src = (SDL_FRect){
-            (float)mapViewPosX[previewTile],
-            (float)mapViewPosY[previewTile],
-            (float)tileSize,
-            (float)tileSize
-        };
+        src = meAtlasSrc(ed, mapViewPosX[previewTile],
+                         mapViewPosY[previewTile]);
     }
     SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
     SDL_RenderTexture(ed->renderer, ed->tilesTex, &src, &dest);
@@ -3103,8 +3124,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Initialize map view lookup tables */
     mapViewInit();
 
-    /* Build tile atlas */
-    SDL_Surface *sheet = tileLoaderBuildSheet(16);
+    /* Build the tile atlas at 1x. The frame loop re-rasterizes it to match the
+       zoom and pixel density (meEnsureAtlas); this just guarantees there is an
+       atlas before the first frame, and gives the failure an exit path. */
+    ed->sheetScale = 1;
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X);
     if (!sheet) {
         WB_LOG_ERROR(WB_LOG_CAT_ASSET, "mapEditorRun: tileLoaderBuildSheet failed");
         free(ed);
@@ -3180,6 +3204,12 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
            window to a display with a different density changes it. */
         float pxScale = SDL_GetWindowPixelDensity(window);
         if (pxScale <= 0.0f) pxScale = 1.0f;
+
+        /* Fold the density into the magnification so a tile keeps its physical
+           size and gains pixels rather than being stretched. Set before the
+           events so anything that hit-tests this frame sees it; the atlas that
+           matches is rasterized below, after any zoom change has landed. */
+        ed->zoomFactor = meRenderZoom(ed, pxScale);
 
         /* Process events */
         SDL_Event ev;
@@ -3295,7 +3325,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 case SDLK_KP_PLUS:
                     if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
                     ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
-                    ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+                    ed->zoomFactor = meRenderZoom(ed, pxScale);
                     break;
                 case SDLK_LEFTBRACKET:
                     if (ed->brushSize > 0) ed->brushSize--;
@@ -3307,7 +3337,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 case SDLK_KP_MINUS:
                     if (ed->zoomStepIndex > 0) ed->zoomStepIndex--;
                     ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
-                    ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+                    ed->zoomFactor = meRenderZoom(ed, pxScale);
                     break;
                 case SDLK_HOME:
                     ed->viewCenterX = 128 << 8;
@@ -3817,7 +3847,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                     if (ed->zoomStepIndex > 0) ed->zoomStepIndex--;
                 }
                 ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
-                ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+                ed->zoomFactor = meRenderZoom(ed, pxScale);
                 break;
 
             case SDL_EVENT_DROP_FILE: {
@@ -3857,7 +3887,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                     pinchAccum += 0.15f;
                 }
                 ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
-                ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+                ed->zoomFactor = meRenderZoom(ed, pxScale);
             }
         }
 
@@ -3918,6 +3948,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderFillRect(renderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
         }
+
+        /* Rasterize the atlas at the size tiles are about to be drawn at. Runs
+           here rather than before the event pump so a zoom change made this
+           frame is already reflected. */
+        meEnsureAtlas(ed, ed->zoomFactor);
 
         /* ImGui's SDL3 renderer backend forces every texture it draws to its
            current sampler (LINEAR by default), and the terrain palette draws
@@ -4139,19 +4174,19 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (menuAction.wantZoomIn) {
             if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
             ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
-            ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+            ed->zoomFactor = meRenderZoom(ed, pxScale);
         }
         if (menuAction.wantZoomOut) {
             if (ed->zoomStepIndex > 0) ed->zoomStepIndex--;
             ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
-            ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+            ed->zoomFactor = meRenderZoom(ed, pxScale);
         }
         if (menuAction.wantZoomSet) {
             int idx = menuAction.zoomSetIndex;
             if (idx >= 0 && idx < (int)ZOOM_STEP_COUNT) {
                 ed->zoomStepIndex = idx;
                 ed->zoomLevel = zoomSteps[idx];
-                ed->zoomFactor = (ed->zoomLevel >= 1.0f) ? (int)ed->zoomLevel : 1;
+                ed->zoomFactor = meRenderZoom(ed, pxScale);
             }
         }
         if (menuAction.wantValidate) {
@@ -4492,7 +4527,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                                             ed->window)) {
                 if (ed->exportPath[0] != '\0') {
                     bool ok = mapExportPNG(ed->exportPath, &ed->exportCfg,
-                                           ed->renderer, ed->tilesTex, TILE_SIZE_X,
+                                           ed->renderer,
                                            ed->mp, ed->bs, ed->pb, ed->ss);
                     if (ok) {
                         meSetStatus(ed, "Exported PNG: %s", ed->exportPath);
