@@ -1003,6 +1003,15 @@ void         clientSimSetScrollMechanism(int mech);
 bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 
+/* The gunsight's map square and the pixel offset inside it, for a caller that
+   draws the crosshair itself. False, with nothing written, when there is no
+   tank, when the tank is dead and waiting to respawn, or when the player has
+   the sight hidden — the Show Gunsight preference and auto-hide drive the same
+   flag. Unlike clientSimGetGunsightTile this never reports the map origin for a
+   dead tank. */
+bool         clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
+                                     BYTE *pixelX, BYTE *pixelY);
+
 /* False when the local player has no tank, or has one that is dead and
    waiting to respawn. The overview uses this to stop a dead tank's position
    revealing map or dragging the camera. */

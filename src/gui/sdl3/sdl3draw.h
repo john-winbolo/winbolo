@@ -98,6 +98,13 @@ void sdl3DrawGetGameRect(float *destX, float *destY,
  * not been loaded. */
 int sdl3DrawGetSheetScale(void);
 
+/* Build the gunsight crosshair from data/crosshairs_17x17.png — a 17x17
+ * sprite whose centre pixel (8,8) sits on the aim point. NULL when the
+ * asset is missing or the decode fails; the caller owns the texture and
+ * destroys it. A second window has to make its own copy: an SDL texture
+ * only works on the renderer that created it. */
+SDL_Texture *sdl3DrawCreateCrosshairTexture(SDL_Renderer *r);
+
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);
 

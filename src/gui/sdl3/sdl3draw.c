@@ -797,6 +797,47 @@ static void sdl3DrawSetWindowIcon(SDL_Window *window) {
   stbi_image_free(pixels);
 }
 
+/* Decode data/crosshairs_17x17.png onto the given renderer. Returns NULL if
+ * the file is missing or anything in the decode fails; the caller owns the
+ * texture and destroys it. */
+SDL_Texture *sdl3DrawCreateCrosshairTexture(SDL_Renderer *r) {
+  SDL_Texture *tex = NULL;
+
+  if (!r) return NULL;
+
+  const char *basePath = SDL_GetBasePath();
+  if (!basePath) basePath = "./";
+  char path[1024];
+  SDL_snprintf(path, sizeof(path), "%sdata/crosshairs_17x17.png", basePath);
+  SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+  if (io) {
+    Sint64 sz = SDL_GetIOSize(io);
+    if (sz > 0) {
+      unsigned char *buf = (unsigned char *)SDL_malloc((size_t)sz);
+      if (buf) {
+        SDL_ReadIO(io, buf, (size_t)sz);
+        int imgW, imgH, ch;
+        unsigned char *pix = stbi_load_from_memory(buf, (int)sz, &imgW, &imgH, &ch, 4);
+        SDL_free(buf);
+        if (pix) {
+          SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pix, imgW * 4);
+          if (surf) {
+            tex = SDL_CreateTextureFromSurface(r, surf);
+            SDL_DestroySurface(surf);
+            if (tex) {
+              SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+              SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+            }
+          }
+          stbi_image_free(pix);
+        }
+      }
+    }
+    SDL_CloseIO(io);
+  }
+  return tex;
+}
+
 /* -------------------------------------------------------
  * Loading screen — show smalllogo-transparent.png centered
  * on black.  Called immediately after window/renderer
@@ -1132,38 +1173,7 @@ bool sdl3DrawSetup(int zoomFactor) {
   glyphsInit(gRenderer);
 
   /* Load custom crosshair (17×17 PNG, center pixel (8,8) = aim point). */
-  {
-    const char *basePath = SDL_GetBasePath();
-    if (!basePath) basePath = "./";
-    char path[1024];
-    SDL_snprintf(path, sizeof(path), "%sdata/crosshairs_17x17.png", basePath);
-    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
-    if (io) {
-      Sint64 sz = SDL_GetIOSize(io);
-      if (sz > 0) {
-        unsigned char *buf = (unsigned char *)SDL_malloc((size_t)sz);
-        if (buf) {
-          SDL_ReadIO(io, buf, (size_t)sz);
-          int imgW, imgH, ch;
-          unsigned char *pix = stbi_load_from_memory(buf, (int)sz, &imgW, &imgH, &ch, 4);
-          SDL_free(buf);
-          if (pix) {
-            SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pix, imgW * 4);
-            if (surf) {
-              gCrosshairTex = SDL_CreateTextureFromSurface(gRenderer, surf);
-              SDL_DestroySurface(surf);
-              if (gCrosshairTex) {
-                SDL_SetTextureBlendMode(gCrosshairTex, SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(gCrosshairTex, SDL_SCALEMODE_NEAREST);
-              }
-            }
-            stbi_image_free(pix);
-          }
-        }
-      }
-      SDL_CloseIO(io);
-    }
-  }
+  gCrosshairTex = sdl3DrawCreateCrosshairTexture(gRenderer);
 
   /* Create Phase 4 render-target textures.
      Man-status is created at zoom-factor resolution so the circle is drawn

@@ -49,9 +49,13 @@ OverviewView *overviewViewCreate(void);
 void          overviewViewDestroy(OverviewView *v);
 
 /* Redraw into the view's own offscreen texture, reallocating it when the
-   requested size changes. tiles/sheetScale belong to the host, not the view. */
+   requested size changes. tiles/sheetScale belong to the host, not the view,
+   and so does crosshair — the local player's gunsight sprite, on the same
+   renderer as the tile sheet for the same reason. NULL just leaves the
+   crosshair undrawn. */
 void          overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                           SDL_Texture *tiles, int sheetScale,
+                                          SDL_Texture *crosshair,
                                           int w, int h, ClientSim *cs);
 SDL_Texture  *overviewViewGetTexture(const OverviewView *v);
 void          overviewViewGetSize(const OverviewView *v, int *outW, int *outH);

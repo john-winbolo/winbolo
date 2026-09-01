@@ -486,6 +486,9 @@ static OverviewView *s_overviewView          = nullptr;
 static SDL_Texture  *s_overviewTiles         = nullptr;
 static SDL_Renderer *s_overviewTilesRenderer = nullptr;
 static int           s_overviewTilesScale    = 0;
+/* The gunsight sprite, on the pop-out's renderer for the same reason. */
+static SDL_Texture  *s_overviewCrosshair         = nullptr;
+static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
 /* Last frame's running state, so the start of a game can be told from the
    middle of one — see the auto-hide/reopen in sdl3ImguiRender. */
 static bool          s_overviewWasRunning    = false;
@@ -526,6 +529,31 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
     SDL_SetTextureBlendMode(s_overviewTiles, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(s_overviewTiles, SDL_SCALEMODE_NEAREST);
     return s_overviewTiles;
+}
+
+/* The pop-out's own crosshair. Keyed on the renderer alone — the PNG has one
+   size, so there is nothing here matching the tile sheet's scale. Like the
+   sheet, the attempt is recorded before it is made so a failed load is not
+   retried every frame. */
+static SDL_Texture *overviewEnsureCrosshair(SDL_Renderer *r) {
+    if (!r) return nullptr;
+
+    if (s_overviewCrosshairRenderer == r) {
+        return s_overviewCrosshair;
+    }
+
+    if (s_overviewCrosshair) {
+        SDL_DestroyTexture(s_overviewCrosshair);
+        s_overviewCrosshair = nullptr;
+    }
+    s_overviewCrosshairRenderer = r;
+
+    s_overviewCrosshair = sdl3DrawCreateCrosshairTexture(r);
+    if (!s_overviewCrosshair) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[Overview] sdl3DrawCreateCrosshairTexture failed");
+    }
+    return s_overviewCrosshair;
 }
 
 static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
@@ -4986,9 +5014,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 }
             }
             SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
+            SDL_Texture *ovCross =
+                overviewEnsureCrosshair(s_popMapOverview.renderer);
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
-                                        ovTiles, s_overviewTilesScale,
+                                        ovTiles, s_overviewTilesScale, ovCross,
                                         s_popMapOverview.width,
                                         s_popMapOverview.height, cs);
         }
@@ -5491,7 +5521,7 @@ void sdl3ImguiShowKeySetup(void) {
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
     inputGamepadShutdown();
-    /* Before the loop: both were made on the Map Overview pop-out's
+    /* Before the loop: all of these were made on the Map Overview pop-out's
        renderer, which popOutDestroy tears down. */
     overviewViewDestroy(s_overviewView);
     s_overviewView = nullptr;
@@ -5501,6 +5531,11 @@ void sdl3ImguiCleanup(void) {
     }
     s_overviewTilesRenderer = nullptr;
     s_overviewTilesScale    = 0;
+    if (s_overviewCrosshair) {
+        SDL_DestroyTexture(s_overviewCrosshair);
+        s_overviewCrosshair = nullptr;
+    }
+    s_overviewCrosshairRenderer = nullptr;
     for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
     flagsDestroy();
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }

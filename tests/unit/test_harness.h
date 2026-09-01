@@ -853,6 +853,13 @@ int run_overview_dead_tank(void);
  * local player's own tank passes wherever it stands. */
 int run_overview_entities(void);
 
+/* Overview gunsight accessor (test_overview_map.c): clientSimGetGunsightPos
+ * reports the crosshair's square and pixel offset while the tank is alive and
+ * the sight is shown, and declines — writing nothing — for a hidden sight and
+ * for a tank that is dead and waiting to respawn, where clientSimGetGunsightTile
+ * still answers with the map origin. */
+int run_overview_gunsight(void);
+
 /* My-tank position accessor (test_overview_map.c): clientSimGetMyTankMapPos
  * reports the tank's square while it is alive, fails while it is dead and
  * waiting to respawn rather than handing back the map origin it reads as, and

@@ -3669,6 +3669,7 @@ set(_unit_test_names
     overview_camera
     overview_dead_tank
     overview_entities
+    overview_gunsight
     tank_pos_dead
     stall_advances_processed_tick
     stall_mine_late_lays_once

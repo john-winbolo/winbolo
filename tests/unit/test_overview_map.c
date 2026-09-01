@@ -27,6 +27,11 @@
  * leaves the block the player can see, while the player's own tank is drawn
  * wherever it is.
  *
+ * One more covers the accessor the overview draws its own crosshair from,
+ * clientSimGetGunsightPos: it declines for a hidden sight and for a tank that
+ * is dead and waiting to respawn, where clientSimGetGunsightTile still answers
+ * with the map origin.
+ *
  * The last case runs the reveal checks again over the real UDP transport, where
  * the map arrives as a download and terrain changes arrive out of band as map
  * events, so the mask does not quietly depend on the client and the server
@@ -1022,6 +1027,74 @@ int run_overview_entities(void) {
                   "the local tank would be hidden on square %u,%u",
                   (unsigned)gotX, (unsigned)gotY);
     screenTanksDestroy(&tks);
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+/* Seeded into the gunsight out-params before every read, so a call that fails
+ * and still writes something shows it. */
+#define GUNSIGHT_SENTINEL 0xEE
+
+int run_overview_gunsight(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Gunsight");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    BYTE mx = GUNSIGHT_SENTINEL;
+    BYTE my = GUNSIGHT_SENTINEL;
+    BYTE px = GUNSIGHT_SENTINEL;
+    BYTE py = GUNSIGHT_SENTINEL;
+
+    /* A tank starts with the sight hidden — the same flag the Show Gunsight
+     * preference and auto-hide drive. Nothing to draw, and nothing written. */
+    UT_ASSERT_MSG(clientSimGetGunsightPos(f.cs, &mx, &my, &px, &py) != TRUE,
+                  "a hidden gunsight reported a position");
+    UT_ASSERT_MSG(mx == GUNSIGHT_SENTINEL && my == GUNSIGHT_SENTINEL &&
+                      px == GUNSIGHT_SENTINEL && py == GUNSIGHT_SENTINEL,
+                  "a failed read overwrote the caller's variables with %u,%u "
+                  "%u,%u", (unsigned)mx, (unsigned)my, (unsigned)px,
+                  (unsigned)py);
+
+    /* Shown, on a living tank: the case the crosshair is drawn for. */
+    clientSimSetGunsight(f.cs, true);
+    UT_ASSERT_MSG(clientSimGetGunsightPos(f.cs, &mx, &my, &px, &py) == TRUE,
+                  "a shown gunsight on a living tank reported nothing");
+
+    /* Dead but still in its slot, which is what the server leaves behind for
+     * the whole of deathWait. The sight is still shown, so dying is the only
+     * thing the accessor can be answering to. */
+    tankSetArmour(&f.gs->tanks[f.me], (BYTE)(TANK_FULL_ARMOUR + 1));
+    mx = my = px = py = GUNSIGHT_SENTINEL;
+    UT_ASSERT_MSG(clientSimGetGunsightPos(f.cs, &mx, &my, &px, &py) != TRUE,
+                  "a dead tank reported a gunsight position");
+    UT_ASSERT_MSG(mx == GUNSIGHT_SENTINEL && my == GUNSIGHT_SENTINEL &&
+                      px == GUNSIGHT_SENTINEL && py == GUNSIGHT_SENTINEL,
+                  "a failed read overwrote the caller's variables with %u,%u "
+                  "%u,%u", (unsigned)mx, (unsigned)my, (unsigned)px,
+                  (unsigned)py);
+
+    /* The difference this accessor exists for, pinned on the same state: the
+     * tile accessor answers for a dead tank, and answers with the map origin
+     * — a crosshair drawn from it would sit in the map's top-left corner. */
+    {
+        BYTE tileX = GUNSIGHT_SENTINEL;
+        BYTE tileY = GUNSIGHT_SENTINEL;
+
+        UT_ASSERT_MSG(clientSimGetGunsightTile(f.cs, &tileX, &tileY) == TRUE,
+                      "clientSimGetGunsightTile stopped answering for a dead "
+                      "tank — this case would then pin no difference");
+        UT_ASSERT_MSG(tileX == 0 && tileY == 0,
+                      "clientSimGetGunsightTile reads %u,%u for a dead tank, "
+                      "expected the map origin", (unsigned)tileX,
+                      (unsigned)tileY);
+    }
+
+    /* Respawned: the accessor answers again, so discounting a dead tank is not
+     * a one-way door. */
+    tankSetArmour(&f.gs->tanks[f.me], (BYTE)TANK_FULL_ARMOUR);
+    UT_ASSERT_MSG(clientSimGetGunsightPos(f.cs, &mx, &my, &px, &py) == TRUE,
+                  "a respawned tank reported no gunsight position");
 
     overviewFixtureStop(&f);
     return 0;

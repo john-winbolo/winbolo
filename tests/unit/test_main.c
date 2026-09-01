@@ -441,6 +441,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_camera",                         run_overview_camera                         },
     { "overview_dead_tank",                      run_overview_dead_tank                      },
     { "overview_entities",                       run_overview_entities                       },
+    { "overview_gunsight",                       run_overview_gunsight                       },
     { "tank_pos_dead",                           run_tank_pos_dead                           },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },

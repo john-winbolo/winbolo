@@ -63,6 +63,10 @@ extern "C" {
  * quarter of a view pixel at every rung. */
 #define OVERVIEW_ENTITY_SUBPX 16
 
+/* Side of the crosshair sprite in game pixels. One more than a tile, so it
+ * straddles the aim point rather than sitting in a corner of it. */
+#define OVERVIEW_CROSSHAIR_PX 17
+
 /* Zoom at or above which tank names are drawn. Below it the labels are wider
  * than the tanks are apart and the picture turns into text. */
 #define OVERVIEW_LABEL_MIN_ZOOM 1.0f
@@ -261,6 +265,7 @@ static void overviewViewDrawLabels(SDL_Renderer *r, const OverviewCamera *cam,
 /* The sprite overlay: everything that moves, on the squares the player can
  * see this instant. Runs on the offscreen the terrain passes just filled. */
 static void overviewViewDrawEntities(SDL_Renderer *r, SDL_Texture *tiles, int ss,
+                                     SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
                                      const OverviewMap *om, ClientSim *cs) {
@@ -312,6 +317,29 @@ static void overviewViewDrawEntities(SDL_Renderer *r, SDL_Texture *tiles, int ss
     mapViewDrawShells(&ctx, &sb, originX, originY, tileW, tileH, 0, 0);
     mapViewDrawTanks(&ctx, &tks, originX, originY, tileW, tileH, 0, 0);
     mapViewDrawLGMs(&ctx, &lgms, originX, originY, tileW, tileH, 0, 0);
+
+    /* The local player's own reticle, last so it sits on top of the sprites
+     * the way the main view's does. Its top-left goes where a 16x16 tile
+     * sprite would — mapViewDrawTanks' formula with bbx built from the
+     * gunsight's square and pixel offset — which is what puts the sprite's
+     * centre pixel on the aim point. Inside the render scale, so its 17 game
+     * pixels track the map at every zoom exactly as a tank's 16 do. */
+    BYTE gsMX, gsMY, gsPX, gsPY;
+    if (crosshair != NULL &&
+        clientSimGetGunsightPos(cs, &gsMX, &gsMY, &gsPX, &gsPY)) {
+        /* The ImGui SDL3 backend sets the sampler per draw, so the mode the
+         * host set at load time does not survive to here. */
+        SDL_SetTextureScaleMode(crosshair, SDL_SCALEMODE_NEAREST);
+        int bbx = (int)gsMX * TILE_SIZE_X + (int)gsPX;
+        int bby = (int)gsMY * TILE_SIZE_Y + (int)gsPY;
+        SDL_FRect dst = {
+            (float)(originX - tileW + bbx * OVERVIEW_ENTITY_SUBPX),
+            (float)(originY - tileH + bby * OVERVIEW_ENTITY_SUBPX),
+            (float)(OVERVIEW_CROSSHAIR_PX * OVERVIEW_ENTITY_SUBPX),
+            (float)(OVERVIEW_CROSSHAIR_PX * OVERVIEW_ENTITY_SUBPX)
+        };
+        SDL_RenderTexture(r, crosshair, NULL, &dst);
+    }
     SDL_SetRenderScale(r, wasScaleX, wasScaleY);
 
     if (zoomScale >= OVERVIEW_LABEL_MIN_ZOOM) {
@@ -361,6 +389,7 @@ extern "C" OverviewCamera *overviewViewCamera(OverviewView *v) {
 
 extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             SDL_Texture *tiles, int sheetScale,
+                                            SDL_Texture *crosshair,
                                             int w, int h, ClientSim *cs) {
     if (!v || !r || w <= 0 || h <= 0) return;
     if (!overviewViewEnsureTarget(v, r, w, h)) return;
@@ -396,7 +425,8 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * below draws from it too, and at full brightness. */
         SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
-        overviewViewDrawEntities(r, tiles, sheetScale, &v->cam, w, h, om, cs);
+        overviewViewDrawEntities(r, tiles, sheetScale, crosshair, &v->cam,
+                                 w, h, om, cs);
     }
 
     SDL_SetRenderTarget(r, NULL);

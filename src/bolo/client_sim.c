@@ -2558,6 +2558,20 @@ bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   return true;
 }
 
+bool clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
+                             BYTE *pixelX, BYTE *pixelY) {
+  if (!cs || MY_TANK(cs) == NULL) return false;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  if (!tankIsGunsightShow(&MY_TANK(cs))) return false;
+  /* tankGetGunsight reads the raw sim pose, not the render-smoothed one the
+   * main view feeds tankGetGunsightAt. That view also redraws the own hull at
+   * the smoothed pose, so the two agree there; a caller that draws the tank
+   * straight from screenTanksPrepare has no such fixup, and smoothing only the
+   * crosshair would put it out of step with the tank sprite beside it. */
+  tankGetGunsight(&MY_TANK(cs), mapX, mapY, pixelX, pixelY);
+  return true;
+}
+
 void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {
   switch (msgType) {
   case MSG_NEWSWIRE:
