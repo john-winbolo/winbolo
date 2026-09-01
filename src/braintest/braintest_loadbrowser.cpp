@@ -66,6 +66,18 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
 
                 ImGui::TableNextColumn();
                 if (isLoaded && appearing) ImGui::SetScrollHereY(0.4f);
+                /* Invisible full-row selectable purely for the HOVER style:
+                 * the whole row lights up under the mouse (ImGuiCol_Header*),
+                 * which makes scanning a long list much easier. AllowOverlap
+                 * keeps the Load button (drawn later, on top) clickable. */
+                if (e->loadable) {
+                    ImGui::PushID(i);
+                    ImGui::Selectable("##rowhover", false,
+                        ImGuiSelectableFlags_SpanAllColumns |
+                        ImGuiSelectableFlags_AllowOverlap);
+                    ImGui::PopID();
+                    ImGui::SameLine(0.0f, 0.0f);
+                }
                 if (isLoaded) {
                     ImGui::TextColored(ImVec4(0.55f, 1.0f, 0.6f, 1.0f), "%s", e->name);
                     ImGui::SameLine(); ImGui::TextDisabled("(loaded)");
