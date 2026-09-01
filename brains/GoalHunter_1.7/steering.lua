@@ -367,7 +367,11 @@ local function intentionally_stationary(goal, info)
   -- while the base tops us up — that's intentional, NOT stuck. (En route to the
   -- base it's still subject to normal stuck recovery.) Without this, the
   -- stuck-detector escalated to STUCK_ESCAPE and cleared the refuel goal.
-  if goal.kind == "refuel_at_base" and info and goal.mx then
+  -- flee_to_base is the same destination semantics (park on a base pad) — the
+  -- critical-flee injection swaps refuel_at_base to flee_to_base at low armour,
+  -- and both kinds dock via the same steering branch now.
+  if (goal.kind == "refuel_at_base" or goal.kind == "flee_to_base")
+     and info and goal.mx then
     local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
     if U.mdist(tmx, tmy, goal.mx, goal.my) <= 1 then return true end
   end
@@ -3687,7 +3691,16 @@ function M.steer(state, world, info, goal)
     end
     goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(nav_mx), U.m2w(nav_my))
 
-  elseif goal.kind == "refuel_at_base" then
+  elseif goal.kind == "refuel_at_base" or goal.kind == "flee_to_base" then
+    -- flee_to_base docks EXACTLY like refuel_at_base. It used to fall through
+    -- to the generic navigate, whose approach brake never commands a speed
+    -- below 6 for non-precision goals — so a fleeing tank could not stop ON
+    -- the pad and orbited beside it while the engine's refuel rule (tank tile
+    -- must BE the base tile for 46 uninterrupted ticks; the timer resets on
+    -- re-entry) gave it nothing. par1b bot3 t=8300-8530: 220 ticks circling
+    -- base #14 at armour 0 with the base holding 18. The cruel half: the
+    -- critical-flee injection swaps refuel->flee at low armour, so the dying
+    -- tank was exactly the one that lost the docking behaviour.
     -- wait_for_ally: an ally is camping our target base, so we park at
     -- a low-danger tile in the surrounding 11x11 square (picked at
     -- substate entry in init.lua) instead of crowding the base.  Fall
