@@ -717,6 +717,11 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint
  * it, so a monitor that has been unplugged since the last run cannot strand
  * the window off-screen. Same test the main window does in winbolo.c. */
 static void mapOverviewOpen(void) {
+    /* The full screen map already fills the window with the same view, so
+       the pop-out never opens while it is up. gameFrontShowMapOverview is
+       left alone: a player who had the pop-out flagged to reopen gets it
+       back once they are out of the mode. */
+    if (sdl3DrawIsOverviewInWindow()) return;
     bool firstCreate = (s_popMapOverview.window == nullptr);
     int w = gameFrontOverviewW;
     int h = gameFrontOverviewH;
@@ -3130,10 +3135,12 @@ static void renderMenuBar(ClientSim *cs) {
                     s_showNetInfo = !s_showNetInfo;
                 } else togglePopOut(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420, 0);
             }
+            ImGui::Separator();
             /* The overview draws the map the player has seen, so it stays
-               greyed out until a game is running. */
+               greyed out until a game is running — and while the full screen
+               map is up, which is the same view already filling the window. */
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
-                                cs != nullptr && clientSimIsRunning(cs))) {
+                                cs != nullptr && clientSimIsRunning(cs) && !overviewInWindow)) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
@@ -4644,7 +4651,8 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->gameInfoOpen    = sdl3ImguiIsGameInfoOpen();
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
-    s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs));
+    s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
+                             !sdl3ImguiIsOverviewInWindowOpen());
     s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
     s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs));
 

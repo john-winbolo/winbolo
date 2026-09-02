@@ -874,6 +874,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [fileMenu addItem:netInfoItem];
     s_netInfoItem = netInfoItem;
 
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+
     NSMenuItem *mapOverviewItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_MAP_OVERVIEW)
         action:@selector(onShowMapOverview:)
