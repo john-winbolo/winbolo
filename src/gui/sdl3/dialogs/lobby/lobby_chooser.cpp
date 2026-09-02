@@ -47,10 +47,11 @@
 #include "imgui.h"
 #include "imgui_internal.h"  /* ImGuiContext — the Esc path reads NavId off the context, which imgui.h only forward-declares */
 /* LobbyChooserState and lobbyChooser / lobbyChooserReset; the WinBolo.net
- * tab's provider callbacks (lobbyWbnMaps* / lobbyWbnGeneratePreview); and
+ * tab's sim-facing provider callbacks (lobbyWbnMapsOnSelect / Tick); and
  * through imgui_dialog_utils.h imguiPush/PopNearestSampling and
  * dialogNavWasInsideSubRegionAtFrameStart. */
 #include "lobby_internal.h"
+#include "../../wbn_map_source.h"  /* wbnMapsListProvider / OnFolderJump / TooltipPrefix / GeneratePreview — the WinBolo.net tab's catalogue callbacks */
 #include "dialog_footer.h"  /* WBUI::CancelKeyPressed / DialogFooter3 / FOOTER_* */
 extern "C" {
 #include "imgui_mapchooser.h"  /* MapChooserState / MapChooserEntry / MapPreviewPixels, MAP_CHOOSER_MAX_MAPS and the mapChooser* API */
@@ -928,12 +929,12 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooserTabs.wbn.maximizePtr      = &s_chooser.maximized;
         s_chooserTabs.wbn.hideExtras       = true;
         s_chooserTabs.wbn.leftPanelMaxW    = 300.0f;
-        s_chooserTabs.wbn.provider.enumerate            = lobbyWbnMapsListProvider;
+        s_chooserTabs.wbn.provider.enumerate            = wbnMapsListProvider;
         s_chooserTabs.wbn.provider.onSelect             = lobbyWbnMapsOnSelect;
-        s_chooserTabs.wbn.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
-        s_chooserTabs.wbn.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
+        s_chooserTabs.wbn.provider.onFolderJump         = wbnMapsOnFolderJump;
+        s_chooserTabs.wbn.provider.refreshTooltipPrefix = wbnMapsTooltipPrefix;
         s_chooserTabs.wbn.provider.tick                 = lobbyWbnMapsTick;
-        s_chooserTabs.wbn.provider.generatePreview      = lobbyWbnGeneratePreview;
+        s_chooserTabs.wbn.provider.generatePreview      = wbnMapsGeneratePreview;
         s_chooserTabs.wbn.provider.cacheScope           = "wbn";
         s_chooserTabs.wbn.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooserTabs.wbn.crumbsRootLabel, "Maps",
