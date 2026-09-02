@@ -20,9 +20,9 @@
  *                Picking a map downloads it on the shared
  *                worker and hands the raw .map bytes back to
  *                the editor, which loads them from memory.
- *                Only built into the WinBolo client
- *                (MAPEDITOR_WBN_OPEN); the standalone editor
- *                and the WASM build have no WBN stack.
+ *                Built into the WinBolo client and the
+ *                standalone MapEditor (MAPEDITOR_WBN_OPEN);
+ *                the WASM build has no WBN stack.
  *********************************************************/
 
 #ifndef MAPEDITOR_WBN_OPEN_H
@@ -37,7 +37,13 @@
 extern "C" {
 #endif
 
-/* Open the dialog (no-op if already open). */
+/* Availability of the WBN backend (default true). The standalone
+ * editor sets this from httpCreate()'s result at startup; the menu
+ * item is disabled while false. */
+void meWbnOpenSetAvailable(bool available);
+bool meWbnOpenAvailable(void);
+
+/* Open the dialog (no-op if already open or unavailable). */
 void meWbnOpenShow(void);
 
 /* True while the dialog is open. */

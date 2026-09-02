@@ -55,6 +55,11 @@ extern "C" {
 static MapChooserState s_chooser;
 static bool            s_chooserWired = false;
 
+/* WBN backend usable. Defaults true (the client has httpCreate'd long
+ * before the editor opens); the standalone editor lowers it when its
+ * own httpCreate fails, and the menu item follows. */
+static bool s_available    = true;
+
 static bool s_open         = false;  /* dialog is showing */
 static bool s_popupPending = false;  /* OpenPopup still to be issued this open */
 static bool s_downloading  = false;  /* a submitted map hasn't completed yet */
@@ -184,8 +189,18 @@ static bool meWbnPollDownload(unsigned char **outBytes, int *outLen,
     return true;
 }
 
+extern "C" void meWbnOpenSetAvailable(bool available) {
+    s_available = available;
+}
+
+extern "C" bool meWbnOpenAvailable(void) {
+    return s_available;
+}
+
 extern "C" void meWbnOpenShow(void) {
-    if (s_open) return;
+    /* The availability check also guards a stray action flag from a
+     * menu path that didn't honour the disabled state. */
+    if (!s_available || s_open) return;
     s_open         = true;
     s_popupPending = true;
     s_downloading  = false;

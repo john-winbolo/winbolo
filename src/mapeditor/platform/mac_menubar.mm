@@ -8,6 +8,7 @@
 extern "C" {
 #include "../mapeditor_imgui.h"
 }
+#include "../mapeditor_wbn_open.h"  /* meWbnOpenAvailable — empty unless MAPEDITOR_WBN_OPEN */
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
 
@@ -309,6 +310,10 @@ void me_mac_menubar_install(struct SDL_Window *win) {
         action:@selector(onOpenWbn:)
         keyEquivalent:@""];
     [openWbnItem setTarget:s_me_bridge];
+    /* Availability is fixed before mapEditorRun installs the menu (the
+     * standalone editor sets it from httpCreate at startup), so
+     * install-time is enough; fileMenu has autoenablesItems off. */
+    [openWbnItem setEnabled:meWbnOpenAvailable()];
     [fileMenu addItem:openWbnItem];
 #endif
 

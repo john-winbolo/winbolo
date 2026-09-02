@@ -36,6 +36,7 @@
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
 #include "mapeditor_stamp.h"
+#include "mapeditor_wbn_open.h"  /* meWbnOpenAvailable — empty unless MAPEDITOR_WBN_OPEN */
 #include "tilenum.h"
 #include "../gui/lang.h"
 #include "../gui/tiles.h"
@@ -165,7 +166,9 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                 action->wantOpen = true;
             }
 #ifdef MAPEDITOR_WBN_OPEN
-            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN))) {
+            /* Greyed out when the WBN HTTP layer failed to come up. */
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN), nullptr,
+                                false, meWbnOpenAvailable())) {
                 action->wantOpenWbn = true;
             }
 #endif
