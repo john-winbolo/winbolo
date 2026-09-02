@@ -201,6 +201,17 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keycap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_status.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_deck_pause.cpp
@@ -303,5 +314,6 @@ target_compile_options(main PRIVATE
     -Wno-implicit-fallthrough
     -Wno-implicit-function-declaration
     -Wno-nonportable-include-path
+    -Werror=undef
     -fcommon
 )

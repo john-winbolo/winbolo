@@ -543,6 +543,47 @@ else()
         -Wno-sign-compare
         -Wno-implicit-fallthrough
     )
+    # -Werror=undef makes an undefined macro in #if an error instead of a
+    # silent 0, so a lobby source that tests one of the BOLO_* feature
+    # macros without including lobby_internal.h fails to build. Set on
+    # those sources rather than added above, because add_compile_options
+    # is inherited by every target created later in this directory --
+    # including the FetchContent dependencies, and libplum's log.c tests
+    # an undefined RELEASE. Not set for MSVC: C4668 is forced to level 1
+    # and fires throughout the Windows SDK headers, where /external:W3
+    # cannot suppress it and the /WX above would make it fatal.
+    #
+    # The second option makes a function with external linkage and no
+    # previous declaration an error, so every symbol the lobby's sources
+    # share has to be declared in lobby_internal.h, and a definition cannot
+    # lose its static without gaining a declaration. The spelling is not
+    # interchangeable between the two compilers: Clang wants
+    # -Wmissing-prototypes and uses -Wmissing-declarations for an unrelated
+    # diagnostic (a declaration that declares nothing), while GCC wants
+    # -Wmissing-declarations and rejects -Wmissing-prototypes outright in
+    # C++.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(LOBBY_MISSING_DECL_OPTION -Werror=missing-prototypes)
+    else()
+        set(LOBBY_MISSING_DECL_OPTION -Werror=missing-declarations)
+    endif()
+    set_source_files_properties(
+        src/gui/sdl3/dialogs/imgui_lobby.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_status.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_players.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
+        PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
+    )
 endif()
 
 # ---------------------------------------------------------------------------
@@ -716,6 +757,17 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_messagebox.cpp
     src/gui/sdl3/dialogs/imgui_keycap.cpp
     src/gui/sdl3/dialogs/imgui_lobby.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_status.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/dialogs/imgui_deck_pause.cpp
@@ -844,6 +896,7 @@ set_target_properties(WinBoloIOS PROPERTIES
 
 target_include_directories(WinBoloIOS PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/gui
     src/gui/ios
     src/gui/mobile
@@ -1280,7 +1333,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1430,6 +1483,7 @@ endif()
 
 target_include_directories(WinBolo PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/gui
     src/server
     src/mapeditor

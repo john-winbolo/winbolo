@@ -92,7 +92,7 @@ typedef enum {
     CMD_REJECT_BAD_STATE,
     /* NameChange-specific reject codes. Surfaced to the originating
      * client via CTRL_COMMAND_REJECTED.reasonCode; the lobby toast
-     * (renderLobbyRejectToast in imgui_lobby.cpp) maps each onto a
+     * (lobbyRenderRejectToast in imgui_lobby.cpp) maps each onto a
      * STR_NAME_INVALID_* / STR_DLGSETNAME_INUSE_ERR lang string. */
     CMD_REJECT_NAME_EMPTY,
     CMD_REJECT_NAME_RESERVED_PREFIX,
