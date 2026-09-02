@@ -101,7 +101,11 @@ MIN_ARMOUR_CAPTURE = 9      # bases.h -- at or below this a base is capturable
 SHELL_DAMAGE = 5            # global.h DAMAGE
 FULL_SHELLS_TO_KILL = 17    # ceil((90 - 9) / 5)
 STEAL_MAX_ARMOUR = 24       # constants.lua BASE_STEAL_MAX_ARMOUR
-MARKUP_STALE = 500          # constants.lua BASE_MARKUP_STALE
+MARKUP_STALE = 1200         # constants.lua BASE_MARKUP_STALE (widened from
+                            # 500 to = BASE_STEAL_OBS_STALE on 2026-09-02: an
+                            # idle damaged base only re-reports once per
+                            # BASE_TICKS_BETWEEN_REFUEL, so a 500-tick window
+                            # priced a base we HAD read as if we never had)
 STEAL_RANGE = 6             # constants.lua BASE_STEAL_RANGE
 STEAL_COST = 10             # constants.lua BASE_STEAL_COST
 ATTACK_BASE_EXTRA_COST = 80  # constants.lua

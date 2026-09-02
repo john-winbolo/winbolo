@@ -4584,9 +4584,18 @@ function Brain.think(info)
       local _replan_log = BRAIN_DEBUG_MODE
         and (state._capacity_tier or 10) >= (C.REPLAN_LOG_MIN_TIER or 3)
       if _replan_log and state.pool_cache then
-        for pi = 0, 10 do
+        for pi = 0, 14 do
           local pce = state.pool_cache[pi]
           if pce and pce.goal then
+            -- cost= is the RAW cached pool cost: pre phase-weight, pre
+            -- influence multiplier, pre refuel shape, pre hysteresis. What
+            -- actually competed is the total goal_competition ended up with,
+            -- and some rows never competed at all (blocked dest, goal
+            -- blacklist, abandon cooldown, refuel already at target). Print
+            -- both and name the exclusion, so a row on the panel can never
+            -- look like a contender it never was.
+            local competed = state._pool_competed and state._pool_competed[pi]
+            local excl = state._pool_excluded and state._pool_excluded[pi]
           end
         end
       end
@@ -4668,9 +4677,25 @@ function Brain.think(info)
       -- current goal object untouched — a same-winner replan (urgent or timer)
       -- must be a no-op, never a churn that resets the substate/progress and
       -- interrupts e.g. an in-flight blitz/take.
+      -- ...but "the same goal" has to include the ACTION for defend_pill. The
+      -- same pill, held from the same tile, can be a WATCH one replan and a
+      -- REPAIR the next, and the two drive completely different behaviour
+      -- downstream (builder.decide dispatches the LGM on goal.repair; the heat
+      -- substates key off goal.heat). Comparing kind+tile+target alone kept the
+      -- stale watch object, so the repair rung could win the pool every replan
+      -- and never reach the builder at all.
+      local _defend_action_same = true
+      if new_goal and new_goal.kind == "defend_pill"
+         and state.goal.kind == "defend_pill" then
+        _defend_action_same =
+              ((new_goal.repair or false) == (state.goal.repair or false))
+          and ((new_goal.heat   or false) == (state.goal.heat   or false))
+          and ((new_goal.watch  or false) == (state.goal.watch  or false))
+      end
       local same_winner = new_goal and new_goal.kind == state.goal.kind
         and new_goal.mx == state.goal.mx and new_goal.my == state.goal.my
         and (new_goal.target_id or -1) == (state.goal.target_id or -1)
+        and _defend_action_same
       if same_winner then
         new_goal = state.goal  -- re-affirmed current goal: no switch
       elseif swerving then
@@ -4719,7 +4744,15 @@ function Brain.think(info)
          or new_goal.mx ~= state.goal.mx
          or new_goal.my ~= state.goal.my
          or (new_goal.target_id and state.goal.target_id
-             and new_goal.target_id ~= state.goal.target_id) then
+             and new_goal.target_id ~= state.goal.target_id)
+         -- Same reason as the same_winner test above, and it has to be repeated
+         -- HERE: this is the gate that actually installs the object. A
+         -- defend_pill whose ACTION changed (watch -> repair) has the same
+         -- kind, tile and target, so without this clause the fresh goal is
+         -- discarded and the stale one keeps its old flags -- the repair rung
+         -- won the pool at every replan and builder.decide never saw
+         -- goal.repair at all.
+         or not _defend_action_same then
         local old_kind = state.goal.kind
         local old_id   = state.goal.target_id
         -- Record abandoned goal on cooldown (prevent oscillation).

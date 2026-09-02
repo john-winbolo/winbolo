@@ -917,6 +917,36 @@ M.REPAIR_FIX_ENABLED       = true  -- repair fix ON (dead-pill rebuild + guards)
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ??N when an enemy tank is closer to the pill than us (contested ??? likely futile)
+-- Repair contest terms (2026-09-02 rework). REPAIR_CONTESTED_MULT above is kept
+-- as the value and as the name anything older may still read; the live pool-5
+-- code calls it REPAIR_UNDER_FIRE_MULT because that is now what it means.
+--
+-- The old "contested" test was (any enemy tank closer to the pill than we are,
+-- at ANY range) OR (a hostile seen within DEFEND_ENEMY_NEAR_RADIUS of the pill
+-- in the last DEFEND_SIGHT_FRESH_TICKS = 600 ticks = 12 s). Neither reads
+-- whether the pill is actually being SHOT, so a repair stayed priced x3 for
+-- twelve seconds after the shooter drove off, and a pill under live fire on the
+-- far side of the map read exactly the same as one nobody had touched. Split in
+-- two, both keyed on evidence the brain already keeps:
+--   UNDER_FIRE      pill.last_hit_tick (world.lua stamps it on REAL damage
+--                   only) is fresher than REPAIR_QUIET_TICKS -> shells are
+--                   landing on it right now. x3: this repair walks the LGM
+--                   into fire and the pill will just be re-damaged.
+--   ENEMY_IN_RANGE  a hostile tank we can SEE this tick sits within
+--                   PILL_FIRE_RANGE + PILL_REPOSITION_ENEMY_TANK_PAD of the
+--                   pill (or is closer to it than we are and inside
+--                   DEFEND_ENEMY_NEAR_RADIUS). A soft x1.5: it may start
+--                   shooting, it is not shooting yet.
+-- The two are exclusive (UNDER_FIRE supersedes) so the desc names exactly one.
+M.REPAIR_QUIET_TICKS        = 75    -- ~1.5 s with no fresh hit on the pill = "the
+                                    -- shelling has stopped". Also the LGM
+                                    -- interlock in builder.lua (see
+                                    -- REPAIR_HOLD_UNDER_FIRE_ENABLED) and the
+                                    -- defend->repair handoff gate.
+M.REPAIR_UNDER_FIRE_MULT    = 3.0   -- = REPAIR_CONTESTED_MULT; repair cost xN while
+                                    -- the pill is still taking hits
+M.REPAIR_ENEMY_IN_RANGE_MULT = 1.5  -- softer xN for a visible hostile tank near the
+                                    -- pill that is not (yet) hitting it
 -- ?????? Dead-pill repair (rebuild a friendly 0-HP pill IN PLACE) ?????????????????????????????????????????????
 -- The LGM walks out with wood and the engine rebuilds it (lgm.c: a 0-armour
 -- pill is the 4??LGM_COST_PILLREPAIR tier). Distinct from alive-damaged repair:
@@ -1943,6 +1973,33 @@ M.REPAIR_HOLD_ENEMY_NEAR_TICKS = 400 -- hold the repair LGM dispatch while a hos
                                      -- near the pill this recently (~8 s) ??? don't walk the little
                                      -- guy into a live fight; the pool's contested x3 already
                                      -- de-prioritizes the trip itself
+-- Under-fire repair hold: ON. This is the interlock the enemy-near hold above
+-- was reaching for and got wrong. "A hostile was seen somewhere near this pill
+-- in the last 8 s" is not a reason to keep the little guy in the tank -- it is
+-- true for most of a real game and it is why the flag above had to be turned
+-- off. "A shell landed on this pill less than REPAIR_QUIET_TICKS ago" is: the
+-- LGM walks at 1 tile/~13 ticks and dies to a single hit, so sending him while
+-- the volley is still landing simply loses him. The moment the hits stop, he
+-- goes. Set false to dispatch regardless (the pre-2026-09-02 behaviour).
+M.REPAIR_HOLD_UNDER_FIRE_ENABLED = true
+
+-- LGM repair-dispatch RANGE. These were four bare locals inside
+-- builder.decide (DANGER_LOW/HIGH, DIST_BASE/DIST_DANGEROUS); they are
+-- constants now because a second caller needs to read the same numbers.
+-- The cap is danger-blended: insist the tank be within DIST_BASE tiles of the
+-- pill while nothing is shooting at us, widening toward DIST_DANGEROUS as the
+-- tank's own local threat climbs from DANGER_LOW to DANGER_HIGH ("get as close
+-- as we can while it is safe", re-evaluated every tick).
+--
+-- The second caller is defend_pill_score's REPAIR handoff: a defend win that
+-- means "fix this pill" must not steer the tank AT the pill tile (a live pill
+-- is impassable), so it drives to its hold tile instead -- but only when that
+-- tile is inside the UNSCALED DIST_BASE cap, or the LGM could never be
+-- dispatched from where we parked and the tank would sit there forever.
+M.REPAIR_DISPATCH_DIST_BASE      = 5    -- tiles, calm
+M.REPAIR_DISPATCH_DIST_DANGEROUS = 12   -- tiles, at DANGER_HIGH
+M.REPAIR_DISPATCH_DANGER_LOW     = 50   -- threat_at_tank where the widening starts
+M.REPAIR_DISPATCH_DANGER_HIGH    = 150  -- ...and where it is fully widened
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase
@@ -2487,9 +2544,37 @@ M.TAKE_COVER_W_TRAVEL  = 0.6   -- per unit of smart_cost. Grass is 2.0/tile in
 M.TAKE_COVER_MIN_MARGIN = 8    -- with NO trigger, only bid when the best tile is at
                                -- least this much safer than standing still (about
                                -- one covering pill); otherwise REJECT no_safer_tile.
+-- ...but "safer" has to mean SAFER FROM SOMETHING. The margin is the sum of
+-- four terms and two of them (cover, ally) are COMFORT: a tile that is merely
+-- shaded by one more of our own pills, with the same zero incoming pill fire
+-- and the same zero enemy tanks as where we stand, is not an escape. At
+-- 20260902_000405 bot2 t=22561 the whole 12.0 margin was cover*8 + ally*4 with
+-- expo and enemy identical at both tiles -- nothing was being avoided -- and
+-- that calm bid still preempted a live defend on a pill being shelled at 5
+-- hits/s. So the CALM branch (the one with no real-danger trigger behind it)
+-- gates on the DANGER half only: W_EXPO * dexpo + W_ENEMY * denemy, i.e. the
+-- harm the move actually avoids. The full margin still sets the discount.
+M.TAKE_COVER_MIN_DANGER_MARGIN = 8  -- calm branch: how much AVOIDED HARM (pill
+                               -- fire + enemy tanks) the pick must buy before
+                               -- take_cover bids at all.
 M.TAKE_COVER_BASE_COST = 60    -- untriggered/bad-ground bid before the margin
                                -- discount: loses to a real attack (20-30) and to
                                -- capture work, beats seek_trees filler at 34+.
+M.TAKE_COVER_CALM_MIN  = 120   -- ...but a CALM bid (no haul, no panic, no bad
+                               -- ground -- just a safer tile) may only ever beat
+                               -- FILLER. 120 sits above the whole live band it
+                               -- was preempting -- attack_tank engage (~20-30),
+                               -- a defend rescue (100-300), a close repair
+                               -- (<100) -- and below explore (500), so calm
+                               -- cover is what you do when there is genuinely
+                               -- nothing else. (seek_trees, 34 at carry 1, also
+                               -- outbids it now; wanting wood while nothing is
+                               -- shooting at you is the same kind of idle.)
+                               -- calm cost = max(CALM_MIN, BASE_COST - K*margin),
+                               -- so with BASE_COST 60 the discount is inert and
+                               -- the calm bid is simply the floor -- deliberate:
+                               -- the discount was what let the margin talk it
+                               -- down into the live band in the first place.
 M.TAKE_COVER_K         = 1.0   -- cost = max(1, BASE_COST - K * margin)
 M.TAKE_COVER_HAUL_FLOOR = 10   -- the "get the cargo out" / "panic but cannot build"
                                -- floor. Below attack_tank's engage band on purpose:
@@ -2515,6 +2600,16 @@ M.TAKE_COVER_REJECT_COST = 1e8 -- sentinel for a rejected pool-14 entry: never w
 -- and to take_cover's haul floor (10), and BEAT seek_trees (40 - carry*6,
 -- so 34 at carry=1).
 M.DEFEND_WATCH_COST = 30
+
+-- defend_pill ARRIVED-and-we-can-actually-FIX-it bid. The watch ladder had no
+-- rung for "the shelling stopped, I am parked next to a chewed-up pill with the
+-- LGM aboard and 23 trees". taking_damage blocks heat for DEFEND_DMG_FRESH_TICKS
+-- (400 = 8 s), which drops the bid to WATCH and the defender then babysits a
+-- 9/15 pill it could have healed. Priced BETWEEN watch (30) and heat (200):
+-- repairing beats standing around, but a live attack_tank (~20-30) or a haul
+-- flee (10) still wins, and the LGM interlock in builder.lua is what actually
+-- decides whether the man leaves the tank.
+M.DEFEND_REPAIR_COST = 40
 
 -- ── sea-pill harvest (2026-09-01) ─────────────────────────────────────────
 -- Dead pills sitting in DEEP SEA off a shore. capture_pill's deep-sea branch
@@ -2689,8 +2784,38 @@ M.BASE_FULL_SHELLS_TO_KILL = 17   -- ceil((90 - 9) / 5): the markup denominator
 -- the discount linearly back to the full flat price over BASE_MARKUP_STALE
 -- ticks -- old information must never make a healthy base look free, and the
 -- decayed price can never drop below what the fresh reading would have paid.
-M.BASE_MARKUP_STALE = 500   -- = REFUEL_OBS_STALE; the same window the refuel
-                            -- observation logic uses for obs_shells/obs_armour
+M.BASE_MARKUP_STALE = 1200  -- = BASE_STEAL_OBS_STALE (was 500 = REFUEL_OBS_STALE).
+                            -- 500 was half a base refuel cycle, and an idle
+                            -- damaged base only re-reports once per
+                            -- BASE_TICKS_BETWEEN_REFUEL (1000): base #8 at
+                            -- 20260902_000405 bot2 t=22561 had a 560-tick-old
+                            -- reading of 74 armour (13 of 17 shells left) and was
+                            -- still priced as a never-seen full base. The reading
+                            -- can only understate armour by +1 regen per 1000
+                            -- ticks, so the wider window is the same safe
+                            -- direction the steal already trusts.
+
+-- FRIENDLY PILL COVER on an attack_base errand -- the mirror of the steal's
+-- hostile coverage guard (refresh_base_steal: a base we can only reach down a
+-- pillbox's line of fire is not a free base). Our OWN live pills within
+-- PILL_FIRE_RANGE of the base tile, or of any tile on the straight approach we
+-- would drive down, are doing part of this job already: they shell the base and
+-- they shoot the tanks that come to defend it. Nothing priced that, so a base
+-- sitting under one of our pillboxes cost exactly as much to attack as one deep
+-- in their half. Each covering pill multiplies the ENGAGE half of the candidate
+-- cost -- (armour-aware markup + threat), NOT the travel: a friendly pill does
+-- not shorten the drive.
+--
+-- Unlike the hostile guard this is a RANGE test only, with no line-of-fire shot
+-- sim. It is a discount, not a veto, so over-counting is the safe direction, and
+-- the sim is the expensive half (5 shell sims per pill).
+M.ATTACK_BASE_FRIENDLY_COVER_MULT  = 0.8  -- per covering friendly/allied live pill
+M.ATTACK_BASE_FRIENDLY_COVER_FLOOR = 0.5  -- ...never below half, however many
+M.ATTACK_BASE_LOG_CANDS            = 2    -- how many pool-7 candidates the
+                                          -- P7_CANDS diagnostic line prints.
+                                          -- finalize competes only the best;
+                                          -- the runner-up is what tells you WHY
+                                          -- the best won
 
 -- (2) IMMINENT BASE STEAL.  A hostile base a shell or three from capturable,
 -- sitting right next to us while we have the ammo to finish it, is not a normal
