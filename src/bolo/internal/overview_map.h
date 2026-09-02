@@ -47,9 +47,16 @@ int  overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
 
 /* Rebuilds the live regions from the current sim state, stamps them into the
  * memory, and gives any region that has just stopped being live one last
- * stamp so it freezes as it is now rather than as it was a tick ago. */
+ * stamp so it freezes as it is now rather than as it was a tick ago.
+ *
+ * tankDeathWait says the tank is still in its slot but dead. It keeps its
+ * block live on the square it last held - the caller has no position to give
+ * for a dead tank - so the player watches the explosion and the ground round
+ * it rather than the area going grey the moment they die. Only a tank that
+ * has really gone drops its block. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
-                       bool haveTank, BYTE tankMX, BYTE tankMY);
+                       bool haveTank, bool tankDeathWait, BYTE tankMX,
+                       BYTE tankMY);
 
 /* sim is non-const in both calls only because the state they read is reached
  * through non-const APIs: pillsCanView calls playersIsAllie, and

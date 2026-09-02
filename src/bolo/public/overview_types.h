@@ -54,6 +54,11 @@ typedef struct OverviewMap {
     OverviewRect prevLive[OVERVIEW_MAX_REGIONS];         /* regions used by the update before it */
     int          prevLiveCount;
     bool         tankWasLive;                            /* the tank region existed last update */
+    /* A tank waiting to respawn reports the map origin instead of the square
+     * it died on, so the square it last had a block on has to be kept here:
+     * without it there is no position to hold the block still at. */
+    BYTE         lastTankMX, lastTankMY;                 /* where the tank last had a live block */
+    bool         haveLastTank;                           /* whether the two above mean anything yet */
     bool         pillWasLive[MAX_PILLS];                 /* pill i had a region last update */
     unsigned     generation;                             /* +1 per update that changed anything */
     unsigned     seenCount;                              /* squares with tile != OVERVIEW_UNSEEN */

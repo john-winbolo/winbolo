@@ -696,15 +696,20 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
 }
 
 /* Feeds the overview its per-tick view of the world. Reads the local tank's
- * map square, or reports that there isn't one. A tank waiting to respawn
- * counts as not having one: its square is wherever it died or worse, and
- * stamping a block there would reveal map the player has never reached. */
+ * map square, or reports that there isn't one. The two go together: a tank
+ * waiting to respawn is still in its slot, but its position is deliberately
+ * not read, because a dead tank reads as the map origin and stamping a block
+ * there would reveal map the player has never reached. The overview is told
+ * it is dead rather than gone and holds the block on the square it remembers,
+ * so the player watches the explosion where it happened. */
 static void overviewMapTick(ClientSim *cs) {
   BYTE mx = 0, my = 0;
   bool haveTank = clientSimIsMyTankAlive(cs) &&
                   clientSimGetMyTankMapPos(cs, &mx, &my);
+  bool deathWait = !haveTank && MY_TANK(cs) != NULL;
 
-  overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank, mx, my);
+  overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank,
+                    deathWait, mx, my);
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
@@ -712,8 +717,8 @@ void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
     return;
   }
   /* The overview memory is the one consumer that needs the no-tank tick:
-   * that is when a dead player's regions get their last stamp and a
-   * spectating player keeps seeing what they saw. */
+   * that is when a player who has left has their regions given a last stamp
+   * and a spectating player keeps seeing what they saw. */
   overviewMapTick(cs);
   /* Master gate for the per-frame game-render pipeline.  Both
    * clientUiOnTick and basesTickMessageQueue assume the local tank

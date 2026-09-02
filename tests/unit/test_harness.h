@@ -850,9 +850,9 @@ int run_overview_camera(void);
 int run_overview_hud_layout(void);
 
 /* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to
- * respawn stops feeding the memory a position — the corner it reads from
- * reveals nothing, the block it held while alive freezes with its tiles, and
- * the block comes back when it respawns. */
+ * respawn holds its block on the square it died on — the corner it reads from
+ * reveals nothing, the block keeps its tiles and goes on taking terrain
+ * changes, and it follows the tank to wherever it respawns. */
 int run_overview_dead_tank(void);
 
 /* Overview entity filter (test_overview_map.c): the per-frame lists

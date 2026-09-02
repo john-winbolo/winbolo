@@ -164,6 +164,9 @@ void overviewMapReset(OverviewMap *om) {
   memset(om->prevLive, 0, sizeof(om->prevLive));
   om->prevLiveCount = 0;
   om->tankWasLive = FALSE;
+  om->lastTankMX = 0;
+  om->lastTankMY = 0;
+  om->haveLastTank = FALSE;
   memset(om->pillWasLive, 0, sizeof(om->pillWasLive));
   om->generation = 0;
   om->seenCount = 0;
@@ -200,7 +203,11 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
 }
 
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
-                       bool haveTank, BYTE tankMX, BYTE tankMY) {
+                       bool haveTank, bool tankDeathWait, BYTE tankMX,
+                       BYTE tankMY) {
+  bool tankLive; /* Is there a tank region this update */
+  BYTE useMX;    /* Centre of that region */
+  BYTE useMY;    /* Centre of that region */
   bool changed;  /* Did anything move this update */
   BYTE numPills; /* Pills on the map */
   int idx;       /* Which prevLive rect the replay is up to */
@@ -210,11 +217,31 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     return;
   }
 
+  /* Which square the tank block sits on, if there is one at all. A tank with
+   * a position of its own records it here on the way past; one that is dead
+   * and still in its slot has none to give - a dead tank reads as the map
+   * origin - so it holds the block on the square it last had one, and the
+   * player watches their own wreck instead of the ground round it greying
+   * out. Anything else means no tank block, which is what releases it and
+   * lets the farewell stamp below run. */
+  tankLive = haveTank;
+  useMX = tankMX;
+  useMY = tankMY;
+  if (haveTank == TRUE) {
+    om->lastTankMX = tankMX;
+    om->lastTankMY = tankMY;
+    om->haveLastTank = TRUE;
+  } else if (tankDeathWait == TRUE && om->haveLastTank == TRUE) {
+    tankLive = TRUE;
+    useMX = om->lastTankMX;
+    useMY = om->lastTankMY;
+  }
+
   memcpy(om->prevLive, om->live, sizeof(om->prevLive));
   om->prevLiveCount = om->liveCount;
 
-  om->liveCount = overviewMapBuildRegions(sim, myPlayerNum, haveTank, tankMX,
-                                          tankMY, om->live,
+  om->liveCount = overviewMapBuildRegions(sim, myPlayerNum, tankLive, useMX,
+                                          useMY, om->live,
                                           OVERVIEW_MAX_REGIONS);
   changed = overviewRegionsDiffer(om->live, om->liveCount, om->prevLive,
                                   om->prevLiveCount);
@@ -228,7 +255,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * produced it. */
   idx = 0;
   if (om->tankWasLive == TRUE) {
-    if (haveTank == FALSE && idx < om->prevLiveCount) {
+    if (tankLive == FALSE && idx < om->prevLiveCount) {
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
           TRUE) {
         changed = TRUE;
@@ -268,7 +295,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
 
-  om->tankWasLive = haveTank;
+  om->tankWasLive = tankLive;
   numPills = pillsGetNumPills(&sim->pb);
   for (i = 0; i < MAX_PILLS; i++) {
     if (i < (int)numPills) {
