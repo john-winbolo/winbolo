@@ -793,6 +793,25 @@ static void overviewInWindowChoose(bool on) {
     overviewInWindowSet(on);
 }
 
+/* True while the info panels and Send Message are drawn in the main window
+ * *as stand-ins for their pop-outs*: the overview owns the game window, so a
+ * separate OS window would land behind the map the player is looking at and
+ * each panel opens in-window for the duration.
+ *
+ * Deliberately narrower than "the panel is in-window". The Settings > Session
+ * Info entries open the same in-window panels on every platform and mode, and
+ * on the Deck — no menu bar under a controller — that is the only way to
+ * reach them; those are the panel's real form, not a stand-in, and the rules
+ * keyed on this must leave them exactly as they were. False on the tablet /
+ * mobile / web builds for the same reason: they have no pop-outs at all. */
+static bool panelsStandInForPopOuts(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    return !uiModeIsTablet() && sdl3DrawIsOverviewInWindow();
+#else
+    return false;
+#endif
+}
+
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
@@ -4215,14 +4234,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
-                    /* Via sdl3ImguiShowSendMsg rather than straight to
-                       sendMsgPopOutShow: it picks the pop-out or the
-                       controller modal. The pop-out is a separate OS window
+                    /* Via sdl3ImguiSendMsgShortcut rather than straight to
+                       sendMsgPopOutShow: it picks the pop-out, the in-window
+                       panel or the controller modal, and decides raise vs
+                       toggle for each. The pop-out is a separate OS window
                        that receives no controller input, so on a Deck — where
                        the virtual pad reports as keyboard and can reach this
                        shortcut — opening it directly would leave a pad user
                        with a window they cannot close. */
-                    sdl3ImguiShowSendMsg(true);
+                    sdl3ImguiSendMsgShortcut();
                 } else {
 #endif
                     /* Never a toggle — an already-open panel is raised to the
@@ -5577,9 +5597,32 @@ void sdl3ImguiShowSendMsg(bool open) {
 #endif
     }
 }
+
+/* What Ctrl/Cmd+M does, for every desktop entry point that carries that
+ * shortcut — the key handler here and the macOS menu item.
+ *
+ * Against a pop-out it opens and never closes: the pop-out is a separate OS
+ * window usually sitting behind the game, the key press lands on the main
+ * window, and a player pressing it means "bring the message box forward" —
+ * see sendMsgPopOutShow. The pop-out's close box or Escape is the way out.
+ *
+ * The in-window panel the overview mode draws has no window to be behind. The
+ * same press with it already on screen can only mean close it, so there it
+ * toggles, matching the Players menu item. */
+void sdl3ImguiSendMsgShortcut(void) {
+    if (panelsStandInForPopOuts() && s_showSendMsg) {
+        sdl3ImguiShowSendMsg(false);
+        return;
+    }
+    sdl3ImguiShowSendMsg(true);
+}
+
 bool sdl3ImguiIsSendMsgOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popSendMsg.open;
+    /* Reports the in-window panel while the overview owns the window, matching
+       where sdl3ImguiShowSendMsg puts it — see sdl3ImguiIsSysInfoOpen. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showSendMsg : s_popSendMsg.open;
 #endif
     return s_showSendMsg;
 }
@@ -5713,10 +5756,26 @@ bool sdl3ImguiWantsKeyboard(void) {
     ImGuiIO &io = ImGui::GetIO();
     ImGuiContext *g = ImGui::GetCurrentContext();
 
+    /* Standing in for a pop-out, these four must not suspend the game: a
+       pop-out is a separate OS window, so the player kept driving with System
+       Info up and the OS-focus gate in input.c muted the keys only once the
+       pop-out actually took focus. The in-window stand-in has to match, or
+       opening one full screen leaves the tank dead to every key with nothing
+       on screen saying why. Send Message still suspends while its box holds
+       the caret — that is io.WantTextInput above, and clicking back onto the
+       map drops the caret and hands the keys back, the way clicking the game
+       window behind the pop-out does.
+
+       Everywhere else they keep blocking, unchanged: the tablet panels, and
+       the same panels opened from Settings > Session on a desktop or a Deck,
+       which are the panel itself rather than a stand-in for anything. */
+    bool infoPanelsBlock = !panelsStandInForPopOuts() &&
+                           (s_showSysInfo || s_showNetInfo ||
+                            s_showGameInfo || s_showSendMsg);
+
     InputGateState st;
     st.textInputActive             = io.WantTextInput;
-    st.blockingModalOpen           = s_showSysInfo || s_showNetInfo ||
-                                     s_showGameInfo || s_showSendMsg ||
+    st.blockingModalOpen           = infoPanelsBlock ||
                                      s_showPlayersPanel || s_showSettings ||
                                      s_brainSettingsOpen;
     /* Every popup currently on the stack is blocking (menu-bar dropdowns and

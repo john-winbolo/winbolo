@@ -65,6 +65,7 @@ extern "C" void sdl3ImguiShowKeySetup(void);
 extern "C" void sdl3ImguiShowChangeName(void);
 
 extern "C" void sdl3ImguiShowSendMsg(bool open);
+extern "C" void sdl3ImguiSendMsgShortcut(void);
 extern "C" void clientSimCheckAllNonePlayers(struct ClientSim *cs, bool check);
 extern "C" void clientSimCheckAlliedPlayers(struct ClientSim *cs);
 extern "C" void clientSimCheckNearbyPlayers(struct ClientSim *cs);
@@ -432,10 +433,11 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 }
 - (void)onShowSendMsg:(id)sender {
     (void)sender;
-    /* Show-and-raise rather than toggle: an already-open pop-out is usually
-       sitting behind the game window, and hiding it is never what the player
-       meant. See sendMsgPopOutShow in sdl3imgui.cpp. */
-    sdl3ImguiShowSendMsg(true);
+    /* Show-and-raise against the pop-out, which is usually sitting behind the
+       game window where hiding it is never what the player meant; a toggle
+       against the in-window panel the full screen map draws instead. See
+       sdl3ImguiSendMsgShortcut in sdl3imgui.cpp. */
+    sdl3ImguiSendMsgShortcut();
 }
 - (void)onSelectAllPlayers:(id)sender {
     (void)sender;

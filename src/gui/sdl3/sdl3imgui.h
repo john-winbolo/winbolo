@@ -98,6 +98,11 @@ void sdl3ImguiShowSysInfo(bool open);
 void sdl3ImguiShowNetInfo(bool open);
 void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
+/* What Ctrl/Cmd+M does. Raises the Send Message pop-out without ever hiding
+ * it — the key press lands on the main window, so a toggle would close the
+ * window the player meant to bring forward — but toggles the in-window panel
+ * the full screen map draws instead, which has no window to be behind. */
+void sdl3ImguiSendMsgShortcut(void);
 void sdl3ImguiShowMapOverview(bool open);
 /* In-window Map Overview: the map fills the game window and the window goes
  * fullscreen. Desktop only, like the pop-out above. */
