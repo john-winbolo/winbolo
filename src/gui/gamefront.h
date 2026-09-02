@@ -937,11 +937,11 @@ extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 
 /* App full screen mode ([MENU] section). While it is on the main window is
  * full screen everywhere — menus, lobby and game — and every game opens in
- * the Full Screen Map view. Independent of the pop-out above: the two can
- * both be on at once, so this is a second flag rather than an overload of
- * gameFrontShowMapOverview. It survives the automatic exit from the in-window
- * map view at the end of a game and is cleared only by the player turning
- * full screen off. */
+ * the Full Screen Map view. That view is the map, so the pop-out above never
+ * opens while this is on; the two are separate flags because the pop-out has
+ * to be remembered across a spell of full screen and handed back on the way
+ * out. It survives the automatic exit from the in-window map view at the end
+ * of a game and is cleared only by the player turning full screen off. */
 extern bool  gameFrontFullScreen;
 
 extern bool gameFrontUseUpnp;

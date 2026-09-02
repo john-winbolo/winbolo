@@ -723,11 +723,14 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint
  * it, so a monitor that has been unplugged since the last run cannot strand
  * the window off-screen. Same test the main window does in winbolo.c. */
 static void mapOverviewOpen(void) {
-    /* The full screen map already fills the window with the same view, so
-       the pop-out never opens while it is up. gameFrontShowMapOverview is
-       left alone: a player who had the pop-out flagged to reopen gets it
-       back once they are out of the mode. */
-    if (sdl3DrawIsOverviewInWindow()) return;
+    /* Full screen mode owns the whole window and draws the same map itself,
+       so the pop-out never opens while it is on — in a game, in the lobby or
+       in the menus. The test is the app flag rather than the in-window view
+       because the view only comes up once a game is running, and the
+       game-start reopen runs ahead of it. gameFrontShowMapOverview is left
+       alone: a player who had the pop-out flagged to reopen gets it back the
+       moment they are back in classic mode. */
+    if (gameFrontFullScreen) return;
     bool firstCreate = (s_popMapOverview.window == nullptr);
     int w = gameFrontOverviewW;
     int h = gameFrontOverviewH;
@@ -791,6 +794,15 @@ static void overviewInWindowSet(bool on) {
 static void overviewInWindowChoose(bool on) {
     gameFrontFullScreen = on;
     overviewInWindowSet(on);
+    /* The two views of the map never share the screen, so the pop-out swaps
+       with the mode. Going full screen puts it away without forgetting it;
+       coming back to classic mode hands it straight back at the size and
+       place it was left — the window it had, or a fresh one at the saved
+       geometry when this run never opened it. Only in a game: outside one
+       the pop-out is already down and gameFrontShowMapOverview is what the
+       next game reads. */
+    if (on) mapOverviewHide();
+    else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
 }
 
 /* True while the info panels and Send Message are drawn in the main window
@@ -3170,10 +3182,10 @@ static void renderMenuBar(ClientSim *cs) {
             }
             ImGui::Separator();
             /* The overview draws the map the player has seen, so it stays
-               greyed out until a game is running — and while the full screen
-               map is up, which is the same view already filling the window. */
+               greyed out until a game is running — and all the way through
+               full screen mode, which fills the window with that same map. */
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
-                                cs != nullptr && clientSimIsRunning(cs) && !overviewInWindow)) {
+                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen)) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
@@ -4686,7 +4698,7 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
     s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
-                             !sdl3ImguiIsOverviewInWindowOpen());
+                             !gameFrontFullScreen);
     s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
     s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs));
 
@@ -5331,10 +5343,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                screen when it is on. */
             overviewInWindowSet(false);
         } else if (!s_overviewWasRunning) {
-            /* The pop-out and the in-window mode are independent, so each
-               comes back on its own flag: either, both or neither. */
-            if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
+            /* Only one of the two can come back, because full screen mode
+               draws the map itself: the in-window view when the app is full
+               screen, the pop-out on its own flag when it is not. */
             if (gameFrontFullScreen) sdl3ImguiShowOverviewInWindow(true);
+            else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
         }
         s_overviewWasRunning = overviewRunning;
         /* Draw the map into the view's offscreen before the pop-out's ImGui
