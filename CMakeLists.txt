@@ -1350,6 +1350,10 @@ set(CLIENT_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # Embedded editor's "Open from WinBolo.net" dialog — client only, it
+    # sits on the chooser + wbn_map_source stack the standalone MapEditor
+    # doesn't link (see MAPEDITOR_WBN_OPEN below).
+    src/mapeditor/mapeditor_wbn_open.cpp
     src/third_party/stb/stb_image_write_impl.c
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
@@ -1431,6 +1435,9 @@ add_executable(WinBolo ${CLIENT_SOURCES})
 target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
+    # Gates the embedded map editor's File > Open from WinBolo.net entry in
+    # the mapeditor TUs shared with the standalone MapEditor target.
+    MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"

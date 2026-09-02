@@ -164,6 +164,11 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_OPEN), "Ctrl+O")) {
                 action->wantOpen = true;
             }
+#ifdef MAPEDITOR_WBN_OPEN
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN))) {
+                action->wantOpenWbn = true;
+            }
+#endif
             if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_RECENT), numRecent > 0)) {
                 for (int i = 0; i < numRecent; i++) {
                     /* Show just the filename, not the full path */

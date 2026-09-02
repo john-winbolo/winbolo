@@ -89,6 +89,9 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 - (void)onQuit:(id)sender;
 - (void)onNew:(id)sender;
 - (void)onOpen:(id)sender;
+#ifdef MAPEDITOR_WBN_OPEN
+- (void)onOpenWbn:(id)sender;
+#endif
 - (void)onSave:(id)sender;
 - (void)onSaveAs:(id)sender;
 - (void)onExportPNG:(id)sender;
@@ -128,6 +131,9 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 - (void)onQuit:(id)sender { (void)sender; s_me_pending.wantExit = true; }
 - (void)onNew:(id)sender { (void)sender; s_me_pending.wantNew = true; }
 - (void)onOpen:(id)sender { (void)sender; s_me_pending.wantOpen = true; }
+#ifdef MAPEDITOR_WBN_OPEN
+- (void)onOpenWbn:(id)sender { (void)sender; s_me_pending.wantOpenWbn = true; }
+#endif
 - (void)onSave:(id)sender { (void)sender; s_me_pending.wantSave = true; }
 - (void)onSaveAs:(id)sender { (void)sender; s_me_pending.wantSaveAs = true; }
 - (void)onExportPNG:(id)sender { (void)sender; s_me_pending.wantExportPNG = true; }
@@ -295,6 +301,16 @@ void me_mac_menubar_install(struct SDL_Window *win) {
         keyEquivalent:@"o"];
     [openItem setTarget:s_me_bridge];
     [fileMenu addItem:openItem];
+
+#ifdef MAPEDITOR_WBN_OPEN
+    /* Open from WinBolo.net — no key equivalent. */
+    NSMenuItem *openWbnItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LV_MENU_OPEN_WBN)
+        action:@selector(onOpenWbn:)
+        keyEquivalent:@""];
+    [openWbnItem setTarget:s_me_bridge];
+    [fileMenu addItem:openWbnItem];
+#endif
 
     /* Recent Files submenu — content rebuilt by refresh. */
     NSMenuItem *recentRoot = [[NSMenuItem alloc]
@@ -857,6 +873,7 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
     action->wantExit            = s_me_pending.wantExit;
     action->wantNew             = s_me_pending.wantNew;
     action->wantOpen            = s_me_pending.wantOpen;
+    action->wantOpenWbn         = s_me_pending.wantOpenWbn;
     action->wantSave            = s_me_pending.wantSave;
     action->wantSaveAs          = s_me_pending.wantSaveAs;
     action->wantCenter          = s_me_pending.wantCenter;
