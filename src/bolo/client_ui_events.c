@@ -99,12 +99,11 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
       int oldXOffset = clientSimGetXOffset(csPtr);
       int oldYOffset = clientSimGetYOffset(csPtr);
       if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), rmx, rmy, TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr), rwx, rwy) == TRUE) {
-        /* OS-cursor follow is handled centrally by the per-frame mouse
-         * warp in frontEndDrawMainScreen, which tracks the full scroll
-         * delta (whole-tile xOffset + sub-tile subPos) and warps in
-         * pixels. The cursor cell index follows from the per-frame
-         * cursorPos refresh; the explicit ±1 bumps here are there so
-         * the cell is correct on this very tick before render. */
+        /* Keep the pointer cell on the world tile it was over as the view
+         * scrolls out from under it, so a frontend that only refreshes the
+         * cell on a real pointer event still reports the same square between
+         * events. The OS pointer itself is not moved — the build selection is
+         * the build cursor's latched absolute tile, not this cell. */
         if (oldXOffset < clientSimGetXOffset(csPtr)) {
           clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1);
         } else if (oldXOffset > clientSimGetXOffset(csPtr)) {

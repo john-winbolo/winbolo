@@ -111,16 +111,4 @@ void cursorSetPos(RECT rcWindow, BYTE xValue, BYTE yValue);
 *********************************************************/
 void moveMousePointer(updateType value);
 
-/*********************************************************
-*NAME:          cursorApplyScrollDelta
-*PURPOSE:
-*  Shift the OS cursor (and cached mouse position) by the
-*  same pixel delta that the view scrolled this frame, so
-*  the cursor stays glued to its world tile while the map
-*  slides beneath it. No-op when the cursor is outside the
-*  main view area. dpx/dpy are in main-view pixels (same
-*  units as gCachedMouseX/Y).
-*********************************************************/
-void cursorApplyScrollDelta(int dpx, int dpy);
-
 #endif /* CURSOR_H */

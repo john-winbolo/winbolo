@@ -884,6 +884,14 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   if (drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+    /* Resolve the reticle through the shared build cursor, exactly as the
+       desktop frontend does — the click path (sdl3draw.c, shared with this
+       build) dispatches to the latched target, so the reticle must come from
+       the same place or the two would disagree here only. */
+    bool cursorFaint = false;
+    showCursor = buildCursorResolveReticle(cs, showCursor, cursorX, cursorY,
+                                           &cursorX, &cursorY, &cursorFaint);
+    sdl3DrawSetCursorFaint(cursorFaint);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
