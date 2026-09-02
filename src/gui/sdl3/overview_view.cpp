@@ -655,3 +655,14 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
         }
     }
 }
+
+/* The hover test in overviewViewHandleInput restores the pointer when it
+ * leaves the map, but hiding the window with the pointer still over it stops
+ * that function running at all, and the crosshair would be left set over the
+ * rest of the UI until the main view's next in/out transition. */
+extern "C" void overviewViewReleaseCursor(OverviewView *v) {
+    if (v && v->crosshairOn) {
+        cursorSetCursor(true);
+        v->crosshairOn = false;
+    }
+}

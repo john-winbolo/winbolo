@@ -79,6 +79,7 @@ extern "C" {
 
 extern "C" {
 #include "client_net.h"
+#include "../clientmutex.h" /* the overview's render reads sim state */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -490,7 +491,7 @@ static int           s_overviewTilesScale    = 0;
 static SDL_Texture  *s_overviewCrosshair         = nullptr;
 static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
 /* Last frame's running state, so the start of a game can be told from the
-   middle of one — see the auto-hide/reopen in sdl3ImguiRender. */
+   middle of one — see the auto-hide/reopen in sdl3ImguiPumpAndRender. */
 static bool          s_overviewWasRunning    = false;
 
 /* Whether the windows the player drives from (main window + Map Overview)
@@ -572,7 +573,7 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint
      * a Metal renderer mid-run releases Metal objects that the Steam overlay
      * (gameoverlayrenderer.dylib) has cached, and the overlay then messages the
      * freed object on the next present of the main window -> SIGSEGV. The
-     * renderers are only torn down for real at shutdown (sdl3ImguiShutdown). */
+     * renderers are only torn down for real at shutdown (sdl3ImguiCleanup). */
     if (pw->window) {
         pw->open = true;
         SDL_ShowWindow(pw->window);
@@ -738,11 +739,20 @@ static void mapOverviewOpen(void) {
     gameFrontShowMapOverview = true;
 }
 
+/* Every path that takes the overview off screen comes through here, so the
+ * pointer the view may have switched to the game crosshair is always handed
+ * back. overviewViewHandleInput only restores it when the pointer leaves the
+ * map, which never happens when the window goes away underneath it. */
+static void mapOverviewHide(void) {
+    if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+    overviewViewReleaseCursor(s_overviewView);
+}
+
 /* An explicit close: the window goes away and is not brought back with the
  * next game. The auto-hide at the end of a game deliberately does not come
  * through here — see the comment there. */
 static void mapOverviewClose(void) {
-    if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+    mapOverviewHide();
     gameFrontShowMapOverview = false;
 }
 
@@ -3898,8 +3908,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
-                    popOutHide(pw);
-                    if (pw == &s_popMapOverview) gameFrontShowMapOverview = false;
+                    if (pw == &s_popMapOverview) mapOverviewClose();
+                    else popOutHide(pw);
                     consumedByPopOut = true;
                 }
 
@@ -3912,8 +3922,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
                     ev.key.windowID == pwID &&
                     ev.key.scancode == SDL_SCANCODE_ESCAPE) {
-                    popOutHide(pw);
-                    if (pw == &s_popMapOverview) gameFrontShowMapOverview = false;
+                    if (pw == &s_popMapOverview) mapOverviewClose();
+                    else popOutHide(pw);
                     consumedByPopOut = true;
                 }
             }
@@ -5056,7 +5066,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            tablet tests every other caller uses. */
         bool overviewRunning = (cs != nullptr && clientSimIsRunning(cs));
         if (!overviewRunning) {
-            if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+            mapOverviewHide();
         } else if (!s_overviewWasRunning && gameFrontShowMapOverview) {
             sdl3ImguiShowMapOverview(true);
         }
@@ -5080,11 +5090,28 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
             SDL_Texture *ovCross =
                 overviewEnsureCrosshair(s_popMapOverview.renderer);
+            /* The render reads the fog memory, the local tank and the
+               per-frame entity lists straight out of the ClientSim, and the
+               host server's timer thread writes into those as it dispatches
+               a tick to in-process subscribers. The main view's draw takes
+               the same lock around the same kind of read in winbolo.c.
+               Nothing is held on entry — winbolo.c releases before calling
+               the pump, and nothing inside the render takes a lock of its
+               own — so there is no ordering here to invert. The two
+               texture-ensure calls above build from assets and touch no sim
+               state, so they stay outside.
+
+               The cost is that the lock now spans the whole visible-tile
+               loop, which at 0.5x zoom on a large window is far more squares
+               than the main view's 15x15. Start here if frame times
+               regress with the overview open. */
+            clientMutexWaitFor();
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
                                         ovTiles, s_overviewTilesScale, ovCross,
                                         s_popMapOverview.width,
                                         s_popMapOverview.height, cs);
+            clientMutexRelease();
         }
         if (popOutBeginFrame(&s_popMapOverview)) {
             /* The map fills the window edge to edge: the image is exactly

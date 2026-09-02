@@ -81,6 +81,11 @@ void          overviewViewHandleInput(OverviewView *v, bool hovered,
                                       int viewW, int viewH, ClientSim *cs,
                                       const keyItems *keys);
 
+/* Hand the OS pointer back if this view switched it to the crosshair. The
+   host calls it whenever the view stops being shown: nothing else will put
+   the system cursor back. Safe on a NULL view. */
+void          overviewViewReleaseCursor(OverviewView *v);
+
 #ifdef __cplusplus
 }
 #endif

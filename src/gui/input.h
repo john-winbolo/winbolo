@@ -30,6 +30,14 @@
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
 
+/* The declarations below are defined in input.c, so a C++ includer that
+   forgot to wrap this header would give them C++ linkage and fail to
+   link. The two includes above stay outside the guard: other includers
+   already pull them in inside an extern "C" of their own. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct ClientSim;
 
 /* Typestructure that holds the keys */
@@ -157,5 +165,9 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu);
 *  isMenu  - True if we are in a menu
 *********************************************************/
 void inputScroll(struct ClientSim *cs, keyItems *setKeys, bool isMenu);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
