@@ -67,6 +67,29 @@ T2 access via dedicated CMake profiles.
    Do not mutate them. (Where the receive-side API can be tightened
    to `const`, it should be.)
 
+5. **For remembered terrain, read `OverviewMap` — never `brainMap`.**
+   Two map-shaped arrays hang off a `ClientSim` and only one of them
+   answers "what has this player seen?".
+
+   `clientSimGetOverviewMap` returns the fog memory: for each square,
+   the tile it carried the last time the local player could see it,
+   plus the regions they can see this instant. It stores the *drawn*
+   tile — alliance-correct pillboxes and bases, mines only where the
+   client knows one — and freezes a square when it leaves view.
+
+   `clientSimGetBrainMap` returns the terrain array brains reason
+   over, and it is not a record of anything the player saw. It holds
+   raw map bytes rather than tiles; `viewport.c` writes every square
+   the viewport passes over into it; `screenBrainMapFillFromMap`
+   fills it from the entire map for bots; and `mapSetPos` refreshes
+   a square on the server sim whenever the terrain there changes,
+   whoever can or cannot see it. Drawing from it would leak ground
+   the player has never visited.
+
+   The two are deliberately not unified. Pointing brains at the fog
+   memory would change how bots play, which is a gameplay decision
+   and not a refactor.
+
 ## What clients must not do
 
 The following patterns are the bug class this architecture exists to
