@@ -388,6 +388,10 @@ STR_MENU_LEAVE_GAME=Leave Game
 STR_BRAINSETTINGS_NONE=(no settings)
 STR_BRAINSETTINGS_TITLE=Brain Settings
 
+# Map overview pop-out
+STR_OVERVIEW_FOLLOWING=following
+STR_OVERVIEW_FREE=free
+
 # Settings panel additions (pre-game)
 STR_DLGSETTINGS_TUTORIAL=Tutorial
 STR_DLGSETTINGS_PLAY_TUTORIAL=Play Tutorial

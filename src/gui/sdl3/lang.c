@@ -337,6 +337,11 @@ static const LangEntry langTable[] = {
     {587,  "Leave Game"},
     {588,  "(no settings)"},
     {589,  "Brain Settings"},
+
+    /* Map overview pop-out */
+    {1949, "following"},
+    {1950, "free"},
+
     {590,  "Tutorial"},
     {591,  "Play Tutorial"},
     {592,  "Show on main menu"},

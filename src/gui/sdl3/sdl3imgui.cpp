@@ -1579,6 +1579,27 @@ static void renderMapOverviewContent(ClientSim *cs) {
             gameFrontOverviewFollow = cam->follow;
             gameFrontSaveWindowSettings();
         }
+
+        /* Zoom and follow state along the bottom-left of the map. Drawn onto
+           the image with the window draw list rather than as a widget: the
+           image is exactly DisplaySize, so anything that added to the
+           content would give the pop-out a scrollbar. %g keeps the ladder
+           readable (0.5, 1, 1.5, 2) with no trailing zeros, and the text is
+           ASCII because this file is compiled without /utf-8. */
+        char status[64];
+        SDL_snprintf(status, sizeof(status), "%gx - %s", (double)zoom,
+                     langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
+                                             : STR_OVERVIEW_FREE));
+        const float pad = 4.0f;
+        ImVec2 textSize = ImGui::CalcTextSize(status);
+        ImVec2 boxMin(imgMin.x,
+                      imgMin.y + (float)texH - (textSize.y + pad * 2.0f));
+        ImVec2 boxMax(imgMin.x + textSize.x + pad * 2.0f,
+                      imgMin.y + (float)texH);
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
+        dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                    IM_COL32(230, 230, 230, 255), status);
     }
 }
 

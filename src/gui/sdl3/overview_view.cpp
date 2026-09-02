@@ -161,6 +161,16 @@ static void overviewViewDrawPass(SDL_Renderer *r, SDL_Texture *tiles, int ss,
             float sx = 0.0f, sy = 0.0f;
             overviewCameraWorldToScreen(cam, viewW, viewH,
                                         (float)mx, (float)my, &sx, &sy);
+            /* Whole pixels. The camera is continuous, so a tile boundary can
+             * land on a half-pixel, and neighbouring tiles then either leave
+             * a gap that shows the black clear colour or sample a texel from
+             * the next atlas cell. Rounding here is exact rather than
+             * approximate: tilePx is OVERVIEW_TILE_PX * zoomScale, and every
+             * rung of the zoom ladder makes that a whole number, so
+             * round(sx + tilePx) == round(sx) + tilePx. Tiles keep their
+             * exact size and abut. */
+            sx = SDL_roundf(sx);
+            sy = SDL_roundf(sy);
             SDL_FRect dest = { sx, sy, tilePx, tilePx };
             SDL_FRect src  = { (float)(mapViewPosX[tile] * ss),
                                (float)(mapViewPosY[tile] * ss),

@@ -435,6 +435,10 @@
 #define STR_BRAINSETTINGS_NONE              588
 #define STR_BRAINSETTINGS_TITLE             589
 
+/* Map overview pop-out */
+#define STR_OVERVIEW_FOLLOWING              1949
+#define STR_OVERVIEW_FREE                   1950
+
 /* Settings panel additions (pre-game) */
 #define STR_DLGSETTINGS_TUTORIAL            590
 #define STR_DLGSETTINGS_PLAY_TUTORIAL       591
