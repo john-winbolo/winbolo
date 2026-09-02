@@ -33,12 +33,15 @@ static const float kOverviewZoomSteps[] = {
 };
 #define OVERVIEW_ZOOM_COUNT 7
 #define OVERVIEW_ZOOM_1X    2 /* index of 1.0f */
+#define OVERVIEW_ZOOM_2X    4 /* index of 2.0f — where a fresh camera starts */
 
 static_assert((int)(sizeof(kOverviewZoomSteps) / sizeof(kOverviewZoomSteps[0]))
                   == OVERVIEW_ZOOM_COUNT,
               "kOverviewZoomSteps and OVERVIEW_ZOOM_COUNT disagree");
 static_assert(OVERVIEW_ZOOM_1X < OVERVIEW_ZOOM_COUNT,
               "OVERVIEW_ZOOM_1X is off the ladder");
+static_assert(OVERVIEW_ZOOM_2X < OVERVIEW_ZOOM_COUNT,
+              "OVERVIEW_ZOOM_2X is off the ladder");
 
 /* floorf / ceilf followed by a range-safe cast. A stale cursor position or a
  * degenerate view size can hand us a pixel millions of squares off the map,
@@ -88,7 +91,7 @@ void overviewCameraInit(OverviewCamera *cam) {
     if (!cam) return;
     cam->cx = (float)MAP_ARRAY_SIZE * 0.5f;
     cam->cy = (float)MAP_ARRAY_SIZE * 0.5f;
-    cam->zoomIndex = OVERVIEW_ZOOM_1X;
+    cam->zoomIndex = OVERVIEW_ZOOM_2X;
     cam->follow = true;
     overviewCameraClamp(cam);
 }

@@ -297,13 +297,13 @@ float gameFrontLobbySplitRecap = 0.0f;
 
 /* Map overview pop-out geometry, camera state and last-open flag. The
    defaults are the size the window was created at before it had preferences,
-   1x zoom with follow on (what overviewCameraInit picks), no saved position
+   2x zoom with follow on (what overviewCameraInit picks), no saved position
    and closed. */
 int   gameFrontOverviewW = 640;
 int   gameFrontOverviewH = 640;
 int   gameFrontOverviewX = -1;
 int   gameFrontOverviewY = -1;
-float gameFrontOverviewZoom = 1.0f;
+float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
 
@@ -3218,7 +3218,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontOverviewX = atoi(buff);
   prefsGetString("WINDOW", "Overview Y", "-1", buff, FILENAME_MAX);
   gameFrontOverviewY = atoi(buff);
-  prefsGetString("WINDOW", "Overview Zoom", "1", buff, FILENAME_MAX);
+  prefsGetString("WINDOW", "Overview Zoom", "2", buff, FILENAME_MAX);
   gameFrontOverviewZoom = (float)atof(buff);
   prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
