@@ -1287,16 +1287,22 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
   if (isServer == TRUE && (*lgman)->isDead == FALSE && (*lgman)->inTank == FALSE) {
     WORLD conv;
     dead = FALSE;
-    /* Map coords from real position — used for pill drop, sound, etc. */
-    conv = (*lgman)->x - 1;
+    /* Map coords from real position — used for pill drop, sound, etc.
+     * Raw >>8, the same mapping the movement code uses (lgmMoveAway /
+     * lgmReturn): the man's x/y is his authoritative hit point. The old
+     * -1/-2 world-unit nudge (1/16th of a game pixel) could map a man
+     * pinned flush against a wall's south/east edge INTO the wall square,
+     * so a shell demolishing that wall killed a man standing on open
+     * ground beside it — movement never lets him enter a solid square. */
+    conv = (*lgman)->x;
     conv >>= 8;
     lgmMapX = (BYTE) conv;
-    lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y - 2) >> 8);
+    lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y) >> 8);
     /* Map coords from check position — used for hit detection */
-    conv = lgmWorldX - 1;
+    conv = lgmWorldX;
     conv >>= 8;
     checkMapX = (BYTE) conv;
-    checkMapY = (BYTE) ((unsigned int) (lgmWorldY - 2) >> 8);
+    checkMapY = (BYTE) ((unsigned int) (lgmWorldY) >> 8);
     mx = (BYTE) (wx >> 8);
     my = (BYTE) (wy >> 8);
 
