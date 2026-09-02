@@ -53,6 +53,7 @@
 #include "cursor.h"
 #include "input_source.h"
 #include "mapview.h"
+#include "overview_hud_layout.h"
 #include "overview_view.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
@@ -159,6 +160,13 @@ static float        gGameScale    = 1.0f;    /* Scale factor from RT to dest */
 static bool          gOverviewInWindow = FALSE;
 static OverviewView *gOverviewView     = NULL;
 static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+/* A whole classic frame at gZoomFactor, drawn offscreen so the HUD column can
+   be cut out of it as source rects. gGameRenderTarget cannot be borrowed for
+   this: sdl3DrawReconfigureZoom never creates it on the Steam Deck or in
+   tablet mode. Rebuilt when the zoom changes, since the frame is drawn at it. */
+static SDL_Texture  *gHudSrcTex  = NULL;
+static int           gHudSrcZoom = 0;
 
 static buildSelect  gCurrentBuildSelect = BsTrees;
 
@@ -1322,6 +1330,7 @@ void sdl3DrawCleanup(void) {
   if (gCrosshairTex)     { SDL_DestroyTexture(gCrosshairTex);     gCrosshairTex     = NULL; }
   if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
+  if (gHudSrcTex)        { SDL_DestroyTexture(gHudSrcTex);        gHudSrcTex        = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
@@ -1482,11 +1491,80 @@ static void sdl3DrawCountFrame(void) {
   }
 }
 
+/* Draws one whole classic frame into gHudSrcTex: the background bitmap, the
+   three item grids, the status panels and the cached text, all at the
+   positions.h coordinates they already live at. The HUD column is then nine
+   source rects out of it, so the panel bevels, the build-item pictures, the
+   selected indent, the bar labels and the numbers all come along without any
+   of them being repositioned.
+
+   Swaps the render target, so it has to run before any window drawing in the
+   frame; the caller's target is saved and put back. Returns false when the
+   scratch target could not be made, in which case no HUD is drawn. */
+static bool hudSourceRender(ClientSim *cs, bool showPillLabels, bool showBaseLabels) {
+  /* Read before the block below, which leaves the target on the window when
+     it has to build the texture. */
+  SDL_Texture *savedTarget = SDL_GetRenderTarget(gRenderer);
+
+  if (gHudSrcTex != NULL && gHudSrcZoom != gZoomFactor) {
+    SDL_DestroyTexture(gHudSrcTex);
+    gHudSrcTex = NULL;
+  }
+  if (gHudSrcTex == NULL) {
+    gHudSrcTex = sdl3CreateRenderTarget(gZoomFactor * SDL3_SCREEN_W,
+                                        gZoomFactor * SDL3_SCREEN_H);
+    if (gHudSrcTex == NULL) return false;
+    gHudSrcZoom = gZoomFactor;
+  }
+
+  SDL_SetRenderTarget(gRenderer, gHudSrcTex);
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+
+  if (sdl3LoadBackground()) {
+    SDL_FRect bgDest = { 0.0f, 0.0f,
+                         (float)(gZoomFactor * SDL3_SCREEN_W),
+                         (float)(gZoomFactor * SDL3_SCREEN_H) };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
+  }
+
+  sdl3DrawSetBasesStatusClear();
+  {
+    BYTE total = clientSimGetBaseCount(cs);
+    for (BYTE i = 1; i <= total; i++) {
+      sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), showBaseLabels);
+    }
+  }
+  sdl3DrawSetPillsStatusClear();
+  {
+    BYTE total = clientSimGetPillCount(cs);
+    for (BYTE i = 1; i <= total; i++) {
+      sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), showPillLabels);
+    }
+  }
+  sdl3DrawSetTanksStatusClear();
+  for (BYTE i = 1; i <= MAX_TANKS; i++) {
+    sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
+  }
+
+  /* Safe with our target set: the three bar/man texture builders each take
+     SDL_GetRenderTarget first and put it back. */
+  sdl3RenderStatusPanels();
+  sdl3RenderCachedText();
+
+  SDL_SetRenderTarget(gRenderer, savedTarget);
+  return true;
+}
+
 /* In-window Map Overview: the whole game window is the map, and neither the
    classic 15x15 view nor the chrome is drawn. The view renders at window size
    into its own offscreen and is blitted straight to the window — going through
-   gGameRenderTarget would letterbox the map to the 515:325 chrome aspect. */
-static void sdl3DrawOverviewInWindowFrame(ClientSim *cs) {
+   gGameRenderTarget would letterbox the map to the 515:325 chrome aspect. The
+   status panels and the newswire go over the map afterwards, as slices of a
+   classic frame drawn offscreen alongside the view. */
+static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
+                                          bool showBaseLabels) {
   int ww = 0, wh = 0;
   {
     SDL_RendererLogicalPresentation logMode;
@@ -1513,6 +1591,12 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs) {
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
                               gCrosshairTex, w, h, cs);
 
+  /* Both offscreen passes belong here, before anything is drawn to the
+     window: each of them swaps the render target. */
+  OverviewHudLayout hud;
+  bool drawHud = overviewHudLayout(w, h, &hud) &&
+                 hudSourceRender(cs, showPillLabels, showBaseLabels);
+
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
@@ -1526,6 +1610,37 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs) {
     /* Both halves work from this rect: the ImGui side puts its pan item and
        status strip over exactly these numbers. */
     gOverviewRect = dest;
+  }
+
+  if (drawHud) {
+    /* The layout works in map-rect pixels; the rect starts below the menu bar. */
+    float originX = 0.0f;
+    float originY = menuBarHeight;
+
+    /* Translucent backing, so the map still reads between the panels. */
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 160);
+    SDL_FRect colBack = { originX + hud.columnX, originY + hud.columnY,
+                          hud.columnW, hud.columnH };
+    SDL_FRect newsBack = { originX + hud.newswireX, originY + hud.newswireY,
+                           hud.newswireW, hud.newswireH };
+    SDL_RenderFillRect(gRenderer, &colBack);
+    SDL_RenderFillRect(gRenderer, &newsBack);
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+
+    /* The chrome is opaque, like the classic panel blits, so the backing
+       shows only in the gaps between the pieces. Linear filtering because
+       the column is a downscale from gZoomFactor to the fit scale, and
+       nearest aliases the panel artwork and the digits. */
+    SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_NONE);
+    SDL_SetTextureScaleMode(gHudSrcTex, SDL_SCALEMODE_LINEAR);
+    for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
+      const OverviewHudElement *e = &hud.el[i];
+      SDL_FRect src = { (float)(e->srcX * gZoomFactor), (float)(e->srcY * gZoomFactor),
+                        (float)(e->srcW * gZoomFactor), (float)(e->srcH * gZoomFactor) };
+      SDL_FRect dst = { originX + e->dstX, originY + e->dstY, e->dstW, e->dstH };
+      SDL_RenderTexture(gRenderer, gHudSrcTex, &src, &dst);
+    }
   }
 
   sdl3DrawCountFrame();
@@ -1543,7 +1658,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   }
 
   if (gOverviewInWindow) {
-    sdl3DrawOverviewInWindowFrame(cs);
+    sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
     return;
   }
 

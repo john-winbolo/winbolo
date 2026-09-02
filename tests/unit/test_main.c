@@ -439,6 +439,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_reset",                          run_overview_reset                          },
     { "overview_loopback",                       run_overview_loopback                       },
     { "overview_camera",                         run_overview_camera                         },
+    { "overview_hud_layout",                     run_overview_hud_layout                     },
     { "overview_dead_tank",                      run_overview_dead_tank                      },
     { "overview_entities",                       run_overview_entities                       },
     { "overview_gunsight",                       run_overview_gunsight                       },

@@ -732,6 +732,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wb_theme.cpp
@@ -1285,6 +1286,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/news_image_cache.cpp
@@ -2998,6 +3000,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
     tests/unit/test_overview_camera.cpp
+    tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -3170,12 +3173,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
-    # The overview's camera maths. The only src/gui/sdl3 file in this target:
-    # it is arithmetic over an OverviewCamera struct with no ImGui and no
-    # SDL_Renderer include, so it links into a binary that has neither, and
-    # test_overview_camera.cpp exercises it directly. The drawing half
+    # The overview's camera maths and the in-window HUD geometry. The only
+    # src/gui/sdl3 files in this target: both are arithmetic over plain
+    # structs with no ImGui and no SDL_Renderer include, so they link into a
+    # binary that has neither, and test_overview_camera.cpp /
+    # test_overview_hud_layout.cpp exercise them directly. The drawing half
     # (overview_view.cpp) stays out.
     src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_hud_layout.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -3668,6 +3673,7 @@ set(_unit_test_names
     overview_reset
     overview_loopback
     overview_camera
+    overview_hud_layout
     overview_dead_tank
     overview_entities
     overview_gunsight
