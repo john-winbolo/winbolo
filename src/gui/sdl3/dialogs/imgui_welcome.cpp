@@ -48,8 +48,14 @@ extern "C" {
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
+/* From winbolo.c */
+extern "C" {
+  void windowFullScreenChoose(bool on);
+}
+
 /* Match openingStates enum from gamefront.h */
 enum {
+    RESULT_WELCOME      = 3,   /* openWelcome - comes straight back here */
     RESULT_SINGLEPLAYER = 5,   /* openSetup */
     RESULT_TUTORIAL     = 4,   /* openTutorial */
     RESULT_INTERNET     = 14,  /* openInternet */
@@ -330,6 +336,20 @@ extern "C" int imguiWelcomeShow(void) {
                follow controller *presence*, not the last-used device. */
             const bool showDesktopTools =
                 !inputGamepadRealControllerConnected() && !uiModeIsSteamDeck();
+            /* Deck and tablet run full screen from window creation, and
+               controller mode leaves the host window alone everywhere else,
+               so on those surfaces the button would have nothing to say. */
+            const bool showFullScreenToggle =
+                !uiModeIsSteamDeck() && !uiModeIsTablet() && !uiShouldUseControllerMode();
+            /* Read the window itself rather than the preference, so the label
+               still tells the truth after an OS-driven full screen change. */
+            const bool isFullScreen =
+                (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+            /* The button is named for where it takes you, and the table is
+               rebuilt every frame, so the name follows the window. */
+            const langid fullScreenLabel = isFullScreen
+                ? STR_DLGWELCOME_SWITCH_CLASSIC
+                : STR_DLGWELCOME_SWITCH_FULLSCREEN;
             /* rawLabel, when non-null, signals a non-exit action: the click
              * handler dispatches by rawLabel string rather than setting
              * result/running. Display text still goes through
@@ -345,6 +365,10 @@ extern "C" int imguiWelcomeShow(void) {
                 { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+                { fullScreenLabel,          0,                   showFullScreenToggle,
+                                                                 "FullScreen" },
+#endif
 #if !BOLO_MOBILE
                 { STR_DLGWELCOME_NEWS,      0,                   true, "News" },
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
@@ -369,6 +393,17 @@ extern "C" int imguiWelcomeShow(void) {
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
 #if !BOLO_MOBILE
+#if !defined(__EMSCRIPTEN__)
+                    if (miniModes[i].rawLabel &&
+                        SDL_strcmp(miniModes[i].rawLabel, "FullScreen") == 0) {
+                        /* Move the window, then come back in through the top
+                           of this dialog so the fonts and the UI scale are
+                           rebuilt for the surface we now have. */
+                        windowFullScreenChoose(!isFullScreen);
+                        result = RESULT_WELCOME;
+                        running = false;
+                    } else
+#endif
                     if (miniModes[i].rawLabel && SDL_strcmp(miniModes[i].rawLabel, "News") == 0) {
                         newsPopupOpenManual();
                     } else

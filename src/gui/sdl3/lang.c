@@ -1237,6 +1237,11 @@ static const LangEntry langTable[] = {
     {1270, "Don't auto-show news in future"},
     {1271, "Comments: {number}"},
 
+    /* Welcome screen full screen button. The label names where the button
+     * takes you, so it is picked from the window's current state. */
+    {1952, "Switch to classic"},
+    {1953, "Switch to full screen"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveSegments() when uiModeIsTablet() is true. */

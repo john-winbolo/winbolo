@@ -800,6 +800,11 @@
 #define STR_DLGWELCOME_LOGVIEWER            791
 #define STR_DLGWELCOME_INTERNET             792
 
+/* The two faces of the welcome screen's full screen button. Which one is
+ * shown is decided from the window's real state, not from the preference. */
+#define STR_DLGWELCOME_SWITCH_CLASSIC       1952
+#define STR_DLGWELCOME_SWITCH_FULLSCREEN    1953
+
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
