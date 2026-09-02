@@ -202,6 +202,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keycap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_deck_pause.cpp

@@ -187,6 +187,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_nav_outline.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chat.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
