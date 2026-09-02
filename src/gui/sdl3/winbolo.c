@@ -517,20 +517,30 @@ int main(int argc, char *argv[]) {
         /* All modes resizable - resizing auto-switches to Custom */
         SDL_SetWindowResizable(sdlWin, true);
 
-        /* Get the monitor where the dialog/splash was shown.
-           First try the saved dialog position, then fall back to the
-           window's current position (it's the same SDL window from
-           the dialog phase), then the primary display. */
+        /* Get the monitor the window is about to occupy. The saved window
+           position comes first, because that is where the window is placed
+           below and its display may be a different shape from the one the
+           dialog was on. Then the dialog/splash position, then the window's
+           current display (it's the same SDL window from the dialog phase),
+           then the primary display. */
         SDL_Rect usable;
         usable = getDefaultDisplayBounds();
         {
           SDL_DisplayID dispID = 0;
-          SDL_Point dialogPt = { gameFrontDialogX, gameFrontDialogY };
-          if (dialogPt.x >= 0 && dialogPt.y >= 0) {
-            dispID = SDL_GetDisplayForPoint(&dialogPt);
+          int prefX, prefY;
+          windowGetSavedPosition(&prefX, &prefY);
+          if (prefX >= 0 && prefY >= 0) {
+            SDL_Point savedPt = { prefX, prefY };
+            dispID = SDL_GetDisplayForPoint(&savedPt);
           }
           if (!dispID) {
-            /* Dialog position unknown — use the window's current display */
+            SDL_Point dialogPt = { gameFrontDialogX, gameFrontDialogY };
+            if (dialogPt.x >= 0 && dialogPt.y >= 0) {
+              dispID = SDL_GetDisplayForPoint(&dialogPt);
+            }
+          }
+          if (!dispID) {
+            /* No saved or dialog position — use the window's current display */
             dispID = SDL_GetDisplayForWindow(sdlWin);
           }
           if (dispID) {
@@ -1270,9 +1280,11 @@ void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int a
 /* Update saved position from current window */
 void windowSaveCurrentPosition(void) {
   SDL_Window *win = sdl3DrawGetWindow();
-  if (win) {
-    SDL_GetWindowPosition(win, &s_windowX, &s_windowY);
-  }
+  if (!win) return;
+  /* A fullscreen window's position is the display's, not the player's, so the
+     remembered position has to survive going fullscreen and coming back. */
+  if (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) return;
+  SDL_GetWindowPosition(win, &s_windowX, &s_windowY);
 }
 
 /* Cardinal content widths.
