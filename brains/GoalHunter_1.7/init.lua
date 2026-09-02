@@ -2892,11 +2892,12 @@ function Brain.think(info)
         end
       end
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
-                                 C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
+                                 C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP,
+                                 C.EXPAND_DEEP_MARGIN or 0)
       state._tail_sig, state._tail_tick = _tsig, now
       state._tail_rebuilt_tick = now
-      print2(string.format("TAIL_REBUILD t=%d sig=%d %.2fms",
-        now, _tsig, (clock_us() - _t_tail) / 1000))
+      print2(string.format("TAIL_REBUILD t=%d sig=%d deep_margin=%d %.2fms",
+        now, _tsig, C.EXPAND_DEEP_MARGIN or 0, (clock_us() - _t_tail) / 1000))
     end
     cpf.merge_influence_tail()
     -- What the tail did this rebuild: how much ground each side's tail

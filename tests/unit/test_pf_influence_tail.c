@@ -13,6 +13,8 @@
  *   - two tails meeting cancel, and an exact tie goes to the hostile side
  *     (-1) so FindFrontLine never sees a signless zero seam;
  *   - a stamped cell is never overwritten by the tail;
+ *   - with EXPAND_DEEP_MARGIN set, no tile within that many king-moves of deep
+ *     sea or of the map edge is claimed;
  *   - contact between tails produces a front line; no contact, no line.
  */
 
@@ -51,7 +53,13 @@ static void seed(BrainPathfinder *pf, int x, int y, int v) {
 }
 
 static void rebuild_merge(BrainPathfinder *pf) {
-    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP);
+    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, 0);
+    brainPathfinderMergeInfluenceTail(pf);
+}
+
+/* Same, with the deep-water margin (EXPAND_DEEP_MARGIN) active. */
+static void rebuild_merge_margin(BrainPathfinder *pf, int margin) {
+    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, margin);
     brainPathfinderMergeInfluenceTail(pf);
 }
 
@@ -168,6 +176,50 @@ int run_pf_tail_never_overwrites_a_stamp(void) {
                   expect(1), brainPathfinderInfluenceAt(pf, 102, 100));
     UT_ASSERT(brainPathfinderInfluenceTailAt(pf, 101, 100) == 0);
     UT_ASSERT(brainPathfinderInfluenceTailAt(pf, 102, 100) == expect(1));
+    brainPathfinderDestroy(pf);
+    return 0;
+}
+
+int run_pf_tail_deep_margin_keeps_off_the_shore(void) {
+    BrainPathfinder *pf = fresh_pf();
+    const int MARGIN = 4;
+    int y;
+    UT_ASSERT(pf != NULL);
+    /* A deep-sea column at x=97: with MARGIN=4 the tail may not claim
+     * x=93..101 (x=102 is the first tile more than 4 king-moves clear). */
+    for (y = 60; y <= 140; y++) g_map[y * PF_MAPSZ + 97] = TT_DEEPSEA;
+    seed(pf, 105, 100, 100);
+    rebuild_merge_margin(pf, MARGIN);
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 105, 100) == 100, "core overwritten");
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 103, 100) == expect(2),
+                  "outside the margin: got %d want %d",
+                  brainPathfinderInfluenceAt(pf, 103, 100), expect(2));
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 102, 100) == expect(3),
+                  "first tile clear of the margin: got %d want %d",
+                  brainPathfinderInfluenceAt(pf, 102, 100), expect(3));
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 101, 100) == 0,
+                  "claimed a tile 4 from deep sea: %d",
+                  brainPathfinderInfluenceAt(pf, 101, 100));
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 98, 100) == 0, "claimed the shore tile");
+    /* The map edge counts as deep sea too. */
+    brainPathfinderClearInfluence(pf);
+    seed(pf, 8, 100, 100);
+    rebuild_merge_margin(pf, MARGIN);
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 4, 100) == expect(4),
+                  "first tile clear of the edge margin: got %d want %d",
+                  brainPathfinderInfluenceAt(pf, 4, 100), expect(4));
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 3, 100) == 0,
+                  "claimed a tile 4 from the map edge: %d",
+                  brainPathfinderInfluenceAt(pf, 3, 100));
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 0, 100) == 0, "claimed the map border");
+    /* margin 0 is the old behaviour: the shore tile next to the sea is claimed
+     * again (same pf, so this also proves the mask is not left over). */
+    brainPathfinderClearInfluence(pf);
+    seed(pf, 105, 100, 100);
+    rebuild_merge_margin(pf, 0);
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 98, 100) == expect(7),
+                  "margin 0 should claim the shore: got %d want %d",
+                  brainPathfinderInfluenceAt(pf, 98, 100), expect(7));
     brainPathfinderDestroy(pf);
     return 0;
 }

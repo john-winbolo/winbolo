@@ -100,6 +100,15 @@ struct BrainPathfinder {
   int16_t  expand_grid[65536];
   uint8_t  neutral_zone[65536];       /* 1 = inside a live neutral pill's range */
   uint8_t  tail_dist[65536];          /* scratch: BFS step distance, 255 = unreached */
+  /* Deep-water margin for the tail: 1 = this tile is within `deep_margin`
+   * king-moves of a deep-sea tile or of the map edge (off-map counts as deep
+   * sea). Masked tiles never receive a grown tail value and never pass one on,
+   * so the tail cannot paint a front line out over the sea or along the map
+   * border. Scratch, not a cache: the map the brain hands us is its own
+   * fogged view, one buffer whose contents change in place as tiles are
+   * discovered, so the mask is rebuilt on every tail rebuild (~0.3ms, and the
+   * rebuild only runs on a stamp-set change or every EXPAND_REFRESH_TICKS). */
+  uint8_t  deep_margin_mask[65536];
   int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
   /* Coastal boat band: 1 where a water/boat tile lies within
    * BRAINPF_COASTAL_BAND euclidean tiles of land. Lets the land-only SHORT
@@ -421,11 +430,17 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
  * front line never has a signless zero seam) in expand_grid. Merge writes
  * influence_grid = stamped where |stamped| >= |tail|, else tail, keeping the
  * stamps in influence_base_grid. Call Merge every tick after stamping;
- * Rebuild only when the stamped set changes. */
+ * Rebuild only when the stamped set changes.
+ * deep_margin > 0 additionally forbids the tail from claiming any tile within
+ * that many king-moves of deep sea or of the map edge (off-map counts as deep
+ * sea): such a tile gets no tail value and passes none on, so no front line is
+ * drawn out over the water or along the border. Stamped cores still seed, so a
+ * core standing near the shore keeps growing inland. 0 = old behaviour. */
 void brainPathfinderClearNeutralZones(BrainPathfinder *pf);
 void brainPathfinderStampNeutralZone(BrainPathfinder *pf, int cx, int cy, int radius);
 void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
-                                         int start, int neutral_step, int water_step);
+                                         int start, int neutral_step, int water_step,
+                                         int deep_margin);
 void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf);
 /* The tail value at (x,y) if the tail won the last merge there, else 0. */
 int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y);

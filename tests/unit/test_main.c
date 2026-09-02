@@ -237,6 +237,7 @@ static const UnitTestEntry s_tests[] = {
     { "pf_tail_neutral_zone_slows",              run_pf_tail_neutral_zone_slows              },
     { "pf_tail_meeting_cancels_tie_to_hostile",  run_pf_tail_meeting_cancels_tie_to_hostile  },
     { "pf_tail_never_overwrites_a_stamp",        run_pf_tail_never_overwrites_a_stamp        },
+    { "pf_tail_deep_margin_keeps_off_the_shore", run_pf_tail_deep_margin_keeps_off_the_shore },
     { "pf_tail_contact_makes_a_front_line",      run_pf_tail_contact_makes_a_front_line      },
     { "net_impair",                              run_net_impair                              },
     { "channel_mux",                             run_channel_mux                             },

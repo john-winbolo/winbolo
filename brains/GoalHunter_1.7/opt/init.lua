@@ -2194,7 +2194,8 @@ function Brain.think(info)
         end
       end
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
-                                 C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP)
+                                 C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP,
+                                 C.EXPAND_DEEP_MARGIN or 0)
       state._tail_sig, state._tail_tick = _tsig, now
       state._tail_rebuilt_tick = now
     end
