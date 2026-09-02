@@ -53,6 +53,7 @@
 #include "cursor.h"
 #include "input_source.h"
 #include "mapview.h"
+#include "overview_view.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -146,6 +147,18 @@ static int          gGameRTHeight     = 0;
    Set each frame after calculating aspect-preserving scale. */
 static SDL_FRect    gGameDestRect = {0, 0, 0, 0};
 static float        gGameScale    = 1.0f;    /* Scale factor from RT to dest */
+
+/* In-window Map Overview mode. The overview is drawn at window size straight
+   to the window, so it uses none of the game render target above (which is
+   locked to the 515:325 chrome aspect and would letterbox the map). The view
+   instance belongs here because the render needs gRenderer, gTilesTex and
+   gCrosshairTex; sdl3imgui.cpp reaches it through the accessors below for the
+   input handling and status strip, which have to run inside its ImGui frame.
+   gOverviewRect is the last blit rect, so both halves agree on where the map
+   is on screen. */
+static bool          gOverviewInWindow = FALSE;
+static OverviewView *gOverviewView     = NULL;
+static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
 
 static buildSelect  gCurrentBuildSelect = BsTrees;
 
@@ -550,6 +563,36 @@ SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
 }
 
+/* The single place the mode is turned on and off, so the pointer the view may
+   have switched to the game crosshair is handed back on every way out — the
+   menu toggle, the end of a game and teardown all come through here. */
+void sdl3DrawSetOverviewInWindow(bool active) {
+  if (active == gOverviewInWindow) return;
+  gOverviewInWindow = active;
+  if (!active) {
+    overviewViewReleaseCursor(gOverviewView);
+    gOverviewRect.x = gOverviewRect.y = gOverviewRect.w = gOverviewRect.h = 0.0f;
+  }
+}
+
+bool sdl3DrawIsOverviewInWindow(void) {
+  return gOverviewInWindow;
+}
+
+struct OverviewView *sdl3DrawOverviewInWindowView(void) {
+  return gOverviewView;
+}
+
+bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
+                                     float *outW, float *outH) {
+  if (!gOverviewInWindow || gOverviewRect.w <= 0.0f) return false;
+  if (outX) *outX = gOverviewRect.x;
+  if (outY) *outY = gOverviewRect.y;
+  if (outW) *outW = gOverviewRect.w;
+  if (outH) *outH = gOverviewRect.h;
+  return true;
+}
+
 int sdl3DrawGetSheetScale(void) {
   return gSheetScale;
 }
@@ -679,6 +722,9 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
     case SDL_EVENT_MOUSE_MOTION: {
+      /* The classic 15x15 mapping means nothing while the overview owns the
+         window, and the overview drives the shared build cursor itself. */
+      if (gOverviewInWindow) break;
       /* Transform window coords to game coords */
       float gameX, gameY;
       if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
@@ -714,6 +760,11 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       break;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+      /* A click that arrives before ImGui's capture flag catches up would
+         build twice — once at the overview's square, once at the classic
+         cursor — and the build-select hit-test would fire at chrome
+         positions that are not on screen in this mode. */
+      if (gOverviewInWindow) break;
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
@@ -1280,6 +1331,10 @@ void sdl3DrawCleanup(void) {
     SDL_DestroyTexture(gBackgroundTex);
     gBackgroundTex = NULL;
   }
+  /* The in-window overview's offscreen was made on gRenderer, so it goes
+     before the renderer does. */
+  overviewViewDestroy(gOverviewView);
+  gOverviewView = NULL;
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -1414,6 +1469,68 @@ static void sdl3DrawAdaptRenderTarget(void) {
   sdl3DrawReconfigureZoom(0);                       /* derive from window */
 }
 
+/* Called once per drawn frame by whichever branch drew it, so the FPS readout
+   keeps working in the in-window overview as well as the classic view. */
+static void sdl3DrawCountFrame(void) {
+  g_dwFrameCount++;
+  DWORD now = (DWORD)SDL_GetTicks();
+  DWORD elapsed = now - g_dwFrameTime;
+  if (elapsed > 1000) {
+    g_dwFrameTotal = g_dwFrameCount;
+    g_dwFrameTime = now;
+    g_dwFrameCount = 0;
+  }
+}
+
+/* In-window Map Overview: the whole game window is the map, and neither the
+   classic 15x15 view nor the chrome is drawn. The view renders at window size
+   into its own offscreen and is blitted straight to the window — going through
+   gGameRenderTarget would letterbox the map to the 515:325 chrome aspect. */
+static void sdl3DrawOverviewInWindowFrame(ClientSim *cs) {
+  int ww = 0, wh = 0;
+  {
+    SDL_RendererLogicalPresentation logMode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+    if (ww <= 0 || wh <= 0 || logMode == SDL_LOGICAL_PRESENTATION_DISABLED) {
+      SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    }
+  }
+
+  /* Zero when the menu bar is hidden (controller mode) so the map fills the
+     freed top strip — same expression the classic blit uses. */
+  float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
+  int w = ww;
+  int h = (int)((float)wh - menuBarHeight);
+  if (w < 1 || h < 1) return;
+
+  /* The classic draw loads the atlas lazily on its way past; this branch
+     never gets there, so it loads it itself. */
+  sdl3LoadTiles();
+
+  if (!gOverviewView) gOverviewView = overviewViewCreate();
+  if (!gOverviewView) return;
+
+  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gCrosshairTex, w, h, cs);
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+
+  SDL_Texture *tex = overviewViewGetTexture(gOverviewView);
+  if (tex) {
+    SDL_FRect dest = { 0.0f, menuBarHeight, (float)w, (float)h };
+    /* BLENDMODE_NONE for the same reason the classic blit uses it: alpha
+       below 255 left in a render target would composite semi-transparent. */
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(gRenderer, tex, NULL, &dest);
+    /* Both halves work from this rect: the ImGui side puts its pan item and
+       status strip over exactly these numbers. */
+    gOverviewRect = dest;
+  }
+
+  sdl3DrawCountFrame();
+}
+
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
@@ -1422,6 +1539,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   (void)rcWindow;
 
   if (gRenderer == NULL) {
+    return;
+  }
+
+  if (gOverviewInWindow) {
+    sdl3DrawOverviewInWindowFrame(cs);
     return;
   }
 
@@ -1878,17 +2000,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     sdl3RenderCachedText();
   }
 
-  /* Frame rate counting */
-  g_dwFrameCount++;
-  {
-    DWORD now = (DWORD)SDL_GetTicks();
-    DWORD elapsed = now - g_dwFrameTime;
-    if (elapsed > 1000) {
-      g_dwFrameTotal = g_dwFrameCount;
-      g_dwFrameTime = now;
-      g_dwFrameCount = 0;
-    }
-  }
+  sdl3DrawCountFrame();
 
   /* Restore original zoom factor after tablet-mode override */
   gZoomFactor = savedZoomFactor;
@@ -1962,6 +2074,11 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
                        bool showPillsStatus, bool showBasesStatus) {
   (void)rcWindow;
   if (gRenderer == NULL) return;
+
+  /* The in-window overview redraws the whole window from sim state every
+     frame, so a full repaint has nothing to add — and the classic chrome it
+     would draw is not part of that mode. */
+  if (gOverviewInWindow) return;
 
   sdl3DrawAdaptRenderTarget();
 

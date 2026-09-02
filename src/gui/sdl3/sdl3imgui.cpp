@@ -756,6 +756,17 @@ static void mapOverviewClose(void) {
     gameFrontShowMapOverview = false;
 }
 
+/* Turn the in-window overview on or off. The mode takes the main window
+ * fullscreen so the map gets the whole screen; leaving puts the window back
+ * the way the player had it. */
+static void overviewInWindowSet(bool on) {
+    if (on == sdl3DrawIsOverviewInWindow()) return;
+    SDL_Window *win = sdl3DrawGetWindow();
+    if (on && !win) return;
+    sdl3DrawSetOverviewInWindow(on);      /* hands the OS pointer back on the way out */
+    if (win) SDL_SetWindowFullscreen(win, on);
+}
+
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
@@ -1611,6 +1622,75 @@ static void renderMapOverviewContent(ClientSim *cs) {
         dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
                     IM_COL32(230, 230, 230, 255), status);
     }
+}
+
+/* -------------------------------------------------------
+ * In-window Map Overview
+ * ------------------------------------------------------- */
+/* The input half of the in-window mode: sdl3draw.c has already rendered the
+ * map and blitted it to the window this frame, so this only has to put the pan
+ * item and the status strip over exactly the rect it blitted to. Submitted at
+ * the start of the frame so it sits at the back of the z-order and never takes
+ * a click from a panel or dialog on top of it. */
+static void renderOverviewInWindow(ClientSim *cs) {
+    if (!sdl3DrawIsOverviewInWindow()) return;
+    OverviewView *view = sdl3DrawOverviewInWindowView();
+    if (!view) return;
+    float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
+    if (!sdl3DrawGetOverviewInWindowRect(&rx, &ry, &rw, &rh)) return;
+
+    ImGui::SetNextWindowPos(ImVec2(rx, ry));
+    ImGui::SetNextWindowSize(ImVec2(rw, rh));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    bool open = ImGui::Begin("##OverviewInWindow", nullptr,
+                             ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavInputs |
+                             ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
+    if (open) {
+        /* Same split as the pop-out: the item claims the right button so a
+           right-drag pans, and leaves the left one unclaimed so a click still
+           reaches the overview's build path. */
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::InvisibleButton("##OverviewInWindowPan", ImVec2(rw, rh),
+                               ImGuiButtonFlags_MouseButtonRight);
+        /* The live bindings, fetched each frame — Key Setup can change them
+           while the mode is up, and a key bound to an in-game action has to
+           drive the tank rather than the map. */
+        keyItems keys;
+        windowGetKeys(&keys);
+        overviewViewHandleInput(view, ImGui::IsItemHovered(),
+                                (int)rw, (int)rh, cs, &keys);
+
+        /* Zoom and follow state along the top-left of the map — the pop-out
+           puts the same readout bottom-left, but here the bottom of the window
+           is where the newswire goes. Drawn with the window draw list so it
+           adds nothing to the window's content. %g keeps the ladder readable
+           (0.5, 1, 1.5, 2) with no trailing zeros, and the text is ASCII
+           because this file is compiled without /utf-8. */
+        OverviewCamera *cam = overviewViewCamera(view);
+        if (cam) {
+            char status[64];
+            SDL_snprintf(status, sizeof(status), "%gx - %s",
+                         (double)overviewCameraZoomScale(cam),
+                         langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
+                                                 : STR_OVERVIEW_FREE));
+            const float pad = 4.0f;
+            ImVec2 textSize = ImGui::CalcTextSize(status);
+            ImVec2 boxMin(rx, ry);
+            ImVec2 boxMax(rx + textSize.x + pad * 2.0f,
+                          ry + textSize.y + pad * 2.0f);
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
+            dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                        IM_COL32(230, 230, 230, 255), status);
+        }
+    }
+    ImGui::End();
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
@@ -2955,6 +3035,11 @@ static void renderMenuBar(ClientSim *cs) {
                                 cs != nullptr && clientSimIsRunning(cs))) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
+                                sdl3DrawIsOverviewInWindow(),
+                                cs != nullptr && clientSimIsRunning(cs))) {
+                overviewInWindowSet(!sdl3DrawIsOverviewInWindow());
+            }
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
@@ -4245,75 +4330,91 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                applyMainContextUiScale early-outs if the quantised scale held. */
             if (!uiModeIsTablet() && !uiModeIsSteamDeck())
                 s_pendingUiScaleRebuild = true;
-            if (s_suppressAutoCustom) {
-                /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
-                   Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
-            } else {
-                /* Enforce aspect ratio: adjust height to match width — but not
-                   while maximized or fullscreen, where the window must keep the
-                   size the OS gave it and the draw side letterboxes the game
-                   inside.  Forcing a taller-than-screen height there pushes the
-                   title bar off-screen and strands the window with no way to
-                   move or restore it. */
-                SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
-                bool osManaged =
-                    (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
-                int w = ev.window.data1;
-                int h = ev.window.data2;
-                int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
-                int correctH = correctContentH + MENU_BAR_HEIGHT;
-                if (!osManaged && h != correctH) {
-                    s_suppressAutoCustom = true;  /* Prevent recursion */
-                    SDL_SetWindowSize(s_window, w, correctH);
-                }
-                /* Auto-switch zoom mode based on width — but NOT during modal
-                   resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE.
-                   If width matches a cardinal size, switch to that cardinal mode.
-                   Otherwise switch to custom. */
-                if (s_pendingZoom == 255 && !s_inModalResize) {
-                    BYTE targetZoom = ZOOM_FACTOR_CUSTOM;
-                    if (w == 1 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_NORMAL;
-                    else if (w == 2 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_DOUBLE;
-                    else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
-                    else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
-                    if (zoomFactor != targetZoom) {
-                        s_pendingZoom = targetZoom;
+            /* A fullscreen size is not the player's window size: the
+               remembered custom size and position, and the zoom mode
+               derived from the width, all have to stay whatever they were
+               when the window was last windowed.  Re-deriving the zoom mode
+               from a fullscreen surface is worse than a bad saved value —
+               it switches to Custom, which calls SDL_SetWindowSize and
+               resizes the window out from under the fullscreen map.  The UI
+               scale rebuild above still applies: the surface really did
+               change size. */
+            if (!(SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)) {
+                if (s_suppressAutoCustom) {
+                    /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
+                       Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
+                } else {
+                    /* Enforce aspect ratio: adjust height to match width — but not
+                       while maximized or fullscreen, where the window must keep the
+                       size the OS gave it and the draw side letterboxes the game
+                       inside.  Forcing a taller-than-screen height there pushes the
+                       title bar off-screen and strands the window with no way to
+                       move or restore it. */
+                    SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
+                    bool osManaged =
+                        (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
+                    int w = ev.window.data1;
+                    int h = ev.window.data2;
+                    int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
+                    int correctH = correctContentH + MENU_BAR_HEIGHT;
+                    if (!osManaged && h != correctH) {
+                        s_suppressAutoCustom = true;  /* Prevent recursion */
+                        SDL_SetWindowSize(s_window, w, correctH);
+                    }
+                    /* Auto-switch zoom mode based on width — but NOT during modal
+                       resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE.
+                       If width matches a cardinal size, switch to that cardinal mode.
+                       Otherwise switch to custom. */
+                    if (s_pendingZoom == 255 && !s_inModalResize) {
+                        BYTE targetZoom = ZOOM_FACTOR_CUSTOM;
+                        if (w == 1 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_NORMAL;
+                        else if (w == 2 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_DOUBLE;
+                        else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
+                        else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
+                        if (zoomFactor != targetZoom) {
+                            s_pendingZoom = targetZoom;
+                        }
+                    }
+                    /* Save custom size on USER-initiated resize (not programmatic menu changes).
+                       Only save if it's actually a non-cardinal size.
+                       Save the CORRECTED size (proper aspect ratio), not actual window size,
+                       so maximize (which allows any ratio with gray bars) doesn't save a bad size.
+                       Find the largest aspect-correct size that FITS WITHIN the actual window. */
+                    if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
+                        (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                        int curW, curH, curX, curY;
+                        SDL_GetWindowSize(s_window, &curW, &curH);
+                        SDL_GetWindowPosition(s_window, &curX, &curY);
+                        /* Don't save cardinal sizes as "custom" */
+                        bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
+                                           curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
+                        if (!isCardinal) {
+                            int saveW, saveH, saveX, saveY;
+                            windowComputeAspectCorrectSize(curW, curH, curX, curY, &saveW, &saveH, &saveX, &saveY);
+                            windowSetCustomSize(saveW, saveH);
+                            windowSetSavedPosition(saveX, saveY);
+                        }
                     }
                 }
-                /* Save custom size on USER-initiated resize (not programmatic menu changes).
-                   Only save if it's actually a non-cardinal size.
-                   Save the CORRECTED size (proper aspect ratio), not actual window size,
-                   so maximize (which allows any ratio with gray bars) doesn't save a bad size.
-                   Find the largest aspect-correct size that FITS WITHIN the actual window. */
-                if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
-                    (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
-                    int curW, curH, curX, curY;
-                    SDL_GetWindowSize(s_window, &curW, &curH);
-                    SDL_GetWindowPosition(s_window, &curX, &curY);
-                    /* Don't save cardinal sizes as "custom" */
-                    bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
-                                       curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
-                    if (!isCardinal) {
-                        int saveW, saveH, saveX, saveY;
-                        windowComputeAspectCorrectSize(curW, curH, curX, curY, &saveW, &saveH, &saveX, &saveY);
-                        windowSetCustomSize(saveW, saveH);
-                        windowSetSavedPosition(saveX, saveY);
-                    }
+                /* Save position on resize too (window may have been repositioned) - but only if
+                   we didn't already save a corrected position above */
+                if (s_pendingZoom != ZOOM_FACTOR_CUSTOM &&
+                    !(zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                    windowSaveCurrentPosition();
                 }
+                gameFrontSaveWindowSettings();
             }
-            /* Save position on resize too (window may have been repositioned) - but only if
-               we didn't already save a corrected position above */
-            if (s_pendingZoom != ZOOM_FACTOR_CUSTOM &&
-                !(zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
-                windowSaveCurrentPosition();
-            }
-            gameFrontSaveWindowSettings();
         }
         /* Window moved — save position */
         if (ev.type == SDL_EVENT_WINDOW_MOVED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
-            windowSaveCurrentPosition();
-            gameFrontSaveWindowSettings();
+            /* A fullscreen window's position is the display's, not the
+               player's, so the remembered position has to survive going
+               fullscreen and coming back. */
+            if (!(SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)) {
+                windowSaveCurrentPosition();
+                gameFrontSaveWindowSettings();
+            }
         }
 
         /* Dispatch tap-style key actions (pill view, tank view) that are
@@ -4435,6 +4536,8 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
     s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs));
+    s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
+    s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs));
 
     int dispW = 99999, dispH = 99999;
     if (s_window) {
@@ -4728,6 +4831,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             return;
         }
     }
+
+    /* First window of the frame, so the full-window map sits behind every
+       panel, overlay and dialog that follows. */
+    renderOverviewInWindow(cs);
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -5067,6 +5174,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool overviewRunning = (cs != nullptr && clientSimIsRunning(cs));
         if (!overviewRunning) {
             mapOverviewHide();
+            /* The in-window mode goes with the game for the same reason, and
+               the lobby must not inherit a fullscreen window. */
+            overviewInWindowSet(false);
         } else if (!s_overviewWasRunning && gameFrontShowMapOverview) {
             sdl3ImguiShowMapOverview(true);
         }
@@ -5302,6 +5412,23 @@ void sdl3ImguiShowMapOverview(bool open) {
 bool sdl3ImguiIsMapOverviewOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) return s_popMapOverview.open;
+#endif
+    return false;
+}
+/* The in-window mode is a desktop-window mode, so tablet has nothing to show
+ * and nothing to report active. */
+void sdl3ImguiShowOverviewInWindow(bool active) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        overviewInWindowSet(active);
+        return;
+    }
+#endif
+    (void)active;
+}
+bool sdl3ImguiIsOverviewInWindowOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
 #endif
     return false;
 }
@@ -5624,6 +5751,11 @@ void sdl3ImguiShowKeySetup(void) {
 
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
+    /* Runs on return-to-lobby, end-of-game and process exit, so it is the last
+       chance to drop the in-window mode: neither the lobby nor the next game
+       should inherit a fullscreen window or a pointer still stuck on the game
+       crosshair. */
+    overviewInWindowSet(false);
     inputGamepadShutdown();
     /* Before the loop: all of these were made on the Map Overview pop-out's
        renderer, which popOutDestroy tears down. */

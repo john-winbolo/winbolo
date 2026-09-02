@@ -1737,96 +1737,103 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (drawBusy == FALSE) {
     BYTE cursorX = 0, cursorY = 0;
-    bool showCursor;
+    bool showCursor = false;
+    bool cursorFaint = false;
 
-    /* Track view scroll in pixels and warp the OS mouse by the same delta
-     * so the cursor stays glued to its world tile while the map slides.
-     * Total view shift = xOffset whole-tile shift + subPos sub-tile shift.
-     * The cursor cell then stays the same frame to frame (no flicker) as
-     * autoscroll bumps subPos. Skip warps larger than a few tiles — those
-     * come from respawn / scrollCenterObject / mode switch and the user
-     * wants the cursor to stay where it is, not teleport. */
-    {
-      int zf      = sdl3DrawGetZoomFactor();
-      int tileWpx = TILE_SIZE_X * zf;
-      int tileHpx = TILE_SIZE_Y * zf;
-      int subX    = clientSimGetSubPosX(cs);
-      int subY    = clientSimGetSubPosY(cs);
-      int curScrollPxX = (int)clientSimGetXOffset(cs) * tileWpx + subX * tileWpx / 256;
-      int curScrollPxY = (int)clientSimGetYOffset(cs) * tileHpx + subY * tileHpx / 256;
-      static int  sLastScrollPxX = 0;
-      static int  sLastScrollPxY = 0;
-      static bool sLastScrollPxValid = FALSE;
-      if (sLastScrollPxValid) {
-        int dpx = curScrollPxX - sLastScrollPxX;
-        int dpy = curScrollPxY - sLastScrollPxY;
-        int maxAuto = 4 * tileWpx;
-        /* Skip the world-tracking warp while the pointer is over an ImGui
-         * overlay (vote widget, alliance request, info panels). The warp
-         * runs every frame the view scrolls — including per-tick sub-pixel
-         * autoscroll — so left unchecked it drags the OS cursor out from
-         * under a click on those windows, and button presses never register. */
-        if (!sdl3ImguiWantCaptureMouse() &&
-            abs(dpx) <= maxAuto && abs(dpy) <= maxAuto) {
-          cursorApplyScrollDelta(dpx, dpy);
+    /* None of the classic pointer plumbing applies while the overview owns
+     * the window: the 15x15 cell mapping corresponds to nothing on screen,
+     * the scroll warp would drag the pointer off the square it is over, and
+     * the overview drives the shared build cursor from absolute map
+     * coordinates of its own. */
+    if (!sdl3DrawIsOverviewInWindow()) {
+      /* Track view scroll in pixels and warp the OS mouse by the same delta
+       * so the cursor stays glued to its world tile while the map slides.
+       * Total view shift = xOffset whole-tile shift + subPos sub-tile shift.
+       * The cursor cell then stays the same frame to frame (no flicker) as
+       * autoscroll bumps subPos. Skip warps larger than a few tiles — those
+       * come from respawn / scrollCenterObject / mode switch and the user
+       * wants the cursor to stay where it is, not teleport. */
+      {
+        int zf      = sdl3DrawGetZoomFactor();
+        int tileWpx = TILE_SIZE_X * zf;
+        int tileHpx = TILE_SIZE_Y * zf;
+        int subX    = clientSimGetSubPosX(cs);
+        int subY    = clientSimGetSubPosY(cs);
+        int curScrollPxX = (int)clientSimGetXOffset(cs) * tileWpx + subX * tileWpx / 256;
+        int curScrollPxY = (int)clientSimGetYOffset(cs) * tileHpx + subY * tileHpx / 256;
+        static int  sLastScrollPxX = 0;
+        static int  sLastScrollPxY = 0;
+        static bool sLastScrollPxValid = FALSE;
+        if (sLastScrollPxValid) {
+          int dpx = curScrollPxX - sLastScrollPxX;
+          int dpy = curScrollPxY - sLastScrollPxY;
+          int maxAuto = 4 * tileWpx;
+          /* Skip the world-tracking warp while the pointer is over an ImGui
+           * overlay (vote widget, alliance request, info panels). The warp
+           * runs every frame the view scrolls — including per-tick sub-pixel
+           * autoscroll — so left unchecked it drags the OS cursor out from
+           * under a click on those windows, and button presses never register. */
+          if (!sdl3ImguiWantCaptureMouse() &&
+              abs(dpx) <= maxAuto && abs(dpy) <= maxAuto) {
+            cursorApplyScrollDelta(dpx, dpy);
+          }
+        }
+        sLastScrollPxX = curScrollPxX;
+        sLastScrollPxY = curScrollPxY;
+        sLastScrollPxValid = TRUE;
+      }
+
+      /* Refresh cursor cell every frame: the autoscroll sub-tile offset
+       * changes per tick, so the visually-rendered tile under a stationary
+       * mouse changes too. cursorPos re-derives the cell from the cached
+       * mouse pixel + current subPos and stores it in the viewport's
+       * cursorPosX/Y, which clientSimGetCursorPos then reads. */
+      {
+        BYTE cx = 0, cy = 0;
+        if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+          clientSimSetCursorPos(cs, cx, cy);
+        } else {
+          clientSimSetCursorPos(cs, 0, 0);
         }
       }
-      sLastScrollPxX = curScrollPxX;
-      sLastScrollPxY = curScrollPxY;
-      sLastScrollPxValid = TRUE;
-    }
+      showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
 
-    /* Refresh cursor cell every frame: the autoscroll sub-tile offset
-     * changes per tick, so the visually-rendered tile under a stationary
-     * mouse changes too. cursorPos re-derives the cell from the cached
-     * mouse pixel + current subPos and stores it in the viewport's
-     * cursorPosX/Y, which clientSimGetCursorPos then reads. */
-    {
-      BYTE cx = 0, cy = 0;
-      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
-        clientSimSetCursorPos(cs, cx, cy);
-      } else {
-        clientSimSetCursorPos(cs, 0, 0);
-      }
-    }
-    showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
-
-    /* When the gamepad-driven free build cursor is active, override
-       the mouse cursor's screen position so the existing build-mode
-       reticle render does double-duty.  The build cursor stores an
-       absolute map tile; convert to the 1-based screen tile by
-       subtracting the camera offset.  Off-screen tiles hide the
-       reticle (matching how the mouse cursor hides when it leaves
-       the play area). */
-    /* Keep an active build cursor inside the visible edge as the view
-       scrolls with the tank (no-op while cursor mode is off). */
-    buildCursorClampToView(cs);
-    bool cursorFaint = false;
-    BYTE bcX, bcY;
-    if (buildCursorGetTile(&bcX, &bcY)) {
-      /* Cursor mode ON — draw the reticle solid at the cursor tile. */
-      int sx = (int)bcX - (int)clientSimGetXOffset(cs);
-      int sy = (int)bcY - (int)clientSimGetYOffset(cs);
-      if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
-          sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
-        showCursor = true;
-        cursorX    = (BYTE)sx;
-        cursorY    = (BYTE)sy;
-      } else {
-        showCursor = false;
-      }
-    } else if (!showCursor && buildCursorGetTargetTile(&bcX, &bcY)) {
-      /* Cursor mode OFF but a target is locked, and the mouse cursor isn't
-         showing (gamepad context): draw the locked target faintly so the
-         player can still see where Build Now will place. Off-screen = hidden. */
-      int sx = (int)bcX - (int)clientSimGetXOffset(cs);
-      int sy = (int)bcY - (int)clientSimGetYOffset(cs);
-      if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
-          sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
-        showCursor  = true;
-        cursorX     = (BYTE)sx;
-        cursorY     = (BYTE)sy;
-        cursorFaint = true;
+      /* When the gamepad-driven free build cursor is active, override
+         the mouse cursor's screen position so the existing build-mode
+         reticle render does double-duty.  The build cursor stores an
+         absolute map tile; convert to the 1-based screen tile by
+         subtracting the camera offset.  Off-screen tiles hide the
+         reticle (matching how the mouse cursor hides when it leaves
+         the play area). */
+      /* Keep an active build cursor inside the visible edge as the view
+         scrolls with the tank (no-op while cursor mode is off). */
+      buildCursorClampToView(cs);
+      BYTE bcX, bcY;
+      if (buildCursorGetTile(&bcX, &bcY)) {
+        /* Cursor mode ON — draw the reticle solid at the cursor tile. */
+        int sx = (int)bcX - (int)clientSimGetXOffset(cs);
+        int sy = (int)bcY - (int)clientSimGetYOffset(cs);
+        if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
+            sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
+          showCursor = true;
+          cursorX    = (BYTE)sx;
+          cursorY    = (BYTE)sy;
+        } else {
+          showCursor = false;
+        }
+      } else if (!showCursor && buildCursorGetTargetTile(&bcX, &bcY)) {
+        /* Cursor mode OFF but a target is locked, and the mouse cursor isn't
+           showing (gamepad context): draw the locked target faintly so the
+           player can still see where Build Now will place. Off-screen = hidden. */
+        int sx = (int)bcX - (int)clientSimGetXOffset(cs);
+        int sy = (int)bcY - (int)clientSimGetYOffset(cs);
+        if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
+            sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
+          showCursor  = true;
+          cursorX     = (BYTE)sx;
+          cursorY     = (BYTE)sy;
+          cursorFaint = true;
+        }
       }
     }
     sdl3DrawSetCursorFaint(cursorFaint);

@@ -113,6 +113,7 @@ static NSMenuItem *s_netInfoItem             = nil;
 static NSMenuItem *s_gameInfoItem            = nil;
 static NSMenuItem *s_sendMsgItem             = nil;
 static NSMenuItem *s_mapOverviewItem         = nil;
+static NSMenuItem *s_overviewInWindowItem    = nil;
 static NSMenuItem *s_winboloRequestAllianceItem = nil;
 static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
 static NSMenuItem *s_playersRequestAllianceItem = nil;
@@ -225,6 +226,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onShowSysInfo:(id)sender;
 - (void)onShowNetInfo:(id)sender;
 - (void)onShowMapOverview:(id)sender;
+- (void)onToggleOverviewInWindow:(id)sender;
 - (void)onSmoothScrolling:(id)sender;
 - (void)onAutoScrolling:(id)sender;
 - (void)onShowGunsight:(id)sender;
@@ -303,6 +305,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onShowMapOverview:(id)sender {
     (void)sender;
     sdl3ImguiShowMapOverview(!sdl3ImguiIsMapOverviewOpen());
+}
+- (void)onToggleOverviewInWindow:(id)sender {
+    (void)sender;
+    sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
 }
 - (void)onSmoothScrolling:(id)sender {
     (void)sender;
@@ -876,6 +882,14 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [fileMenu addItem:mapOverviewItem];
     s_mapOverviewItem = mapOverviewItem;
 
+    NSMenuItem *overviewInWindowItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_OVERVIEW_IN_WINDOW)
+        action:@selector(onToggleOverviewInWindow:)
+        keyEquivalent:@""];
+    [overviewInWindowItem setTarget:g_bridge];
+    [fileMenu addItem:overviewInWindowItem];
+    s_overviewInWindowItem = overviewInWindowItem;
+
     /* Edit menu — mirrors the ImGui Edit menu (renderMenuBar() in
      * sdl3imgui.cpp). Titles are localized via langGetText so the native
      * menu tracks the in-window menu across all 17 supported languages.
@@ -1438,6 +1452,7 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_netInfoItem)               [s_netInfoItem               setState:(s->netInfoOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_gameInfoItem)              [s_gameInfoItem              setState:(s->gameInfoOpen          ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_mapOverviewItem)           [s_mapOverviewItem           setState:(s->mapOverviewOpen       ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_overviewInWindowItem)      [s_overviewInWindowItem      setState:(s->overviewInWindow      ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_sendMsgItem)               [s_sendMsgItem               setState:(s->sendMsgOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
 
@@ -1480,6 +1495,7 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
      * revealed, so it is selectable only while a game is running. Disabling
      * the item also makes its Cmd+O key equivalent inert. */
     if (s_mapOverviewItem)            [s_mapOverviewItem            setEnabled:(s->mapOverviewEnabled ? YES : NO)];
+    if (s_overviewInWindowItem)       [s_overviewInWindowItem       setEnabled:(s->overviewInWindowEnabled ? YES : NO)];
 
     /* Per-slot view swap. Occupied slots get a WBPlayerSlotView assigned
      * (lazily allocated on first use); empty slots have their view torn

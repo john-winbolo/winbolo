@@ -78,6 +78,17 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 
+/* In-window Map Overview mode: the overview fills the game window and the
+   classic 15x15 view and chrome are not drawn. */
+void sdl3DrawSetOverviewInWindow(bool active);
+bool sdl3DrawIsOverviewInWindow(void);
+struct OverviewView *sdl3DrawOverviewInWindowView(void);
+/* Where the overview was last blitted, in renderer coordinates — which are
+   ImGui's coordinates in every mode we ship. False when the mode is off or
+   nothing has been drawn yet. */
+bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
+                                     float *outW, float *outH);
+
 /* TRUE if the caller is on the thread that created the renderer. The SDL
  * renderer / Metal command queue must only be touched from that thread, so
  * sim-tick front-end callbacks that would otherwise draw defer to the

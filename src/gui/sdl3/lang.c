@@ -289,6 +289,7 @@ static const LangEntry langTable[] = {
     {540,  "New"},
     {541,  "Save Map"},
     {1948, "Map Overview"},
+    {1951, "Full Screen Map"},
     {542,  "Exit"},
     {543,  "Edit"},
     {544,  "Frame Rate"},

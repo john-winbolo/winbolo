@@ -99,6 +99,9 @@ void sdl3ImguiShowNetInfo(bool open);
 void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
 void sdl3ImguiShowMapOverview(bool open);
+/* In-window Map Overview: the map fills the game window and the window goes
+ * fullscreen. Desktop only, like the pop-out above. */
+void sdl3ImguiShowOverviewInWindow(bool active);
 void sdl3ImguiShowPlayersPanel(bool open);
 void sdl3ImguiTogglePlayersPanel(void);
 
@@ -114,6 +117,7 @@ bool sdl3ImguiIsSendMsgOpen(void);
 /* The map overview is a desktop-only pop-out with no in-window twin, so it
  * always reports closed in tablet mode. */
 bool sdl3ImguiIsMapOverviewOpen(void);
+bool sdl3ImguiIsOverviewInWindowOpen(void);
 
 /* True while keyboard focus is on a window the player drives the game
  * from: the main window, or the Map Overview pop-out. The other pop-outs
