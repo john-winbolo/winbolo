@@ -103,6 +103,12 @@ struct OverviewView {
     bool           crosshairOn;
     bool           dragWasActive;
 
+    /* True while the pointer sits over a map square. The hover keeps the
+     * shared build cursor on that square, and the main view draws its mouse
+     * square solid — so this view does too, keeping the faint rendering for
+     * a target the gamepad flow left behind. */
+    bool           mouseOnMap;
+
     /* This view's tank-label cache — the shared drawer in tank_label.c
      * builds its textures on whichever renderer hosts the view (the classic
      * pass's cache is the main window's and cannot be shared). It flushes
@@ -345,12 +351,14 @@ static void overviewViewDrawEntities(OverviewView *v,
     SDL_SetRenderScale(r, perStep, perStep);
 
     /* Where a build will land, from the same mouse_square sprite the main view
-     * draws. Solid while cursor mode is on; a target that is only locked in
+     * draws. Solid while cursor mode is on or the pointer is over the map (the
+     * main view draws its mouse square solid); a target that is only locked in
      * shows faint, which is the split the main view makes too. Ahead of the
      * sprite passes so tanks and men stand on top of it. */
     BYTE bcX = 0, bcY = 0;
-    bool cursorSolid = buildCursorGetTile(&bcX, &bcY);
-    if (cursorSolid || buildCursorGetTargetTile(&bcX, &bcY)) {
+    bool cursorMode  = buildCursorGetTile(&bcX, &bcY);
+    bool cursorSolid = cursorMode || v->mouseOnMap;
+    if (cursorMode || buildCursorGetTargetTile(&bcX, &bcY)) {
         int bbx = (int)bcX * TILE_SIZE_X;
         int bby = (int)bcY * TILE_SIZE_Y;
         SDL_FRect src = mapViewAtlasSrc(MOUSE_SQUARE_X, MOUSE_SQUARE_Y,
@@ -612,6 +620,15 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
         if (overviewSquareUnderMouse(cam, viewW, viewH, &mx, &my)) {
             buildCursorSetTile((BYTE)mx, (BYTE)my);
         }
+    }
+
+    /* Tested every frame, not just on movement: the flag has to drop the
+     * instant the pointer leaves the map so the square fades back to the
+     * locked-target rendering. */
+    {
+        int mx = 0, my = 0;
+        v->mouseOnMap = hovered &&
+                        overviewSquareUnderMouse(cam, viewW, viewH, &mx, &my);
     }
 
     /* Left-click builds at the square under the pointer. The pan item claims
