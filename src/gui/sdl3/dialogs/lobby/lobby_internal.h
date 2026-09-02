@@ -530,9 +530,11 @@ int      *lobbyPlayersForceTab(void);
 /* s_recap.showMap, owned by recap. Core reads it to pick the right-hand panel
  * and flips it from the panel's own button. */
 bool     *lobbyRecapShowMap(void);
+#ifndef __EMSCRIPTEN__
 /* s_chooserTabs.wbn, owned by chooser. wbnmaps drives the WinBolo.net tab's
  * browser through it. */
 MapChooserState *lobbyChooserWbnTab(void);
+#endif /* __EMSCRIPTEN__ */
 /* s_lf.chatInput, owned by core. Chat's timestamp helper appends into it;
  * LOBBY_CHAT_INPUT_SIZE bytes. */
 char     *lobbyFrameChatInput(void);

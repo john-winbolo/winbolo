@@ -125,11 +125,13 @@ typedef struct LobbyChooserTabs {
 
 static LobbyChooserTabs s_chooserTabs = {};
 
+#ifndef __EMSCRIPTEN__
 /* wbnmaps drives the WinBolo.net tab's browser through this, which is why the
  * enclosing LobbyChooserTabs does not have to be published. */
 MapChooserState *lobbyChooserWbnTab(void) {
     return &s_chooserTabs.wbn;
 }
+#endif /* __EMSCRIPTEN__ */
 
 /* enumerate for the Server Maps provider. Routes through the server's
  * directory enumeration so the chooser browses the SERVER's map
