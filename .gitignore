@@ -44,3 +44,4 @@ brain_error.log
 
 # Backup files from manual merges (e.g. data/tiles_odd.svg.orig)
 *.orig
+.DS_Store

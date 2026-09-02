@@ -4,20 +4,33 @@
  */
 
 /*
- * build_cursor.h — gamepad-driven free build cursor.
+ * build_cursor.h — the build target selection, shared by every input
+ * device.
  *
- * Mouse players click any tile to send the LGM there.  On gamepad the
- * X (build_confirm) action sends the LGM to the gunsight tile, which
- * is fine within gunsight range but doesn't give the same "click
- * anywhere" freedom.  This module is the gamepad equivalent: an
- * absolute-map-coord cursor toggled with R3, steered by the right
- * stick (taking it over from map scroll while active), confirmed by
- * X to dispatch the LGM build.
+ * There is ONE build cursor.  It holds an absolute map tile, and it is
+ * the single answer to "which square does a build go to?":
  *
- * Behaviour matches the mouse cursor reticle:
+ *   - The mouse sets it when the player moves the pointer over the
+ *     view; a click dispatches the LGM to it.
+ *   - A tablet tap sets it and dispatches in the same gesture.
+ *   - On gamepad it is a free cursor toggled with R3 and steered by
+ *     the right stick (taking it over from map scroll while active),
+ *     with X dispatching the build.  The gunsight-tile build the pad
+ *     otherwise gets is fine within gunsight range but doesn't give
+ *     the same "click anywhere" freedom.
+ *
+ * The renderer paints its reticle from the same tile
+ * (buildCursorResolveReticle), so what the player sees and what a
+ * build dispatches to are the same square by construction — deriving
+ * either one from the live pointer position instead lets a view scroll
+ * or a pointer resync silently move the target out from under the
+ * player.
+ *
+ * Behaviour:
  *   - Cursor is pinned to its absolute map tile.  When the tank
  *     drives and the view scrolls, the cursor stays put — it can
- *     drift off-screen without being lost.
+ *     drift off-screen without being lost.  Only the player moving
+ *     it (mouse, tap, stick) relocates it.
  *   - X dispatch leaves the cursor in place.  Repeated presses send
  *     more LGMs to the same tile until the player relocates.
  *   - If the player nudges the stick while the cursor is off-screen,
@@ -93,6 +106,31 @@ void buildCursorClampToView(struct ClientSim *cs);
    frame.  The camera scrolls to keep the cursor on-screen with a
    small edge margin.  No-op when not active. */
 void buildCursorTick(struct ClientSim *cs, int dxPx, int dyPx);
+
+/* Resolve the build reticle the renderer should paint this frame.
+   This is the single source of truth shared by every frontend that
+   draws the reticle — desktop, wasm, tablet — so what the player sees
+   and what a build click dispatches to can never disagree.
+
+   The reticle tracks the *latched* build target (an absolute map tile
+   set by the mouse, a tap, or the gamepad stick), not the live pointer
+   position, so it stays pinned to its world square while the tank
+   drives and the view scrolls underneath it.
+
+   pointerScreenX/Y are the frontend's own pointer/touch selection
+   (1-based screen tiles), used only as the fallback before anything
+   has been latched; pointerLive says whether that selection is
+   currently showing.
+
+   Outputs 1-based screen tile coords.  *outFaint is set when the
+   target should be drawn dimmed (a locked target with no live pointer
+   driving it — the gamepad "Build Now goes here" hint).  Returns false
+   when no reticle should be drawn at all, e.g. the latched target has
+   scrolled off-screen. */
+bool buildCursorResolveReticle(struct ClientSim *cs, bool pointerLive,
+                               BYTE pointerScreenX, BYTE pointerScreenY,
+                               BYTE *outScreenX, BYTE *outScreenY,
+                               bool *outFaint);
 
 #ifdef __cplusplus
 }

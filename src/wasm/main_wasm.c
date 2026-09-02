@@ -884,6 +884,14 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   if (drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+    /* Resolve the reticle through the shared build cursor, exactly as the
+       desktop frontend does — the click path (sdl3draw.c, shared with this
+       build) dispatches to the latched target, so the reticle must come from
+       the same place or the two would disagree here only. */
+    bool cursorFaint = false;
+    showCursor = buildCursorResolveReticle(cs, showCursor, cursorX, cursorY,
+                                           &cursorX, &cursorY, &cursorFaint);
+    sdl3DrawSetCursorFaint(cursorFaint);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
@@ -1039,6 +1047,11 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
     }
     /* Drop the previous game's newswire/kills text so it doesn't linger. */
     sdl3DrawResetCachedText();
+    /* Drop the previous game's latched build target for the same reason: it
+       is the square a click builds at, and it outlives the ClientSim that
+       set it, so without this the first click of the next game is dispatched
+       to a tile chosen in the last one. */
+    buildCursorReset();
   }
   s_activeUiCs = cs;
 }
