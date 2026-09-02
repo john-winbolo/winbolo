@@ -191,6 +191,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_status.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
