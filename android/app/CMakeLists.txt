@@ -209,6 +209,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_deck_pause.cpp
