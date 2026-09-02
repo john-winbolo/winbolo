@@ -296,6 +296,12 @@ int run_pf_tail_never_overwrites_a_stamp(void);
 int run_pf_tail_deep_margin_keeps_off_the_shore(void);
 int run_pf_tail_contact_makes_a_front_line(void);
 
+int run_loadbrowser_segment_walks_parts(void);
+int run_loadbrowser_segment_crosses_blocks(void);
+int run_loadbrowser_segment_no_neighbour(void);
+int run_loadbrowser_segment_path_forms(void);
+int run_loadbrowser_segment_labels(void);
+
 int run_net_impair(void);
 
 /* ChannelMux reliability primitive (test_channel_mux.c): the full

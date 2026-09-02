@@ -128,6 +128,9 @@ void mainImGuiRenderShortcuts(bool *visible) {
         {".",       "Step forward one frame (steps live past end)"},
         {"Home",    "Jump to start of recording (playback)"},
         {"End",     "Jump back to live (latest tick)"},
+        {"]",       "Load NEXT segment of the loaded session (next _partXofN, "
+                    "else the next 15-min block) — relaunches BrainTest"},
+        {"[",       "Load PREVIOUS segment of the loaded session"},
         {NULL,      NULL},
     };
     static const Row kView[] = {

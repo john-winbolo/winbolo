@@ -6619,6 +6619,23 @@ int main(int argc, char *argv[]) {
                     g_showLoadBrowser = !g_showLoadBrowser;
                     if (g_showLoadBrowser) scanSessions();
                     break;
+                case SDLK_LEFTBRACKET:
+                case SDLK_RIGHTBRACKET: {
+                    /* Walk a long recording one segment at a time: ] loads the
+                     * next _part<X>of<N> (or, off the end, the next 15-minute
+                     * block's first part), [ the previous one. Only meaningful
+                     * while replaying, and the list is rescanned first so a
+                     * split that finished after launch is picked up. */
+                    if (!optLoadSession[0]) break;
+                    scanSessions();
+                    int segDir = (ev.key.key == SDLK_RIGHTBRACKET) ? +1 : -1;
+                    int seg = loadBrowserFindSegment(g_sessionList, g_sessionCount,
+                                                     optLoadSession, segDir);
+                    if (seg >= 0) relaunchWithSession(g_sessionList[seg].dir);
+                    else fprintf(stderr, "No %s segment for %s\n",
+                                 segDir > 0 ? "next" : "previous", optLoadSession);
+                    break;
+                }
                 case SDLK_L:
                     /* L: HUD layout edit toggle (locking saves) — edit mode also
                      *    labels every HUD overlay with its viz id.

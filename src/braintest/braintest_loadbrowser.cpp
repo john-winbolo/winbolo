@@ -13,15 +13,30 @@
 
 #include "braintest_loadbrowser.h"
 
-/* Path-tail compare: the browser stores "debug_sessions/<name>" while
- * -loadsession may carry any prefix or separator style. Two dirs are the
- * same session iff their basenames match. */
-static bool sameSessionDir(const char *a, const char *b) {
-    if (!a || !b || !a[0] || !b[0]) return false;
-    const char *ba = a, *bb = b;
-    for (const char *c = a; *c; c++) if (*c == '/' || *c == '\\') ba = c + 1;
-    for (const char *c = b; *c; c++) if (*c == '/' || *c == '\\') bb = c + 1;
-    return SDL_strcmp(ba, bb) == 0;
+/* The path-tail compare (loadBrowserSameSession) and the segment lookup
+ * (loadBrowserFindSegment) live in braintest_loadbrowser_segment.c — plain C,
+ * so tests/unit can link them. */
+
+/* One segment-step button. `dir` is +1 (next) / -1 (prev); when there is no
+ * such segment the button is drawn disabled with the reason in its label, so
+ * "am I on the last part?" is answered without reading dir names.
+ * Returns the list index to load, or -1. */
+static int segmentButton(const LoadSessionEntry *list, int count,
+                         const char *loadedDir, int dir) {
+    int idx = loadBrowserFindSegment(list, count, loadedDir, dir);
+    char label[160];
+    if (idx >= 0) {
+        if (dir > 0) SDL_snprintf(label, sizeof label, "Next segment: %s  >>", list[idx].name);
+        else         SDL_snprintf(label, sizeof label, "<<  Prev segment: %s", list[idx].name);
+    } else {
+        if (dir > 0) SDL_strlcpy(label, "Next segment (last segment)  >>", sizeof label);
+        else         SDL_strlcpy(label, "<<  Prev segment (first segment)", sizeof label);
+    }
+
+    if (idx < 0) ImGui::BeginDisabled();
+    bool hit = ImGui::Button(label);
+    if (idx < 0) ImGui::EndDisabled();
+    return (hit && idx >= 0) ? idx : -1;
 }
 
 int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
@@ -35,6 +50,23 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             "Replay a winbolods recording. Loading ABANDONS the current game "
             "and relaunches BrainTest on the recorded map.");
         ImGui::Separator();
+
+        /* Segment strip: walking a long game is [ and ] (or these two
+         * buttons), never a hunt through the table below for the dir whose
+         * name differs by one digit. */
+        if (loadedDir && loadedDir[0] && count > 0) {
+            char base[LOADBROWSER_MAX_NAME];
+            loadBrowserBaseName(loadedDir, base, sizeof base);
+            ImGui::Text("Loaded: %s", base);
+            int sel = segmentButton(list, count, loadedDir, -1);
+            if (sel >= 0) chosen = sel;
+            ImGui::SameLine();
+            sel = segmentButton(list, count, loadedDir, +1);
+            if (sel >= 0) chosen = sel;
+            ImGui::SameLine();
+            ImGui::TextDisabled("([ / ])");
+            ImGui::Separator();
+        }
 
         if (count <= 0) {
             ImGui::TextDisabled("No debug_sessions/ recordings found.");
@@ -56,7 +88,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
                 /* Highlight the CURRENTLY LOADED session's row (and scroll it
                  * into view when the window opens): "which part am I on?" is
                  * one glance, and the next part is the neighbouring row. */
-                const bool isLoaded = sameSessionDir(e->dir, loadedDir);
+                const bool isLoaded = loadBrowserSameSession(e->dir, loadedDir);
                 ImGui::TableNextRow();
                 if (isLoaded) {
                     ImU32 hl = ImGui::GetColorU32(ImVec4(0.18f, 0.42f, 0.22f, 0.65f));
