@@ -2139,8 +2139,94 @@ end
 -- about choosing WHETHER to place at all (seek-trees redirect, offensive/panic
 -- drop, combat-goal interrupt, util-reserve hold): that decision was made at
 -- dispatch.
+--
+-- `tmx, tmy` on a re-score (`only`) are the TANK POSITION THE SCORE IS ASKED
+-- FROM, which the harvest resume pins to the dispatch position -- see
+-- M.score_place_tile.
+local defend_hold_tile   -- forward decl (defined with the defend evaluators
+                         -- below; the follow-through bid uses the same
+                         -- "where do I stand while I wait" answer defend does)
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo, only)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
+
+  -- ── Follow-through: a HARVEST trip is live ──────────────────────────────
+  -- The builder is out chopping the very tile we chose for the pill, so the
+  -- `actionable` gate below (man must be IN the tank) is about to return nil
+  -- and delete this whole row from the pool for the length of the walk. That
+  -- is what let refuel drag the tank 22 tiles away mid-harvest and collapse the
+  -- resume re-score (20260902_030233 bot2 t=36981-37445; see
+  -- PLACE_FOLLOW_THROUGH_COST in constants.lua).
+  --
+  -- So keep bidding, at a flat hold price, for one thing only: STAY IN RANGE.
+  -- Deliberately ABOVE the seek-trees redirect: during a harvest trip the trip
+  -- IS the tree plan (LGM_GATHER_TREE 4 == PILL_PLACE_TREE_COST 4 -- the chop
+  -- funds the placement exactly), so a low tree count must not send the tank
+  -- off to a different forest and abandon the man mid-walk.
+  --
+  -- Interplay with eval_wait_for_lgm: that evaluator returns nil for the whole
+  -- trip (`if state._place_trip then return nil end`) because parking the tank
+  -- was the wrong answer for a PLAIN placement -- the pill leaves with the man
+  -- and the tank is free. It stays suppressed; this row is now the thing that
+  -- holds the tank, and it does it only for harvest trips, only near the trip
+  -- tile, and at a price a real fight or a flee still beats.
+  if not only and state._place_trip
+     and state._place_trip.harvest
+     and info.man_status == C.LGM_MOVING
+     and (info.carried_pills or 0) >= 1
+     and not info.inboat then
+    local ft = state._place_trip
+    local org = ft.origin
+    if org == "strategic" or org == "forced" or org == "guard" then
+      local now = state.tick or 0
+      local hold_r = C.PLACE_FOLLOW_THROUGH_HOLD_DIST or C.REPAIR_DISPATCH_DIST_BASE or 5
+      -- Where to stand. Same question defend answers when it has ARRIVED at a
+      -- pill and must wait somewhere sane, so it uses the same answer: the
+      -- take_cover pick when one is nearby, else the safest of the tile's 8
+      -- neighbours. Then clamped to the hold radius -- a cover tile 9 tiles off
+      -- is not a hold -- preferring "stand exactly where you are" when that is
+      -- already in range, since not moving is the whole point.
+      local hmx, hmy, hsrc = defend_hold_tile(state, info, { mx = ft.mx, my = ft.my })
+      if U.mdist(hmx, hmy, ft.mx, ft.my) > hold_r then
+        if U.mdist(tmx, tmy, ft.mx, ft.my) <= hold_r then
+          hmx, hmy, hsrc = tmx, tmy, "stand_fast"
+        else
+          hmx, hmy, hsrc = ft.mx, ft.my, "trip_tile"
+        end
+      end
+      -- OFF_BUILD's "not actionable" skip line never prints here (we return
+      -- before that gate), so say the same thing in the same grep-able place,
+      -- once per trip rather than once per evaluation.
+      local fkey = string.format("%d:%d:%d", ft.mx, ft.my, ft.tick or 0)
+      if state._ft_log_key ~= fkey then
+        state._ft_log_key = fkey
+      end
+      local cost = C.PLACE_FOLLOW_THROUGH_COST or 25
+      return {
+        cost = cost,
+        goal = { kind = "place_pill_strategic", mx = hmx, my = hmy,
+                 wx = U.m2w(hmx), wy = U.m2w(hmy),
+                 -- follow_through is read by: goal_selection (pin the cost past
+                 -- the phase weight, exempt from the influence multiplier),
+                 -- builder.set_mode (skip the dispatch branch -- the man is
+                 -- already out) and viz's harvest_trip overlay.
+                 follow_through = true,
+                 trip_mx = ft.mx, trip_my = ft.my,
+                 _spot_score = ft.score_at_dispatch,
+                 _spot_sc7   = ft.sc7_at_dispatch },
+        desc = BRAIN_POOL_VIZ and string.format(
+               "FOLLOW_THROUGH harvest@(%d,%d) score_at_dispatch=%s lgm=out cost{%.0f} hold=(%d,%d)[%s] d=%d/%d age=%dt origin=%s",
+               ft.mx, ft.my,
+               ft.score_at_dispatch and string.format("%.0f", ft.score_at_dispatch) or "none",
+               cost, hmx, hmy, hsrc,
+               U.mdist(tmx, tmy, ft.mx, ft.my), hold_r,
+               now - (ft.tick or now), org) or "",
+        cands = {
+          { id = ft.my * 256 + ft.mx, mx = hmx, my = hmy, cost = cost,
+            own = "self", hp = 0, stale = 0 },
+        },
+      }
+    end
+  end
 
   -- Seek-trees redirect (BEFORE the LGM-in-tank actionable gate below, so it
   -- persists while the LGM is out harvesting): carrying pills we can't afford to
@@ -2985,9 +3071,18 @@ end
 -- the value it had at dispatch. Returns the score, or nil when the tile no
 -- longer qualifies (category drift under STRICT_NEED, surplus role, blocked,
 -- occupied, unplaceable). See init.lua's trip lifecycle.
-function M.score_place_tile(state, world, info, mx, my, sc7_pinned)
-  local tmx = bit.rshift(info.tankx, 8)
-  local tmy = bit.rshift(info.tanky, 8)
+--
+-- tank_mx/tank_my (optional): ask the question FROM a tank position other than
+-- the live one. sc7 was never the only travel-shaped term -- the strategic
+-- centre chain (nearest friendly base, nearest hostile pill, the offensive
+-- spike base) is all measured from the tank too, and at 20260902_030233 bot2
+-- t=37445 driving 22 tiles off to refuel mid-harvest is what turned a 311 tile
+-- into a 182 one and threw the harvest away. The resume pins these to the
+-- position the tank was standing in when it dispatched the builder, so the
+-- comparison is "is the TILE still good", not "did I wander off".
+function M.score_place_tile(state, world, info, mx, my, sc7_pinned, tank_mx, tank_my)
+  local tmx = tank_mx or bit.rshift(info.tankx, 8)
+  local tmy = tank_my or bit.rshift(info.tanky, 8)
   return eval_place_pill_strategic(state, world, info, tmx, tmy,
                                    info.inboat, info.shells,
                                    { mx = mx, my = my, sc7 = sc7_pinned or 0 })
@@ -3167,6 +3262,15 @@ function M.draw_build_viz(viz, state, info)
     if trip then
       local r, g, b = 80, 220, 120
       if trip.harvest then r, g, b = 60, 180, 60 end
+      -- Follow-through hold tile: where pool 8's FOLLOW_THROUGH row is parking
+      -- the tank for the length of the harvest, with the hold radius it was
+      -- clamped to. Only drawn while that row is actually the live bid (it is
+      -- stamped each time the row is built), so a stale marker can't imply a
+      -- hold that isn't happening.
+      local h = state._ft_hold
+      if h and (now - (h.tick or 0)) <= 2 then
+        local hr = C.PLACE_FOLLOW_THROUGH_HOLD_DIST or C.REPAIR_DISPATCH_DIST_BASE or 5
+      end
     end
     local rs = state._place_resume
     if rs then
@@ -3635,7 +3739,9 @@ end
 -- The take_cover pick when it is inside the arrival radius (so the two agree
 -- about where "sane" is), else the safest of the pill's 8 neighbours by
 -- threat.at. Returns mx, my, src, threat_of_pick.
-local function defend_hold_tile(state, info, p)
+-- (forward-declared above eval_place_pill_strategic, which uses it for the
+-- follow-through hold tile -- keep the `local` on the declaration, not here.)
+function defend_hold_tile(state, info, p)
   local cs = state._cover_spot
   if cs and U.edist(cs.mx, cs.my, p.mx, p.my) <= (C.DEFEND_ARRIVE_RADIUS or 10) then
     return cs.mx, cs.my, "take_cover_pick", nil
@@ -5090,6 +5196,16 @@ local function eval_wait_for_lgm(state, info)
   -- 50 -- cheap enough to re-park the tank next to the spot it just stood off
   -- from. Keyed off the flag, not the goal, because the goal changes while the
   -- builder walks.
+  --
+  -- This stays suppressed for HARVEST trips too, even though a harvest trip is
+  -- exactly the case where the tank SHOULD hold: pool 8's follow-through row
+  -- (eval_place_pill_strategic, PLACE_FOLLOW_THROUGH_COST) is what holds it
+  -- now, and it holds it in the right PLACE (within the builder's dispatch
+  -- range of the trip tile) rather than wherever the tank happened to be, at a
+  -- price tuned against the live band. Two rows both saying "park" would just
+  -- race each other -- and the wait_for_lgm carrying price (20) is below a real
+  -- attack_tank engage, which is precisely the danger the follow-through row is
+  -- priced to lose to.
   if state._place_trip then return nil end
   local g = state.goal
   if g then
@@ -13941,6 +14057,14 @@ local function goal_selection(state, world, info, quiet)
         if entry._engage_break_lock then
           cost = math.min(cost, 9)
         end
+        -- Follow-through hold: pinned to the flat constant AFTER the phase
+        -- weight, same trick. place_strategic is x3.0 in opening and x0.7 mid,
+        -- which would turn 25 into 75 (losing to attack_base at 60) or 17.5
+        -- (beating a live attack_tank engage) -- and neither is what the number
+        -- means. A hold has no travel for a LOCAL phase preference to scale.
+        if entry.goal and entry.goal.follow_through then
+          cost = C.PLACE_FOLLOW_THROUGH_COST or 25
+        end
         pool[#pool + 1] = {
           cost = cost, _base_cost = cost,  -- _base_cost preserved for breakdown display
           goal = entry.goal, desc = entry.desc,
@@ -13990,9 +14114,16 @@ local function goal_selection(state, world, info, quiet)
       -- influence — but only under the repair fix. Off → 1.90-beta1: subject to
       -- the influence ×0.5/×2 like any other goal.
       if C.REPAIR_FIX_ENABLED then INF_EXEMPT.repair_pill = true end
+      -- place_pill_strategic is NOT kind-exempt (a normal placement drives to
+      -- the spot and should pay for it being in their half), so the
+      -- follow-through row is exempted by its FLAG instead: it is a hold, the
+      -- influence under the trip tile was already priced when the pool picked
+      -- that tile, and doubling a fixed 25 would silently move it out of the
+      -- band PLACE_FOLLOW_THROUGH_COST is documented against.
       for _, c in ipairs(pool) do
         if c.goal and c.goal.mx and c.goal.my
-           and not INF_EXEMPT[c.goal.kind] and not c._reject_sentinel then
+           and not INF_EXEMPT[c.goal.kind] and not c.goal.follow_through
+           and not c._reject_sentinel then
           local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
           if inf < -50 then
             c.cost = c.cost * 2.0
@@ -14464,7 +14595,12 @@ local function goal_selection(state, world, info, quiet)
           and c.goal.kind == state.goal.kind
           and c.goal.mx == state.goal.mx and c.goal.my == state.goal.my
 
-        if sim_kinds[c.goal.kind] and not skip then
+        -- The follow-through hold is never simulated: there is no journey to
+        -- price (the hold tile is inside PLACE_FOLLOW_THROUGH_HOLD_DIST, often
+        -- the tile we are already on) and no LGM dwell to add (the man is
+        -- already out walking). A wsim add would also un-pin the flat cost the
+        -- constant is documented against.
+        if sim_kinds[c.goal.kind] and not skip and not c.goal.follow_through then
           local attack_id = nil
           local spot_x, spot_y = nil, nil
           if c.goal.kind == "attack_pill" and c._pill_id then

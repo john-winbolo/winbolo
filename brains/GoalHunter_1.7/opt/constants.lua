@@ -2503,6 +2503,46 @@ M.HARVEST_RESUME_MARGIN_FRAC = 0.15 -- than max(ABS, dispatch_score x FRAC)
 M.HARVEST_RESUME_MAX_TICKS   = 25   -- resume request not dispatched within this
                                     -- many ticks (decide() early-returned every
                                     -- tick, e.g. water_build): drop it (stalled)
+
+-- ── Follow-through: finish the build you harvested for (2026-09-02) ───────
+-- While a HARVEST trip is live the builder is out of the tank, so
+-- eval_place_pill_strategic's `actionable` gate (carried >= 1 AND
+-- man == LGM_INTANK) returned nil and the placement row simply vanished from
+-- the pool for the whole walk. The tank then took whatever won next -- at
+-- 20260902_030233 bot2 t=37012 that was refuel_at_base 22 tiles away -- and
+-- when the man came back with the wood the re-score had collapsed (311 -> 182)
+-- because half of the placement score is measured from where the TANK stands
+-- (strategic centre, spike base, nearest hostile pill). The harvest was thrown
+-- away (HARVEST_DROP worse_than_margin) and placement restarted elsewhere.
+--
+-- So while the trip is live the placement keeps bidding, at a FLAT price: this
+-- is not "drive somewhere and build", it is "stay where you already are until
+-- the man gets back", which costs nothing but the wait. Where 25 sits, cheapest
+-- first, in the band it competes against:
+--   10    take_cover haul / panic floor (TAKE_COVER_HAUL_FLOOR)  -- BEATS us
+--   20-30 a real attack_tank engage (TANK_COMBAT_BASE_COST 30)   -- BEATS us
+--         (and goal_selection's "a normal place_pill_strategic must never
+--          out-rank an attack_tank" clamp still applies to this row, so a live
+--          tank fight takes the tank whatever the arithmetic says)
+--   25    >>> PLACE_FOLLOW_THROUGH_COST <<<
+--   30    defend_pill WATCH (DEFEND_WATCH_COST)                  -- loses
+--   34    seek_trees at carry=1 (SEEK_TREES_BASE_COST 40 - 6)    -- loses
+--   40    defend_pill REPAIR (DEFEND_REPAIR_COST)                -- loses
+--   45+   refuel (REFUEL_BASE_COST floor; ~60-130 at 35 armour)  -- loses
+--   60    attack_base / STRATEGIC_PLACE_BASE_COST                -- loses
+--   120   calm take_cover (TAKE_COVER_CALM_MIN)                  -- loses
+-- The row is pinned to this number AFTER the phase weight (place_strategic is
+-- x3.0 in opening, x0.7 mid) for the same reason the number is flat at all --
+-- a hold has no travel and no local phase preference to scale -- and it is
+-- exempt from the influence x2/x0.5 like defend_pill: the trip tile's influence
+-- is a property of the spot the pool already picked, not of standing near it.
+M.PLACE_FOLLOW_THROUGH_COST = 25
+-- How far from the trip tile the tank may hold while the man is out. Reuses the
+-- builder's CALM dispatch range (REPAIR_DISPATCH_DIST_BASE, 5) rather than a
+-- number of its own: being inside it is exactly the condition for the resume
+-- dispatch to be a short walk for the returning builder. The tank does NOT
+-- have to stand ON the tile -- the man is walking to it.
+M.PLACE_FOLLOW_THROUGH_HOLD_DIST = M.REPAIR_DISPATCH_DIST_BASE
 -- =========================================================================
 -- take_cover (2026-09-01)
 -- =========================================================================

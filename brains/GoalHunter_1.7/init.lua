@@ -2380,39 +2380,77 @@ function Brain.think(info)
           if not ok then
             reason = (why == "unreachable") and "unreachable" or ("invalid_" .. why)
           elseif trip.score_at_dispatch then
-            -- Fresh re-score, sc7 pinned (the tank moved on by design).
+            -- Fresh re-score, TRAVEL-FREE: sc7 pinned (as before) AND the tank
+            -- position pinned to where we stood when the builder was sent.
+            -- sc7 was never the only tank-relative term -- the strategic-centre
+            -- chain (nearest friendly base / nearest hostile pill / offensive
+            -- spike base) is measured from the tank as well -- so a tank that
+            -- drove off mid-harvest failed its own margin on distance it
+            -- created: 20260902_030233 bot2 t=37445, 311.3 -> 181.7 after
+            -- refuelling 22 tiles away, and a paid-for harvest thrown out. The
+            -- question the margin has to answer is "is the TILE still worth the
+            -- pill", so ask it from the dispatch position. (The follow-through
+            -- bid in goals.lua is what stops the tank leaving in the first
+            -- place; this is the belt to that pair of braces -- an interrupt
+            -- the follow-through row correctly lost to still must not cost us
+            -- the wood.)
             -- nil = the tile no longer qualifies at all (category drift under
             -- STRICT_NEED, surplus role, blocked).
             resume_score = goals.score_place_tile(state, world, info,
+                                                  trip.mx, trip.my, trip.sc7_at_dispatch,
+                                                  trip.tank_mx, trip.tank_my)
+            -- The live-tank number, for the log only: it is what this code used
+            -- to compare, so both are printed and the change is auditable.
+            local ltmx, ltmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+            local full_score
+            if trip.tank_mx and (trip.tank_mx ~= ltmx or trip.tank_my ~= ltmy) then
+              full_score = goals.score_place_tile(state, world, info,
                                                   trip.mx, trip.my, trip.sc7_at_dispatch)
+            else
+              full_score = resume_score   -- tank never moved: same question
+            end
+            local function _sfmt(v) return v and string.format("%.1f", v) or "nil" end
+            local _detail = string.format(
+              "travel-free from dispatch tank @(%d,%d); full %s from live tank @(%d,%d)",
+              trip.tank_mx or ltmx, trip.tank_my or ltmy, _sfmt(full_score), ltmx, ltmy)
             local s0     = trip.score_at_dispatch
             local margin = math.max(C.HARVEST_RESUME_MARGIN_ABS or 30,
                                     s0 * (C.HARVEST_RESUME_MARGIN_FRAC or 0.15))
             if not resume_score then
               -- STRICT_NEED category drift, surplus role, blocked tile, or
               -- reposition-origin exclusion: the re-score refused the cell.
+              -- No line here: the generic HARVEST_DROP below covers every
+              -- reason except worse_than_margin, and printing one as well gave
+              -- two HARVEST_DROP lines for one drop (20260902_092340 bot2
+              -- t=14102). The detail rides along on that line instead.
               reason = "disqualified"
             elseif (s0 - resume_score) > margin then
               reason = "worse_than_margin"
-              print2(string.format("HARVEST_DROP t=%d tile=(%d,%d) reason=%s score %.1f -> %.1f (%+.1f, margin %.1f)",
-                now, trip.mx, trip.my, reason, s0, resume_score, resume_score - s0, margin))
+              print2(string.format("HARVEST_DROP t=%d tile=(%d,%d) reason=%s score %.1f -> %.1f (%+.1f, margin %.1f) [%s]",
+                now, trip.mx, trip.my, reason, s0, resume_score, resume_score - s0, margin, _detail))
             end
+            trip._resume_detail = _detail
           end
           if not reason then
             -- Valid (and within margin, when there was a score to hold it to):
             -- re-dispatch to place. builder.set_mode consumes this, no pool.
             state._place_resume = { mx = trip.mx, my = trip.my, tick = now }
-            print2(string.format("HARVEST_RESUME t=%d tile=(%d,%d) score %s -> %s -> dispatch",
+            print2(string.format("HARVEST_RESUME t=%d tile=(%d,%d) score %s -> %s%s -> dispatch",
               now, trip.mx, trip.my,
               trip.score_at_dispatch and string.format("%.1f", trip.score_at_dispatch) or "none",
-              resume_score and string.format("%.1f", resume_score) or "n/a"))
+              resume_score and string.format("%.1f", resume_score) or "n/a",
+              trip._resume_detail and (" [" .. trip._resume_detail .. "]") or ""))
             reason = "resume"
           end
         end
       end
       if reason then
         if trip.harvest and reason ~= "resume" and reason ~= "worse_than_margin" then
-          print2(string.format("HARVEST_DROP t=%d tile=(%d,%d) reason=%s", now, trip.mx, trip.my, reason))
+          -- _resume_detail exists only when the re-score actually ran (the
+          -- disqualified case); the other reasons never got that far.
+          print2(string.format("HARVEST_DROP t=%d tile=(%d,%d) reason=%s%s",
+            now, trip.mx, trip.my, reason,
+            trip._resume_detail and (" [" .. trip._resume_detail .. "]") or ""))
         elseif not trip.harvest then
           print2(string.format("PLACE_TRIP_END t=%d tile=(%d,%d) reason=%s after %dt",
             now, trip.mx, trip.my, reason, now - trip.tick))
@@ -4366,6 +4404,17 @@ function Brain.think(info)
       -- the LGM is killed, so we don't sit on a pill we can't fix).
       if not p or p.owner ~= "friendly" or p.health >= C.PILLS_MAX_HEALTH
          or info.man_status == C.LGM_DEAD then goal_valid = false end
+    elseif gk == "place_pill_strategic" and state.goal.follow_through then
+      -- FOLLOW_THROUGH hold: goal.mx/my is a tile for the TANK to wait on, not
+      -- a drop spot, so the "a friendly pill is already there" test below would
+      -- be asking about the wrong tile (and would thrash the goal if the hold
+      -- picked a neighbour with a pill on it). It is valid for exactly as long
+      -- as the harvest trip it follows -- the lifecycle block above already
+      -- cleared _place_trip on the return, so this drops the goal on the same
+      -- tick the resume dispatch takes over.
+      if not (state._place_trip and state._place_trip.harvest) then
+        goal_valid = false
+      end
     elseif gk == "place_pill_strategic" then
       -- Invalid if we no longer carry a pill, or pill was placed at target
       if (info.carried_pills or 0) == 0 and info.man_status == C.LGM_INTANK then
@@ -7057,6 +7106,11 @@ function Brain.think(info)
         -- check alone -- there is no strategic score to hold it to.
         score_at_dispatch = on_goal and g._spot_score or nil,
         sc7_at_dispatch   = on_goal and g._spot_sc7 or nil,
+        -- Where the tank stood when the builder left. The harvest re-score is
+        -- asked FROM here (goals.score_place_tile's tank_mx/tank_my), so the
+        -- margin measures the tile changing, not the tank moving.
+        tank_mx = bit.rshift(info.tankx, 8),
+        tank_my = bit.rshift(info.tanky, 8),
         origin = (state.builder.place_resume and "resume")
               or ((g and g._place_forced) and "forced")
               or (on_goal and "strategic" or "guard"),
