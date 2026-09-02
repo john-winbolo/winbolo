@@ -19,18 +19,7 @@
  *                while waiting for the game to start.
  *********************************************************/
 
-#include <cstdio>
 #include <cstring>
-#include <cstdlib>
-#include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
-#include <cmath>    /* atan2 / floor — lobby start compass octant math */
-#include <algorithm>  /* std::sort — used for chooser list order */
-#include <atomic>
-#include <mutex>
-#include <thread>
-#include <string>
-#include <vector>
-#include <map>
 
 #include <SDL3/SDL.h>
 
@@ -40,13 +29,10 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
-#include "imgui_star_rating.h"
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "imgui_server_address.h"
 #include "dialog_footer.h"
-#include "nanosvg.h"
-#include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
 #include "../glyphs.h"   /* glyphForActionAuto — controller footer legend */
 
@@ -54,55 +40,24 @@
 extern "C" {
 #include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
-#include "../../tiles.h"   /* map sprites for the recap scoreboard headers */
 #include "../../gamefront.h"
 #include "global.h"
-#include "bolo_rand.h"
 #include "client_sim.h"
 #include "client_net.h"
 #include "../../sound.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
-#include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
-#include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
-#include "../../../server/server_dedicated_log.h"  /* last completed round's .wbv */
-#include "../../../server/threads.h"  /* threadsWaitForMutex / Release — SP-host server calls */
-#include "platform_net.h"
-#include "../../../common/mp_diag_log.h"
-#include "../flags.h"
 #include "../sdl3imgui.h"
-#include "../input_gamepad.h"  /* inputGamepadGetScrollDirection — right stick */
 #include "../../ui_mode.h"
-#include "../minimap_render.h"
-#include "../../../bolo/public/client_mappreview.h"
 #include "../../../bolo/public/wire_limits.h"
-#include "../../../bolo/public/round_stats_derive.h"  /* roundStatsPickAwardSubset */
-#include <errno.h>
 
-/* stb_image entry points used by lobbyWbnGeneratePreview (defined in
- * src/third_party/stb/stb_image_impl.c). Declared at file scope so
- * they're visible to provider code earlier in the file. */
-extern "C" {
-    unsigned char *stbi_load_from_memory(const unsigned char *, int,
-                                         int *, int *, int *, int);
-    void stbi_image_free(void *);
-}
 #include "../map_preview_popup.h"
-#include "../macos_pinch.h"  /* macOSPinchZoomConsume — trackpad pinch over the reel */
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
-#include "imgui_mapchooser.h"
-#include "imgui_winbolonet.h"    /* sign-in section, for the recap's comment form */
-#include "../../../winbolonet/http.h"
-#include "../../../winbolonet/wbn_comments.h"  /* recap ratings + comments */
-#include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
-#include "cJSON.h"
 
 }
-#include "../wb_theme.h"
-#include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
 
 #define MAP_PREVIEW_SIZE 256
 
