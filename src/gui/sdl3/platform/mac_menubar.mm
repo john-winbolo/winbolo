@@ -1375,11 +1375,16 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
     [windowMenu addItem:[NSMenuItem separatorItem]];
 
+    /* Drives the app's own full screen flag, the same handler as the File
+       menu's item, rather than AppKit's toggleFullScreen: — two items in one
+       menu bar taking the window full screen by different routes would leave
+       the flag disagreeing with the window. */
     NSMenuItem *fullScreenItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_ENTER_FULL_SCREEN)
-        action:@selector(toggleFullScreen:)
+        action:@selector(onToggleOverviewInWindow:)
         keyEquivalent:@"f"];
     [fullScreenItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
+    [fullScreenItem setTarget:g_bridge];
     [windowMenu addItem:fullScreenItem];
 
     [windowMenu addItem:[NSMenuItem separatorItem]];

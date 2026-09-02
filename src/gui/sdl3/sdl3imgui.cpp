@@ -269,6 +269,10 @@ static bool s_showPlayersPanel = false;
 static BYTE s_pendingZoom = 255;
 static bool s_pendingZoomFromResize = false;  /* True if zoom change came from resize snap */
 
+/* Deferred full screen change, for the same reason: -1 = no pending change,
+   0 = leave full screen, 1 = enter it. */
+static signed char s_pendingFullScreen = -1;
+
 /* Suppress auto-switch to Custom on the next resize event.  Set before
    programmatic SDL_SetWindowSize so the resulting event doesn't trigger
    an unwanted mode change. */
@@ -2886,6 +2890,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     ctx.cs = cs;
     ctx.inGame = true;
     ctx.pendingZoom = 255;
+    ctx.pendingFullScreen = -1;
 
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
@@ -3097,6 +3102,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     if (ctx.pendingZoom != 255)  s_pendingZoom = ctx.pendingZoom;
     if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
     if (ctx.wantKeySetup)        sdl3ImguiShowKeySetup();
+    if (ctx.pendingFullScreen >= 0) s_pendingFullScreen = ctx.pendingFullScreen;
 
     ImGui::End();
 }
@@ -5395,6 +5401,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
         /* Clear suppress flag now that zoom change is complete */
         s_suppressAutoCustom = false;
+    }
+
+    /* Apply the deferred full screen change, after the frame for the same
+       reason as the zoom above — the settings tab that asks for it renders
+       mid-frame.  In a game this goes through the in-window map view, the one
+       path the File menu and the macOS menu bar use as well. */
+    if (s_pendingFullScreen >= 0) {
+        bool want = (s_pendingFullScreen != 0);
+        s_pendingFullScreen = -1;
+        sdl3ImguiShowOverviewInWindow(want);
     }
 
     /* Initialise WBN popup state on first settings open */

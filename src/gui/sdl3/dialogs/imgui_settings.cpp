@@ -111,6 +111,7 @@ extern "C" {
   void windowLabelOwnTank_toggle(struct ClientSim *cs);
   void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
   void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
+  void windowFullScreenChoose(bool on);
   bool clientSimSetPlayerName(struct ClientSim *cs, char *value);
 
 #if defined(__IPHONEOS__)
@@ -552,6 +553,23 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
 #endif
 
 #if !BOLO_MOBILE
+#if !defined(__EMSCRIPTEN__)
+    /* ---- Full screen ---- */
+    if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
+        /* Read the window itself rather than the preference, so the tick still
+           tells the truth after an OS-driven full screen change. */
+        bool fs = (SDL_GetWindowFlags(sdl3DrawGetWindow()) & SDL_WINDOW_FULLSCREEN) != 0;
+        if (ImGui::Checkbox(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), &fs)) {
+            /* Checkbox has already flipped fs to what the player asked for.
+               Moving the window here would do it inside a live frame, so only
+               record the request; each shell applies it once the frame ends. */
+            ctx->pendingFullScreen = fs ? 1 : 0;
+        }
+        imguiHelpTooltip("Fill the whole screen instead of running in a "
+                         "window.  Remembered for next time.");
+    }
+#endif
+
     /* ---- Letterbox bars ---- */
     {
         bool lb = (bool)letterboxBarsGray;
@@ -941,6 +959,9 @@ extern "C" void imguiSettingsShow(void) {
     bool running = true;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
+    /* Full screen pick from the Display tab, applied after Present alongside
+       key setup: -1 = nothing pending, 0 = leave full screen, 1 = enter it. */
+    signed char pendingFullScreen = -1;
 #endif
 
     /* When the language picker reports a CJK-region change it sets
@@ -1037,6 +1058,7 @@ extern "C" void imguiSettingsShow(void) {
         ctx.cs = nullptr;
         ctx.inGame = false;
         ctx.pendingZoom = 255;
+        ctx.pendingFullScreen = -1;
 
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
@@ -1191,6 +1213,9 @@ extern "C" void imguiSettingsShow(void) {
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
+        /* The Display tab's full screen tick rides the same teardown: the
+           window changes size, so the context has to be rebuilt for it. */
+        if (ctx.pendingFullScreen >= 0) pendingFullScreen = ctx.pendingFullScreen;
 
         ImGui::EndChild(); /* ##settingsScroll */
 
@@ -1252,8 +1277,16 @@ extern "C" void imguiSettingsShow(void) {
         }
 
 #if !BOLO_MOBILE
-        if (showKeySetup) {
+        /* Two things need the dialog's ImGui context torn down and rebuilt
+           between Present and the next NewFrame: running key setup, which owns
+           the context while it is up, and a full screen change, which lands the
+           dialog on a differently sized surface.  Both rebuild from the live
+           window size below, so they share one block. */
+        if (showKeySetup || pendingFullScreen >= 0) {
+            bool        doKeySetup   = showKeySetup;
+            signed char doFullScreen = pendingFullScreen;
             showKeySetup = false;
+            pendingFullScreen = -1;
 
             /* Tear down current ImGui context */
             ImGui_ImplSDLRenderer3_Shutdown();
@@ -1261,7 +1294,11 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::DestroyContext();
 
             /* Run the key setup dialog (blocking) */
-            imguiKeySetupShow();
+            if (doKeySetup) imguiKeySetupShow();
+
+            /* Move the window before the size is read back; the SyncWindow
+               inside makes the new size readable straight away. */
+            if (doFullScreen >= 0) windowFullScreenChoose(doFullScreen != 0);
 
             /* Re-create ImGui context for the settings loop */
             SDL_GetWindowSize(window, &screenW, &screenH);
@@ -1292,6 +1329,13 @@ extern "C" void imguiSettingsShow(void) {
             /* The shared name buffer is file-scope; re-seed it for the
                rebuilt context alongside the language/atlas resync. */
             imguiSettingsSeedPlayerName();
+
+            /* Which tab is open lived in the context we just destroyed, so the
+               tab bar would come back on the first one.  s_pgActiveTab is file
+               scope and survived; force the bar back to it so the player lands
+               where they left off — on Display for a full screen tick, on
+               Controls coming back out of key setup. */
+            s_pgForceTab = s_pgActiveTab;
 
             dialogSetWindowSize(window, 1024, 768);
             dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
