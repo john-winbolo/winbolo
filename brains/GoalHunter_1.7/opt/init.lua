@@ -2910,6 +2910,21 @@ function Brain.think(info)
     -- shooting defenders doesn't trip stuck-flee mid-take.
     state.stuck_for = 0
   end
+  -- Track how long the CURRENT destination has been pursued. The stuck
+  -- ESCALATION below keys on the physical counter (goal-agnostic, survives
+  -- goal churn — a wedged tank whose goals flip every 30 ticks must still
+  -- escape), but the dest BLACKLIST stamp must not: par1b bot3 t=8533
+  -- accumulated 220 orbit ticks against base #14, re-targeted #13, and 3
+  -- ticks later stamped #13 "unreachable" for 600 ticks on evidence gathered
+  -- chasing a different base — sending a 0-armour tank on an 1100-tick walk.
+  do
+    local dk = state.goal.kind ~= "none" and state.goal.mx
+               and U.mkey(state.goal.mx, state.goal.my) or nil
+    if dk ~= state._stuck_dest_key then
+      state._stuck_dest_key   = dk
+      state._stuck_dest_since = state.tick or 0
+    end
+  end
   if cur_mx == state.last_mx and cur_my == state.last_my
      and state.goal.kind ~= "none"
      and not attack_at_standoff
@@ -2984,8 +2999,19 @@ function Brain.think(info)
           state.command_goal = nil
         end
       else
-        local bk = U.mkey(state.goal.mx, state.goal.my)
-        U.set_blocked(state, bk, now + 600, "refuel_base_unreachable")
+        -- Blacklist the dest ONLY when this dest itself has been pursued
+        -- continuously long enough to blame it. The escalation clock is
+        -- physical and survives goal churn (correct — a wedged tank must
+        -- escape whatever its goals do), but "this dest is unreachable" is
+        -- a conclusion about THIS dest, and 3 ticks of pursuit cannot
+        -- support it (see the tracker above). The escape below still runs
+        -- either way; only the 600-tick stamp is withheld.
+        local _dest_ticks = now - (state._stuck_dest_since or 0)
+        if _dest_ticks >= (C.STUCK_DEST_BLAME_TICKS or 100) then
+          local bk = U.mkey(state.goal.mx, state.goal.my)
+          U.set_blocked(state, bk, now + 600, "refuel_base_unreachable")
+        elseif BRAIN_DEBUG_MODE then
+        end
         log.event("stuck", string.format("%s@%d,%d", state.goal.kind, state.goal.mx, state.goal.my))
         if state.command_goal then
           state.command_reply = string.format(
