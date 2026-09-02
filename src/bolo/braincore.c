@@ -1361,7 +1361,12 @@ static int l_cpf_rebuild_influence_tail(lua_State *L) {
                                       (int)luaL_checkinteger(L, 2),
                                       (int)luaL_checkinteger(L, 3),
                                       (int)luaL_checkinteger(L, 4),
-                                      (int)luaL_checkinteger(L, 5));
+                                      (int)luaL_checkinteger(L, 5),
+                                      /* deep_margin: optional, so brains that
+                                       * predate it (GoalHunter 1.6 and older,
+                                       * which must stay bit-for-bit) keep the
+                                       * old no-margin behaviour. */
+                                      (int)luaL_optinteger(L, 6, 0));
   return 0;
 }
 

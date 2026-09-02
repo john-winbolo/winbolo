@@ -852,14 +852,70 @@ static int tail_blocked(int type) {
       || type == 12 /* pillbox */;
 }
 
+/* Fill deep_margin_mask with 1 where the tile lies within `margin` king-moves
+ * (Chebyshev distance) of a deep-sea tile or of the map edge — off-map counts
+ * as deep sea, so the outermost `margin` rows and columns are always masked.
+ *
+ * Exact 8-connected distance transform in two raster sweeps (O(tiles), no
+ * queue): the forward sweep reads the NW/N/NE/W neighbours, the backward sweep
+ * the SE/S/SW/E ones, and an out-of-bounds neighbour reads as distance 0. The
+ * array holds distances only between the sweeps; it is thresholded to 0/1 at
+ * the end. Every tile is within 128 of an edge, so 255 always means "not
+ * computed yet", never a real distance. */
+static void tail_build_deep_margin(BrainPathfinder *pf, int margin) {
+  uint8_t *d = pf->deep_margin_mask;
+  int x, y, idx;
+
+  for (idx = 0; idx < 65536; idx++)
+    d[idx] = ((pf->map[idx] & 0x0F) == TT_DEEPSEA) ? 0 : 255;
+
+  for (y = 0; y < MAP_SIZE; y++) {
+    for (x = 0; x < MAP_SIZE; x++) {
+      int best;
+      idx = y * MAP_SIZE + x;
+      if (d[idx] == 0) continue;
+      if (y == 0 || x == 0 || x == MAP_SIZE - 1) {
+        best = 0;                                /* an off-map neighbour */
+      } else {
+        best = d[idx - MAP_SIZE - 1];
+        if (d[idx - MAP_SIZE]     < best) best = d[idx - MAP_SIZE];
+        if (d[idx - MAP_SIZE + 1] < best) best = d[idx - MAP_SIZE + 1];
+        if (d[idx - 1]            < best) best = d[idx - 1];
+      }
+      if (best + 1 < d[idx]) d[idx] = (uint8_t)(best + 1);
+    }
+  }
+  for (y = MAP_SIZE - 1; y >= 0; y--) {
+    for (x = MAP_SIZE - 1; x >= 0; x--) {
+      int best;
+      idx = y * MAP_SIZE + x;
+      if (d[idx] == 0) continue;
+      if (y == MAP_SIZE - 1 || x == 0 || x == MAP_SIZE - 1) {
+        best = 0;                                /* an off-map neighbour */
+      } else {
+        best = d[idx + MAP_SIZE + 1];
+        if (d[idx + MAP_SIZE]     < best) best = d[idx + MAP_SIZE];
+        if (d[idx + MAP_SIZE - 1] < best) best = d[idx + MAP_SIZE - 1];
+        if (d[idx + 1]            < best) best = d[idx + 1];
+      }
+      if (best + 1 < d[idx]) d[idx] = (uint8_t)(best + 1);
+    }
+  }
+  for (idx = 0; idx < 65536; idx++) d[idx] = (d[idx] <= margin) ? 1 : 0;
+}
+
 /* One side's step-distance BFS from its cores. Bucket queue (Dial's) over a
  * pooled entry list: a node re-enters a lower bucket when a cheaper route
  * reaches it, and stale entries are skipped by comparing to tail_dist. Seeds
  * and buckets are visited in tile-index order, so the result is
  * deterministic. `sign` +1 grows the friendly tail into expand_grid, -1
- * subtracts the hostile tail (exact tie -> -1). */
+ * subtracts the hostile tail (exact tie -> -1).
+ * `deep_mask` (may be NULL) marks tiles too close to deep sea or the map edge:
+ * they are skipped like blocked terrain, so they neither take a value nor pass
+ * one on. Cores still seed, so a core near the shore keeps growing inland. */
 static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
                       int start, int neutral_step, int water_step,
+                      const uint8_t *deep_mask,
                       int32_t *pool_idx, int32_t *pool_next) {
   int head[TAIL_MAXD + 1];
   int d, idx, used = 0;
@@ -888,6 +944,7 @@ static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
         ni = ny * MAP_SIZE + nx;
         type = pf->map[ni] & 0x0F;
         if (tail_blocked(type)) continue;
+        if (deep_mask && deep_mask[ni]) continue;   /* too near deep sea / edge */
         step = (type == TT_RIVER || type == TT_BOAT) ? water_step : 1;
         if (pf->neutral_zone[ni] && neutral_step > step) step = neutral_step;
         nd = d + step;
@@ -902,6 +959,7 @@ static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
     int dist = pf->tail_dist[idx];
     int e;
     if (dist == 255) continue;
+    if (deep_mask && deep_mask[idx]) continue;  /* a masked core seeds, never claims */
     e = (int)((float)start * (1.0f - (float)dist / span));
     if (e <= 0) continue;
     if (sign > 0) {
@@ -914,16 +972,31 @@ static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
 }
 
 void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
-                                         int start, int neutral_step, int water_step) {
+                                         int start, int neutral_step, int water_step,
+                                         int deep_margin) {
   int32_t *pool_idx, *pool_next;
+  const uint8_t *deep_mask = NULL;
   if (!pf || !pf->map) return;
   memset(pf->expand_grid, 0, sizeof(pf->expand_grid));
   if (radius <= 0 || start <= 0) return;
+  if (deep_margin > 0) {
+    if (deep_margin > 254) deep_margin = 254;
+    /* Rebuilt every time rather than cached: pf->map is the brain's own fogged
+     * view of the world, a single buffer whose contents change in place as the
+     * bot discovers tiles, so a mask keyed on the map POINTER would freeze the
+     * coastline as it was known at the first rebuild. Two raster sweeps over
+     * 64K tiles is ~0.3ms, and this runs only on a stamp-set change or every
+     * EXPAND_REFRESH_TICKS. */
+    tail_build_deep_margin(pf, deep_margin);
+    deep_mask = pf->deep_margin_mask;
+  }
   pool_idx  = (int32_t *)malloc(sizeof(int32_t) * TAIL_POOL);
   pool_next = (int32_t *)malloc(sizeof(int32_t) * TAIL_POOL);
   if (!pool_idx || !pool_next) { free(pool_idx); free(pool_next); return; }
-  tail_pass(pf, +1, seed_min, radius, start, neutral_step, water_step, pool_idx, pool_next);
-  tail_pass(pf, -1, seed_min, radius, start, neutral_step, water_step, pool_idx, pool_next);
+  tail_pass(pf, +1, seed_min, radius, start, neutral_step, water_step,
+            deep_mask, pool_idx, pool_next);
+  tail_pass(pf, -1, seed_min, radius, start, neutral_step, water_step,
+            deep_mask, pool_idx, pool_next);
   free(pool_idx);
   free(pool_next);
 }

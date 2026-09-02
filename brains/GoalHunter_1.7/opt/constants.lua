@@ -170,6 +170,13 @@ M.EXPAND_NEUTRAL_STEP  = 3    -- step cost inside a live NEUTRAL pill's range:
                               -- the tail penetrates ~1/3 as far and fades 3x faster
 M.EXPAND_WATER_STEP    = 2    -- shallow water / boat tile. Deep sea, buildings,
                               -- walls and pillboxes block the tail outright
+M.EXPAND_DEEP_MARGIN   = 4    -- tiles within this many tiles (king-move / Chebyshev)
+                              -- of deep sea or of the map edge (off-map counts as
+                              -- deep sea) are never claimed by the tail: no tail
+                              -- value, and no growth passes through them, so the
+                              -- front line stops short of the shore instead of
+                              -- being drawn out over the water. Stamped cores are
+                              -- unaffected (they still seed). 0 = old behaviour
 M.EXPAND_REFRESH_TICKS = 250  -- backstop rebuild; normally only on a stamp-set change
 M.EXPAND_DEBUG_MAP     = false -- debug only: TAIL_MAP print2 (ASCII 64x64 around the
                               -- tank on every rebuild). Off for normal play

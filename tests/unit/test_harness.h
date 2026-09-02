@@ -293,6 +293,7 @@ int run_pf_tail_blocked_by_wall_and_sea(void);
 int run_pf_tail_neutral_zone_slows(void);
 int run_pf_tail_meeting_cancels_tie_to_hostile(void);
 int run_pf_tail_never_overwrites_a_stamp(void);
+int run_pf_tail_deep_margin_keeps_off_the_shore(void);
 int run_pf_tail_contact_makes_a_front_line(void);
 
 int run_net_impair(void);
