@@ -843,9 +843,10 @@ int run_overview_camera(void);
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
  * in the classic order without overlapping and stay inside their backing
- * strip, the newswire strip spans the bottom edge, every slice is cut from
- * inside the 515x325 chrome, and a window too small for a legible column is
- * refused without writing to the caller's layout. */
+ * strip, the build select stands clear on the left edge with five evenly
+ * stacked clickable items, the newswire strip spans the bottom edge, every
+ * slice is cut from inside the 515x325 chrome, and a window too small for a
+ * legible column is refused without writing to the caller's layout. */
 int run_overview_hud_layout(void);
 
 /* Overview dead tank (test_overview_map.c): a tank that is dead and waiting to

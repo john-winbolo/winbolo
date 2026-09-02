@@ -14,11 +14,12 @@
 
 /*********************************************************
  * Name:          overview_hud_layout.h
- * Purpose:       Where the status panels and the newswire go
- *                when the map overview owns the whole game
- *                window: one scaled column of classic-chrome
- *                slices down the right edge, and the newswire
- *                on a strip across the bottom.
+ * Purpose:       Where the status panels, the build select and
+ *                the newswire go when the map overview owns the
+ *                whole game window: one scaled column of
+ *                classic-chrome slices down the right edge, the
+ *                build-select strip down the left edge, and the
+ *                newswire on a strip across the bottom.
  *
  *                The pieces are cut out of a frame of the
  *                classic 515x325 chrome, so each one carries
@@ -73,6 +74,7 @@ typedef struct OverviewHudLayout {
     float              scale;                        /* source pixel -> window pixel */
     OverviewHudElement el[OVERVIEW_HUD_COUNT];
     float              columnX, columnY, columnW, columnH;   /* translucent backing */
+    float              buildX, buildY, buildW, buildH;   /* translucent backing, left edge */
     float              newswireX, newswireY, newswireW, newswireH;
 } OverviewHudLayout;
 
@@ -80,6 +82,13 @@ typedef struct OverviewHudLayout {
    false and leaves *out untouched when the rect is too small to hold a
    legible column, in which case the caller draws no HUD. */
 bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out);
+
+/* The on-screen rect of one build-select item, 0..4 top to bottom, matching
+   the buildSelect enum. False for an out-of-range index. Coordinates are
+   relative to the map rect, like every other rect in the layout. */
+bool overviewHudBuildItemRect(const OverviewHudLayout *lay, int index,
+                              float *outX, float *outY,
+                              float *outW, float *outH);
 
 #ifdef __cplusplus
 }

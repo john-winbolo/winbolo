@@ -51,6 +51,9 @@ extern "C" {
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
  * existing callers compile unchanged. */
 #include "sdl3draw_status.h"
+/* Pure geometry — no SDL, no ImGui — so both the drawing side and the ImGui
+ * side can work from the same rectangles. */
+#include "overview_hud_layout.h"
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32
@@ -88,6 +91,10 @@ struct OverviewView *sdl3DrawOverviewInWindowView(void);
    nothing has been drawn yet. */
 bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
                                      float *outW, float *outH);
+/* The HUD geometry the last in-window frame used, so the ImGui side can put
+   its hit-testing on the same rectangles the blit used. False when the mode
+   is off or no HUD was laid out. */
+bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out);
 
 /* TRUE if the caller is on the thread that created the renderer. The SDL
  * renderer / Metal command queue must only be touched from that thread, so

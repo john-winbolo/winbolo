@@ -18,12 +18,13 @@ static const int   kStripPad  = 4;     /* window pixels around the newswire slic
 static const float kMinScale  = 0.75f;
 static const float kMaxShare  = 0.30f; /* of the width the column may take */
 
-/* Everything in the column, in stacking order. The newswire is deliberately
- * absent: it lives on its own strip at the bottom. */
+/* Everything in the column, in stacking order. The newswire and the build
+ * select are deliberately absent: each lives on a strip of its own, the
+ * newswire across the bottom and the build select down the left edge. */
 static const int kColumn[] = {
     OVERVIEW_HUD_MANSTATUS, OVERVIEW_HUD_KILLSDEATHS,
     OVERVIEW_HUD_TANKS, OVERVIEW_HUD_PILLS, OVERVIEW_HUD_BASES,
-    OVERVIEW_HUD_BASEBARS, OVERVIEW_HUD_TANKBARS, OVERVIEW_HUD_BUILDSELECT
+    OVERVIEW_HUD_BASEBARS, OVERVIEW_HUD_TANKBARS
 };
 #define COLUMN_LEN ((int)(sizeof(kColumn) / sizeof(kColumn[0])))
 
@@ -35,8 +36,8 @@ static const char *kNames[OVERVIEW_HUD_COUNT] = {
 static int maxInt(int a, int b) { return (a > b) ? a : b; }
 
 /* The column's source height, re-derived from the rows the mockup stacks: the
- * LGM pair, the three grids, the base bars, then the tank-bars/build-select
- * pair, with a gap between every row. */
+ * LGM pair, the three grids, the base bars, then the tank bars, with a gap
+ * between every row. */
 static int columnSrcHeight(const OverviewHudLayout *lay) {
     return maxInt(lay->el[OVERVIEW_HUD_MANSTATUS].srcH,
                   lay->el[OVERVIEW_HUD_KILLSDEATHS].srcH) + kGap
@@ -44,11 +45,10 @@ static int columnSrcHeight(const OverviewHudLayout *lay) {
          + lay->el[OVERVIEW_HUD_PILLS].srcH    + kGap
          + lay->el[OVERVIEW_HUD_BASES].srcH    + kGap
          + lay->el[OVERVIEW_HUD_BASEBARS].srcH + kGap
-         + maxInt(lay->el[OVERVIEW_HUD_TANKBARS].srcH,
-                  lay->el[OVERVIEW_HUD_BUILDSELECT].srcH);
+         + lay->el[OVERVIEW_HUD_TANKBARS].srcH;
 }
 
-/* The widest row wins: the two pairs are as wide as both pieces plus the gap,
+/* The widest row wins: the LGM pair is as wide as both pieces plus the gap,
  * every other row as wide as its one piece. */
 static int columnSrcWidth(const OverviewHudLayout *lay) {
     int w = lay->el[OVERVIEW_HUD_MANSTATUS].srcW + kGap
@@ -57,8 +57,7 @@ static int columnSrcWidth(const OverviewHudLayout *lay) {
     w = maxInt(w, lay->el[OVERVIEW_HUD_PILLS].srcW);
     w = maxInt(w, lay->el[OVERVIEW_HUD_BASES].srcW);
     w = maxInt(w, lay->el[OVERVIEW_HUD_BASEBARS].srcW);
-    w = maxInt(w, lay->el[OVERVIEW_HUD_TANKBARS].srcW + kGap
-                      + lay->el[OVERVIEW_HUD_BUILDSELECT].srcW);
+    w = maxInt(w, lay->el[OVERVIEW_HUD_TANKBARS].srcW);
     return w;
 }
 
@@ -128,7 +127,7 @@ static int hud_layout_fits_deck(void) {
     return 0;
 }
 
-/* Top to bottom in the mockup's order, with the two pairs side by side. */
+/* Top to bottom in the mockup's order, with the LGM pair side by side. */
 static int hud_layout_stacks_in_order(void) {
     OverviewHudLayout lay;
     UT_ASSERT(overviewHudLayout(1920, 1058, &lay));
@@ -154,17 +153,6 @@ static int hud_layout_stacks_in_order(void) {
                   "kills/deaths at y %.2f does not share the man status row at %.2f",
                   (double)lay.el[OVERVIEW_HUD_KILLSDEATHS].dstY,
                   (double)lay.el[OVERVIEW_HUD_MANSTATUS].dstY);
-
-    UT_ASSERT_MSG(lay.el[OVERVIEW_HUD_BUILDSELECT].dstX >
-                      lay.el[OVERVIEW_HUD_TANKBARS].dstX,
-                  "build select at x %.2f is not right of the tank bars at %.2f",
-                  (double)lay.el[OVERVIEW_HUD_BUILDSELECT].dstX,
-                  (double)lay.el[OVERVIEW_HUD_TANKBARS].dstX);
-    UT_ASSERT_MSG(nearly(lay.el[OVERVIEW_HUD_BUILDSELECT].dstY,
-                         lay.el[OVERVIEW_HUD_TANKBARS].dstY),
-                  "build select at y %.2f does not share the tank bars row at %.2f",
-                  (double)lay.el[OVERVIEW_HUD_BUILDSELECT].dstY,
-                  (double)lay.el[OVERVIEW_HUD_TANKBARS].dstY);
 
     UT_ASSERT_MSG(lay.el[OVERVIEW_HUD_TANKS].dstY >
                       lay.el[OVERVIEW_HUD_MANSTATUS].dstY,
@@ -263,6 +251,106 @@ static int hud_layout_backing_contains_column(void) {
     return 0;
 }
 
+/* The build select stands on the left edge, level with the column and clear of
+ * everything else drawn over the map. */
+static int hud_layout_build_strip(void) {
+    static const struct { int w, h; } kSizes[] = {
+        { 1920, 1058 }, { 1280, 800 }, { 2560, 1400 }, { 1024, 600 }
+    };
+
+    for (int s = 0; s < (int)(sizeof(kSizes) / sizeof(kSizes[0])); s++) {
+        const int viewW = kSizes[s].w;
+        const int viewH = kSizes[s].h;
+        OverviewHudLayout lay;
+        UT_ASSERT_MSG(overviewHudLayout(viewW, viewH, &lay),
+                      "%dx%d should hold a legible column", viewW, viewH);
+
+        UT_ASSERT_MSG(nearly(lay.buildX, (float)kMargin),
+                      "at %dx%d, the build strip starts at x %.2f, not the "
+                      "%d px left margin",
+                      viewW, viewH, (double)lay.buildX, kMargin);
+        UT_ASSERT_MSG(nearly(lay.buildY, lay.columnY),
+                      "at %dx%d, the build strip at y %.2f does not share the "
+                      "column's top edge at %.2f",
+                      viewW, viewH, (double)lay.buildY, (double)lay.columnY);
+        UT_ASSERT_MSG(lay.buildX + lay.buildW <= lay.columnX,
+                      "at %dx%d, the build strip ends at x %.2f, past the "
+                      "column's left edge at %.2f",
+                      viewW, viewH, (double)(lay.buildX + lay.buildW),
+                      (double)lay.columnX);
+        UT_ASSERT_MSG(lay.buildY + lay.buildH <= lay.newswireY,
+                      "at %dx%d, the build strip ends at y %.2f, below the "
+                      "newswire strip's top edge at %.2f",
+                      viewW, viewH, (double)(lay.buildY + lay.buildH),
+                      (double)lay.newswireY);
+        UT_ASSERT_MSG(rectInside(lay.buildX, lay.buildY, lay.buildW, lay.buildH,
+                                 0.0f, 0.0f, (float)viewW, (float)viewH),
+                      "at %dx%d, the build strip (%.2f,%.2f %.2fx%.2f) leaves "
+                      "the map rect",
+                      viewW, viewH, (double)lay.buildX, (double)lay.buildY,
+                      (double)lay.buildW, (double)lay.buildH);
+
+        /* The strip's own slice is what the backing is drawn behind. */
+        const OverviewHudElement *e = &lay.el[OVERVIEW_HUD_BUILDSELECT];
+        UT_ASSERT_MSG(rectInside(e->dstX, e->dstY, e->dstW, e->dstH,
+                                 lay.buildX, lay.buildY,
+                                 lay.buildW, lay.buildH),
+                      "at %dx%d, the build slice (%.2f,%.2f %.2fx%.2f) leaves "
+                      "its backing (%.2f,%.2f %.2fx%.2f)",
+                      viewW, viewH, (double)e->dstX, (double)e->dstY,
+                      (double)e->dstW, (double)e->dstH,
+                      (double)lay.buildX, (double)lay.buildY,
+                      (double)lay.buildW, (double)lay.buildH);
+    }
+    return 0;
+}
+
+/* Five clickable items, evenly stacked down the strip and nothing outside
+ * them. */
+static int hud_layout_build_items(void) {
+    const int viewW = 1920;
+    const int viewH = 1058;
+    OverviewHudLayout lay;
+    UT_ASSERT(overviewHudLayout(viewW, viewH, &lay));
+
+    float x[5], y[5], w[5], h[5];
+    for (int i = 0; i < 5; i++) {
+        UT_ASSERT_MSG(overviewHudBuildItemRect(&lay, i, &x[i], &y[i], &w[i], &h[i]),
+                      "build item %d should have a rect", i);
+        UT_ASSERT_MSG(rectInside(x[i], y[i], w[i], h[i],
+                                 lay.buildX, lay.buildY, lay.buildW, lay.buildH),
+                      "build item %d (%.2f,%.2f %.2fx%.2f) leaves the strip "
+                      "(%.2f,%.2f %.2fx%.2f)",
+                      i, (double)x[i], (double)y[i], (double)w[i], (double)h[i],
+                      (double)lay.buildX, (double)lay.buildY,
+                      (double)lay.buildW, (double)lay.buildH);
+    }
+
+    for (int i = 1; i < 5; i++) {
+        UT_ASSERT_MSG(y[i] > y[i - 1],
+                      "build item %d at y %.2f is not below item %d at y %.2f",
+                      i, (double)y[i], i - 1, (double)y[i - 1]);
+        UT_ASSERT_MSG(y[i - 1] + h[i - 1] <= y[i] + 0.01f,
+                      "build item %d ends at y %.2f, overlapping item %d at "
+                      "y %.2f",
+                      i - 1, (double)(y[i - 1] + h[i - 1]), i, (double)y[i]);
+        UT_ASSERT_MSG(nearly(x[i], x[i - 1]) && nearly(w[i], w[i - 1]) &&
+                          nearly(h[i], h[i - 1]),
+                      "build item %d (%.2f,%.2fx%.2f) is not the same size and "
+                      "column as item %d (%.2f,%.2fx%.2f)",
+                      i, (double)x[i], (double)w[i], (double)h[i],
+                      i - 1, (double)x[i - 1], (double)w[i - 1],
+                      (double)h[i - 1]);
+    }
+
+    float ox = 0.0f, oy = 0.0f, ow = 0.0f, oh = 0.0f;
+    UT_ASSERT_MSG(!overviewHudBuildItemRect(&lay, -1, &ox, &oy, &ow, &oh),
+                  "index -1 should have no rect");
+    UT_ASSERT_MSG(!overviewHudBuildItemRect(&lay, 5, &ox, &oy, &ow, &oh),
+                  "index 5 is past the five build items and should have no rect");
+    return 0;
+}
+
 /* The newswire strip runs the full width along the bottom edge, and holds its
  * slice with the pad above it. */
 static int hud_layout_newswire_strip(void) {
@@ -351,6 +439,8 @@ extern "C" int run_overview_hud_layout(void) {
     rc = hud_layout_stacks_in_order();        if (rc) return rc;
     rc = hud_layout_column_never_overlaps();  if (rc) return rc;
     rc = hud_layout_backing_contains_column();if (rc) return rc;
+    rc = hud_layout_build_strip();            if (rc) return rc;
+    rc = hud_layout_build_items();            if (rc) return rc;
     rc = hud_layout_newswire_strip();         if (rc) return rc;
     rc = hud_layout_rejects_tiny_window();    if (rc) return rc;
     rc = hud_layout_source_rects_in_bounds(); if (rc) return rc;

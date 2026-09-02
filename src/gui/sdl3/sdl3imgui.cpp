@@ -1627,6 +1627,18 @@ static void renderMapOverviewContent(ClientSim *cs) {
 /* -------------------------------------------------------
  * In-window Map Overview
  * ------------------------------------------------------- */
+/* Is the pointer inside a HUD rectangle? The layout's coordinates are relative
+ * to the map rect, so the caller passes the rect's origin and this shifts them
+ * into the window coordinates ImGui reports the mouse in — the same shift the
+ * blit applies. */
+static bool overviewHudRectHit(ImVec2 mouse, float originX, float originY,
+                               float x, float y, float w, float h) {
+    float left = originX + x;
+    float top  = originY + y;
+    return mouse.x >= left && mouse.x < left + w &&
+           mouse.y >= top  && mouse.y < top + h;
+}
+
 /* The input half of the in-window mode: sdl3draw.c has already rendered the
  * map and blitted it to the window this frame, so this only has to put the pan
  * item and the status strip over exactly the rect it blitted to. Submitted at
@@ -1658,20 +1670,67 @@ static void renderOverviewInWindow(ClientSim *cs) {
         ImGui::SetNextItemAllowOverlap();
         ImGui::InvisibleButton("##OverviewInWindowPan", ImVec2(rw, rh),
                                ImGuiButtonFlags_MouseButtonRight);
+        bool hovered = ImGui::IsItemHovered();
+
+        /* The HUD is blitted over the map by sdl3draw.c rather than submitted
+           as ImGui items, so the pan item still spans it. Hit-test the three
+           backing rectangles here and hold the pointer back from the view over
+           them: a click on a panel must not build at the map square
+           underneath, and hovered = false also hands the OS pointer back, so
+           an arrow shows over the chrome instead of the game crosshair. A
+           right-drag that began on the map keeps panning either way — that
+           path keys off the item being active, not hovered. */
+        OverviewHudLayout hud;
+        bool haveHud   = sdl3DrawGetOverviewHudLayout(&hud);
+        bool overBuild = false;
+        bool overHud   = false;
+        ImVec2 mouse   = ImGui::GetMousePos();
+        if (haveHud) {
+            overBuild = overviewHudRectHit(mouse, rx, ry, hud.buildX, hud.buildY,
+                                           hud.buildW, hud.buildH);
+            overHud = overBuild ||
+                      overviewHudRectHit(mouse, rx, ry, hud.columnX, hud.columnY,
+                                         hud.columnW, hud.columnH) ||
+                      overviewHudRectHit(mouse, rx, ry,
+                                         hud.newswireX, hud.newswireY,
+                                         hud.newswireW, hud.newswireH);
+        }
+
+        /* The build items are the only interactive part of the HUD; a click
+           anywhere else on it is simply swallowed. Same trio the classic
+           hit-test in sdl3DrawHandleEvent runs, so the indent drawn into the
+           HUD slice follows the new selection. */
+        if (overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            for (int i = 0; i <= (int)BsMine; i++) {
+                float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
+                if (!overviewHudBuildItemRect(&hud, i, &ix, &iy, &iw, &ih)) break;
+                if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
+                buildSelect picked = (buildSelect)i;
+                if (picked != clientSimGetCurrentBuildSelect(cs)) {
+                    sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
+                    sdl3DrawSelectIndentsOn(picked, 0, 0);
+                    clientMutexWaitFor();
+                    clientSimSetCurrentBuildSelect(cs, picked);
+                    clientMutexRelease();
+                }
+                break;
+            }
+        }
+
         /* The live bindings, fetched each frame — Key Setup can change them
            while the mode is up, and a key bound to an in-game action has to
            drive the tank rather than the map. */
         keyItems keys;
         windowGetKeys(&keys);
-        overviewViewHandleInput(view, ImGui::IsItemHovered(),
+        overviewViewHandleInput(view, hovered && !overHud,
                                 (int)rw, (int)rh, cs, &keys);
 
-        /* Zoom and follow state along the top-left of the map — the pop-out
-           puts the same readout bottom-left, but here the bottom of the window
-           is where the newswire goes. Drawn with the window draw list so it
-           adds nothing to the window's content. %g keeps the ladder readable
-           (0.5, 1, 1.5, 2) with no trailing zeros, and the text is ASCII
-           because this file is compiled without /utf-8. */
+        /* Zoom and follow state along the top of the map — the pop-out puts the
+           same readout bottom-left, but here the bottom of the window is where
+           the newswire goes. Drawn with the window draw list so it adds nothing
+           to the window's content. %g keeps the ladder readable (0.5, 1, 1.5,
+           2) with no trailing zeros, and the text is ASCII because this file is
+           compiled without /utf-8. */
         OverviewCamera *cam = overviewViewCamera(view);
         if (cam) {
             char status[64];
@@ -1681,9 +1740,20 @@ static void renderOverviewInWindow(ClientSim *cs) {
                                                  : STR_OVERVIEW_FREE));
             const float pad = 4.0f;
             ImVec2 textSize = ImGui::CalcTextSize(status);
-            ImVec2 boxMin(rx, ry);
-            ImVec2 boxMax(rx + textSize.x + pad * 2.0f,
-                          ry + textSize.y + pad * 2.0f);
+            /* The corner belongs to the build strip, so the readout starts
+               just past it, level with its top. The gap matches the margin the
+               strip itself keeps from the map's edge. With no HUD drawn there
+               is nothing to clear and it sits in the corner. */
+            float textX = rx;
+            float textY = ry;
+            if (haveHud) {
+                const float hudGap = 8.0f;
+                textX = rx + hud.buildX + hud.buildW + hudGap;
+                textY = ry + hud.buildY;
+            }
+            ImVec2 boxMin(textX, textY);
+            ImVec2 boxMax(textX + textSize.x + pad * 2.0f,
+                          textY + textSize.y + pad * 2.0f);
             ImDrawList *dl = ImGui::GetWindowDrawList();
             dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
             dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
@@ -3026,9 +3096,31 @@ static void renderMenuBar(ClientSim *cs) {
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
-            if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  440, 600, 0);
-            if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo,  langGetText(STR_DLGNETINFO_TITLE),  360, 420, 0);
+            /* While the overview owns the game window these open as in-window
+               panels instead of pop-outs: a separate OS window would land
+               behind the map the player is looking at. A pop-out already open
+               when the mode is entered keeps winning — each panel returns
+               early while its pop-out is up. */
+            bool overviewInWindow = sdl3DrawIsOverviewInWindow();
+            if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE), nullptr,
+                                overviewInWindow ? s_showGameInfo : s_popGameInfo.open)) {
+                if (overviewInWindow) s_showGameInfo = !s_showGameInfo;
+                else togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
+            }
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE), nullptr,
+                                overviewInWindow ? s_showSysInfo : s_popSysInfo.open)) {
+                if (overviewInWindow) {
+                    if (!s_showSysInfo) sysInfoGraphReset();
+                    s_showSysInfo = !s_showSysInfo;
+                } else togglePopOut(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600, 0);
+            }
+            if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE), nullptr,
+                                overviewInWindow ? s_showNetInfo : s_popNetInfo.open)) {
+                if (overviewInWindow) {
+                    if (!s_showNetInfo) pingGraphReset();
+                    s_showNetInfo = !s_showNetInfo;
+                } else togglePopOut(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420, 0);
+            }
             /* The overview draws the map the player has seen, so it stays
                greyed out until a game is running. */
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
@@ -3202,9 +3294,17 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
             /* Checked when the pop-out is open; picking it raises and focuses
-               that window rather than closing it, matching Ctrl+M. */
-            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M", s_popSendMsg.open))
-                sendMsgPopOutShow();
+               that window rather than closing it, matching Ctrl+M. While the
+               overview owns the game window it toggles the in-window panel
+               instead, for the same reason the File menu's dialogs do. */
+            bool overviewInWindow = sdl3DrawIsOverviewInWindow();
+            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M",
+                                overviewInWindow ? s_showSendMsg : s_popSendMsg.open)) {
+                if (overviewInWindow) {
+                    s_showSendMsg = !s_showSendMsg;
+                    if (s_showSendMsg) { s_sendMsgFocusInput = true; s_closeMenuPopups = true; }
+                } else sendMsgPopOutShow();
+            }
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
@@ -5284,6 +5384,13 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn) {
 void sdl3ImguiShowSysInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
+        /* While the overview owns the game window the panel opens in-window,
+           the way the menu item does: a pop-out would land behind the map. */
+        if (sdl3DrawIsOverviewInWindow()) {
+            if (open && !s_showSysInfo) sysInfoGraphReset();
+            s_showSysInfo = open;
+            return;
+        }
         if (open) {
             if (!s_popSysInfo.open) {
                 sysInfoGraphReset();
@@ -5300,7 +5407,12 @@ void sdl3ImguiShowSysInfo(bool open) {
 }
 bool sdl3ImguiIsSysInfoOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popSysInfo.open;
+    /* Reports the in-window panel while the overview owns the window, matching
+       where sdl3ImguiShowSysInfo puts it. The macOS menu toggles these items
+       with Show(!IsOpen()) and draws their checkmarks from the same answer, so
+       reading the pop-out here would leave them open-only. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showSysInfo : s_popSysInfo.open;
 #endif
     return s_showSysInfo;
 }
@@ -5311,6 +5423,13 @@ float sdl3ImguiGetUiScale(void) {
 void sdl3ImguiShowNetInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
+        /* In-window while the overview owns the window — see
+           sdl3ImguiShowSysInfo. */
+        if (sdl3DrawIsOverviewInWindow()) {
+            if (open && !s_showNetInfo) pingGraphReset();
+            s_showNetInfo = open;
+            return;
+        }
         if (open) {
             if (!s_popNetInfo.open) {
                 pingGraphReset();
@@ -5327,13 +5446,22 @@ void sdl3ImguiShowNetInfo(bool open) {
 }
 bool sdl3ImguiIsNetInfoOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popNetInfo.open;
+    /* In-window while the overview owns the window — see
+       sdl3ImguiIsSysInfoOpen. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showNetInfo : s_popNetInfo.open;
 #endif
     return s_showNetInfo;
 }
 void sdl3ImguiShowGameInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
+        /* In-window while the overview owns the window — see
+           sdl3ImguiShowSysInfo. */
+        if (sdl3DrawIsOverviewInWindow()) {
+            s_showGameInfo = open;
+            return;
+        }
         if (open) {
             if (!s_popGameInfo.open) {
                 popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
@@ -5348,7 +5476,10 @@ void sdl3ImguiShowGameInfo(bool open) {
 }
 bool sdl3ImguiIsGameInfoOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popGameInfo.open;
+    /* In-window while the overview owns the window — see
+       sdl3ImguiIsSysInfoOpen. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showGameInfo : s_popGameInfo.open;
 #endif
     return s_showGameInfo;
 }
@@ -5365,6 +5496,14 @@ void sdl3ImguiShowSendMsg(bool open) {
                 s_pendingCtrlSendMsg = true;
             } else {
                 s_showCtrlSendMsg = false;
+            }
+        } else if (sdl3DrawIsOverviewInWindow()) {
+            /* In-window while the overview owns the window — see
+               sdl3ImguiShowSysInfo. */
+            s_showSendMsg = open;
+            if (open) {
+                s_sendMsgFocusInput = true;
+                s_closeMenuPopups = true;
             }
         } else {
             /* Mouse/keyboard desktop: the draggable pop-out window.  Opening

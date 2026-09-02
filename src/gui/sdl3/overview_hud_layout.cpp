@@ -132,7 +132,7 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
     hudSourceRects(lay.el);
 
     /* Stack the rows top to bottom in the classic order, left-aligned in the
-       column. Two rows are a pair side by side, sharing the row's top edge
+       column. The top row is a pair side by side, sharing the row's top edge
        and separated by the same gap that separates the rows. */
     int colX[OVERVIEW_HUD_COUNT];
     int colY[OVERVIEW_HUD_COUNT];
@@ -157,19 +157,20 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
 
     colX[OVERVIEW_HUD_TANKBARS]    = 0;
     colY[OVERVIEW_HUD_TANKBARS]    = y;
-    colX[OVERVIEW_HUD_BUILDSELECT] = lay.el[OVERVIEW_HUD_TANKBARS].srcW + HUD_ROW_GAP;
-    colY[OVERVIEW_HUD_BUILDSELECT] = y;
-    y += hudMaxInt(lay.el[OVERVIEW_HUD_TANKBARS].srcH,
-                   lay.el[OVERVIEW_HUD_BUILDSELECT].srcH);
+    y += lay.el[OVERVIEW_HUD_TANKBARS].srcH;
 
-    /* The newswire is not in the column; it gets its own full-width strip. */
+    /* Neither the build strip nor the newswire is in the column: the strip
+       stands on the left edge and the newswire gets its own full-width strip
+       along the bottom. */
+    colX[OVERVIEW_HUD_BUILDSELECT] = 0;
+    colY[OVERVIEW_HUD_BUILDSELECT] = 0;
     colX[OVERVIEW_HUD_NEWSWIRE] = 0;
     colY[OVERVIEW_HUD_NEWSWIRE] = 0;
 
     int columnHSrc = y;
     int columnWSrc = 0;
     for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
-        if (i == OVERVIEW_HUD_NEWSWIRE) continue;
+        if (i == OVERVIEW_HUD_NEWSWIRE || i == OVERVIEW_HUD_BUILDSELECT) continue;
         columnWSrc = hudMaxInt(columnWSrc, colX[i] + lay.el[i].srcW);
     }
     if (columnWSrc < 1 || columnHSrc < 1) return false;
@@ -185,7 +186,11 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
        the strip ends on the bottom edge, which leaves HUD_MARGIN of clearance
        between them — a consequence of the fit, not a gap anyone applies. The
        width cap only ever makes the scale smaller, which widens that
-       clearance. */
+       clearance.
+
+       The build strip is left out of the fit because the column is the taller
+       of the two, so a scale that fits the column leaves the strip room to
+       spare. */
     float scale = (float)(viewH - 2 * HUD_MARGIN - 2 * HUD_STRIP_PAD) /
                   (float)(columnHSrc + lay.el[OVERVIEW_HUD_NEWSWIRE].srcH);
     float widthCap = HUD_MAX_WIDTH_SHARE * (float)viewW / (float)columnWSrc;
@@ -199,12 +204,25 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
     lay.columnY = (float)HUD_MARGIN;
 
     for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
-        if (i == OVERVIEW_HUD_NEWSWIRE) continue;
+        if (i == OVERVIEW_HUD_NEWSWIRE || i == OVERVIEW_HUD_BUILDSELECT) continue;
         lay.el[i].dstX = lay.columnX + (float)colX[i] * scale;
         lay.el[i].dstY = lay.columnY + (float)colY[i] * scale;
         lay.el[i].dstW = (float)lay.el[i].srcW * scale;
         lay.el[i].dstH = (float)lay.el[i].srcH * scale;
     }
+
+    /* The build strip stands on the left edge at the column's own top, so the
+       two chrome stacks bracket the map. Its slice already carries
+       HUD_SLICE_PAD around the items, so the backing is the slice itself. */
+    OverviewHudElement *build = &lay.el[OVERVIEW_HUD_BUILDSELECT];
+    build->dstX = (float)HUD_MARGIN;
+    build->dstY = (float)HUD_MARGIN;
+    build->dstW = (float)build->srcW * scale;
+    build->dstH = (float)build->srcH * scale;
+    lay.buildX = build->dstX;
+    lay.buildY = build->dstY;
+    lay.buildW = build->dstW;
+    lay.buildH = build->dstH;
 
     /* The strip runs the full width of the map rect and sits on its bottom
        edge; the slice keeps the column's scale and the column's left margin. */
@@ -228,5 +246,22 @@ bool overviewHudLayout(int viewW, int viewH, OverviewHudLayout *out) {
     }
 
     *out = lay;
+    return true;
+}
+
+bool overviewHudBuildItemRect(const OverviewHudLayout *lay, int index,
+                              float *outX, float *outY,
+                              float *outW, float *outH) {
+    if (!lay || index < 0 || index >= HUD_BUILD_ITEMS) return false;
+
+    /* The items sit inside the slice's pad, one BS_ITEM_SIZE_Y apart, in the
+       order the classic layout stacks them. Measured off the strip's own
+       destination so the rect follows wherever the strip was placed. */
+    const OverviewHudElement *build = &lay->el[OVERVIEW_HUD_BUILDSELECT];
+    if (outX) *outX = build->dstX + (float)HUD_SLICE_PAD * lay->scale;
+    if (outY) *outY = build->dstY +
+                      (float)(HUD_SLICE_PAD + index * BS_ITEM_SIZE_Y) * lay->scale;
+    if (outW) *outW = (float)BS_ITEM_SIZE_X * lay->scale;
+    if (outH) *outH = (float)BS_ITEM_SIZE_Y * lay->scale;
     return true;
 }

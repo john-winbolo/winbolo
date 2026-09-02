@@ -161,6 +161,12 @@ static bool          gOverviewInWindow = FALSE;
 static OverviewView *gOverviewView     = NULL;
 static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
 
+/* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
+   the panels on exactly the rectangles that were drawn. Only meaningful while
+   the flag is set: a frame that drew no HUD clears it. */
+static OverviewHudLayout gOverviewHud;
+static bool              gOverviewHudValid = FALSE;
+
 /* A whole classic frame at gZoomFactor, drawn offscreen so the HUD column can
    be cut out of it as source rects. gGameRenderTarget cannot be borrowed for
    this: sdl3DrawReconfigureZoom never creates it on the Steam Deck or in
@@ -580,6 +586,7 @@ void sdl3DrawSetOverviewInWindow(bool active) {
   if (!active) {
     overviewViewReleaseCursor(gOverviewView);
     gOverviewRect.x = gOverviewRect.y = gOverviewRect.w = gOverviewRect.h = 0.0f;
+    gOverviewHudValid = FALSE;
   }
 }
 
@@ -598,6 +605,12 @@ bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
   if (outY) *outY = gOverviewRect.y;
   if (outW) *outW = gOverviewRect.w;
   if (outH) *outH = gOverviewRect.h;
+  return true;
+}
+
+bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out) {
+  if (!gOverviewInWindow || !gOverviewHudValid || out == NULL) return false;
+  *out = gOverviewHud;
   return true;
 }
 
@@ -1565,6 +1578,10 @@ static bool hudSourceRender(ClientSim *cs, bool showPillLabels, bool showBaseLab
    classic frame drawn offscreen alongside the view. */
 static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
                                           bool showBaseLabels) {
+  /* Stale the moment this frame starts: every way out below either lays a new
+     HUD out or draws none at all. */
+  gOverviewHudValid = FALSE;
+
   int ww = 0, wh = 0;
   {
     SDL_RendererLogicalPresentation logMode;
@@ -1596,6 +1613,10 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   OverviewHudLayout hud;
   bool drawHud = overviewHudLayout(w, h, &hud) &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
+  if (drawHud) {
+    gOverviewHud      = hud;
+    gOverviewHudValid = TRUE;
+  }
 
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
@@ -1622,9 +1643,12 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 160);
     SDL_FRect colBack = { originX + hud.columnX, originY + hud.columnY,
                           hud.columnW, hud.columnH };
+    SDL_FRect buildBack = { originX + hud.buildX, originY + hud.buildY,
+                            hud.buildW, hud.buildH };
     SDL_FRect newsBack = { originX + hud.newswireX, originY + hud.newswireY,
                            hud.newswireW, hud.newswireH };
     SDL_RenderFillRect(gRenderer, &colBack);
+    SDL_RenderFillRect(gRenderer, &buildBack);
     SDL_RenderFillRect(gRenderer, &newsBack);
     SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
 
