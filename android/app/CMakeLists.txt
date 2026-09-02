@@ -227,6 +227,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw_status.c
+    ${PROJ_ROOT}/src/gui/sdl3/tank_label.c
     ${PROJ_ROOT}/src/gui/sdl3/tileloader.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl_bmp.c
     ${PROJ_ROOT}/src/gui/skins.c

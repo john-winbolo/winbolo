@@ -131,11 +131,12 @@ void sdl3DrawResetCachedText(void);
 void sdl3DrawMessages(int x, int y, char *top, char *bottom);
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
 /* The newswire's TTF face (13 px times the main window's zoom), NULL until
-   the fonts are loaded. Fonts are renderer-independent, so the map overview
-   renders its own label textures from it on whichever renderer hosts it —
-   the textures the classic label pass caches are the main window's and
-   cannot be shared. The pointer changes when a zoom change reopens the
-   fonts; holders of derived textures treat that as a cache flush. */
+   the fonts are loaded. Fonts are renderer-independent, so the overview
+   hosts hand it to their own tank-label caches (tank_label.h), which build
+   textures from it on whichever renderer hosts them — the classic pass's
+   cache is the main window's and cannot be shared. The pointer changes
+   when a zoom change reopens the fonts; the label caches treat that as a
+   flush. */
 TTF_Font *sdl3DrawGetMessageFont(void);
 /* When the newswire text last changed (SDL_GetTicks ms), 0 for never since
    the last reset. The full screen map uses it to slide its newswire strip

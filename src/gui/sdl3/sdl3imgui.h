@@ -261,13 +261,16 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetBrainIcon
+*NAME:          sdl3ImguiGetBrainIconSurface
 *PURPOSE:
-*  Returns the SDL_Texture for the AI-brain icon (the badge
-*  shown for bot players). Loads the SVG lazily on first
-*  call. Returns NULL if the SVG could not be loaded.
+*  Returns the AI-brain icon (the badge shown for bot
+*  players) as an SDL_Surface — renderer-free, so the
+*  tank-label caches can texture it on whichever renderer
+*  hosts them. Owned by this module; do not destroy. Loads
+*  the SVG lazily on first call. Returns NULL if the SVG
+*  could not be loaded.
 *********************************************************/
-SDL_Texture *sdl3ImguiGetBrainIcon(void);
+SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiPlayerIsBot

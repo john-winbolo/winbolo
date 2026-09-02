@@ -310,14 +310,16 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
  * shield.svg for native Cocoa drawing. */
 static SDL_Texture *s_iconSteam = nullptr;
 static SDL_Texture *s_iconBrain = nullptr;
-/* Large brain texture used for tank-label overlays. The small s_iconBrain
- * is rasterized at WBN_ICON_SIZE for the player-popup / renderPlayerName
- * paths; sized up to a tank-label height (~16-48 px depending on zoom)
- * the small one looks soft because the SVG's vector edges were already
- * baked into a 14-px bitmap. WBN_ICON_TANK_LABEL_SIZE rasterizes the
- * same SVG at a height that covers the realistic zoom range so the
- * label-side blit is a (sharp) downscale rather than an upscale. */
-static SDL_Texture *s_iconBrainLg = nullptr;
+/* Large brain rasterization used for tank-label overlays, kept as a surface
+ * because the label caches texture it per renderer (main window, pop-out
+ * overview). The small s_iconBrain is rasterized at WBN_ICON_SIZE for the
+ * player-popup / renderPlayerName paths; sized up to a tank-label height
+ * (~16-48 px depending on zoom) the small one looks soft because the SVG's
+ * vector edges were already baked into a 14-px bitmap.
+ * WBN_ICON_TANK_LABEL_SIZE rasterizes the same SVG at a height that covers
+ * the realistic zoom range so the label-side blit is a (sharp) downscale
+ * rather than an upscale. */
+static SDL_Surface *s_iconBrainSurf = nullptr;
 static bool s_wbnIconsLoaded = false;
 #define WBN_ICON_SIZE 14
 #define WBN_ICON_TANK_LABEL_SIZE 48
@@ -326,13 +328,13 @@ static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconSteam   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
-    s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
-                                          WBN_ICON_TANK_LABEL_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
+    s_iconSteam     = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconBrain     = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    s_iconBrainSurf = imguiLoadSvgIconWhiteSurface("data/ui/brain.svg",
+                                                   WBN_ICON_TANK_LABEL_SIZE);
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainSurf=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconSteam,
-            (void *)s_iconBrain, (void *)s_iconBrainLg,
+            (void *)s_iconBrain, (void *)s_iconBrainSurf,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
 
@@ -5771,14 +5773,14 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     return s_iconSteam;
 }
 
-SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
     /* Returns the larger rasterization — the only consumer is the
-     * tank-label overlay (sdl3DrawTankLabel), which scales the icon to
-     * the TTF label height and would alias badly off the 14-px popup
-     * texture. renderPlayerName / the in-game player menu read
-     * s_iconBrain directly. */
+     * tank-label drawer (tank_label.c), which textures it per renderer
+     * and scales it to the TTF label height; the 14-px popup texture
+     * would alias badly at that size. renderPlayerName / the in-game
+     * player menu read s_iconBrain directly. */
     ensureWbnIconsLoaded();
-    return s_iconBrainLg;
+    return s_iconBrainSurf;
 }
 
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
@@ -5935,7 +5937,7 @@ void sdl3ImguiCleanup(void) {
     flagsDestroy();
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
-    if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }
+    if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
     s_wbnIconsLoaded = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
         /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a

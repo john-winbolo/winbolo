@@ -48,13 +48,27 @@ void flagsDestroy(void);
 /*********************************************************
  *NAME:          flagsGetTexture
  *PURPOSE:
- *  Return the SDL_Texture for a 2-letter country code.
- *  Loads and caches the SVG on first request.
- *  Returns NULL if the flag cannot be loaded.
+ *  Return the SDL_Texture for a 2-letter country code,
+ *  built on the renderer flagsCreate was given. Loads and
+ *  caches the SVG on first request. Returns NULL if the
+ *  flag cannot be loaded.
  *ARGUMENTS:
  *  countryCode - 2-char ISO 3166-1 alpha-2 code (e.g. "US")
  *********************************************************/
 SDL_Texture *flagsGetTexture(const char countryCode[2]);
+
+/*********************************************************
+ *NAME:          flagsGetSurface
+ *PURPOSE:
+ *  Return the cached rasterization of a flag as an
+ *  SDL_Surface — renderer-free, so a consumer on any
+ *  renderer (the tank-label caches) can build its own
+ *  texture from it. Owned by this module; do not destroy.
+ *  Returns NULL if the flag cannot be loaded.
+ *ARGUMENTS:
+ *  countryCode - 2-char ISO 3166-1 alpha-2 code (e.g. "US")
+ *********************************************************/
+SDL_Surface *flagsGetSurface(const char countryCode[2]);
 
 #ifdef __cplusplus
 }

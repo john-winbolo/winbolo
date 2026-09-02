@@ -319,25 +319,25 @@ BYTE utilGetDir(TURNTYPE value) {
 /* ====================================================================
  * Part 3 — tank-label icon hooks (linker-only, return "unavailable").
  *
- * sdl3draw_status.c's sdl3DrawTankLabel (shared with the main game)
- * draws a country flag or AI-brain badge beside the tank name. Those
- * textures live in flags.c / sdl3imgui.cpp, neither of which the
- * standalone LogViewer links. Returning NULL / false here makes
- * sdl3DrawTankLabel fall back to rendering the full "name@loc" text,
+ * tank_label.c (the label drawer shared with the main game) hangs a
+ * country flag or AI-brain badge beside the tank name, built from
+ * surfaces that live in flags.c / sdl3imgui.cpp — neither of which
+ * the standalone LogViewer links. Returning NULL / false here makes
+ * the drawer fall back to rendering the full "name@loc" text,
  * preserving the LogViewer's existing label appearance.
  *
- * Opaque SDL_Texture forward declaration — resolved by symbol name at
+ * Opaque SDL_Surface forward declaration — resolved by symbol name at
  * link time; the real signatures live in flags.h / sdl3imgui.h.
  * ==================================================================== */
 
-struct SDL_Texture;
+struct SDL_Surface;
 
-struct SDL_Texture *flagsGetTexture(const char countryCode[2]) {
+struct SDL_Surface *flagsGetSurface(const char countryCode[2]) {
   (void)countryCode;
   return NULL;
 }
 
-struct SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+struct SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
   return NULL;
 }
 

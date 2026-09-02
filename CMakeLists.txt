@@ -683,6 +683,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
     src/gui/sdl3/sdl3draw_status.c
+    src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
@@ -1291,7 +1292,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -1993,6 +1994,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
+    src/gui/sdl3/tank_label.c
     src/logviewer/bolo_shim.c
     src/logviewer/game_view.c
 )
