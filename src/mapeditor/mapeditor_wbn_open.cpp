@@ -21,13 +21,19 @@
  *                modal over the editor. A row click submits
  *                the map to the shared download worker; the
  *                per-frame drive polls the worker and, when
- *                the bytes land, hands them to the editor
- *                and closes. Closing for any reason stops
- *                the preview worker and drops the download
- *                so a late completion can't be applied on
- *                the next open. The chooser state itself
- *                persists across opens, so the user lands
- *                back in the folder they left.
+ *                the bytes land, feeds them to the chooser's
+ *                preview pane and keeps a copy in a
+ *                dialog-local stash. Only the Open button
+ *                hands the stashed bytes to the editor and
+ *                closes, and it is enabled only while the
+ *                stash matches the current selection. Cancel,
+ *                Esc and the close box discard the stash and
+ *                any in-flight download, stop the preview
+ *                worker, and drop the download so a late
+ *                completion can't be applied on the next
+ *                open. The chooser state itself persists
+ *                across opens, so the user lands back in the
+ *                folder they left.
  *********************************************************/
 
 #include "mapeditor_wbn_open.h"
@@ -36,7 +42,9 @@
 
 #include <cstdio>   /* FILENAME_MAX — the breadcrumb jump buffer */
 #include <cstring>  /* memset / memcpy / strncmp — chooser state init, the byte copy and the "wbn:" prefix test */
-#include <string>   /* std::string — the display name with its .map extension stripped */
+#include <string>   /* std::string — display names and the stash's path stamps */
+#include <utility>  /* std::move — the download result's bytes into the stash */
+#include <vector>   /* std::vector — the stashed .map bytes */
 
 #include <SDL3/SDL.h>
 
@@ -45,8 +53,8 @@
 #include "../gui/sdl3/dialogs/imgui_dialog_utils.h"  /* dialogComputeScale */
 #include "../gui/sdl3/dialogs/dialog_footer.h"       /* WBUI::PushCancelStyle / PopCancelStyle / CancelKeyPressed */
 extern "C" {
-#include "../gui/sdl3/dialogs/imgui_mapchooser.h"  /* MapChooserState and the mapChooser* API */
-#include "../gui/lang.h"  /* langGetText / STR_LV_MENU_OPEN_WBN / STR_DLGLOBBY_DOWNLOADING / STR_DLGLOBBY_WBN_ERR_* / STR_CANCEL */
+#include "../gui/sdl3/dialogs/imgui_mapchooser.h"  /* MapChooserState and the mapChooser* API, mapChooserSetSelectedMapBytes */
+#include "../gui/lang.h"  /* langGetText / STR_LV_MENU_OPEN_WBN / STR_DLGLOBBY_DOWNLOADING / STR_DLGLOBBY_WBN_ERR_* / STR_OK / STR_CANCEL */
 }
 
 /* The chooser instance. Wired on first open and kept for the life of
@@ -64,22 +72,69 @@ static bool s_open         = false;  /* dialog is showing */
 static bool s_popupPending = false;  /* OpenPopup still to be issued this open */
 static bool s_downloading  = false;  /* a submitted map hasn't completed yet */
 static char s_pendingName[128];      /* selectedName at submit time, for the status line */
+static std::string s_pendingPath;    /* selectedPath ("wbn:<id>") at submit time, stamps the stash */
 static char s_errText[256];          /* last download failure, empty = none */
+
+/* The last completed download, kept until Open hands it to the editor
+ * or the dialog closes. s_stashPath is the "wbn:<id>" row it was
+ * fetched for, so a re-click of that row doesn't re-download.
+ * s_stashShownPath is whatever the chooser wrote into selectedPath
+ * when the bytes were fed to its preview pane; while selectedPath
+ * still equals it the stash is what the user is looking at, and Open
+ * is enabled. Any other selection (another row, a folder jump) leaves
+ * Open disabled until that row's download lands. */
+static std::vector<uint8_t> s_stashBytes;
+static std::string          s_stashName;       /* display name, .map stripped */
+static std::string          s_stashPath;
+static std::string          s_stashShownPath;
+
+/* A same-row re-click found the stash already holding that map. The
+ * chooser has just reset its preview to the "wbn:" spinner, so the
+ * frame drive re-feeds the stash after the render pass rather than
+ * touching the preview from inside the chooser's own click handler. */
+static bool s_refeedPending = false;
+
+static void meWbnClearStash(void) {
+    s_stashBytes.clear();
+    s_stashName.clear();
+    s_stashPath.clear();
+    s_stashShownPath.clear();
+    s_refeedPending = false;
+}
+
+/* Push the stash into the chooser's preview pane and record the
+ * selection marker the chooser wrote for it. */
+static void meWbnFeedPreview(SDL_Renderer *renderer) {
+    if (s_stashBytes.empty()) return;
+    mapChooserSetSelectedMapBytes(&s_chooser, renderer,
+                                  s_stashBytes.data(),
+                                  (int)s_stashBytes.size(),
+                                  s_stashName.c_str());
+    s_stashShownPath = s_chooser.selectedPath;
+}
 
 /* onSelect for the WBN provider. Synthetic "wbn:<id>" paths only —
  * anything else is a folder click the chooser handled internally.
- * Submitting the id kicks the download worker; the frame drive below
- * polls for the result. */
+ * A row whose bytes are already stashed (or already on their way) is
+ * left alone; anything else drops the stash and kicks the download
+ * worker. The frame drive below polls for the result. */
 static void meWbnOnSelect(MapChooserState *state, void *ctx) {
     (void)ctx;
     const char *sel = state->selectedPath;
     static const char kPrefix[] = "wbn:";
     if (!sel || strncmp(sel, kPrefix, sizeof(kPrefix) - 1) != 0) return;
+    if (!s_stashBytes.empty() && s_stashPath == sel) {
+        s_refeedPending = true;
+        return;
+    }
+    if (s_downloading && s_pendingPath == sel) return;
     uint32_t mapId = (uint32_t)SDL_atoi(sel + sizeof(kPrefix) - 1);
     if (mapId == 0) return;
+    meWbnClearStash();
     wbnMapSourceSubmitDownload(mapId);
     s_downloading = true;
     s_errText[0]  = '\0';
+    s_pendingPath = sel;
     SDL_strlcpy(s_pendingName, state->selectedName, sizeof(s_pendingName));
 }
 
@@ -106,13 +161,16 @@ static void meWbnWireChooser(SDL_Renderer *renderer) {
 }
 
 /* Close housekeeping, shared by the Cancel button, the window close
- * box and a successful pick. Dropping the download is what stops a
- * completion that lands after close from being applied on the next
- * open. The chooser state is kept. */
+ * box and Open. Dropping the download is what stops a completion that
+ * lands after close from being applied on the next open; dropping the
+ * stash is what stops a stale map (and a stale Open state) from
+ * greeting the next open. The chooser state is kept. */
 static void meWbnClose(void) {
     s_open         = false;
     s_popupPending = false;
     s_downloading  = false;
+    s_pendingPath.clear();
+    meWbnClearStash();
     mapChooserStopPreviewWorker();
     wbnMapSourceResetDownload();
 }
@@ -147,30 +205,22 @@ static void meWbnRenderChooser(SDL_Renderer *renderer, float availW,
     }
 }
 
-/* Drain the download worker. On success the bytes are copied into an
- * SDL_malloc buffer for the editor and the display name (minus any
- * .map extension) written to outName; returns true. On failure the
- * error text is shown on the status line and the dialog stays open. */
-static bool meWbnPollDownload(unsigned char **outBytes, int *outLen,
-                              char *outName, int outNameLen) {
+/* Drain the download worker. On success the bytes and the display
+ * name (minus any .map extension) go into the stash, stamped with the
+ * row they were fetched for, and the chooser's preview pane is fed so
+ * it shows the real map instead of the spinner. On failure the error
+ * text is shown on the status line and the stash stays empty. */
+static void meWbnPollDownload(SDL_Renderer *renderer) {
     WbnMapDownloadResult res;
-    if (!wbnMapSourcePollDownload(&res)) return false;
+    if (!wbnMapSourcePollDownload(&res)) return;
     s_downloading = false;
     if (!res.ok) {
         SDL_strlcpy(s_errText,
                     res.err.empty() ? langGetText(STR_DLGLOBBY_WBN_ERR_MAPFAILED)
                                     : res.err.c_str(),
                     sizeof(s_errText));
-        return false;
+        return;
     }
-
-    unsigned char *buf = (unsigned char *)SDL_malloc(res.bytes.size());
-    if (!buf) {
-        SDL_strlcpy(s_errText, langGetText(STR_DLGLOBBY_WBN_ERR_OOM),
-                    sizeof(s_errText));
-        return false;
-    }
-    memcpy(buf, res.bytes.data(), res.bytes.size());
 
     std::string displayName = res.mapName;
     if (displayName.empty()) displayName = s_pendingName;
@@ -181,10 +231,29 @@ static bool meWbnPollDownload(unsigned char **outBytes, int *outLen,
         displayName.resize(displayName.size() - 4);
     }
 
+    s_stashBytes = std::move(res.bytes);
+    s_stashName  = displayName;
+    s_stashPath  = s_pendingPath;
+    meWbnFeedPreview(renderer);
+}
+
+/* Open was clicked: copy the stash into an SDL_malloc buffer for the
+ * editor. Returns false (with the error on the status line) only if
+ * the copy can't be allocated. */
+static bool meWbnTakeStash(unsigned char **outBytes, int *outLen,
+                           char *outName, int outNameLen) {
+    if (!outBytes || !outLen) return false;
+    unsigned char *buf = (unsigned char *)SDL_malloc(s_stashBytes.size());
+    if (!buf) {
+        SDL_strlcpy(s_errText, langGetText(STR_DLGLOBBY_WBN_ERR_OOM),
+                    sizeof(s_errText));
+        return false;
+    }
+    memcpy(buf, s_stashBytes.data(), s_stashBytes.size());
     *outBytes = buf;
-    *outLen   = (int)res.bytes.size();
+    *outLen   = (int)s_stashBytes.size();
     if (outName && outNameLen > 0) {
-        SDL_strlcpy(outName, displayName.c_str(), (size_t)outNameLen);
+        SDL_strlcpy(outName, s_stashName.c_str(), (size_t)outNameLen);
     }
     return true;
 }
@@ -204,7 +273,9 @@ extern "C" void meWbnOpenShow(void) {
     s_open         = true;
     s_popupPending = true;
     s_downloading  = false;
+    s_pendingPath.clear();
     s_errText[0]   = '\0';
+    meWbnClearStash();
 }
 
 extern "C" bool meWbnOpenIsOpen(void) {
@@ -257,10 +328,12 @@ extern "C" bool meWbnOpenFrame(SDL_Renderer *renderer,
 
         meWbnRenderChooser(renderer, availW, availH, s);
 
-        if (meWbnPollDownload(outBytes, outLen, outName, outNameLen)) {
-            ready     = true;
-            wantClose = true;
+        if (s_refeedPending) {
+            s_refeedPending = false;
+            meWbnFeedPreview(renderer);
         }
+
+        meWbnPollDownload(renderer);
 
         /* Status line: download progress, else the last failure, else
          * an empty line so the button row doesn't jump. */
@@ -275,13 +348,30 @@ extern "C" bool meWbnOpenFrame(SDL_Renderer *renderer,
             ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
         }
 
-        /* Cancel, right-aligned. Esc / Cmd+W dismiss too. */
-        float btnW = 120.0f * s;
-        float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - btnW;
+        /* Open then Cancel, right-aligned. Open only while the stash
+         * is what the preview pane is showing. Esc / Cmd+W dismiss
+         * like Cancel. */
+        bool canOpen = !s_downloading && !s_stashBytes.empty() &&
+                       !s_stashShownPath.empty() &&
+                       s_stashShownPath == s_chooser.selectedPath;
+        float btnW  = 120.0f * s;
+        float pairW = btnW * 2.0f + style.ItemSpacing.x;
+        float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - pairW;
         if (x > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(x);
+
+        ImGui::BeginDisabled(!canOpen);
+        bool openClicked = ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0.0f));
+        ImGui::EndDisabled();
+        ImGui::SameLine();
         WBUI::PushCancelStyle();
         bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0.0f));
         WBUI::PopCancelStyle();
+
+        if (openClicked && canOpen &&
+            meWbnTakeStash(outBytes, outLen, outName, outNameLen)) {
+            ready     = true;
+            wantClose = true;
+        }
         if (cancelClicked || WBUI::CancelKeyPressed()) {
             wantClose = true;
         }
