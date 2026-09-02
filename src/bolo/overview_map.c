@@ -22,8 +22,17 @@
  *  each pillbox they can view through - and rewrites those
  *  squares from the current map. Squares that have dropped
  *  out of that set keep the tile they last carried, so what
- *  the player has walked past stays as they left it and what
- *  they have never reached stays OVERVIEW_UNSEEN.
+ *  the player has walked past stays as they left it.
+ *
+ *  The memory opens seeded: when a map lands, every square
+ *  is stamped once from it in the remembered (not-live)
+ *  style, so the whole map reads dimmed from the first
+ *  frame - the terrain is in the map file every client
+ *  holds, so the picture gives nothing away - and only the
+ *  live regions brighten over it. From then on a seeded
+ *  square behaves exactly like a walked-past one: it holds
+ *  what it was stamped with until it goes live, so terrain
+ *  changes on ground the player cannot see stay invisible.
  *********************************************************/
 
 #include "global.h"
@@ -170,6 +179,23 @@ void overviewMapReset(OverviewMap *om) {
   memset(om->pillWasLive, 0, sizeof(om->pillWasLive));
   om->generation = 0;
   om->seenCount = 0;
+}
+
+void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
+                        BYTE myPlayerNum) {
+  OverviewRect all; /* The whole map, one stamp */
+
+  if (om == NULL || sim == NULL) {
+    return;
+  }
+
+  all.left = 0;
+  all.top = 0;
+  all.right = MAP_ARRAY_SIZE - 1;
+  all.bottom = MAP_ARRAY_SIZE - 1;
+  if (overviewStampRect(om, sim, myPlayerNum, &all, FALSE) == TRUE) {
+    om->generation++;
+  }
 }
 
 int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,

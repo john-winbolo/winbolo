@@ -19,8 +19,11 @@
  *  Tier-T3 header: the map memory a client keeps of what it
  *  has seen. Squares inside a live region are recalculated
  *  every display tick; squares outside one hold the tile
- *  they carried when they were last live, and squares that
- *  were never live stay OVERVIEW_UNSEEN.
+ *  they carried when they were last live. The memory is
+ *  seeded from the map when it lands, so a square the player
+ *  has never reached shows the ground as it was at the start;
+ *  OVERVIEW_UNSEEN survives only between a reset and the next
+ *  map install.
  *
  *  Read-only for frontends: the sim owns every byte here
  *  and rewrites it from overview_map.c.

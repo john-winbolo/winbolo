@@ -9,13 +9,15 @@
  * it in index order, and never more rects than the caller asked for.
  *
  * The rest drive a real ClientSim through clientSimDisplayTick and check what
- * the memory ends up holding: only live squares are revealed, a square that
- * leaves a live region keeps the tile it had and never picks up a later
- * terrain change the client already knows about, a region that stops being
- * live is stamped once more on the way out so a pill freezes dead or in the
- * captor's colours rather than a tick stale, a tank waiting to respawn holds
- * its block on the square it died on rather than dropping it, and a round
- * reset clears the lot while a mid-game map resync leaves it alone.
+ * the memory ends up holding: a map install seeds every square dimmed on the
+ * next tick and only live squares are bright over it, a square outside the
+ * live set keeps the tile it was seeded or last stamped with and never picks
+ * up a later terrain change the client already knows about, a region that
+ * stops being live is stamped once more on the way out so a pill freezes dead
+ * or in the captor's colours rather than a tick stale, a tank waiting to
+ * respawn holds its block on the square it died on rather than dropping it,
+ * and a round reset clears the lot while a mid-game map resync leaves it
+ * alone and a fresh install re-seeds it.
  *
  * One case steps outside the memory to the accessor that feeds it,
  * clientSimGetMyTankMapPos, and pins what it reports for a tank that is dead
@@ -431,46 +433,37 @@ int run_overview_reveal(void) {
     UT_ASSERT_MSG(om->liveCount == n, "liveCount %d, expected %d",
                   om->liveCount, n);
 
-    /* Every square of the map, either side of the union: inside it the memory
-     * holds what the per-square calculator says and is flagged live; outside it
-     * nothing has been touched at all. */
-    unsigned unionSize = 0;
+    /* Every square of the map, either side of the union: everything holds
+     * what the per-square calculator says — the install seeded the whole map
+     * on this tick and nothing has moved since — with the live flag exactly
+     * on the union. */
     int x, y;
     for (x = 0; x < MAP_ARRAY_SIZE; x++) {
         for (y = 0; y < MAP_ARRAY_SIZE; y++) {
             BYTE flags = om->flags[x][y];
+            bool inUnion = overviewInAnyRect(expect, n, x, y) == TRUE;
+            bool isMine = FALSE;
+            BYTE want = viewportCalcSquarePure(f.gs, f.me, (BYTE)x, (BYTE)y,
+                                               &isMine);
 
-            if (overviewInAnyRect(expect, n, x, y) == TRUE) {
-                bool isMine = FALSE;
-                BYTE want = viewportCalcSquarePure(f.gs, f.me, (BYTE)x, (BYTE)y,
-                                                   &isMine);
-                UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) != 0,
-                              "square %d,%d is inside a region but not live",
-                              x, y);
-                UT_ASSERT_MSG(om->tile[x][y] == want,
-                              "square %d,%d holds tile %u, calculator says %u",
-                              x, y, (unsigned)om->tile[x][y], (unsigned)want);
-                UT_ASSERT_MSG(((flags & OVERVIEW_F_MINE) != 0) == (isMine == TRUE),
-                              "square %d,%d mine flag %d, calculator says %d",
-                              x, y, (flags & OVERVIEW_F_MINE) != 0,
-                              isMine == TRUE);
-                unionSize++;
-            } else {
-                UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) == 0,
-                              "square %d,%d is outside every region but live",
-                              x, y);
-                UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
-                              "square %d,%d was never live but holds tile %u",
-                              x, y, (unsigned)om->tile[x][y]);
-                UT_ASSERT_MSG(flags == 0,
-                              "square %d,%d was never live but carries flags %u",
-                              x, y, (unsigned)flags);
-            }
+            UT_ASSERT_MSG(((flags & OVERVIEW_F_LIVE) != 0) == inUnion,
+                          "square %d,%d is %s the union but %s live",
+                          x, y, inUnion ? "inside" : "outside",
+                          inUnion ? "not" : "flagged");
+            UT_ASSERT_MSG(om->tile[x][y] == want,
+                          "square %d,%d holds tile %u, calculator says %u",
+                          x, y, (unsigned)om->tile[x][y], (unsigned)want);
+            UT_ASSERT_MSG(((flags & OVERVIEW_F_MINE) != 0) == (isMine == TRUE),
+                          "square %d,%d mine flag %d, calculator says %d",
+                          x, y, (flags & OVERVIEW_F_MINE) != 0,
+                          isMine == TRUE);
         }
     }
-    UT_ASSERT_MSG(om->seenCount == unionSize,
-                  "seenCount %u, the union holds %u squares", om->seenCount,
-                  unionSize);
+    UT_ASSERT_MSG(om->seenCount ==
+                      (unsigned)(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE),
+                  "seenCount %u after the seed, expected every square (%u)",
+                  om->seenCount,
+                  (unsigned)(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE));
 
     /* A second tick with nothing touched in between. generation is what a
      * renderer reads to decide it can skip a redraw, so a tick where nothing
@@ -793,15 +786,19 @@ int run_overview_dead_tank(void) {
         }
     }
 
-    /* The block the tank is about to be sent to. Checked unseen rather than
+    /* The block the tank is about to be sent to. Checked not-live rather than
      * assumed, so a join that dropped the tank within reach of the corner says
-     * so instead of leaving the case proving nothing. */
+     * so instead of leaving the case proving nothing; its seeded tiles are
+     * captured so the death tick can be shown to leave them alone. */
+    BYTE corner[OVERVIEW_TANK_SIDE * OVERVIEW_TANK_SIDE];
+    i = 0;
     for (x = deadRect.left; x <= deadRect.right; x++) {
         for (y = deadRect.top; y <= deadRect.bottom; y++) {
-            UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
+            UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_LIVE) == 0,
                           "square %d,%d of the corner the dead tank is sent to "
-                          "is already revealed: tile %u",
-                          x, y, (unsigned)om->tile[x][y]);
+                          "is already live", x, y);
+            corner[i] = om->tile[x][y];
+            i++;
         }
     }
 
@@ -817,12 +814,18 @@ int run_overview_dead_tank(void) {
     clientSimDisplayTick(f.cs, false);
 
     /* A dead tank reveals nothing where it reads: the block is held on the
-     * square it died on, never on the corner underneath it. */
+     * square it died on, never on the corner underneath it, so the corner
+     * stays out of the live set with its seeded tiles untouched. */
+    i = 0;
     for (x = deadRect.left; x <= deadRect.right; x++) {
         for (y = deadRect.top; y <= deadRect.bottom; y++) {
-            UT_ASSERT_MSG(om->tile[x][y] == OVERVIEW_UNSEEN,
-                          "a dead tank revealed square %d,%d: tile %u", x, y,
-                          (unsigned)om->tile[x][y]);
+            UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_LIVE) == 0,
+                          "a dead tank lit square %d,%d", x, y);
+            UT_ASSERT_MSG(om->tile[x][y] == corner[i],
+                          "a dead tank restamped square %d,%d: tile %u, "
+                          "expected %u", x, y, (unsigned)om->tile[x][y],
+                          (unsigned)corner[i]);
+            i++;
         }
     }
     UT_ASSERT_MSG(om->liveCount == 1,
@@ -1196,6 +1199,25 @@ int run_overview_reset(void) {
                   "a resync moved seenCount from %u to %u", seenAgain,
                   om->seenCount);
 
+    /* A fresh install — the lobby map-change path — resets the memory and
+     * arms the seed: black until the next tick, then the whole map reads
+     * dimmed again. */
+    {
+        BYTE emap[6000] = E_MAP;
+        UT_ASSERT_MSG(installCompressedMap(f.cs, emap, OVERVIEW_EMAP_LEN,
+                                           "Everard Island", true) == TRUE,
+                      "installCompressedMap rejected the fresh install");
+    }
+    UT_ASSERT_MSG(om->seenCount == 0,
+                  "a fresh install left seenCount at %u before the seeding "
+                  "tick", om->seenCount);
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(om->seenCount ==
+                      (unsigned)(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE),
+                  "seenCount %u one tick after a fresh install, expected "
+                  "every square (%u)", om->seenCount,
+                  (unsigned)(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE));
+
     overviewFixtureStop(&f);
     return 0;
 }
@@ -1333,7 +1355,6 @@ int run_overview_loopback(void) {
     int badY = 0;
     unsigned badGot = 0;
     unsigned badWant = 0;
-    unsigned unionSize = 0;
     int x, y;
     for (x = 0; x < MAP_ARRAY_SIZE && bad == NULL; x++) {
         for (y = 0; y < MAP_ARRAY_SIZE; y++) {
@@ -1343,7 +1364,6 @@ int run_overview_loopback(void) {
                 bool isMine = FALSE;
                 BYTE want = viewportCalcSquarePure(gs, me, (BYTE)x, (BYTE)y,
                                                    &isMine);
-                unionSize++;
                 if ((flags & OVERVIEW_F_LIVE) == 0) {
                     bad = "is inside a region but not live";
                 } else if (om->tile[x][y] != want) {
@@ -1359,13 +1379,9 @@ int run_overview_loopback(void) {
             } else {
                 if ((flags & OVERVIEW_F_LIVE) != 0) {
                     bad = "is outside every region but live";
-                } else if (om->tile[x][y] != OVERVIEW_UNSEEN) {
-                    bad = "was never live but holds a tile";
-                    badGot = om->tile[x][y];
-                    badWant = OVERVIEW_UNSEEN;
-                } else if (flags != 0) {
-                    bad = "was never live but carries flags";
-                    badGot = flags;
+                } else if (om->tile[x][y] == OVERVIEW_UNSEEN) {
+                    bad = "was left out of the seed";
+                    badGot = OVERVIEW_UNSEEN;
                     badWant = 0;
                 }
             }
@@ -1381,10 +1397,10 @@ int run_overview_loopback(void) {
         UT_FAIL("square %d,%d %s (got %u, expected %u)", badX, badY, bad,
                 badGot, badWant);
     }
-    if (om->seenCount != unionSize) {
+    if (om->seenCount != (unsigned)(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)) {
         loopbackHarnessStop(&h);
-        UT_FAIL("seenCount %u, the union holds %u squares", om->seenCount,
-                unionSize);
+        UT_FAIL("seenCount %u after the seed, expected every square (%u)",
+                om->seenCount, (unsigned)(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE));
     }
 
     /* One square the tank can see and one nothing has revealed. Both are found
@@ -1408,14 +1424,15 @@ int run_overview_loopback(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("no terrain-driven square in the block 100 off the tank");
     }
-    if (om->tile[farX][farY] != OVERVIEW_UNSEEN ||
+    if ((om->flags[farX][farY] & OVERVIEW_F_LIVE) != 0 ||
         overviewInAnyRect(expect, n, farX, farY) == TRUE) {
         loopbackHarnessStop(&h);
-        UT_FAIL("the square meant to stay hidden, %u,%u, is already revealed",
+        UT_FAIL("the square meant to stay hidden, %u,%u, is live",
                 (unsigned)farX, (unsigned)farY);
     }
 
     BYTE liveTileBefore = om->tile[liveX][liveY];
+    BYTE farTileBefore = om->tile[farX][farY];
     OverviewTerrainWait wait;
 
     /* Both changes go out the way a sim tick emits one: the server's own map
@@ -1488,13 +1505,13 @@ int run_overview_loopback(void) {
     }
 
     /* The hidden square does not. The client has the new terrain - the pump
-     * above waited for it - and the memory still says nothing was ever seen
-     * there. */
-    if (om->tile[farX][farY] != OVERVIEW_UNSEEN) {
+     * above waited for it - and the memory still shows what the seed stamped
+     * there, so a change on ground the player cannot see stays invisible. */
+    if (om->tile[farX][farY] != farTileBefore) {
         loopbackHarnessStop(&h);
-        UT_FAIL("a map event revealed %u,%u on its own: tile %u",
-                (unsigned)farX, (unsigned)farY,
-                (unsigned)om->tile[farX][farY]);
+        UT_FAIL("a map event restamped hidden square %u,%u: tile %u, "
+                "expected %u", (unsigned)farX, (unsigned)farY,
+                (unsigned)om->tile[farX][farY], (unsigned)farTileBefore);
     }
 
     loopbackHarnessStop(&h);

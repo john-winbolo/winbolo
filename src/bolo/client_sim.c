@@ -708,6 +708,12 @@ static void overviewMapTick(ClientSim *cs) {
                   clientSimGetMyTankMapPos(cs, &mx, &my);
   bool deathWait = !haveTank && MY_TANK(cs) != NULL;
 
+  /* A map install armed this: stamp the whole map dimmed before the live
+   * regions brighten over it, now that myPlayerNum is settled. */
+  if (cs->overviewSeedPending == TRUE) {
+    overviewMapSeedAll(&cs->overview, &cs->sim, cs->myPlayerNum);
+    cs->overviewSeedPending = FALSE;
+  }
   overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank,
                     deathWait, mx, my);
 }
@@ -1937,8 +1943,12 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
   if (initViewport) {
     viewportInit(clientSimViewportMut(cs));
     /* New map, so nothing seen on the old one still means anything. The
-     * resync path keeps the memory. */
+     * next overview tick seeds the memory from the map just installed —
+     * the whole map dimmed, live regions bright over it. The resync path
+     * keeps the memory instead: same map, and the player has not stopped
+     * having been where they have been. */
     overviewMapReset(&cs->overview);
+    cs->overviewSeedPending = TRUE;
   }
 
   {

@@ -75,7 +75,11 @@ T2 access via dedicated CMake profiles.
    the tile it carried the last time the local player could see it,
    plus the regions they can see this instant. It stores the *drawn*
    tile — alliance-correct pillboxes and bases, mines only where the
-   client knows one — and freezes a square when it leaves view.
+   client knows one — and freezes a square when it leaves view. The
+   memory is seeded from the map when it lands (the terrain is in the
+   map file every client holds), so every square reads dimmed from the
+   first frame; entities stay gated on the live regions, and a seeded
+   square freezes like any other until the player can see it.
 
    `clientSimGetBrainMap` returns the terrain array brains reason
    over, and it is not a record of anything the player saw. It holds
@@ -83,8 +87,8 @@ T2 access via dedicated CMake profiles.
    the viewport passes over into it; `screenBrainMapFillFromMap`
    fills it from the entire map for bots; and `mapSetPos` refreshes
    a square on the server sim whenever the terrain there changes,
-   whoever can or cannot see it. Drawing from it would leak ground
-   the player has never visited.
+   whoever can or cannot see it. Drawing from it would leak terrain
+   changes on ground the player cannot currently see.
 
    The two are deliberately not unified. Pointing brains at the fog
    memory would change how bots play, which is a gameplay decision

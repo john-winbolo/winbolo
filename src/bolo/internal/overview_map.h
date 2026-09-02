@@ -36,6 +36,15 @@ struct GameSim;
  * A calloc'd owner is not already reset — OVERVIEW_UNSEEN is 0xFF. */
 void overviewMapReset(OverviewMap *om);
 
+/* Stamps the whole map once in the remembered (not-live) style, so the
+ * overview opens with every square readable but dimmed instead of black.
+ * Run after a map lands, with the local slot settled — the per-square
+ * calculator draws pills, bases and mines from that player's point of
+ * view. A seeded square then freezes like any other remembered one until
+ * a live region reaches it. */
+void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
+                        BYTE myPlayerNum);
+
 /* Pure geometry. Writes the tank rect first when haveTank is true, then one
  * rect per pillbox passing pillsCanView in ascending pill index. Returns the
  * number written, never more than maxOut. The ordering is contractual — the

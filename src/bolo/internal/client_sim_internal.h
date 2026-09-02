@@ -225,12 +225,18 @@ struct ClientSim {
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 
-    /* Overview fog memory — what this player has seen, and what is live now.
-     * Maintained every display tick whether or not the overview is shown.
-     * Distinct from brainMap above: that one is the brains' terrain fog and
-     * is revealed by map changes anywhere; this one only ever records what
-     * was inside a live region. */
+    /* Overview fog memory — the whole map seeded dimmed when it lands, then
+     * what this player has seen live over it. Maintained every display tick
+     * whether or not the overview is shown. Distinct from brainMap above:
+     * that one is the brains' terrain fog and is revealed by map changes
+     * anywhere; this one only ever rewrites what is inside a live region. */
     OverviewMap overview;
+    /* A fresh map wants the memory seeded, but the install can run before
+     * the local slot is settled (clientSimConnectLocal installs at step 5,
+     * the slot funnel is step 7) and the seed draws pills, bases and mines
+     * from the local player's point of view. The install arms this instead;
+     * the next overview tick seeds with myPlayerNum settled. */
+    bool overviewSeedPending;
 
     /* Per-instance message state (was messages.c globals) */
     MessageState messages;
