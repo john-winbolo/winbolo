@@ -10,10 +10,11 @@
  * Files that include this header see the full struct
  * definition and may access its fields directly.
  *
- * Outside src/server/server_sim.c and
- * src/server/server_lifecycle.c, callers must include
- * server_sim.h (which exposes only a forward declaration)
- * and use the public accessor/mutator API.
+ * Outside src/server/server_sim.c,
+ * src/server/server_lifecycle.c and the sources under
+ * src/server/sim/, callers must include server_sim.h
+ * (which exposes only a forward declaration) and use the
+ * public accessor/mutator API.
  *********************************************************/
 #ifndef SERVER_SIM_INTERNAL_H
 #define SERVER_SIM_INTERNAL_H

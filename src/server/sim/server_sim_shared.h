@@ -65,4 +65,10 @@ void serverSimCbConsoleMessage(void *ctx, char *msg);
  * server_sim.c both feed it. */
 void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
 
+/* Defined in server_sim_snapshot.c — the base and pill collectors. They fill
+ * the snapshot's periodic full sync, and the tick core in server_sim.c reads
+ * them each half-step to diff this frame's bases and pills against the last. */
+int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
+int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
+
 #endif
