@@ -34,8 +34,12 @@ local U      = require("util")
 local attack = require("attack")
 local danger = require("danger")
 local threat = require("threat")   -- coverage_at, for the dispatch trigger
+-- The builder POOL: side-quests for the man, arbitrated separately from the
+-- tank's goal. No cycle -- builder_pool requires neither builder nor goals.
+local bpool  = require("builder_pool")
 local log    = require("logger")
 local PF     = require("pathfinder")
+local cpf    = require("cpathfinder")   -- tank-travel ETA for b.reserve_eta
 local print2 = require("print2")
 local viz    = require("viz")
 
@@ -597,6 +601,58 @@ function M.set_mode(state, world, info, goal)
     b.place_gate_fails, b.place_gate_key, b.place_gate_tick = nil, nil, nil
     b._dispatch_key = nil
   end
+
+  -- ── reserve_eta: when will THIS goal want the man? ────────────────────
+  -- One number, one comparison. The builder pool launches a side-quest only
+  -- if its whole round trip plus BUILDER_POOL_RESERVE_MARGIN fits inside this,
+  -- so "the walls are 110 ticks away" and "that rebuild is a 180-tick errand"
+  -- resolve without either side knowing about the other.
+  --
+  -- nil means "this goal will not want him", which is the common case and the
+  -- reason the pool is worth having at all. 0 means "now" -- set for the goals
+  -- that FEED the pool (repair/defend-repair): they seed their own job, and
+  -- while that is pending nothing else may take the man.
+  --
+  -- The tank-side ETA is the C estimator (cpf.estimate_tank_travel_ticks), the
+  -- same one the wall-shield early-advance uses to decide whether the tank
+  -- beats the LGM home -- not a distance/speed guess of our own.
+  b.reserve_eta = nil
+  do
+    local rtmx = bit.rshift(info.tankx, 8)
+    local rtmy = bit.rshift(info.tanky, 8)
+    local dmx, dmy, why
+    if kind == "repair_pill" or (kind == "defend_pill" and goal.repair) then
+      b.reserve_eta, why = 0, "repair_feeder"
+    elseif kind == "attack_pill"
+           and (goal.wall_shield or goal._trees_for_walls) then
+      -- Walls are planned at the standoff: the man is needed on arrival.
+      dmx, dmy, why = goal.standoff_mx or goal.approach_mx,
+                      goal.standoff_my or goal.approach_my, "walls_at_standoff"
+    elseif kind == "capture_pill" and goal.sea and not goal.sea.done then
+      -- Sea plan: the mine and the boat are both LGM work at the firing tile F.
+      local F = goal.sea.F
+      dmx, dmy, why = F and F[1], F and F[2], "sea_plan"
+      if not dmx then b.reserve_eta, why = 0, "sea_plan_no_F" end
+    elseif kind == "place_pill_strategic" and (info.carried_pills or 0) > 0 then
+      dmx, dmy, why = goal.mx, goal.my, "placement"
+    elseif kind == "pill_place" and goal.place_mx then
+      dmx, dmy, why = goal.place_mx, goal.place_my, "take_blocker"
+    end
+    if dmx and dmy then
+      if rtmx == dmx and rtmy == dmy then
+        b.reserve_eta = 0
+      else
+        local tt = cpf.estimate_tank_travel_ticks(rtmx, rtmy, dmx, dmy,
+                                                  info.inboat and 1 or 0)
+        -- -1 = the estimator gave up (unreachable / budget). Treat that as "no
+        -- reservation" rather than "immediately": an unreachable standoff is
+        -- not a claim on the man, and pretending it is would silence the pool
+        -- for the whole time the tank flails at it.
+        b.reserve_eta = (tt and tt > 0) and tt or nil
+      end
+    end
+    b.reserve_why = why
+  end
 end
 
 -- -------------------------------------------------------------------------
@@ -932,158 +988,18 @@ function M.decide(state, world, info, now)
     end
   end
 
-  -- Priority 0.4: repair_pill dispatch (FORCED mode — no danger gate).
-  -- As soon as we're within 5 tiles of the target friendly damaged pill
-  -- AND the LGM's tile-walk reachability sim says it can actually arrive,
-  -- dispatch BUILDMODE_PBOX onto the pill tile. Engine-side (lgm.c:1060+)
-  -- treats an empty-handed LGM walking onto a pill while carrying trees
-  -- as a repair: pillsRepairPos consumes the trees, restores health.
+  -- Priority 0.4 (repair_pill / defend->repair dispatch) HAS MOVED.
   --
-  -- After dispatch the brain is free to pick a new goal — the LGM
-  -- runs the repair autonomously. state._repair_dispatched signals
-  -- init.lua to clear state.goal back to "none".
-  -- Also serves the defend_pill REPAIR handoff (goal.repair, set by
-  -- defend_pill_score's ARRIVED branch): a defender parked at its own damaged
-  -- pill with the LGM aboard and wood in hand should FIX it rather than watch
-  -- it. Identical dispatch; the target comes from goal.pill_mx/pill_my because
-  -- a defend goal's own mx/my can be a hold tile next to the pill.
-  local _rep_px, _rep_py
-  if state.goal and state.goal.kind == "repair_pill" then
-    _rep_px, _rep_py = state.goal.mx, state.goal.my
-  elseif state.goal and state.goal.kind == "defend_pill" and state.goal.repair then
-    _rep_px = state.goal.pill_mx or state.goal.mx
-    _rep_py = state.goal.pill_my or state.goal.my
-  end
-  if _rep_px and _rep_py then
-    local px, py = _rep_px, _rep_py
-    local dist  = U.mdist(tmx, tmy, px, py)
-    -- Danger-blended distance cap. Insist on dist<=5 when we're not
-    -- under fire; widen toward DIST_DANGEROUS as the tank's local
-    -- danger climbs from DANGER_LOW to DANGER_HIGH. The tank still
-    -- navigates toward the pill (goal.mx/my unchanged), so it keeps
-    -- closing — we just stop EARLIER when staying close would cost
-    -- armour. "Get as close as we can while it's safe" naturally
-    -- emerges from re-evaluating the cap each tick.
-    -- Constants, not locals: defend_pill_score's REPAIR handoff reads
-    -- REPAIR_DISPATCH_DIST_BASE to decide whether its hold tile is somewhere
-    -- the LGM could actually be dispatched from.
-    local DANGER_LOW   = C.REPAIR_DISPATCH_DANGER_LOW or 50
-    local DANGER_HIGH  = C.REPAIR_DISPATCH_DANGER_HIGH or 150
-    local DIST_BASE      = C.REPAIR_DISPATCH_DIST_BASE or 5
-    local DIST_DANGEROUS = C.REPAIR_DISPATCH_DIST_DANGEROUS or 12
-    local danger_at_tank = (state.perc and state.perc.threat_at_tank) or 0
-    local t = (danger_at_tank - DANGER_LOW) / (DANGER_HIGH - DANGER_LOW)
-    if t < 0 then t = 0 elseif t > 1 then t = 1 end
-    local effective_max = DIST_BASE + (DIST_DANGEROUS - DIST_BASE) * t
-    local in_range = dist <= effective_max
-    local has_trees = info.trees > 0
-    -- Bless the pill tile (destination): the LGM walks onto the damaged pill to
-    -- repair it, so the live-pill stamp must not block its own target. Path
-    -- pills/bases still block.
-    -- Enemy-near hold: a hostile tank was seen near this pill within
-    -- REPAIR_HOLD_ENEMY_NEAR_TICKS (perception's _enemy_near_tick, fed by
-    -- team pill view) — sending the LGM out now walks him into fire. Hold
-    -- the dispatch (tank keeps closing / guarding) until the sighting
-    -- ages out. This is the honest replacement for pricing alone: the
-    -- pool's contested x3 already de-prioritizes the repair; this stops
-    -- the LGM leaving the tank while the threat is CURRENT.
-    local enemy_hold = false
-    -- Flag-gated (REPAIR_HOLD_ENEMY_NEAR_ENABLED, default OFF): with the
-    -- hold disabled, a committed repair_pill SENDS the LGM even with a
-    -- recent enemy sighting — the pool already priced the contest; a
-    -- repairer that always waits repairs nothing (and the waiting tank
-    -- used to get stuck-blocked on top: 20260825_200837 bot9 t=6218).
-    local _tgt_pill
-    do
-      local lst = world.pill_at and world.pill_at[py * 256 + px]
-      _tgt_pill = lst and lst[1] and lst[1].pill
-    end
-    if C.REPAIR_HOLD_ENEMY_NEAR_ENABLED then
-      local tp = _tgt_pill
-      if tp and tp._enemy_near_tick
-         and ((state.tick or 0) - tp._enemy_near_tick) < (C.REPAIR_HOLD_ENEMY_NEAR_TICKS or 400) then
-        enemy_hold = true
-      end
-    end
-    -- UNDER-FIRE hold (REPAIR_HOLD_UNDER_FIRE_ENABLED, default ON). This is the
-    -- interlock the enemy-near hold above was reaching for. "A hostile was SEEN
-    -- near this pill in the last 400 ticks" is true for most of a real game,
-    -- which is why that flag had to be turned off and the LGM was left with no
-    -- safety gate at all. "A shell landed on this pill less than
-    -- REPAIR_QUIET_TICKS ago" is the honest one: the LGM walks at ~1 tile/13
-    -- ticks and dies to a single hit, so sending him while the volley is still
-    -- landing simply loses him. The moment the hits stop, he goes.
-    local under_fire_hold, _uf_age = false, nil
-    if C.REPAIR_HOLD_UNDER_FIRE_ENABLED then
-      local lh = _tgt_pill and _tgt_pill.last_hit_tick
-      if lh and lh > 0 then
-        _uf_age = (state.tick or 0) - lh
-        if _uf_age < (C.REPAIR_QUIET_TICKS or 75) then under_fire_hold = true end
-      end
-    end
-    if under_fire_hold and (state._bhuf_log_tick or -1) ~= (state.tick or 0) then
-      state._bhuf_log_tick = state.tick or 0
-      print2(string.format(
-        "BUILDER_HOLD_UNDER_FIRE t=%d pill=(%d,%d) hit_age=%d quiet=%d goal=%s"
-        .. " -- LGM stays aboard while shells are still landing",
-        state.tick or 0, px, py, _uf_age or -1, C.REPAIR_QUIET_TICKS or 75,
-        (state.goal and state.goal.kind) or "?"))
-    end
-    local _hold = enemy_hold or under_fire_hold
-    local ticks = (in_range and has_trees and not _hold)
-      and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, px, py, 2000, 150)
-      or -1
-    local can_dispatch = in_range and has_trees and not _hold and ticks > 0
-
-    if BRAIN_DEBUG_MODE then
-      -- Status circle on the pill: green = dispatch fires this tick,
-      -- yellow = in goal but blocked on prerequisites, red = LGM can't
-      -- reach. Status line text on the tank.
-      local r, g, b
-      if can_dispatch then          r, g, b =   0, 255,   0
-      elseif ticks == 0 then        r, g, b = 255, 100, 100
-      else                          r, g, b = 255, 220,   0 end
-      viz.circle("repair_pill_viz", px + 0.5, py + 0.5, 0.55, r, g, b, 220)
-      viz.circle("repair_pill_viz", px + 0.5, py + 0.5, 0.30, r, g, b, 180)
-      local tank_fx = info.tankx / 256.0
-      local tank_fy = info.tanky / 256.0
-      viz.line("repair_pill_viz", tank_fx, tank_fy, px + 0.5, py + 0.5,
-               r, g, b, 120)
-      viz.text("repair_pill_viz", tank_fx + 0.6, tank_fy - 1.2,
-               string.format("Repair d=%d/%.1f tr=%d dgr=%d lgm=%d%s",
-                             dist, effective_max, info.trees,
-                             math.floor(danger_at_tank or 0),
-                             math.floor(ticks or 0),
-                             under_fire_hold
-                               and string.format(" HOLD(under fire %dt)", _uf_age or -1)
-                               or (enemy_hold and " HOLD(enemy near)" or "")),
-               "topleft", r, g, b, 240)
-      print2(string.format(
-        "REPAIR_DISPATCH_CHECK t=%d pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d"
-        .. " hold=%s (enemy_near=%s under_fire=%s hit_age=%s) goal=%s can=%s",
-        state.tick or 0, px, py, tmx, tmy, dist, effective_max, info.trees,
-        math.floor(danger_at_tank or 0),
-        math.floor(ticks or 0), tostring(_hold),
-        tostring(enemy_hold), tostring(under_fire_hold),
-        _uf_age and tostring(_uf_age) or "-",
-        (state.goal and state.goal.kind) or "?", tostring(can_dispatch)))
-    end
-
-    if can_dispatch then
-      state._repair_dispatched = true
-      -- Precise walk-sim ETA for the lgmd dispatch advert (init.lua's
-      -- dispatch funnel falls back to mdist x ticks/tile without it).
-      state._repair_dispatch_eta = ticks
-      if BRAIN_DEBUG_MODE then
-        print2(string.format(
-          "REPAIR_DISPATCH_FIRED t=%d pill=(%d,%d) action=BUILDMODE_PBOX eta=%d goal=%s hit_age=%s",
-          state.tick or 0, px, py, ticks,
-          (state.goal and state.goal.kind) or "?",
-          _uf_age and tostring(_uf_age) or "-"))
-      end
-      return { x = px, y = py, action = BUILDMODE_PBOX }
-    end
-  end
+  -- It used to sit right here and `return {action = BUILDMODE_PBOX}` on its
+  -- own, which made it a SECOND dispatch path: a repair went out with no job
+  -- record, no ally claim and no panel row, in parallel with a builder pool
+  -- that had no idea it had happened. The whole gate (danger-blended distance
+  -- cap, enemy-near hold, under-fire hold, walk sim, REPAIR_DISPATCH_CHECK /
+  -- BUILDER_HOLD_UNDER_FIRE / REPAIR_DISPATCH_FIRED) now lives in
+  -- builder_pool.repair_feeder, which runs from init.lua before decide() and
+  -- SEEDS the pool. The pool's rung (below, between P1b and P2) is the single
+  -- executor for every LGM errand: one place issues the order, one place opens
+  -- the job + claim, one place logs it. See BUILDER_POOL_PLAN.md section 7.
 
   -- Priority 0.5: base shield — build wall to block pill fire while on
   -- a base.  Scoped to refuel_at_base + actually sitting on the base
@@ -1196,6 +1112,25 @@ function M.decide(state, world, info, now)
     if danger.lgm_path_safe_enhanced(info, bx, by, C.LGM_DANGER_MED, now, world) then
       return { x = bx, y = by, action = BUILDMODE_ROAD }
     end
+  end
+
+  -- Priority 1c: BUILDER POOL — side-quests for the man (2026-09-02).
+  --
+  -- Deliberately between the emergency roads (1 / 1b) and the "suppressed"
+  -- bail (2). Above 2 because that bail is exactly what used to lose the pill:
+  -- a tank correctly finishing a take suppresses the builder, and a four-tree
+  -- errand six tiles away never got asked. Below 1 and 1b because drowning and
+  -- being stuck at speed 3 are survival, and survival still outranks an errand.
+  --
+  -- All the deciding happened in builder_pool.update(), which init.lua runs
+  -- between set_mode and here: it evaluated the whole eligibility stack (mode
+  -- ownership, fire-exchange substates, the tank's under-fire clock, the tree
+  -- reserve, ally claims, path safety, reserve_eta vs round trip) and left at
+  -- most one winner. This line only turns that winner into an engine action,
+  -- so there is one place that issues LGM orders and one place that logs them.
+  do
+    local bp_cmd = bpool.rung(state, world, info, now)
+    if bp_cmd then return bp_cmd end
   end
 
   -- Priority 2: suppressed — no builder activity

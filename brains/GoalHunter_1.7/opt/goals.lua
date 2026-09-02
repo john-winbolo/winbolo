@@ -25,6 +25,7 @@ local ally_state = require("ally_state")
 local circles    = require("circles")
 local squad  = require("squad")
 local builder = require("builder")   -- shared panic guard-spot search (M.guard_build_spot)
+local bpool  = require("builder_pool")  -- the repair_pill split + the BUILDER panel strip
 local PP     = require("pill_portfolio")
 local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
@@ -5207,6 +5208,20 @@ local function eval_wait_for_lgm(state, info)
   -- attack_tank engage, which is precisely the danger the follow-through row is
   -- priced to lose to.
   if state._place_trip then return nil end
+  -- Builder-pool side-quest in flight. The rule from the plan's collision
+  -- section is that a side-quest must NEVER delay a goal transition -- the
+  -- tank carries on and the stranded/rescue machinery is the backstop, which
+  -- is what keeps the leash cheap. So no park, with ONE exception: on the
+  -- RETURN leg with the tank under fire, the point of bidding is not to wait
+  -- longer, it is to move the RENDEZVOUS out of the shell zone
+  -- (pick_wait_spot's danger-aware tile) instead of dragging the man home
+  -- through it. Outbound / working / quiet: no bid at all.
+  local bpj = state._bp_job
+  if bpj then
+    local _fa = danger.tank_fire_age(state, state.tick or 0)
+    local hot = _fa ~= nil and _fa < (C.BUILDER_POOL_UNDER_FIRE_TICKS or 100)
+    if not (hot and bpj.phase == "returning") then return nil end
+  end
   local g = state.goal
   if g then
     if g.kind == "rescue_lgm"   then return nil end
@@ -6062,6 +6077,20 @@ local function filter_repair_pill(obj, state, info)
           and obj.health < C.PILLS_MAX_HEALTH
           and (C.REPAIR_FIX_ENABLED or obj.health > 0)) then return false end
   if not (info.man_status == C.LGM_INTANK and info.trees > 0) then return false end
+  -- A live ALLY builder-pool claim covers the OUTCOME, not just the trip
+  -- (BUILDER_POOL_PLAN section 6): if p2's man is walking to this pill, it is
+  -- going to be repaired, so it should not appear in our "damaged friendly
+  -- pill needing attention" discovery at all -- not as a cheap row we then
+  -- reject, which would still let it drag our replan around. Arbitration
+  -- (earlier claim tick, then lower player number) lives in
+  -- builder_pool.ally_claim_on; here we simply honour whatever it says beats
+  -- us, asking as of NOW because we hold no claim on this tile.
+  if C.BUILDER_POOL_ENABLED and state then
+    local _now_c = state.tick or 0
+    if bpool.ally_claim_on(state, info, obj.mx, obj.my, _now_c, _now_c) then
+      return false
+    end
+  end
   if C.REPAIR_FIX_ENABLED and obj.health == 0 then
     if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
     -- Capture outranks rebuild: a corpse that capture_pill can take (on the
@@ -11085,6 +11114,9 @@ function M.step_eval_queue(state, world, info)
       local _rp_dmg, _rp_contested = 0, false
       local _rp_uf, _rp_hit_age = false, nil
       local _rp_soft, _rp_soft_id, _rp_soft_d, _rp_soft_why = false, nil, nil, nil
+      -- Set by the repair_pill split below; becomes entry._skipped so the row
+      -- carries its reject chip like every other INF row in the grid.
+      local entry_skipped_builder = nil
       if pool_idx == 5 and (obj.health or 0) > 0 then
         _rp_dmg = (C.PILLS_MAX_HEALTH or 15) - obj.health
         c = (C.REPAIR_BASE_COST or 30)
@@ -11146,6 +11178,37 @@ function M.step_eval_queue(state, world, info)
         end
         -- Legacy display flag: anything that still asks "was this contested?"
         _rp_contested = _rp_uf or _rp_soft
+      end
+
+      -- repair_pill SPLIT (BUILDER_POOL_PLAN section 7). repair_pill as a TANK
+      -- goal means one thing only: "relocate so the repair becomes
+      -- leash-reachable". If the man can ALREADY walk to this pill from where
+      -- the tank stands, the tank has nothing to add -- the builder pool will
+      -- do it without the tank moving at all -- so the row goes INF with the
+      -- reason on it rather than spending a replan driving to somewhere it is
+      -- already close enough to. Dead pills split the same way (the pool's
+      -- `rebuild` row is the one that walks out with the wood).
+      --
+      -- INF rather than "hidden": the always-show rule. Seeing
+      -- `REJECT builder_can (leash 8, eta 44)` on the pool-5 row and the
+      -- matching `rebuild` row on the BUILDER strip is how the two halves of
+      -- the split are checked against each other.
+      if pool_idx == 5 and C.BUILDER_POOL_ENABLED then
+        local _bc_eta = bpool.builder_can_repair(state, world, info, obj)
+        if _bc_eta then
+          c = 1e30
+          entry_skipped_builder = string.format("builder_can (leash %d, eta %d)",
+                                                C.BUILDER_POOL_LEASH or 8, _bc_eta)
+          -- Edge-triggered on the pill: a committed relocate that finally gets
+          -- close enough should produce ONE line saying the hand-off happened,
+          -- not one per re-eval for the rest of the game.
+          state._rsplit_seen = state._rsplit_seen or {}
+          if not state._rsplit_seen[id] then
+            state._rsplit_seen[id] = now
+          end
+        elseif state._rsplit_seen then
+          state._rsplit_seen[id] = nil
+        end
       end
 
       -- Ally-claimed handling for generic pools (2,3,4,5,6,7,8).
@@ -11342,6 +11405,7 @@ function M.step_eval_queue(state, world, info)
         entry._rp_soft_id = _rp_soft_id
         entry._rp_soft_d = _rp_soft_d
         entry._rp_soft_why = _rp_soft_why
+        entry._skipped = entry_skipped_builder
       else
         entry._stale=stale_cost; entry._age=_gen_age
       end
@@ -16140,6 +16204,22 @@ function M.get_pool_breakdown_json(state)
     if by_pool[idx] and #by_pool[idx] > 0 then
       sections[#sections + 1] = (build_section(idx))
     end
+  end
+
+  -- BUILDER (15) — the builder pool's own strip. NOT a new pool and not part
+  -- of the eval_queue: this arbiter spends the MAN, not the tank, so it has no
+  -- goal, no phase weight and no WINNERS entry. It is built entirely by
+  -- builder_pool.panel_section from the record update() left on state, which
+  -- is why the numbers on it are the same numbers the dispatch used.
+  -- Numbering starts above take_cover (14) so every recording made before
+  -- this existed still loads: nothing that was 1..14 has moved.
+  --
+  -- The section carries `hdr` (owner / eligibility / active job) on top of the
+  -- usual rows; the renderer prints those lines above the row list. Rows use
+  -- the shared cost + short||long formula renderer like every other pool row.
+  do
+    local bsec = bpool.panel_section(state)
+    if bsec then sections[#sections + 1] = bsec end
   end
 
   return json.encode({

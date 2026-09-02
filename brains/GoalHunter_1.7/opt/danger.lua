@@ -308,6 +308,53 @@ function M.update(info, tick)
   end
 end
 
+-- -------------------------------------------------------------------------
+-- Sustained "the TANK is in a firefight" clock (builder pool, 2026-09-02).
+--
+-- perc.under_fire is a SINGLE-TICK test -- "the danger field at our tile is
+-- non-zero" -- and it is the wrong question for deciding whether to let the
+-- LGM out. It is true through the quiet minutes of a standoff with a calm pill
+-- in range, and it is false in the gap between two shells that are both aimed
+-- at us. The man's risky moments are the two ENDS of his trip (splash at
+-- departure, splash at return), so what matters is whether anything has
+-- actually connected or is genuinely inbound RECENTLY.
+--
+-- Two pieces of evidence, both of which the brain already keeps:
+--   * armour dropped since last tick (init.lua's state.took_damage_this_tick),
+--   * a hostile/neutral shell whose closest approach IN OUR MOVING FRAME lands
+--     inside SWERVE_HIT_RADIUS_WU -- i.e. shells_incoming_near's own hit test,
+--     the same one the swerve uses to decide a shell WILL connect. A shell we
+--     are successfully dodging reads as a miss and does not restart the clock.
+--
+-- update_fire_clock stamps state._tank_fire_tick on either; tank_fire_age
+-- reports how long ago that was (nil = never, this game/life). Deterministic:
+-- game ticks only, no wall clock.
+-- -------------------------------------------------------------------------
+function M.update_fire_clock(state, info, tick)
+  if state._tank_fire_clock_tick == tick then return end
+  state._tank_fire_clock_tick = tick
+  local why = nil
+  if state.took_damage_this_tick then
+    why = "armour"
+  else
+    local will_hit = M.shells_incoming_near(info, info.tankx, info.tanky,
+                                            C.SWERVE_SHELL_NEAR_WU)
+    if will_hit then why = "shell" end
+  end
+  if why then
+    state._tank_fire_tick = tick
+    state._tank_fire_why  = why
+  end
+end
+
+-- Ticks since the last hit / inbound shell, plus which of the two it was.
+-- nil when nothing has ever hit us (a fresh spawn, a quiet game).
+function M.tank_fire_age(state, tick)
+  local t = state._tank_fire_tick
+  if not t then return nil, nil end
+  return tick - t, state._tank_fire_why
+end
+
 -- =========================================================================
 -- vulnerability / imdanger — the two build scores
 -- =========================================================================
