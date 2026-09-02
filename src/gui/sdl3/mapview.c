@@ -48,12 +48,8 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
   bool done = FALSE;
   while (!done) {
     BYTE pos = screenGetPos(value, x, y);
-    SDL_FRect src = {
-      (float)(mapViewPosX[pos] * ss),
-      (float)(mapViewPosY[pos] * ss),
-      (float)(TILE_SIZE_X * ss),
-      (float)(TILE_SIZE_Y * ss)
-    };
+    SDL_FRect src = mapViewAtlasSrc(mapViewPosX[pos], mapViewPosY[pos],
+                                    TILE_SIZE_X, TILE_SIZE_Y, ss);
     SDL_FRect dest = {
       (float)(originX + ((int)x - 1) * tileW - edgeX),
       (float)(originY + ((int)y - 1) * tileH - edgeY),
@@ -63,8 +59,8 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
     if (screenIsMine(mineView, x, y)) {
-      SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
-                            (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
+      SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
+                                          TILE_SIZE_X, TILE_SIZE_Y, ss);
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
 
@@ -153,8 +149,7 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       sy -= kTipRow[dir] * (float)ctx->zoomFactor;
     }
 
-    int ss = ctx->sheetScale;
-    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+    SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ctx->sheetScale);
     SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
@@ -284,14 +279,8 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
     {
-      int ss = ctx->sheetScale;
-      /* Inset the source rect by a tiny amount to prevent the GPU from
-         sampling the adjacent atlas row due to float-to-UV precision
-         errors.  BMP-sourced sprites above have green (0,255,0,0) in
-         their transparent pixels which would otherwise bleed through. */
-      float inset = 0.05f;
-      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
-                         (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
+      SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, TILE_SIZE_X, TILE_SIZE_Y,
+                                       ctx->sheetScale);
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
@@ -346,8 +335,8 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     }
 
     {
-      int ss = ctx->sheetScale;
-      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+      SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, srcW, srcH,
+                                       ctx->sheetScale);
       SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
@@ -530,12 +519,8 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
   for (int x = 0; x < tilesW; x++) {
     for (int y = 0; y < tilesH; y++) {
       BYTE pos = tileBuf.tiles[x][y];
-      SDL_FRect src = {
-        (float)(mapViewPosX[pos] * ss),
-        (float)(mapViewPosY[pos] * ss),
-        (float)(tileSize * ss),
-        (float)(tileSize * ss)
-      };
+      SDL_FRect src = mapViewAtlasSrc(mapViewPosX[pos], mapViewPosY[pos],
+                                      tileSize, tileSize, ss);
       SDL_FRect dest = {
         (float)(originX + x * scaledTile - edgeX),
         (float)(originY + y * scaledTile - edgeY),
@@ -545,8 +530,8 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
       if (tileBuf.mines[x][y]) {
-        SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
-                              (float)(tileSize * ss), (float)(tileSize * ss) };
+        SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
+                                            tileSize, tileSize, ss);
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
       }
     }
@@ -684,7 +669,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
       default: continue;
     }
 
-    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
+    SDL_FRect srcR = mapViewAtlasSrc(srcX, srcY, tileSize, tileSize, ss);
     SDL_FRect dstR = { dx, dy, (float)scaledTile, (float)scaledTile };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
@@ -748,7 +733,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
         /* Cull off-screen */
         if (sx + srcW * zf >= originX && sx <= originX + viewW &&
             sy + srcH * zf >= originY && sy <= originY + viewH) {
-          SDL_FRect sSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+          SDL_FRect sSrc = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ss);
           SDL_FRect sDst = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
           SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &sSrc, &sDst);
         }
@@ -788,7 +773,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
 
       if (ex + scaledTile >= originX && ex <= originX + viewW &&
           ey + scaledTile >= originY && ey <= originY + viewH) {
-        SDL_FRect eSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
+        SDL_FRect eSrc = mapViewAtlasSrc(srcX, srcY, tileSize, tileSize, ss);
         SDL_FRect eDst = { ex, ey, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &eSrc, &eDst);
       }
@@ -836,7 +821,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
 
     if (lx + srcW * zf >= originX && lx <= originX + viewW &&
         ly + srcH * zf >= originY && ly <= originY + viewH) {
-      SDL_FRect lSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+      SDL_FRect lSrc = mapViewAtlasSrc(srcX, srcY, srcW, srcH, ss);
       SDL_FRect lDst = { lx, ly, (float)(srcW * zf), (float)(srcH * zf) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &lSrc, &lDst);
     }
@@ -862,7 +847,8 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
           ty + scaledTile >= originY && ty <= originY + viewH) {
         /* Fireball is TANK_EXPLOSION_FRAME (8) which in the real game maps
          * through SHELL_EXPLOSION1 (=8) to the EXPLOSION1 sprite (small spark). */
-        SDL_FRect tSrc = { (float)(EXPLOSION1_X * ss), (float)(EXPLOSION1_Y * ss), (float)(tileSize * ss), (float)(tileSize * ss) };
+        SDL_FRect tSrc = mapViewAtlasSrc(EXPLOSION1_X, EXPLOSION1_Y,
+                                         tileSize, tileSize, ss);
         SDL_FRect tDst = { tx, ty, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &tSrc, &tDst);
       }

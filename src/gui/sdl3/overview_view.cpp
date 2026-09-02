@@ -157,10 +157,8 @@ static void overviewViewDrawPass(SDL_Renderer *r, SDL_Texture *tiles, int ss,
     }
 
     float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
-    float cellW  = (float)(TILE_SIZE_X * ss);
-    float cellH  = (float)(TILE_SIZE_Y * ss);
-    SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
-                          cellW, cellH };
+    SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
+                                        TILE_SIZE_X, TILE_SIZE_Y, ss);
 
     /* x outer, y inner: the memory is [x][y], so the inner walk is
      * contiguous. */
@@ -187,9 +185,9 @@ static void overviewViewDrawPass(SDL_Renderer *r, SDL_Texture *tiles, int ss,
             sx = SDL_roundf(sx);
             sy = SDL_roundf(sy);
             SDL_FRect dest = { sx, sy, tilePx, tilePx };
-            SDL_FRect src  = { (float)(mapViewPosX[tile] * ss),
-                               (float)(mapViewPosY[tile] * ss),
-                               cellW, cellH };
+            SDL_FRect src  = mapViewAtlasSrc(mapViewPosX[tile],
+                                             mapViewPosY[tile],
+                                             TILE_SIZE_X, TILE_SIZE_Y, ss);
             SDL_RenderTexture(r, tiles, &src, &dest);
 
             if ((flags & OVERVIEW_F_MINE) != 0) {
@@ -355,10 +353,8 @@ static void overviewViewDrawEntities(OverviewView *v,
     if (cursorSolid || buildCursorGetTargetTile(&bcX, &bcY)) {
         int bbx = (int)bcX * TILE_SIZE_X;
         int bby = (int)bcY * TILE_SIZE_Y;
-        SDL_FRect src = {
-            (float)(MOUSE_SQUARE_X * ss), (float)(MOUSE_SQUARE_Y * ss),
-            (float)(TILE_SIZE_X * ss),    (float)(TILE_SIZE_Y * ss)
-        };
+        SDL_FRect src = mapViewAtlasSrc(MOUSE_SQUARE_X, MOUSE_SQUARE_Y,
+                                        TILE_SIZE_X, TILE_SIZE_Y, ss);
         SDL_FRect dst = {
             (float)(originX - tileW + bbx * OVERVIEW_ENTITY_SUBPX),
             (float)(originY - tileH + bby * OVERVIEW_ENTITY_SUBPX),
