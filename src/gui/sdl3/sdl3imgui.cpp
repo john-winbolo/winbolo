@@ -4254,7 +4254,7 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
 
 /* Drain any pending NAME_* reject (CTRL_COMMAND_REJECTED with a
  * CMD_REJECT_NAME_* reason) into the in-game message overlay when
- * we're not in the lobby. The lobby toast in renderLobbyRejectToast
+ * we're not in the lobby. The lobby toast in lobbyRenderRejectToast
  * handles the in-lobby case; this closes the gap for in-game name
  * changes (WinBolo > Change Name, Settings > Player Name), which
  * non-WBN servers accept at any phase. Clearing the reject after
