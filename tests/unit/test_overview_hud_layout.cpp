@@ -13,6 +13,7 @@
 /* Layout policy, mirroring overview_hud_layout.cpp. The checks below restate
  * the rules rather than hand-copying the numbers they produce. */
 static const int   kGap       = 4;     /* source pixels between rows and pairs */
+static const int   kDividerH  = 3;     /* the ridge between the base and tank bars */
 static const int   kMargin    = 8;     /* window pixels around the column */
 static const int   kStripPad  = 4;     /* window pixels around the newswire slice */
 static const float kMinScale  = 0.75f;
@@ -36,8 +37,8 @@ static const char *kNames[OVERVIEW_HUD_COUNT] = {
 static int maxInt(int a, int b) { return (a > b) ? a : b; }
 
 /* The column's source height, re-derived from the rows the mockup stacks: the
- * LGM pair, the three grids, the base bars, then the tank bars, with a gap
- * between every row. */
+ * LGM pair, the three grids, the base bars, the divider ridge in its own slot,
+ * then the tank bars, with a gap between every row. */
 static int columnSrcHeight(const OverviewHudLayout *lay) {
     return maxInt(lay->el[OVERVIEW_HUD_MANSTATUS].srcH,
                   lay->el[OVERVIEW_HUD_KILLSDEATHS].srcH) + kGap
@@ -45,6 +46,7 @@ static int columnSrcHeight(const OverviewHudLayout *lay) {
          + lay->el[OVERVIEW_HUD_PILLS].srcH    + kGap
          + lay->el[OVERVIEW_HUD_BASES].srcH    + kGap
          + lay->el[OVERVIEW_HUD_BASEBARS].srcH + kGap
+         + kDividerH                           + kGap
          + lay->el[OVERVIEW_HUD_TANKBARS].srcH;
 }
 
@@ -80,6 +82,14 @@ static bool rectInside(float x, float y, float w, float h,
     const float eps = 0.01f;
     return x >= ox - eps && y >= oy - eps &&
            x + w <= ox + ow + eps && y + h <= oy + oh + eps;
+}
+
+/* Do the two rectangles keep clear of each other on at least one axis? */
+static bool rectsApart(float ax, float ay, float aw, float ah,
+                       float bx, float by, float bw, float bh) {
+    const float eps = 0.01f;
+    return ax + aw <= bx + eps || bx + bw <= ax + eps ||
+           ay + ah <= by + eps || by + bh <= ay + eps;
 }
 
 /* 1080p less the menu bar: the column fits, and it stays inside the map. */
@@ -167,8 +177,8 @@ static int hud_layout_stacks_in_order(void) {
     return 0;
 }
 
-/* Nothing in the column is drawn over anything else in it, and nothing in it
- * is drawn under the newswire strip. */
+/* Nothing in the column is drawn over anything else in it, and the column's
+ * backing keeps clear of the newswire strip it shares the bottom band with. */
 static int hud_layout_column_never_overlaps(void) {
     static const struct { int w, h; } kSizes[] = {
         { 1920, 1058 }, { 1280, 800 }, { 2560, 1400 }, { 1024, 600 }
@@ -199,25 +209,21 @@ static int hud_layout_column_never_overlaps(void) {
             }
         }
 
-        /* The strip is fitted with the column rather than laid on top of it,
-           so the backing rectangles never meet. */
-        UT_ASSERT_MSG(lay.columnY + lay.columnH <= lay.newswireY,
-                      "at %dx%d, the column backing ends at y %.2f, below the "
-                      "newswire strip's top edge at %.2f",
+        /* The column shares the bottom band with the newswire strip — the
+           column anchored to the bottom-right corner, the centred strip
+           trimmed to stop short of it — so the two backings must be kept
+           apart as rectangles, not stacked. */
+        UT_ASSERT_MSG(rectsApart(lay.columnX, lay.columnY,
+                                 lay.columnW, lay.columnH,
+                                 lay.newswireX, lay.newswireY,
+                                 lay.newswireW, lay.newswireH),
+                      "at %dx%d, the column backing (%.2f,%.2f %.2fx%.2f) "
+                      "overlaps the newswire strip (%.2f,%.2f %.2fx%.2f)",
                       kSizes[s].w, kSizes[s].h,
-                      (double)(lay.columnY + lay.columnH),
-                      (double)lay.newswireY);
-
-        for (int i = 0; i < COLUMN_LEN; i++) {
-            const OverviewHudElement *e = &lay.el[kColumn[i]];
-            UT_ASSERT_MSG(e->dstY + e->dstH <= lay.newswireY,
-                          "at %dx%d, %s (%.2f,%.2f %.2fx%.2f) runs into the "
-                          "newswire strip, which starts at y %.2f",
-                          kSizes[s].w, kSizes[s].h, kNames[kColumn[i]],
-                          (double)e->dstX, (double)e->dstY,
-                          (double)e->dstW, (double)e->dstH,
-                          (double)lay.newswireY);
-        }
+                      (double)lay.columnX, (double)lay.columnY,
+                      (double)lay.columnW, (double)lay.columnH,
+                      (double)lay.newswireX, (double)lay.newswireY,
+                      (double)lay.newswireW, (double)lay.newswireH);
     }
     return 0;
 }
@@ -251,7 +257,7 @@ static int hud_layout_backing_contains_column(void) {
     return 0;
 }
 
-/* The build select stands on the left edge, level with the column and clear of
+/* The build select stands on the left edge, vertically centred, and clear of
  * everything else drawn over the map. */
 static int hud_layout_build_strip(void) {
     static const struct { int w, h; } kSizes[] = {
@@ -269,20 +275,26 @@ static int hud_layout_build_strip(void) {
                       "at %dx%d, the build strip starts at x %.2f, not the "
                       "%d px left margin",
                       viewW, viewH, (double)lay.buildX, kMargin);
-        UT_ASSERT_MSG(nearly(lay.buildY, lay.columnY),
-                      "at %dx%d, the build strip at y %.2f does not share the "
-                      "column's top edge at %.2f",
-                      viewW, viewH, (double)lay.buildY, (double)lay.columnY);
+        UT_ASSERT_MSG(nearly(lay.buildY, ((float)viewH - lay.buildH) * 0.5f),
+                      "at %dx%d, the build strip at y %.2f is not centred on "
+                      "the view height (expected %.2f)",
+                      viewW, viewH, (double)lay.buildY,
+                      (double)(((float)viewH - lay.buildH) * 0.5f));
         UT_ASSERT_MSG(lay.buildX + lay.buildW <= lay.columnX,
                       "at %dx%d, the build strip ends at x %.2f, past the "
                       "column's left edge at %.2f",
                       viewW, viewH, (double)(lay.buildX + lay.buildW),
                       (double)lay.columnX);
-        UT_ASSERT_MSG(lay.buildY + lay.buildH <= lay.newswireY,
-                      "at %dx%d, the build strip ends at y %.2f, below the "
-                      "newswire strip's top edge at %.2f",
-                      viewW, viewH, (double)(lay.buildY + lay.buildH),
-                      (double)lay.newswireY);
+        UT_ASSERT_MSG(rectsApart(lay.buildX, lay.buildY,
+                                 lay.buildW, lay.buildH,
+                                 lay.newswireX, lay.newswireY,
+                                 lay.newswireW, lay.newswireH),
+                      "at %dx%d, the build strip (%.2f,%.2f %.2fx%.2f) "
+                      "overlaps the newswire strip (%.2f,%.2f %.2fx%.2f)",
+                      viewW, viewH, (double)lay.buildX, (double)lay.buildY,
+                      (double)lay.buildW, (double)lay.buildH,
+                      (double)lay.newswireX, (double)lay.newswireY,
+                      (double)lay.newswireW, (double)lay.newswireH);
         UT_ASSERT_MSG(rectInside(lay.buildX, lay.buildY, lay.buildW, lay.buildH,
                                  0.0f, 0.0f, (float)viewW, (float)viewH),
                       "at %dx%d, the build strip (%.2f,%.2f %.2fx%.2f) leaves "
@@ -351,8 +363,8 @@ static int hud_layout_build_items(void) {
     return 0;
 }
 
-/* The newswire strip runs the full width along the bottom edge, and holds its
- * slice with the pad above it. */
+/* The newswire strip sits centred on the bottom edge, just wide enough for
+ * its slice, and holds the slice with the pad above it. */
 static int hud_layout_newswire_strip(void) {
     static const struct { int w, h; } kSizes[] = { { 1920, 1058 }, { 1280, 800 } };
 
@@ -362,11 +374,24 @@ static int hud_layout_newswire_strip(void) {
         OverviewHudLayout lay;
         UT_ASSERT(overviewHudLayout(viewW, viewH, &lay));
 
-        UT_ASSERT_MSG(nearly(lay.newswireX, 0.0f) &&
-                          nearly(lay.newswireW, (float)viewW),
-                      "newswire strip spans %.2f..%.2f, not the full %d px width",
-                      (double)lay.newswireX,
-                      (double)(lay.newswireX + lay.newswireW), viewW);
+        const OverviewHudElement *news = &lay.el[OVERVIEW_HUD_NEWSWIRE];
+        UT_ASSERT_MSG(nearly(lay.newswireX,
+                             ((float)viewW - lay.newswireW) * 0.5f),
+                      "newswire strip at x %.2f is not centred on the %d px "
+                      "width (expected %.2f)",
+                      (double)lay.newswireX, viewW,
+                      (double)(((float)viewW - lay.newswireW) * 0.5f));
+        UT_ASSERT_MSG(nearly(lay.newswireW,
+                             news->dstW + 2.0f * (float)kStripPad),
+                      "newswire strip is %.2f wide, not its %.2f px slice "
+                      "plus the pad",
+                      (double)lay.newswireW,
+                      (double)(news->dstW + 2.0f * (float)kStripPad));
+        UT_ASSERT_MSG(lay.newswireX + lay.newswireW <= lay.columnX + 0.01f,
+                      "newswire strip ends at x %.2f, past the column's left "
+                      "edge at %.2f",
+                      (double)(lay.newswireX + lay.newswireW),
+                      (double)lay.columnX);
         UT_ASSERT_MSG(nearly(lay.newswireY + lay.newswireH, (float)viewH),
                       "newswire strip ends at %.2f, not the %d px bottom edge",
                       (double)(lay.newswireY + lay.newswireH), viewH);
