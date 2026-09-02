@@ -1490,6 +1490,32 @@ function Brain.think(info)
     return { holdkeys = 0, tapkeys = 0, build = nil,
              wantallies = info.allies, messagedest = 0, sendmessage = nil }
   end
+  -- ── Dead → alive edge ───────────────────────────────────────────────
+  -- We are alive and the previous tick was a dead tick, so THIS is the first
+  -- frame of a new life. That is the only reliable respawn signal a bot gets:
+  --   * the position-jump test below needs > RESPAWN_CACHE_WIPE_DIST (12)
+  --     tiles, and a tank whose boat is shot out from under it AT its start
+  --     square respawns on the same tile (jump 1);
+  --   * info.newtank is ALWAYS false here. tank.c sets it when deathWait
+  --     reaches 0 and clears it in the very next tankUpdate (tank.c:579),
+  --     while bot_manager advances the bot's client sim TWO game ticks per
+  --     think — so both updates land before the brain is asked. Measured, not
+  --     assumed: an inert probe brain over three same-square deaths saw
+  --     newtank true exactly once, on the synthetic `first == TRUE` open
+  --     (brain_data.c:275), and false on every real dead→alive edge.
+  -- The dead branch above runs on every dead tick (bot_manager deliberately
+  -- keeps thinking while dead), so _dij_blanked is set for the whole death
+  -- and cleared here — which makes it the edge.
+  if state._dij_blanked and C.SPAWN_ESCAPE_ENABLED then
+    local _rmx = bit.rshift(info.tankx, 8)
+    local _rmy = bit.rshift(info.tanky, 8)
+    state._spawn_escape_arm   = now
+    state._spawn_escape       = nil
+    state._spawn_escape_cands = nil
+    -- The refuel target hold belonged to the trip the DEAD tank was making.
+    state._refuel_target      = nil
+    print2(string.format("SPAWN_ESCAPE_ARM t=%d at=(%d,%d) via=dead_edge", now, _rmx, _rmy))
+  end
   state._dij_blanked = nil   -- alive: re-arm the on-death slate blank for next death
 
   -- Diagnostic: log when Dijkstra newly reaches a base. State-tracked
@@ -3463,6 +3489,22 @@ function Brain.think(info)
         now, jump, state._prev_mx, state._prev_my, cur_mx, cur_my))
     end
   end
+  -- Spawn-escape arming already happened on the dead→alive edge much earlier
+  -- in this think (see the _dij_blanked block); that path has no distance
+  -- condition, so it catches the same-square respawn the jump test below
+  -- cannot see. This is the belt-and-braces arm for the case where the dead
+  -- tick was missed entirely (a Lua error or GC pause ate it) but the jump is
+  -- still visible.
+  if C.SPAWN_ESCAPE_ENABLED and _just_respawned
+     and state._spawn_escape_arm ~= now then
+    state._spawn_escape_arm   = now
+    state._spawn_escape       = nil
+    state._spawn_escape_cands = nil
+    state._refuel_target      = nil
+    print2(string.format("SPAWN_ESCAPE_ARM t=%d at=(%d,%d) via=respawn_jump",
+      now, cur_mx, cur_my))
+  end
+
   if _just_respawned then
     state.stuck_for = 0
     state._kw_send_query = true   -- re-acquire team's known world after respawn
@@ -3608,6 +3650,12 @@ function Brain.think(info)
     -- (e.g. a pill we died next to reads cheap from across the map). The
     -- scheduler restarts all 4 slates here instead of waiting out the interval.
     state._dij_reroot = true
+    -- The refuel target hold belongs to the trip we were on; the tank making
+    -- it is dead. Drop it so the new tank re-picks freely.
+    state._refuel_target = nil
+    -- (spawn-escape arming happens above, on the dead->alive edge, with the
+    -- _just_respawned jump as belt-and-braces -- see the note there. NOT on
+    -- info.newtank: that flag is always false by the time a bot brain runs.)
     -- Force-seed an explore goal so the first post-respawn tick has a
     -- sane state.goal before goal_selection runs.
     state.goal.kind     = "explore"
@@ -3997,6 +4045,15 @@ function Brain.think(info)
       end
       state.goal = { kind = "none" }
     end
+
+    -- Spawn escape. Runs on the "not drowning" side on purpose: a tank that
+    -- has LOST its boat and is sitting in water is escape_water's problem
+    -- (above), and that branch already owns the goal. This one is for the
+    -- tank that is still ON the boat at its start square with hostile pills
+    -- looking at it. It sets state.goal itself and, while it is live, the
+    -- replan gate below refuses to let goal selection run at all — so the
+    -- pool cannot talk the tank back into the coverage.
+    goals.spawn_escape_tick(state, world, info)
 
     -- Build road under self when on slow terrain (swamp/rubble/crater).
     -- ROI: swamp traversal ~85 ticks vs ~44 ticks with road built → saves ~40 ticks/tile.
@@ -5499,6 +5556,20 @@ function Brain.think(info)
     state._force_replan_reason = nil
     local replan = urgent_replan or refuel_done or force_replan
                or (min_commit_met and not refuel_hold and not state.command_goal and timer_fire)
+    -- Spawn escape denies goal selection outright (urgent replans included)
+    -- until the tank is out of pill coverage or ashore. The whole failure it
+    -- exists for is the pool picking explore/refuel through the fire that is
+    -- sinking the boat, and the warmup exit right after a respawn IS an
+    -- urgent replan — so the deny has to be unconditional. It is bounded by
+    -- SPAWN_ESCAPE_MAX_TICKS (goals.spawn_escape_tick releases on timeout).
+    if state._spawn_escape then
+      if BRAIN_DEBUG_MODE and replan then
+        print2(string.format("REPLAN DENIED t=%d — spawn_escape active to (%d,%d), %dt in",
+          now, state._spawn_escape.mx, state._spawn_escape.my,
+          now - (state._spawn_escape.since or now)))
+      end
+      replan = false
+    end
     -- Only log the replan-decision dump on ticks where something
     -- interesting happens (timer fire, urgent replan, or refuel done).
     -- The vast majority of ticks just print "replan=false" with the
@@ -7741,6 +7812,7 @@ function Brain.think(info)
     pill_table.draw(viz, world, state, info)
     goals.draw_pill_spots(viz, state)
     goals.draw_take_cover(viz, state)
+    goals.draw_spawn_escape(viz, state)
     goals.draw_sea_harvest(viz, state)
     goals.draw_build_viz(viz, state, info)
     attack.draw_pill_eval_progress(viz, state)
