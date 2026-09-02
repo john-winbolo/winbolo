@@ -31,7 +31,7 @@
 /* Include this at file scope, never from inside an extern "C" block: the
  * header below pulls in imgui.h, whose templates do not compile with C
  * linkage. The declarations further down carry their own extern "C". */
-#include "../imgui_dialog_utils.h"
+#include "imgui_dialog_utils.h"
 
 /* Parts of the recap that need something a given build does not have, and the
  * one that has a transport per platform. Named for what they need rather than
@@ -85,7 +85,7 @@
  *                       HighlightWindow (round_stats.h).
  * types.h             — MAX_STARTS, sizing LobbyMapPreviewState's per-start
  *                       caches.
- * ../imgui_mapchooser.h — MapPreviewPixels and MapChooserState, the two types
+ * imgui_mapchooser.h  — MapPreviewPixels and MapChooserState, the two types
  *                       the map-chooser provider callbacks are declared
  *                       against. */
 #ifdef __cplusplus
@@ -93,7 +93,7 @@ extern "C" {
 #endif
 #include "client_net.h"
 #include "types.h"
-#include "../imgui_mapchooser.h"
+#include "imgui_mapchooser.h"
 #ifdef __cplusplus
 }
 #endif

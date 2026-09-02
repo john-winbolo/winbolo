@@ -868,6 +868,7 @@ set_target_properties(WinBoloIOS PROPERTIES
 
 target_include_directories(WinBoloIOS PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/gui
     src/gui/ios
     src/gui/mobile
@@ -1451,6 +1452,7 @@ endif()
 
 target_include_directories(WinBolo PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/gui
     src/server
     src/mapeditor

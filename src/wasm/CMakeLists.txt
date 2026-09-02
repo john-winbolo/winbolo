@@ -332,6 +332,7 @@ add_executable(winbolo
 
 target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui/sdl3
+    ${SRC_ROOT}/gui/sdl3/dialogs
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
