@@ -2426,6 +2426,7 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
     src/braintest/braintest_loadbrowser.cpp
+    src/braintest/braintest_loadbrowser_segment.c
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
@@ -2992,6 +2993,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bolo_rand.c
     tests/unit/test_pf_corner_cut.c
     tests/unit/test_pf_influence_tail.c
+    # BrainTest Load Session next/prev-segment lookup. The finder is plain C
+    # and ImGui-free precisely so it can be linked here; the rest of the
+    # browser (braintest_loadbrowser.cpp) is not part of this target.
+    tests/unit/test_loadbrowser_segment.c
+    src/braintest/braintest_loadbrowser_segment.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3364,6 +3370,9 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # blocks.h, snapshot.h, lv_*.h) used by test_wbv_reader.c and the
     # linked src/logviewer/*.c decode TUs.
     src/logviewer
+    # braintest_loadbrowser.h for the Load Session segment-walk test (the
+    # finder TU compiled above); no other braintest source is linked here.
+    src/braintest
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -3574,6 +3583,11 @@ set(_unit_test_names
     pf_tail_meeting_cancels_tie_to_hostile
     pf_tail_never_overwrites_a_stamp
     pf_tail_contact_makes_a_front_line
+    loadbrowser_segment_walks_parts
+    loadbrowser_segment_crosses_blocks
+    loadbrowser_segment_no_neighbour
+    loadbrowser_segment_path_forms
+    loadbrowser_segment_labels
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback
