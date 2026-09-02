@@ -154,6 +154,8 @@ ImVec4 poolColorFor(int idx) {
     if (idx == 11) return ImVec4(0.7f, 0.5f,  1.0f,  1);   /* def_build: violet */
     if (idx == 12) return ImVec4(0.55f,0.85f, 0.55f, 1);   /* wait_for_lgm: sage */
     if (idx == 13) return ImVec4(1.0f, 0.85f, 0.2f,  1);   /* kill_lgm: yellow */
+    if (idx == 14) return ImVec4(0.6f, 0.75f, 0.85f, 1);   /* take_cover: slate */
+    if (idx == 15) return ImVec4(0.5f, 0.85f, 1.0f,  1);   /* builder pool: ice blue */
     return ImVec4(0.8f, 0.8f, 0.8f, 1);
 }
 
@@ -189,6 +191,11 @@ struct Row {
     bool   blitz;
 };
 
+/* Maximum section index the renderer knows how to place. 1..10 are the 2x5
+ * grid; 11..15 are full-width strips below it. Bump this (and MAX_SECT_IDX's
+ * users) when the brain adds a strip -- everything below is sized from it. */
+enum { MAX_SECT_IDX = 15 };
+
 struct Section {
     int   idx;
     char  name[32];
@@ -197,6 +204,13 @@ struct Section {
     float phase_weight;
     Row  *rows;
     int   nrows;
+    /* Optional header lines printed between the section title and the rows.
+     * The BUILDER strip (15) uses them for its owner / eligibility / active-job
+     * lines -- state that belongs to the whole pool rather than to any one
+     * candidate, and so has no row to live on. Sections that send no "hdr"
+     * array render exactly as before. */
+    char  hdr[4][256];
+    int   nhdr;
 };
 
 static const float FLASH_DURATION_MS = 1000.0f;
@@ -220,9 +234,10 @@ struct DetailRow {
 };
 struct PanelState {
     /* Per-section rank tracking for flash animation, indexed by
-     * section idx (1..12). map<row_id → rank/flash-start>. */
-    std::unordered_map<int,int>    prevRank[13];
-    std::unordered_map<int,Uint64> flashStart[13];
+     * section idx (1..MAX_SECT_IDX). map<row_id → rank/flash-start>.
+     * Sized MAX_SECT_IDX+1 so the idx itself is a valid subscript. */
+    std::unordered_map<int,int>    prevRank[MAX_SECT_IDX + 1];
+    std::unordered_map<int,Uint64> flashStart[MAX_SECT_IDX + 1];
 
     /* Click selection + Ctrl+C copy buffer. */
     int  selectedSection = -1;
@@ -285,6 +300,17 @@ static int parseSections(cJSON *root, Section *out, int outMax) {
         SDL_strlcpy(s->name, getStr(js, "name", "?"), sizeof(s->name));
         s->phase_weight = (float)getNum(js, "weight", 1.0);
         s->winner_id    = (int)getNum(js, "winner_id", -1);
+        cJSON *jhdr = cJSON_GetObjectItem(js, "hdr");
+        if (jhdr && cJSON_IsArray(jhdr)) {
+            int hn = cJSON_GetArraySize(jhdr);
+            if (hn > 4) hn = 4;
+            for (int hi = 0; hi < hn; hi++) {
+                cJSON *jh = cJSON_GetArrayItem(jhdr, hi);
+                if (cJSON_IsString(jh) && jh->valuestring)
+                    SDL_strlcpy(s->hdr[hi], jh->valuestring, sizeof(s->hdr[hi]));
+            }
+            s->nhdr = hn;
+        }
         cJSON *jrows = cJSON_GetObjectItem(js, "rows");
         int rn = (jrows && cJSON_IsArray(jrows)) ? cJSON_GetArraySize(jrows) : 0;
         s->nrows = rn;
@@ -557,6 +583,17 @@ static void renderSection(PanelState &st, Section *s) {
     }
     ImGui::Separator();
 
+    /* Pool-wide header lines (BUILDER's owner / eligibility / active job).
+     * Printed before the "(empty)" bail on purpose: a builder pool with no
+     * candidates at all still has to be able to say WHY -- an eligibility
+     * verdict of "DENY fire_exchange:shoot_pill" is the most informative
+     * thing the strip can show, and it is exactly the tick on which there
+     * are no rows to hang it off. */
+    for (int hi = 0; hi < s->nhdr; hi++) {
+        if (s->hdr[hi][0] == '\0') continue;
+        ImGui::TextColored(ImVec4(0.72f, 0.72f, 0.72f, 1), "%s", s->hdr[hi]);
+    }
+
     if (s->nrows == 0) {
         ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1), "(empty)");
         return;
@@ -810,9 +847,13 @@ void renderPoolGrid(int registry_idx, const char *body) {
     Section sections[MAX_SECS];
     int nSections = parseSections(root, sections, MAX_SECS);
 
-    Section *byIdx[14] = {0};
+    /* Sized MAX_SECT_IDX+1 so the section idx is the subscript. The bound used
+     * to be 12, which silently dropped kill_lgm (13) and take_cover (14) -- the
+     * brain has been emitting both for some time and neither ever rendered.
+     * Fixed here alongside the new BUILDER strip (15). */
+    Section *byIdx[MAX_SECT_IDX + 1] = {0};
     for (int i = 0; i < nSections; i++) {
-        if (sections[i].idx >= 1 && sections[i].idx <= 12) {
+        if (sections[i].idx >= 1 && sections[i].idx <= MAX_SECT_IDX) {
             byIdx[sections[i].idx] = &sections[i];
         }
     }
@@ -821,7 +862,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
      * fresh flash timestamp; flashAlpha then decays over
      * FLASH_DURATION_MS. */
     Uint64 now = SDL_GetTicks();
-    for (int si = 1; si <= 12; si++) {
+    for (int si = 1; si <= MAX_SECT_IDX; si++) {
         Section *sec = byIdx[si];
         if (!sec) continue;
         auto &prev  = st.prevRank[si];
@@ -892,13 +933,19 @@ void renderPoolGrid(int registry_idx, const char *body) {
 
     /* 2x5 grid for sections 1..10. */
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    /* Reserve room at the bottom for the def_build (11) /
-     * wait_for_lgm (12) / kill_lgm (13) strips when those sections
-     * exist. */
+    /* Reserve room at the bottom for the def_build (11) / wait_for_lgm (12) /
+     * kill_lgm (13) / take_cover (14) / BUILDER (15) strips when those
+     * sections exist. BUILDER is taller because it carries three header lines
+     * (owner, eligibility, active job) above its candidate rows. */
+    const float kStripH        = 52.0f;
+    const float kStripStrideH  = 56.0f;
+    const float kBuilderH      = 128.0f;
     float reservedH = 0.0f;
-    if (byIdx[11]) reservedH += 56.0f;
-    if (byIdx[12]) reservedH += 56.0f;
-    if (byIdx[13]) reservedH += 56.0f;
+    if (byIdx[11]) reservedH += kStripStrideH;
+    if (byIdx[12]) reservedH += kStripStrideH;
+    if (byIdx[13]) reservedH += kStripStrideH;
+    if (byIdx[14]) reservedH += kStripStrideH;
+    if (byIdx[15]) reservedH += kBuilderH + 4.0f;
     const float gap = 4.0f;
     float gridH = avail.y - reservedH;
     if (gridH < 100.0f) gridH = 100.0f;
@@ -927,27 +974,27 @@ void renderPoolGrid(int registry_idx, const char *body) {
     }
     if (isReplanTick) ImGui::PopStyleColor();
 
-    /* def_build (11) — full-width strip below the grid. */
-    if (byIdx[11]) {
-        ImVec2 a11 = ImGui::GetContentRegionAvail();
-        ImGui::BeginChild("##cell11", ImVec2(a11.x, 52.0f), true);
-        renderSection(st, byIdx[11]);
-        ImGui::EndChild();
-    }
-    /* wait_for_lgm (12) — single-row strip. */
-    if (byIdx[12]) {
-        ImVec2 a12 = ImGui::GetContentRegionAvail();
-        ImGui::BeginChild("##cell12", ImVec2(a12.x, 52.0f), true);
-        renderSection(st, byIdx[12]);
-        ImGui::EndChild();
-    }
-    /* kill_lgm (13) — single-row strip. Pool injected directly from
-     * perception (no eval_queue / goal_competition path), so only
-     * present while a hostile LGM is visible. */
-    if (byIdx[13]) {
-        ImVec2 a13 = ImGui::GetContentRegionAvail();
-        ImGui::BeginChild("##cell13", ImVec2(a13.x, 52.0f), true);
-        renderSection(st, byIdx[13]);
+    /* Full-width strips below the grid, in brain-emission order:
+     *   11 def_build      12 wait_for_lgm   13 kill_lgm
+     *   14 take_cover     15 BUILDER (the builder pool)
+     * 13 and 14 are injected straight into pool_cache by the brain (no
+     * eval_queue / goal_competition path) so they come and go with a visible
+     * hostile LGM / a live cover scan. 15 is not a pool at all -- it is the
+     * second arbiter, spending the MAN rather than the tank -- which is why it
+     * gets the tall cell: three header lines then its candidate rows. */
+    struct { int idx; const char *id; float h; } kStrips[] = {
+        { 11, "##cell11", kStripH },
+        { 12, "##cell12", kStripH },
+        { 13, "##cell13", kStripH },
+        { 14, "##cell14", kStripH },
+        { 15, "##cell15", kBuilderH },
+    };
+    for (size_t i = 0; i < sizeof(kStrips) / sizeof(kStrips[0]); i++) {
+        Section *sec = byIdx[kStrips[i].idx];
+        if (!sec) continue;
+        ImVec2 av = ImGui::GetContentRegionAvail();
+        ImGui::BeginChild(kStrips[i].id, ImVec2(av.x, kStrips[i].h), true);
+        renderSection(st, sec);
         ImGui::EndChild();
     }
 

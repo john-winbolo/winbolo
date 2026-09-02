@@ -2904,4 +2904,221 @@ M.STUCK_DEST_BLAME_TICKS = 100 -- the stuck escalation only BLACKLISTS its desti
                                -- always runs (par1b bot3 t=8533: 3 ticks of pursuit stamped a
                                -- fresh base "unreachable" for 600t on another base's evidence)
 
+-- =========================================================================
+-- BUILDER POOL — LGM side-quests as a parallel track (2026-09-02)
+-- =========================================================================
+-- The incident: 20260901_160325_1_par2 bot2, t=21071-21661. bot2 places its
+-- own blocker p15 at (125,114) for a take on pill #10; p15 dies to return fire
+-- at 21471; for the next 190 ticks the LGM sits idle IN THE TANK with 13 trees
+-- about 6 tiles from the corpse while the tank (correctly) finishes the take.
+-- At 21661 a 1.6 bot drives over p15 and takes it. A 4-tree LGM repair would
+-- have converted a dead pill back into a live friendly one -- undriveable,
+-- race over -- and it never had a chance to run, because builder dispatch is
+-- slaved to the TANK's goal. The tank goal was right; the architecture lost
+-- the pill.
+--
+-- Fix: a second arbiter for a second resource. The goal pool decides what the
+-- TANK does; the builder pool decides what the MAN does. Scored candidates
+-- compete every tick, the winner (if any) gets the one LGM, and the whole
+-- thing is gated by an eligibility stack whose every denial is named.
+--
+-- What is NOT a pool row: walls, placements and sea legs. Those are goal-owned
+-- work with no existence outside their goal (builder.set_mode still owns them
+-- and pre-empts the pool by MODE, exactly as before).
+-- =========================================================================
+M.BUILDER_POOL_ENABLED = true   -- master switch; false = 1.7-at-HARBOR behaviour
+
+-- ── Leash ────────────────────────────────────────────────────────────────
+-- How far from the TANK a side-quest target may sit. The man walks at roughly
+-- BUILDER_POOL_GRASS_TICKS_PER_TILE per clear tile and dies to a single hit,
+-- so the round trip is what is actually being bounded: 8 tiles out is ~128
+-- ticks each way on grass, i.e. a ~5 s errand. Anything further stops being a
+-- side-quest and becomes a reason to move the tank (that is the out-of-leash
+-- repair_pill goal, below).
+M.BUILDER_POOL_LEASH = 8
+M.BUILDER_POOL_GRASS_TICKS_PER_TILE = 16   -- = REPAIR_DEAD_GRASS_TICKS_PER_TILE
+                                           -- (MAP_MANSPEED_TGRASS); only used for
+                                           -- the fallback ETA when the walk sim
+                                           -- declines to answer
+M.BUILDER_POOL_LGM_MAX_TICKS   = 2000      -- walk-sim budget (matches every other caller)
+M.BUILDER_POOL_LGM_STUCK_TICKS = 150
+
+-- ── Value: the front-distance clock ──────────────────────────────────────
+-- A dead pill AT the contact line is ticking -- the enemy is right there and
+-- will drive over it. One deep in our own rear can wait all game. The
+-- influence map already knows where the line is (pill_portfolio.on_front_line
+-- mirrors brainPathfinderFindFrontLine), so front distance is free: ring-scan
+-- outward from the target until a front tile is found.
+--
+--   value = BASE[type] + FRONT_URGENCY * max(0, (FRONT_MAX - front_dist)/FRONT_MAX)
+--
+-- front_dist is in tiles, capped at FRONT_MAX (beyond which the clock has
+-- stopped and the job is worth its base alone).
+M.BUILDER_POOL_FRONT_MAX_TILES = 12   -- ring-scan cap; also the "clock stopped" distance
+M.BUILDER_POOL_FRONT_URGENCY   = 120  -- value added to a job sitting ON the front line
+M.BUILDER_POOL_VALUE_REBUILD   = 200  -- a 0-HP friendly pill: 4 trees turn a corpse the
+                                      -- enemy can DRIVE OVER into a live pill they cannot.
+                                      -- The single highest-leverage LGM errand there is.
+M.BUILDER_POOL_VALUE_TOPUP     = 60   -- a damaged-but-alive friendly pill: real value, no
+                                      -- race against a driver -- nobody can steal it
+M.BUILDER_POOL_VALUE_FARM      = 15   -- opportunistic wood, at a full woodpile. No clock
+                                      -- at all -- a forest is not going anywhere and
+                                      -- nobody can steal it
+-- ...but wood being the thing we are SHORT of is itself a reason to spend the
+-- man, and at 15 flat the farm row could never clear MIN_SCORE even for a
+-- forest one tile away (a 1-tile round trip already costs 26). So the row
+-- earns its keep only when the woodpile is genuinely low:
+--     value_farm = VALUE_FARM + FARM_URGENCY x max(0, FARM_LOW_TREES - trees)
+-- The ceiling is deliberate arithmetic, not a coincidence:
+--     15 + 12 x 12 = 159  <  VALUE_REBUILD (200)
+-- so DEAD-PILL REBUILD OUTRANKS FARM ALWAYS, at any tree count, exactly as the
+-- plan requires -- and it falls out of the numbers rather than a special case.
+-- Above FARM_LOW_TREES the row still exists (always-show) and still loses,
+-- leaving ordinary top-ups to decide()'s Priority 4 on-path farm, which is
+-- strictly better at that job: it picks forest the TANK is going to drive past.
+M.BUILDER_POOL_FARM_LOW_TREES  = 12
+M.BUILDER_POOL_FARM_URGENCY    = 12
+M.BUILDER_POOL_TOPUP_PER_HP    = 6    -- + this per point of missing armour on a top-up, so
+                                      -- a 4/15 pill outbids a 14/15 one
+M.BUILDER_POOL_TOPUP_MIN_MISSING = 4  -- don't walk out for less than one tree's worth
+                                      -- (PILL_REPAIR_AMOUNT) of damage
+
+-- ── Trip and danger: what the job COSTS ──────────────────────────────────
+--   cost = TRIP_W * round_trip_ticks + DANGER_W * threat_at_target
+--   score = value - cost           (higher is better; ties break deterministically)
+-- TRIP_W is set so that the 8-tile leash edge (~256 ticks round trip on grass)
+-- costs 128 -- roughly the whole front-urgency bonus. A job at the leash edge
+-- therefore needs to be genuinely urgent to beat a nearer one.
+M.BUILDER_POOL_TRIP_W   = 0.5
+M.BUILDER_POOL_DANGER_W = 1.5   -- threat.at() at the target tile
+M.BUILDER_POOL_MIN_SCORE = 20   -- below this the errand is not worth the man's time at all
+                                -- (keeps the farm row from firing on every quiet tick)
+
+-- ── Eligibility ──────────────────────────────────────────────────────────
+-- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
+-- our tile is non-zero", which is true for most of a firefight's quiet moments
+-- and false in the gap between two shells that are both aimed at us. The man's
+-- risky moments are the two ENDS of the trip (departure and return splash), so
+-- what matters is whether anything has actually connected or is inbound
+-- RECENTLY. danger.tank_fire_age() stamps a clock on either evidence:
+--   * armour dropped since last tick (state.took_damage_this_tick), or
+--   * a hostile shell's closest approach lands inside SWERVE_HIT_RADIUS_WU
+--     (danger.shells_incoming_near's own hit test).
+M.BUILDER_POOL_UNDER_FIRE_TICKS = 100  -- 2 s: no hit and no inbound shell for this long
+                                       -- before the man may leave. Deliberately longer
+                                       -- than REPAIR_QUIET_TICKS (75, which is about a
+                                       -- PILL going quiet) -- this one is about the TANK,
+                                       -- and the tank is where the man starts and ends
+M.BUILDER_POOL_RESERVE_MARGIN   = 40   -- ticks of slack the round trip must leave inside
+                                       -- b.reserve_eta. A wall shield that finds the man
+                                       -- still walking is the failure this prevents
+M.BUILDER_POOL_TREE_RESERVE_EXTRA = 0  -- extra wood held back on top of the goal's own
+                                       -- declared need (road_tree_reserve / _trees_for_walls
+                                       -- / the sea plan). 0 = trust those numbers
+M.BUILDER_POOL_PATH_DANGER = M.LGM_DANGER_MED   -- lgm_path_safe_enhanced threshold for the
+                                                -- trip: same tier the repair dispatch uses
+M.BUILDER_POOL_TREES_REBUILD = 4  -- = REPAIR_DEAD_MIN_TREES / LGM_COST_PILLREPAIR x 4
+M.BUILDER_POOL_TREES_TOPUP   = 1  -- one tree = PILL_REPAIR_AMOUNT(4) armour
+M.BUILDER_POOL_TREES_FARM    = 0  -- a farm trip SPENDS nothing, it brings wood home
+
+-- ── Substate classes ─────────────────────────────────────────────────────
+-- ONE table, keyed by substate name (they are unique enough across goals that
+-- a per-kind nesting would only duplicate rows). Two classes:
+--
+--   "travel"  the tank is driving, aiming at nothing, and nothing is aimed at
+--             it as a consequence of what it is doing. The man may go, gated
+--             by reserve_eta and the under-fire clock.
+--   "fire"    the tank is in a shooting exchange. Shells detonating on or near
+--             it splash the man at departure AND at return, which are exactly
+--             the two ends of the errand. DENY, unconditionally.
+--
+-- Anything not listed DENIES (mode_owned). That default is deliberate: a new
+-- substate should have to be classified on purpose, not inherit permission.
+-- The LGM-work substates (ws_prebuild / ws_rebuild / build_walls / dispatch)
+-- are absent because builder.set_mode has already turned them into a goal-tied
+-- MODE by the time the pool is asked, and mode_owned names them better.
+M.BUILDER_POOL_SUBSTATE_CLASS = {
+  -- attack_pill, travel half
+  plan_position   = "travel",
+  approach        = "travel",
+  gather_trees    = "travel",
+  blitz_wait      = "travel",
+  ws_prewait      = "travel",
+  ws_advance      = "travel",
+  ws_retreat      = "travel",
+  detree          = "travel",
+  navigate        = "travel",
+  select_pill     = "travel",
+  loiter          = "travel",
+  curve_away      = "travel",
+  post_engage     = "travel",
+  disengage       = "travel",
+  reposition      = "travel",
+  -- capture_pill / sea, travel half
+  collect_target  = "travel",
+  collect         = "travel",
+  pickup          = "travel",
+  seek_trees      = "travel",
+  entrance_plan   = "travel",
+  wait_place      = "travel",
+  -- fire exchange: every substate where a shell is in flight either way
+  shoot_pill            = "fire",
+  engage                = "fire",
+  ws_engage             = "fire",
+  charge                = "fire",
+  swerve                = "fire",
+  kill_hardline         = "fire",
+  aim                   = "fire",
+  in_range_aim          = "fire",
+  in_range_aim_pre      = "fire",
+  in_range_aim_finetune = "fire",
+  in_range_position     = "fire",
+  finish                = "fire",
+  rush                  = "fire",
+  close                 = "fire",
+  heat_pill_aim         = "fire",
+  heat_pill_position    = "fire",
+  heat_pill_shoot       = "fire",
+  heat_done             = "fire",
+  reposition_shoot      = "fire",
+}
+-- Goal kinds that map to builder mode "suppressed" and carry NO substate, but
+-- whose suppression is about keeping the man aboard for THIS goal rather than
+-- about being in a fight. A defender parked and watching is the plan's
+-- "defend-watch" travel class. A defender with goal.repair set is excluded --
+-- that one is a pool FEEDER (it seeds the job directly), not a side-quest.
+M.BUILDER_POOL_TRAVEL_GOALS = { defend_pill = true }
+-- Builder modes that are "idle-ish": no goal has spoken for the man, so the
+-- pool may spend him freely. Everything else that is not "suppressed" is a
+-- goal-tied working mode and denies with mode_owned.
+M.BUILDER_POOL_IDLE_MODES = {
+  opportunistic  = true,
+  infrastructure = true,
+  repair_nearby  = true,
+}
+
+-- ── Claims (multi-bot arbitration) ───────────────────────────────────────
+-- Five allies must not all repair the same pill. The claim rides the existing
+-- /info extra channel as `bpj=TTXXYYCCCCEEEE` (type, tile, claim tick low 16
+-- bits, ETA) alongside `lgmd`. Arbitration is deterministic and needs no
+-- wall clock: earlier claim tick wins; a same-tick race breaks to the LOWER
+-- player number (the same rule the blitz commander and the standoff-spot
+-- picker use). A live claim also removes the target from allies' DISCOVERY --
+-- the claim covers the outcome, not just the trip.
+M.BUILDER_POOL_CLAIM_MAX_AGE = M.SQUAD_ALLY_MAX_AGE or 1750  -- claim expiry (heartbeat gap)
+M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
+
+-- ── Job lifecycle ────────────────────────────────────────────────────────
+M.BUILDER_POOL_JOB_MAX_TICKS = 900   -- the man never came back (18 s): drop the job record
+                                     -- so a lost LGM cannot hold the claim forever
+M.BUILDER_POOL_ABORT_GRACE   = 30    -- ticks after dispatch before an abort may be declared
+                                     -- (the engine takes a few ticks to move him off tile)
+
+-- ── Panel ────────────────────────────────────────────────────────────────
+-- Section 15 in the pool_grid JSON. NOT a new pool: the 1..10 grid numbering
+-- and the 11..14 strips are untouched, so old recordings still load.
+M.BUILDER_POOL_PANEL_IDX  = 15
+M.BUILDER_POOL_PANEL_ROWS = 8    -- cap on side-quest rows rendered (always-show rule
+                                 -- keeps rejects visible; this only bounds a huge map)
+
 return M

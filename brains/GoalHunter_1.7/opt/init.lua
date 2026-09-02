@@ -52,6 +52,7 @@ local demine  = require("demine")
 local log     = require("logger")
 local danger  = require("danger")
 local builder = require("builder")
+local bpool   = require("builder_pool")   -- LGM side-quests (the parallel track)
 local metrics = require("metrics")
 local changes = require("changes")
 local percept  = require("perception")
@@ -5721,6 +5722,8 @@ function Brain.think(info)
   local t_build0 = clock_us()
   -- Draw persistent wsim kill/damage paths every tick
   -- Draw attack_tank detection/precondition overlays (navy blue)
+  -- Builder-pool active job: tank->target line, target ring, ETA label, and
+  -- the leash circle the discovery actually used.
 
   -- Base shield visualization: show wall target, pill source, and blocking line
 
@@ -5735,6 +5738,14 @@ function Brain.think(info)
   builder.set_mode(state, world, info, state.goal)
   local t_build_setmode = clock_us()
   opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
+  -- Builder POOL, between set_mode and decide, in that order for a reason:
+  -- set_mode is what publishes the mode and b.reserve_eta the eligibility
+  -- stack reads, and decide()'s new rung only executes the winner this pass
+  -- leaves behind. It runs EVERY tick, even when nothing can possibly be
+  -- dispatched, because the panel has to be able to say why (the always-show
+  -- rule the other strips follow) and because the job lifecycle + the tank's
+  -- under-fire clock have to keep ticking while the man is out.
+  bpool.update(state, world, info, now)
   local build_cmd = builder.decide(state, world, info, now)
   -- Repair-pill completion: the builder dispatched the LGM onto a
   -- friendly damaged pill (engine auto-repairs on arrival). Clear the
@@ -6698,6 +6709,13 @@ function Brain.think(info)
       end
       bse.lgmd = "-"
     end
+    -- Builder-pool JOB CLAIM: "this side-quest is mine". Same channel and the
+    -- same explicit-"-" discipline as lgmd, and deliberately a SEPARATE key:
+    -- lgmd says where the man is walking, which is a fact about this tick;
+    -- bpj says what OUTCOME we have taken responsibility for, which is what
+    -- allies must not duplicate. Five bots must not all rebuild one corpse.
+    -- Format and arbitration: builder_pool.claim_advert / ally_claim_on.
+    bse.bpj = bpool.claim_advert(state, now)
     -- Goal-selection cost (pool_cache winner matching our current goal).
     -- Drifts every tick as we close on the target, so it rides the extra
     -- channel on a ~1 Hz cadence (see cost_due below) rather than the
