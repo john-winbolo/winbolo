@@ -76,6 +76,7 @@ add_library(server_sim_static STATIC
     server_sim.c
     server_command_dispatch.c
     servermessages.c
+    sim/server_sim_accessors.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)
