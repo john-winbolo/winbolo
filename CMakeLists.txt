@@ -764,9 +764,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
     src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
-    src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
-    src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp

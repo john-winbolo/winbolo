@@ -194,9 +194,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_recap.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_rating.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp

@@ -209,9 +209,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
