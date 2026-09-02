@@ -110,9 +110,8 @@ extern "C" {
 #include "../wb_theme.h"
 #include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
 
-#define MAX_TANKS 16
-#define WBN_ICON_SIZE 14
-#define CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
+#define LOBBY_WBN_ICON_SIZE 14
+#define LOBBY_CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 #define MAP_PREVIEW_SIZE 256
 
 static const int DIALOG_W = 1024;
@@ -179,7 +178,7 @@ typedef struct LobbyCommandState {
 
 static LobbyCommandState s_commands = {};
 
-static void lobbyCommandReset(void) {
+void lobbyCommandReset(void) {
     s_commands = LobbyCommandState{};
 }
 
@@ -197,7 +196,7 @@ static void lobbyCommandReset(void) {
  * the Transport pointer (used by the multiplayer path).  When the
  * Transport is null and we're not single-player, the call is a no-op.
  */
-static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
+void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     /* Both single-player and multiplayer now go through the same
      * ready toggle. The server's all-ready detector trips the
      * lobby→running transition (synchronously via StartGameInPlace
@@ -260,7 +259,7 @@ typedef struct LobbyBrainCache {
 
 static LobbyBrainCache s_brains = {};
 
-static const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
+const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
     if (!name || !name[0]) return NULL;
     for (int i = 0; i < s_brains.metaCount; i++) {
         if (SDL_strcasecmp(s_brains.meta[i].name, name) == 0) return &s_brains.meta[i];
@@ -276,7 +275,7 @@ static const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
 /* Render a one-line tagline, colouring a leading "Easy." / "Hard." token
  * (green / red) so the difficulty reads at a glance. wrapPosX > 0 wraps the
  * remainder at that window-local x. */
-static void lobbyDrawTagline(const char *tag, float wrapPosX) {
+void lobbyDrawTagline(const char *tag, float wrapPosX) {
     if (!tag || !tag[0]) return;
     const char *rest = tag;
     if (strncmp(tag, "Easy.", 5) == 0) {
@@ -298,7 +297,7 @@ static void lobbyDrawTagline(const char *tag, float wrapPosX) {
 /* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot's
  * selected brain (its versioned code name) and that version's short tagline,
  * with the Easy./Hard. difficulty token coloured. */
-static void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
+void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
     ImGui::BeginTooltip();
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));
     const BrainList *bl = clientSimGetLobbyBrainList(cs);
@@ -468,7 +467,7 @@ static int lobbyCountConnectedSlots(ClientSim *cs) {
     return n;
 }
 
-static bool lobbyAddBotPending(ClientSim *cs) {
+bool lobbyAddBotPending(ClientSim *cs) {
     if (!cs) return false;
     /* In the same ImGui frame as the last send, refuse another no matter
      * what — multiple buttons render before any one's click can update
@@ -487,7 +486,7 @@ static bool lobbyAddBotPending(ClientSim *cs) {
     return true;
 }
 
-static void lobbySendAddBotDebounced(ClientSim *cs,
+void lobbySendAddBotDebounced(ClientSim *cs,
                                      int namingPool, uint8_t teamNumber) {
     if (!cs) return;
     /* Drop the call entirely if anything already added a bot this
@@ -553,7 +552,7 @@ typedef struct LobbyChooserState {
 
 static LobbyChooserState s_chooser = {};
 
-static void lobbyChooserReset(void) {
+void lobbyChooserReset(void) {
     s_chooser = LobbyChooserState{};
 }
 
@@ -581,7 +580,7 @@ static LobbyChatState   s_chat                   = {};
 /* Drop the chat rect and the pending refocus / nav-suppression flags on
  * lobby teardown, so a session left mid-send does not carry a focus
  * grab or a stale hole position into the next one. */
-static void lobbyChatReset(void) {
+void lobbyChatReset(void) {
     s_chat = LobbyChatState{};
 }
 
@@ -1600,7 +1599,7 @@ static LobbySpWbnState s_spWbn;
  * dropped. The flag stays raised — every attempt lowers it for itself
  * before the transfer starts. fetching belongs to the worker, which clears
  * it on its way out whichever branch it takes. */
-static void lobbySpWbnReset(void) {
+void lobbySpWbnReset(void) {
     s_spWbn.cancel = 1;
     ++s_spWbn.fetchSeq;
     {
@@ -1926,7 +1925,7 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
  * lobby's click handler parses to trigger the download/upload flow.
  * Sub-folder rows use the friendly child path so a click writes
  * that back into state->currentDir and the cycle repeats. */
-static void wbnMapsListProvider(MapChooserState *state,
+void lobbyWbnMapsListProvider(MapChooserState *state,
                                 const char *relPath, void *ctx) {
     (void)ctx;
     state->numMaps = 0;
@@ -2201,7 +2200,7 @@ static void wbnMapsListProvider(MapChooserState *state,
  * anything else is a folder click the chooser handled internally.
  * Submitting the id kicks the SP-side download worker (which also
  * routes through MP upload when the host is a network server). */
-static void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
+void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
     ClientSim *cs = (ClientSim *)ctx;
     if (!cs) return;
     const char *sel = state->selectedPath;
@@ -2228,7 +2227,7 @@ static void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
  * the clickable root indicator. "Maps" alone (or "Maps/") jumps back
  * to the WBN catalogue root; anything else is a friendly path the
  * provider resolves via s_wbnMaps.pathToId on the next frame. */
-static void lobbyWbnMapsOnFolderJump(MapChooserState *state,
+void lobbyWbnMapsOnFolderJump(MapChooserState *state,
                                       const char *jumpPath, void *ctx) {
     (void)ctx;
     const char *jp = jumpPath;
@@ -2244,7 +2243,7 @@ static void lobbyWbnMapsOnFolderJump(MapChooserState *state,
  * preview-cache worker thread. Hits /api/v1/maps/img/<id>, decodes
  * the response (any format stbi understands — PNG today) and hands
  * the RGBA pixels off to the cache. */
-static bool lobbyWbnGeneratePreview(const char *entryPath,
+bool lobbyWbnGeneratePreview(const char *entryPath,
                                      MapPreviewPixels *outBuf,
                                      void *ctx) {
     (void)ctx;
@@ -2291,7 +2290,7 @@ static bool lobbyWbnGeneratePreview(const char *entryPath,
 /* WBN tick: drain any completed background download. Always called
  * on the UI thread; SP applies bytes in-process, MP feeds them into
  * the regular MAP_UPLOAD protocol. */
-static void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
+void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
                               void *ctx) {
     (void)state;
     ClientSim *cs = (ClientSim *)ctx;
@@ -2300,7 +2299,7 @@ static void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
 
 /* Tooltip on the WBN path label = the WBN host URL so the user can
  * tell at a glance which server the catalogue is coming from. */
-static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
+void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
     (void)ctx;
     const char *wbnHost = httpGetBaseUrl();
     SDL_strlcpy(state->pathTooltipPrefix,
@@ -2497,7 +2496,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooserTabs.wbn.maximizePtr      = &s_chooser.maximized;
         s_chooserTabs.wbn.hideExtras       = true;
         s_chooserTabs.wbn.leftPanelMaxW    = 300.0f;
-        s_chooserTabs.wbn.provider.enumerate            = wbnMapsListProvider;
+        s_chooserTabs.wbn.provider.enumerate            = lobbyWbnMapsListProvider;
         s_chooserTabs.wbn.provider.onSelect             = lobbyWbnMapsOnSelect;
         s_chooserTabs.wbn.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
         s_chooserTabs.wbn.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
@@ -2529,7 +2528,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
     }
 }
 
-static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
+void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     /* Cache the cs for providers before EnsureInit so the first
      * synchronous discover sees the network ctx. */
     s_chooser.cs = cs;
@@ -2683,7 +2682,7 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     ImGui::End();
 }
 
-static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
+void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                        float s, int screenW, int screenH) {
     /* Stop the preview worker on the close edge — any of the six
      * paths that flip s_chooser.open to false land here on the next
@@ -3139,7 +3138,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     ImGui::End();
 }
 
-static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
+void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
@@ -3158,7 +3157,7 @@ static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
  * wrapper's local-transport branch; over UDP the server allows any
  * client to change its own team and gates other-target moves on
  * host / admin / openHost (matches the drag-and-drop UI gate). */
-static void lobbySendTeamSet(ClientSim *cs,
+void lobbySendTeamSet(ClientSim *cs,
                              uint8_t targetSlot, uint8_t teamNumber) {
     clientSimNetSendTeamSet(cs, targetSlot, teamNumber);
 }
@@ -3168,7 +3167,7 @@ static void lobbySendTeamSet(ClientSim *cs,
  * UI can drop bad input before sending) and hands off to the wire
  * wrapper, whose local-transport branch re-runs the canonical
  * validate-and-apply path for SP-host. */
-static void lobbySendBotConfig(ClientSim *cs,
+void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
                                uint8_t difficulty, uint8_t personality,
                                const char *name) {
@@ -3207,7 +3206,7 @@ static void lobbySendBotConfig(ClientSim *cs,
  * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN.
  * brainIdx == 0xFF means "use the server's CLI-configured default
  * brain"; any other value indexes into the lobby brain catalogue. */
-static void lobbySendSetBotBrain(ClientSim *cs,
+void lobbySendSetBotBrain(ClientSim *cs,
                                  uint8_t slot, uint8_t brainIdx) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -3228,7 +3227,7 @@ static void lobbySendSetBotBrain(ClientSim *cs,
  * Mirrors PACKET_LOBBY_TEAM_CLEAR. Only called when the team is
  * empty — caller already gates on memberCount == 0. The wrapper's
  * local-transport branch handles SP-host. */
-static void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
+void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
     clientSimNetSendLobbyTeamClear(cs, teamId);
 }
 
@@ -3239,7 +3238,7 @@ static void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
  * immediately — the SP and MP branches diverge only in which set of
  * accessors they iterate (server-sim vs client-sim mirror); both
  * land on the same wire wrapper for the per-bot rename sends. */
-static void lobbySendTeamPool(ClientSim *cs,
+void lobbySendTeamPool(ClientSim *cs,
                               uint8_t teamId, uint8_t namingPool,
                               const char *teamName) {
     if (cs && clientSimIsSinglePlayer(cs)) {
@@ -3346,7 +3345,7 @@ static void lobbySendTeamPool(ClientSim *cs,
  * client_net wrapper, whose local-transport branch shares
  * serverSimApplyLobbySetting with the UDP-side packet handler so SP
  * and wire follow one code path. */
-static void lobbySendSetting(ClientSim *cs,
+void lobbySendSetting(ClientSim *cs,
                              uint8_t settingType,
                              const uint8_t *value, uint8_t valueLen) {
     /* Pre-send validation for setting types that have a wire-side range
@@ -3379,7 +3378,7 @@ static void lobbySendSetting(ClientSim *cs,
 }
 
 /* Bounding box of interesting (non-sea) terrain in the map preview */
-struct MapBounds {
+struct LobbyMapBounds {
     int minX, minY, maxX, maxY;
 };
 
@@ -3395,7 +3394,7 @@ typedef struct LobbyMapPreviewState {
     /* Cached compass octant (an STR_COMPASS_* lang id, 0 = unknown) per map
      * start, indexed 1-based by startIdx. MAX_STARTS is 16, so [17] covers
      * indices 1..16. Rebuilt only when the lobby map bytes change (see
-     * rebuildStartCompassCache), so the player-list column never decompresses
+     * lobbyRebuildStartCompassCache), so the player-list column never decompresses
      * the map per frame. */
     int         startCompassId[MAX_STARTS + 1] = {0};
 
@@ -3419,7 +3418,7 @@ static LobbyMapPreviewState s_mapPreview = {};
 
 /* The compressed map buffer is owned here, so it has to be released before
  * the struct is overwritten. */
-static void lobbyMapPreviewReset(void) {
+void lobbyMapPreviewReset(void) {
     if (s_mapPreview.popupCompressedData) {
         SDL_free(s_mapPreview.popupCompressedData);
     }
@@ -3460,10 +3459,10 @@ static int lobbyStartCompassStr(int sx, int sy, int minX, int minY,
 }
 
 /* Rebuild s_mapPreview.startCompassId from a runtime compressed map buffer.
- * Loads a transient MapPreview (the same bytes buildMapPreview consumes),
+ * Loads a transient MapPreview (the same bytes lobbyBuildMapPreview consumes),
  * computes the bounding box over all starts, then fills one compass id per start.
  * Clears the cache on failure or an empty start list. */
-static void rebuildStartCompassCache(const BYTE *data, int len) {
+void lobbyRebuildStartCompassCache(const BYTE *data, int len) {
     memset(s_mapPreview.startCompassId, 0, sizeof(s_mapPreview.startCompassId));
     memset(s_mapPreview.startMapX, 0, sizeof(s_mapPreview.startMapX));
     memset(s_mapPreview.startMapY, 0, sizeof(s_mapPreview.startMapY));
@@ -3526,7 +3525,7 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
  * transfer that never started, which is the exact thing this is undoing.
  * Telling the two apart needs the transport's spectator-download flag,
  * which no T1 accessor exposes today. */
-static const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
+const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
     if (clientSimGetConnectState(cs) == CLIENT_CONNECT_DOWNLOADING_MAP) {
         *outProgress = (float)clientSimGetMapDownloadPercent(cs) / 100.0f;
         return langGetText(STR_DLGLOBBY_DOWNLOADING);
@@ -3539,7 +3538,7 @@ static const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress) {
  * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy. Also returns an FNV-1a
  * signature so the caller can detect when a recolour rebuild is needed
  * (claims/team changes don't trigger a map re-download). Returns the count. */
-static int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
+int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                                    uint8_t *owners, int maxN, uint32_t *outSig) {
     int n = (int)clientSimGetLobbyStartCount(cs);
     if (n > maxN) n = maxN;
@@ -3586,7 +3585,7 @@ static int lobbyPreviewStartAtScreen(ImVec2 imgMin, float previewSize,
  * toward the map edge (per the start's compass octant) so labels avoid the
  * playable centre. (imgMin, previewSize) is the on-screen Image rect; the
  * b* ints are the source-pixel crop the Image's UVs map from. */
-static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
+void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
                                          ImVec2 imgMin, float previewSize,
                                          int bx0, int by0, int bx1, int by1) {
     const bool spectator = clientSimIsSpectator(cs);
@@ -3705,7 +3704,7 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
  * light-blue focus outline. Clicking a FREE start moves you there; pressing a
  * movable claimed start and dragging reassigns its player (a manual drag).
  * Returns true if it consumed the click so the caller skips the zoom popup. */
-static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
+bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                                  ImVec2 imgMin, float innerSize,
                                  int bx0, int by0, int bx1, int by1) {
     static int s_miniDragHolder = -1;   /* lobby slot being dragged, or -1 */
@@ -3766,9 +3765,9 @@ static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap
 /* Build a 256x256 RGBA minimap from compressed map data.
  * Returns an SDL_Texture* or NULL on failure.
  * bounds is filled with the bounding box of non-sea terrain. */
-static SDL_Texture *buildMapPreview(SDL_Renderer *renderer,
+SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
                                      const BYTE *compressedData, int dataLen,
-                                     MapBounds *bounds,
+                                     LobbyMapBounds *bounds,
                                      const uint8_t *startOwners, int ownerCount) {
     MinimapBounds mb;
     SDL_Texture *tex = minimapFromCompressedOwned(renderer, compressedData, dataLen,
@@ -3783,7 +3782,7 @@ static SDL_Texture *buildMapPreview(SDL_Renderer *renderer,
     return tex;
 }
 
-static const char *gameTypeStr(gameType gt) {
+const char *lobbyGameTypeStr(gameType gt) {
     switch (gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
         case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
@@ -3792,7 +3791,7 @@ static const char *gameTypeStr(gameType gt) {
     }
 }
 
-static const char *aiTypeStr(uint8_t ai) {
+const char *lobbyAiTypeStr(uint8_t ai) {
     switch (ai) {
         case 0:  return langGetText(STR_NO);
         case 1:  return langGetText(STR_YES);
@@ -3802,7 +3801,7 @@ static const char *aiTypeStr(uint8_t ai) {
     }
 }
 
-static void formatTimeLimit(int32_t ticks, char *buf, int bufSize) {
+void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     if (ticks <= 0) {
         SDL_snprintf(buf, bufSize, "%s", langGetText(STR_DLGGAMEINFO_UNLIMITED));
         return;
@@ -3906,12 +3905,12 @@ static SDL_Texture *loadLobbyPng(SDL_Renderer *renderer, const char *filename) {
 }
 
 /* The three tank getters below guard only on their own attempted flag —
- * a renderer swap is handled for them by loadStatusIconsOnce, which
+ * a renderer swap is handled for them by lobbyLoadStatusIconsOnce, which
  * destroys these textures and clears those flags. Every path that reaches
  * a getter runs it first in the same frame: the only callers are in
- * renderTeamGroupedPlayers, which loads the icons at its top and draws
+ * lobbyRenderTeamGroupedPlayers, which loads the icons at its top and draws
  * the tank column further down, against the same renderer. */
-static SDL_Texture *getTankSelf04Texture(SDL_Renderer *renderer) {
+SDL_Texture *lobbyGetTankSelf04Texture(SDL_Renderer *renderer) {
     if (s_icons.tankSelfAttempted) return s_icons.tankSelf04;
     s_icons.tankSelfAttempted = true;
     s_icons.tankSelf04 = loadLobbyPng(renderer, "svg/tank_self_04.png");
@@ -3923,8 +3922,8 @@ static SDL_Texture *getTankSelf04Texture(SDL_Renderer *renderer) {
 
 /* Red enemy tank — used next to player rows on teams different from
  * the local player's. Loaded lazily on first use, same pattern as
- * getTankSelf04Texture. */
-static SDL_Texture *getTankEvil04Texture(SDL_Renderer *renderer) {
+ * lobbyGetTankSelf04Texture. */
+SDL_Texture *lobbyGetTankEvil04Texture(SDL_Renderer *renderer) {
     if (s_icons.tankEvilAttempted) return s_icons.tankEvil04;
     s_icons.tankEvilAttempted = true;
     s_icons.tankEvil04 = loadLobbyPng(renderer, "svg/tank_evil_04.png");
@@ -3937,7 +3936,7 @@ static SDL_Texture *getTankEvil04Texture(SDL_Renderer *renderer) {
 /* "Good" ally tank (yellow tone) — used to distinguish the local
  * player's own row from the rest of their team. Falls back to
  * tank_self_04 if the asset isn't there. */
-static SDL_Texture *getTankGood04Texture(SDL_Renderer *renderer) {
+SDL_Texture *lobbyGetTankGood04Texture(SDL_Renderer *renderer) {
     if (s_icons.tankGoodAttempted) return s_icons.tankGood04;
     s_icons.tankGoodAttempted = true;
     s_icons.tankGood04 = loadLobbyPng(renderer, "svg/tank_good_04.png");
@@ -3964,7 +3963,7 @@ static SDL_Texture *loadWhiteIcon(SDL_Renderer *renderer, const char *relPath,
     return tex;
 }
 
-static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
+void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
      * recreated it; SDL3 textures don't survive that), destroy the
@@ -4070,7 +4069,7 @@ typedef struct LobbyPlayersState {
 
     /* Kick-confirm dialog state. Populated when an authorised player picks
      * "Kick" from a row's right-click context menu; the modal at the bottom
-     * of renderTeamGroupedPlayers reads it on the next frame. */
+     * of lobbyRenderTeamGroupedPlayers reads it on the next frame. */
     int  kickPendingSlot     = -1;
     char kickPendingName[64] = {0};
     bool kickPendingOpen     = false;
@@ -4081,7 +4080,7 @@ typedef struct LobbyPlayersState {
 
 static LobbyPlayersState s_players = {};
 
-static void lobbyPlayersReset(void) {
+void lobbyPlayersReset(void) {
     s_players = LobbyPlayersState{};
 }
 
@@ -4094,7 +4093,7 @@ static void renderBotAiConfig(ClientSim *cs,
  * WbTheme. Replaces the flat 5-column table with the mockup's
  * "team containers" model. Sized to fit inside the calling child
  * window. Returns nothing — purely UI. */
-static void renderLockBadge(void);
+void lobbyRenderLockBadge(void);
 
 /* Ranked-game eligibility shape: exactly two teams with equal sizes
  * of 1/2/3 connected humans (1v1, 2v2, 3v3). Used by the Ranked-game
@@ -4103,14 +4102,14 @@ static void renderLockBadge(void);
  * so the host can keep Ranked on for the games-list filter even
  * while shuffling players around). Returns the breakdown so callers
  * can show the same tooltip text. */
-struct RankedEligibility {
+struct LobbyRankedEligibility {
     bool sizesEligible;
     int  teamsInUse;
     int  firstSize;
     int  secondSize;
 };
-static RankedEligibility computeRankedEligibility(ClientSim *cs) {
-    RankedEligibility r = {false, 0, 0, 0};
+LobbyRankedEligibility lobbyComputeRankedEligibility(ClientSim *cs) {
+    LobbyRankedEligibility r = {false, 0, 0, 0};
     int teamSizes[17] = {0};
     for (int i = 0; i < MAX_TANKS; i++) {
         const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
@@ -4130,7 +4129,7 @@ static RankedEligibility computeRankedEligibility(ClientSim *cs) {
                       (r.firstSize >= 1 && r.firstSize <= 3);
     return r;
 }
-static void rankedShapeTooltip(const RankedEligibility &r) {
+void lobbyRankedShapeTooltip(const LobbyRankedEligibility &r) {
     MessageArgs args = {};
     args.number  = r.teamsInUse;
     SDL_strlcpy(args.string1,
@@ -4145,18 +4144,18 @@ static void rankedShapeTooltip(const RankedEligibility &r) {
 
 /* True when myPlayerNum holds the lobby host role. Keeps the
  * host-identity test uniform across the lobby UI. */
-static bool isLobbyHost(ClientSim *cs, int myPlayerNum) {
+bool lobbyIsHost(ClientSim *cs, int myPlayerNum) {
     return myPlayerNum >= 0 && myPlayerNum == clientSimGetLobbyHostSlot(cs);
 }
 
 /* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
  * only and multiplayer only (single-player has no UDP listener). Used
- * to live inside renderTeamGroupedPlayers; hoisted to the parent so
+ * to live inside lobbyRenderTeamGroupedPlayers; hoisted to the parent so
  * the PlayerPanel and MapPanel top edges stay aligned. */
-static void renderAllowNewPlayersRow(ClientSim *cs,
+void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
                                      int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
-    bool isHost = isLobbyHost(cs, myPlayerNum);
+    bool isHost = lobbyIsHost(cs, myPlayerNum);
     bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                          & PLAYER_FLAG_ADMIN));
@@ -4199,7 +4198,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     if (autoLockDisabled) ImGui::EndDisabled();
     if (autoLockLocked) {
         ImGui::SameLine(0.0f, 4.0f * s);
-        renderLockBadge();
+        lobbyRenderLockBadge();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         if (rankedForcesAutoLock) {
@@ -4247,7 +4246,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             if (ls && ls->connected && ls->isBot) botCount++;
         }
         bool botsBlock = (botCount > 0) && !rankedV;
-        RankedEligibility re = computeRankedEligibility(cs);
+        LobbyRankedEligibility re = lobbyComputeRankedEligibility(cs);
 
         bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_RANKED) != 0;
         bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
@@ -4259,7 +4258,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             lobbySendSetting(cs, LST_RANKED, &v, 1);
         }
         if (!canToggle) ImGui::EndDisabled();
-        if (rankedLocked) renderLockBadge();
+        if (rankedLocked) lobbyRenderLockBadge();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (rankedLocked) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
@@ -4268,7 +4267,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             } else if (botsBlock) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_BOTS));
             } else if (rankedV && !re.sizesEligible) {
-                rankedShapeTooltip(re);
+                lobbyRankedShapeTooltip(re);
             } else {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_INFO));
             }
@@ -4553,7 +4552,7 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
 /* True when the lobby's right panel is currently showing the replay reel
  * rather than the map. Defined below, next to the recap view statics it
  * reads; declared here because the player list is rendered before them. */
-static bool lobbyRecapReelVisible(ClientSim *cs);
+bool lobbyRecapReelVisible(ClientSim *cs);
 
 /* Clicking a player's name jumps to that player in whichever view is on
  * screen — the replay reel in the post-game recap, the map preview otherwise.
@@ -4563,7 +4562,7 @@ static bool lobbyRecapReelVisible(ClientSim *cs);
  * and there is nothing to centre — so the jump drives the zoom popup, which
  * does have a camera and is already what clicking the inline preview opens.
  * Position data is the lobby slot's claimed start index (1-based, 0xFF when
- * unclaimed) resolved through the start cache rebuildStartCompassCache
+ * unclaimed) resolved through the start cache lobbyRebuildStartCompassCache
  * fills from the map bytes, so no extra decompression happens per frame.
  *
  * Call immediately after the name text. Hover and click are tested on that
@@ -4649,7 +4648,7 @@ static void lobbyNameJumpToPlayer(ClientSim *cs, int slot) {
  * left exactly where the player had it, rather than being thrown at (0,0) or
  * at a stale last-known spot that no longer shows anything. Scrubbing to a
  * moment where they are alive and clicking again then works. */
-static void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
+void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
     (void)isBot;
     if (slot < 0 || slot >= MAX_TANKS) return;
     const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)slot);
@@ -4657,17 +4656,17 @@ static void lobbyRecapRowJump(ClientSim *cs, int slot, bool isBot) {
     lvEmbedFocusPlayerByName(ls->playerName);
 }
 
-static void renderTeamGroupedPlayers(ClientSim *cs,
+void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     const bool spectator = clientSimIsSpectator(cs);
     /* Lazy-load the badge / bot-cpu icons. Used to be done inside
-     * renderConnectivityBadge, but we now skip that in SP / LAN-only
+     * lobbyRenderConnectivityBadge, but we now skip that in SP / LAN-only
      * mode where the badge has nothing to report — the bot-cpu PNGs
      * still need to come up though, so trigger it here too. The
      * helper is idempotent (s_icons.attempted guard). */
     {
         SDL_Renderer *r = sdl3DrawGetRenderer();
-        if (r) loadStatusIconsOnce(r, s);
+        if (r) lobbyLoadStatusIconsOnce(r, s);
     }
 
     /* Helper to count members per team for header strings. */
@@ -5319,12 +5318,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     SDL_Texture *tankTex = nullptr;
                     if (r) {
                         if (isSelf) {
-                            tankTex = getTankSelf04Texture(r);  /* black self */
+                            tankTex = lobbyGetTankSelf04Texture(r);  /* black self */
                         } else if (isAlly) {
-                            tankTex = getTankGood04Texture(r);  /* green ally */
-                            if (!tankTex) tankTex = getTankSelf04Texture(r);
+                            tankTex = lobbyGetTankGood04Texture(r);  /* green ally */
+                            if (!tankTex) tankTex = lobbyGetTankSelf04Texture(r);
                         } else {
-                            tankTex = getTankEvil04Texture(r);  /* red enemy */
+                            tankTex = lobbyGetTankEvil04Texture(r);  /* red enemy */
                         }
                     }
                     if (tankTex && showTankCol) {
@@ -5379,8 +5378,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::SameLine();
                     }
                     /* All WBN/Steam/platform icons in renderPlayerName are
-                     * WBN_ICON_SIZE tall — center them as one block. */
-                    cyAbs((float)WBN_ICON_SIZE);
+                     * LOBBY_WBN_ICON_SIZE tall — center them as one block. */
+                    cyAbs((float)LOBBY_WBN_ICON_SIZE);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                     {
                         /* Hide the WBN globe in local-only sessions —
@@ -5767,8 +5766,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     /* Host-only "Make host" promote button, drawn to the
                      * left of the kick X. openHost/admin (effectiveHost)
                      * can kick but must NOT transfer the host role, so
-                     * this is gated on isLobbyHost, not effectiveHost. */
-                    if (isLobbyHost(cs, myPlayerNum)) {
+                     * this is gated on lobbyIsHost, not effectiveHost. */
+                    if (lobbyIsHost(cs, myPlayerNum)) {
                         ImVec2 mhPos = basePos;
                         ImGui::SetCursorScreenPos(mhPos);
                         char mhStr[24];
@@ -6272,11 +6271,11 @@ static void renderBotAiConfig(ClientSim *cs,
  *
  * Renders nothing when port-mapping status is DISABLED. Owns its own
  * popup modal for the detail view; clicking the icon/text opens it. */
-static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
+void lobbyRenderConnectivityBadge(SDL_Renderer *renderer, float s) {
     ServerPortmapInfo pm;
     serverInstanceGetPortmapInfo(&pm);
 
-    loadStatusIconsOnce(renderer, s);
+    lobbyLoadStatusIconsOnce(renderer, s);
 
     SDL_Texture *icon       = nullptr;
     const char  *shortText  = nullptr;
@@ -6444,7 +6443,7 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
  * clientSimApplyControl) as a one-line orange status pill. Auto-clears
  * after the user dismisses it (clicks the X) so subsequent rejects
  * re-trigger naturally. */
-static void renderLobbyRejectToast(ClientSim *cs, float s) {
+void lobbyRenderRejectToast(ClientSim *cs, float s) {
     if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
     const char *reason = langGetText(STR_DLGLOBBY_REJECT_DEFAULT);
     switch (clientSimGetLobbyLastRejectReason(cs)) {
@@ -6636,7 +6635,7 @@ typedef struct LobbyRecapState {
 
 static LobbyRecapState s_recap = {};
 
-static void lobbyRecapReset(void) {
+void lobbyRecapReset(void) {
     s_recap = LobbyRecapState{};
 }
 
@@ -6646,7 +6645,7 @@ static void lobbyRecapReset(void) {
  * AND the panel has not been flipped to its Map tab. With the recap withheld
  * at build level there is no reel, so this is constant false — matching the
  * same #if the lobby uses to compute lobbyShowLastRound. */
-static bool lobbyRecapReelVisible(ClientSim *cs) {
+bool lobbyRecapReelVisible(ClientSim *cs) {
 #if POSTGAME_STATS_ENABLED
     return (clientSimGetLastRoundStats(cs) != NULL) && !s_recap.showMap;
 #else
@@ -6758,7 +6757,7 @@ typedef struct LobbyReelState {
      * The reel adds it to its own height, which is what stops the body ending
      * well short of the bottom of a tall panel. Immediate mode gives no way to
      * know what the content below the reel will cost before drawing it, so this
-     * is a one-frame feedback loop: renderLastRoundBody measures the shortfall
+     * is a one-frame feedback loop: lobbyRenderLastRoundBody measures the shortfall
      * at the end of the frame and this grows or shrinks by that much. It has to
      * accumulate rather than hold the raw shortfall — a raw value would be
      * spent, measure zero, and collapse back the next frame. */
@@ -6988,10 +6987,10 @@ static void lobbyReelWbnPoll(void) {
 
 #if BOLO_RECAP_CLIP_GIF
 /* Defined with the clip export below, which needs the reel's own state. */
-static void lobbyClipGifReset(void);
+void lobbyClipGifReset(void);
 #endif
 
-static void lobbyReelEnd(void) {
+void lobbyReelEnd(void) {
 #if BOLO_RECAP_CLIP_GIF
     /* An export in flight is holding encoder allocations and a playback
      * position to put back, and the reel it was reading is about to go. What
@@ -7060,7 +7059,7 @@ static void lobbyReelLogTransfer(int state, uint8_t percent) {
  * the bytes are stale and the next round must fetch its own. Kept apart from
  * lobbyReelEnd, which also runs at the end of a lobby session with no
  * ClientSim in reach. */
-static void lobbyReelDropRoundLog(ClientSim *cs) {
+void lobbyReelDropRoundLog(ClientSim *cs) {
     if (clientSimGetRoundLogState(cs) != CLIENT_ROUND_LOG_READY) return;
     size_t len = 0;
     uint8_t *buf = clientSimTakeRoundLog(cs, &len);
@@ -7089,7 +7088,7 @@ static void lobbyRenderReelStatus(int state, uint8_t percent, ImVec2 rect,
      * Last round tab, where the player list that usually brings the status
      * icons up is not drawn. The load is idempotent, so asking again is free. */
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
-    if (renderer) loadStatusIconsOnce(renderer, s);
+    if (renderer) lobbyLoadStatusIconsOnce(renderer, s);
 
     const char  *msg = nullptr;
     SDL_Texture *ico = nullptr;
@@ -7212,19 +7211,19 @@ static const float REEL_HEIGHT_MIN      = 180.0f;
 static const float REEL_HEIGHT_MAX_FRAC = 0.85f;
 
 /* Defined down with the chat input's state, which is declared after this. */
-static void lobbyChatInputAppendTime(uint32_t curMs);
+void lobbyChatInputAppendTime(uint32_t curMs);
 
 #if BOLO_RECAP_CLIP_GIF
 /* Defined with the clip export below, which needs the reel's own state. The
  * transport bar carries the same control the clip rows do, so both are reached
  * from here. */
-static bool lobbyClipGifButton(const char *id, bool compact);
-static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
+bool lobbyClipGifButton(const char *id, bool compact);
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName);
 /* Whether an export is running. The crop frame reads it to hold still: the
  * rect is fixed once at msf_gif_begin and every frame of the GIF is that size,
  * so letting it be dragged mid-capture would show a box the recording is not
  * following. */
-static bool lobbyClipGifActive(void);
+bool lobbyClipGifActive(void);
 
 /* The crop control, sitting with the export it crops. Names the frame rather
  * than describing it — the same rule the GIF control's caption follows, and
@@ -7500,7 +7499,7 @@ static void lobbyReelZoomInput(bool hovered, ImVec2 imgMin) {
     }
 }
 
-static void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
+void lobbyRenderReel(ClientSim *cs, const RoundStatsSummary *st,
                             float s) {
     /* Source, in order: the file this process wrote, else the copy the server
      * sent us, else the copy WinBolo.net holds under the round's key.
@@ -8077,12 +8076,12 @@ static void lobbyClipGifAbort(void) {
  * buffers a live capture holds are leaked outright if they are overwritten
  * instead of ended. A capture that was never begun has nothing to end and
  * nothing to leak. */
-static void lobbyClipGifReset(void) {
+void lobbyClipGifReset(void) {
     lobbyClipGifAbort();
     s_clipGif = ClipGifCapture{};
 }
 
-static bool lobbyClipGifActive(void) {
+bool lobbyClipGifActive(void) {
     return s_clipGif.active;
 }
 
@@ -8198,14 +8197,14 @@ static void lobbyClipGifStart(uint32_t startMs, uint32_t durationMs,
 
 /* A clip row's export: the moment and the place the row names, for as long as
  * the round's scorer decided the clip runs. */
-static void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName) {
+void lobbyClipGifStartClip(const HighlightWindow *h, const char *mapName) {
     lobbyClipGifStart(h->startMs, h->durationMs, true, h->mapX, h->mapY,
                       mapName);
 }
 
 /* The transport's export: a fixed length from wherever the playhead sits, with
  * the view left where the player put it. */
-static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName) {
+void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName) {
     lobbyClipGifStart(curMs, CLIP_GIF_PLAYHEAD_MS, false, 0, 0, mapName);
 }
 
@@ -8215,7 +8214,7 @@ static void lobbyClipGifStartFromPlayhead(uint32_t curMs, const char *mapName) {
  * comes out the height of the buttons beside it. The tooltip names the format
  * either way — a glyph on its own does not say which one. (Not `small`: the
  * Windows RPC headers define that as a type.) */
-static bool lobbyClipGifButton(const char *id, bool compact) {
+bool lobbyClipGifButton(const char *id, bool compact) {
     const float lineH = ImGui::GetTextLineHeight();
     bool clicked;
 
@@ -8244,7 +8243,7 @@ static bool lobbyClipGifButton(const char *id, bool compact) {
 }
 
 /* Width the control above will take, for a caller placing it by hand. */
-static float lobbyClipGifButtonWidth(void) {
+float lobbyClipGifButtonWidth(void) {
     return (s_icons.picture ? ImGui::GetTextLineHeight()
                           : ImGui::CalcTextSize(CLIP_GIF_TITLE).x)
            + ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -8380,7 +8379,7 @@ static void lobbyClipGifSave(const MsfGifResult *res) {
 
 /* Drives a capture from the recap's own frames and draws the modal over it.
  * Called once per body render, after the clip rows that arm it. */
-static void lobbyClipGifRender(float s) {
+void lobbyClipGifRender(float s) {
     if (!s_clipGif.active) {
         return;
     }
@@ -8524,7 +8523,7 @@ static WbnCommentPost *s_recapPost = nullptr;
 
 /* The fetch handle is owned here, so it has to be released before the struct
  * is overwritten. Freeing it cancels the transfer, so the wait is brief. */
-static void lobbyRatingReset(void) {
+void lobbyRatingReset(void) {
     if (s_rating.fetch) {
         wbn_comments_fetch_free(s_rating.fetch);
     }
@@ -8546,7 +8545,7 @@ static void lobbyRatingReset(void) {
  * finished round's stars and comments loaded and show them for the frames
  * before the next round's summary lands. Idempotent, so both the per-frame
  * hook and the renderer can call it. */
-static void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st) {
+void lobbyRatingSyncKey(ClientSim *cs, const RoundStatsSummary *st) {
     const char *key = (st && st->wbnLogKey[0] != '\0') ? st->wbnLogKey : "";
     if (strncmp(s_rating.ratingKey, key, sizeof(s_rating.ratingKey)) == 0) return;
 
@@ -8624,7 +8623,7 @@ static void lobbyRatingPoll(ClientSim *cs) {
     }
 }
 
-static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
+void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
                                    float s) {
     lobbyRatingSyncKey(cs, st);
 
@@ -8803,7 +8802,7 @@ static void lobbyRenderRatingBlock(ClientSim *cs, const RoundStatsSummary *st,
  * desktop lobby's right column / the controller layout's Last round tab)
  * gates it on clientSimGetLastRoundStats and supplies the surrounding
  * container. */
-static void renderLastRoundBody(ClientSim *cs, float s) {
+void lobbyRenderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
     if (!st) {
 #if !BOLO_MOBILE
@@ -9321,7 +9320,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
 /* ── Layout A — small inline lock badge ───────────────────────────
  * Renders an inline orange "[locked]" pill next to a setting name
  * when the server has flagged it in serverLocks. Cosmetic + tooltip. */
-static void renderLockBadge(void) {
+void lobbyRenderLockBadge(void) {
     ImGui::SameLine();
     if (s_icons.locked) {
         float sz = ImGui::GetTextLineHeight();
@@ -9347,7 +9346,7 @@ static void renderLockBadge(void) {
  *
  * sameLine chooses between stacking it under the map info (what the map
  * panel wants) and setting it beside whatever precedes it on the row. */
-static void renderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
+void lobbyRenderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
                               float s, bool sameLine) {
     if (spectator || !clientSimIsMapSkipAvailable(cs) ||
         !clientSimIsInLobby(cs) ||
@@ -9405,7 +9404,7 @@ static void renderMapSkipVote(ClientSim *cs, bool spectator, bool hasTransport,
  * commands. Host-only or anyone if openHost. */
 /* Forward decl — the form body is defined just after the panel, but the
  * panel (and the controller Settings tab) call it. */
-static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
+void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 
 /* Open state of the settings CollapsingHeader. File-scope rather than a
  * panel-local static because the lobby's post-game edge handler below
@@ -9445,7 +9444,7 @@ static void lobbySettingsHeaderInit(void) {
  * auto-collapse left it. Re-opening it during the recap clears the flag,
  * so a manual choice outranks the remembered state and survives into the
  * next round. */
-static void lobbySettingsPostGameEdge(bool showLastRound) {
+void lobbySettingsPostGameEdge(bool showLastRound) {
     lobbySettingsHeaderInit();
     if (showLastRound && !s_settings.prevShowLastRound) {
         s_settings.preCollapse   = s_settings.open;
@@ -9461,10 +9460,10 @@ static void lobbySettingsPostGameEdge(bool showLastRound) {
     s_settings.prevShowLastRound = showLastRound;
 }
 
-static void renderGameSettingsPanel(ClientSim *cs,
+void lobbyRenderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
-    bool effectiveHost = !spectator && (isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = !spectator && (lobbyIsHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN)));
@@ -9524,19 +9523,19 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * editable checkbox is rendered for host/admin only in the "Other"
      * column below. */
 
-    renderGameSettingsBody(cs, myPlayerNum, s);
+    lobbyRenderGameSettingsBody(cs, myPlayerNum, s);
 }
 
 /* The game-settings form proper (game type / AI policy / mines / time
- * limit / password). Split out of renderGameSettingsPanel so the
+ * limit / password). Split out of lobbyRenderGameSettingsPanel so the
  * controller Settings tab can render it flat, without the desktop
  * collapsing-header chrome. Host-gated by every caller. */
-static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
+void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
     /* Same effective-host test the panel computes, recomputed here so the
      * per-control disabled state is identical whether the body renders in
      * the desktop collapsing header or the controller Settings tab. */
-    bool effectiveHost = !spectator && (isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = !spectator && (lobbyIsHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN)));
@@ -9553,7 +9552,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     bool gtLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_GAME_TYPE) != 0;
     {
         ImGui::Text("%s", langGetText(STR_DLGLOBBY_GAMETYPE_LBL));
-        if (gtLocked) renderLockBadge();
+        if (gtLocked) lobbyRenderLockBadge();
         bool disable = !effectiveHost || gtLocked;
         if (disable) ImGui::BeginDisabled();
         const char *items[] = {
@@ -9589,7 +9588,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     bool aiLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_AI_POLICY) != 0;
     {
         ImGui::Text("%s", langGetText(STR_DLGLOBBY_AI_SECTION_LBL));
-        if (aiLocked) renderLockBadge();
+        if (aiLocked) lobbyRenderLockBadge();
         /* Ranked games force "No computer tanks" — disable the
          * whole AI block since none of the alternatives are valid. */
         bool disable = !effectiveHost || aiLocked
@@ -9629,7 +9628,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             lobbySendSetting(cs, LST_HIDDEN_MINES, &v, 1);
         }
         if (minesDisabled) ImGui::EndDisabled();
-        if (minesLocked) renderLockBadge();
+        if (minesLocked) lobbyRenderLockBadge();
 
         /* "Allow all players to change settings" — toggles openHost
          * (the same flag that gates per-team manage-bots authority).
@@ -9642,7 +9641,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
          * authority-gating controls cluster together at the top of
          * the Other column. */
         if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal = isLobbyHost(cs, myPlayerNum);
+            bool isHostLocal = lobbyIsHost(cs, myPlayerNum);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                                  (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                                   & PLAYER_FLAG_ADMIN));
@@ -9655,7 +9654,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                     clientSimNetSendLobbyOpenHost(cs, oh);
                 }
                 if (openHostLocked) ImGui::EndDisabled();
-                if (openHostLocked) renderLockBadge();
+                if (openHostLocked) lobbyRenderLockBadge();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (openHostLocked) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
@@ -9692,14 +9691,14 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TIMELIMIT_MIN));
         }
         if (timeDisabled) ImGui::EndDisabled();
-        if (timeLocked) renderLockBadge();
+        if (timeLocked) lobbyRenderLockBadge();
 
         /* Password protection — host or admin only (NOT openHost;
          * we don't want random connected players to be able to lock
          * the host out of their own server). MP only — SP has no
          * remote clients to keep out. */
         if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
+            bool isHostLocal  = lobbyIsHost(cs, myPlayerNum);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                                  (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                                   & PLAYER_FLAG_ADMIN));
@@ -9727,7 +9726,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                      * anything yet — wait for the user to type. */
                 }
                 if (pwLocked) ImGui::EndDisabled();
-                if (pwLocked) renderLockBadge();
+                if (pwLocked) lobbyRenderLockBadge();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (pwLocked) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
@@ -9757,7 +9756,7 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         /* "Allow new players" / "Disallow new players once game has
          * started" moved to the team-list header (right of "+ Add Team")
          * so all join-related controls live in one row. See
-         * renderTeamGroupedPlayers. */
+         * lobbyRenderTeamGroupedPlayers. */
 
     }
 
@@ -9926,7 +9925,7 @@ static void lobbyRenderChatTimeLine(const char *begin, const char *end,
  * vertical item spacing is what makes the two kinds of line stack at the pitch
  * a single text block would. With no reel to seek there is nothing to link, so
  * every line takes the plain path. */
-static void lobbyRenderChatHistory(const char *blob) {
+void lobbyRenderChatHistory(const char *blob) {
     if (blob == NULL) {
         return;
     }
@@ -9991,7 +9990,7 @@ static void lobbyRenderChatHistory(const char *blob) {
  * Send button (which would target Send, not the input). The 2-frame
  * counter survives ImGui's internal InputText deactivation on Enter,
  * which stomps a single-frame focus request. */
-static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
+void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                         BYTE myPlayerNum, bool hasTransport,
                                         float s, BYTE destPlayer) {
     /* A spectator may chat in the live lobby: the input is enabled and Enter/
@@ -10007,7 +10006,7 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     }
     if (s_chat.hideNav)
         ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
-    bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
+    bool enterPressed = ImGui::InputText("##ChatInput", chatInput, LOBBY_CHAT_INPUT_SIZE,
                                          ImGuiInputTextFlags_EnterReturnsTrue);
     if (s_chat.hideNav) {
         ImGui::GetCurrentContext()->NavCursorVisible = false;
@@ -10064,7 +10063,7 @@ typedef struct LobbyFrameState {
     DialogSafeInsets safeInsets;
 
     /* Chat compose buffer + unread tracking. */
-    char   chatInput[CHAT_INPUT_SIZE];
+    char   chatInput[LOBBY_CHAT_INPUT_SIZE];
     bool   chatUnread;
     int    lastChatLen;
     bool   teamChatUnread;
@@ -10078,7 +10077,7 @@ typedef struct LobbyFrameState {
     uint32_t mapPreviewOwnerSeen;
     int      mapPreviewOwnerStable;
     bool     prevMapDownloadComplete;
-    MapBounds mapBounds;
+    LobbyMapBounds mapBounds;
     char     prevMapName[128];
     bool     awaitingMapChangePacket;
     int      awaitingFrames;
@@ -10097,18 +10096,18 @@ static LobbyFrameState s_lf = {};
  * Silently does nothing when the whole token will not fit: half a token in
  * the box reads as a link nobody can follow. A round past 99 minutes writes
  * three minute digits, which lobbyMatchChatTime leaves as plain text. */
-static void lobbyChatInputAppendTime(uint32_t curMs) {
+void lobbyChatInputAppendTime(uint32_t curMs) {
     unsigned secs = (unsigned)(curMs / 1000u);
     char     token[16];
     size_t   used, room;
 
     snprintf(token, sizeof(token), "@%02u:%02u ", secs / 60u, secs % 60u);
     used = SDL_strlen(s_lf.chatInput);
-    room = (size_t)(CHAT_INPUT_SIZE - 1) - used;
+    room = (size_t)(LOBBY_CHAT_INPUT_SIZE - 1) - used;
     if (SDL_strlen(token) > room) {
         return;
     }
-    SDL_strlcat(s_lf.chatInput, token, CHAT_INPUT_SIZE);
+    SDL_strlcat(s_lf.chatInput, token, LOBBY_CHAT_INPUT_SIZE);
     s_chat.refocusFrames = 2;
 }
 #endif
@@ -10250,7 +10249,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
     /* Aliases onto the persistent per-frame state so the UI body below
      * reads/writes it by its original local names. */
-    char (&chatInput)[CHAT_INPUT_SIZE]    = s_lf.chatInput;
+    char (&chatInput)[LOBBY_CHAT_INPUT_SIZE]    = s_lf.chatInput;
     bool &chatUnread                      = s_lf.chatUnread;
     int  &lastChatLen                     = s_lf.lastChatLen;
     bool &teamChatUnread                  = s_lf.teamChatUnread;
@@ -10262,7 +10261,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
     uint32_t &mapPreviewOwnerSeen         = s_lf.mapPreviewOwnerSeen;
     int  &mapPreviewOwnerStable           = s_lf.mapPreviewOwnerStable;
     bool &prevMapDownloadComplete         = s_lf.prevMapDownloadComplete;
-    MapBounds &mapBounds                  = s_lf.mapBounds;
+    LobbyMapBounds &mapBounds                  = s_lf.mapBounds;
     char (&prevMapName)[128]              = s_lf.prevMapName;
     bool &awaitingMapChangePacket         = s_lf.awaitingMapChangePacket;
     int  &awaitingFrames                  = s_lf.awaitingFrames;
@@ -10441,7 +10440,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 uint32_t sig0 = 0;
                 int nOwn0 = lobbyComputeStartOwners(cs, spectator ? -1 : (int)gameFrontGetPlayerNum(),
                                                     owners0, MAX_STARTS, &sig0);
-                mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds,
+                mapPreviewTex = lobbyBuildMapPreview(renderer, mapData, mapLen, &mapBounds,
                                                 nOwn0 ? owners0 : NULL, nOwn0);
                 mapPreviewOwnerSig = sig0;
                 if (prev) SDL_DestroyTexture(prev);
@@ -10459,7 +10458,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     /* Recompute the per-start compass cache from the new
                      * map bytes — only here, so the player-list column
                      * never decompresses the map per frame. */
-                    rebuildStartCompassCache(s_mapPreview.popupCompressedData,
+                    lobbyRebuildStartCompassCache(s_mapPreview.popupCompressedData,
                                              s_mapPreview.popupCompressedLen);
                     /* If the user has the big map-preview popup open
                      * right now, refresh its underlying data in place
@@ -10493,7 +10492,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 mapPreviewOwnerStable = 0;
             }
             if (sig != mapPreviewOwnerSig && mapPreviewOwnerStable >= 3) {
-                SDL_Texture *fresh = buildMapPreview(renderer, s_mapPreview.popupCompressedData,
+                SDL_Texture *fresh = lobbyBuildMapPreview(renderer, s_mapPreview.popupCompressedData,
                                                      s_mapPreview.popupCompressedLen, &mapBounds,
                                                      nOwn ? owners : NULL, nOwn);
                 if (fresh) {
@@ -10572,17 +10571,17 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             };
 
             char timeStr[32];
-            formatTimeLimit(clientSimGetLobbyTimeLimit(cs), timeStr, sizeof(timeStr));
+            lobbyFormatTimeLimit(clientSimGetLobbyTimeLimit(cs), timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
             /* Stack labels vertically on mobile so the line wraps cleanly. */
             ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
             ImGui::SameLine();
             renderServerValue();
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(clientSimGetLobbyGameType(cs)));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), aiTypeStr(clientSimGetLobbyAiType(cs)));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
 #else
             /* Leave button sits at the top-left, before the Server: line.
@@ -10627,12 +10626,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             renderServerValue();
             ImGui::SameLine(0, 16);
             ImGui::AlignTextToFramePadding();
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(clientSimGetLobbyGameType(cs)));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), lobbyGameTypeStr(clientSimGetLobbyGameType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
             ImGui::SameLine(0, 16);
-            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), aiTypeStr(clientSimGetLobbyAiType(cs)));
+            ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
 #endif
@@ -10643,11 +10642,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * passed -no-natpunch / LAN-only). Skipping it covers SP,
              * LAN-only hosts, and non-hosting clients in one check. */
             if (serverInstanceIsNatPunchActive()) {
-                /* renderConnectivityBadge right-aligns itself within the
+                /* lobbyRenderConnectivityBadge right-aligns itself within the
                  * remaining horizontal space, so we just SameLine onto
                  * the status row and let it absorb the slack. */
                 ImGui::SameLine();
-                renderConnectivityBadge(renderer, s);
+                lobbyRenderConnectivityBadge(renderer, s);
             }
         }
 
@@ -10658,14 +10657,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         /* Layout A — surface the most recent server reject (locked
          * setting, non-host action, invalid request). Renders only
          * when clientSimGetLobbyLastRejectPacket(cs) != 0. */
-        renderLobbyRejectToast(cs, s);
+        lobbyRenderRejectToast(cs, s);
 
         /* Layout A — collapsible game settings panel (radios, checkboxes,
          * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING.
          * Skipped entirely for non-privileged players — the same
          * info already lives in the top status bar, and the panel
          * is read-only anyway. */
-        bool gsEffectiveHost = !spectator && (isLobbyHost(cs, myPlayerNum)
+        bool gsEffectiveHost = !spectator && (lobbyIsHost(cs, myPlayerNum)
             || clientSimGetLobbyOpenHost(cs)
             || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
@@ -10698,13 +10697,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * tabbed layout renders the same form in a dedicated tab, so skip it
          * here to avoid double-rendering it for the host. */
         if (gsEffectiveHost && !useTabbedLobby) {
-            renderGameSettingsPanel(cs, myPlayerNum, s);
+            lobbyRenderGameSettingsPanel(cs, myPlayerNum, s);
             ImGui::Separator();
             ImGui::Spacing();
         }
 
         /* Hosted-MP port-mapping status now renders at top-right via
-         * renderConnectivityBadge — see the call site in the read-only
+         * lobbyRenderConnectivityBadge — see the call site in the read-only
          * status block above. */
 
         /* --- Main content (tabbed in controller mode, two-column for mouse;
@@ -10771,7 +10770,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         s_players.forceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 0;
                     /* Allow New Players row above the player list (mobile). */
-                    renderAllowNewPlayersRow(cs, myPlayerNum, s);
+                    lobbyRenderAllowNewPlayersRow(cs, myPlayerNum, s);
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
                     ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_NavFlattened);
 
@@ -10780,8 +10779,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * intact for reference; toggle the 0/1 to A/B
                      * compare during the in-progress UI rewrite. */
 #if 1
-                    bool isHostHere = isLobbyHost(cs, myPlayerNum);
-                    renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
+                    bool isHostHere = lobbyIsHost(cs, myPlayerNum);
+                    lobbyRenderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
                     /* Avoid the legacy table entirely. */
                     if (false) {
 #else
@@ -10932,7 +10931,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * effHostMap stays visible to the preview block below
                      * so privileged users can also click the preview to
                      * jump straight into the chooser. */
-                    bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
+                    bool isHostLocal  = lobbyIsHost(cs, myPlayerNum);
                     bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                          & PLAYER_FLAG_ADMIN));
@@ -11012,7 +11011,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                                 effHostMap, miniMin, innerSize,
                                                 bx0, by0, bx1, by1);
-                        drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
+                        lobbyDrawPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                                      bx0, by0, bx1, by1);
                         /* Controller-reachable entry to the start picker: a
                          * focusable activation over the preview that opens the
@@ -11104,7 +11103,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         s_players.forceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 2;
                     ImGui::Spacing();
-                    renderGameSettingsBody(cs, myPlayerNum, s);
+                    lobbyRenderGameSettingsBody(cs, myPlayerNum, s);
                     ImGui::EndTabItem();
                 }
 
@@ -11195,7 +11194,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
                     ImGui::BeginChild("##LastRoundTab", ImVec2(availW, tabH),
                                       ImGuiChildFlags_NavFlattened);
-                    renderLastRoundBody(cs, s);
+                    lobbyRenderLastRoundBody(cs, s);
                     ImGui::EndChild();
                     ImGui::EndTabItem();
                 }
@@ -11218,9 +11217,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * matter in SP / LAN where Ranked isn't shown at all. */
                 bool rankedActive = !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs)
                                      && clientSimGetLobbyRanked(cs);
-                RankedEligibility readyRe = rankedActive
-                                              ? computeRankedEligibility(cs)
-                                              : RankedEligibility{true, 0, 0, 0};
+                LobbyRankedEligibility readyRe = rankedActive
+                                              ? lobbyComputeRankedEligibility(cs)
+                                              : LobbyRankedEligibility{true, 0, 0, 0};
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
                 bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
 
@@ -11270,7 +11269,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (!canReady) ImGui::EndDisabled();
                 if (rankedBlocksReady &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    rankedShapeTooltip(readyRe);
+                    lobbyRankedShapeTooltip(readyRe);
                 }
                 }  /* close !spectator: Ready button */
 
@@ -11391,7 +11390,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* "Allow New Players" row spans the full width above both
              * panels so PlayerPanel and MapPanel top edges align in Y. */
             float beforeAllowY = ImGui::GetCursorPosY();
-            renderAllowNewPlayersRow(cs, myPlayerNum, s);
+            lobbyRenderAllowNewPlayersRow(cs, myPlayerNum, s);
             float allowRowH = ImGui::GetCursorPosY() - beforeAllowY;
 
             float spacingH = ImGui::GetStyle().ItemSpacing.y;
@@ -11466,8 +11465,8 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * A/B compare during the in-progress UI rewrite. */
 #if 1
             {
-                bool isHostHere = isLobbyHost(cs, myPlayerNum);
-                renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
+                bool isHostHere = lobbyIsHost(cs, myPlayerNum);
+                lobbyRenderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
             }
             if (false) {
 #else
@@ -11761,7 +11760,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     s_recap.showMap = !s_recap.showMap;
                 }
                 if (!showMapPanel) {
-                    renderLastRoundBody(cs, s);
+                    lobbyRenderLastRoundBody(cs, s);
                 }
             }
 
@@ -11807,7 +11806,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * Pre-measure N so the preview can claim everything else
                  * deterministically and the panel doesn't end up with
                  * either dead space or content pushed past the bottom. */
-                bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
+                bool isHostLocal  = lobbyIsHost(cs, myPlayerNum);
                 bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                     (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                      & PLAYER_FLAG_ADMIN));
@@ -11865,7 +11864,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
                                         effHostMap, miniMin, innerSize,
                                         bx0, by0, bx1, by1);
-                drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
+                lobbyDrawPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                              bx0, by0, bx1, by1);
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
@@ -11914,13 +11913,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), clientSimGetMapName(cs));
                 if ((clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP) != 0) {
                     ImGui::SameLine(0.0f, 4.0f * s);
-                    renderLockBadge();
+                    lobbyRenderLockBadge();
                 }
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
 
-                renderMapSkipVote(cs, spectator, hasTransport, s, false);
+                lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
             }
 
             /* Choose Map button moved up to sit directly under the
@@ -11942,9 +11941,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * matter in SP / LAN where Ranked isn't shown at all. */
                 bool rankedActive = !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs)
                                      && clientSimGetLobbyRanked(cs);
-                RankedEligibility readyRe = rankedActive
-                                              ? computeRankedEligibility(cs)
-                                              : RankedEligibility{true, 0, 0, 0};
+                LobbyRankedEligibility readyRe = rankedActive
+                                              ? lobbyComputeRankedEligibility(cs)
+                                              : LobbyRankedEligibility{true, 0, 0, 0};
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
                 bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
 
@@ -11978,7 +11977,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 if (!canReady) ImGui::EndDisabled();
                 if (rankedBlocksReady &&
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    rankedShapeTooltip(readyRe);
+                    lobbyRankedShapeTooltip(readyRe);
                 }
                 }  /* close !spectator: Ready button */
             }
@@ -11992,7 +11991,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * actually opens on a Change request. "Allow players to
              * change game settings" (openHost) extends this beyond
              * the host slot to every connected player. */
-            bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
+            bool isHostLocal  = lobbyIsHost(cs, myPlayerNum);
             bool isAdminLocal = (cs && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                  & PLAYER_FLAG_ADMIN));
