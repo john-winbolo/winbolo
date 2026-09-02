@@ -912,9 +912,20 @@ function M.decide(state, world, info, now)
   -- After dispatch the brain is free to pick a new goal — the LGM
   -- runs the repair autonomously. state._repair_dispatched signals
   -- init.lua to clear state.goal back to "none".
-  if state.goal and state.goal.kind == "repair_pill"
-     and state.goal.mx and state.goal.my then
-    local px, py = state.goal.mx, state.goal.my
+  -- Also serves the defend_pill REPAIR handoff (goal.repair, set by
+  -- defend_pill_score's ARRIVED branch): a defender parked at its own damaged
+  -- pill with the LGM aboard and wood in hand should FIX it rather than watch
+  -- it. Identical dispatch; the target comes from goal.pill_mx/pill_my because
+  -- a defend goal's own mx/my can be a hold tile next to the pill.
+  local _rep_px, _rep_py
+  if state.goal and state.goal.kind == "repair_pill" then
+    _rep_px, _rep_py = state.goal.mx, state.goal.my
+  elseif state.goal and state.goal.kind == "defend_pill" and state.goal.repair then
+    _rep_px = state.goal.pill_mx or state.goal.mx
+    _rep_py = state.goal.pill_my or state.goal.my
+  end
+  if _rep_px and _rep_py then
+    local px, py = _rep_px, _rep_py
     local dist  = U.mdist(tmx, tmy, px, py)
     -- Danger-blended distance cap. Insist on dist<=5 when we're not
     -- under fire; widen toward DIST_DANGEROUS as the tank's local
@@ -923,8 +934,13 @@ function M.decide(state, world, info, now)
     -- closing — we just stop EARLIER when staying close would cost
     -- armour. "Get as close as we can while it's safe" naturally
     -- emerges from re-evaluating the cap each tick.
-    local DANGER_LOW, DANGER_HIGH = 50, 150
-    local DIST_BASE, DIST_DANGEROUS = 5, 12
+    -- Constants, not locals: defend_pill_score's REPAIR handoff reads
+    -- REPAIR_DISPATCH_DIST_BASE to decide whether its hold tile is somewhere
+    -- the LGM could actually be dispatched from.
+    local DANGER_LOW   = C.REPAIR_DISPATCH_DANGER_LOW or 50
+    local DANGER_HIGH  = C.REPAIR_DISPATCH_DANGER_HIGH or 150
+    local DIST_BASE      = C.REPAIR_DISPATCH_DIST_BASE or 5
+    local DIST_DANGEROUS = C.REPAIR_DISPATCH_DIST_DANGEROUS or 12
     local danger_at_tank = (state.perc and state.perc.threat_at_tank) or 0
     local t = (danger_at_tank - DANGER_LOW) / (DANGER_HIGH - DANGER_LOW)
     if t < 0 then t = 0 elseif t > 1 then t = 1 end
@@ -947,18 +963,47 @@ function M.decide(state, world, info, now)
     -- recent enemy sighting — the pool already priced the contest; a
     -- repairer that always waits repairs nothing (and the waiting tank
     -- used to get stuck-blocked on top: 20260825_200837 bot9 t=6218).
-    if C.REPAIR_HOLD_ENEMY_NEAR_ENABLED then
+    local _tgt_pill
+    do
       local lst = world.pill_at and world.pill_at[py * 256 + px]
-      local tp = lst and lst[1] and lst[1].pill
+      _tgt_pill = lst and lst[1] and lst[1].pill
+    end
+    if C.REPAIR_HOLD_ENEMY_NEAR_ENABLED then
+      local tp = _tgt_pill
       if tp and tp._enemy_near_tick
          and ((state.tick or 0) - tp._enemy_near_tick) < (C.REPAIR_HOLD_ENEMY_NEAR_TICKS or 400) then
         enemy_hold = true
       end
     end
-    local ticks = (in_range and has_trees and not enemy_hold)
+    -- UNDER-FIRE hold (REPAIR_HOLD_UNDER_FIRE_ENABLED, default ON). This is the
+    -- interlock the enemy-near hold above was reaching for. "A hostile was SEEN
+    -- near this pill in the last 400 ticks" is true for most of a real game,
+    -- which is why that flag had to be turned off and the LGM was left with no
+    -- safety gate at all. "A shell landed on this pill less than
+    -- REPAIR_QUIET_TICKS ago" is the honest one: the LGM walks at ~1 tile/13
+    -- ticks and dies to a single hit, so sending him while the volley is still
+    -- landing simply loses him. The moment the hits stop, he goes.
+    local under_fire_hold, _uf_age = false, nil
+    if C.REPAIR_HOLD_UNDER_FIRE_ENABLED then
+      local lh = _tgt_pill and _tgt_pill.last_hit_tick
+      if lh and lh > 0 then
+        _uf_age = (state.tick or 0) - lh
+        if _uf_age < (C.REPAIR_QUIET_TICKS or 75) then under_fire_hold = true end
+      end
+    end
+    if under_fire_hold and (state._bhuf_log_tick or -1) ~= (state.tick or 0) then
+      state._bhuf_log_tick = state.tick or 0
+      print2(string.format(
+        "BUILDER_HOLD_UNDER_FIRE t=%d pill=(%d,%d) hit_age=%d quiet=%d goal=%s"
+        .. " -- LGM stays aboard while shells are still landing",
+        state.tick or 0, px, py, _uf_age or -1, C.REPAIR_QUIET_TICKS or 75,
+        (state.goal and state.goal.kind) or "?"))
+    end
+    local _hold = enemy_hold or under_fire_hold
+    local ticks = (in_range and has_trees and not _hold)
       and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, px, py, 2000, 150)
       or -1
-    local can_dispatch = in_range and has_trees and not enemy_hold and ticks > 0
+    local can_dispatch = in_range and has_trees and not _hold and ticks > 0
 
     if BRAIN_DEBUG_MODE then
       -- Status circle on the pill: green = dispatch fires this tick,
@@ -979,13 +1024,19 @@ function M.decide(state, world, info, now)
                              dist, effective_max, info.trees,
                              math.floor(danger_at_tank or 0),
                              math.floor(ticks or 0),
-                             enemy_hold and " HOLD(enemy near)" or ""),
+                             under_fire_hold
+                               and string.format(" HOLD(under fire %dt)", _uf_age or -1)
+                               or (enemy_hold and " HOLD(enemy near)" or "")),
                "topleft", r, g, b, 240)
       print2(string.format(
-        "REPAIR_DISPATCH_CHECK pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d hold=%s can=%s",
-        px, py, tmx, tmy, dist, effective_max, info.trees,
+        "REPAIR_DISPATCH_CHECK t=%d pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d"
+        .. " hold=%s (enemy_near=%s under_fire=%s hit_age=%s) goal=%s can=%s",
+        state.tick or 0, px, py, tmx, tmy, dist, effective_max, info.trees,
         math.floor(danger_at_tank or 0),
-        math.floor(ticks or 0), tostring(enemy_hold), tostring(can_dispatch)))
+        math.floor(ticks or 0), tostring(_hold),
+        tostring(enemy_hold), tostring(under_fire_hold),
+        _uf_age and tostring(_uf_age) or "-",
+        (state.goal and state.goal.kind) or "?", tostring(can_dispatch)))
     end
 
     if can_dispatch then
@@ -995,7 +1046,10 @@ function M.decide(state, world, info, now)
       state._repair_dispatch_eta = ticks
       if BRAIN_DEBUG_MODE then
         print2(string.format(
-          "REPAIR_DISPATCH_FIRED pill=(%d,%d) action=BUILDMODE_PBOX eta=%d", px, py, ticks))
+          "REPAIR_DISPATCH_FIRED t=%d pill=(%d,%d) action=BUILDMODE_PBOX eta=%d goal=%s hit_age=%s",
+          state.tick or 0, px, py, ticks,
+          (state.goal and state.goal.kind) or "?",
+          _uf_age and tostring(_uf_age) or "-"))
       end
       return { x = px, y = py, action = BUILDMODE_PBOX }
     end
