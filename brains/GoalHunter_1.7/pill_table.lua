@@ -33,8 +33,11 @@ local function building_intent(state, info)
   if not state or not state.goal then return nil end
   local g = state.goal
   if g.kind ~= "place_pill_strategic" or not g.mx then return nil end
-  local cat = PP.classify(g.mx, g.my, false, true)
-  return cat, g.mx, g.my
+  -- On a FOLLOW_THROUGH hold, goal.mx/my is where the TANK stands while the
+  -- builder chops; the pill is still going to trip_mx/trip_my.
+  local imx, imy = g.trip_mx or g.mx, g.trip_my or g.my
+  local cat = PP.classify(imx, imy, false, true)
+  return cat, imx, imy
 end
 
 function M.draw(viz, world, state, info)

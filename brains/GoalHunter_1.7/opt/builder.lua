@@ -387,7 +387,33 @@ function M.set_mode(state, world, info, goal)
     -- goal back to a real placement. need_trees stops the gather at "enough".
     b.mode       = "gather"
     b.need_trees = (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
+  elseif kind == "place_pill_strategic"
+         and (goal.follow_through
+              or (state._place_trip and state._place_trip.harvest
+                  and info.man_status ~= C.LGM_INTANK)) then
+    -- Follow-through hold (goals.lua, PLACE_FOLLOW_THROUGH_COST): the builder
+    -- is ALREADY out harvesting the trip tile, so there is nothing here to
+    -- dispatch -- goal.mx/my is a hold tile for the TANK, not a drop spot, and
+    -- running the branch below would only print PLACE_PILL_SETMODE
+    -- "no-dispatch" every tick of the walk (_pp_ok needs LGM_INTANK). The
+    -- re-dispatch happens through state._place_resume when the man is back.
+    --
+    -- The trip flag is tested as well as the goal flag, because goal-change
+    -- detection in init.lua only swaps the goal OBJECT when the kind/tile/id
+    -- change: when the hold tile IS the trip tile (the tank was further out
+    -- than the hold radius) the winner has the same kind and tile as the goal
+    -- already running, so the old object -- without follow_through on it -- is
+    -- kept. The trip is the ground truth either way, and with the man out
+    -- _pp_ok below is false regardless, so this branch changes nothing but the
+    -- logging. 20260902_093221 bot2/bot3.
+    -- Edge-triggered so a 400-tick harvest is one line, not four hundred.
+    local hkey = string.format("%d:%d", goal.trip_mx or goal.mx, goal.trip_my or goal.my)
+    if b._ft_hold_key ~= hkey then
+      b._ft_hold_key = hkey
+    end
+
   elseif kind == "place_pill_strategic" then
+    b._ft_hold_key = nil
     local tmx = bit.rshift(info.tankx, 8)
     local tmy = bit.rshift(info.tanky, 8)
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
