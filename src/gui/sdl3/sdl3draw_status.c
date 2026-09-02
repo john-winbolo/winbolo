@@ -690,6 +690,10 @@ void sdl3DrawGetCachedMessages(const char **top, const char **bottom) {
   if (bottom) *bottom = gMsgBottom;
 }
 
+TTF_Font *sdl3DrawGetMessageFont(void) {
+  return gFontMsg;
+}
+
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths) {
   (void)x; (void)y;
   /* Cache only — sdl3RenderCachedText() draws these into the next frame. */

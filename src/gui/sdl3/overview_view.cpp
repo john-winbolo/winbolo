@@ -48,6 +48,8 @@ extern "C" {
 #include "sprite_positions.h"
 #include "mapview.h"        /* mapViewDrawShells / Tanks / LGMs */
 }
+#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont — the newswire's face */
+#include "sdl3draw.h"        /* sdl3DrawGetZoomFactor — the size it is opened at */
 
 /* The Edit-menu Smooth Scrolling preference (winbolo.c). On, follow glides
  * with the tank's sub-square position; off, it steps whole squares the way
@@ -99,7 +101,26 @@ struct OverviewView {
      * one frame further, for the reason in overviewViewHandleInput. */
     bool           crosshairOn;
     bool           dragWasActive;
+
+    /* Per-player name textures rendered from the newswire's TTF face on this
+     * view's renderer — the classic label pass caches its own on the main
+     * window's renderer, which another renderer cannot draw. Flushed when
+     * the font (reopened on zoom change) or the renderer changes. */
+    SDL_Texture   *labelTex[MAX_TANKS];
+    char           labelStr[MAX_TANKS][PLAYER_NAME_LEN];
+    TTF_Font      *labelFont;
+    SDL_Renderer  *labelRenderer;
 };
+
+static void overviewViewFlushLabelCache(OverviewView *v) {
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (v->labelTex[i]) {
+            SDL_DestroyTexture(v->labelTex[i]);
+            v->labelTex[i] = NULL;
+        }
+        v->labelStr[i][0] = '\0';
+    }
+}
 
 /* (Re)create the offscreen when the host asks for a size — or a renderer —
  * the current one does not match. Returns false when there is no target to
@@ -250,19 +271,33 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
     }
 }
 
-/* Tank names beside the sprites, in the renderer's own 8x8 debug font — the
- * pop-out has its own renderer, and the TTF faces the main window's label
- * pass uses are bound to that window's. Same choice bg_game.c makes for its
- * map-name caption. */
-static void overviewViewDrawLabels(SDL_Renderer *r, const OverviewCamera *cam,
+/* Tank names beside the sprites, in the newswire's TTF face. The classic
+ * label pass cannot be reused directly — its cached textures (and the flag /
+ * brain icons) live on the main window's renderer, and this view may be on
+ * the pop-out's — so the view renders its own textures from the same font on
+ * whichever renderer it was handed. The renderer's 8x8 debug font stays as
+ * the fallback for a build where the TTF faces never loaded. */
+static void overviewViewDrawLabels(OverviewView *v, SDL_Renderer *r,
+                                   const OverviewCamera *cam,
                                    int viewW, int viewH,
                                    const screenTanks *tks) {
     BYTE total = screenTanksGetNumEntries(tks);
     BYTE count;
 
-    /* The debug font is a fixed 8 px, so left alone the names shrink
-       relative to the tiles as the zoom rises. Scale the renderer while the
-       text is drawn so the names grow with the map instead. */
+    TTF_Font *font = sdl3DrawGetMessageFont();
+    if (font != v->labelFont || r != v->labelRenderer) {
+        overviewViewFlushLabelCache(v);
+        v->labelFont     = font;
+        v->labelRenderer = r;
+    }
+
+    /* The face is opened at 13 px times the main window's zoom; the blit is
+     * scaled so the on-screen height is 13 px times the overview zoom. */
+    int mainZoom = sdl3DrawGetZoomFactor();
+    if (mainZoom < 1) mainZoom = 1;
+    float ds = overviewCameraZoomScale(cam) / (float)mainZoom;
+
+    /* Debug-font fallback: a fixed 8 px, scaled with the zoom the same way. */
     float ts = overviewCameraZoomScale(cam);
     if (ts < 1.0f) ts = 1.0f;
 
@@ -286,22 +321,56 @@ static void overviewViewDrawLabels(SDL_Renderer *r, const OverviewCamera *cam,
         if (sx > (float)viewW || sy > (float)viewH || sy < 0.0f) continue;
         if (sx < 0.0f) sx = 0.0f;
 
+        SDL_Texture *tex = NULL;
+        if (font && playerNum < MAX_TANKS) {
+            if (!v->labelTex[playerNum] ||
+                SDL_strcmp(v->labelStr[playerNum], shown) != 0) {
+                if (v->labelTex[playerNum]) {
+                    SDL_DestroyTexture(v->labelTex[playerNum]);
+                    v->labelTex[playerNum] = NULL;
+                }
+                SDL_Color fg = {230, 230, 230, 255};
+                SDL_Surface *sf = TTF_RenderText_Blended(font, shown, 0, fg);
+                if (sf) {
+                    v->labelTex[playerNum] = SDL_CreateTextureFromSurface(r, sf);
+                    SDL_DestroySurface(sf);
+                }
+                SDL_strlcpy(v->labelStr[playerNum], shown, PLAYER_NAME_LEN);
+            }
+            tex = v->labelTex[playerNum];
+        }
+
         /* Terrain runs from black sea to pale road under the same label, so
          * the name is drawn over its own shadow rather than trusting one
-         * colour to read against all of it. Debug text takes its size from
-         * the render scale, so the draw happens in scaled coordinates. */
-        SDL_SetRenderScale(r, ts, ts);
-        SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
-        SDL_RenderDebugText(r, sx / ts + 1.0f, sy / ts + 1.0f, shown);
-        SDL_SetRenderDrawColor(r, 230, 230, 230, 255);
-        SDL_RenderDebugText(r, sx / ts, sy / ts, shown);
-        SDL_SetRenderScale(r, 1.0f, 1.0f);
+         * colour to read against all of it. The shadow is the glyph texture
+         * colour-modded to black. */
+        if (tex) {
+            float texW = 0.0f, texH = 0.0f;
+            SDL_GetTextureSize(tex, &texW, &texH);
+            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+            SDL_FRect sh = { sx + 1.0f, sy + 1.0f, texW * ds, texH * ds };
+            SDL_SetTextureColorMod(tex, 0, 0, 0);
+            SDL_RenderTexture(r, tex, NULL, &sh);
+            SDL_FRect d = { sx, sy, texW * ds, texH * ds };
+            SDL_SetTextureColorMod(tex, 255, 255, 255);
+            SDL_RenderTexture(r, tex, NULL, &d);
+        } else {
+            /* Debug text takes its size from the render scale, so the draw
+             * happens in scaled coordinates. */
+            SDL_SetRenderScale(r, ts, ts);
+            SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+            SDL_RenderDebugText(r, sx / ts + 1.0f, sy / ts + 1.0f, shown);
+            SDL_SetRenderDrawColor(r, 230, 230, 230, 255);
+            SDL_RenderDebugText(r, sx / ts, sy / ts, shown);
+            SDL_SetRenderScale(r, 1.0f, 1.0f);
+        }
     }
 }
 
 /* The sprite overlay: everything that moves, on the squares the player can
  * see this instant. Runs on the offscreen the terrain passes just filled. */
-static void overviewViewDrawEntities(SDL_Renderer *r, SDL_Texture *tiles, int ss,
+static void overviewViewDrawEntities(OverviewView *v,
+                                     SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
@@ -407,7 +476,7 @@ static void overviewViewDrawEntities(SDL_Renderer *r, SDL_Texture *tiles, int ss
     SDL_SetRenderScale(r, wasScaleX, wasScaleY);
 
     if (zoomScale >= OVERVIEW_LABEL_MIN_ZOOM) {
-        overviewViewDrawLabels(r, cam, viewW, viewH, &tks);
+        overviewViewDrawLabels(v, r, cam, viewW, viewH, &tks);
     }
 
     screenBulletsDestroy(&sb);
@@ -431,6 +500,7 @@ extern "C" OverviewView *overviewViewCreate(void) {
 
 extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
+    overviewViewFlushLabelCache(v);
     if (v->target) {
         SDL_DestroyTexture(v->target);
         v->target = NULL;
@@ -497,7 +567,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * below draws from it too, and at full brightness. */
         SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
-        overviewViewDrawEntities(r, tiles, sheetScale, crosshair, &v->cam,
+        overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
                                  w, h, om, cs);
     }
 
