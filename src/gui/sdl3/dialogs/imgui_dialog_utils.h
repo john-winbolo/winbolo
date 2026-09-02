@@ -763,6 +763,16 @@ static inline void dialogSetWindowTitle(SDL_Window *window, const char *title) {
     }
 }
 
+/* App full screen mode — the window state every screen runs at.
+ * Stored in gamefront.c, loaded/saved via INI prefs. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern bool gameFrontFullScreen;
+#ifdef __cplusplus
+}
+#endif
+
 /* Apply a device preset to the given window. Updates UI mode and window size/title. */
 static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
     g_currentDevicePreset = idx;
@@ -775,12 +785,18 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, 1024, 768);
         SDL_SetWindowTitle(win, "WinBolo");
+        /* The sizing above needs a windowed window, so full screen goes back
+           on afterwards and the flag and the window still agree. */
+        SDL_SetWindowFullscreen(win, gameFrontFullScreen);
     } else {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, p->w, p->h);
         char title[128];
         SDL_snprintf(title, sizeof(title), "WinBolo - %s (%dx%d)", p->name, p->w, p->h);
         SDL_SetWindowTitle(win, title);
+        /* A simulated device runs at its own size, so the window stays
+           windowed and the flag follows it. */
+        gameFrontFullScreen = false;
     }
 
     WB_LOG_INFO(WB_LOG_CAT_GUI, "Device preset: %s (%dx%d, %s)", p->name, p->w, p->h,

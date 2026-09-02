@@ -198,7 +198,7 @@ int   gameFrontOverviewY = -1;
 float gameFrontOverviewZoom = 1.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
-bool  gameFrontOverviewInWindow = FALSE;
+bool  gameFrontFullScreen = FALSE;
 
 bool isServer = FALSE;
 bool useAutoslow;

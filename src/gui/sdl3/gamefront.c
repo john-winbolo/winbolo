@@ -307,8 +307,8 @@ float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
 
-/* Full Screen Map (the in-window overview), on when the last game ended. */
-bool  gameFrontOverviewInWindow = FALSE;
+/* App full screen mode, and with it the in-window Full Screen Map view. */
+bool  gameFrontFullScreen = FALSE;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -685,6 +685,18 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         OKStart = FALSE;
       }
     }
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    /* Full screen covers the menus and the lobby too, so the window goes
+       full screen here rather than waiting for a game. The preferences are
+       already read and the window is created hidden, so the first dialog is
+       the first thing drawn and there is no windowed flash. Big Picture,
+       tablet and the Deck are full screen from creation and are left alone. */
+    if (OKStart && gameFrontFullScreen && !uiModeIsTablet() &&
+        !uiModeIsSteamDeck() && !steam_is_big_picture()) {
+      SDL_SetWindowFullscreen(sdl3DrawGetWindow(), true);
+    }
+#endif
 
 #if defined(__APPLE__) && !defined(BOLO_MOBILE)
     /* Install only the Dock-icon menu now so it is live during the
@@ -3150,11 +3162,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
   gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
-  /* The key carries the player-facing name, Full Screen Map, so it reads the
-     way the menu does to anyone editing the file by hand; the symbol keeps the
-     in-window name the rest of the mode's code uses. */
+  /* The key keeps the name it has always had so settings in existing player
+     files carry over; what it feeds now drives full screen for the whole app,
+     not just the in-window map view a game opens with. */
   prefsGetString("MENU", "Show Full Screen Map", "No", buff, FILENAME_MAX);
-  gameFrontOverviewInWindow = YESNO_TO_TRUEFALSE(buff[0]);
+  gameFrontFullScreen = YESNO_TO_TRUEFALSE(buff[0]);
 #if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
 #else
@@ -3445,7 +3457,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Show Map Overview",
                  TRUEFALSE_TO_STR(gameFrontShowMapOverview));
   prefsSetString("MENU", "Show Full Screen Map",
-                 TRUEFALSE_TO_STR(gameFrontOverviewInWindow));
+                 TRUEFALSE_TO_STR(gameFrontFullScreen));
   /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
      bypassing debounce since this is the shutdown save path. */
   gameFrontFlushWindowSettings();

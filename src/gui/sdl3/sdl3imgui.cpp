@@ -764,23 +764,29 @@ static void mapOverviewClose(void) {
 }
 
 /* Turn the in-window overview on or off. The mode takes the main window
- * fullscreen so the map gets the whole screen; leaving puts the window back
- * the way the player had it. */
+ * fullscreen so the map gets the whole screen; leaving drops the window back
+ * to windowed only when the app full screen flag is off, because with it on
+ * the window stays full screen for the lobby and the menus. The window call
+ * sits outside the mode test on purpose: a flag change with no mode change
+ * still has to be able to move the window. */
 static void overviewInWindowSet(bool on) {
-    if (on == sdl3DrawIsOverviewInWindow()) return;
     SDL_Window *win = sdl3DrawGetWindow();
     if (on && !win) return;
-    sdl3DrawSetOverviewInWindow(on);      /* hands the OS pointer back on the way out */
-    if (win) SDL_SetWindowFullscreen(win, on);
+    if (on != sdl3DrawIsOverviewInWindow()) {
+        sdl3DrawSetOverviewInWindow(on);  /* hands the OS pointer back on the way out */
+    }
+    if (win) SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
 }
 
 /* The player asking for the mode, on or off, which is what the next game
  * brings back. The auto-exit at the end of a game and the teardown in
  * sdl3ImguiCleanup call overviewInWindowSet directly instead: an automatic
- * exit must not forget that the player wanted the mode. */
+ * exit must not forget that the player wanted the mode. The flag is assigned
+ * first because overviewInWindowSet reads it — turning the mode off in game
+ * has to clear it before the call or the window never leaves full screen. */
 static void overviewInWindowChoose(bool on) {
+    gameFrontFullScreen = on;
     overviewInWindowSet(on);
-    gameFrontOverviewInWindow = on;
 }
 
 /* -------------------------------------------------------
@@ -5293,14 +5299,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool overviewRunning = (cs != nullptr && clientSimIsRunning(cs));
         if (!overviewRunning) {
             mapOverviewHide();
-            /* The in-window mode goes with the game for the same reason, and
-               the lobby must not inherit a fullscreen window. */
+            /* The in-window map view goes with the game for the same reason.
+               What the window does from there is overviewInWindowSet's call:
+               windowed for the lobby when app full screen is off, still full
+               screen when it is on. */
             overviewInWindowSet(false);
         } else if (!s_overviewWasRunning) {
             /* The pop-out and the in-window mode are independent, so each
                comes back on its own flag: either, both or neither. */
             if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
-            if (gameFrontOverviewInWindow) sdl3ImguiShowOverviewInWindow(true);
+            if (gameFrontFullScreen) sdl3ImguiShowOverviewInWindow(true);
         }
         s_overviewWasRunning = overviewRunning;
         /* Draw the map into the view's offscreen before the pop-out's ImGui
@@ -5913,9 +5921,11 @@ void sdl3ImguiShowKeySetup(void) {
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
     /* Runs on return-to-lobby, end-of-game and process exit, so it is the last
-       chance to drop the in-window mode: neither the lobby nor the next game
-       should inherit a fullscreen window or a pointer still stuck on the game
-       crosshair. */
+       chance to drop the in-window map view: neither the lobby nor the next
+       game should inherit it, or a pointer still stuck on the game crosshair.
+       Dropping the view is unconditional; the window state that follows is
+       overviewInWindowSet's call, and stays full screen while app full screen
+       is on. */
     overviewInWindowSet(false);
     inputGamepadShutdown();
     /* Before the loop: all of these were made on the Map Overview pop-out's

@@ -935,12 +935,14 @@ extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
 extern bool  gameFrontOverviewFollow;
 extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 
-/* Full Screen Map's own last-on flag ([MENU] section). It belongs to the
- * in-window mode, not to the pop-out above: the two are independent and can
+/* App full screen mode ([MENU] section). While it is on the main window is
+ * full screen everywhere — menus, lobby and game — and every game opens in
+ * the Full Screen Map view. Independent of the pop-out above: the two can
  * both be on at once, so this is a second flag rather than an overload of
- * gameFrontShowMapOverview. Like that one it survives the automatic exit at
- * the end of a game and is cleared only by the player turning the mode off. */
-extern bool  gameFrontOverviewInWindow;
+ * gameFrontShowMapOverview. It survives the automatic exit from the in-window
+ * map view at the end of a game and is cleared only by the player turning
+ * full screen off. */
+extern bool  gameFrontFullScreen;
 
 extern bool gameFrontUseUpnp;
 extern bool gameFrontUseNatTraversal;

@@ -578,8 +578,11 @@ int main(int argc, char *argv[]) {
         }
 
         /* Big Picture / Gamepad UI: leave the window maximised (set at
-           creation) — don't size or reposition it from saved desktop prefs. */
-        if (!steam_is_big_picture()) {
+           creation) — don't size or reposition it from saved desktop prefs.
+           Full screen mode is the same story: the window has been full screen
+           since the menus and stays that way into the game, so sizing and
+           positioning it from the windowed prefs would only fight that. */
+        if (!steam_is_big_picture() && !gameFrontFullScreen) {
           SDL_SetWindowSize(sdlWin, targetW, targetH);
 
           /* Restore saved window position from preferences, but ensure it's on this monitor */
@@ -607,6 +610,16 @@ int main(int argc, char *argv[]) {
         }
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
+        /* The switch to full screen happened back in the dialog phase, where
+           each dialog runs its own event loop, so the game's
+           SDL_EVENT_WINDOW_RESIZED handler never saw it — and the sizing
+           above is skipped, so nothing else triggers a rebuild either. That
+           leaves the render target, tiles, fonts and status atlas sized for
+           the old windowed surface. Rebuilding them against the live render
+           output size fixes that, and is a no-op once the zoom matches. */
+        if (gameFrontFullScreen) {
+          sdl3DrawReconfigureZoom(0);
+        }
       }
       guiMessageSetHandler(sdl3MessageHandler);
 
@@ -1535,6 +1548,23 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 
 void windowLetterboxBarsGray_toggle(void) {
   letterboxBarsGray = !letterboxBarsGray;
+  gameFrontSaveCurrentPrefs();
+}
+
+/* Turn app full screen on or off from the screens outside a game. In a game
+   the File-menu item drives the in-window map view instead, which carries the
+   flag with it, so there is only ever one path per surface.
+   SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the caller
+   re-enters its dialog immediately, which reads and writes the window
+   position; without the wait the compositor can apply the transition on top
+   of that and clobber both. */
+void windowFullScreenChoose(bool on) {
+  gameFrontFullScreen = on;
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (win) {
+    SDL_SetWindowFullscreen(win, on);
+    SDL_SyncWindow(win);
+  }
   gameFrontSaveCurrentPrefs();
 }
 
