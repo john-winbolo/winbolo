@@ -327,6 +327,82 @@ M.REFUEL_LOCK_IN = false
 -- the base and replan).  Keeps two bots from piling onto one base.
 M.REFUEL_ALLY_WAIT_DIST  = 2     -- tiles
 M.REFUEL_ALLY_WAIT_TICKS = 500   -- ~10 s @ 50 Hz
+-- Refuel target stickiness. Once pool 1 has picked a base, KEEP it. Same-kind
+-- target switches inside the refuel group only pay GOAL_TARGET_SWITCH_PENALTY
+-- (15) at the goal layer, and the multiplicative GOAL_SWITCH_RATIO gate never
+-- fires for them at all: pool 1 publishes ONE row, so when it swaps its
+-- internal winner the old target has no pool entry left to be the stickiness
+-- bar. 20260902_120856 block 3, bot2 at 0 shells / armour 40 standing at
+-- (143,138): bases #11 (137,143) and #4 (137,130) scored within +-30 of each
+-- other (410/447 -> 478/445 -> 427/441 -> 419/429) and the goal alternated
+-- #11 -> #4 -> #11 -> #4 -> take_cover -> #11 -> #4 for 1600 ticks until the
+-- tank died at armour 0 having reached neither. The hold lives at the pool-1
+-- winner pick (finalize + the critical-flee injection) -- the ONLY place the
+-- refuel target is chosen.
+M.REFUEL_TARGET_SWITCH_RATIO   = 0.6   -- a rival must cost < 60% of the held target's CURRENT score to take it
+M.REFUEL_TARGET_MIN_HOLD_TICKS = 150   -- ~3 s @ 50 Hz: no switch at all for this long after each (re)target
+M.REFUEL_TARGET_HOLD_MAX_TICKS = 3000  -- safety valve: a target held this long without docking is released outright
+-- Stock-aware refuel pricing. REFUEL_MIN_STOCK is a threshold REJECT only;
+-- above it a base with 4 shells priced exactly like one with 90. Same
+-- incident: bot2 docked at #11 (which held 4-8 shells), took 3 shells, left
+-- one tick later, and #3/#4/#9 held 80-90 shells the whole time. Value a base
+-- by what it can actually GIVE:
+--   obtainable = min(observed stock, what we still need)
+--   shortfall  = need - obtainable        (the trip we'd have to make AGAIN)
+-- and charge for the shortfall. SHELLS ONLY: base armour reaches the brain
+-- through two engine paths that disagree by 5x (bases.c basesGetBrainBaseItem
+-- divides armour by 5 for the per-tick "closest base" item, EVENT_BASE_STOCK
+-- carries it raw), so b.obs_armour flips between 90 and 18 for the same base
+-- and is not a number to scale a price by. Armour is still covered — by the
+-- "empty" / "low_stock" rejects and depletion_cost, which compare it against
+-- thresholds instead. Only applied when the observation is FRESH
+-- (< REFUEL_OBS_STALE); a stale/absent observation keeps the existing
+-- staleness handling and pays nothing here.
+--
+-- The charge is a FRACTION OF THIS TRIP, not a flat per-unit price:
+--   frac = max over needed resources of (shortfall / need)   -- 0..1
+--   cost = frac x travel x REFUEL_SHORTFALL_TRIP_K
+-- because what a half-empty base actually costs you is having to make the
+-- trip AGAIN, and that is worth what the trip is worth. A flat per-unit
+-- charge was tried first (12/shell, 8/armour) and was wrong in exactly the
+-- case it should be harmless: tests/pill_scariness B, a tank at armour 0
+-- standing 2.8 cost units from its only base, which held 18 armour. The flat
+-- term added 176 to a trip worth 3, refuel lost to take_cover, and the bot
+-- sat at 0 armour next to the pumps. Scaling by the trip makes a base under
+-- your nose free to top up at, and still prices a 13-tile detour to a base
+-- holding 4 shells out of contention (the 20260902_120856 case: bases 13
+-- apart, scores 410 vs 447, frac 0.84 x 410 x 0.6 = +207 on the empty one).
+M.REFUEL_SHORTFALL_TRIP_K = 0.6   -- shortfall fraction x this x the trip's own travel cost
+M.REFUEL_SHORTFALL_BASE   = 60    -- ...plus this much flat, also scaled by the fraction, so the term
+                                  -- still discriminates between two bases that are BOTH close (the
+                                  -- trip term alone goes to ~0 there and a 4-shell base would tie a
+                                  -- full one). Small enough that a base under the tank stays cheap:
+                                  -- at frac 0.55 it adds 33, not the 176 the flat per-unit form did.
+M.REFUEL_SHORTFALL_CAP    = 400   -- clamp so an empty-ish far base is expensive, not unreachable
+-- 0-shell desperation. A tank with no shells has no fight, and the danger
+-- surcharge on the one goal that fixes that is exactly backwards. At/below
+-- DESPERATE_SHELLS the refuel row scales its danger weight down and caps its
+-- final cost, so a far/exposed base stops pricing itself out of reach.
+-- 20260902_120856 t=130680+: bot2 at 0 shells priced its bases at 410-480
+-- raw, ~150-180 after urgency, and spent its last life alternating between
+-- refuel and explore instead of reaching either base.
+--
+-- The CAP is a ceiling, never a floor: a cheap nearby base keeps its ordinary
+-- (lower) cost. What it is tuned to out-bid, with the worst ordinary switch
+-- stack on top (GOAL_SWITCH_PENALTY 30 + GOAL_COMMITMENT_CAP 75 = 165):
+--   explore (~500)                    -> beaten, and by the GOAL_SWITCH_RATIO
+--                                        bar too (0.7 x 500 = 350)
+--   attack_pill / attack_base at 0 shells -> those pools already price
+--                                        themselves at COST_INF (no ammo)
+-- What it deliberately does NOT out-bid:
+--   capture_base  -- taking a base at 0 shells IS the resupply
+--   capture_pill / a live sea-pill harvest -- free pills need no ammo, and a
+--     cap of 18 (tried first) beat the sea plan's 23 at t=0 and broke
+--     tests/sea_pills D and E: the bot refuelled first, at a different base
+--     with fewer mines, and never got the mine down inside the budget.
+M.REFUEL_DESPERATE_SHELLS       = 3     -- shells at/below this = desperate
+M.REFUEL_DESPERATE_DANGER_SCALE = 0.25  -- multiply REFUEL_DANGER_WEIGHT by this while desperate
+M.REFUEL_DESPERATE_COST_CAP     = 60    -- final refuel-row cost ceiling while desperate
 M.PILLS_MAX_HEALTH = 15   -- fully repaired pill
 M.BASE_MIN_ARMOUR_CAPTURE = 0  -- engine reports 1 for all hostile bases (fog of war); 0 means truly dead/capturable
 
@@ -1094,6 +1170,33 @@ M.WAIT_LGM_HOLD_ARRIVAL_TICKS = 150  -- ~3s: LGM arriving sooner ??? hold despit
 M.ENEMY_LGM_RETURN_TICKS   = 3000     -- estimated ticks for enemy LGM to respawn (~60 sec)
 M.RESPAWN_CACHE_WIPE_DIST  = 12       -- tiles; if respawn point is farther than this from death point, wipe all distance-dependent caches
 M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy LGM is dead
+
+-- -------------------------------------------------------------------------
+-- Spawn escape (respawn into pill fire)
+-- -------------------------------------------------------------------------
+-- Every respawn puts the tank on a BOAT at a fixed start square with 0
+-- shells / 0 mines / 0 trees and armour 40. Once the enemy owns the pills
+-- around those squares the boat is shot out from under the tank and the tank
+-- drowns: 20260902_120856 blocks 3-4, all 45 respawns were on a start-square
+-- boat and several died cause=1 (LAST_DEATH_BY_DEEPSEA, killer == self) within
+-- 61-800 frames of RESPAWN_DETECTED -- bot3 t=138874 spawn -> t=138935 dead on
+-- the spawn tile (112,142). The brain sat still a median 12 frames after the
+-- respawn re-root and then drove its first goal straight back through the
+-- coverage. This is an OVERRIDE goal (like escape_water), not a pool: it
+-- replaces goal selection until the tank is clear or ashore.
+--
+-- Not a pool row on purpose: pool indices are rendered by the C++
+-- braintest_panels/pool_grid.cpp, and adding index 15 would mean a C change.
+-- The decision is instead fully logged (SPAWN_ESCAPE ... why=<reason>) and
+-- drawn under the "spawn_escape" viz overlay.
+M.SPAWN_ESCAPE_ENABLED        = true
+M.SPAWN_ESCAPE_WINDOW_TICKS   = 250   -- only arm within this many frames of RESPAWN_DETECTED
+M.SPAWN_ESCAPE_MAX_TICKS      = 600   -- hard cap on the hold: never deny goal selection longer than this
+M.SPAWN_ESCAPE_SEARCH_RADIUS  = 14    -- tiles: ring scan radius for an uncovered destination
+M.SPAWN_ESCAPE_SHELL_RADIUS   = 512   -- world units for danger.shells_incoming_near (2 tiles)
+M.SPAWN_ESCAPE_BASE_BIAS      = 1.5   -- cost per tile of (escape tile -> nearest friendly base with stock): biases the
+                                      -- escape toward the resupply we are going to need anyway
+M.SPAWN_ESCAPE_TRAVEL_W       = 3.0   -- cost per tile of (tank -> escape tile): get out FAST beats getting out pretty
 
 -- -------------------------------------------------------------------------
 -- Steering: deep-sea cliff safety

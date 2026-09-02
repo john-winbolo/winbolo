@@ -3094,8 +3094,14 @@ function M.steer(state, world, info, goal)
   local target_dist = 0x7FFF
   local goal_dist   = 0x7FFF
 
-  if goal.kind == "escape_water" then
-    -- Bypass A*: steer directly at dry land
+  if goal.kind == "escape_water" or goal.kind == "spawn_escape" then
+    -- Bypass A*: steer directly at the destination. For escape_water that is
+    -- dry land. For spawn_escape it is the nearest tile outside every hostile
+    -- pill's fire — and the bypass is the whole point there too: the respawn
+    -- re-root has just restarted all four Dijkstra slates, so a path query
+    -- would read INF for the first couple of seconds, which are exactly the
+    -- seconds the boat is being shot at. goals.spawn_escape_tick only picks a
+    -- tile whose straight ray is already clear (se_ray_clear).
     move_dir    = U.aim_at(info.tankx, info.tanky, goal.wx, goal.wy)
     target_dist = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
     goal_dist   = target_dist
@@ -4207,6 +4213,14 @@ function M.steer(state, world, info, goal)
       keys = bit.bor((bit.band(keys, bit.bnot(KEY_FASTER))), KEY_SLOWER)
     elseif goal.kind == "escape_water" then
       _throttle_branch = "escape_water"
+      keys = bit.bor(keys, KEY_FASTER)
+    elseif goal.kind == "spawn_escape" then
+      -- Get out. The boat speed cap is NOT applied here: goals.spawn_escape_
+      -- tick publishes the covered water as state._sea_nogo, and init.lua's
+      -- single post-steer choke point (SEA_NOGO_SPEED_CAP) is what enforces
+      -- it — the same mechanism the sea harvest uses, so there is one place
+      -- that decides how fast a boat may turn.
+      _throttle_branch = "spawn_escape"
       keys = bit.bor(keys, KEY_FASTER)
     elseif state._kill_lgm_halt then
       _throttle_branch = "kill_lgm_halt"
