@@ -249,6 +249,13 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 static ClientSim *s_activeUiCs = NULL;
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  if (cs != s_activeUiCs) {
+    /* Drop the previous game's latched build target: it is the square a tap
+       builds at, and it outlives the ClientSim that set it, so without this
+       the first tap of the next game is dispatched to a tile chosen in the
+       last one. */
+    buildCursorReset();
+  }
   s_activeUiCs = cs;
 }
 

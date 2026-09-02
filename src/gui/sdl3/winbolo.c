@@ -1913,6 +1913,11 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
        the message surface when the next game starts (it would otherwise stay
        visible until the first message overwrites it). */
     sdl3DrawResetCachedText();
+    /* Drop the previous game's latched build target for the same reason: it
+       is the square a click builds at, and it outlives the ClientSim that
+       set it, so without this the first click of the next game is dispatched
+       to a tile chosen in the last one. */
+    buildCursorReset();
   }
   s_activeUiCs = cs;
 }

@@ -35,7 +35,7 @@
 #include "../winbolo.h"
 #include "../sound.h"
 #include "sdl3draw.h"
-#include "build_cursor.h"
+#include "../sdl3/build_cursor.h"
 #include "../sdl3/sdl3imgui.h"
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
