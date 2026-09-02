@@ -208,6 +208,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
     ${SRC_ROOT}/gui/sdl3/overview_camera.cpp
+    ${SRC_ROOT}/gui/sdl3/overview_fog.cpp
     ${SRC_ROOT}/gui/sdl3/overview_hud_layout.cpp
     ${SRC_ROOT}/gui/sdl3/overview_view.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp

@@ -223,6 +223,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/lobby_start_list.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_view.cpp
     ${PROJ_ROOT}/src/gui/sdl3/overview_camera.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/overview_fog.cpp
     ${PROJ_ROOT}/src/gui/sdl3/overview_hud_layout.cpp
     ${PROJ_ROOT}/src/gui/sdl3/overview_view.cpp
     ${PROJ_ROOT}/src/gui/sdl3/wb_theme.cpp

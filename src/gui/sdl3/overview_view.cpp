@@ -17,10 +17,12 @@
  * Purpose:       Implementation of the map overview's
  *                drawing and input — see overview_view.h.
  *                Terrain and mines straight from the client's
- *                OverviewMap, then the tanks, men and shells
- *                standing on the squares it says are visible;
- *                the camera maths it sits on lives in
- *                overview_camera.cpp.
+ *                OverviewMap, the fog that dims everything
+ *                outside a live region over the top of them,
+ *                then the tanks, men and shells standing on
+ *                the squares it says are visible; the camera
+ *                maths it sits on lives in overview_camera.cpp
+ *                and the fog mask in overview_fog.cpp.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -28,6 +30,7 @@
 #include "imgui.h"
 
 #include "overview_view.h"
+#include "overview_fog.h"   /* overviewFogBuildMask and the fog's constants */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "build_cursor.h"   /* buildCursorSetTile */
 
@@ -56,11 +59,6 @@ extern "C" {
  * with the tank's sub-square position; off, it steps whole squares the way
  * the classic view's scroll does. */
 extern "C" bool smoothScrollingEnabled;
-
-/* Colour mod for a remembered-but-not-currently-visible square. Dark enough
- * to read as "this is memory, not sight" at a glance, light enough that the
- * terrain type is still identifiable. */
-#define OVERVIEW_FROZEN_MOD 110
 
 /* View pixels an arrow key moves the centre per frame. In pixels rather than
  * squares so the map slides at the same apparent speed at every zoom. */
@@ -95,6 +93,20 @@ struct OverviewView {
     SDL_Renderer  *targetRenderer;
     int            targetW;
     int            targetH;
+
+    /* The fog overlay: one texel per map square, stretched over the whole map
+     * and filtered, so the fade out of a live region is smooth at every zoom
+     * rather than stepping a square at a time. Bound to a renderer the same
+     * way the offscreen above is. The mask is rebuilt only when the live
+     * regions move — the tank crossing a square, or a pill's view coming and
+     * going — so fogLive/fogLiveCount hold the set it was last built from and
+     * fogValid says whether they mean anything yet. */
+    SDL_Texture   *fog;
+    SDL_Renderer  *fogRenderer;
+    OverviewRect   fogLive[OVERVIEW_MAX_REGIONS];
+    int            fogLiveCount;
+    bool           fogValid;
+    BYTE           fogMask[OVERVIEW_FOG_MASK_BYTES];
 
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
@@ -146,21 +158,18 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
     return true;
 }
 
-/* One colour-mod run over the visible squares: livePass draws the squares
- * inside a live region at full brightness, the other pass draws the
- * remembered ones dimmed. Splitting them this way sets the mod twice per
- * frame instead of once per square, which keeps the renderer batching. */
-static void overviewViewDrawPass(SDL_Renderer *r, SDL_Texture *tiles, int ss,
-                                 const OverviewCamera *cam, int viewW, int viewH,
-                                 const OverviewMap *om,
-                                 int left, int top, int right, int bottom,
-                                 bool livePass) {
-    if (livePass) {
-        SDL_SetTextureColorMod(tiles, 255, 255, 255);
-    } else {
-        SDL_SetTextureColorMod(tiles, OVERVIEW_FROZEN_MOD,
-                               OVERVIEW_FROZEN_MOD, OVERVIEW_FROZEN_MOD);
-    }
+/* Every square the view covers, all at full brightness — what the player can
+ * see this instant and what they are only remembering alike. The fog pass
+ * below takes the second kind back down; keeping the two apart is what lets
+ * the boundary between them be softer than one square. */
+static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
+                                    const OverviewCamera *cam,
+                                    int viewW, int viewH,
+                                    const OverviewMap *om,
+                                    int left, int top, int right, int bottom) {
+    /* The in-window overview draws from the main window's tile sheet, which
+     * the classic view mods for its own purposes. */
+    SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
     float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
     SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
@@ -174,9 +183,6 @@ static void overviewViewDrawPass(SDL_Renderer *r, SDL_Texture *tiles, int ss,
             if (tile == OVERVIEW_UNSEEN) continue;  /* the black clear shows */
 
             BYTE flags = om->flags[mx][my];
-            bool isLive = (flags & OVERVIEW_F_LIVE) != 0;
-            if (isLive != livePass) continue;
-
             float sx = 0.0f, sy = 0.0f;
             overviewCameraWorldToScreen(cam, viewW, viewH,
                                         (float)mx, (float)my, &sx, &sy);
@@ -203,9 +209,102 @@ static void overviewViewDrawPass(SDL_Renderer *r, SDL_Texture *tiles, int ss,
     }
 }
 
+/* (Re)create the fog texture when the renderer changes. White, so the fog's
+ * colour is the colour mod and nothing else: interpolating a constant white
+ * leaves the filtered edge free of the fringe a two-coloured texture would
+ * bleed into it. Nothing else ever draws this texture, so — unlike the host's
+ * tile sheet, which ImGui also submits — the sampler set here survives from
+ * frame to frame. */
+static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
+    if (v->fog && v->fogRenderer == r) return true;
+
+    if (v->fog) {
+        SDL_DestroyTexture(v->fog);
+        v->fog = NULL;
+    }
+    v->fogRenderer = NULL;
+    v->fogValid = false;
+
+    v->fog = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA8888,
+                               SDL_TEXTUREACCESS_STREAMING,
+                               MAP_ARRAY_SIZE, MAP_ARRAY_SIZE);
+    if (!v->fog) return false;
+
+    SDL_SetTextureBlendMode(v->fog, SDL_BLENDMODE_BLEND);
+    /* The whole point: one texel per square blown up to whole tiles, with the
+     * hardware shading between them. */
+    SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_LINEAR);
+    /* Black fog — src is white, so this alone picks the colour a future tint
+     * would change. */
+    SDL_SetTextureColorMod(v->fog, 0, 0, 0);
+    v->fogRenderer = r;
+    return true;
+}
+
+/* Rebuild the mask from the regions and push it into the texture. RGBA8888 is
+ * one Uint32 per texel with red in the top byte, so a white texel carrying the
+ * mask as its alpha is 0xFFFFFF00 | mask. */
+static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
+    void *pixels = NULL;
+    int   pitch  = 0;
+
+    overviewFogBuildMask(om->live, om->liveCount, v->fogMask);
+    if (!SDL_LockTexture(v->fog, NULL, &pixels, &pitch)) return;
+
+    for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+        Uint32     *row = (Uint32 *)((Uint8 *)pixels + (size_t)y * (size_t)pitch);
+        const BYTE *src = v->fogMask + (size_t)y * MAP_ARRAY_SIZE;
+        for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+            row[x] = 0xFFFFFF00u | (Uint32)src[x];
+        }
+    }
+    SDL_UnlockTexture(v->fog);
+}
+
+/* The fog over the terrain the pass above just drew.
+ *
+ * The texture covers the whole map, one texel to a square, so it goes down as
+ * a single blit of the map's own rect: texel i then spans exactly square i and
+ * its centre lands on the square's centre, which is what makes the filtering
+ * shade between square centres instead of smearing the mask off by half a
+ * tile. The rect's origin is rounded the way the terrain's is, and its size is
+ * a whole number of tiles, so the two stay registered at every zoom.
+ *
+ * The mask comes from the live regions rather than the per-square LIVE flag —
+ * the sim writes the flag from those same rects, so they say the same thing,
+ * and the rects are 17 structs to compare where the flags are 64K of bytes.
+ *
+ * One consequence of filtering: the fade starts at the last live square's
+ * centre, not its outer edge, so the fully-clear area gives up half a square
+ * at the boundary. It never gains any, which is the direction that matters —
+ * nothing outside a live region is ever drawn at full brightness. */
+static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
+                                const OverviewCamera *cam, int viewW, int viewH,
+                                const OverviewMap *om) {
+    if (!overviewViewEnsureFog(v, r)) return;
+
+    if (!v->fogValid || v->fogLiveCount != om->liveCount ||
+        SDL_memcmp(v->fogLive, om->live,
+                   sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
+        overviewViewUploadFog(v, om);
+        SDL_memcpy(v->fogLive, om->live, sizeof(v->fogLive));
+        v->fogLiveCount = om->liveCount;
+        v->fogValid = true;
+    }
+
+    float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(cam);
+    float sx = 0.0f, sy = 0.0f;
+    overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &sx, &sy);
+
+    SDL_FRect dst = { SDL_roundf(sx), SDL_roundf(sy),
+                      tilePx * (float)MAP_ARRAY_SIZE,
+                      tilePx * (float)MAP_ARRAY_SIZE };
+    SDL_RenderTexture(r, v->fog, NULL, &dst);
+}
+
 /* Copies the entries the player is allowed to see into a second set of lists.
  * The builders work over the whole map — wider than anything the server culls
- * to — so this is where the fog is applied: an entity is kept only when the
+ * to — so this is where sight is enforced: an entity is kept only when the
  * square it stands on is live, with the local player's own tank the one
  * exception. Copying into fresh lists rather than editing the built ones
  * leaves the sim's per-frame views untouched, as the renderer is meant to. */
@@ -430,6 +529,10 @@ extern "C" OverviewView *overviewViewCreate(void) {
 extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
+    if (v->fog) {
+        SDL_DestroyTexture(v->fog);
+        v->fog = NULL;
+    }
     if (v->target) {
         SDL_DestroyTexture(v->target);
         v->target = NULL;
@@ -487,15 +590,14 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         int left = 0, top = 0, right = 0, bottom = 0;
         if (overviewCameraVisibleRange(&v->cam, w, h,
                                        &left, &top, &right, &bottom)) {
-            overviewViewDrawPass(r, tiles, sheetScale, &v->cam, w, h, om,
-                                 left, top, right, bottom, true);
-            overviewViewDrawPass(r, tiles, sheetScale, &v->cam, w, h, om,
-                                 left, top, right, bottom, false);
+            overviewViewDrawTerrain(r, tiles, sheetScale, &v->cam, w, h, om,
+                                    left, top, right, bottom);
+            overviewViewDrawFog(v, r, &v->cam, w, h, om);
         }
-        /* Hand the host's texture back the way we found it — the sprite pass
-         * below draws from it too, and at full brightness. */
-        SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
+        /* Sprites on top of the fog: a tank only stands on a live square, and
+         * the build cursor and the gunsight are the player's own marks, so
+         * neither wants dimming. */
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
                                  w, h, om, cs);
     }

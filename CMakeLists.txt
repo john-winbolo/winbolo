@@ -785,6 +785,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -1340,6 +1341,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/overview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -3056,6 +3058,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
     tests/unit/test_overview_camera.cpp
+    tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
@@ -3229,13 +3232,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
-    # The overview's camera maths and the in-window HUD geometry. The only
-    # src/gui/sdl3 files in this target: both are arithmetic over plain
-    # structs with no ImGui and no SDL_Renderer include, so they link into a
-    # binary that has neither, and test_overview_camera.cpp /
-    # test_overview_hud_layout.cpp exercise them directly. The drawing half
-    # (overview_view.cpp) stays out.
+    # The overview's camera maths, its fog mask and the in-window HUD
+    # geometry. The only src/gui/sdl3 files in this target: all three are
+    # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
+    # so they link into a binary that has neither, and test_overview_camera.cpp
+    # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
+    # directly. The drawing half (overview_view.cpp) stays out.
     src/gui/sdl3/overview_camera.cpp
+    src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
@@ -3729,6 +3733,7 @@ set(_unit_test_names
     overview_reset
     overview_loopback
     overview_camera
+    overview_fog
     overview_hud_layout
     overview_dead_tank
     overview_entities

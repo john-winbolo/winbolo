@@ -840,6 +840,14 @@ int run_overview_loopback(void);
  * range matches hand-worked spans at the map edges. */
 int run_overview_camera(void);
 
+/* Overview fog mask (test_overview_fog.cpp): a live square comes out clear and
+ * ground past the ramp fully fogged, the fade rises square by square out of
+ * every edge and is darker diagonally off a corner than the same way out of an
+ * edge, overlapping regions take the brightest answer, a region against the
+ * map border keeps its brightness to the border without writing past the end
+ * of the mask, and no regions at all fogs the whole map. */
+int run_overview_fog(void);
+
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
  * in the classic order without overlapping and stay inside their backing
