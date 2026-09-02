@@ -58,7 +58,6 @@ void inputSourceTick(void) {}
 void inputSourceNoteGamepad(void) {}
 void inputSourceNoteKeyboard(void) {}
 void inputSourceNoteCursorWarp(void) {}
-bool inputSourceCursorWarpActive(void) { return false; }
 InputSource inputSourceCurrent(void) { return INPUT_SOURCE_KEYBOARD; }
 
 /* The tutorial overlay is now real in the wasm build — see
