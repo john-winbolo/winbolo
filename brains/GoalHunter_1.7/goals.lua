@@ -6800,6 +6800,195 @@ local function sea_tile_covered(world, threats, mx, my, rays)
   return nil
 end
 
+-- =========================================================================
+-- ARMOUR-AWARE BASE PRICING + IMMINENT BASE STEAL
+--
+-- See the constants.lua block of the same name for the engine facts these
+-- rest on.  The short version:
+--   * a base runs 0..90 armour and is capturable at <= 9; one shell is 5,
+--     so a full base is 17 shells from falling;
+--   * world.bases[id].health is FOGGED for a hostile base -- it is 1 (alive)
+--     or 0 (capturable), never an armour number;
+--   * the real armour arrives as EVENT_BASE_STOCK, which bots receive for
+--     every base on the map, and world.lua parks it in obs_armour/obs_tick.
+-- Everything below reads obs_armour/obs_tick, never health.
+-- =========================================================================
+
+-- Shells still needed to drive `armour` down to capturable.
+local function base_shells_to_kill(armour)
+  local over = (armour or C.BASE_FULL_ARMOUR) - C.BASE_CAPTURE_ARMOUR
+  if over <= 0 then return 0 end
+  return math.ceil(over / C.BASE_SHELL_DAMAGE)
+end
+
+-- Last observed engine armour for a base + how old that reading is.
+-- Returns nil, math.huge when the base has never reported its stock.
+local function base_armour_obs(b, now)
+  local a, t = b.obs_armour, b.obs_tick
+  if a == nil or t == nil or (now or 0) <= 0 then return nil, math.huge end
+  local age = now - t
+  if age < 0 then age = 0 end
+  return a, age
+end
+
+-- The armour-aware attack_base markup.  Returns
+--   markup   the number that replaces the flat ATTACK_BASE_EXTRA_COST
+--   n        shells still needed (nil when never observed)
+--   n_full   shells needed from FULL armour (the denominator, 17)
+--   frac     the fraction actually charged, AFTER the staleness decay
+--   armour   the observed engine armour (nil when never observed)
+--   age      ticks since that observation
+--   decay    0 = reading is this tick, 1 = fully aged out to the flat price
+-- A never-observed base pays the full flat price, and no decay can price a
+-- base BELOW what its fresh reading would have cost.
+local function base_markup(b, now)
+  local full   = C.ATTACK_BASE_EXTRA_COST
+  local n_full = C.BASE_FULL_SHELLS_TO_KILL
+  local a, age = base_armour_obs(b, now)
+  if a == nil or (a <= 0 and (b.health or 0) > 0) then
+    return full, nil, n_full, 1.0, nil, math.huge, 1.0
+  end
+  local n = base_shells_to_kill(a)
+  local frac = n / n_full
+  if frac > 1 then frac = 1 end
+  local win = C.BASE_MARKUP_STALE or 500
+  local decay = (win > 0) and math.min(1.0, age / win) or 1.0
+  local eff = frac + (1.0 - frac) * decay
+  if eff > 1 then eff = 1 end
+  if eff < frac then eff = frac end
+  return full * eff, n, n_full, eff, a, age, decay
+end
+
+-- The tiles of the straight tank->base approach, endpoints included.  Used by
+-- the steal's coverage guard: a base we can only reach by driving down a
+-- pillbox's line of fire is not a free base.
+local function base_approach_tiles(tmx, tmy, bmx, bmy)
+  local dx, dy = bmx - tmx, bmy - tmy
+  local n = math.max(math.abs(dx), math.abs(dy))
+  if n < 1 then return { { tmx, tmy } } end
+  local tiles = {}
+  for i = 0, n do
+    tiles[#tiles + 1] = { tmx + math.floor(dx * i / n + 0.5),
+                          tmy + math.floor(dy * i / n + 0.5) }
+  end
+  return tiles
+end
+
+-- refresh_base_steal -- pick at most ONE hostile base to steal, and record why
+-- every other hostile base was passed over so the pool grid can say so.
+--
+-- Gates, in the order they are reported:
+--   stale_obs       no armour reading, or one older than BASE_STEAL_OBS_STALE
+--   not_capturable  fresh armour above BASE_STEAL_MAX_ARMOUR (more than three
+--                   shells from falling) -- a normal attack_base errand
+--   out_of_range    further than BASE_STEAL_RANGE tiles away
+--   no_shells       shells <= SHELL_RESERVE + shells-still-needed
+--   covered         a live hostile/neutral pillbox can put a shell on the base
+--                   tile or on our straight approach to it
+-- Whole-tank gates (inboat / tank armour) reject every candidate at once.
+-- Deterministic: bases are walked in sorted-id order and the pick is the
+-- NEAREST survivor, ties going to the lower id (the sorted walk gets there
+-- first and the strict `<` keeps it).
+local function refresh_base_steal(state, world, info)
+  if not (world and world.bases and info and info.tankx) then return end
+  -- Both call sites (build_eval_queue at the start of the cycle, finalize_pools
+  -- at the decision tick) can land on the SAME tick when the eval cycle is
+  -- short. The coverage guard runs shot sims, so only do the work once.
+  local _now = state.tick or 0
+  if state._base_steal_tick == _now then return end
+  state._base_steal_tick = _now
+  state.base_steal = nil
+  state.base_steal_rejects = {}
+  state.base_steal_why = nil
+  local rej = state.base_steal_rejects
+  local now = state.tick or 0
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+
+  local ids = {}
+  for id, b in pairs(world.bases) do
+    if b.owner == "hostile" and (b.health or 0) > 0 then ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+
+  -- Whole-tank vetoes.  Still walk the bases so every row gets a reason.
+  local veto = nil
+  if info.inboat then
+    veto = "inboat"
+  elseif (info.armour or 0) < (C.BASE_STEAL_MIN_ARMOUR or 8) then
+    veto = "tank_armour"
+  end
+  state.base_steal_why = veto
+
+  local best, best_d = nil, nil
+  local rows = BRAIN_DEBUG_MODE and {} or nil
+  for _, id in ipairs(ids) do
+    local b = world.bases[id]
+    local a, age = base_armour_obs(b, now)
+    local d = U.mdist(tmx, tmy, b.mx, b.my)
+    -- n comes back from base_markup so the row's `n` and its `markup` can never
+    -- disagree -- base_markup is the one place that decides a reading is not
+    -- usable (never observed, or the EVENT_BASE_UPDATE armour-0 artefact) and
+    -- returns n = nil for it.
+    local mk, n = base_markup(b, now)
+    local reason, cover_id = veto, nil
+    if not reason then
+      if a == nil or age > (C.BASE_STEAL_OBS_STALE or 1200)
+         or a <= 0 then
+        -- a <= 0 while the object scan still calls the base ALIVE is the
+        -- EVENT_BASE_UPDATE artefact described above base_markup, not a real
+        -- reading. (This branch only sees standing bases: the id list above
+        -- filters on health > 0.)
+        reason = "stale_obs"
+      elseif d > (C.BASE_STEAL_RANGE or 6) then
+        reason = "out_of_range"
+      elseif a > (C.BASE_STEAL_MAX_ARMOUR or 24) then
+        reason = "not_capturable"
+      elseif (info.shells or 0) <= (C.SHELL_RESERVE or 0) + n then
+        reason = "no_shells"
+      else
+        -- Coverage guard last: it is the only expensive test, and by here at
+        -- most a base or two can still reach it.
+        local tiles = base_approach_tiles(tmx, tmy, b.mx, b.my)
+        local threats = sea_threat_pills(world, tiles, C.BASE_STEAL_COVER_RANGE or 9)
+        for _, tp in ipairs(threats) do
+          local hit = nil
+          for _, t in ipairs(tiles) do
+            if sea_pill_covers(world, tp, t[1], t[2], nil) then hit = tp.id break end
+          end
+          if hit then cover_id = hit break end
+        end
+        if cover_id then reason = "covered" end
+      end
+    end
+    rej[id] = reason and { reason = reason, armour = a, age = age, dist = d,
+                           need = n, markup = mk, pill = cover_id } or nil
+    if not reason then
+      if (not best) or d < best_d then
+        best, best_d = { id = id, mx = b.mx, my = b.my, armour = a, age = age,
+                         need = n, dist = d, markup = mk }, d
+      end
+    end
+    if rows then
+      rows[#rows + 1] = string.format(
+        "base#%s@(%d,%d) arm=%s(age=%s) n=%s/%d markup=%.1f d=%d %s",
+        tostring(id), b.mx, b.my,
+        a and tostring(a) or "?", (age == math.huge) and "never" or tostring(age),
+        n and tostring(n) or "?", C.BASE_FULL_SHELLS_TO_KILL, mk, d,
+        reason and ("REJECT " .. reason .. (cover_id and ("(pill#" .. tostring(cover_id) .. ")") or ""))
+                or "STEAL")
+    end
+  end
+  if rows and #rows > 0 then
+    print2(string.format("BASE_STEAL t=%d tank=(%d,%d) arm=%d sh=%d pick=%s%s | %s",
+      now, tmx, tmy, info.armour or 0, info.shells or 0,
+      best and ("base#" .. tostring(best.id)) or "none",
+      veto and (" veto=" .. veto) or "",
+      table.concat(rows, "; ")))
+  end
+  state.base_steal = best
+end
+M.refresh_base_steal = refresh_base_steal
+
 -- A visible enemy tank within `range` of any tile in `tiles`.
 local function sea_enemy_tank_near(state, tiles, range)
   local ets = state.perc and state.perc.enemy_tanks
@@ -8874,6 +9063,12 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
+  -- IMMINENT BASE STEAL: pick (at most) one hostile base that is a shell or
+  -- three from capturable and sitting right next to us, and record a reason for
+  -- every other hostile base. Done here, once per eval cycle, so the per-tick
+  -- candidate costing below and the finalize step both read one decision.
+  refresh_base_steal(state, world, info)
+
   -- Pool 7: attack_base (only if enough shells, but always keep
   -- the current target so a mid-attack base doesn't vanish from the
   -- eval queue just because shells dipped to SHELLS_LOW)
@@ -9340,9 +9535,88 @@ local function get_formula_inner(e)
         e._tv, C.ATTACK_BASE_THREAT_WEIGHT, e._thr)
     end
     local _d_stale = fmt_stale_detail(e._age, e._stale)
-    f = string.format(
-      "A*{%.0f}@(%d,%d) + base{%.0f} + threat{%.0f} + stale{%.0f}||base:%.0f[ATTACK_BASE_EXTRA_COST]|threat:%s|stale:%s",
-      raw, e._mx or 0, e._my or 0, e._base, e._thr, e._stale, C.ATTACK_BASE_EXTRA_COST, _d_threat, _d_stale)
+    -- ARMOUR-AWARE MARKUP.  base{} is no longer the flat ATTACK_BASE_EXTRA_COST:
+    -- it is that cost scaled by the WORK LEFT on this base, shells-still-needed
+    -- over shells-from-full (17).  `hp n/17` is exactly that ratio, so the chip
+    -- multiplies out to the printed number by hand.
+    local _b_n     = e._b_n            -- shells still needed (nil = never observed)
+    local _b_nfull = e._b_nfull or C.BASE_FULL_SHELLS_TO_KILL
+    local _b_frac  = e._b_frac or 1.0  -- the fraction charged, AFTER stale decay
+    local _b_arm   = e._b_arm          -- observed engine armour (nil = never seen)
+    local _b_age   = e._b_age or 0
+    local _b_decay = e._b_decay or 1.0
+    local _b_chip
+    if _b_n then
+      _b_chip = string.format("%d x hp %d/%d = %.0f",
+        C.ATTACK_BASE_EXTRA_COST, _b_n, _b_nfull, e._base or 0)
+    else
+      _b_chip = string.format("%d x hp ?/%d = %.0f (unseen)",
+        C.ATTACK_BASE_EXTRA_COST, _b_nfull, e._base or 0)
+    end
+    local _d_base
+    if _b_n then
+      local _fresh = C.ATTACK_BASE_EXTRA_COST * (_b_n / _b_nfull)
+      _d_base = string.format(
+        "%.0f[ATTACK_BASE_EXTRA_COST] x %.3f[work left] = %.1f. armour=%d, capturable at <= %d,"
+        .. " %d[DAMAGE] per shell -> ceil((%d - %d)/%d) = %d shell(s) left of the %d a FULL base"
+        .. " (%d armour) needs. Reading is %d tick(s) old: decay = min(1, %d/%d[BASE_MARKUP_STALE]) = %.2f,"
+        .. " so the charged fraction is %d/%d + (1 - %d/%d) x %.2f = %.3f (fresh would have been %.1f)",
+        C.ATTACK_BASE_EXTRA_COST, _b_frac, e._base or 0,
+        _b_arm or 0, C.BASE_CAPTURE_ARMOUR, C.BASE_SHELL_DAMAGE,
+        _b_arm or 0, C.BASE_CAPTURE_ARMOUR, C.BASE_SHELL_DAMAGE, _b_n, _b_nfull,
+        C.BASE_FULL_ARMOUR, _b_age, _b_age, C.BASE_MARKUP_STALE, _b_decay,
+        _b_n, _b_nfull, _b_n, _b_nfull, _b_decay, _b_frac, _fresh)
+    else
+      _d_base = string.format(
+        "%.0f[ATTACK_BASE_EXTRA_COST] x 1.000 = %.1f. This base has NEVER reported its stock"
+        .. " (EVENT_BASE_STOCK fires only when a base's armour/shells/mines change), so there is no"
+        .. " armour reading to discount and it pays the full flat markup",
+        C.ATTACK_BASE_EXTRA_COST, e._base or 0)
+    end
+    -- STEAL chip: whether the imminent-base-steal floor took this row, or which
+    -- gate it failed.  See refresh_base_steal.
+    local _st_chip, _d_steal = "", ""
+    if e._steal then
+      _st_chip = string.format(" STEAL{%.0f}", C.BASE_STEAL_COST)
+      _d_steal = string.format(
+        "|steal:YES -- fresh armour %d (<= %d[BASE_STEAL_MAX_ARMOUR]) is %d shell(s) from capturable,"
+        .. " base is %d tile(s) away (<= %d[BASE_STEAL_RANGE]), nothing covers the base tile or the"
+        .. " approach line, and we have the ammo. Cost is SNAPPED to %.0f[BASE_STEAL_COST] so one shell"
+        .. " then the armour-0 IMMINENT capture wins the pool outright",
+        _b_arm or 0, C.BASE_STEAL_MAX_ARMOUR, _b_n or 0,
+        e._steal_dist or 0, C.BASE_STEAL_RANGE, C.BASE_STEAL_COST)
+    elseif e._steal_rej then
+      _st_chip = string.format(" steal{no:%s}", e._steal_rej)
+      local why = ({
+        stale_obs      = string.format("no armour reading, or one older than %d[BASE_STEAL_OBS_STALE] ticks (age=%s)",
+                           C.BASE_STEAL_OBS_STALE, (e._b_age and e._b_age < 1e17) and tostring(e._b_age) or "never"),
+        not_capturable = string.format("armour %s > %d[BASE_STEAL_MAX_ARMOUR] -- %s shells from capturable, that is a normal attack_base errand",
+                           tostring(_b_arm), C.BASE_STEAL_MAX_ARMOUR, tostring(_b_n)),
+        out_of_range   = string.format("%s tiles away > %d[BASE_STEAL_RANGE]",
+                           tostring(e._steal_dist), C.BASE_STEAL_RANGE),
+        no_shells      = string.format("shells <= %d[SHELL_RESERVE] + %s needed",
+                           C.SHELL_RESERVE or 0, tostring(_b_n)),
+        covered        = string.format("live hostile/neutral pill#%s can put a shell on the base tile or on our straight approach to it",
+                           tostring(e._steal_pill)),
+        inboat         = "we are afloat -- a boat has no business taking a base",
+        tank_armour    = string.format("tank armour %s < %d[BASE_STEAL_MIN_ARMOUR]",
+                           tostring(e._steal_arm), C.BASE_STEAL_MIN_ARMOUR),
+      })[e._steal_rej] or e._steal_rej
+      _d_steal = "|steal:no -- " .. why
+    end
+    if e._steal then
+      -- The snap floor is a min(), not another term: print it as one so the
+      -- displayed chain still resolves to the cost the pool competed.
+      f = string.format(
+        "min(A*{%.0f}@(%d,%d) + base{%s} + threat{%.0f} + stale{%.0f},%s)||base:%s|threat:%s|stale:%s%s",
+        raw, e._mx or 0, e._my or 0, _b_chip, e._thr, e._stale, _st_chip,
+        _d_base, _d_threat, _d_stale, _d_steal)
+    else
+      f = string.format(
+        "A*{%.0f}@(%d,%d) + base{%s} + threat{%.0f} + stale{%.0f}%s||base:%s|threat:%s|stale:%s%s",
+        raw, e._mx or 0, e._my or 0, _b_chip, e._thr, e._stale, _st_chip,
+        _d_base, _d_threat, _d_stale, _d_steal)
+    end
   elseif p == 4 then
     -- Rejected dead-pill rows: short-circuit with a "REJECT: <reason>"
     -- formula so the breakdown panel makes clear why the row exists
@@ -10173,11 +10447,16 @@ function M.step_eval_queue(state, world, info)
       if _gen_age > C.STALE_PENALTY_START then
         stale_cost = (_gen_age - C.STALE_PENALTY_START) * C.STALE_PENALTY_PER_TICK
       end
-      -- Attack_base extra costs (same as finalization path)
+      -- Attack_base extra costs (same as finalization path).
+      -- base_extra is the ARMOUR-AWARE markup, not the flat constant: a base
+      -- one shell from falling is not the same errand as an untouched one.
+      -- See base_markup (which also handles the staleness decay).
       local base_extra, threat_cost, _threat_val = 0, 0, 0
       local _p7_lgm_mult = 1
+      local _p7_n, _p7_nfull, _p7_frac, _p7_arm, _p7_age, _p7_decay
       if pool_idx == 7 then
-        base_extra  = C.ATTACK_BASE_EXTRA_COST
+        base_extra, _p7_n, _p7_nfull, _p7_frac, _p7_arm, _p7_age, _p7_decay =
+          base_markup(obj, now)
         _threat_val = threat.at(obj.mx, obj.my)
         _p7_lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
         threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT * _p7_lgm_mult
@@ -10688,6 +10967,17 @@ function M.step_eval_queue(state, world, info)
           c = c * _danger_nearby_mult
         end
       end
+      -- IMMINENT BASE STEAL (pool 7): the per-replan steal pick gets a snap cost
+      -- floor so "one shell, then the existing armour-0 IMMINENT capture" wins
+      -- the pool outright instead of losing to routine errands. refresh_base_steal
+      -- owns the gates (fresh armour, range, ammo, pill coverage, tank armour,
+      -- not afloat) and picks exactly ONE base.
+      local _p7_steal = false
+      if pool_idx == 7 and state.base_steal and state.base_steal.id == id then
+        _p7_steal = true
+        if c > C.BASE_STEAL_COST then c = C.BASE_STEAL_COST end
+      end
+
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
       --   threat * DANGER_WEIGHT → hot zones push cost up regardless of distance
@@ -10923,6 +11213,17 @@ function M.step_eval_queue(state, world, info)
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._lgm_mult=_p7_lgm_mult
         entry._stale=stale_cost; entry._age=_gen_age
+        -- Armour-aware markup terms + the steal verdict, for the panel row.
+        entry._b_n=_p7_n; entry._b_nfull=_p7_nfull; entry._b_frac=_p7_frac
+        entry._b_arm=_p7_arm; entry._b_age=_p7_age; entry._b_decay=_p7_decay
+        entry._steal = _p7_steal or nil
+        local _sr = state.base_steal_rejects and state.base_steal_rejects[id]
+        entry._steal_rej  = _sr and _sr.reason or nil
+        entry._steal_pill = _sr and _sr.pill or nil
+        entry._steal_dist = (_sr and _sr.dist)
+                            or (state.base_steal and state.base_steal.id == id
+                                and state.base_steal.dist) or nil
+        entry._steal_arm  = info.armour or 0
       elseif pool_idx == 4 then
         entry._ds=_cpill_dist_score; entry._dv=_cpill_danger_val
         entry._intcpt=_cpill_intcpt
@@ -12377,23 +12678,65 @@ function M.finalize_pools(state, world, info)
 
   local _t_p6end = clock_us()  -- pool 6 (attack_pill) done; pool 7 below
   -- Pool 7: attack_base
+  -- Re-run the steal pick at the decision tick: the armour reading that arms it
+  -- moves every time anyone puts a shell into the base, and build_eval_queue's
+  -- copy can be a whole cycle old by now.
+  refresh_base_steal(state, world, info)
   local pr7 = partial[7]
-  if pr7 and pr7.best_obj then
-    local base = pr7.best_obj
-    local bid = pr7.best_id
-    local bcost = pr7.best_cost
+  local _steal7 = state.base_steal
+  if _steal7 then
+    local sb = world.bases[_steal7.id]
+    -- Only a base that is still hostile and still standing can be stolen; a
+    -- base whose armour already fell to 0 belongs to capture_base, not here.
+    if not (sb and sb.owner == "hostile" and (sb.health or 0) > 0) then
+      _steal7 = nil
+    end
+  end
+  if (pr7 and pr7.best_obj) or _steal7 then
+    local base, bid, bcost
+    if _steal7 then
+      -- The steal wins pool 7 outright, even when another base is cheaper by
+      -- path: it is one push from being ours.
+      base, bid = world.bases[_steal7.id], _steal7.id
+      bcost = (pr7 and pr7.best_id == bid and pr7.best_cost) or C.BASE_STEAL_COST
+    else
+      base, bid, bcost = pr7.best_obj, pr7.best_id, pr7.best_cost
+    end
     local threat_at_base = threat.at(base.mx, base.my)
-    local adj_cost = bcost + C.ATTACK_BASE_EXTRA_COST
+    -- ARMOUR-AWARE markup, same shape and same numbers as the per-candidate
+    -- cost in step_eval_queue (base_markup is the single source).
+    local b_markup, b_n, b_nfull, b_frac, b_arm, b_age, b_decay =
+      base_markup(base, state.tick or 0)
+    local adj_cost = bcost + b_markup
                    + threat_at_base * C.ATTACK_BASE_THREAT_WEIGHT
+    if _steal7 and adj_cost > C.BASE_STEAL_COST then
+      adj_cost = C.BASE_STEAL_COST
+    end
+    -- Keep the pool-grid row for the winner in step with the cost that just won,
+    -- so the panel and the decision never disagree about the steal.
+    if _steal7 and state.cost_cache then
+      local _ce = state.cost_cache["7:" .. tostring(bid)]
+      if _ce then
+        _ce.cost = adj_cost; _ce._steal = true; _ce._steal_rej = nil
+        _ce._steal_dist = _steal7.dist; _ce.formula = nil
+        _ce._base = b_markup; _ce._b_n = b_n; _ce._b_nfull = b_nfull
+        _ce._b_frac = b_frac; _ce._b_arm = b_arm; _ce._b_age = b_age
+        _ce._b_decay = b_decay
+      end
+    end
     pc[7] = {
       cost = adj_cost,
-      _shells_on_arrival = pr7.best_shells_on_arrival,
+      _shells_on_arrival = pr7 and pr7.best_shells_on_arrival or nil,
+      _steal = _steal7 and true or nil,
       goal = { kind = "attack_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = BRAIN_POOL_VIZ and string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
+      desc = BRAIN_POOL_VIZ and string.format(
+             "attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d x hp %s/%d = %.0f +threat=%.0f×%d)%s",
              bid, base.mx, base.my, adj_cost, bcost, C.ATTACK_BASE_EXTRA_COST,
-             threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT) or "",
-      cands = pr7.candidates,
+             b_n and tostring(b_n) or "?", b_nfull, b_markup,
+             threat_at_base, C.ATTACK_BASE_THREAT_WEIGHT,
+             _steal7 and " STEAL" or "") or "",
+      cands = pr7 and pr7.candidates or nil,
     }
   else
     pc[7] = nil
@@ -15570,6 +15913,21 @@ function M.get_pool_breakdown_json(state)
     if not win then win = rows[1] end
     if win and win.cost >= 0 and win.cost < 1e29 and not win.reject then
       win.is_winner = true
+    end
+    -- BASE POOLS: cap the rendered rows.  A 16-base map otherwise buries the
+    -- interesting bases (the ones a shell or two from falling, which now sort to
+    -- the top on the armour-aware markup) under a wall of full-armour rows.
+    -- Rows are already sorted cheapest-first; keep the top BASE_PANEL_MAX and
+    -- never drop the winner / active-goal row.
+    if (idx == 3 or idx == 7) and #rows > (C.BASE_PANEL_MAX or 6) then
+      local keep = {}
+      for i = 1, (C.BASE_PANEL_MAX or 6) do keep[i] = rows[i] end
+      if win then
+        local present = false
+        for i = 1, #keep do if keep[i] == win then present = true break end end
+        if not present then keep[#keep + 1] = win end
+      end
+      rows = keep
     end
     local winner_id = (win and win.is_winner) and win.id or -1
     return {

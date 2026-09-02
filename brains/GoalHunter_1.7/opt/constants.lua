@@ -2639,4 +2639,97 @@ M.CAPTURE_CLUSTER_GUARD_MAX   = 4.0  -- cap: three or more guards is already a n
 -- END pill-damage attribution + land capture clusters
 -- =========================================================================
 
+-- =========================================================================
+-- BEGIN armour-aware base pricing + IMMINENT BASE STEAL  (20260901)
+-- =========================================================================
+-- ENGINE FACTS (src/bolo/internal/bases.h, src/bolo/public/global.h):
+--   BASE_FULL_ARMOUR   90   a base tops out at 90 armour
+--   MIN_ARMOUR_CAPTURE  9   at or below 9 the base is DEAD / drive-on capturable
+--   DAMAGE              5   one tank shell takes 5 armour off a base
+--   BASE_TICKS_BETWEEN_REFUEL 1000  a base regains +1 armour / +1 shell /
+--                           +1 mine once per 1000 ticks (basesUpdateStock)
+-- So a FULL base is ceil((90 - 9) / 5) = 17 shells away from capturable, and a
+-- base at armour <= 14 is ONE shell away.
+--
+-- WHAT THE BOT CAN ACTUALLY SEE.  basesGetItems (bases.c ~1649) FOGS hostile
+-- base armour in the per-tick object scan: an enemy base reports direction = 1
+-- ("alive") or 0 ("capturable"), never its armour.  That is why
+-- world.bases[id].health for a HOSTILE base is only ever 0 or 1 -- reading it as
+-- an armour number is wrong (allied bases do report armour/5, i.e. 0..18, which
+-- is what makes the confusion so easy).
+--
+-- The REAL armour reaches a bot through EVENT_BASE_STOCK.  The server culls that
+-- event to neutral/allied bases for HUMANS but sends every one of them to BOTS
+-- (server_sim.c ~3667: `if (evType == EVENT_BASE_STOCK && !recipientIsBot)`), and
+-- world.lua stores it as bases[id].obs_armour with bases[id].obs_tick.  So
+-- obs_armour/obs_tick is the ONLY armour source for a hostile base.  It is
+-- emitted on CHANGE only, which means:
+--   * while anyone is shelling the base it refreshes every hit (age ~0),
+--   * an idle base below full refreshes once per refuel cycle (age <= 1000),
+--   * a base at full armour/shells/mines never refreshes at all -- and that is
+--     the safe direction, because "no reading" prices at FULL markup.
+-- It also means a stale reading can only UNDERSTATE armour by the regen rate
+-- (+1 per 1000 ticks); nothing but our own shells drives it down.
+M.BASE_FULL_ARMOUR         = 90   -- bases.h BASE_FULL_ARMOUR
+M.BASE_CAPTURE_ARMOUR      = 9    -- bases.h MIN_ARMOUR_CAPTURE
+M.BASE_SHELL_DAMAGE        = 5    -- global.h DAMAGE (per shell, on a base)
+M.BASE_FULL_SHELLS_TO_KILL = 17   -- ceil((90 - 9) / 5): the markup denominator
+
+-- (1) ARMOUR-AWARE attack_base MARKUP.  ATTACK_BASE_EXTRA_COST is the flat
+-- "attacking a base is an errand, not a stroll" surcharge.  It was flat, so a
+-- base one shell from falling cost the same 80 as an untouched one.  It now
+-- scales with the WORK LEFT: shells-still-needed / 17.  A stale reading decays
+-- the discount linearly back to the full flat price over BASE_MARKUP_STALE
+-- ticks -- old information must never make a healthy base look free, and the
+-- decayed price can never drop below what the fresh reading would have paid.
+M.BASE_MARKUP_STALE = 500   -- = REFUEL_OBS_STALE; the same window the refuel
+                            -- observation logic uses for obs_shells/obs_armour
+
+-- (2) IMMINENT BASE STEAL.  A hostile base a shell or three from capturable,
+-- sitting right next to us while we have the ammo to finish it, is not a normal
+-- attack_base errand -- it is a free base.  Price it at a snap floor so it wins
+-- the pool outright; the existing armour-0 IMMINENT capture then takes the
+-- hand-off the moment the base falls.
+--
+-- NOTE ON THE ARMOUR NUMBER.  The brief for this change said "armour <= 3",
+-- written in the allied /5 DISPLAY scale.  obs_armour is in ENGINE units, so the
+-- same gate is 24 = MIN_ARMOUR_CAPTURE(9) + 3 x DAMAGE(5): three shells or fewer
+-- from capturable.
+M.BASE_STEAL_MAX_ARMOUR = 24   -- fresh-observed engine armour at/below which a
+                               -- base is "one push" from falling (<= 3 shells)
+M.BASE_STEAL_RANGE      = 6    -- tiles (manhattan) from the tank to the base
+M.BASE_STEAL_COST       = 10   -- snap cost floor in the attack_base slot. Sits
+                               -- above capture's IMMINENT_CAPTURE_FLOOR (5) and
+                               -- below refuel's REFUEL_BASE_COST floor (25).
+M.BASE_STEAL_OBS_STALE  = 1200 -- max age of the armour reading the steal will
+                               -- act on. Wider than BASE_MARKUP_STALE on
+                               -- purpose: an idle damaged base only reports once
+                               -- per BASE_TICKS_BETWEEN_REFUEL (1000), so a 500
+                               -- window would blank a real steal for half of
+                               -- every cycle. Safe because the only thing that
+                               -- can have happened since the reading is +1 regen
+                               -- per 1000 ticks (or someone else shooting it,
+                               -- which only helps).
+-- Guards. The steal must not be a way to drive into a pillbox's field of fire
+-- for a cheap base, and it must not fire from a boat or on a nearly-dead tank.
+M.BASE_STEAL_MIN_ARMOUR = 8    -- = IMMINENT_CAPTURE_MIN_ARMOUR: same tank-armour
+                               -- floor the imminent capture already respects
+M.BASE_STEAL_COVER_RANGE = 9   -- tiles: pill-scan radius for the coverage guard
+                               -- (= SEA_PILL_PILL_SAFE_RANGE, PILLBOX_RANGE 8
+                               -- plus a tile of heat margin)
+
+-- (3) PANEL.  The pool grid lists every base candidate it has, cheapest first;
+-- this caps how many rows the base pools render so a 16-base map stays legible.
+-- The ACTIVE goal's row is always kept even when it falls outside the cap.
+M.BASE_PANEL_MAX = 6
+-- =========================================================================
+-- END armour-aware base pricing + IMMINENT BASE STEAL
+-- =========================================================================
+
+-- ── stuck-dest blame gate (2026-09-01) ────────────────────────────────────
+M.STUCK_DEST_BLAME_TICKS = 100 -- the stuck escalation only BLACKLISTS its destination when that
+                               -- dest has been pursued continuously this long; the escape itself
+                               -- always runs (par1b bot3 t=8533: 3 ticks of pursuit stamped a
+                               -- fresh base "unreachable" for 600t on another base's evidence)
+
 return M
