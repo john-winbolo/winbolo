@@ -732,9 +732,15 @@ static inline void imguiPopNearestSampling(void) {
  * Controller Mode), leave the host window alone so dialogs render into
  * the existing fullscreen surface — clamping to a 1024x768 default
  * would clip below smaller-than-1024 screen heights, and forcing a
- * resize while the player is using a controller is jarring. */
+ * resize while the player is using a controller is jarring.
+ * A fullscreen window is left alone for the same reason: its size is the
+ * display's, so resizing or recentring it either does nothing or fights
+ * the compositor. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
     if (uiShouldUseControllerMode()) {
+        return;
+    }
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) {
         return;
     }
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
@@ -821,9 +827,12 @@ extern int gameFrontDialogY;
 }
 #endif
 
-/* Save current dialog window position */
+/* Save current dialog window position. Skipped while the window is
+ * fullscreen: that position is wherever the display put it, not the
+ * windowed position the player chose, and saving it would overwrite the
+ * one they get back when full screen goes off. */
 static inline void dialogSaveCurrentPosition(SDL_Window *win) {
-    if (win) {
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
         SDL_GetWindowPosition(win, &gameFrontDialogX, &gameFrontDialogY);
     }
 }
@@ -838,9 +847,12 @@ static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event
     }
 }
 
-/* Restore dialog window position if we have a saved one */
+/* Restore dialog window position if we have a saved one. Skipped while the
+ * window is fullscreen: it already covers the display, so moving it either
+ * does nothing or fights the compositor. */
 static inline void dialogRestorePosition(SDL_Window *win) {
-    if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) &&
+        gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
         SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
     }
 }

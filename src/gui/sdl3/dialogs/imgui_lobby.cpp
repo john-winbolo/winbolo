@@ -2235,12 +2235,14 @@ static bool lobbyRestoreUsableBounds(SDL_Window *window, SDL_Rect *out) {
  * is safe to call from every move/resize event of a drag.
  *
  * Skipped when the window size isn't the player's to choose: controller
- * mode leaves the host window alone, and an active device preset forces
- * its own dimensions — saving either would overwrite the desktop size. */
+ * mode leaves the host window alone, an active device preset forces its
+ * own dimensions, and a fullscreen window is sized by the display —
+ * saving any of them would overwrite the desktop size. */
 static void lobbySaveWindowGeometry(SDL_Window *window) {
     if (!window) return;
 #if !BOLO_MOBILE
     if (uiShouldUseControllerMode()) return;
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) return;
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
         s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
         return;
@@ -2278,7 +2280,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
     float s = dialogComputeScale(screenW, screenH);
 #if !BOLO_MOBILE
-    if (!uiModeIsSteamDeck()) s = 1.0f;   /* lobby + nested map chooser / start picker: desktop scaling deferred to the lobby rework */
+    /* A windowed desktop lobby (and its nested map chooser / start picker)
+     * stays at 1x — scaling those fixed layouts is deferred to the lobby
+     * rework. A fullscreen lobby keeps the height-derived scale so it isn't
+     * a 1x island on a 1440p or 4K display. */
+    if (!uiModeIsSteamDeck() && !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) s = 1.0f;
 #endif
 
 #if !BOLO_MOBILE
@@ -2311,8 +2317,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
      * that no longer fits the restored size) would leave the lobby off-screen
      * with no way to drag it back, so pull it inside the target display's
      * usable area. Only writes when it actually moved, so the normal case
-     * leaves the saved position untouched. */
-    {
+     * leaves the saved position untouched. Skipped entirely while the window
+     * is fullscreen: its position and size are the display's, so clamping
+     * from them would push the player's saved windowed geometry out of the
+     * prefs file. */
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
         SDL_Rect usable;
         int px = 0, py = 0, ww = 0, wh = 0;
         SDL_GetWindowPosition(window, &px, &py);
