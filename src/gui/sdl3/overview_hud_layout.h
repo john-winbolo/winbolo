@@ -18,8 +18,9 @@
  *                the newswire go when the map overview owns the
  *                whole game window: one scaled column of
  *                classic-chrome slices down the right edge, the
- *                build-select strip down the left edge, and the
- *                newswire on a strip across the bottom.
+ *                build-select strip centred on the left edge,
+ *                and the newswire on a centred strip along the
+ *                bottom.
  *
  *                The pieces are cut out of a frame of the
  *                classic 515x325 chrome, so each one carries
@@ -76,6 +77,7 @@ typedef struct OverviewHudLayout {
     float              columnX, columnY, columnW, columnH;   /* translucent backing */
     float              buildX, buildY, buildW, buildH;   /* translucent backing, left edge */
     float              newswireX, newswireY, newswireW, newswireH;
+    float              dividerX, dividerY, dividerW, dividerH;   /* ridge between the base and tank bars */
 } OverviewHudLayout;
 
 /* Lay the column out for a map rect of viewW x viewH window pixels. Returns

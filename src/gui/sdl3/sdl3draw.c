@@ -1570,6 +1570,27 @@ static bool hudSourceRender(ClientSim *cs, bool showPillLabels, bool showBaseLab
   return true;
 }
 
+/* A thin chrome frame just outside one HUD backing rect, in the background
+   art's greys: a light line on the outside, the chrome grey as the body, a
+   dark line against the backing — the classic window bevel at HUD scale. */
+static void sdl3DrawOverviewHudFrame(const SDL_FRect *r, float scale) {
+  int body = (int)SDL_ceilf(2.0f * scale);
+  if (body < 2) body = 2;
+  int rings = body + 2;   /* + the light outer and dark inner lines */
+  for (int i = 1; i <= rings; i++) {
+    if (i == 1) {
+      SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
+    } else if (i == rings) {
+      SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
+    } else {
+      SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+    }
+    SDL_FRect o = { r->x - (float)i, r->y - (float)i,
+                    r->w + 2.0f * (float)i, r->h + 2.0f * (float)i };
+    SDL_RenderRect(gRenderer, &o);
+  }
+}
+
 /* In-window Map Overview: the whole game window is the map, and neither the
    classic 15x15 view nor the chrome is drawn. The view renders at window size
    into its own offscreen and is blitted straight to the window — going through
@@ -1651,6 +1672,28 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     SDL_RenderFillRect(gRenderer, &buildBack);
     SDL_RenderFillRect(gRenderer, &newsBack);
     SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+
+    /* The chrome edging the classic window puts around its panels; the
+       newswire strip sits on the bottom edge, so its bottom line is
+       clipped by the window and the rest frames it. */
+    sdl3DrawOverviewHudFrame(&colBack, hud.scale);
+    sdl3DrawOverviewHudFrame(&buildBack, hud.scale);
+    sdl3DrawOverviewHudFrame(&newsBack, hud.scale);
+
+    /* The ridge across the column between the base bars and the tank bars,
+       in the same greys as the frames: grey body, light top, dark bottom. */
+    {
+      SDL_FRect d = { originX + hud.dividerX, originY + hud.dividerY,
+                      hud.dividerW, hud.dividerH };
+      SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+      SDL_RenderFillRect(gRenderer, &d);
+      SDL_FRect edge = { d.x, d.y, d.w, 1.0f };
+      SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
+      SDL_RenderFillRect(gRenderer, &edge);
+      edge.y = d.y + d.h - 1.0f;
+      SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
+      SDL_RenderFillRect(gRenderer, &edge);
+    }
 
     /* The chrome is opaque, like the classic panel blits, so the backing
        shows only in the gaps between the pieces. Linear filtering because
