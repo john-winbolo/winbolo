@@ -767,6 +767,15 @@ static void overviewInWindowSet(bool on) {
     if (win) SDL_SetWindowFullscreen(win, on);
 }
 
+/* The player asking for the mode, on or off, which is what the next game
+ * brings back. The auto-exit at the end of a game and the teardown in
+ * sdl3ImguiCleanup call overviewInWindowSet directly instead: an automatic
+ * exit must not forget that the player wanted the mode. */
+static void overviewInWindowChoose(bool on) {
+    overviewInWindowSet(on);
+    gameFrontOverviewInWindow = on;
+}
+
 /* -------------------------------------------------------
  * System Info panel
  * ------------------------------------------------------- */
@@ -3130,7 +3139,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
                                 sdl3DrawIsOverviewInWindow(),
                                 cs != nullptr && clientSimIsRunning(cs))) {
-                overviewInWindowSet(!sdl3DrawIsOverviewInWindow());
+                overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
             }
         } else {
 #endif
@@ -5277,8 +5286,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             /* The in-window mode goes with the game for the same reason, and
                the lobby must not inherit a fullscreen window. */
             overviewInWindowSet(false);
-        } else if (!s_overviewWasRunning && gameFrontShowMapOverview) {
-            sdl3ImguiShowMapOverview(true);
+        } else if (!s_overviewWasRunning) {
+            /* The pop-out and the in-window mode are independent, so each
+               comes back on its own flag: either, both or neither. */
+            if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
+            if (gameFrontOverviewInWindow) sdl3ImguiShowOverviewInWindow(true);
         }
         s_overviewWasRunning = overviewRunning;
         /* Draw the map into the view's offscreen before the pop-out's ImGui
@@ -5559,7 +5571,7 @@ bool sdl3ImguiIsMapOverviewOpen(void) {
 void sdl3ImguiShowOverviewInWindow(bool active) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
-        overviewInWindowSet(active);
+        overviewInWindowChoose(active);
         return;
     }
 #endif

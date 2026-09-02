@@ -307,6 +307,9 @@ float gameFrontOverviewZoom = 1.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
 
+/* Full Screen Map (the in-window overview), on when the last game ended. */
+bool  gameFrontOverviewInWindow = FALSE;
+
 /* Dialog states */
 openingStates dlgState = openStart;
 
@@ -3147,6 +3150,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Map Overview", "No", buff, FILENAME_MAX);
   gameFrontShowMapOverview = YESNO_TO_TRUEFALSE(buff[0]);
+  /* The key carries the player-facing name, Full Screen Map, so it reads the
+     way the menu does to anyone editing the file by hand; the symbol keeps the
+     in-window name the rest of the mode's code uses. */
+  prefsGetString("MENU", "Show Full Screen Map", "No", buff, FILENAME_MAX);
+  gameFrontOverviewInWindow = YESNO_TO_TRUEFALSE(buff[0]);
 #if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
 #else
@@ -3436,6 +3444,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
   prefsSetString("MENU", "Show Map Overview",
                  TRUEFALSE_TO_STR(gameFrontShowMapOverview));
+  prefsSetString("MENU", "Show Full Screen Map",
+                 TRUEFALSE_TO_STR(gameFrontOverviewInWindow));
   /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
      bypassing debounce since this is the shutdown save path. */
   gameFrontFlushWindowSettings();
