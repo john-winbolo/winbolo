@@ -130,6 +130,10 @@ bool sdl3DrawOnRenderThread(void);
 void sdl3DrawResetCachedText(void);
 void sdl3DrawMessages(int x, int y, char *top, char *bottom);
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom);
+/* When the newswire text last changed (SDL_GetTicks ms), 0 for never since
+   the last reset. The full screen map uses it to slide its newswire strip
+   on and off; the classic frame ignores it. */
+Uint64 sdl3DrawGetMessageActivityTick(void);
 void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);

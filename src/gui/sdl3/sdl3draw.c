@@ -167,6 +167,15 @@ static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
 static OverviewHudLayout gOverviewHud;
 static bool              gOverviewHudValid = FALSE;
 
+/* The full screen map's newswire starts off the bottom edge, rides up while
+   its text is changing and drops back off once it has been quiet for the
+   hold time. 0 is fully on screen, 1 fully off; the classic frame never
+   touches any of this. */
+static float  gOverviewNewsSlide     = 1.0f;
+static Uint64 gOverviewNewsSlideTick = 0;
+#define OVERVIEW_NEWS_HOLD_MS  30000
+#define OVERVIEW_NEWS_SLIDE_MS 300
+
 /* A whole classic frame at gZoomFactor, drawn offscreen so the HUD column can
    be cut out of it as source rects. gGameRenderTarget cannot be borrowed for
    this: sdl3DrawReconfigureZoom never creates it on the Steam Deck or in
@@ -1635,6 +1644,28 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   bool drawHud = overviewHudLayout(w, h, &hud) &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
   if (drawHud) {
+    /* Slide the newswire: wanted on screen while its text has changed within
+       the hold time, off the bottom edge otherwise. The offset moves the
+       backing, the chrome frame, the slice and the click rect together, so
+       everything below reads the adjusted rects. */
+    Uint64 now     = SDL_GetTicks();
+    Uint64 lastMsg = sdl3DrawGetMessageActivityTick();
+    bool newsWanted = lastMsg != 0 && (now - lastMsg) < OVERVIEW_NEWS_HOLD_MS;
+    float step = (gOverviewNewsSlideTick == 0)
+                     ? 1.0f
+                     : (float)(now - gOverviewNewsSlideTick) /
+                           (float)OVERVIEW_NEWS_SLIDE_MS;
+    gOverviewNewsSlideTick = now;
+    gOverviewNewsSlide += newsWanted ? -step : step;
+    if (gOverviewNewsSlide < 0.0f) gOverviewNewsSlide = 0.0f;
+    if (gOverviewNewsSlide > 1.0f) gOverviewNewsSlide = 1.0f;
+    if (gOverviewNewsSlide > 0.0f) {
+      /* Far enough down that the chrome frame's outer line leaves too. */
+      float travel = hud.newswireH + SDL_ceilf(2.0f * hud.scale) + 3.0f;
+      float off    = gOverviewNewsSlide * travel;
+      hud.newswireY += off;
+      hud.el[OVERVIEW_HUD_NEWSWIRE].dstY += off;
+    }
     gOverviewHud      = hud;
     gOverviewHudValid = TRUE;
   }

@@ -100,6 +100,8 @@ static bool         gLabelBot[SDL3_MAX_PLAYERS];
 
 static char gMsgTop[SDL3_MSG_LEN];
 static char gMsgBottom[SDL3_MSG_LEN];
+/* SDL_GetTicks when the message lines last changed to something non-empty */
+static Uint64 gMsgActivityTick = 0;
 static int  gCachedKills  = 0;
 static int  gCachedDeaths = 0;
 
@@ -649,6 +651,7 @@ void sdl3DrawCopyBasesStatusBars(int x, int y) {
 void sdl3DrawResetCachedText(void) {
   gMsgTop[0] = '\0';
   gMsgBottom[0] = '\0';
+  gMsgActivityTick = 0;
   gCachedKills  = 0;
   gCachedDeaths = 0;
   /* Invalidate texture caches so stale text isn't rendered */
@@ -664,11 +667,22 @@ void sdl3DrawResetCachedText(void) {
 
 void sdl3DrawMessages(int x, int y, char *top, char *bottom) {
   (void)x; (void)y;
-  /* Cache only — sdl3RenderCachedText() draws these into the next frame. */
-  if (top)    SDL_strlcpy(gMsgTop,    top,    SDL3_MSG_LEN);
-  else        gMsgTop[0] = '\0';
-  if (bottom) SDL_strlcpy(gMsgBottom, bottom, SDL3_MSG_LEN);
-  else        gMsgBottom[0] = '\0';
+  const char *newTop    = top    ? top    : "";
+  const char *newBottom = bottom ? bottom : "";
+  /* Cache only — sdl3RenderCachedText() draws these into the next frame.
+     Text arriving or scrolling stamps the activity tick; a change to two
+     empty lines is the ticker going quiet, not activity. */
+  if ((SDL_strcmp(newTop, gMsgTop) != 0 ||
+       SDL_strcmp(newBottom, gMsgBottom) != 0) &&
+      (newTop[0] != '\0' || newBottom[0] != '\0')) {
+    gMsgActivityTick = SDL_GetTicks();
+  }
+  SDL_strlcpy(gMsgTop,    newTop,    SDL3_MSG_LEN);
+  SDL_strlcpy(gMsgBottom, newBottom, SDL3_MSG_LEN);
+}
+
+Uint64 sdl3DrawGetMessageActivityTick(void) {
+  return gMsgActivityTick;
 }
 
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom) {
