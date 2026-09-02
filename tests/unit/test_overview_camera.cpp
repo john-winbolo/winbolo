@@ -222,7 +222,8 @@ static int camera_follow_centres_on_tank(void) {
         cam.cx = 10.0f;
         cam.cy = 240.0f;
 
-        overviewCameraCenterOnTank(&cam, viewW, viewH, tankMX, tankMY);
+        overviewCameraCenterOnTank(&cam, viewW, viewH,
+                                   (float)tankMX + 0.5f, (float)tankMY + 0.5f);
         UT_ASSERT_MSG(cam.follow,
                       "zoom index %d: centre-on-tank (%d,%d) left follow off",
                       z, tankMX, tankMY);
@@ -243,12 +244,13 @@ static int camera_follow_centres_on_tank(void) {
                       z, (double)overviewCameraZoomScale(&cam), tankMX, tankMY,
                       (double)sy, (double)((float)viewH * 0.5f));
 
-        /* The tank moves on; the tick follows it. */
-        overviewCameraFollowTick(&cam, viewW, viewH, 60, 200);
-        UT_ASSERT_MSG(cam.cx == 60.5f && cam.cy == 200.5f,
-                      "zoom index %d: follow tick to (%d,%d) put the centre at "
-                      "(%.4f,%.4f), expected (60.5,200.5)",
-                      z, 60, 200, (double)cam.cx, (double)cam.cy);
+        /* The tank moves on; the tick follows it — at sub-square precision,
+         * so the centre lands exactly on the position handed in. */
+        overviewCameraFollowTick(&cam, viewW, viewH, 60.25f, 200.75f);
+        UT_ASSERT_MSG(cam.cx == 60.25f && cam.cy == 200.75f,
+                      "zoom index %d: follow tick to (60.25,200.75) put the "
+                      "centre at (%.4f,%.4f)",
+                      z, (double)cam.cx, (double)cam.cy);
         UT_ASSERT_MSG(cam.follow,
                       "zoom index %d: follow tick cleared follow", z);
     }
@@ -261,11 +263,11 @@ static int camera_follow_centres_on_tank(void) {
 
     cam.cx = 10.0f;
     cam.cy = 20.0f;
-    overviewCameraFollowTick(&cam, viewW, viewH, 200, 30);
+    overviewCameraFollowTick(&cam, viewW, viewH, 200.5f, 30.5f);
     UT_ASSERT_MSG(cam.cx == 10.0f && cam.cy == 20.0f,
-                  "follow off: tick to (%d,%d) moved the centre from "
+                  "follow off: tick to (200.5,30.5) moved the centre from "
                   "(10.0,20.0) to (%.4f,%.4f)",
-                  200, 30, (double)cam.cx, (double)cam.cy);
+                  (double)cam.cx, (double)cam.cy);
     UT_ASSERT_MSG(!cam.follow, "follow off: tick turned follow back on");
     return 0;
 }

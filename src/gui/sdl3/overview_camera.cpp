@@ -212,24 +212,23 @@ void overviewCameraPan(OverviewCamera *cam, int viewW, int viewH,
 }
 
 void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
-                                int tankMX, int tankMY) {
+                                float tankMapX, float tankMapY) {
     if (!cam) return;
     (void)viewW;
     (void)viewH;
-    /* The centre of the tank's square, not its top-left corner. */
-    cam->cx = (float)tankMX + 0.5f;
-    cam->cy = (float)tankMY + 0.5f;
+    cam->cx = tankMapX;
+    cam->cy = tankMapY;
     cam->follow = true;
     overviewCameraClamp(cam);
 }
 
 void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
-                              int tankMX, int tankMY) {
+                              float tankMapX, float tankMapY) {
     if (!cam || !cam->follow) return;
     (void)viewW;
     (void)viewH;
-    cam->cx = (float)tankMX + 0.5f;
-    cam->cy = (float)tankMY + 0.5f;
+    cam->cx = tankMapX;
+    cam->cy = tankMapY;
     overviewCameraClamp(cam);
 }
 

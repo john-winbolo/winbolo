@@ -33,7 +33,7 @@
 
 extern "C" {
 #include "global.h"
-#include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPos,
+#include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPosF,
                                clientSimIsMyTankAlive,
                                clientSimPrepareOverviewEntities,
                                clientSimManMoveToMap,
@@ -48,6 +48,11 @@ extern "C" {
 #include "sprite_positions.h"
 #include "mapview.h"        /* mapViewDrawShells / Tanks / LGMs */
 }
+
+/* The Edit-menu Smooth Scrolling preference (winbolo.c). On, follow glides
+ * with the tank's sub-square position; off, it steps whole squares the way
+ * the classic view's scroll does. */
+extern "C" bool smoothScrollingEnabled;
 
 /* Colour mod for a remembered-but-not-currently-visible square. Dark enough
  * to read as "this is memory, not sight" at a glance, light enough that the
@@ -255,6 +260,12 @@ static void overviewViewDrawLabels(SDL_Renderer *r, const OverviewCamera *cam,
     BYTE total = screenTanksGetNumEntries(tks);
     BYTE count;
 
+    /* The debug font is a fixed 8 px, so left alone the names shrink
+       relative to the tiles as the zoom rises. Scale the renderer while the
+       text is drawn so the names grow with the map instead. */
+    float ts = overviewCameraZoomScale(cam);
+    if (ts < 1.0f) ts = 1.0f;
+
     for (count = 1; count <= total; count++) {
         BYTE mx, my, px, py, frame, playerNum;
         char name[PLAYER_NAME_LEN];
@@ -277,11 +288,14 @@ static void overviewViewDrawLabels(SDL_Renderer *r, const OverviewCamera *cam,
 
         /* Terrain runs from black sea to pale road under the same label, so
          * the name is drawn over its own shadow rather than trusting one
-         * colour to read against all of it. */
+         * colour to read against all of it. Debug text takes its size from
+         * the render scale, so the draw happens in scaled coordinates. */
+        SDL_SetRenderScale(r, ts, ts);
         SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
-        SDL_RenderDebugText(r, sx + 1.0f, sy + 1.0f, shown);
+        SDL_RenderDebugText(r, sx / ts + 1.0f, sy / ts + 1.0f, shown);
         SDL_SetRenderDrawColor(r, 230, 230, 230, 255);
-        SDL_RenderDebugText(r, sx, sy, shown);
+        SDL_RenderDebugText(r, sx / ts, sy / ts, shown);
+        SDL_SetRenderScale(r, 1.0f, 1.0f);
     }
 }
 
@@ -456,10 +470,18 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         SDL_SetTextureScaleMode(tiles, SDL_SCALEMODE_NEAREST);
 
         /* A tank waiting to respawn has a position but is not anywhere the
-         * player is, so follow mode holds the centre it already had. */
-        BYTE tankX = 0, tankY = 0;
+         * player is, so follow mode holds the centre it already had. The
+         * sub-square read is what lets follow glide with the tank rather
+         * than stepping a whole square at a time; with Smooth Scrolling off
+         * the position is snapped back to its square's centre, so follow
+         * steps the way the classic view's scroll does. */
+        float tankX = 0.0f, tankY = 0.0f;
         if (clientSimIsMyTankAlive(cs) &&
-            clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {
+            clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+            if (!smoothScrollingEnabled) {
+                tankX = SDL_floorf(tankX) + 0.5f;
+                tankY = SDL_floorf(tankY) + 0.5f;
+            }
             overviewCameraFollowTick(&v->cam, w, h, tankX, tankY);
         }
 
@@ -648,9 +670,9 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * rather than throwing the view at wherever the corpse reads. */
     if (overviewKeyPressed(keys, ImGuiKey_Home) ||
         overviewKeyPressed(keys, ImGuiKey_C)) {
-        BYTE tankX = 0, tankY = 0;
+        float tankX = 0.0f, tankY = 0.0f;
         if (clientSimIsMyTankAlive(cs) &&
-            clientSimGetMyTankMapPos(cs, &tankX, &tankY)) {
+            clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
             overviewCameraCenterOnTank(cam, viewW, viewH, tankX, tankY);
         }
     }

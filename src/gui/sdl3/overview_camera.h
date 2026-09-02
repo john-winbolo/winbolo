@@ -113,14 +113,19 @@ void overviewCameraZoomAt(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraPan(OverviewCamera *cam, int viewW, int viewH,
                        float dxPixels, float dyPixels);
 
-/* Centre on the tank's square and turn follow on. */
+/* Centre on the tank and turn follow on. The position is in map squares
+ * with the sub-square fraction included, so the camera lands exactly on the
+ * tank; a caller working from whole squares passes the square's centre,
+ * x + 0.5. */
 void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
-                                int tankMX, int tankMY);
+                                float tankMapX, float tankMapY);
 
 /* Re-centre on the tank without touching the flag. Does nothing unless
- * follow is on, so a caller can run it every frame unconditionally. */
+ * follow is on, so a caller can run it every frame unconditionally. Same
+ * sub-square coordinates as overviewCameraCenterOnTank — that precision is
+ * what makes follow glide instead of stepping a square at a time. */
 void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
-                              int tankMX, int tankMY);
+                              float tankMapX, float tankMapY);
 
 /* Inclusive square range intersecting the view, clamped to
  * 0..MAP_ARRAY_SIZE-1. Returns false when no square is visible. */

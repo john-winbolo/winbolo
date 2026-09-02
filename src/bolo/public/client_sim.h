@@ -1001,6 +1001,12 @@ void         clientSimSetScrollMechanism(int mech);
  * than anywhere the tank is. It leaves *mapX / *mapY alone when it fails, so
  * a caller keeps whatever fallback it seeded them with. */
 bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
+
+/* The same position at sub-square precision: map squares with the fraction
+ * giving where inside the square the tank sits. Same false cases as the
+ * BYTE version; the map overview's follow camera glides on this where the
+ * whole-square read would step a square at a time. */
+bool         clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 
 /* The gunsight's map square and the pixel offset inside it, for a caller that

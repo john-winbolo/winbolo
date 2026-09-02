@@ -2456,6 +2456,15 @@ bool clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   return true;
 }
 
+bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
+  WORLD wx = 0, wy = 0;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  tankGetWorld(&MY_TANK(cs), &wx, &wy);
+  if (mapX) *mapX = (float)wx / (float)(1 << TANK_SHIFT_MAPSIZE);
+  if (mapY) *mapY = (float)wy / (float)(1 << TANK_SHIFT_MAPSIZE);
+  return true;
+}
+
 bool clientSimIsMyTankAlive(const ClientSim *cs) {
   if (!cs || MY_TANK((ClientSim *)cs) == NULL) return false;
   /* Over full armour is how a dead tank waiting on deathWait reads, the same
