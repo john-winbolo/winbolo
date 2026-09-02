@@ -32,6 +32,12 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE slot,
                                 uint8_t clientType, uint8_t clientFlags);
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
 
+/* Reserves a free lobby start for one slot, clustered near its teammates.
+ * Called from the join path, the bot-add path, the team change and the
+ * map-change reconcile, which do not share a translation unit. Defined in
+ * server_sim.c. */
+void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot);
+
 /* Synchronous local-join entry point. Picks a slot via serverSimFindFreeSlot,
  * resolves the country directly from fallbackCountry (no peer addr), runs
  * the four-step internal sequence under the country-before-PLAYER_JOIN
