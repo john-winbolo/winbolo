@@ -2902,6 +2902,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Base View", def, buff, FILENAME_MAX);
   keys->kiBaseView = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_ZOOM, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Zoom", def, buff, FILENAME_MAX);
+  keys->kiOverviewZoom = atoi(buff);
 
   /* Scrolling */
   intToStr(DEFAULT_SCROLLUP, def, sizeof(def));
@@ -3335,6 +3338,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "LGM View", buff);
   intToStr(keys->kiBaseView, buff, sizeof(buff));
   prefsSetString("KEYS", "Base View", buff);
+  intToStr(keys->kiOverviewZoom, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Zoom", buff);
 
   /* Scrolling */
   intToStr(keys->kiScrollUp, buff, sizeof(buff));

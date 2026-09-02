@@ -53,6 +53,8 @@ typedef struct {
   int kiGunDecrease; /* Decrease gunsight length */
   int kiTankView;    /* Center on tank */
   int kiPillView;    /* Pill view */
+  int kiOverviewZoom; /* Held, the wheel zooms the map overview instead of
+                         moving the gunsight */
   int kiScrollUp;    /* Scroll up */
   int kiScrollDown;  /* Scroll down */
   int kiScrollLeft;  /* Scroll left */

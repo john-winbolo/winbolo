@@ -73,10 +73,13 @@ OverviewCamera *overviewViewCamera(OverviewView *v);
    build cursor and a left-click builds at the square under it, so the pan item
    has to claim the right mouse button and leave the left one free. `cs`
    supplies the tank square that the centre-on-tank key needs and takes the
-   build request; NULL disables both. `keys` is the
+   build request and the gunsight bump; NULL disables all three. `keys` is the
    player's in-game bindings: the view's own keys are checked against them so
    it never shadows a game action, and NULL means no bindings are known, in
-   which case every key is the view's. */
+   which case every key is the view's.
+
+   The wheel belongs to the gunsight, as it does over the main view, and zooms
+   only while kiOverviewZoom is held — cleared, it zooms unconditionally. */
 void          overviewViewHandleInput(OverviewView *v, bool hovered,
                                       int viewW, int viewH, ClientSim *cs,
                                       const keyItems *keys);

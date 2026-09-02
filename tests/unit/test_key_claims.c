@@ -12,7 +12,7 @@
  * to keyItems later and not added to the predicate, which would be a key the
  * game owns and the overview silently steals. */
 #define KC_FIRST_SENTINEL 101
-#define KC_FIELD_COUNT    22
+#define KC_FIELD_COUNT    23
 
 /* An unbound scancode — outside the sentinel block above. */
 #define KC_UNBOUND_SCANCODE 200
@@ -33,18 +33,19 @@ int run_key_claims(void) {
         k.kiGunDecrease  = KC_FIRST_SENTINEL + 7;
         k.kiTankView     = KC_FIRST_SENTINEL + 8;
         k.kiPillView     = KC_FIRST_SENTINEL + 9;
-        k.kiScrollUp     = KC_FIRST_SENTINEL + 10;
-        k.kiScrollDown   = KC_FIRST_SENTINEL + 11;
-        k.kiScrollLeft   = KC_FIRST_SENTINEL + 12;
-        k.kiScrollRight  = KC_FIRST_SENTINEL + 13;
-        k.kiAllyView     = KC_FIRST_SENTINEL + 14;
-        k.kiLGMView      = KC_FIRST_SENTINEL + 15;
-        k.kiBaseView     = KC_FIRST_SENTINEL + 16;
-        k.kiQuickTree    = KC_FIRST_SENTINEL + 17;
-        k.kiQuickRoad    = KC_FIRST_SENTINEL + 18;
-        k.kiQuickWall    = KC_FIRST_SENTINEL + 19;
-        k.kiQuickPillbox = KC_FIRST_SENTINEL + 20;
-        k.kiQuickMine    = KC_FIRST_SENTINEL + 21;
+        k.kiOverviewZoom = KC_FIRST_SENTINEL + 10;
+        k.kiScrollUp     = KC_FIRST_SENTINEL + 11;
+        k.kiScrollDown   = KC_FIRST_SENTINEL + 12;
+        k.kiScrollLeft   = KC_FIRST_SENTINEL + 13;
+        k.kiScrollRight  = KC_FIRST_SENTINEL + 14;
+        k.kiAllyView     = KC_FIRST_SENTINEL + 15;
+        k.kiLGMView      = KC_FIRST_SENTINEL + 16;
+        k.kiBaseView     = KC_FIRST_SENTINEL + 17;
+        k.kiQuickTree    = KC_FIRST_SENTINEL + 18;
+        k.kiQuickRoad    = KC_FIRST_SENTINEL + 19;
+        k.kiQuickWall    = KC_FIRST_SENTINEL + 20;
+        k.kiQuickPillbox = KC_FIRST_SENTINEL + 21;
+        k.kiQuickMine    = KC_FIRST_SENTINEL + 22;
 
         for (i = 0; i < KC_FIELD_COUNT; i++) {
             UT_ASSERT_MSG(keyIsClaimedByGame(&k, KC_FIRST_SENTINEL + i),
@@ -84,6 +85,7 @@ int run_key_claims(void) {
         k.kiGunDecrease  = 40;   /* SDL_SCANCODE_RETURN  */
         k.kiTankView     = 23;   /* SDL_SCANCODE_T      */
         k.kiPillView     = 10;   /* SDL_SCANCODE_G      */
+        k.kiOverviewZoom = 224;  /* SDL_SCANCODE_LCTRL  */
         k.kiScrollUp     = 82;   /* SDL_SCANCODE_UP     */
         k.kiScrollDown   = 81;   /* SDL_SCANCODE_DOWN   */
         k.kiScrollLeft   = 80;   /* SDL_SCANCODE_LEFT   */
@@ -109,6 +111,11 @@ int run_key_claims(void) {
                       "down arrow scrolls the main view by default");
         UT_ASSERT_MSG(keyIsClaimedByGame(&k, 87),  /* SDL_SCANCODE_KP_PLUS */
                       "keypad plus increases gun range by default");
+
+        /* The wheel's zoom key is a binding of its own, so the overview must
+         * not reach for it as a shortcut as well. */
+        UT_ASSERT_MSG(keyIsClaimedByGame(&k, 224), /* SDL_SCANCODE_LCTRL */
+                      "left control holds the overview's wheel on zoom");
 
         /* The rest of the overview's keys are unbound by default and stay
          * the overview's. */

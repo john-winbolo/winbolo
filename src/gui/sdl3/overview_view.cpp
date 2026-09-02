@@ -43,6 +43,7 @@ extern "C" {
                                clientSimGetCurrentBuildSelect */
 #include "../clientmutex.h" /* the build dispatch runs on the sim's data */
 #include "cursor.h"         /* cursorSetCursor — the game's crosshair pointer */
+#include "input.h"          /* inputBumpGunsight — the wheel's other job */
 #include "overview_types.h"
 #include "screentank.h"
 #include "screenlgm.h"
@@ -637,6 +638,49 @@ static bool overviewKeyDown(const keyItems *keys, ImGuiKey key) {
     return ImGui::IsKeyDown(key);
 }
 
+/* The modifier mask a scancode is one half of, or 0 for an ordinary key. Both
+ * halves map to the pair: nobody rebinds to reach for one particular Ctrl, so
+ * a binding on the left one answers to the right one too. */
+static SDL_Keymod overviewModMaskFor(int scancode) {
+    switch (scancode) {
+        case SDL_SCANCODE_LCTRL:
+        case SDL_SCANCODE_RCTRL:  return SDL_KMOD_CTRL;
+        case SDL_SCANCODE_LSHIFT:
+        case SDL_SCANCODE_RSHIFT: return SDL_KMOD_SHIFT;
+        case SDL_SCANCODE_LALT:
+        case SDL_SCANCODE_RALT:   return SDL_KMOD_ALT;
+        case SDL_SCANCODE_LGUI:
+        case SDL_SCANCODE_RGUI:   return SDL_KMOD_GUI;
+        default:                  return SDL_KMOD_NONE;
+    }
+}
+
+/* Does the wheel zoom this instant, or move the gunsight? The zoom key is the
+ * view's own binding rather than one of the keys it borrows, so it is read
+ * straight off the keyboard: keyIsClaimedByGame counts it — which is what
+ * stops the overview reaching for the same key to pan or centre — and
+ * overviewKeyDown would therefore always read it as up.
+ *
+ * A modifier is read through the mod state, which SDL keeps from key events,
+ * rather than the keyboard array: input.c's mine key is on Shift for the same
+ * reason — the array reports a held modifier on some platforms long after it
+ * was let go, and here that would leave the wheel stuck on zoom with the
+ * gunsight unreachable.
+ *
+ * Unbound means the wheel zooms the way it did before there was a key to hold,
+ * so clearing the row in Key Setup is the way back to that. */
+static bool overviewWheelZooms(const keyItems *keys) {
+    int sc = keys ? keys->kiOverviewZoom : 0;
+    if (sc <= 0) return true;
+    if (sc >= SDL_SCANCODE_COUNT) return false;
+
+    SDL_Keymod mask = overviewModMaskFor(sc);
+    if (mask != SDL_KMOD_NONE) return (SDL_GetModState() & mask) != 0;
+
+    const bool *state = SDL_GetKeyboardState(NULL);
+    return state && state[sc];
+}
+
 /* The map square under the mouse pointer, taken against the item the caller
  * submitted immediately before this — the same rect the wheel zoom anchors
  * to. False when the pointer is off the map; the square is still written, so
@@ -697,12 +741,23 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
     }
     v->dragWasActive = dragging;
 
+    /* The wheel moves the gunsight over the map exactly as it does over the
+     * main view, and zooms only while the zoom key is held. The bump is
+     * dispatched from here rather than left to the wheel handler in
+     * sdl3imgui.cpp, which neither host's wheel reaches: the in-window mode
+     * sits under an ImGui window that captures the mouse, and the pop-out's
+     * events are consumed as that window's own. Same running-game test the
+     * handler there makes. */
     if (hovered && io.MouseWheel != 0.0f) {
-        ImVec2 rectMin = ImGui::GetItemRectMin();
-        ImVec2 mouse   = ImGui::GetMousePos();
         int steps = (io.MouseWheel > 0.0f) ? 1 : -1;
-        overviewCameraZoomAt(cam, viewW, viewH,
-                             mouse.x - rectMin.x, mouse.y - rectMin.y, steps);
+        if (overviewWheelZooms(keys)) {
+            ImVec2 rectMin = ImGui::GetItemRectMin();
+            ImVec2 mouse   = ImGui::GetMousePos();
+            overviewCameraZoomAt(cam, viewW, viewH,
+                                 mouse.x - rectMin.x, mouse.y - rectMin.y, steps);
+        } else if (cs && clientSimGetNetStatus(cs) == netRunning) {
+            inputBumpGunsight(steps);
+        }
     }
 
     /* Moving the pointer over the map drives the one shared build cursor, the

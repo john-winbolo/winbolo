@@ -57,6 +57,10 @@
 #define DEFAULT_LGMVIEW      11   /* SDL_SCANCODE_H */
 #define DEFAULT_BASEVIEW     16   /* SDL_SCANCODE_M */
 
+/* Held while the wheel turns over the map overview, it zooms the map rather
+   than moving the gunsight. Cleared (0), the wheel always zooms there. */
+#define DEFAULT_OVERVIEW_ZOOM 224 /* SDL_SCANCODE_LCTRL */
+
 /* Quick-build keys — number row 1-5 */
 #define DEFAULT_QUICKTREE    30   /* SDL_SCANCODE_1 */
 #define DEFAULT_QUICKROAD    31   /* SDL_SCANCODE_2 */

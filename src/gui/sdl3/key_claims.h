@@ -24,6 +24,7 @@ static inline bool keyIsClaimedByGame(const keyItems *k, int scancode) {
            scancode == k->kiShoot        || scancode == k->kiLayMine      ||
            scancode == k->kiGunIncrease  || scancode == k->kiGunDecrease  ||
            scancode == k->kiTankView     || scancode == k->kiPillView     ||
+           scancode == k->kiOverviewZoom ||
            scancode == k->kiScrollUp     || scancode == k->kiScrollDown   ||
            scancode == k->kiScrollLeft   || scancode == k->kiScrollRight  ||
            scancode == k->kiAllyView     || scancode == k->kiLGMView      ||
