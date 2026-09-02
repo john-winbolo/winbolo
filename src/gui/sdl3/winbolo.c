@@ -92,6 +92,7 @@ extern ClientSim *humanSim;
 /* Forward declarations */
 void sdl3MessageHandler(const char *message, const char *title);
 static SDL_Rect getDefaultDisplayBounds(void);
+static void windowEnsureOnScreen(SDL_Window *win);
 
 /* -------------------------------------------------------
  * Globals declared by winbolo.h (extern in sdl3imgui.cpp)
@@ -589,6 +590,10 @@ int main(int argc, char *argv[]) {
               SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
             }
           }
+          /* Backstop for both branches: the clamp above works off the dialog's
+             monitor and off the client area, so it can still leave the title
+             bar off-screen once the window lands on another display. */
+          windowEnsureOnScreen(sdlWin);
         }
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
@@ -1206,6 +1211,45 @@ static SDL_Rect getDefaultDisplayBounds(void) {
     return bounds;
 }
 
+/* Nudge a window so its frame — title bar included — sits inside the usable
+   area of the display it is actually on. SDL positions the client area, so a
+   position that looks valid can still leave the caption above the screen with
+   no way to drag the window back. Safe to call after any move or resize. */
+static void windowEnsureOnScreen(SDL_Window *win) {
+  if (!win) return;
+
+  int x, y, w, h;
+  SDL_GetWindowPosition(win, &x, &y);
+  SDL_GetWindowSize(win, &w, &h);
+
+  /* Bounds of the display the window is on now, not of the one a saved
+     coordinate came from — that monitor may be a different shape, or gone. */
+  SDL_Rect usable;
+  SDL_DisplayID dispID = SDL_GetDisplayForWindow(win);
+  if (!dispID || !SDL_GetDisplayUsableBounds(dispID, &usable)) {
+    usable = getDefaultDisplayBounds();
+  }
+
+  /* The frame the window manager draws around the client area. Some backends
+     can't report it; zero borders then clamp the client area alone. */
+  int top = 0, left = 0, bottom = 0, right = 0;
+  if (!SDL_GetWindowBordersSize(win, &top, &left, &bottom, &right)) {
+    top = 0; left = 0; bottom = 0; right = 0;
+  }
+
+  int newX = x, newY = y;
+  if (newX + w + right > usable.x + usable.w) newX = usable.x + usable.w - w - right;
+  if (newY + h + bottom > usable.y + usable.h) newY = usable.y + usable.h - h - bottom;
+  /* Floors applied last, so a window bigger than the display loses its right
+     and bottom edges rather than its caption. */
+  if (newX < usable.x + left) newX = usable.x + left;
+  if (newY < usable.y + top) newY = usable.y + top;
+
+  if (newX != x || newY != y) {
+    SDL_SetWindowPosition(win, newX, newY);
+  }
+}
+
 void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
                                      int *outW, int *outH, int *outX, int *outY) {
   int contentH = actualH - MENU_BAR_HEIGHT;
@@ -1283,7 +1327,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
      BUT: don't save if the current size is actually a cardinal size (bug recovery). */
   if (zoomFactor == ZOOM_FACTOR_CUSTOM) {
     SDL_Window *win = sdl3DrawGetWindow();
-    if (win) {
+    /* A fullscreen size and origin belong to the display, not to the player,
+       so they must never overwrite the remembered windowed geometry. */
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
       int savW, savH, savX, savY;
       SDL_GetWindowPosition(win, &savX, &savY);
       SDL_GetWindowSize(win, &savW, &savH);
@@ -1306,7 +1352,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     if (fromDragResize) {
       /* Use current window size (user just dragged to this size) */
       SDL_Window *win = sdl3DrawGetWindow();
-      if (win) {
+      /* Fullscreen geometry isn't the player's — see the custom-mode capture
+         above. */
+      if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
         int curX, curY;
         SDL_GetWindowSize(win, &targetW, &targetH);
         SDL_GetWindowPosition(win, &curX, &curY);
@@ -1405,6 +1453,7 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
           SDL_SetWindowSize(win, restoreW, restoreH);
           if (s_customWinX != SDL_WINDOWPOS_CENTERED) {
             SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
+            windowEnsureOnScreen(win);
           }
         }
       } else {
