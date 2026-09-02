@@ -552,9 +552,24 @@ else()
     # an undefined RELEASE. Not set for MSVC: C4668 is forced to level 1
     # and fires throughout the Windows SDK headers, where /external:W3
     # cannot suppress it and the /WX above would make it fatal.
+    #
+    # The second option makes a function with external linkage and no
+    # previous declaration an error, so every symbol the lobby's sources
+    # share has to be declared in lobby_internal.h, and a definition cannot
+    # lose its static without gaining a declaration. The spelling is not
+    # interchangeable between the two compilers: Clang wants
+    # -Wmissing-prototypes and uses -Wmissing-declarations for an unrelated
+    # diagnostic (a declaration that declares nothing), while GCC wants
+    # -Wmissing-declarations and rejects -Wmissing-prototypes outright in
+    # C++.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(LOBBY_MISSING_DECL_OPTION -Werror=missing-prototypes)
+    else()
+        set(LOBBY_MISSING_DECL_OPTION -Werror=missing-declarations)
+    endif()
     set_source_files_properties(
         src/gui/sdl3/dialogs/imgui_lobby.cpp
-        PROPERTIES COMPILE_OPTIONS -Werror=undef
+        PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
     )
 endif()
 

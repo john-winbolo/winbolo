@@ -110,8 +110,6 @@ extern "C" {
 #include "../wb_theme.h"
 #include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
 
-#define LOBBY_WBN_ICON_SIZE 14
-#define LOBBY_CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 #define MAP_PREVIEW_SIZE 256
 
 static const int DIALOG_W = 1024;
@@ -178,6 +176,12 @@ typedef struct LobbyCommandState {
 
 static LobbyCommandState s_commands = {};
 
+/* Players sets the flag when the host types a bot name and clears it when the
+ * slot is reused. Indexed by lobby slot, MAX_TANKS entries. */
+bool *lobbyCommandBotNameOverridden(void) {
+    return s_commands.botNameOverridden;
+}
+
 void lobbyCommandReset(void) {
     s_commands = LobbyCommandState{};
 }
@@ -229,16 +233,6 @@ static int lobbyDefaultBrainIdx(const BrainList *bl) {
     return 0;  /* sorted newest-first → entry 0 is the newest GoalHunter */
 }
 
-/* Client-side cache of per-brain about.txt metadata, keyed by catalogue name.
- * brainListLoadMeta hits disk, so the combo would otherwise re-read every frame
- * while open. Entries are loaded lazily and never invalidated (the brains/ tree
- * doesn't change at runtime). */
-struct LobbyBrainMeta {
-    char name[BRAIN_LIST_NAME_LEN];
-    char tagline[BRAIN_LIST_TAG_LEN];
-    char desc[BRAIN_LIST_DESC_LEN];
-};
-
 /* Bot-brain state that outlives any one lobby session: the host's sticky
  * brain pick and the about.txt metadata cache. Deliberately has no reset
  * function — imguiLobbyFrameReset runs on every lobby→game edge, so
@@ -258,6 +252,12 @@ typedef struct LobbyBrainCache {
 } LobbyBrainCache;
 
 static LobbyBrainCache s_brains = {};
+
+/* Players writes the host's sticky brain pick from the per-bot Bot Code
+ * dropdown. 0xFF, not 0, is the "no sticky yet" value. */
+uint8_t *lobbyBrainLastChosenIdx(void) {
+    return &s_brains.lastChosenBrainIdx;
+}
 
 const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
     if (!name || !name[0]) return NULL;
@@ -510,47 +510,15 @@ void lobbySendAddBotDebounced(ClientSim *cs,
  * persists across re-opens so the user's last tab + position are
  * remembered for the session.
  *
- * State has to be declared before the helpers that reference it.
- *
- * Everything here belongs to one lobby session — the window's
- * visibility, its focus edge-trigger, the pending-action flags and the
- * cached ClientSim — so lobbyChooserReset() clears it on teardown. The
- * browsers themselves live in LobbyChooserTabs below and are kept. */
-typedef struct LobbyChooserState {
-    bool       open             = false;
-    /* Edge-trigger: SetNextWindowFocus the chooser on the frame it opens
-     * so it draws above the scrim windows, but NOT every frame after —
-     * that yanks focus away from anything the user clicks into the
-     * chat-hole. */
-    bool       focusedOnce      = false;
-    /* The map that was active when the window opened, so Cancel can
-     * restore it (no undo packet is wired yet — the field is reserved
-     * for that future work). */
-    char       prevName[128]    = "";
-    /* Source tab the trigger/shoulder tab-cycle wants selected next frame
-     * in the map chooser, or -1 for "no forced selection". Applied via
-     * ImGuiTabItemFlags_SetSelected, then cleared once after the tab bar. */
-    int        forceTab         = -1;
-    /* When true, the chooser window is force-sized to almost the full
-     * lobby window — leaving a few chat lines visible at the bottom.
-     * Toggled by the corner icon button, or by pressing Esc while the
-     * chooser window has focus. */
-    bool       maximized        = false;
-    /* True when the user has fired at least one live-preview from a tab
-     * since opening the chooser (file pick, upload kick, generate config
-     * change). Drives the close-confirmation modal: dismissing the
-     * window with the X (or Esc) while pending opens a "Use This Map /
-     * Cancel / Keep Picking" prompt instead of silently reverting. */
-    bool       previewPending   = false;
-    bool       wantCloseConfirm = false;
-    /* Cached ClientSim pointer for the chooser. Captured by
-     * lobbyChooseMapOpen so the listProvider (which only gets a void*
-     * ctx) can reach into the cs's lobbyMapList* state without each
-     * call site rethreading the pointer. */
-    ClientSim *cs               = NULL;
-} LobbyChooserState;
+ * State has to be declared before the helpers that reference it. */
 
 static LobbyChooserState s_chooser = {};
+
+/* Core reads the window's visibility and its focus edge-trigger; wbnmaps
+ * flags a fired live-preview through previewPending. */
+LobbyChooserState *lobbyChooser(void) {
+    return &s_chooser;
+}
 
 void lobbyChooserReset(void) {
     s_chooser = LobbyChooserState{};
@@ -576,6 +544,16 @@ typedef struct LobbyChatState {
 } LobbyChatState;
 
 static LobbyChatState   s_chat                   = {};
+
+/* Core captures the chat block's screen rect each frame; the chooser scrim
+ * reads it back to punch its hole. */
+ImVec2 *lobbyChatBlockMin(void) {
+    return &s_chat.blockMin;
+}
+
+ImVec2 *lobbyChatBlockMax(void) {
+    return &s_chat.blockMax;
+}
 
 /* Drop the chat rect and the pending refocus / nav-suppression flags on
  * lobby teardown, so a session left mid-send does not carry a focus
@@ -619,6 +597,12 @@ typedef struct LobbyChooserTabs {
 } LobbyChooserTabs;
 
 static LobbyChooserTabs s_chooserTabs = {};
+
+/* wbnmaps drives the WinBolo.net tab's browser through this, which is why the
+ * enclosing LobbyChooserTabs does not have to be published. */
+MapChooserState *lobbyChooserWbnTab(void) {
+    return &s_chooserTabs.wbn;
+}
 
 /* enumerate for the Server Maps provider. Routes through the server's
  * directory enumeration so the chooser browses the SERVER's map
@@ -3377,44 +3361,13 @@ void lobbySendSetting(ClientSim *cs,
     clientSimNetSendLobbySetting(cs, settingType, value, valueLen);
 }
 
-/* Bounding box of interesting (non-sea) terrain in the map preview */
-struct LobbyMapBounds {
-    int minX, minY, maxX, maxY;
-};
-
-/* Map-preview state: the stashed compressed map bytes plus the per-start
- * cache derived from them. */
-typedef struct LobbyMapPreviewState {
-    /* Compressed map data — stashed when map download completes so the popup
-     * can decompress on demand (transportUdpClientGetMapData() is only called
-     * in the one-shot preview-build block; the pointer may not remain valid). */
-    BYTE       *popupCompressedData = NULL;
-    int         popupCompressedLen  = 0;
-
-    /* Cached compass octant (an STR_COMPASS_* lang id, 0 = unknown) per map
-     * start, indexed 1-based by startIdx. MAX_STARTS is 16, so [17] covers
-     * indices 1..16. Rebuilt only when the lobby map bytes change (see
-     * lobbyRebuildStartCompassCache), so the player-list column never decompresses
-     * the map per frame. */
-    int         startCompassId[MAX_STARTS + 1] = {0};
-
-    /* Cached start map-square positions (1-based, parallel to startCompassId)
-     * plus the start bounding box and count, for the ownership-marker overlay
-     * on the map previews. Rebuilt alongside the compass cache on map change so
-     * the overlay never decompresses the map per frame. */
-    BYTE        startMapX[MAX_STARTS + 1] = {0};
-    BYTE        startMapY[MAX_STARTS + 1] = {0};
-    int         startBboxMinX = 0, startBboxMinY = 0;
-    int         startBboxMaxX = 0, startBboxMaxY = 0;
-    BYTE        startCount = 0;
-
-    /* 1-based start currently hovered in a start dropdown (the combo in the
-     * player list), so the inline preview can outline it. Set while a dropdown
-     * entry is hovered; consumed (cleared) by the preview overlay each frame. */
-    int         hoveredStartChoice = -1;
-} LobbyMapPreviewState;
-
 static LobbyMapPreviewState s_mapPreview = {};
+
+/* Core reads the stashed map bytes; players reads those and the per-start
+ * caches behind the start column and the ownership overlay. */
+LobbyMapPreviewState *lobbyMapPreview(void) {
+    return &s_mapPreview;
+}
 
 /* The compressed map buffer is owned here, so it has to be released before
  * the struct is overwritten. */
@@ -3828,43 +3781,13 @@ void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize) {
     }
 }
 
-/* Icon and tank textures the lobby draws, cached for the process rather
- * than the session: SDL_Texture belongs to the renderer that made it, so
- * the cache is keyed on the renderer and reloaded when that pointer
- * changes, not cleared on lobby teardown. */
-typedef struct LobbyIconCache {
-    SDL_Texture  *success;
-    SDL_Texture  *error;
-    SDL_Texture  *info;
-    SDL_Texture  *settings;
-    SDL_Texture  *botCpuGreen;
-    SDL_Texture  *botCpuRed;
-    SDL_Texture  *locked;
-    SDL_Texture  *skull;
-    SDL_Texture  *picture;
-    SDL_Texture  *play;
-    SDL_Texture  *pause;
-    bool          attempted;
-    /* The renderer instance the icons above were created against. SDL_Texture
-     * is tied to the renderer that created it, so if the renderer instance
-     * pointer changes between calls (e.g. across a game→lobby transition
-     * that recreates the renderer) the cached textures reference dead GPU
-     * resources. Track it and reload on mismatch — same pattern as
-     * imgui_mapchooser's loadViewModeIconsOnce. */
-    SDL_Renderer *renderer;
-
-    /* Tank sprite used as the team identity badge in the lobby header.
-     * Loaded once on first lobby render; tinted with the team color via
-     * a darkened semi-transparent overlay. */
-    SDL_Texture  *tankSelf04;
-    SDL_Texture  *tankEvil04;
-    SDL_Texture  *tankGood04;
-    bool          tankSelfAttempted;
-    bool          tankEvilAttempted;
-    bool          tankGoodAttempted;
-} LobbyIconCache;
-
 static LobbyIconCache s_icons = {};
+
+/* Assets is a leaf: players, status, recap, reel and clipgif all read the
+ * cached textures out of here and nothing here reaches back. */
+LobbyIconCache *lobbyIcons(void) {
+    return &s_icons;
+}
 
 /* stb_image entry points — defined in C, declared with C linkage
  * so the C++ linker finds them. Mirror of how imgui_welcome.cpp
@@ -4080,6 +4003,13 @@ typedef struct LobbyPlayersState {
 
 static LobbyPlayersState s_players = {};
 
+/* Core sets this from the shoulder tab-cycle and clears it after the tab bar.
+ * -1 means "no forced selection". LobbyChooserState has a field of the same
+ * name and type; that one is chooser-internal and has no accessor. */
+int *lobbyPlayersForceTab(void) {
+    return &s_players.forceTab;
+}
+
 void lobbyPlayersReset(void) {
     s_players = LobbyPlayersState{};
 }
@@ -4095,19 +4025,6 @@ static void renderBotAiConfig(ClientSim *cs,
  * window. Returns nothing — purely UI. */
 void lobbyRenderLockBadge(void);
 
-/* Ranked-game eligibility shape: exactly two teams with equal sizes
- * of 1/2/3 connected humans (1v1, 2v2, 3v3). Used by the Ranked-game
- * checkbox tooltip AND by the Ready button (Ready is disabled when
- * the lobby is flagged Ranked but the current shape doesn't qualify,
- * so the host can keep Ranked on for the games-list filter even
- * while shuffling players around). Returns the breakdown so callers
- * can show the same tooltip text. */
-struct LobbyRankedEligibility {
-    bool sizesEligible;
-    int  teamsInUse;
-    int  firstSize;
-    int  secondSize;
-};
 LobbyRankedEligibility lobbyComputeRankedEligibility(ClientSim *cs) {
     LobbyRankedEligibility r = {false, 0, 0, 0};
     int teamSizes[17] = {0};
@@ -6635,6 +6552,12 @@ typedef struct LobbyRecapState {
 
 static LobbyRecapState s_recap = {};
 
+/* Core reads this to pick which view the right-hand panel shows, and flips it
+ * from the button at the top of that panel. */
+bool *lobbyRecapShowMap(void) {
+    return &s_recap.showMap;
+}
+
 void lobbyRecapReset(void) {
     s_recap = LobbyRecapState{};
 }
@@ -6679,100 +6602,15 @@ static bool lastRoundDrawSkull(void) {
  * into an SDL render target; the recap blits the visible slice of that
  * target as an image and feeds wheel/drag input back. The viewer owns a
  * process-wide decoder singleton, so the reel is torn down whenever the
- * recap stops drawing it or the summary clears.
- *
- * Everything the reel holds belongs to one round's recap — what is playing,
- * how it is being scrubbed, the optional crop frame over it, where a round
- * still on its way from the server stands, the slack the body hands back and
- * the zoom gesture banks — so lobbyReelEnd clears the lot. */
-typedef struct LobbyReelState {
-    bool  active     = false;
-    bool  tried      = false;  /* one load attempt per summary */
-    /* The one attempt came to nothing — the viewer refused this summary's
-     * bytes, or there were none to hand it. There is nothing further to try
-     * for this round, so the recap says so instead of going back round for
-     * more bytes. */
-    bool  loadFailed = false;
-    bool  drawn      = false;  /* body drew the reel this frame */
-    /* True when the pause was ours (the recap stopped being drawn), not the
-     * player's — the reel resumes on its own when the recap comes back, but
-     * only then. */
-    bool  autoPaused = false;
-    float viewW      = 0.0f;
-    float viewH      = 0.0f;
-    /* Where the seek slider sits, and whether the player is dragging it. Held
-     * apart from the playhead so a drag is not fought by the reel advancing
-     * under it. The reel follows the handle live while it is dragged — see the
-     * scrub block in the transport row for what each direction costs. */
-    float  seekRatio      = 0.0f;
-    bool   seeking        = false;
-    /* Last ratio actually handed to the decoder, and when. Tracks the playhead
-     * while idle so a drag starts from the truth. */
-    float  seekApplied    = 0.0f;
-    Uint64 seekAppliedMs  = 0;
-    /* Playing state latched when a drag began, restored when it ends: a scrub
-     * pauses the reel for its duration rather than letting every applied seek
-     * tear down and rebuild the two SDL playback timers. */
-    bool   seekWasPlaying = false;
-
-#if BOLO_RECAP_CLIP_GIF
-    /* Crop frame: an optional rectangle over the reel that an export takes
-     * instead of the whole visible view, so a clip can be posted without the
-     * map around it. Off by default, and off is the untouched full-view path.
-     *
-     * Held normalized to the displayed image rather than in pixels, so resizing
-     * the lobby or zooming the reel keeps the same framing rather than leaving
-     * the box pointing at a different part of the map. Session-only, by design
-     * — a crop is chosen for the clip being taken, not kept as a preference,
-     * which is what the reset below makes true. */
-    bool  cropOn = false;
-    float cropX0 = 0.25f;
-    float cropY0 = 0.25f;
-    float cropX1 = 0.75f;
-    float cropY1 = 0.75f;
-
-    /* The slice the reel last blitted, in render-target pixels: origin plus the
-     * whole-pixel visible extent the draw computed. The crop frame is
-     * normalized against this extent, so a capture can map the frame back onto
-     * exactly the pixels the outline was drawn over rather than re-deriving the
-     * mapping and risking a different answer. */
-    SDL_Rect lastSlice = { 0, 0, 0, 0 };
-#endif
-
-    /* Where a client that did not record the round stands in getting it from
-     * the server that did: the transfer's state as a ClientRoundLogState, the
-     * percent that goes with it while bytes are arriving, and the latch that
-     * keeps the request to one send per summary. Read by the recap so it can
-     * say what is happening in place of a reel it has no bytes for yet. A
-     * process replaying its own recording never asks, and leaves these idle. */
-    bool    logAsked   = false;
-    int     logState   = CLIENT_ROUND_LOG_IDLE;
-    uint8_t logPercent = 0;
-    /* Last state and ten-percent step written to winbolo.log, so the transfer
-     * is traced as it moves instead of once a frame. */
-    int     logStateSeen = -1;
-    int     logStepSeen  = -1;
-
-    /* Vertical room the recap left unused on the previous frame, accumulated.
-     * The reel adds it to its own height, which is what stops the body ending
-     * well short of the bottom of a tall panel. Immediate mode gives no way to
-     * know what the content below the reel will cost before drawing it, so this
-     * is a one-frame feedback loop: lobbyRenderLastRoundBody measures the shortfall
-     * at the end of the frame and this grows or shrinks by that much. It has to
-     * accumulate rather than hold the raw shortfall — a raw value would be
-     * spent, measure zero, and collapse back the next frame. */
-    float recapSlack = 0.0f;
-
-    /* Banked wheel and pinch travel, and the frame they were last spent on, so
-     * a gesture is stepped a whole notch at a time and a bank left over from a
-     * gesture aimed elsewhere is dropped. See the zoom-input block below for
-     * what the two units are and why the banks exist at all. */
-    float wheelAccum = 0.0f;
-    float pinchAccum = 0.0f;
-    int   zoomFrame  = -1;
-} LobbyReelState;
+ * recap stops drawing it or the summary clears. */
 
 static LobbyReelState s_reel = {};
+
+/* Core reads what is playing, recap the slack the reel hands back, clipgif
+ * the crop frame and the last blitted slice. */
+LobbyReelState *lobbyReel(void) {
+    return &s_reel;
+}
 
 #if BOLO_RECAP_CLIP_GIF
 /* Smallest crop the frame will shrink to, in displayed pixels. */
@@ -10089,6 +9927,12 @@ typedef struct LobbyFrameState {
 } LobbyFrameState;
 
 static LobbyFrameState s_lf = {};
+
+/* The one field of the frame state anything outside core touches: chat's
+ * timestamp helper appends into it. LOBBY_CHAT_INPUT_SIZE bytes. */
+char *lobbyFrameChatInput(void) {
+    return s_lf.chatInput;
+}
 
 #if !BOLO_MOBILE
 /* Append the reel's position to the chat box as "@mm:ss ", then take the
