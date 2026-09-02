@@ -71,4 +71,32 @@ void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
 int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
 int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 
+/* Defined in server_sim_round.c — round-lifecycle functions that were file-local
+ * to server_sim.c until their definitions moved out. Each still has a caller
+ * left behind there. */
+
+/* Full lobby reset when the last human leaves — removes bots, restores the
+ * startup settings snapshot, and unlocks the lobby. serverSimRemovePlayer in
+ * server_sim.c calls this when the departing player was the last human. */
+void serverSimResetLobbyToDefaults(ServerSim *sim);
+
+/* The player slot every base owner is allied to when one side has swept
+ * the map, or NEUTRAL when no side has. Same predicate as
+ * serverSimCheckGameWin: a base at or below MIN_ARMOUR_CAPTURE is dead
+ * and recapturable, so it does not count toward a sweep. The tick core in
+ * server_sim.c reads it each half-step to spot a win. */
+BYTE serverSimWinningOwner(ServerSim *sim);
+
+/* Caches the active map's BMAPBOLO MD5 so WinBolo.net can match the map against
+ * its library. Called by serverSimCreate and the map-reload path in
+ * server_sim.c, and by serverSimChangeMap alongside it. */
+void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
+
+/* Defined in server_sim.c — the one entry here owned by the parent rather than
+ * by a source in this directory. Arms the per-thread active-sim slot that
+ * serverSimGetActive reads back; the activeSim pointer itself stays file-local
+ * to server_sim.c, so a sim/ source that needs to arm it goes through this.
+ * serverSimStartGame in server_sim_round.c is the one such caller. */
+void serverSimSetActive(ServerSim *sim);
+
 #endif

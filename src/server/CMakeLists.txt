@@ -83,6 +83,7 @@ add_library(server_sim_static STATIC
     sim/server_sim_bots.c
     sim/server_sim_callbacks.c
     sim/server_sim_snapshot.c
+    sim/server_sim_round.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)
