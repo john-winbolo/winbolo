@@ -28,6 +28,7 @@
 #include "screencalc.h"
 #include "client_render.h"
 #include "gfx_settings.h"
+#include "tileloader.h"
 #include "util.h"
 
 #include <string.h>
@@ -328,6 +329,17 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     float sy = (float)(originY - tileH - edgeY) +
                mapViewSpriteOffset(ctx, mode, (int)my, apy, (int)wy);
 
+    /* A rotating skin's tank can instead be drawn from its north sprite and
+       turned here by the tank's full angle, for 256 steps rather than the
+       sixteen the sheet holds.  Off by default: see
+       WB_SKIN_DRAWTIME_ROTATION in tileloader.h for what it buys and what
+       to move out of this loop before switching it on. */
+#if WB_SKIN_DRAWTIME_ROTATION
+    int baseX, baseY;
+    bool rotated = tileLoaderRotatedSource(srcX, srcY, &baseX, &baseY);
+    if (rotated) { srcX = baseX; srcY = baseY; }
+#endif
+
     {
       int ss = ctx->sheetScale;
       /* Inset the source rect by a tiny amount to prevent the GPU from
@@ -338,7 +350,22 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
                          (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
+#if WB_SKIN_DRAWTIME_ROTATION
+      if (rotated) {
+        /* angle is 0..255 over a whole turn and the sheet build turns frame
+           f clockwise by f * 22.5 degrees, so angle * 360 / 256 is the same
+           turn stated finely — and clockwise is the direction SDL reads its
+           degrees in.  NULL centre turns about the middle of dstR, which is
+           the point the build's rotation works about as well. */
+        SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
+                                 (double)angle * 360.0 / 256.0, NULL,
+                                 SDL_FLIP_NONE);
+      } else {
+        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      }
+#else
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+#endif
     }
   }
 }

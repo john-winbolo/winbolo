@@ -150,6 +150,43 @@ const SkinDensityInfo *tileLoaderGetDensityInfo(struct SkinSource *skin);
 int  tileLoaderPickDensity(const SkinDensityInfo *info, int spriteIndex,
                            int mode, int scale);
 
+/* Draw-time tank rotation. Off: the sheet build already turns a rotating
+   skin's north sprite into the group's other fifteen slots, which is what
+   makes such a skin render correctly everywhere. Turning the north slot
+   again at draw time buys the tank's full 0..255 angle instead of sixteen
+   steps, and on a 16x16 sprite that is close to invisible — one bradian
+   moves the outermost pixel about 0.2 px, which nearest sampling rounds
+   away.
+
+   Before switching this on, move the lookup out of the draw loop.
+   tileLoaderRotatedSource scans the rotation table per tank per frame,
+   keyed on sheet coordinates; the sheet build already knows the answer and
+   should hand the renderer something it can index directly. */
+#define WB_SKIN_DRAWTIME_ROTATION 0
+
+/*********************************************************
+ * NAME:          tileLoaderRotatedSource
+ * PURPOSE:
+ *   When the sheet slot at (srcX, srcY) — 1x sheet
+ *   coordinates, as gTileMap[] and tiles.h give them —
+ *   was filled by rotating its group's north sprite,
+ *   writes that sprite's slot position to *baseX / *baseY
+ *   and returns true.  A group's north slot reports
+ *   itself, so a caller holding an angle finer than the
+ *   sixteen frames can rotate that facing too.
+ *   False when the slot holds art of its own, which a
+ *   hand-drawn per-direction file always does, and for
+ *   every slot of a skin that does not ask for rotation.
+ *   Describes the sheet the last tileLoaderBuildSheetFor
+ *   built.
+ *   This, and the table behind it, are compiled only when
+ *   WB_SKIN_DRAWTIME_ROTATION is on.  The sheet build's
+ *   own rotation runs either way.
+ *********************************************************/
+#if WB_SKIN_DRAWTIME_ROTATION
+bool tileLoaderRotatedSource(int srcX, int srcY, int *baseX, int *baseY);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

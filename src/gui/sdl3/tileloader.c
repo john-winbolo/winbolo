@@ -371,6 +371,50 @@ static const char *const kRotationGroups[] = {
 
 #define ROTATION_GROUP_FRAMES 16
 
+#if WB_SKIN_DRAWTIME_ROTATION
+/* Which sheet slots the fill pass at the end of tileLoaderBuildSheetFor
+   turned out of a group's north sprite, and the slot that sprite sits in.
+   1x coordinates, the ones gTileMap[] and tiles.h carry, so a draw path
+   working in tiles.h constants can match against them as they are.
+   A group's north slot is listed against itself: its art is what every other
+   slot in the group was turned from, so a caller holding an angle finer than
+   the sixteen frames can turn it too.  Six groups of sixteen slots is the
+   most there can be. */
+static struct {
+    int slotX, slotY;
+    int baseX, baseY;
+} s_rotatedSlots[(sizeof(kRotationGroups) / sizeof(kRotationGroups[0])) *
+                 ROTATION_GROUP_FRAMES];
+static int s_rotatedSlotCount = 0;
+
+/* Record that the slot `m` holds a turned copy of the sprite in slot `base`.
+   The array is sized from the same two constants the fill pass loops over,
+   so the bound below cannot be reached; it is there so a later group added
+   to kRotationGroups without resizing overruns nothing. */
+static void noteRotatedSlot(const TileMapEntry *m, const TileMapEntry *base) {
+    int max = (int)(sizeof(s_rotatedSlots) / sizeof(s_rotatedSlots[0]));
+    if (s_rotatedSlotCount >= max) return;
+    s_rotatedSlots[s_rotatedSlotCount].slotX = m->sheetX;
+    s_rotatedSlots[s_rotatedSlotCount].slotY = m->sheetY;
+    s_rotatedSlots[s_rotatedSlotCount].baseX = base->sheetX;
+    s_rotatedSlots[s_rotatedSlotCount].baseY = base->sheetY;
+    s_rotatedSlotCount++;
+}
+
+bool tileLoaderRotatedSource(int srcX, int srcY, int *baseX, int *baseY) {
+    for (int i = 0; i < s_rotatedSlotCount; i++) {
+        if (s_rotatedSlots[i].slotX != srcX ||
+            s_rotatedSlots[i].slotY != srcY) {
+            continue;
+        }
+        if (baseX) *baseX = s_rotatedSlots[i].baseX;
+        if (baseY) *baseY = s_rotatedSlots[i].baseY;
+        return true;
+    }
+    return false;
+}
+#endif /* WB_SKIN_DRAWTIME_ROTATION */
+
 /* Rasterize SVG bytes at the given size.  nanosvg parses in place, so `data`
  * must be writable and NUL-terminated at [len] — both SDL_LoadFile and
  * skinSourceRead hand back a buffer like that.
@@ -637,6 +681,14 @@ static SDL_Surface *loadSkinSheet(struct SkinSource *skin, int *outDensity) {
 
 SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
                                      int mode) {
+#if WB_SKIN_DRAWTIME_ROTATION
+    /* The fill pass at the end records the slots it turns.  Drop whatever a
+       previous build left first: this one may be for a different skin, a
+       different Tile Detail mode or a different zoom, and any of the three
+       can change which slots end up turned. */
+    s_rotatedSlotCount = 0;
+#endif
+
     /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
        and the sheet is the classic 496x176.  When tileSize==32, scale==2
        and SVGs are rasterized at 2x for crisper rendering. */
@@ -882,6 +934,13 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
             readSheetRGBA(sheet, base->sheetX * scale, base->sheetY * scale,
                           size, size, frame0);
 
+#if WB_SKIN_DRAWTIME_ROTATION
+            /* The north slot against itself, so a draw path with an angle
+               finer than a frame can turn the north facing as well.  Nothing
+               about the sheet changes: the slot keeps the author's sprite. */
+            noteRotatedSlot(base, base);
+#endif
+
             for (int f = 1; f < ROTATION_GROUP_FRAMES; f++) {
                 SDL_snprintf(nameBuf, sizeof(nameBuf), "%s_%02d",
                              kRotationGroups[g], f);
@@ -905,6 +964,9 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
                 rotateRGBA(frame0, tmpBuf, size, (float)f * 22.5f);
                 blitRGBA(sheet, m->sheetX * scale, m->sheetY * scale,
                          size, size, tmpBuf);
+#if WB_SKIN_DRAWTIME_ROTATION
+                noteRotatedSlot(m, base);
+#endif
                 rotatedCount++;
             }
         }
@@ -936,4 +998,9 @@ void tileLoaderCleanup(void) {
      * Reserved for future caching (e.g. keeping parsed SVGs for re-rasterization). */
     s_densitySkin  = NULL;
     s_densityValid = false;
+#if WB_SKIN_DRAWTIME_ROTATION
+    /* And the slots the last build turned: there is no sheet left for them
+     * to describe. */
+    s_rotatedSlotCount = 0;
+#endif
 }
