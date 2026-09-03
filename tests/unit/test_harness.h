@@ -1004,6 +1004,7 @@ int run_control_overflow_defers_disconnect(void);
  * of freeing the tank/lgm inline. */
 int run_shells_survive_cleared_lgm_slot(void);
 int run_ping_kick_defers_teardown(void);
+int run_ping_kick_clears_strikes_on_disconnect(void);
 
 /* tkExplosionUpdate pairs lgms[i] with tanks[i] over the COMPACTED per-player
  * arrays, and its small-explosion sweep must cover every index

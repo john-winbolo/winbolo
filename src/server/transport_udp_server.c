@@ -3942,6 +3942,21 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].wbnWebCountry[0] = '\0';
     udpServer.clients[idx].wbnWebUserId = -1;
 
+    /* Clear the high-ping enforcement tally. These count consecutive breaches
+     * by ONE occupant, so leaving them set hands the next occupant of this slot
+     * the departing player's strikes. A player kicked for high ping leaves with
+     * pingKickStrikes at PING_KICK_COUNT, so on their reconnect the first
+     * measurement over the threshold reaches PING_KICK_COUNT + 1 and kicks them
+     * again immediately, with none of the PING_KICK_COUNT samples of grace the
+     * enforcement is built around — and pingWarned still true, so they get no
+     * warning first either. lastEnforcedPingMs goes too: it is the dedup for
+     * "already counted this measurement", and a stale value silently skips the
+     * next occupant's first matching sample. */
+    udpServer.clients[idx].pingKickStrikes = 0;
+    udpServer.clients[idx].pingWarnStrikes = 0;
+    udpServer.clients[idx].pingWarned = false;
+    udpServer.clients[idx].lastEnforcedPingMs = 0;
+
     /* Reset control-sync state so a re-using slot starts fresh. */
     udpServer.controlSyncInProgress[idx] = false;
 
@@ -7203,6 +7218,18 @@ void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs) {
     if (playerNum >= MAX_TANKS) return;
     if (!udpServer.clients[playerNum].connected) return;
     udpServer.clients[playerNum].pingMs = pingMs;
+}
+
+void transportUdpServerGetPingStrikesForTest(BYTE playerNum,
+                                             uint8_t *outKickStrikes,
+                                             uint8_t *outWarnStrikes,
+                                             bool *outWarned,
+                                             uint16_t *outLastEnforcedMs) {
+    if (playerNum >= MAX_TANKS) return;
+    if (outKickStrikes)    *outKickStrikes    = udpServer.clients[playerNum].pingKickStrikes;
+    if (outWarnStrikes)    *outWarnStrikes    = udpServer.clients[playerNum].pingWarnStrikes;
+    if (outWarned)         *outWarned         = udpServer.clients[playerNum].pingWarned;
+    if (outLastEnforcedMs) *outLastEnforcedMs = udpServer.clients[playerNum].lastEnforcedPingMs;
 }
 
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {

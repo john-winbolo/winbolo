@@ -3789,6 +3789,7 @@ set(_unit_test_names
     error_smoothing
     shells_survive_cleared_lgm_slot
     ping_kick_defers_teardown
+    ping_kick_clears_strikes_on_disconnect
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
