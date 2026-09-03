@@ -159,6 +159,33 @@ static int segmentButton(const LoadSessionEntry *list, int count,
     return (hit && idx >= 0) ? idx : -1;
 }
 
+/* ---- Filter ------------------------------------------------------------
+ * A substring typed into the box above the table hides every row that does
+ * not contain it (case-insensitive) in its session name, map name or
+ * not-loadable note. Purely a view: row indices handed back to the caller are
+ * still indices into the full `list`, the loaded-row highlight and the [ / ]
+ * segment walk are untouched, and clearing the box shows everything again.
+ * Kept across window open/close so a narrowed list stays narrowed. */
+static char s_filter[64] = "";
+
+static bool filterMatches(const LoadSessionEntry *e, const char *filter) {
+    if (!filter || !filter[0]) return true;
+    const char *fields[3] = { e->name, e->map, e->note };
+    for (int f = 0; f < 3; f++) {
+        const char *hay = fields[f];
+        if (!hay || !hay[0]) continue;
+        size_t n = SDL_strlen(filter);
+        for (const char *h = hay; *h; h++) {
+            size_t k = 0;
+            while (k < n && h[k] &&
+                   SDL_tolower((unsigned char)h[k]) ==
+                   SDL_tolower((unsigned char)filter[k])) k++;
+            if (k == n) return true;
+        }
+    }
+    return false;
+}
+
 int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
                       const char *loadedDir, bool *needsRescan) {
     if (!open || !*open) return -1;
@@ -200,8 +227,27 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             ImGui::Separator();
         }
 
+        /* Filter box. Typing narrows the table on every keystroke; the "x"
+         * (or emptying the box) shows the whole list again. */
+        int shown = 0;
+        if (count > 0) {
+            ImGui::SetNextItemWidth(260.0f);
+            ImGui::InputTextWithHint("##sessfilter", "filter: name, map or note",
+                                     s_filter, sizeof s_filter);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x")) s_filter[0] = '\0';
+            for (int i = 0; i < count; i++) {
+                if (filterMatches(&list[i], s_filter)) shown++;
+            }
+            ImGui::SameLine();
+            if (s_filter[0]) ImGui::TextDisabled("%d of %d", shown, count);
+            else             ImGui::TextDisabled("%d session(s)", count);
+        }
+
         if (count <= 0) {
             ImGui::TextDisabled("No debug_sessions/ recordings found.");
+        } else if (shown <= 0) {
+            ImGui::TextDisabled("No session matches \"%s\".", s_filter);
         } else if (ImGui::BeginTable("sessions", 6,
                        ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
                        ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp)) {
@@ -217,6 +263,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             const bool appearing = ImGui::IsWindowAppearing();
             for (int i = 0; i < count; i++) {
                 const LoadSessionEntry *e = &list[i];
+                if (!filterMatches(e, s_filter)) continue;   /* hidden by the filter */
                 /* Highlight the CURRENTLY LOADED session's row (and scroll it
                  * into view when the window opens): "which part am I on?" is
                  * one glance, and the next part is the neighbouring row. */
