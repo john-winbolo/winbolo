@@ -43,7 +43,16 @@ extern "C" {
 #define VOICE_FRAME_SAMPLES     960   /* 20 ms mono @ 48 kHz */
 #define VOICE_MAX_PACKET        400   /* encoder output ceiling */
 #define VOICE_DEFAULT_BITRATE 24000
+/* Encoder complexity. The web build encodes on the same single thread that
+ * runs the game and draws the frame, so it trades quality for cycles the
+ * desktop build does not have to count; 2 keeps most of the saving over 5
+ * without dropping to the floor. The split is a judgement - the wasm build
+ * has not been profiled. */
+#ifdef __EMSCRIPTEN__
+#define VOICE_DEFAULT_COMPLEXITY  2
+#else
 #define VOICE_DEFAULT_COMPLEXITY  5
+#endif
 
 typedef struct VoiceEncoder VoiceEncoder;
 typedef struct VoiceDecoder VoiceDecoder;

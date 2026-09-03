@@ -8,14 +8,14 @@
  *
  * Replaces gui/sdl3/voice.c on the WASM target.  The client voice runtime
  * itself is shared (client_frontend/voice_client.c) and reaches the audio
- * device only through the twelve functions below, so this file is the whole
+ * device only through the thirteen functions below, so this file is the whole
  * of what the web build has to supply.
  *
- * Capture and the local loopback output are live: a microphone acquired
- * through getUserMedia feeds an AudioWorklet that hands 20 ms mono chunks to
- * the main thread, and encoded audio played back locally goes out through a
- * second worklet on the same context.  Per-talker playback still declines -
- * nothing plays remote talkers until voice is carried over the wire.
+ * A microphone acquired through getUserMedia feeds an AudioWorklet that hands
+ * 20 ms mono chunks to the main thread; the local loopback test goes back out
+ * through a second worklet on the same context, and every remote talker gets
+ * a playback node of their own there too, so the context mixes the talkers
+ * against each other and against the loopback.
  *
  * Voice runs its own AudioContext, pinned to 48 kHz, rather than sharing
  * sound_wasm.c's: that one is constructed with no sampleRate option and so
@@ -85,7 +85,9 @@ EM_JS(void, wb_voice_init, (int frameSamples, int captureQueueMax,
     moduleOk: false,
     live: false,
     capturing: false,
-    pending: false
+    pending: false,
+    /* Set once the player refuses the microphone, and never cleared. */
+    denied: false
   };
   Module.WB_voice = v;
 
@@ -133,6 +135,8 @@ EM_JS(void, wb_voice_init, (int frameSamples, int captureQueueMax,
 
   if (!ctx.audioWorklet) {
     console.warn("[WB_voice] AudioWorklet not available");
+    try { ctx.close(); } catch (e2) { }
+    v.ctx = null;
     return;
   }
 
@@ -221,6 +225,17 @@ EM_JS(int, wb_voice_capture_start, (void), {
   var v = Module.WB_voice;
   if (!v || !v.ctx || !v.modulePromise) return 0;
 
+  /* A refusal is answered once and stands for the life of the page: the
+     browser will not re-prompt for a permission it has recorded, and changing
+     the site setting takes a reload anyway.  Without this the runtime's
+     once-a-second retry would call getUserMedia every second for the rest of
+     the session - silently rejected on Chromium, a fresh prompt on Firefox.
+     Nothing clears the flag: no timer, no retry budget. */
+  if (v.denied) {
+    v.capturing = false;
+    return 0;
+  }
+
   /* Unhooks and drops whatever capture chain is currently held, so a chain
      that is about to be replaced does not stay in the audio graph feeding
      the same queue as its replacement. Every step is guarded and ordered
@@ -279,8 +294,18 @@ EM_JS(int, wb_voice_capture_start, (void), {
        we could not use anyway would spend the player's one permission
        decision on nothing. */
     if (!w || !w.moduleOk) throw new Error("voice worklet unavailable");
-    return navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 },
-                                                 video: false });
+    /* Echo cancellation, noise suppression and gain control are asked for
+       rather than left to the browser's habit of enabling them.  This build
+       carries no DSP of its own, so the browser's is the only thing standing
+       between a player on speakers and the echo they would send back, and a
+       default is convention rather than a guarantee.  A browser that cannot
+       honour one of these drops it instead of failing the request. */
+    return navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1,
+               echoCancellation: true,
+               noiseSuppression: true,
+               autoGainControl: true },
+      video: false });
   }).then(function(stream) {
     var w = Module.WB_voice;
     if (!w || !w.ctx) {
@@ -334,6 +359,13 @@ EM_JS(int, wb_voice_capture_start, (void), {
     if (w) {
       w.pending = false;
       w.live = false;
+      /* Only a refusal latches.  Everything else that lands here - no device,
+         a device already held by something else, the worklet gone - may well
+         succeed on the next attempt, and the runtime is entitled to try
+         again. */
+      if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) {
+        w.denied = true;
+      }
       /* A stream that was granted but could not be wired up is released
          rather than left holding the microphone open for nothing — along
          with any nodes that were built before the failure, and the chain
@@ -565,9 +597,9 @@ void voiceBackendShutdown(void) {
 *PURPOSE:
 *  Starts capturing, asking the browser for the microphone
 *  the first time.  Returns true once a request is in flight
-*  or the stream is already live, and false only when there
-*  is no way to ask at all - no getUserMedia, an insecure
-*  page, or no 48 kHz context to feed.
+*  or the stream is already live, and false when there is no
+*  way to ask - no getUserMedia, an insecure page, no 48 kHz
+*  context to feed - or when the player has already refused.
 *
 *  Acquiring the microphone is asynchronous and is not
 *  awaited: this runs inside an ImGui frame, and unwinding
@@ -575,7 +607,8 @@ void voiceBackendShutdown(void) {
 *  worth introducing.  So a true here is "asked", not
 *  "capturing" - voiceBackendCaptureIsOpen answers that once
 *  the browser has decided.  A player who refuses the prompt
-*  leaves the switch on and hears nothing.
+*  leaves the switch on and hears nothing, and is not asked
+*  again for the life of the page.
 *
 *  Calling it again while capture is already running is
 *  harmless and does not re-prompt.

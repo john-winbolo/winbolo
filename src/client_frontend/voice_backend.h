@@ -24,7 +24,8 @@
  *   platform supplies a driver rather than its own copy of
  *   the runtime.
  *
- *   Backends: src/gui/sdl3/voice.c (SDL3).
+ *   Backends: src/gui/sdl3/voice.c (SDL3),
+ *   src/wasm/voice_wasm.c (web).
  *
  *   Every entry point is called on the main thread. A
  *   backend that needs an audio thread of its own owns the
