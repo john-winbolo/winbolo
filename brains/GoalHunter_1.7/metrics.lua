@@ -85,7 +85,11 @@ function M.finish_tick(tick)
     end
   end
 
-  counters = {}
+  -- Cleared in place rather than replaced: `counters` is rebuilt from scratch
+  -- every tick, so a fresh table per tick per bot was pure garbage. Every
+  -- reader above either sums (order-independent) or sorts its keys, so reusing
+  -- the table's hash part cannot change any output.
+  for k in pairs(counters) do counters[k] = nil end
 
   if ticks >= REPORT_INTERVAL then
     -- Skip the line build entirely when there's no destination — in

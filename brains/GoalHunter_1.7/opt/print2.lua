@@ -44,9 +44,14 @@ local consecutive_failures        = 0
 -- per-line [x.xxms] within-tick stamp.
 local clock = os.clock
 
--- C threaded log writer (global injected by C; same one optimize.lua
--- uses). nil when unavailable → synchronous file fallback below.
-local na_opt_log = na_opt_log
+-- C threaded log writer (global injected by C; same one optimize.lua uses).
+-- nil when unavailable → synchronous file fallback below.
+--
+-- The global the C module registers is `gh_opt_log` (gh_opt_log.c,
+-- naOptLogRegister). This read used to name `na_opt_log`, which no longer
+-- exists, so it was always nil and EVERY handoff took the synchronous
+-- write+flush path on the brain thread.
+local gh_opt_log = gh_opt_log
 
 -- Design B batching: each tick's lines are serialized into one block and
 -- appended to `pending`. The accumulated blocks are handed to the writer
@@ -56,7 +61,7 @@ local na_opt_log = na_opt_log
 local pending           = {}      -- array of per-tick block strings
 local last_handoff      = 0       -- os.time() of last handoff (0 = never)
 local log_path          = nil     -- resolved per-bot path, set on first handoff
-local writer_started    = false   -- have we ensured the na_opt_log thread is up?
+local writer_started    = false   -- have we ensured the gh_opt_log thread is up?
 local FLUSH_INTERVAL_S  = 1   -- (was 5) tighter so --max-ticks exit drops only ~1s of tail
 local wallclock         = os.time
 
@@ -134,7 +139,7 @@ local function try_open_path(path)
     fail_hard("io.open", path .. " : " .. tostring(err))
   end
   -- Full-buffer: the handoff explicitly flushes once per batch (~5s), so
-  -- we don't want per-line OS writes. The threaded path (na_opt_log) is
+  -- we don't want per-line OS writes. The threaded path (gh_opt_log) is
   -- preferred and avoids this handle entirely.
   if f.setvbuf then pcall(f.setvbuf, f, "full") end
   file = f
@@ -154,7 +159,12 @@ end
 
 -- Hand the accumulated `pending` blocks to the writer thread (or the
 -- synchronous fallback) and reset. The disk I/O happens off the timed
--- think path when na_opt_log is present, so this is cheap to call.
+-- think path when gh_opt_log is present, so this is cheap to call.
+--
+-- ALL-OR-NOTHING per file: whether this bot's log goes through the queue is
+-- decided once, by whether gh_opt_log exists, and never changes for the
+-- process. Mixing the two paths on one file would interleave a synchronous
+-- write with a queued one and scramble the tick blocks.
 local function handoff()
   if #pending == 0 then
     last_handoff = wallclock()
@@ -164,20 +174,28 @@ local function handoff()
   for i = #pending, 1, -1 do pending[i] = nil end
   local path = resolve_path()
 
-  if na_opt_log then
-    -- Threaded path: writer thread opens path, appends text, closes.
-    -- The writer thread is started lazily by whoever needs it first. We
-    -- can't assume the profiler (optimize.lua) started it — append is a
-    -- silent no-op when the thread isn't running, which would drop the
-    -- whole log. So ensure it ourselves. open() is idempotent (returns
-    -- false if already running) and we only use append (per-path), never
-    -- the single shared "main file", so this never collides with the
-    -- profiler's own na_opt_log usage.
+  if gh_opt_log then
+    -- Threaded path: the writer thread keeps `path` open and appends to it.
+    -- The thread is started lazily by whoever needs it first. We can't assume
+    -- the profiler (optimize.lua) started it — append is a silent no-op when
+    -- the thread isn't running, which would drop the whole log. So ensure it
+    -- ourselves. ensure() starts the thread WITHOUT claiming the main log
+    -- file, which open(path) would have done: we only use append (per-path),
+    -- never the shared "main file", and claiming it here would have sent
+    -- optimize.lua's writes into this bot's print2 log.
     if not writer_started then
-      na_opt_log.open(path)
+      gh_opt_log.ensure()
       writer_started = true
     end
-    na_opt_log.append(path, text)
+    -- append returns false when the writer isn't running or the host's path
+    -- jail refused the path (a brain sandboxed to its own directory cannot
+    -- write into DEBUG_SESSION_DIR). Same rule as the synchronous branch
+    -- below: crash loudly rather than log into nothing.
+    -- raw=true: `text` is a run of complete "===TICK n===" blocks that already
+    -- ends in a newline, so the writer must not add another one.
+    if not gh_opt_log.append(path, text, true) then
+      fail_hard("gh_opt_log.append", path)
+    end
   else
     -- Synchronous fallback: persistent handle, full-buffered, one
     -- flush per handoff (every ~5s) — not per tick.
@@ -240,7 +258,7 @@ end
 -- buffer. braincore.c's killed branch calls this through the
 -- _G.brain_flush_killed global, passing the Lua "source:line" where the
 -- budget ran out. We wrap the partial buffer in banner lines and then reuse
--- M.flush(), so the write path (serialize block -> pending -> na_opt_log /
+-- M.flush(), so the write path (serialize block -> pending -> gh_opt_log /
 -- file handoff) is byte-for-byte the normal one. No-op on an empty buffer,
 -- so a second call (or an opt/non-debug run) costs nothing.
 function M.flush_killed(site)

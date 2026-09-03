@@ -1266,6 +1266,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   naThreatRegister(L);
   naShieldStampRegister(L);
   naOptLogRegister(L);
+  /* The crash-log writer lives in bolo_static, which cannot call into the
+   * brain C bindings directly; hand it the flush entry point instead so a
+   * brain crash report is written after the queued print2 output, not before
+   * it. Idempotent — every brain instance installs the same function. */
+  brainCoreSetLogFlushHook(naOptLogFlushSync);
   naAttackRegister(L);
 
   /* Compute brain directory once at function scope so it can be reused for

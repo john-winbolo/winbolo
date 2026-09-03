@@ -97,6 +97,13 @@ typedef enum {
 DWORD oldTick;     /* Number of ticks passed */
 bool isQuiet = FALSE;
 bool isNoInput = FALSE;
+/* -asap: run game ticks back-to-back instead of one per SERVER_TICK_LENGTH of
+ * wall clock. Nothing in a tick needs real time to pass between ticks --
+ * botManagerTick joins the worker pool inside the tick -- so the only thing
+ * the 20 ms timer buys a headless measurement run is wall-clock waiting.
+ * Read from the tick loop and from the command loops (which shorten their
+ * sleeps so they don't pace the game); set once, before any thread starts. */
+bool isAsap = FALSE;
 unsigned int serverTimerGameID = 1;
 /* The dedicated-server replay-log state (former fileName/isLogging/
  * dontSendLog globals) is now private to server_dedicated_log.c. This TU
@@ -275,7 +282,9 @@ void processKeys(bool isQuiet) {
 			if (alarmRaised == alarmInterrupt) {
 				break;
 			}
-			Sleep(1000);
+			/* Under -asap the whole game can finish inside one of these
+			 * sleeps, so poll fast enough not to add a second to the run. */
+			Sleep(isAsap ? 1 : 1000);
 		}
 	} else {
 		/* Start background thread to read stdin */
@@ -353,7 +362,7 @@ void processKeys(bool isQuiet) {
 					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
 				}
 			} else {
-				Sleep(100);
+				Sleep(isAsap ? 1 : 100);
 			}
 		}
 
@@ -511,9 +520,9 @@ static void processCmdStdin(CmdStdin *cs) {
              * is expected to supply an explicit exit/shutdown op once
              * its goldens have been written. */
 #ifdef _WIN32
-            Sleep(50);
+            Sleep(isAsap ? 1 : 50);
 #else
-            SDL_Delay(50);
+            SDL_Delay(isAsap ? 1 : 50);
 #endif
             continue;
         }
@@ -521,9 +530,9 @@ static void processCmdStdin(CmdStdin *cs) {
         uint32_t serverTick = serverSimGetTick(serverSim);
         if (cmd.tick > serverTick) {
 #ifdef _WIN32
-            Sleep(10);
+            Sleep(isAsap ? 0 : 10);
 #else
-            SDL_Delay(10);
+            SDL_Delay(isAsap ? 0 : 10);
 #endif
             continue;
         }
@@ -604,6 +613,30 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
 #endif
 }
 
+/* -asap tick driver: the serverGameTimer body with the elapsed-time gate
+ * removed, on a thread of its own instead of the timer's. Same lock, same
+ * shutdown handshake, same `ticks` counter -- so -ticks, -snapinterval and
+ * -finaljson count exactly what they counted under the timer. */
+static int SDLCALL serverAsapLoop(void *unused) {
+  (void)unused;
+  while (!SDL_GetAtomicInt(&g_serverShuttingDown) && g_serverTickLock != NULL) {
+    SDL_LockMutex(g_serverTickLock);
+    if (SDL_GetAtomicInt(&g_serverShuttingDown)) {
+      SDL_UnlockMutex(g_serverTickLock);
+      break;
+    }
+    serverInstanceTick(serverSim);
+    ticks++;
+    SDL_UnlockMutex(g_serverTickLock);
+    /* The command loops (processKeys / processCmdStdin) and the shutdown
+     * path both want g_serverTickLock or the global mutex; yield between
+     * ticks so a "quit" is not starved on a single-core box. */
+    SDL_Delay(0);
+  }
+  return 0;
+}
+static SDL_Thread *serverAsapThread = NULL;
+
 /* Stop the game-tick timer and guarantee no tick callback is — or will be —
  * executing before the caller frees the sim / bot lua_States. timeKillEvent
  * and SDL_RemoveTimer only unschedule future callbacks; they do not join an
@@ -615,11 +648,19 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
  * path. */
 static void serverQuiesceGameTimer(void) {
   SDL_SetAtomicInt(&g_serverShuttingDown, 1);
+  if (isAsap) {
+    /* No timer was armed; join the tick thread instead. SDL_WaitThread is a
+     * no-op on NULL, and the flag above makes the loop exit at its next
+     * iteration boundary. */
+    SDL_WaitThread(serverAsapThread, NULL);
+    serverAsapThread = NULL;
+  } else {
 #ifdef _WIN32
-  timeKillEvent(serverTimerGameID);
+    timeKillEvent(serverTimerGameID);
 #else
-  SDL_RemoveTimer(serverTimerGameID);
+    SDL_RemoveTimer(serverTimerGameID);
 #endif
+  }
   if (g_serverTickLock != NULL) {
     SDL_LockMutex(g_serverTickLock);
     SDL_UnlockMutex(g_serverTickLock);
@@ -801,6 +842,12 @@ void printArgs() {
   fprintf(stderr, "                crashes every tick stays in the game instead of being\n");
   fprintf(stderr, "                removed. Wanted for measurement (a kick is a huge fork),\n");
   fprintf(stderr, "                surprising on a live server.\n");
+  fprintf(stderr, "-asap         - Run game ticks back-to-back instead of one per 20 ms of\n");
+  fprintf(stderr, "                wall clock. The simulation is unchanged (same ticks, same\n");
+  fprintf(stderr, "                order, same -ticks/-snapinterval counting); it just stops\n");
+  fprintf(stderr, "                waiting for real time between them, so a headless\n");
+  fprintf(stderr, "                measurement or golden run finishes as fast as the CPU\n");
+  fprintf(stderr, "                allows. Pointless with real clients connected.\n");
 #if WB_ENABLE_NETIMPAIR
   fprintf(stderr, "-netimpair <spec> - Apply network impairment to both directions for testing.\n");
   fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
@@ -1312,6 +1359,7 @@ int main(int argc, char **argv) {
     isQuiet = TRUE;
   }
   isNoInput = argExist(argc, argv, "noinput");
+  isAsap = (argExist(argc, argv, "asap") == TRUE);
 
   if (argExist(argc, argv, "maxplayers") == TRUE) {
     maxPlayers = atoi((char *) argv[findArg(argc, argv, "maxplayers")]);
@@ -2346,13 +2394,21 @@ int main(int argc, char **argv) {
   /* Created before the timer starts so serverGameTimer always sees a valid
    * lock; serverQuiesceGameTimer drains the timer through it on shutdown. */
   g_serverTickLock = SDL_CreateMutex();
+  oldTick = SDL_GetTicks();
+  if (isAsap) {
+    fprintf(stderr, "ASAP mode: ticks run back-to-back\n");
+    serverAsapThread = SDL_CreateThread(serverAsapLoop, "wb-asap-tick", NULL);
+    if (serverAsapThread == NULL) {
+      fprintf(stderr, "Error: -asap could not start the tick thread\n");
+      return 0;
+    }
+  } else {
 #ifdef _WIN32
-  oldTick = SDL_GetTicks();
-  serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
+    serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
 #else
-  oldTick = SDL_GetTicks();
-  serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
+    serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
 #endif
+  }
 
   {
     CmdStdin *cmdStream = NULL;

@@ -202,7 +202,13 @@ function M.flush()
 end
 
 function M.close()
-  if gh_opt_log then gh_opt_log.close() end
+  -- FLUSH, not close: the writer thread is process-global and shared with
+  -- print2 and with the other bots' brains. Brain.close runs once per bot, so
+  -- stopping the thread here would leave every bot that closes after this one
+  -- with a dead writer (and print2 hard-fails when its append is refused).
+  -- The thread has no OS resources to leak -- it fflushes after every batch and
+  -- exits with the process.
+  if gh_opt_log then gh_opt_log.flush() end
   if file then file:close(); file = nil; file_dir = nil end
   file_dir = nil
 end

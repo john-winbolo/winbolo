@@ -3688,7 +3688,6 @@ function M.update_attack_substate(goal, state, world, info)
   state.squad_blitz_in_position = nil
   state.squad_blitz_aimed       = nil
 
-  local _t_as = clock_us()
   state._attack_substate_name = goal.substate
   -- Tally on-target shots and bump bullets_needed for any misses.
   update_shot_accounting(goal, world)
@@ -6454,8 +6453,14 @@ function M.update_attack_substate(goal, state, world, info)
   -- detree: shoot trees between tank and pill until clear
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "detree" then
-    -- Recount trees for behavioral check; viz only when debug mode on
-    local trees_left = forest_tiles_on_path(tmx, tmy, pmx, pmy, BRAIN_DEBUG_MODE)
+    -- Tree recount is display-only: the substate advances on `fired`/`needed`
+    -- below, and the only reader of trees_left is the stripped viz.text.  The
+    -- walk (a U.line_walk with a per-tile closure) is therefore debug-only, and
+    -- its do_viz argument was already BRAIN_DEBUG_MODE.
+    local trees_left = 0
+    if BRAIN_DEBUG_MODE then
+      trees_left = forest_tiles_on_path(tmx, tmy, pmx, pmy, true)
+    end
     local needed = goal._detree_shots_needed or 0
     -- Count actual shots fired by tracking shell count drops
     local fired = (goal._detree_shells_at_start or info.shells) - info.shells
