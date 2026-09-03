@@ -279,21 +279,25 @@ static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
 }
 
 /* Cut one sprite out of a whole-sheet BMP (either the skin's own or
- * data/skin.bmp) into the output sheet, nearest-neighbor scaled when the
- * tile size is above 16.  False when there is no source sheet. */
+ * data/skin.bmp) into the output sheet.  `srcDensity` is the multiple the
+ * source sheet is drawn at and `scale` the multiple the output sheet is
+ * built at, so the crop is taken at srcDensity and lands at scale.  False
+ * when there is no source sheet. */
 static bool blitSheetSprite(SDL_Surface *sheet, SDL_Surface *src,
-                            const TileMapEntry *e, int scale) {
+                            const TileMapEntry *e, int scale, int srcDensity) {
     if (!src) return false;
 
+    int D = srcDensity < 1 ? 1 : srcDensity;
     int w = e->width  * scale;
     int h = e->height * scale;
     int dstX = e->sheetX * scale;
     int dstY = e->sheetY * scale;
 
-    if (scale == 1) {
+    if (D == scale) {
+        /* Same multiple both sides: a straight copy of the sprite's rect. */
         blitFromBMP(sheet, src, dstX, dstY,
-                    e->sheetX, e->sheetY, e->width, e->height);
-    } else {
+                    e->sheetX * D, e->sheetY * D, e->width * D, e->height * D);
+    } else if (D == 1) {
         /* Blit the sprite at 1x, then nearest-neighbor scale it up. */
         SDL_Surface *tmpSurf = SDL_CreateSurface(e->width, e->height,
                                                  SDL_PIXELFORMAT_RGBA32);
@@ -315,6 +319,16 @@ static bool blitSheetSprite(SDL_Surface *sheet, SDL_Surface *src,
             }
             SDL_DestroySurface(tmpSurf);
         }
+    } else {
+        /* A sheet drawn at a different multiple than the slot it lands in.
+           Linear when shrinking, so a 2x sheet at zoom 1 keeps what every
+           source pixel contributes instead of dropping every other one. */
+        SDL_Rect srcRect = { e->sheetX * D, e->sheetY * D,
+                             e->width * D, e->height * D };
+        SDL_Rect dstRect = { dstX, dstY, w, h };
+        SDL_BlitSurfaceScaled(src, &srcRect, sheet, &dstRect,
+                              D > scale ? SDL_SCALEMODE_LINEAR
+                                        : SDL_SCALEMODE_NEAREST);
     }
     return true;
 }
@@ -332,10 +346,14 @@ static SDL_Surface *loadKeyedSheetFromSurface(SDL_Surface *raw) {
     return out;
 }
 
-/* Load the skin's own whole sheet — tiles.bmp, else skin.bmp — color-keyed
- * the same way as data/skin.bmp.  NULL when the skin holds neither. */
-static SDL_Surface *loadSkinSheet(struct SkinSource *skin) {
-    static const char *names[] = { "tiles.bmp", "skin.bmp" };
+/* Load the skin's own whole sheet — tiles.bmp, else skin.bmp, else the
+ * skin32.bmp that 1.x skins ship — color-keyed the same way as
+ * data/skin.bmp.  Writes the multiple the sheet is drawn at to *outDensity.
+ * NULL when the skin holds none of them. */
+static SDL_Surface *loadSkinSheet(struct SkinSource *skin, int *outDensity) {
+    static const char *names[] = { "tiles.bmp", "skin.bmp", "skin32.bmp" };
+
+    if (outDensity) *outDensity = 1;
 
     for (int i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++) {
         void *buf = NULL;
@@ -348,7 +366,23 @@ static SDL_Surface *loadSkinSheet(struct SkinSource *skin) {
             keyed = loadKeyedSheetFromSurface(SDL_LoadBMP_IO(io, true));
         }
         SDL_free(buf);
-        if (keyed) return keyed;
+        if (keyed) {
+            /* The multiple comes from the pixels, never from the name: the
+               32 in skin32.bmp is its tile size, which is 2x here, but
+               nothing holds an author to that.  A sheet that is not a whole
+               multiple on both axes is used as 1x, which is what happened to
+               every sheet before, so it earns a warning and no more. */
+            int d = keyed->w / TILE_FILE_X;
+            if (d >= 1 && d <= SKIN_DENSITY_MAX &&
+                keyed->w == TILE_FILE_X * d && keyed->h == TILE_FILE_Y * d) {
+                if (outDensity) *outDensity = d;
+            } else {
+                WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                        "tileLoaderBuildSheet: skin %s is %dx%d, not a whole multiple of %dx%d; using it as 1x",
+                        names[i], keyed->w, keyed->h, TILE_FILE_X, TILE_FILE_Y);
+            }
+            return keyed;
+        }
         WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: skin %s is not a usable BMP",
                 names[i]);
     }
@@ -393,7 +427,8 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
 
     /* The skin's whole sheet is read once and cropped per sprite, so a
        sheet-only skin costs one decode per build. */
-    SDL_Surface *skinSheet = skin ? loadSkinSheet(skin) : NULL;
+    int skinSheetDensity = 1;
+    SDL_Surface *skinSheet = skin ? loadSkinSheet(skin, &skinSheetDensity) : NULL;
 
     /* Name the skin in the summary below so a skin resolving to the wrong
        assets can be told apart from the built-in set in the log. */
@@ -455,7 +490,8 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
                 }
             }
 
-            if (!loaded && blitSheetSprite(sheet, skinSheet, e, scale)) {
+            if (!loaded &&
+                blitSheetSprite(sheet, skinSheet, e, scale, skinSheetDensity)) {
                 loaded = true;
                 skinSheetCount++;
             }
@@ -479,15 +515,16 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
             }
         }
 
-        /* Fall back to BMP — blit at 1x then scale up if needed. */
-        if (!loaded && blitSheetSprite(sheet, bmp, e, scale)) {
+        /* Fall back to BMP — data/skin.bmp is always drawn at 1x. */
+        if (!loaded && blitSheetSprite(sheet, bmp, e, scale, 1)) {
             bmpCount++;
         }
     }
 
-    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d sheet sprites",
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d sheet sprites from a density %d sheet",
             scale, sheetW, sheetH, svgCount, pngCount, bmpCount,
-            skinLabel, skinSvgCount, skinPngCount, skinSheetCount);
+            skinLabel, skinSvgCount, skinPngCount, skinSheetCount,
+            skinSheetDensity);
 
     SDL_free(tmpBuf);
     if (rast) nsvgDeleteRasterizer(rast);

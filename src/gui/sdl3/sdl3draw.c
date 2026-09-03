@@ -384,7 +384,26 @@ void sdl3DrawReloadTiles(void) {
   sdl3LoadTiles();
 }
 
-/* Loads background.bmp as gBackgroundTex: from the active skin when it
+/* Reads one BMP by name out of a skin and turns it into a texture.  NULL
+ * when the skin carries no such file or the bytes do not decode. */
+static SDL_Texture *sdl3LoadSkinBmpTexture(SkinSource *skin, const char *name) {
+  void        *buf = NULL;
+  size_t       len = 0;
+  SDL_Texture *tex = NULL;
+
+  if (!skinSourceRead(skin, name, &buf, &len)) {
+    return NULL;
+  }
+  SDL_IOStream *io = SDL_IOFromMem(buf, len);
+  if (io != NULL) {
+    /* closeio closes the stream, not the bytes behind it. */
+    tex = sdlLoadBmpStreamAsTexture(gRenderer, io, true, false);
+  }
+  SDL_free(buf);
+  return tex;
+}
+
+/* Loads the game background as gBackgroundTex: from the active skin when it
  * carries one, otherwise from data/background.bmp beside the
  * executable. */
 static bool sdl3LoadBackground(void) {
@@ -394,15 +413,12 @@ static bool sdl3LoadBackground(void) {
 
   SkinSource *skin = skinGetActiveSource();
   if (skin != NULL) {
-    void  *buf = NULL;
-    size_t len = 0;
-    if (skinSourceRead(skin, "background.bmp", &buf, &len)) {
-      SDL_IOStream *io = SDL_IOFromMem(buf, len);
-      if (io != NULL) {
-        /* closeio closes the stream, not the bytes behind it. */
-        gBackgroundTex = sdlLoadBmpStreamAsTexture(gRenderer, io, true, false);
-      }
-      SDL_free(buf);
+    /* background.bmp is ours; screen.bmp is what 1.x skins call it. */
+    static const char *names[] = { "background.bmp", "screen.bmp" };
+    for (int i = 0;
+         i < (int)(sizeof(names) / sizeof(names[0])) && gBackgroundTex == NULL;
+         i++) {
+      gBackgroundTex = sdl3LoadSkinBmpTexture(skin, names[i]);
     }
   }
 
@@ -416,7 +432,7 @@ static bool sdl3LoadBackground(void) {
   }
 
   if (gBackgroundTex == NULL) {
-    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
+    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3DrawBackground: could not load a background: %s", SDL_GetError());
     return FALSE;
   }
   SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);
