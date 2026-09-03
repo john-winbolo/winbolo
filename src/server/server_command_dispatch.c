@@ -304,8 +304,15 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             if (p->selfMuted) flags |= PLAYER_FLAG_VOICE_MUTED;
         }
         playersSetClientFlags(&gs->plyrs, (BYTE)senderSlot, flags);
-        /* No control event: the bits ride the snapshot and the lobby slot,
-         * both of which already carry clientFlags. */
+        /* During a running game the snapshot carries clientFlags every
+         * tick, so the new bits reach every client on their own. The lobby
+         * slot only goes out when it is published, so a change made while
+         * clients are looking at the lobby has to publish it here. Same
+         * gate as the lobby-slot heartbeat in server_lifecycle.c. */
+        if (serverSimGetState(sim) == serverStateLobby ||
+            serverSimGetState(sim) == serverStateCountdown) {
+            serverSimPublishLobbySlot(sim, (BYTE)senderSlot);
+        }
         return CMD_OK;
     }
     case CMD_ALLIANCE_REQUEST: {
