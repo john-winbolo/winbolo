@@ -856,6 +856,38 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 }
             }
         }
+
+        /* Texture filter.  Set on the sheet that is already there, so a
+           pick shows on the next frame with no rebuild.  Not greyed by
+           what the skin holds: it applies to whatever art is loaded. */
+        {
+            const char *filterLabels[] = {
+                langGetText(STR_DLGSKIN_TEXFILTER_NEAREST),
+                langGetText(STR_DLGSKIN_TEXFILTER_LINEAR),
+                langGetText(STR_DLGSKIN_TEXFILTER_PIXELART),
+            };
+            int tfIdx = (int)gfxGetTextureFilter();
+            if (tfIdx < 0 || tfIdx > 2) tfIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_TEXFILTER));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##texfilter", filterLabels[tfIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool sel = (tfIdx == i);
+                    if (ImGui::Selectable(filterLabels[i], sel) && i != tfIdx) {
+                        gfxSetTextureFilter((GfxTextureFilter)i);
+                        gameFrontSaveCurrentPrefs();
+                        sdl3DrawSetTilesScaleMode(
+                            sdl3DrawScaleModeForFilter((GfxTextureFilter)i));
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            imguiHelpTooltip("Shows most on rotated sprites and on smooth "
+                             "sub-pixel motion.  Textures drawn by the "
+                             "interface ignore it, which is why the tiles "
+                             "above do not change.");
+        }
     }
 
     /* ---- Sound ---- */

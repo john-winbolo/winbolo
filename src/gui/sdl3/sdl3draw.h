@@ -51,6 +51,7 @@ extern "C" {
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
  * existing callers compile unchanged. */
 #include "sdl3draw_status.h"
+#include "gfx_settings.h"    /* GfxTextureFilter */
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32
@@ -154,6 +155,27 @@ void sdl3DrawReloadTiles(void);
 *  texture only; the draw sites reload it lazily.
 *********************************************************/
 void sdl3DrawReloadBackground(void);
+
+/*********************************************************
+*NAME:          sdl3DrawScaleModeForFilter
+*PURPOSE:
+*  Turns the player's texture filter setting into the SDL
+*  scale mode that matches it.  Anything unrecognised maps
+*  to nearest.  Lives here because gfx_settings.h has no
+*  SDL of its own.
+*********************************************************/
+SDL_ScaleMode sdl3DrawScaleModeForFilter(GfxTextureFilter filter);
+
+/*********************************************************
+*NAME:          sdl3DrawSetTilesScaleMode
+*PURPOSE:
+*  Sets how the tile sheet is sampled.  Applies to the
+*  current sheet when there is one, and is kept for every
+*  sheet built afterwards, so calling it before the first
+*  build is fine.  The status bar draws from the same
+*  texture object and follows without a call of its own.
+*********************************************************/
+void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode);
 
 /*********************************************************
 *NAME:          sdl3DrawSetReconfigureGuard

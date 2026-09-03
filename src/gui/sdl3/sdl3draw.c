@@ -130,6 +130,12 @@ static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * g
    atlas (bg_game) can tell that copy is stale after a skin change. */
 static unsigned int  gTilesGeneration = 0;
 
+/* How the tile sheet is sampled.  Held here rather than read from
+   gfx_settings at each build so a sheet built before the settings are
+   loaded still picks the choice up, and so the default matches what the
+   game did before the setting existed. */
+static SDL_ScaleMode gTilesScaleMode = SDL_SCALEMODE_NEAREST;
+
 /* Phase 4 render-target textures.
    Status icon panels (bases/pills/tanks) are drawn directly to the
    framebuffer each frame rather than cached in off-screen textures,
@@ -365,7 +371,7 @@ static bool sdl3LoadTiles(void) {
     return FALSE;
   }
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
-  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
+  SDL_SetTextureScaleMode(gTilesTex, gTilesScaleMode);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
   gTilesGeneration++;
   return TRUE;
@@ -373,6 +379,22 @@ static bool sdl3LoadTiles(void) {
 
 unsigned int sdl3DrawGetTilesGeneration(void) {
   return gTilesGeneration;
+}
+
+SDL_ScaleMode sdl3DrawScaleModeForFilter(GfxTextureFilter filter) {
+  switch (filter) {
+    case GFX_FILTER_LINEAR:   return SDL_SCALEMODE_LINEAR;
+    case GFX_FILTER_PIXELART: return SDL_SCALEMODE_PIXELART;
+    case GFX_FILTER_NEAREST:
+    default:                  return SDL_SCALEMODE_NEAREST;
+  }
+}
+
+void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
+  gTilesScaleMode = mode;
+  if (gTilesTex != NULL) {
+    SDL_SetTextureScaleMode(gTilesTex, mode);
+  }
 }
 
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading

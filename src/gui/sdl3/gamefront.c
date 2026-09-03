@@ -623,6 +623,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                  "built-in assets", gameFrontSkinId);
   }
 
+  /* Push the saved texture filter to the draw layer. There is no sheet
+     yet; the mode is kept and applied when one is built. */
+  sdl3DrawSetTilesScaleMode(sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+
   /* Apply persisted language, or auto-detect if this is a fresh
    * install (empty Language slot in the INI). Either way, this runs
    * before any dialog draws so langGetText() returns the right text

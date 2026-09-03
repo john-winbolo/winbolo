@@ -1856,6 +1856,10 @@ static const LangEntry langTable[] = {
     {1963, "Match pixelation"},
     {1964, "Smooth"},
     {1965, "Smooth shells"},
+    {1966, "Texture filter"},
+    {1967, "Nearest"},
+    {1968, "Linear"},
+    {1969, "Pixel art"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

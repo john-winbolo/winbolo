@@ -54,10 +54,10 @@ typedef enum GfxTextureFilter {
     GFX_FILTER_PIXELART = 2
 } GfxTextureFilter;
 
-/* Only tile detail has a reader yet.  Animation smoothness, smooth shells
-   and the texture filter are stored and persisted here so all four keys go
-   through the same prefs code; the drawing that reads them lands later.
-   None of these is dead - do not remove them. */
+/* All four are read by the drawing code: tile detail picks the size the
+   sheet is built at, animation smoothness and smooth shells decide where a
+   sprite is put on screen, and the texture filter sets how the sheet is
+   sampled.  None of these is dead - do not remove them. */
 
 GfxTileDetail     gfxGetTileDetail(void);
 void              gfxSetTileDetail(GfxTileDetail v);
