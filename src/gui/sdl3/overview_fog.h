@@ -66,8 +66,10 @@ extern "C" {
  * `liveCount` regions, OVERVIEW_FOG_ALPHA for one more than OVERVIEW_FOG_RAMP
  * squares away from all of them, and a smoothstep of the Euclidean distance to
  * the nearest region in between — which is what rounds the corners the regions
- * are square at. No live regions at all is a legitimate call and fogs the whole
- * map. */
+ * are square at. A region's alpha scales its brightness: 255 gives the values
+ * above, a lower one lifts every square it covers less far out of the fog, and
+ * 0 reads as if the region were not in the list. No live regions at all is a
+ * legitimate call and fogs the whole map. */
 void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask);
 
 #ifdef __cplusplus

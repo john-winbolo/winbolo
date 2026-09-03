@@ -53,6 +53,10 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask) {
     for (i = 0; i < liveCount; i++) {
         const OverviewRect *rect = &live[i];
 
+        /* A region faded right out lifts no square out of the fog, so the
+         * walk below could only ever write back what is already there. */
+        if (rect->alpha == 0) continue;
+
         /* The region plus its ramp, trimmed to the map. Squares off the map
          * are not drawn and the texture clamps at its edge, so a region that
          * runs into the map border simply keeps its brightness to the border
@@ -84,9 +88,17 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask) {
                 float d = sqrtf((float)(dx * dx + dy * dy));
                 if (d >= (float)OVERVIEW_FOG_RAMP) continue;
 
+                /* alpha scales how far this region lifts the square out of
+                 * full fog: at 255 the lift is the whole way and the value is
+                 * the ramp's, and as the region fades every square it covers
+                 * darkens towards the fog while the ramp keeps its shape at
+                 * the edges. Rounded to nearest, the way the ramp itself is. */
+                int lift = ((OVERVIEW_FOG_ALPHA - (int)overviewFogRampValue(d))
+                            * (int)rect->alpha + 127) / 255;
+
                 /* Regions overlap — the brightest answer wins, or a pill's
                  * ramp would darken ground the tank's block has live. */
-                BYTE v = overviewFogRampValue(d);
+                BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA - lift);
                 if (v < row[x]) row[x] = v;
             }
         }
