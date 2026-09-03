@@ -3970,6 +3970,7 @@ set(_unit_test_names
     voice_segment_roundtrip
     voice_segment_rejects_malformed
     voice_jitter_ordering_and_plc
+    voice_jitter_undecodable_run
     voice_jitter_under_loss
     voice_flood_cap_enforced
     voice_talker_select_ranks_recent

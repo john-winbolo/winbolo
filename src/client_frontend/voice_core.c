@@ -308,6 +308,7 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
     int i;
     int found = -1;
     uint8_t flags;
+    bool decoded;
 
     if (sp == NULL || pcm == NULL || !sp->primed) {
         return false;
@@ -333,18 +334,33 @@ bool voiceSpeakerPop(VoiceSpeaker *sp, int16_t *pcm) {
         return true;
     }
 
-    if (voiceDecoderDecode(sp->dec, sp->slots[found].data,
-                           sp->slots[found].len, pcm) != VOICE_FRAME_SAMPLES) {
-        voiceSpeakerConceal(sp, pcm);
-    } else {
+    decoded = (voiceDecoderDecode(sp->dec, sp->slots[found].data,
+                                  sp->slots[found].len, pcm) ==
+               VOICE_FRAME_SAMPLES);
+    if (decoded) {
         sp->stats.played++;
+    } else {
+        voiceSpeakerConceal(sp, pcm);
     }
 
+    /* The slot is spent either way: a payload that would not decode is no
+     * more use on the next pop than it was on this one. */
     flags = sp->slots[found].flags;
     sp->slots[found].present = false;
     sp->count--;
     sp->nextSeq++;
-    sp->consecutivePlc = 0;
+
+    if (decoded) {
+        sp->consecutivePlc = 0;
+    } else {
+        /* Concealed like a missing frame, and counted like one: a run of
+         * payloads that will not decode has to end playback too, or the
+         * speaker conceals forever. */
+        sp->consecutivePlc++;
+        if (sp->consecutivePlc >= VOICE_JITTER_MAX_PLC) {
+            voiceSpeakerUnprime(sp);
+        }
+    }
 
     /* The talker finished on this frame: drop anything still held so the
      * next utterance starts cleanly instead of trailing the last one. */

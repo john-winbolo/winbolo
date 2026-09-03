@@ -6855,9 +6855,14 @@ static void serverPumpVoice(ServerSim *sim) {
 
             /* Voice off for this server: the loop still drains the ring, so
              * a client that sends anyway cannot fill it and stall behind
-             * frames nobody will read, but nothing is forwarded and nothing
-             * counts as accepted. */
-            if (!voiceOn) continue;
+             * frames nobody will read.  Nothing is forwarded and nothing
+             * counts as accepted, but the segment is counted as dropped so
+             * an operator can see traffic arriving at a server that will
+             * not carry it. */
+            if (!voiceOn) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
 
             if (accepted >= VOICE_SEGMENTS_PER_TICK) {
                 udpServer.voiceSegsDropped++;

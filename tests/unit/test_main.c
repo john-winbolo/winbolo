@@ -515,6 +515,7 @@ static const UnitTestEntry s_tests[] = {
     { "voice_segment_roundtrip",                 run_voice_segment_roundtrip                 },
     { "voice_segment_rejects_malformed",         run_voice_segment_rejects_malformed         },
     { "voice_jitter_ordering_and_plc",           run_voice_jitter_ordering_and_plc           },
+    { "voice_jitter_undecodable_run",            run_voice_jitter_undecodable_run            },
     { "voice_jitter_under_loss",                 run_voice_jitter_under_loss                 },
     { "voice_flood_cap_enforced",                run_voice_flood_cap_enforced                },
     { "voice_talker_select_ranks_recent",        run_voice_talker_select_ranks_recent        },

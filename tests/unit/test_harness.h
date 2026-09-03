@@ -1046,6 +1046,12 @@ int run_voice_segment_rejects_malformed(void);
  * later utterance at an unrelated sequence number resumes it. */
 int run_voice_jitter_ordering_and_plc(void);
 
+/* Frames that arrive but will not decode (test_voice_jitter.c): each is
+ * concealed and consumed like a missing one, a run of them ends playback
+ * instead of concealing indefinitely, and the end-of-utterance flag is
+ * honoured on a frame that failed to decode. */
+int run_voice_jitter_undecodable_run(void);
+
 /* Jitter buffer under adverse arrival (test_voice_jitter_loss.c): a generated
  * loss / reorder / burst-outage pattern is pushed a tick at a time, and the
  * per-speaker counters are used to check that concealment matches what was

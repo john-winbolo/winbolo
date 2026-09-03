@@ -8,6 +8,10 @@
  * whatever it holds to the decoder, so a payload the decoder rejects would
  * exercise the failure path instead of the ordering being tested. The
  * sequence numbers are the point of the test, not the audio.
+ *
+ * The exception is the last case, which is about that failure path: a frame
+ * can arrive on time and still be unusable, and the buffer has to treat it
+ * as a loss rather than pretend it played.
  */
 #include <math.h>
 #include <stdint.h>
@@ -172,6 +176,92 @@ int run_voice_jitter_ordering_and_plc(void) {
     voiceSpeakerDestroy(NULL);
     voiceSpeakerPush(NULL, 0, 0, frames[0].data, frames[0].len);
     UT_ASSERT(!voiceSpeakerPop(NULL, pcm));
+
+    return 0;
+}
+
+/* A payload the decoder refuses: one byte whose table-of-contents asks for
+ * frame-count code 3, which needs a second byte to say how many frames
+ * follow.  Opus rejects the packet outright rather than decoding part of it,
+ * so a frame carrying this arrives intact and is still unusable — corruption
+ * that survived the transport's own checks. */
+static const uint8_t s_undecodable[] = { 0x03 };
+
+int run_voice_jitter_undecodable_run(void) {
+    EncodedFrame frames[TEST_FRAMES];
+    VoiceSpeaker *sp;
+    VoiceSpeakerStats st;
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    int i;
+
+    UT_ASSERT(encodeFrames(frames, TEST_FRAMES));
+
+    /* --- a run of frames that arrive but do not decode ends playback --- */
+    sp = voiceSpeakerCreate();
+    UT_ASSERT(sp != NULL);
+
+    voiceSpeakerPush(sp, 0, 0, frames[0].data, frames[0].len);
+    voiceSpeakerPush(sp, 1, 0, frames[1].data, frames[1].len);
+    UT_ASSERT(voiceSpeakerPop(sp, pcm));   /* 0 */
+    UT_ASSERT(voiceSpeakerPop(sp, pcm));   /* 1 */
+    voiceSpeakerGetStats(sp, &st);
+    UT_ASSERT_MSG(st.played == 2, "played %u before the run, expected 2",
+                  st.played);
+
+    /* Nothing is missing now — every slot in the sequence arrives on time —
+     * but none of them decodes, so each one is concealed instead. */
+    for (i = 0; i < VOICE_JITTER_MAX_PLC; i++) {
+        voiceSpeakerPush(sp, (uint8_t)(2 + i), 0, s_undecodable,
+                         (int)sizeof(s_undecodable));
+    }
+    for (i = 0; i < VOICE_JITTER_MAX_PLC; i++) {
+        UT_ASSERT_MSG(voiceSpeakerPop(sp, pcm), "stopped after %d undecodable",
+                      i);
+    }
+
+    /* Each was concealed and consumed: none decoded, and none was offered a
+     * second time. */
+    voiceSpeakerGetStats(sp, &st);
+    UT_ASSERT_MSG(st.played == 2, "played %u after the run, expected 2",
+                  st.played);
+    UT_ASSERT_MSG(st.concealed == (uint32_t)VOICE_JITTER_MAX_PLC,
+                  "concealed %u after the run, expected %d", st.concealed,
+                  VOICE_JITTER_MAX_PLC);
+
+    /* The run has reached the concealment limit, so playback stops here
+     * rather than concealing for as long as the frames keep coming. */
+    UT_ASSERT(!voiceSpeakerPop(sp, pcm));
+    UT_ASSERT(!voiceSpeakerPop(sp, pcm));
+
+    /* Frames that do decode start it again from where they say. */
+    voiceSpeakerPush(sp, 40, 0, frames[0].data, frames[0].len);
+    voiceSpeakerPush(sp, 41, 0, frames[1].data, frames[1].len);
+    UT_ASSERT(voiceSpeakerPop(sp, pcm));   /* 40 */
+    UT_ASSERT(voiceSpeakerPop(sp, pcm));   /* 41 */
+    voiceSpeakerGetStats(sp, &st);
+    UT_ASSERT_MSG(st.played == 4, "played %u after re-priming, expected 4",
+                  st.played);
+
+    voiceSpeakerDestroy(sp);
+
+    /* --- end of utterance is honoured on a frame that does not decode --- */
+    sp = voiceSpeakerCreate();
+    UT_ASSERT(sp != NULL);
+    voiceSpeakerPush(sp, 50, 0, frames[0].data, frames[0].len);
+    voiceSpeakerPush(sp, 51, VOICE_FLAG_END_OF_UTTERANCE, s_undecodable,
+                     (int)sizeof(s_undecodable));
+    voiceSpeakerPush(sp, 52, 0, frames[2].data, frames[2].len);
+    UT_ASSERT(voiceSpeakerPop(sp, pcm));   /* 50                        */
+    UT_ASSERT(voiceSpeakerPop(sp, pcm));   /* 51, concealed, and it ends
+                                            * the utterance all the same */
+    UT_ASSERT(!voiceSpeakerPop(sp, pcm));  /* 52 was dropped with it     */
+
+    voiceSpeakerGetStats(sp, &st);
+    UT_ASSERT_MSG(st.played == 1 && st.concealed == 1,
+                  "played %u concealed %u, expected 1 and 1", st.played,
+                  st.concealed);
+
+    voiceSpeakerDestroy(sp);
 
     return 0;
 }
