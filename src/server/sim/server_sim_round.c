@@ -910,6 +910,15 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 9. Reset full sync tracking */
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
 
+    /* Per-recipient view state — the decay proximity clocks and the last
+     * known tank positions both describe the round that just ended. */
+    memset(sim->pillNearTick, 0, sizeof(sim->pillNearTick));
+    memset(sim->baseNearTick, 0, sizeof(sim->baseNearTick));
+    memset(sim->allyNearTick, 0, sizeof(sim->allyNearTick));
+    memset(sim->lastTankMX, 0, sizeof(sim->lastTankMX));
+    memset(sim->lastTankMY, 0, sizeof(sim->lastTankMY));
+    memset(sim->lastTankValid, 0, sizeof(sim->lastTankValid));
+
     /* 10. Reset change detection */
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;

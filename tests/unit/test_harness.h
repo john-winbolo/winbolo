@@ -798,6 +798,18 @@ int run_two_clients_full_sync_independent(void);
  * still visible (the snapshot and best-effort fx cull share this set). */
 int run_fx_viewport_cull(void);
 
+/* Policy-driven viewport rects (test_view_policy_rects.c):
+ * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
+ * bases and tanks each grant a screen under always, nothing under off/key, and
+ * under decay only while the recipient's proximity clock is unexpired — a dead
+ * allied pill grants nothing, and a player with no tank keeps a rect at its
+ * last known position instead of seeing the whole map. */
+int run_view_rects_default_baseline(void);
+int run_view_rects_always_base_ally(void);
+int run_view_rects_off(void);
+int run_view_rects_decay(void);
+int run_view_rects_dead_player(void);
+
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
  * never yields TANK_TRANSPARENT, and resolves pill and base squares by the

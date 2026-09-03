@@ -333,6 +333,19 @@ struct ServerSim {
      * first client built each interval consume it and starve the rest. */
     uint32_t     lastFullSyncTick[MAX_TANKS];
 
+    /* viewPolicyDecay: last sim tick the player's tank was within
+     * VIEW_DECAY_NEAR_TILES of the item. 0 = never (not viewable). */
+    uint32_t     pillNearTick[MAX_TANKS][MAX_PILLS];
+    uint32_t     baseNearTick[MAX_TANKS][MAX_BASES];
+    uint32_t     allyNearTick[MAX_TANKS][MAX_TANKS];
+
+    /* Last map square the builder saw this player's tank at; keeps a dead
+     * or tankless player's view anchored instead of falling back to the
+     * whole map. */
+    uint8_t      lastTankMX[MAX_TANKS];
+    uint8_t      lastTankMY[MAX_TANKS];
+    bool         lastTankValid[MAX_TANKS];
+
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
     aiType       botAiType;               /* AI advantage level for bots */
@@ -452,20 +465,30 @@ struct ServerSim {
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
 
-/* Per-recipient visibility region: the client's tank screen plus each of its
- * owned/allied (not-in-tank) pillbox screens. Shared by the snapshot cull and
- * the best-effort game-event cull. */
-#define MAX_VIEWPORTS (1 + MAX_SNAPSHOT_PILLS)
+/* Per-recipient visibility region: the client's tank screen plus a screen for
+ * each allied pillbox, base and tank the view policies let through. Shared by
+ * the snapshot cull and the best-effort game-event cull. Sized for the worst
+ * case — the tank plus every pill, base and other tank at once. */
+#define MAX_VIEWPORTS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)
 
 typedef struct {
     int minMX, maxMX, minMY, maxMY;
 } ViewportRect;
 
-/* Fill `out` (capacity maxOut) with clientIdx's tank + owned/allied pillbox
- * viewports; falls back to one full-map [0..255] rect when the player has no
- * tank and no placed pills. Returns the count (always >= 1). */
+/* Fill `out` (capacity maxOut) with clientIdx's tank screen plus one screen
+ * per allied pillbox, base and tank that its category's ViewPolicy allows.
+ * A client with no tank gets a screen at its last known position instead.
+ * Returns the count, which can be 0 (a slot that never had a tank, with every
+ * category off). */
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
+
+/* Stamp the proximity clocks the viewPolicyDecay categories read: for every
+ * connected player with a live tank, every pill/base/tank within
+ * VIEW_DECAY_NEAR_TILES map squares of it. Only categories set to
+ * viewPolicyDecay are walked. Called once per running half-step from the tick
+ * core in server_sim_tick.c. */
+void serverSimUpdateViewDecay(ServerSim *sim);
 
 /* Fill `out` with base `baseIdx0`'s (0-based) current shells/mines/armour as an
  * EVENT_BASE_STOCK (data[0]=baseIdx0, data[1]=armour, data[2]=shells,

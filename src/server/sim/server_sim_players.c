@@ -467,6 +467,22 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     /* Force immediate full sync so clients see ownership changes right away */
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
 
+    /* Drop the departing slot's view state: the decay clocks it owns as a
+     * viewer, every other slot's clock for it as a target, and the last
+     * position its own view was anchored to. */
+    {
+        BYTE k;
+        memset(sim->pillNearTick[playerNum], 0, sizeof(sim->pillNearTick[playerNum]));
+        memset(sim->baseNearTick[playerNum], 0, sizeof(sim->baseNearTick[playerNum]));
+        memset(sim->allyNearTick[playerNum], 0, sizeof(sim->allyNearTick[playerNum]));
+        for (k = 0; k < MAX_TANKS; k++) {
+            sim->allyNearTick[k][playerNum] = 0;
+        }
+    }
+    sim->lastTankMX[playerNum] = 0;
+    sim->lastTankMY[playerNum] = 0;
+    sim->lastTankValid[playerNum] = false;
+
     /* Clear lobby state */
     sim->lobbyPlayers[playerNum].teamNumber = 0;
     sim->lobbyPlayers[playerNum].ready = FALSE;

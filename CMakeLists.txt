@@ -3084,6 +3084,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stall_advance.c
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_fx_viewport_cull.c
+    tests/unit/test_view_policy_rects.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
     tests/unit/test_overview_camera.cpp
@@ -3760,6 +3761,11 @@ set(_unit_test_names
     base_armour_fog_of_war
     two_clients_full_sync_independent
     fx_viewport_cull
+    view_rects_default_baseline
+    view_rects_always_base_ally
+    view_rects_off
+    view_rects_decay
+    view_rects_dead_player
     viewport_calc_square_pure
     overview_regions
     overview_reveal

@@ -18,8 +18,9 @@
  *Author:        John Morrison
  *Purpose:
  *  The per-client view-building path. Each recipient gets a
- *  set of viewport rectangles — its tank screen plus its
- *  owned/allied pillbox screens — and the entity collectors
+ *  set of viewport rectangles — its tank screen plus the
+ *  allied pillbox, base and tank screens its view policies
+ *  allow — and the entity collectors
  *  below are culled against them. serverSimBuildSnapshot
  *  assembles the result into the snapshot buffer every
  *  transport hands to that subscriber.
@@ -168,37 +169,188 @@ int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
     return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
 }
 
+/* One screen-sized rect centred on a map square. */
+static void addViewRect(ViewportRect *out, int *n, int centerMX, int centerMY,
+                        int halfView) {
+    out[*n].minMX = centerMX - halfView; out[*n].maxMX = centerMX + halfView;
+    out[*n].minMY = centerMY - halfView; out[*n].maxMY = centerMY + halfView;
+    (*n)++;
+}
+
+/* Chebyshev distance in map squares — the shape of the decay proximity test. */
+static bool viewNearSquare(int aMX, int aMY, int bMX, int bMY) {
+    int dx = aMX - bMX;
+    int dy = aMY - bMY;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    return dx <= VIEW_DECAY_NEAR_TILES && dy <= VIEW_DECAY_NEAR_TILES;
+}
+
+/* Whether a category produces any rects at all. viewPolicyKey produces none
+ * yet — clients have no way to report which item they are viewing through —
+ * and viewPolicyOff never does. */
+static bool viewCategoryBuilds(const ServerSim *sim, ViewCategory cat) {
+    ViewPolicy policy = sim->viewPolicy[cat];
+    return policy == viewPolicyAlways || policy == viewPolicyDecay;
+}
+
+/* Whether a qualifying item counts for this recipient right now. Under
+ * viewPolicyAlways every qualifying item does; under viewPolicyDecay only
+ * while its proximity clock is inside the category's window. A clock of 0
+ * means the player has never been near the item. */
+static bool viewItemInWindow(const ServerSim *sim, ViewCategory cat,
+                             uint32_t nearTick) {
+    if (sim->viewPolicy[cat] != viewPolicyDecay) {
+        return true;
+    }
+    if (nearTick == 0) {
+        return false;
+    }
+    /* A running frame advances sim->tick by two half-steps, so seconds convert
+     * at GAME_NUMTOTALTICKS_SEC. */
+    return (sim->tick - nearTick) <=
+           (uint32_t)sim->viewDecaySecs[cat] * GAME_NUMTOTALTICKS_SEC;
+}
+
 int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut) {
     int n = 0;
     int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
     WORLD clientWX = 0, clientWY = 0;
+    bool hasTankRect = false;
+
+    /* The per-recipient view state below is indexed by slot. */
+    if (clientIdx >= MAX_TANKS) {
+        return 0;
+    }
+
     if (n < maxOut && serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
         int centerMX = clientWX >> 8;
         int centerMY = clientWY >> 8;
-        out[n].minMX = centerMX - halfView; out[n].maxMX = centerMX + halfView;
-        out[n].minMY = centerMY - halfView; out[n].maxMY = centerMY + halfView;
-        n++;
+        addViewRect(out, &n, centerMX, centerMY, halfView);
+        sim->lastTankMX[clientIdx] = (uint8_t)centerMX;
+        sim->lastTankMY[clientIdx] = (uint8_t)centerMY;
+        sim->lastTankValid[clientIdx] = true;
+        hasTankRect = true;
     }
-    if (sim->sim.pb != NULL) {
+
+    /* Allied pillboxes — same test as pillsCanView: allied owner (own pills
+     * count), alive, and on the map rather than in a tank. */
+    if (sim->sim.pb != NULL && viewCategoryBuilds(sim, viewCategoryPill)) {
         BYTE np = pillsGetNumPills(&sim->sim.pb);
         BYTE p;
         for (p = 0; p < np && n < maxOut; p++) {
             BYTE owner = (*sim->sim.pb).item[p].owner;
             if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
+            if ((*sim->sim.pb).item[p].armour == 0) continue;
             if ((*sim->sim.pb).item[p].inTank) continue;
-            out[n].minMX = (*sim->sim.pb).item[p].x - halfView;
-            out[n].maxMX = (*sim->sim.pb).item[p].x + halfView;
-            out[n].minMY = (*sim->sim.pb).item[p].y - halfView;
-            out[n].maxMY = (*sim->sim.pb).item[p].y + halfView;
-            n++;
+            if (!viewItemInWindow(sim, viewCategoryPill,
+                                  sim->pillNearTick[clientIdx][p])) continue;
+            addViewRect(out, &n, (*sim->sim.pb).item[p].x,
+                        (*sim->sim.pb).item[p].y, halfView);
         }
     }
-    if (n == 0) {
-        out[0].minMX = 0; out[0].maxMX = 255;
-        out[0].minMY = 0; out[0].maxMY = 255;
-        n = 1;
+
+    /* Allied bases. A neutral base belongs to nobody, so it never grants a view. */
+    if (sim->sim.bs != NULL && viewCategoryBuilds(sim, viewCategoryBase)) {
+        BYTE nb = basesGetNumBases(&sim->sim.bs);
+        BYTE b;
+        for (b = 0; b < nb && n < maxOut; b++) {
+            BYTE owner = (*sim->sim.bs).item[b].owner;
+            if (owner == NEUTRAL) continue;
+            if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
+            if (!viewItemInWindow(sim, viewCategoryBase,
+                                  sim->baseNearTick[clientIdx][b])) continue;
+            addViewRect(out, &n, (*sim->sim.bs).item[b].x,
+                        (*sim->sim.bs).item[b].y, halfView);
+        }
     }
+
+    /* Allied tanks. A dead ally waiting to respawn shows nothing. */
+    if (viewCategoryBuilds(sim, viewCategoryAlly)) {
+        BYTE t;
+        for (t = 0; t < MAX_TANKS && n < maxOut; t++) {
+            WORLD wx = 0, wy = 0;
+            if (t == clientIdx) continue;
+            if (!playersIsAllie(&sim->sim.plyrs, t, clientIdx)) continue;
+            if (sim->sim.tanks[t] == NULL) continue;
+            if (tankGetDeathWait(&sim->sim.tanks[t]) != 0) continue;
+            if (!viewItemInWindow(sim, viewCategoryAlly,
+                                  sim->allyNearTick[clientIdx][t])) continue;
+            tankGetWorld(&sim->sim.tanks[t], &wx, &wy);
+            addViewRect(out, &n, wx >> 8, wy >> 8, halfView);
+        }
+    }
+
+    /* No tank this build: hold the view at the square the tank was last seen
+     * at. A slot that never had one gets whatever the policies produced,
+     * which can be nothing. */
+    if (!hasTankRect && n < maxOut && sim->lastTankValid[clientIdx]) {
+        addViewRect(out, &n, sim->lastTankMX[clientIdx],
+                    sim->lastTankMY[clientIdx], halfView);
+    }
+
     return n;
+}
+
+void serverSimUpdateViewDecay(ServerSim *sim) {
+    /* 0 is the "never been near" marker, so tick 0 stamps as 1. */
+    uint32_t stamp = (sim->tick == 0) ? 1u : sim->tick;
+    bool pillDecay = (sim->viewPolicy[viewCategoryPill] == viewPolicyDecay);
+    bool baseDecay = (sim->viewPolicy[viewCategoryBase] == viewPolicyDecay);
+    bool allyDecay = (sim->viewPolicy[viewCategoryAlly] == viewPolicyDecay);
+    BYTE c;
+
+    if (!pillDecay && !baseDecay && !allyDecay) {
+        return;
+    }
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        WORLD wx = 0, wy = 0;
+        int mx, my;
+
+        if (!sim->playerConnected[c]) continue;
+        if (sim->sim.tanks[c] == NULL) continue;
+        if (tankGetDeathWait(&sim->sim.tanks[c]) != 0) continue;
+        tankGetWorld(&sim->sim.tanks[c], &wx, &wy);
+        mx = wx >> 8;
+        my = wy >> 8;
+
+        /* Every item is stamped, whoever owns it — alliance, armour and the
+         * rest are the build's business, and an item can change hands long
+         * after the player drove past it. */
+        if (pillDecay && sim->sim.pb != NULL) {
+            BYTE np = pillsGetNumPills(&sim->sim.pb);
+            BYTE p;
+            for (p = 0; p < np; p++) {
+                if (viewNearSquare(mx, my, (*sim->sim.pb).item[p].x,
+                                   (*sim->sim.pb).item[p].y)) {
+                    sim->pillNearTick[c][p] = stamp;
+                }
+            }
+        }
+        if (baseDecay && sim->sim.bs != NULL) {
+            BYTE nb = basesGetNumBases(&sim->sim.bs);
+            BYTE b;
+            for (b = 0; b < nb; b++) {
+                if (viewNearSquare(mx, my, (*sim->sim.bs).item[b].x,
+                                   (*sim->sim.bs).item[b].y)) {
+                    sim->baseNearTick[c][b] = stamp;
+                }
+            }
+        }
+        if (allyDecay) {
+            BYTE t;
+            for (t = 0; t < MAX_TANKS; t++) {
+                WORLD twx = 0, twy = 0;
+                if (t == c) continue;
+                if (sim->sim.tanks[t] == NULL) continue;
+                tankGetWorld(&sim->sim.tanks[t], &twx, &twy);
+                if (viewNearSquare(mx, my, twx >> 8, twy >> 8)) {
+                    sim->allyNearTick[c][t] = stamp;
+                }
+            }
+        }
+    }
 }
 
 void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
@@ -227,8 +379,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             : 0;
 
     /* Build the recipient's viewport set: under cull, the tank screen plus
-     * owned/allied pillbox screens (with a full-map fallback); under noCull,
-     * a single full-map viewport so everything is sent. */
+     * whatever the view policies allow; under noCull, a single full-map
+     * viewport so everything is sent. */
     if (noCull) {
         viewports[0].minMX = 0; viewports[0].maxMX = 255;
         viewports[0].minMY = 0; viewports[0].maxMY = 255;
