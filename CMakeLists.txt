@@ -3085,6 +3085,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_view_policy_rects.c
+    tests/unit/test_view_state.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
     tests/unit/test_overview_camera.cpp
@@ -3497,6 +3498,7 @@ set(_unit_test_names
     command_codec_roundtrip_variants
     command_codec_lobby_claim_start
     command_codec_rating_posted
+    command_codec_view_state
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
@@ -3766,6 +3768,10 @@ set(_unit_test_names
     view_rects_off
     view_rects_decay
     view_rects_dead_player
+    view_state_key_grants_rect
+    view_state_bad_claims_degrade
+    view_state_invalidation
+    view_state_lifecycle
     viewport_calc_square_pure
     overview_regions
     overview_reveal

@@ -339,6 +339,11 @@ struct ServerSim {
     uint32_t     baseNearTick[MAX_TANKS][MAX_BASES];
     uint32_t     allyNearTick[MAX_TANKS][MAX_TANKS];
 
+    /* What each player last reported viewing (CMD_VIEW_STATE). Only
+     * consulted when a category's policy is viewPolicyKey. */
+    uint8_t      viewKind[MAX_TANKS];     /* 0=tank, 1=pill, 2=base, 3=ally */
+    uint8_t      viewTarget[MAX_TANKS];
+
     /* Last map square the builder saw this player's tank at; keeps a dead
      * or tankless player's view anchored instead of falling back to the
      * whole map. */
@@ -489,6 +494,16 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
  * viewPolicyDecay are walked. Called once per running half-step from the tick
  * core in server_sim_tick.c. */
 void serverSimUpdateViewDecay(ServerSim *sim);
+
+/* Re-check every connected player's reported view (viewKind/viewTarget) and
+ * reset it to VIEW_KIND_TANK when the claimed target no longer earns a view:
+ * the category is viewPolicyOff, the target is out of range or no longer
+ * qualifies (allied / alive / not carried), or — under viewPolicyDecay — the
+ * viewer's proximity clock for it has expired. There is no server→client
+ * event: the rect simply stops being built and the client exits the view on
+ * its own. Called once per running half-step alongside
+ * serverSimUpdateViewDecay. */
+void serverSimValidateViewTargets(ServerSim *sim);
 
 /* Fill `out` with base `baseIdx0`'s (0-based) current shells/mines/armour as an
  * EVENT_BASE_STOCK (data[0]=baseIdx0, data[1]=armour, data[2]=shells,

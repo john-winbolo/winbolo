@@ -592,6 +592,16 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               otherwise reset a healthy
                                               client's stream). */
 
+#define PACKET_VIEW_STATE              214  /* client → server
+                                              { kind 1, target 1 } — the view
+                                              the sender's client is in: 0=tank,
+                                              1=pill, 2=base, 3=ally, with the
+                                              item index (pill/base) or player
+                                              number (ally) in target. The
+                                              server stores the claim per slot
+                                              and grants at most what the view
+                                              policies allow. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

@@ -186,12 +186,43 @@ static bool viewNearSquare(int aMX, int aMY, int bMX, int bMY) {
     return dx <= VIEW_DECAY_NEAR_TILES && dy <= VIEW_DECAY_NEAR_TILES;
 }
 
-/* Whether a category produces any rects at all. viewPolicyKey produces none
- * yet — clients have no way to report which item they are viewing through —
- * and viewPolicyOff never does. */
-static bool viewCategoryBuilds(const ServerSim *sim, ViewCategory cat) {
+/* Whether a category grants rects by sweeping every item. viewPolicyKey does
+ * not — it grants the single item the recipient reports viewing, built by
+ * addKeyViewRect below — and viewPolicyOff grants nothing at all. */
+static bool viewCategorySweeps(const ServerSim *sim, ViewCategory cat) {
     ViewPolicy policy = sim->viewPolicy[cat];
     return policy == viewPolicyAlways || policy == viewPolicyDecay;
+}
+
+/* Whether an item is one this recipient may see through at all, policy aside:
+ * an allied pillbox that is alive and on the map rather than in a tank (the
+ * same test as pillsCanView, own pills counting as allied), an owned allied
+ * base — a neutral base belongs to nobody, so it never grants a view — and an
+ * allied tank that exists and is not waiting out a death. Each takes the raw
+ * index and reports false when it is out of range, so both the sweeps below
+ * and serverSimValidateViewTargets can hand them an unchecked value. */
+static bool viewPillQualifies(ServerSim *sim, BYTE clientIdx, BYTE p) {
+    if (sim->sim.pb == NULL || p >= pillsGetNumPills(&sim->sim.pb)) return false;
+    if (!playersIsAllie(&sim->sim.plyrs, (*sim->sim.pb).item[p].owner,
+                        clientIdx)) return false;
+    if ((*sim->sim.pb).item[p].armour == 0) return false;
+    if ((*sim->sim.pb).item[p].inTank) return false;
+    return true;
+}
+
+static bool viewBaseQualifies(ServerSim *sim, BYTE clientIdx, BYTE b) {
+    BYTE owner;
+    if (sim->sim.bs == NULL || b >= basesGetNumBases(&sim->sim.bs)) return false;
+    owner = (*sim->sim.bs).item[b].owner;
+    if (owner == NEUTRAL) return false;
+    return playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
+}
+
+static bool viewAllyQualifies(ServerSim *sim, BYTE clientIdx, BYTE t) {
+    if (t >= MAX_TANKS || t == clientIdx) return false;
+    if (!playersIsAllie(&sim->sim.plyrs, t, clientIdx)) return false;
+    if (sim->sim.tanks[t] == NULL) return false;
+    return tankGetDeathWait(&sim->sim.tanks[t]) == 0;
 }
 
 /* Whether a qualifying item counts for this recipient right now. Under
@@ -210,6 +241,42 @@ static bool viewItemInWindow(const ServerSim *sim, ViewCategory cat,
      * at GAME_NUMTOTALTICKS_SEC. */
     return (sim->tick - nearTick) <=
            (uint32_t)sim->viewDecaySecs[cat] * GAME_NUMTOTALTICKS_SEC;
+}
+
+/* The single rect a viewPolicyKey category grants: the item this recipient
+ * last reported viewing through (CMD_VIEW_STATE), while it is still in range
+ * and still qualifies. Adds nothing for a tank-view claim, for a category that
+ * is not on viewPolicyKey, or once the target stops qualifying — the client is
+ * told nothing, the rect just stops appearing. */
+static void addKeyViewRect(ServerSim *sim, BYTE clientIdx, ViewportRect *out,
+                           int *n, int maxOut, int halfView) {
+    BYTE target = sim->viewTarget[clientIdx];
+
+    if (*n >= maxOut) return;
+    switch (sim->viewKind[clientIdx]) {
+    case VIEW_KIND_PILL:
+        if (sim->viewPolicy[viewCategoryPill] != viewPolicyKey) return;
+        if (!viewPillQualifies(sim, clientIdx, target)) return;
+        addViewRect(out, n, (*sim->sim.pb).item[target].x,
+                    (*sim->sim.pb).item[target].y, halfView);
+        return;
+    case VIEW_KIND_BASE:
+        if (sim->viewPolicy[viewCategoryBase] != viewPolicyKey) return;
+        if (!viewBaseQualifies(sim, clientIdx, target)) return;
+        addViewRect(out, n, (*sim->sim.bs).item[target].x,
+                    (*sim->sim.bs).item[target].y, halfView);
+        return;
+    case VIEW_KIND_ALLY: {
+        WORLD wx = 0, wy = 0;
+        if (sim->viewPolicy[viewCategoryAlly] != viewPolicyKey) return;
+        if (!viewAllyQualifies(sim, clientIdx, target)) return;
+        tankGetWorld(&sim->sim.tanks[target], &wx, &wy);
+        addViewRect(out, n, wx >> 8, wy >> 8, halfView);
+        return;
+    }
+    default:
+        return;  /* tank view — the recipient's own screen is already in */
+    }
 }
 
 int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut) {
@@ -233,16 +300,12 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
         hasTankRect = true;
     }
 
-    /* Allied pillboxes — same test as pillsCanView: allied owner (own pills
-     * count), alive, and on the map rather than in a tank. */
-    if (sim->sim.pb != NULL && viewCategoryBuilds(sim, viewCategoryPill)) {
+    /* Allied pillboxes. */
+    if (sim->sim.pb != NULL && viewCategorySweeps(sim, viewCategoryPill)) {
         BYTE np = pillsGetNumPills(&sim->sim.pb);
         BYTE p;
         for (p = 0; p < np && n < maxOut; p++) {
-            BYTE owner = (*sim->sim.pb).item[p].owner;
-            if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
-            if ((*sim->sim.pb).item[p].armour == 0) continue;
-            if ((*sim->sim.pb).item[p].inTank) continue;
+            if (!viewPillQualifies(sim, clientIdx, p)) continue;
             if (!viewItemInWindow(sim, viewCategoryPill,
                                   sim->pillNearTick[clientIdx][p])) continue;
             addViewRect(out, &n, (*sim->sim.pb).item[p].x,
@@ -250,14 +313,12 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
         }
     }
 
-    /* Allied bases. A neutral base belongs to nobody, so it never grants a view. */
-    if (sim->sim.bs != NULL && viewCategoryBuilds(sim, viewCategoryBase)) {
+    /* Allied bases. */
+    if (sim->sim.bs != NULL && viewCategorySweeps(sim, viewCategoryBase)) {
         BYTE nb = basesGetNumBases(&sim->sim.bs);
         BYTE b;
         for (b = 0; b < nb && n < maxOut; b++) {
-            BYTE owner = (*sim->sim.bs).item[b].owner;
-            if (owner == NEUTRAL) continue;
-            if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
+            if (!viewBaseQualifies(sim, clientIdx, b)) continue;
             if (!viewItemInWindow(sim, viewCategoryBase,
                                   sim->baseNearTick[clientIdx][b])) continue;
             addViewRect(out, &n, (*sim->sim.bs).item[b].x,
@@ -265,21 +326,22 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
         }
     }
 
-    /* Allied tanks. A dead ally waiting to respawn shows nothing. */
-    if (viewCategoryBuilds(sim, viewCategoryAlly)) {
+    /* Allied tanks. */
+    if (viewCategorySweeps(sim, viewCategoryAlly)) {
         BYTE t;
         for (t = 0; t < MAX_TANKS && n < maxOut; t++) {
             WORLD wx = 0, wy = 0;
-            if (t == clientIdx) continue;
-            if (!playersIsAllie(&sim->sim.plyrs, t, clientIdx)) continue;
-            if (sim->sim.tanks[t] == NULL) continue;
-            if (tankGetDeathWait(&sim->sim.tanks[t]) != 0) continue;
+            if (!viewAllyQualifies(sim, clientIdx, t)) continue;
             if (!viewItemInWindow(sim, viewCategoryAlly,
                                   sim->allyNearTick[clientIdx][t])) continue;
             tankGetWorld(&sim->sim.tanks[t], &wx, &wy);
             addViewRect(out, &n, wx >> 8, wy >> 8, halfView);
         }
     }
+
+    /* The one item this recipient says it is looking through, when its
+     * category is on viewPolicyKey. */
+    addKeyViewRect(sim, clientIdx, out, &n, maxOut, halfView);
 
     /* No tank this build: hold the view at the square the tank was last seen
      * at. A slot that never had one gets whatever the policies produced,
@@ -349,6 +411,48 @@ void serverSimUpdateViewDecay(ServerSim *sim) {
                     sim->allyNearTick[c][t] = stamp;
                 }
             }
+        }
+    }
+}
+
+void serverSimValidateViewTargets(ServerSim *sim) {
+    BYTE c;
+
+    for (c = 0; c < MAX_TANKS; c++) {
+        BYTE target = sim->viewTarget[c];
+        bool keep = false;
+
+        if (!sim->playerConnected[c]) continue;
+        if (sim->viewKind[c] == VIEW_KIND_TANK) continue;
+
+        /* The window test is what viewPolicyDecay adds: it passes for every
+         * other policy, so under key there is nothing extra to check. */
+        switch (sim->viewKind[c]) {
+        case VIEW_KIND_PILL:
+            keep = sim->viewPolicy[viewCategoryPill] != viewPolicyOff &&
+                   viewPillQualifies(sim, c, target) &&
+                   viewItemInWindow(sim, viewCategoryPill,
+                                    sim->pillNearTick[c][target]);
+            break;
+        case VIEW_KIND_BASE:
+            keep = sim->viewPolicy[viewCategoryBase] != viewPolicyOff &&
+                   viewBaseQualifies(sim, c, target) &&
+                   viewItemInWindow(sim, viewCategoryBase,
+                                    sim->baseNearTick[c][target]);
+            break;
+        case VIEW_KIND_ALLY:
+            keep = sim->viewPolicy[viewCategoryAlly] != viewPolicyOff &&
+                   viewAllyQualifies(sim, c, target) &&
+                   viewItemInWindow(sim, viewCategoryAlly,
+                                    sim->allyNearTick[c][target]);
+            break;
+        default:
+            break;  /* a kind this server does not know */
+        }
+
+        if (!keep) {
+            sim->viewKind[c]   = VIEW_KIND_TANK;
+            sim->viewTarget[c] = 0;
         }
     }
 }

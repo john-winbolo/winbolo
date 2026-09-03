@@ -848,6 +848,15 @@ void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendViewState(ClientSim *cs, uint8_t kind, uint8_t target) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_VIEW_STATE };
+  cmd.u.viewState.kind   = kind;
+  cmd.u.viewState.target = target;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 /* === Net stats === */
 
 uint16_t clientSimGetNetPing(const ClientSim *cs) {

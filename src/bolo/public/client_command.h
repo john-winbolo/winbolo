@@ -72,7 +72,8 @@ typedef enum {
     CMD_BALANCE_DISMISS,
     CMD_WBN_REAUTH,
     CMD_LOBBY_CLAIM_START,
-    CMD_RATING_POSTED
+    CMD_RATING_POSTED,
+    CMD_VIEW_STATE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -335,6 +336,25 @@ typedef struct {
     char key[ROUND_STATS_LOGKEY_LEN];
 } CmdRatingPosted;
 
+/* CmdViewState.kind — which kind of thing the sender is looking
+ * through. Values are on the wire, so they are fixed. */
+typedef enum {
+    VIEW_KIND_TANK = 0,
+    VIEW_KIND_PILL = 1,
+    VIEW_KIND_BASE = 2,
+    VIEW_KIND_ALLY = 3
+} ViewStateKind;
+
+/* CMD_VIEW_STATE — which view the sender's client is in. kind:
+ * 0=tank, 1=pill, 2=base, 3=ally; target is the item index (pill/
+ * base) or player number (ally), ignored for tank. The server
+ * stores the claim and grants at most the rect the view policies
+ * allow — it never trusts the claim itself. */
+typedef struct {
+    uint8_t kind;
+    uint8_t target;
+} CmdViewState;
+
 /* ClientCommand — variant tag + payload that travels client→server.
  *
  * cmdSeq: per-command sequence number assigned by the client; used
@@ -375,6 +395,7 @@ typedef struct ClientCommand {
         CmdWbnReauth           wbnReauth;
         CmdLobbyClaimStart     lobbyClaimStart;
         CmdRatingPosted        ratingPosted;
+        CmdViewState           viewState;
     } u;
 } ClientCommand;
 

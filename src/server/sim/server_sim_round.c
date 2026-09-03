@@ -910,14 +910,17 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 9. Reset full sync tracking */
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
 
-    /* Per-recipient view state — the decay proximity clocks and the last
-     * known tank positions both describe the round that just ended. */
+    /* Per-recipient view state — the decay proximity clocks, the last known
+     * tank positions and the reported views all describe the round that just
+     * ended. Zeroing viewKind puts every slot back on the tank view. */
     memset(sim->pillNearTick, 0, sizeof(sim->pillNearTick));
     memset(sim->baseNearTick, 0, sizeof(sim->baseNearTick));
     memset(sim->allyNearTick, 0, sizeof(sim->allyNearTick));
     memset(sim->lastTankMX, 0, sizeof(sim->lastTankMX));
     memset(sim->lastTankMY, 0, sizeof(sim->lastTankMY));
     memset(sim->lastTankValid, 0, sizeof(sim->lastTankValid));
+    memset(sim->viewKind, 0, sizeof(sim->viewKind));
+    memset(sim->viewTarget, 0, sizeof(sim->viewTarget));
 
     /* 10. Reset change detection */
     sim->prevPillCount = 0;

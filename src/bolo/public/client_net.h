@@ -280,6 +280,14 @@ void clientSimNetSendWbnReauth(ClientSim *cs);
  * spectator. */
 void clientSimNetSendRatingPosted(ClientSim *cs, const char *key32);
 
+/* Tell the server which view this client is in: kind is a ViewStateKind
+ * (VIEW_KIND_TANK/PILL/BASE/ALLY) and target is the pill/base index or the
+ * ally's player number, ignored for the tank view. The server stores the
+ * claim and grants at most the rect its view policies allow, so a stale or
+ * bogus claim costs nothing. Sends nothing without a transport or from a
+ * spectator. */
+void clientSimNetSendViewState(ClientSim *cs, uint8_t kind, uint8_t target);
+
 /* === Last completed round's replay log === */
 
 /* State of the round-log transfer. A joined client cannot record a round

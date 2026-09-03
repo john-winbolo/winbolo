@@ -278,6 +278,40 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         serverSimPublishControl(sim, &evt);
         return CMD_OK;
     }
+    case CMD_VIEW_STATE: {
+        /* Range check only, in any server state. The claim decides nothing by
+         * itself, so one that names a target this server does not have is
+         * degraded to the tank view rather than rejected — a client that was
+         * viewing through a pill when it died would otherwise collect a
+         * reject for a view it has already left. Whether the target still
+         * qualifies (allied, alive, not carried, policy) is decided by the
+         * viewport builder and serverSimValidateViewTargets. */
+        uint8_t kind   = cmd->u.viewState.kind;
+        uint8_t target = cmd->u.viewState.target;
+        bool inRange = false;
+        switch (kind) {
+        case VIEW_KIND_PILL:
+            inRange = (sim->sim.pb != NULL &&
+                       target < pillsGetNumPills(&sim->sim.pb));
+            break;
+        case VIEW_KIND_BASE:
+            inRange = (sim->sim.bs != NULL &&
+                       target < basesGetNumBases(&sim->sim.bs));
+            break;
+        case VIEW_KIND_ALLY:
+            inRange = (target < MAX_TANKS && target != (uint8_t)senderSlot);
+            break;
+        default:
+            break;  /* tank, or a kind this server does not know */
+        }
+        if (!inRange) {
+            kind   = VIEW_KIND_TANK;
+            target = 0;
+        }
+        sim->viewKind[senderSlot]   = kind;
+        sim->viewTarget[senderSlot] = target;
+        return CMD_OK;
+    }
     case CMD_ALLIANCE_REQUEST: {
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;

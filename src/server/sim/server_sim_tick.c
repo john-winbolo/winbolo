@@ -1005,6 +1005,10 @@ static void simRunHalfStep(ServerSim *sim) {
      * immediately unless some category is set to viewPolicyDecay. */
     serverSimUpdateViewDecay(sim);
 
+    /* Drop any reported view whose target has stopped earning one — the rect
+     * disappears and the client leaves the view by itself. */
+    serverSimValidateViewTargets(sim);
+
     /* The legacy server ticked every 20ms (SERVER_TICK_LENGTH) and wrote
      * one log entry per tick.  Our sim ticks every 10ms alternating
      * keys/game.  Only log on game ticks (every 20ms) to match the

@@ -78,6 +78,7 @@ int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
 int run_command_codec_lobby_claim_start(void);
 int run_command_codec_rating_posted(void);
+int run_command_codec_view_state(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
@@ -800,15 +801,27 @@ int run_fx_viewport_cull(void);
 
 /* Policy-driven viewport rects (test_view_policy_rects.c):
  * serverSimBuildViewports honours the per-category ViewPolicy — allied pills,
- * bases and tanks each grant a screen under always, nothing under off/key, and
- * under decay only while the recipient's proximity clock is unexpired — a dead
- * allied pill grants nothing, and a player with no tank keeps a rect at its
- * last known position instead of seeing the whole map. */
+ * bases and tanks each grant a screen under always, nothing under off (and
+ * nothing under key without a claim), and under decay only while the
+ * recipient's proximity clock is unexpired — a dead allied pill grants
+ * nothing, and a player with no tank keeps a rect at its last known position
+ * instead of seeing the whole map. */
 int run_view_rects_default_baseline(void);
 int run_view_rects_always_base_ally(void);
 int run_view_rects_off(void);
 int run_view_rects_decay(void);
 int run_view_rects_dead_player(void);
+
+/* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
+ * view a client is in, a viewPolicyKey category grants exactly the claimed
+ * item's rect while it still qualifies, and every claim the server cannot
+ * honour is accepted and degraded to the tank view — on arrival, per tick as
+ * the target stops qualifying, on the round reset, and when the player being
+ * viewed through leaves. */
+int run_view_state_key_grants_rect(void);
+int run_view_state_bad_claims_degrade(void);
+int run_view_state_invalidation(void);
+int run_view_state_lifecycle(void);
 
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
