@@ -215,6 +215,27 @@ bool voiceAecIsEnabled(void) {
 }
 
 /*********************************************************
+*NAME:          voiceAecIsAvailable
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Whether a canceller exists.  echoState is non-NULL exactly
+*  when one does: every failing path in voiceAecInit leaves it
+*  NULL and voiceAecShutdown clears it.  Also false when voice
+*  as a whole failed to come up, since voiceInit returns before
+*  reaching voiceAecInit if the codec could not be created -
+*  which is what we want, because either way the honest thing
+*  to tell the player is that cancellation is not running.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceAecIsAvailable(void) {
+    return echoState != NULL;
+}
+
+/*********************************************************
 *NAME:          voiceAecAddReference
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026

@@ -118,6 +118,7 @@ extern "C" {
 #if defined(WINBOLO_VOICE_AEC)
   void windowSetVoiceEchoCancel(bool on);
   bool windowGetVoiceEchoCancel(void);
+  bool windowGetVoiceEchoCancelAvailable(void);
 #endif
 #endif
   void windowMenuNewswire_toggle(struct ClientSim *cs);
@@ -697,10 +698,22 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     }
 #if defined(WINBOLO_VOICE_AEC)
     {
+        /* Greyed out when no canceller came up, still showing what the
+           player chose: the setting is saved either way, so the row reports
+           the canceller's state rather than taking the choice away. */
+        bool aecAvailable = windowGetVoiceEchoCancelAvailable();
         bool echoCancel = windowGetVoiceEchoCancel();
+        if (!aecAvailable) ImGui::BeginDisabled();
         if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ECHOCANCEL),
                             &echoCancel)) {
             windowSetVoiceEchoCancel(echoCancel);
+        }
+        if (!aecAvailable) {
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextDisabled(
+                "%s",
+                langGetText(STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE));
         }
     }
 #endif

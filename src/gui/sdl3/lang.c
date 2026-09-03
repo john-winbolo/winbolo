@@ -1842,7 +1842,6 @@ static const LangEntry langTable[] = {
     {1949, "Test microphone"},
     {1950, "Mic gain"},
     {1951, "Input level"},
-    {1952, "Transmit voice"},
     {1953, "Enable voice"},
     {1954, "Mode"},
     {1955, "Off"},
@@ -1875,6 +1874,9 @@ static const LangEntry langTable[] = {
     /* Voice settings — microphone test progress */
     {1973, "Recording..."},
     {1974, "Playing back..."},
+
+    /* Voice settings — echo canceller could not be created */
+    {1975, "Unavailable on this system"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

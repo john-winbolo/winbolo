@@ -1590,6 +1590,12 @@ void windowSetVoiceEchoCancel(bool on) {
 bool windowGetVoiceEchoCancel(void) {
   return voiceAecIsEnabled();
 }
+
+/* Whether a canceller came up at all, which the getter above cannot say -
+ * it reports the switch, and the switch is the player's either way. */
+bool windowGetVoiceEchoCancelAvailable(void) {
+  return voiceAecIsAvailable();
+}
 #endif
 
 /* Tank-label microphone icons are held by the status renderer that

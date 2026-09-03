@@ -94,6 +94,22 @@ void voiceAecSetEnabled(bool on);
 bool voiceAecIsEnabled(void);
 
 /*********************************************************
+*NAME:          voiceAecIsAvailable
+*PURPOSE:
+*  Whether a canceller exists to do the work: voiceAecInit
+*  succeeded and voiceAecShutdown has not run since.  Separate
+*  from voiceAecIsEnabled because that one is the player's
+*  setting and stays what they chose whether or not Speex came
+*  up, so it cannot answer this and must not be changed to.
+*  For the UI, which has both to report: switched on, and
+*  running.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceAecIsAvailable(void);
+
+/*********************************************************
 *NAME:          voiceAecReset
 *PURPOSE:
 *  Throws away what the filter has learned and empties the
