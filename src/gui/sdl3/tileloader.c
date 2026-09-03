@@ -40,13 +40,13 @@
 BOLO_STATIC_ASSERT(TILE_MAP_COUNT <= SKIN_DENSITY_MAX_SPRITES,
                    tile_map_fits_skin_density_info);
 
-/* HUD chrome: the menu indents, the status pane items, the gunsight, the
+/* HUD art: the menu indents, the status pane items, the gunsight, the
  * mouse square, the status tank icon, the transparent tank and the static
  * screen.  These are left out of the per-density coverage count, so a skin
- * that redraws every terrain tile but no chrome still counts as covering a
+ * that redraws every terrain tile but no HUD art still counts as covering a
  * density in full.  They keep a per-sprite max of their own either way. */
 static bool isNonWorldSprite(const char *name) {
-    static const char *chrome[] = {
+    static const char *hudPrefixes[] = {
         "indent",
         "status_",
         "gunsight",
@@ -56,8 +56,8 @@ static bool isNonWorldSprite(const char *name) {
         "static"
     };
 
-    for (int i = 0; i < (int)(sizeof(chrome) / sizeof(chrome[0])); i++) {
-        if (strncmp(name, chrome[i], strlen(chrome[i])) == 0) return true;
+    for (int i = 0; i < (int)(sizeof(hudPrefixes) / sizeof(hudPrefixes[0])); i++) {
+        if (strncmp(name, hudPrefixes[i], strlen(hudPrefixes[i])) == 0) return true;
     }
     return false;
 }

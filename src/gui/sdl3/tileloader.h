@@ -101,7 +101,7 @@ typedef struct SkinDensityInfo {
  *   and per sprite.  Pure name-index lookups: no file is
  *   opened and no image is decoded, so this is cheap
  *   enough to run whenever the active skin changes.
- *   HUD chrome is left out of the per-density coverage so
+ *   HUD art is left out of the per-density coverage so
  *   a skin that redraws only the world still counts as
  *   covering a density in full.  A NULL skin reports
  *   density 1 and nothing above it.
