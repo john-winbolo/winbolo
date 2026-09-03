@@ -78,6 +78,17 @@
  * over while still dropping within a quarter second of someone stopping. */
 #define VOICE_TALKING_HANGOVER_MS 250
 
+/* Ticks between attempts to open the recording device while the connection
+ * carries voice and the microphone is wanted but has not come up.  The first
+ * attempt is made on the tick the connection starts carrying voice, and on a
+ * desktop that is the very moment the operating system puts its microphone
+ * permission prompt up, so the open fails while the player is still reading
+ * it.  Nothing tells this code when they click Allow, so it asks again - once
+ * a second at the 50 Hz tick, which is prompt enough for the player and not
+ * often enough to trouble the audio subsystem when there is no microphone at
+ * all. */
+#define VOICE_CAPTURE_RETRY_TICKS 50
+
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
@@ -100,10 +111,15 @@ static int gateHangover = 0;
  * which has no client of its own to ask. */
 static bool connectionCarriesVoice = false;
 
-/* Previous tick's connectionCarriesVoice.  The microphone is opened on the
- * rising edge - joining a connection that carries voice is what asks for it,
- * so starting the game on its own never prompts. */
+/* Previous tick's connectionCarriesVoice.  The microphone is first asked for
+ * on the rising edge - joining a connection that carries voice is what asks
+ * for it, so starting the game on its own never prompts. */
 static bool wasCarryingVoice = false;
+
+/* Ticks left before the recording device is asked for again after an open
+ * that failed.  Only counts while the connection carries voice and the
+ * microphone is wanted but not open. */
+static int captureRetryTicks = 0;
 
 /* One remote talker per tank slot, keyed by player number.  Both the decoder
  * and the backend's playback are brought up the first time a frame arrives
@@ -193,16 +209,20 @@ static void stopCaptureIfIdle(void) {
 *  Opens the recording device if something now wants it.
 *  The backend call is idempotent and only prompts for the
 *  microphone the first time, so this is safe to call on
-*  every state change.
+*  every state change.  Returns whether the device is open
+*  and capturing on return: false when voice is not up or
+*  nothing wants the microphone, otherwise what the backend
+*  said, where false is an open that failed and may be
+*  tried again later.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
-static void startCaptureIfWanted(void) {
+static bool startCaptureIfWanted(void) {
     if (!isInitialised || !captureIsWanted()) {
-        return;
+        return false;
     }
-    voiceBackendCaptureStart();
+    return voiceBackendCaptureStart();
 }
 
 /*********************************************************
@@ -352,6 +372,7 @@ void voiceReset(void) {
     reportedSelfMuted = false;
     connectionCarriesVoice = false;
     wasCarryingVoice = false;
+    captureRetryTicks = 0;
 }
 
 /*********************************************************
@@ -947,7 +968,6 @@ void voiceTick(struct ClientSim *cs) {
 
     if (cs != NULL) {
         voicePlayRemote(cs);
-        voiceReportState(cs);
     }
 
     /* The connection has to be one that carries voice at all - the local
@@ -959,12 +979,29 @@ void voiceTick(struct ClientSim *cs) {
     connectionCarriesVoice =
         clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs);
 
-    /* Joining a connection that carries voice is what opens the microphone;
-     * the start is idempotent, so only the edge matters. */
-    if (connectionCarriesVoice && !wasCarryingVoice) {
-        startCaptureIfWanted();
+    /* Joining a connection that carries voice is what opens the microphone.
+     * The first attempt goes out on the tick the connection starts carrying
+     * it; while that has not produced an open device it is asked for again
+     * every VOICE_CAPTURE_RETRY_TICKS, since the open fails for as long as
+     * the operating system's permission prompt is still up.  The start is
+     * idempotent, so an open that succeeded is never repeated. */
+    if (connectionCarriesVoice && captureIsWanted() &&
+        !voiceBackendCaptureIsOpen()) {
+        if (!wasCarryingVoice || captureRetryTicks == 0) {
+            startCaptureIfWanted();
+            captureRetryTicks = VOICE_CAPTURE_RETRY_TICKS;
+        } else {
+            captureRetryTicks--;
+        }
     }
     wasCarryingVoice = connectionCarriesVoice;
+
+    /* Reported after the open attempt, so a device that came up on this
+     * tick is what the server hears about rather than last tick's absence
+     * of one. */
+    if (cs != NULL) {
+        voiceReportState(cs);
+    }
 
     /* Nothing accumulates while the microphone is unwanted - the recording
      * device is paused, so there is no backlog to drain here. */
