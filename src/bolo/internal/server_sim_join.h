@@ -35,7 +35,7 @@ void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
 /* Reserves a free lobby start for one slot, clustered near its teammates.
  * Called from the join path, the bot-add path, the team change and the
  * map-change reconcile, which do not share a translation unit. Defined in
- * server_sim.c. */
+ * server_sim_players.c. */
 void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot);
 
 /* Synchronous local-join entry point. Picks a slot via serverSimFindFreeSlot,

@@ -62,7 +62,7 @@ void serverSimCbConsoleMessage(void *ctx, char *msg);
 
 /* Defined in server_sim_callbacks.c. Appends a packed attribution record to
  * the per-round buffer; the record callbacks above and serverSimAddEvent in
- * server_sim.c both feed it. */
+ * server_sim_control.c both feed it. */
 void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
 
 /* Defined in server_sim_snapshot.c — the base and pill collectors. They fill
@@ -77,7 +77,8 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 
 /* Full lobby reset when the last human leaves — removes bots, restores the
  * startup settings snapshot, and unlocks the lobby. serverSimRemovePlayer in
- * server_sim.c calls this when the departing player was the last human. */
+ * server_sim_players.c calls this when the departing player was the last
+ * human. */
 void serverSimResetLobbyToDefaults(ServerSim *sim);
 
 /* The player slot every base owner is allied to when one side has swept
@@ -88,8 +89,8 @@ void serverSimResetLobbyToDefaults(ServerSim *sim);
 BYTE serverSimWinningOwner(ServerSim *sim);
 
 /* Caches the active map's BMAPBOLO MD5 so WinBolo.net can match the map against
- * its library. Called by serverSimCreate and the map-reload path in
- * server_sim.c, and by serverSimChangeMap alongside it. */
+ * its library. Called by serverSimCreate in server_sim.c and the map-reload
+ * path in server_sim_maps.c, and by serverSimChangeMap alongside it. */
 void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
 
 /* Defined in server_sim_vote.c — the two publish helpers that were file-local
@@ -97,7 +98,7 @@ void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
  * left behind there. */
 
 /* Broadcasts the current per-slot map-skip votes as a CTRL_MAP_SKIP_STATE
- * event. serverSimRemovePlayer in server_sim.c calls it so a departing
+ * event. serverSimRemovePlayer in server_sim_players.c calls it so a departing
  * player's vote drops off every client's tally. */
 void publishMapSkipState(ServerSim *sim);
 
@@ -106,18 +107,22 @@ void publishMapSkipState(ServerSim *sim);
  * it. */
 void publishServerMessage(ServerSim *sim, const char *message);
 
-/* Defined in server_sim.c — the entries owned by the parent rather than by a
+/* Defined in server_sim_control.c — the one control-event filler with a caller
+ * outside that translation unit. */
+
+/* Fills a CTRL_MAP_SKIP_STATE event with the current per-slot skip votes.
+ * publishMapSkipState in server_sim_vote.c calls it; the encoding itself sits
+ * with the other control-event fillers in server_sim_control.c. */
+void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
+
+/* Defined in server_sim.c — the entry owned by the parent rather than by a
  * source in this directory. */
 
 /* Arms the per-thread active-sim slot that serverSimGetActive reads back; the
  * activeSim pointer itself stays file-local to server_sim.c, so a sim/ source
  * that needs to arm it goes through this. serverSimStartGame in
- * server_sim_round.c is the one such caller. */
+ * server_sim_round.c and serverSimPublishControl in server_sim_control.c are
+ * the callers. */
 void serverSimSetActive(ServerSim *sim);
-
-/* Fills a CTRL_MAP_SKIP_STATE event with the current per-slot skip votes.
- * publishMapSkipState in server_sim_vote.c calls it; the encoding itself sits
- * with the other control-event fillers in server_sim.c. */
-void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
 
 #endif
