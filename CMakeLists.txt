@@ -730,6 +730,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/lang.c
@@ -1342,7 +1343,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -2109,6 +2110,7 @@ add_executable(LogViewer
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )
@@ -2444,7 +2446,7 @@ set(BRAINTEST_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/braintest/braintest_lifecycle_stub.c
@@ -2589,7 +2591,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -3238,6 +3240,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # bytes.
     tests/unit/test_skin_source.c
     src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
     # Which densities a skin serves and what each Tile Detail mode picks.
     # Needs the tile loader itself, which no other unit test pulls in.
     tests/unit/test_skin_density.c

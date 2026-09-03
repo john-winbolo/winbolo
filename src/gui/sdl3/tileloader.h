@@ -88,19 +88,27 @@ typedef struct SkinDensityInfo {
     int           highestAny;   /* highest density any sprite has; always >= 1 */
 } SkinDensityInfo;
 
-/* Tile Detail modes. Mirrors GfxTileDetail, which does not exist yet -
-   tileloader must not depend on the settings module. */
+/* Tile Detail modes. Mirrors GfxTileDetail so tileloader needs no dependency
+   on the settings module; gfx_settings.c static-asserts that the two agree. */
 #define TILE_DETAIL_CLASSIC      0
 #define TILE_DETAIL_MATCH_ZOOM   1
 #define TILE_DETAIL_HIGH         2
+
+/* The multiple a whole-sheet BMP is drawn at, read from its header alone:
+   1 for 496x176, 2 for 992x352, and so on. 0 when the bytes are not a BMP
+   or its size is not a whole multiple of the sheet layout on both axes. */
+int tileLoaderSheetDensityFromBmp(const void *buf, size_t len);
 
 /*********************************************************
  * NAME:          tileLoaderScanDensity
  * PURPOSE:
  *   Records which densities a skin can serve, per density
- *   and per sprite.  Pure name-index lookups: no file is
- *   opened and no image is decoded, so this is cheap
- *   enough to run whenever the active skin changes.
+ *   and per sprite.  Name-index lookups plus one read of
+ *   the skin's whole sheet, whose header says what
+ *   multiple it is drawn at; no image is decoded, so this
+ *   is cheap enough to run whenever the active skin
+ *   changes.  A whole sheet at N covers every sprite up
+ *   to N.
  *   HUD art is left out of the per-density coverage so
  *   a skin that redraws only the world still counts as
  *   covering a density in full.  A NULL skin reports

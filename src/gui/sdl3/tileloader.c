@@ -62,6 +62,39 @@ static bool isNonWorldSprite(const char *name) {
     return false;
 }
 
+/* One little-endian signed 32-bit field of a BMP header, assembled a byte at
+ * a time so neither the buffer's alignment nor the host's byte order
+ * matters. */
+static Sint32 readLE32(const unsigned char *p, size_t off) {
+    Uint32 v = (Uint32)p[off]             | ((Uint32)p[off + 1] << 8) |
+               ((Uint32)p[off + 2] << 16) | ((Uint32)p[off + 3] << 24);
+    return (Sint32)v;
+}
+
+int tileLoaderSheetDensityFromBmp(const void *buf, size_t len) {
+    const unsigned char *p = (const unsigned char *)buf;
+    Sint32 w, h;
+    long long absH;
+    int d;
+
+    /* 26 bytes covers the 14-byte file header plus the width and height of
+     * the smallest DIB header that carries them as 32-bit fields. */
+    if (p == NULL || len < 26) return 0;
+    if (p[0] != 'B' || p[1] != 'M') return 0;
+
+    w = readLE32(p, 18);
+    h = readLE32(p, 22);
+    /* A negative height is a top-down BMP; the row order says nothing about
+     * how big the sheet is. */
+    absH = h < 0 ? -(long long)h : (long long)h;
+
+    if (w < TILE_FILE_X || (w % TILE_FILE_X) != 0) return 0;
+    d = (int)(w / TILE_FILE_X);
+    if (d < 1 || d > SKIN_DENSITY_MAX) return 0;
+    if (absH != (long long)TILE_FILE_Y * d) return 0;
+    return d;
+}
+
 void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
     if (!out) return;
 
@@ -86,12 +119,36 @@ void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
        the file is the statement. */
     int svgCap = skinInfo.maxPixelDensity;
 
+    /* A whole sheet drawn at N times the layout carries every sprite at N,
+       so it counts as full coverage up to N before a single @Nx file is
+       looked at.  Reading the first sheet the skin holds costs one file read
+       per scan - about a megabyte for a 2x sheet - which the scan can afford
+       because it runs once per skin change and tileLoaderGetDensityInfo
+       caches the result.  Only the header is parsed, and the per-sprite loop
+       below stays pure index lookups. */
+    static const char *sheetNames[] = { "tiles.bmp", "skin.bmp", "skin32.bmp" };
+    int sheetDensity = 0;
+    for (int i = 0; i < (int)(sizeof(sheetNames) / sizeof(sheetNames[0])); i++) {
+        void *sheetBuf = NULL;
+        size_t sheetLen = 0;
+        if (!skinSourceRead(skin, sheetNames[i], &sheetBuf, &sheetLen)) continue;
+        sheetDensity = tileLoaderSheetDensityFromBmp(sheetBuf, sheetLen);
+        SDL_free(sheetBuf);
+        break;
+    }
+    if (sheetDensity >= 2) {
+        for (int i = 0; i < out->spriteCount; i++) {
+            out->spriteMax[i] = (unsigned char)sheetDensity;
+        }
+        out->highestAny = sheetDensity;
+    }
+
     int worldTotal = 0;
     int worldHits[SKIN_DENSITY_MAX + 1];
     SDL_memset(worldHits, 0, sizeof(worldHits));
 
     /* Name-index lookups only.  skinSourceExists is O(1) for a directory and
-       for an archive alike, so the whole scan costs no file I/O. */
+       for an archive alike, so this loop costs no file I/O. */
     char nameBuf[SKIN_PATH_MAX];
     for (int i = 0; i < out->spriteCount; i++) {
         const char *name = gTileMap[i].name;
@@ -116,7 +173,11 @@ void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
     }
 
     for (int n = 2; n <= SKIN_DENSITY_MAX; n++) {
-        if (worldTotal > 0 && worldHits[n] == worldTotal) {
+        if (n <= sheetDensity) {
+            /* The sheet covers this density for every sprite on its own. */
+            out->coverage[n] = SKIN_DENSITY_COVER_ALL;
+            out->highestAll  = n;
+        } else if (worldTotal > 0 && worldHits[n] == worldTotal) {
             out->coverage[n] = SKIN_DENSITY_COVER_ALL;
             out->highestAll  = n;
         } else if (worldHits[n] > 0) {

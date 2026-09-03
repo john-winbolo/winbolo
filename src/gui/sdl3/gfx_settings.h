@@ -1,0 +1,75 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ * Name:          gfx_settings.h
+ * Purpose:
+ *   Holds the graphics settings the player picks - tile
+ *   detail, animation smoothness, smooth shells and
+ *   texture filtering - for the code that draws with them.
+ *   Every value defaults to 0, which is what the game did
+ *   before these settings existed.
+ *********************************************************/
+
+#ifndef GFX_SETTINGS_H
+#define GFX_SETTINGS_H
+
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* How finely sprites are loaded: at their classic size, at the highest
+   density the skin covers in full for the current zoom, or at the best
+   density each sprite has of its own. */
+typedef enum GfxTileDetail {
+    GFX_TILE_DETAIL_CLASSIC    = 0,
+    GFX_TILE_DETAIL_MATCH_ZOOM = 1,
+    GFX_TILE_DETAIL_HIGH       = 2
+} GfxTileDetail;
+
+/* How movement between tiles is drawn. */
+typedef enum GfxAnimSmoothness {
+    GFX_ANIM_CLASSIC          = 0,
+    GFX_ANIM_MATCH_PIXELATION = 1,
+    GFX_ANIM_SMOOTH           = 2
+} GfxAnimSmoothness;
+
+/* How a texture is sampled when it is not drawn at its own size. */
+typedef enum GfxTextureFilter {
+    GFX_FILTER_NEAREST  = 0,
+    GFX_FILTER_LINEAR   = 1,
+    GFX_FILTER_PIXELART = 2
+} GfxTextureFilter;
+
+/* Only tile detail has a reader yet.  Animation smoothness, smooth shells
+   and the texture filter are stored and persisted here so all four keys go
+   through the same prefs code; the drawing that reads them lands later.
+   None of these is dead - do not remove them. */
+
+GfxTileDetail     gfxGetTileDetail(void);
+void              gfxSetTileDetail(GfxTileDetail v);
+GfxAnimSmoothness gfxGetAnimSmoothness(void);
+void              gfxSetAnimSmoothness(GfxAnimSmoothness v);
+bool              gfxGetSmoothShells(void);
+void              gfxSetSmoothShells(bool v);
+GfxTextureFilter  gfxGetTextureFilter(void);
+void              gfxSetTextureFilter(GfxTextureFilter v);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* GFX_SETTINGS_H */

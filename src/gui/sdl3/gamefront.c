@@ -76,6 +76,7 @@
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 #include "skin_source.h"
+#include "gfx_settings.h"
 
 #include "everard_map.h"
 #include "lobby_bot_pools.h"
@@ -2974,6 +2975,32 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   strncpy(gameFrontSkinId, buff, sizeof(gameFrontSkinId) - 1);
   gameFrontSkinId[sizeof(gameFrontSkinId) - 1] = '\0';
 
+  /* Graphics settings.  Tile detail is 0 Classic / 1 Match to Zoom /
+     2 High Detail, animation smoothness 0 Classic / 1 Match Pixelation /
+     2 Smooth, texture filter 0 Nearest / 1 Linear / 2 Pixel Art.  Only tile
+     detail has a reader so far; the rest are kept so all four settings load
+     and save in one place. */
+  prefsGetString("SETTINGS", "TileDetail", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_TILE_DETAIL_CLASSIC || v > (int)GFX_TILE_DETAIL_HIGH) v = 0;
+    gfxSetTileDetail((GfxTileDetail)v);
+  }
+  prefsGetString("SETTINGS", "AnimSmoothness", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_ANIM_CLASSIC || v > (int)GFX_ANIM_SMOOTH) v = 0;
+    gfxSetAnimSmoothness((GfxAnimSmoothness)v);
+  }
+  prefsGetString("SETTINGS", "SmoothShells", "No", buff, FILENAME_MAX);
+  gfxSetSmoothShells(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("SETTINGS", "TextureFilter", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
+    gfxSetTextureFilter((GfxTextureFilter)v);
+  }
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -3352,6 +3379,15 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Skin id, "" for the built-in assets. */
   prefsSetString("SETTINGS", "Skin", skinGetActive());
+
+  /* Graphics settings.  Same four keys the loader reads. */
+  intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "TileDetail", buff);
+  intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "AnimSmoothness", buff);
+  prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
+  intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "TextureFilter", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
