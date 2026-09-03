@@ -2430,9 +2430,13 @@ void gameFrontHandleUrlOpen(char *url) {
   }
 }
 
+/* Picks up a skin change: rebuilds the tile atlas, drops the cached
+ * background so the next frame reads it again, and reloads the sound set.
+ * The renderer, window, fonts and zoom are left alone. */
 void gameFrontReloadSkins(void) {
   sdl3DrawSetReconfigureGuard(true);
   sdl3DrawReloadTiles();
+  sdl3DrawReloadBackground();
   sdl3DrawSetReconfigureGuard(false);
   soundCleanup();
   if (soundSetup() == FALSE) {

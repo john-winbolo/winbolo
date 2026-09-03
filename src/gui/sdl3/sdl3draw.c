@@ -384,6 +384,19 @@ void sdl3DrawReloadTiles(void) {
   sdl3LoadTiles();
 }
 
+/* Drops the cached background (for a skin change) so the next frame reads it
+ * again.  Destroys and clears only: the three draw sites call
+ * sdl3LoadBackground() themselves and each is behind !tabletMode, so leaving
+ * the load to them keeps tablet mode from building a texture it never draws,
+ * and makes no assumption about which thread the caller is on or where in the
+ * frame it calls from. */
+void sdl3DrawReloadBackground(void) {
+  if (gBackgroundTex) {
+    SDL_DestroyTexture(gBackgroundTex);
+    gBackgroundTex = NULL;
+  }
+}
+
 /* Reads one BMP by name out of a skin and turns it into a texture.  NULL
  * when the skin carries no such file or the bytes do not decode. */
 static SDL_Texture *sdl3LoadSkinBmpTexture(SkinSource *skin, const char *name) {

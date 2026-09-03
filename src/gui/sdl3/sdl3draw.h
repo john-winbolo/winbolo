@@ -147,6 +147,15 @@ void sdl3DrawReconfigureZoom(int explicitZoom);
 void sdl3DrawReloadTiles(void);
 
 /*********************************************************
+*NAME:          sdl3DrawReloadBackground
+*PURPOSE:
+*  Drops the cached game background for a skin change so
+*  the next frame reads it again.  Destroys and clears the
+*  texture only; the draw sites reload it lazily.
+*********************************************************/
+void sdl3DrawReloadBackground(void);
+
+/*********************************************************
 *NAME:          sdl3DrawSetReconfigureGuard
 *PURPOSE:
 *  Marks the start (true) / end (false) of an in-place
