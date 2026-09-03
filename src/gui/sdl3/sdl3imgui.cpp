@@ -1720,6 +1720,17 @@ static void renderOverviewInWindow(ClientSim *cs) {
                              ImGuiWindowFlags_NoNavInputs |
                              ImGuiWindowFlags_NoBackground);
     ImGui::PopStyleVar();
+
+    /* Submitting this first is not what puts it at the back. ImGui files a
+       window carrying NoBringToFrontOnFocus at the back of the display order
+       once, when it is created, and never re-sorts by submission order after
+       that — so a window carrying the same flag that is created later ends up
+       behind this one. The vote widgets and the alliance request are exactly
+       that, and behind a window covering the whole screen they still draw but
+       every click on them hit-tests to the map. Pushing this back each frame
+       is what actually makes it the bottom window. */
+    ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
+
     if (open) {
         /* Same split as the pop-out: the item claims the right button so a
            right-drag pans, and leaves the left one unclaimed so a click still
@@ -4995,8 +5006,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
     }
 
-    /* First window of the frame, so the full-window map sits behind every
-       panel, overlay and dialog that follows. */
+    /* First window of the frame, so the full-window map reads as the backdrop
+       every panel, overlay and dialog that follows sits on. Submitting it here
+       is not what holds it there — see the reorder inside. */
     renderOverviewInWindow(cs);
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
