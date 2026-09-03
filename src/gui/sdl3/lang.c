@@ -1860,6 +1860,8 @@ static const LangEntry langTable[] = {
     {1967, "Nearest"},
     {1968, "Linear"},
     {1969, "Pixel art"},
+    {1970, "This skin supplies its art at one size only, so all three settings build the same tiles."},
+    {1971, "Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -812,9 +812,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             }
             ImGui::EndDisabled();
             if (oneSizeOnly) {
-                imguiHelpTooltip("This skin supplies its art at one size "
-                                 "only, so all three settings build the "
-                                 "same tiles.");
+                imguiHelpTooltip(langGetText(STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP));
             }
         }
 
@@ -883,10 +881,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 }
                 ImGui::EndCombo();
             }
-            imguiHelpTooltip("Shows most on rotated sprites and on smooth "
-                             "sub-pixel motion.  Textures drawn by the "
-                             "interface ignore it, which is why the tiles "
-                             "above do not change.");
+            imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
         }
     }
 

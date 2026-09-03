@@ -347,7 +347,7 @@ preferences folder as the `skins` directory.
 tileLoaderBuildSheet: scale=2, sheet=992x352, tile detail=classic,
   loaded 0 SVG, 305 PNG, 2 BMP fallback sprites;
   skin=user:mytheme: 0 SVG, 12 PNG, 4 @Nx, 0 sheet sprites
-  from a density 0 sheet, 0 slots filled by rotation
+  from a density 1 sheet, 0 slots filled by rotation
 ```
 
 Reading it:
@@ -357,9 +357,11 @@ Reading it:
 - **`skin=` names your skin but every count is 0** — it opened, but no filename
   matched. Check spelling against the sprite list above; names are
   case-insensitive but must otherwise match exactly.
-- **`from a density 0 sheet`** when you shipped a sheet — the dimensions are not
-  an exact multiple of 496 × 176, so it was treated as 1×. A warning line just
-  above names the file and its actual size.
+- **`from a density 1 sheet`** when you shipped a 2× or larger sheet — the
+  dimensions are not an exact multiple of 496 × 176, so it was treated as 1×.
+  A warning line just above names the file and its actual size. The same
+  words appear when the skin has no sheet at all, so check the sheet sprite
+  count beside it: 0 means no sheet was used.
 - **`0 slots filled by rotation`** with `InGameRotate=1` — the skin did not supply
   a group's `_00`, or it supplies a whole sheet.
 

@@ -739,6 +739,8 @@ STR_DLGSKIN_TEXFILTER=Texture filter
 STR_DLGSKIN_TEXFILTER_NEAREST=Nearest
 STR_DLGSKIN_TEXFILTER_LINEAR=Linear
 STR_DLGSKIN_TEXFILTER_PIXELART=Pixel art
+STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP=This skin supplies its art at one size only, so all three settings build the same tiles.
+STR_DLGSKIN_TEXFILTER_TIP=Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change.
 
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config
