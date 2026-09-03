@@ -228,6 +228,20 @@ extern "C" int imguiWelcomeShow(void) {
 
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* Alt+Enter, the same full screen key the game window takes. Ahead
+               of the ImGui feed so the keystroke never reaches a widget, and
+               out through the top of this dialog the way the FullScreen button
+               does, so the fonts and the UI scale are rebuilt for the surface
+               we now have. */
+            if (dialogIsFullScreenToggleEvent(window, &ev)) {
+                windowFullScreenChoose(
+                    (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0);
+                result = RESULT_WELCOME;
+                running = false;
+                continue;
+            }
+#endif
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;

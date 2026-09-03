@@ -816,6 +816,32 @@ static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Even
     return false;
 }
 
+/* Alt+Enter is the full screen key across the app: in a game sdl3imgui.cpp
+ * reads it off the event, and the screens outside one read it here. A
+ * predicate rather than an action, because what a screen has to redo for the
+ * surface it lands on differs -- the welcome screen comes back in through its
+ * own top, the lobby rebuilds its chrome in place.
+ * Test it before ImGui_ImplSDL3_ProcessEvent and consume the event: Enter is
+ * live in a focused text field (the lobby's chat line sends on it), and this
+ * keystroke is a window command rather than typing.
+ * Deck and tablet are full screen from window creation and keep no windowed
+ * geometry to come back to, so there it is not a toggle at all. */
+static inline bool dialogIsFullScreenToggleEvent(SDL_Window *win, const SDL_Event *ev) {
+#if BOLO_MOBILE || defined(__EMSCRIPTEN__)
+    (void)win;
+    (void)ev;
+    return false;
+#else
+    if (!win || !ev) return false;
+    if (uiModeIsSteamDeck() || uiModeIsTablet()) return false;
+    return ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat &&
+           ev->key.windowID == SDL_GetWindowID(win) &&
+           (ev->key.mod & SDL_KMOD_ALT) != 0 &&
+           (ev->key.scancode == SDL_SCANCODE_RETURN ||
+            ev->key.scancode == SDL_SCANCODE_KP_ENTER);
+#endif
+}
+
 /* Dialog window position — separate from game window position.
  * Stored in gamefront.c, loaded/saved via INI prefs. */
 #ifdef __cplusplus
