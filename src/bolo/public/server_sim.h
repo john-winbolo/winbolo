@@ -1703,6 +1703,7 @@ typedef struct TankRenderInfo {
     WORLD world_x;
     WORLD world_y;
     BYTE  dir;       /* 0-15, already converted from TURNTYPE */
+    TURNTYPE angle;  /* The un-quantised 0-255 facing dir was taken from */
     bool  on_boat;
     bool  alive;     /* false when slot is empty or tank is in death-wait */
 } TankRenderInfo;

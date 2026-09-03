@@ -127,8 +127,10 @@ void lv_screenLgmDestroy(screenLgm *value) {
 *  px         - X pixel offset
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the tank
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
 *********************************************************/
-void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) {
+void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy) {
   screenLgm q;
 
   New(q);
@@ -136,6 +138,8 @@ void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, B
   q->my = my;
   q->px = px;
   q->py = py;
+  q->wx = wx;
+  q->wy = wy;
   q->frame = frame;
   q->next = (*value);
   (*value) = q;
@@ -177,6 +181,38 @@ void lv_screenLgmGetItem(screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, BYT
     *frame = q->frame;
   } else {
     // FIXME
+  }
+}
+
+/*********************************************************
+*NAME:          lv_screenLgmGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 19/2/98
+*LAST MODIFIED: 19/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square for a
+*  specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenLgm data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*********************************************************/
+void lv_screenLgmGetSubPixel(screenLgm *value, BYTE itemNum, BYTE *wx, BYTE *wy) {
+  BYTE count;  /* Looping variable */
+  screenLgm q;
+
+  count = 1;
+  q = *value;
+
+  while (count < itemNum && NonEmpty(q)) {
+    count++;
+    q = ScreenLgmsTail(q);
+  }
+  if (q != NULL) {
+    *wx = q->wx;
+    *wy = q->wy;
   }
 }
 
