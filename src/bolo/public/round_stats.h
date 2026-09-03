@@ -30,9 +30,11 @@
 #define ROUND_STATS_H
 
 /* Post-game stats/awards: the wire publish (server) and the lobby recap
- * UI (client) are built but withheld from this release. Set to 1 to
- * surface them. */
-#define POSTGAME_STATS_ENABLED 0
+ * UI (client). Were withheld (0) for the 2.02 release; enabled (1) on the
+ * bot-improvements line 2026-09-03 so LAN test games end with the
+ * scoreboard + awards in the lobby. The codec is compiled either way, so a
+ * client built with 0 just stores the packet and shows nothing. */
+#define POSTGAME_STATS_ENABLED 1
 
 #include <stdint.h>
 #include "global.h"    /* MAX_TANKS, NEUTRAL */
