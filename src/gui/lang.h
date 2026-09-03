@@ -762,6 +762,17 @@
 #define STR_DLGSKIN_NOTES_LBL               769
 #define STR_DLGSKIN_LOADERR                 770
 
+/* Skin section of the Display & Sound settings tab */
+#define STR_DLGSETTINGS_SKIN                1948
+#define STR_DLGSKIN_DEFAULT                 1949
+#define STR_DLGSKIN_SRC_BUILTIN             1950
+#define STR_DLGSKIN_SRC_USER                1951
+#define STR_DLGSKIN_SRC_WORKSHOP            1952
+#define STR_DLGSKIN_DOWNLOADING             1953
+#define STR_DLGSKIN_OPENFOLDER              1954
+#define STR_DLGSKIN_BROWSE_WORKSHOP         1955
+#define STR_DLGSKIN_PUBLISH                 1956
+
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
 #define STR_DLGTRACKER_INVALIDPORT          772

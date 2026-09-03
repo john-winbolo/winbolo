@@ -21,6 +21,7 @@
  *********************************************************/
 
 #include <cstring>
+#include <vector>
 
 #include <SDL3/SDL.h>
 
@@ -45,6 +46,7 @@ extern "C" {
 #include "upload_policy.h"  /* UploadPolicy — map-upload combo */
 #include "playername_validate.h"
 #include "../bg_game.h"
+#include "../skin_source.h"
 #include "../../lang.h"
 #include "imgui_settings.h"
 #include "imgui_keyboard.h"
@@ -464,13 +466,29 @@ extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
 #endif
 }
 
+/* Source tag shown beside a skin's name in the picker. */
+static const char *skinKindLabel(SkinKind kind) {
+    switch (kind) {
+        case SKIN_KIND_WORKSHOP: return langGetText(STR_DLGSKIN_SRC_WORKSHOP);
+        case SKIN_KIND_USER:     return langGetText(STR_DLGSKIN_SRC_USER);
+        case SKIN_KIND_BUILTIN:
+        default:                 return langGetText(STR_DLGSKIN_SRC_BUILTIN);
+    }
+}
+
+/* Set when a pick fails to load, cleared by the next one that succeeds.
+   File scope because both settings shells share the tab renderer. */
+static bool s_skinLoadFailed = false;
+
 /* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
  * the pre-game dialog and the in-game overlay.  Frame rate,
- * letterbox, and Sound apply in both; window size and UI scale only
- * apply in-game (ctx->inGame), and their results are returned via
- * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
- * to apply after the frame.  The Sound section renders last.
+ * letterbox, Skin and Sound apply in both; window size and UI scale
+ * only apply in-game (ctx->inGame), and their results are returned
+ * via ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
+ * to apply after the frame.  A skin pick applies at once but needs
+ * the tile sheet and sound set rebuilt, which the shell does after
+ * the frame off ctx->wantSkinReload.  The Sound section renders last.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
@@ -563,6 +581,164 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                          "ratio differs from the game).");
     }
 #endif
+
+    /* ---- Skin ---- */
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SKIN));
+    {
+        /* Rescanned every frame: a directory listing plus one skin.ini read
+           per skin.  Cheap at the handful of skins a player installs. */
+        std::vector<SkinEntry> skins;
+        int found = skinScanCount();
+        if (found > 0) {
+            skins.resize((size_t)found);
+            found = skinScan(skins.data(), found);
+            skins.resize((size_t)(found > 0 ? found : 0));
+        }
+
+        /* Copied, not aliased: skinSetActive() below rewrites the registry's
+           own copy of the active id. */
+        char activeId[SKIN_ID_MAX];
+        {
+            const char *a = skinGetActive();
+            SDL_strlcpy(activeId, a != nullptr ? a : "", sizeof(activeId));
+        }
+
+        /* -1 is the Default row, which has no id and no source tag. */
+        int cur = -1;
+        for (int i = 0; i < (int)skins.size(); i++) {
+            if (strcmp(skins[(size_t)i].id, activeId) == 0) { cur = i; break; }
+        }
+
+        char preview[SKIN_NAME_MAX + 32];
+        if (cur < 0) {
+            SDL_strlcpy(preview, langGetText(STR_DLGSKIN_DEFAULT),
+                        sizeof(preview));
+        } else {
+            SDL_snprintf(preview, sizeof(preview), "%s (%s)",
+                         skins[(size_t)cur].displayName,
+                         skinKindLabel(skins[(size_t)cur].kind));
+        }
+
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        if (ImGui::BeginCombo("##skin", preview)) {
+            /* Default first: clears back to the built-in assets. */
+            if (ImGui::Selectable(langGetText(STR_DLGSKIN_DEFAULT), cur < 0) &&
+                cur >= 0) {
+                skinSetActive("");
+                s_skinLoadFailed = false;
+                gameFrontSaveCurrentPrefs();
+                ctx->wantSkinReload = true;
+            }
+            for (int i = 0; i < (int)skins.size(); i++) {
+                const SkinEntry &e = skins[(size_t)i];
+                bool sel = (cur == i);
+                char tag[64];
+                SDL_snprintf(tag, sizeof(tag), "(%s)", skinKindLabel(e.kind));
+                /* Leave the dim source tag room at the right rather than let
+                   a full-width row push it outside the popup and clip it.
+                   The row still takes the click everywhere but under the tag. */
+                float nameW = ImGui::CalcTextSize(e.displayName).x;
+                float rowW  = ImGui::GetContentRegionAvail().x -
+                              ImGui::CalcTextSize(tag).x -
+                              ImGui::GetStyle().ItemSpacing.x;
+                if (rowW < nameW) rowW = nameW;
+                ImGui::PushID(i);
+                if (ImGui::Selectable(e.displayName, sel,
+                                      ImGuiSelectableFlags_None,
+                                      ImVec2(rowW, 0.0f)) &&
+                    i != cur) {
+                    if (skinSetActive(e.id)) {
+                        s_skinLoadFailed = false;
+                        gameFrontSaveCurrentPrefs();
+                        ctx->wantSkinReload = true;
+                    } else {
+                        /* A failed load clears to the built-in assets, so put
+                           the previous skin back instead of letting a bad pick
+                           reset it. */
+                        skinSetActive(activeId);
+                        s_skinLoadFailed = true;
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", tag);
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (s_skinLoadFailed) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "%s", langGetText(STR_DLGSKIN_LOADERR));
+        }
+
+        /* Name / author / notes off the active skin's skin.ini.  Default has
+           no source, and three "N/A" rows say nothing, so show none. */
+        SkinSource *src = skinGetActiveSource();
+        if (src != nullptr) {
+            SkinInfo info;
+            const char *na = langGetText(STR_DLGSKIN_NA);
+            skinSourceReadIni(src, &info);
+            ImGui::Text("%s %s", langGetText(STR_DLGSKIN_NAME_LBL),
+                        info.name[0]   != '\0' ? info.name   : na);
+            ImGui::Text("%s %s", langGetText(STR_DLGSKIN_AUTHOR_LBL),
+                        info.author[0] != '\0' ? info.author : na);
+            ImGui::TextWrapped("%s %s", langGetText(STR_DLGSKIN_NOTES_LBL),
+                               info.notes[0] != '\0' ? info.notes : na);
+        }
+
+        /* Sample of the sheet that is live right now.  The tiles reload
+           after the frame, so the strip trails a selection by a frame. */
+        {
+            static const struct { int x, y; } previewTiles[] = {
+                { TANK_SELF_0_X,  TANK_SELF_0_Y  },
+                { TANK_SELF_1_X,  TANK_SELF_1_Y  },
+                { TANK_SELF_2_X,  TANK_SELF_2_Y  },
+                { TANK_SELF_3_X,  TANK_SELF_3_Y  },
+                { TANK_SELF_4_X,  TANK_SELF_4_Y  },
+                { TANK_SELF_5_X,  TANK_SELF_5_Y  },
+                { TANK_SELF_6_X,  TANK_SELF_6_Y  },
+                { TANK_SELF_7_X,  TANK_SELF_7_Y  },
+                { TANK_SELF_8_X,  TANK_SELF_8_Y  },
+                { TANK_SELF_9_X,  TANK_SELF_9_Y  },
+                { TANK_SELF_10_X, TANK_SELF_10_Y },
+                { TANK_SELF_11_X, TANK_SELF_11_Y },
+                { TANK_SELF_12_X, TANK_SELF_12_Y },
+                { TANK_SELF_13_X, TANK_SELF_13_Y },
+                { TANK_SELF_14_X, TANK_SELF_14_Y },
+                { TANK_SELF_15_X, TANK_SELF_15_Y },
+                { BASE_GOOD_X,    BASE_GOOD_Y    },
+                { PILL_GOOD15_X,  PILL_GOOD15_Y  },
+                { GRASS_X,        GRASS_Y        },
+                { ROAD_CROSS_X,   ROAD_CROSS_Y   },
+                { SWAMP_X,        SWAMP_Y        },
+            };
+            const int n = (int)(sizeof(previewTiles) / sizeof(previewTiles[0]));
+            for (int i = 0; i < n; i++) {
+                if (i > 0) ImGui::SameLine(0.0f, 1.0f);
+                imguiDrawTileIcon(previewTiles[i].x, previewTiles[i].y);
+            }
+        }
+
+        if (ImGui::Button(langGetText(STR_DLGSKIN_OPENFOLDER))) {
+            /* SDL_GetPrefPath already ends in a separator. */
+            const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+            if (prefDir != nullptr) {
+                char dir[SKIN_PATH_MAX];
+                char url[SKIN_PATH_MAX + 16];
+                SDL_snprintf(dir, sizeof(dir), "%sskins", prefDir);
+                SDL_free((void *)prefDir);
+                SDL_CreateDirectory(dir);
+                /* file:// wants forward slashes and an extra leading one for
+                   a Windows "C:\..." path, giving "file:///C:/...". */
+                SDL_snprintf(url, sizeof(url), "file://%s%s",
+                             dir[0] == '/' ? "" : "/", dir);
+                for (char *c = url; *c != '\0'; c++) {
+                    if (*c == '\\') *c = '/';
+                }
+                imguiOpenUrl(url);
+            }
+        }
+        imguiHandOnHover();
+    }
 
     /* ---- Sound ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
@@ -949,6 +1125,10 @@ extern "C" void imguiSettingsShow(void) {
      * render in the same dialog session (no app restart needed). */
     bool        pendingFontRebuild = false;
 
+    /* Set when the Skin combo changes.  gameFrontReloadSkins() destroys and
+     * rebuilds the tile texture, so it runs after Present, not mid-frame. */
+    bool        pendingSkinReload = false;
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -1188,6 +1368,8 @@ extern "C" void imguiSettingsShow(void) {
            pre-game atlas-rebuild flag consumed after Present.  Additive:
            never clobber an already-pending rebuild. */
         if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
+        /* Same deal for a skin change: the reload happens after Present. */
+        if (ctx.wantSkinReload) pendingSkinReload = true;
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
@@ -1249,6 +1431,14 @@ extern "C" void imguiSettingsShow(void) {
             imguiLoadBoloFont(fontSize);
             chainPickerNameGlyphs(langEntries, langCount, fontSize);
             pendingFontRebuild = false;
+        }
+
+        /* Rebuild the tile sheet and sound set for a new skin here, between
+         * Present and the next NewFrame — the old tile texture may still be
+         * referenced by draw data before Present. */
+        if (pendingSkinReload) {
+            pendingSkinReload = false;
+            gameFrontReloadSkins();
         }
 
 #if !BOLO_MOBILE

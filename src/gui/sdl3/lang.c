@@ -1836,6 +1836,17 @@ static const LangEntry langTable[] = {
 
     /* Log viewer Options item: present the round on a game-relative clock. */
     {1921, "Hide Lobby"},
+
+    /* Skin section of the Display & Sound settings tab */
+    {1948, "Skin"},
+    {1949, "Default"},
+    {1950, "Built-in"},
+    {1951, "User"},
+    {1952, "Workshop"},
+    {1953, "Downloading…"},
+    {1954, "Open skins folder"},
+    {1955, "Browse Workshop"},
+    {1956, "Publish to Workshop…"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
