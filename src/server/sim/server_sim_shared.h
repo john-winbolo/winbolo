@@ -92,11 +92,32 @@ BYTE serverSimWinningOwner(ServerSim *sim);
  * server_sim.c, and by serverSimChangeMap alongside it. */
 void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
 
-/* Defined in server_sim.c — the one entry here owned by the parent rather than
- * by a source in this directory. Arms the per-thread active-sim slot that
- * serverSimGetActive reads back; the activeSim pointer itself stays file-local
- * to server_sim.c, so a sim/ source that needs to arm it goes through this.
- * serverSimStartGame in server_sim_round.c is the one such caller. */
+/* Defined in server_sim_vote.c — the two publish helpers that were file-local
+ * to server_sim.c until their definitions moved out. Each still has a caller
+ * left behind there. */
+
+/* Broadcasts the current per-slot map-skip votes as a CTRL_MAP_SKIP_STATE
+ * event. serverSimRemovePlayer in server_sim.c calls it so a departing
+ * player's vote drops off every client's tally. */
+void publishMapSkipState(ServerSim *sim);
+
+/* Server-originated English broadcast, published as CTRL_SERVER_TEXT to every
+ * subscriber. The base-sweep branch of the tick core in server_sim.c calls
+ * it. */
+void publishServerMessage(ServerSim *sim, const char *message);
+
+/* Defined in server_sim.c — the entries owned by the parent rather than by a
+ * source in this directory. */
+
+/* Arms the per-thread active-sim slot that serverSimGetActive reads back; the
+ * activeSim pointer itself stays file-local to server_sim.c, so a sim/ source
+ * that needs to arm it goes through this. serverSimStartGame in
+ * server_sim_round.c is the one such caller. */
 void serverSimSetActive(ServerSim *sim);
+
+/* Fills a CTRL_MAP_SKIP_STATE event with the current per-slot skip votes.
+ * publishMapSkipState in server_sim_vote.c calls it; the encoding itself sits
+ * with the other control-event fillers in server_sim.c. */
+void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
 
 #endif

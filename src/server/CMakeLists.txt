@@ -85,6 +85,7 @@ add_library(server_sim_static STATIC
     sim/server_sim_snapshot.c
     sim/server_sim_round.c
     sim/server_sim_maps.c
+    sim/server_sim_vote.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)
