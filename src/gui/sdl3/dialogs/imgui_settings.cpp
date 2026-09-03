@@ -817,6 +817,45 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                                  "same tiles.");
             }
         }
+
+        /* Animation smoothness, and the shell override.  Both are read where
+           a sprite's screen position is worked out, so a pick shows on the
+           next frame with no sheet rebuild.  Neither is greyed by what the
+           skin holds: this is about where a sprite is put on screen, not how
+           much detail it has, and it shows at any zoom above 1 even with
+           16x16 art. */
+        {
+            const char *smoothLabels[] = {
+                langGetText(STR_DLGSKIN_ANIMSMOOTH_CLASSIC),
+                langGetText(STR_DLGSKIN_ANIMSMOOTH_PIXEL),
+                langGetText(STR_DLGSKIN_ANIMSMOOTH_SMOOTH),
+            };
+            int asIdx = (int)gfxGetAnimSmoothness();
+            if (asIdx < 0 || asIdx > 2) asIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_ANIMSMOOTH));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##animsmooth", smoothLabels[asIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool sel = (asIdx == i);
+                    if (ImGui::Selectable(smoothLabels[i], sel) && i != asIdx) {
+                        gfxSetAnimSmoothness((GfxAnimSmoothness)i);
+                        gameFrontSaveCurrentPrefs();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            /* Redundant once everything already moves smoothly, so it only
+               appears in the other two modes. */
+            if (gfxGetAnimSmoothness() != GFX_ANIM_SMOOTH) {
+                bool ss = gfxGetSmoothShells();
+                if (ImGui::Checkbox(langGetText(STR_DLGSKIN_SMOOTHSHELLS), &ss)) {
+                    gfxSetSmoothShells(ss);
+                    gameFrontSaveCurrentPrefs();
+                }
+            }
+        }
     }
 
     /* ---- Sound ---- */

@@ -1613,11 +1613,15 @@ endif()
 #     mapViewCalcSquare/mapViewRenderCentered are renamed lvg_* so the island
 #     copies don't clash with the client's live-game mapview.o; game_view.c's
 #     calls are renamed to match.
-#   * The eight screen* accessors mapView* references rebind to the existing
+#   * The eleven screen* accessors mapView* references rebind to the existing
 #     lv_* bodies (already linked via LOGVIEWER_LIB_SOURCES — no new symbols).
 #     screenTanksGetItem has a different parameter list on the two sides, so it
 #     maps to lvg_screenTanksGetItem (render_island_screentank_adapter.c)
-#     rather than a plain macro.
+#     rather than a plain macro. The three GetSubPixel accessors take the same
+#     parameters on both sides, so they map straight to their lv_ bodies.
+#     Every accessor the Draw* path calls must appear below: an unmapped one
+#     still links, against bolo's body, and reads an lv-layout struct through
+#     the wrong offsets.
 #
 # game-view stays gated off by ownsWindow (draw.c), so this renderer is
 # linked-but-dormant.
@@ -1653,10 +1657,13 @@ target_compile_definitions(winbolo_render_island PRIVATE
     screenIsMine=lv_screenIsMine
     screenBulletsGetNumEntries=lv_screenBulletsGetNumEntries
     screenBulletsGetItem=lv_screenBulletsGetItem
+    screenBulletsGetSubPixel=lv_screenBulletsGetSubPixel
     screenTanksGetNumEntries=lv_screenTanksGetNumEntries
     screenLgmGetNumEntries=lv_screenLgmGetNumEntries
     screenLgmGetItem=lv_screenLgmGetItem
+    screenLgmGetSubPixel=lv_screenLgmGetSubPixel
     screenTanksGetItem=lvg_screenTanksGetItem
+    screenTanksGetSubPixel=lv_screenTanksGetSubPixel
 )
 target_link_libraries(WinBolo PRIVATE winbolo_render_island)
 

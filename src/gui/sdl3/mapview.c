@@ -27,6 +27,7 @@
 #include "tilenum.h"
 #include "screencalc.h"
 #include "client_render.h"
+#include "gfx_settings.h"
 #include "util.h"
 
 #include <string.h>
@@ -34,6 +35,38 @@
 /* mapViewPosX/Y and mapViewInit() moved to sprite_positions.{c,h} so the
  * log viewer can link the table without dragging in the bolo screen
  * dependencies that mapview's draw helpers below need. */
+
+
+/* Offset of a sprite from the map origin, in screen pixels. `square` is the
+   map square on this axis, `pixelOff` its 0..15 game-pixel offset and
+   `worldOff` its 0..255 world offset inside the square. */
+static float mapViewSpriteOffset(const MapViewCtx *ctx, int mode,
+                                 int square, int pixelOff, int worldOff) {
+  if (mode == GFX_ANIM_SMOOTH || mode == GFX_ANIM_MATCH_PIXELATION) {
+    /* 256 world units to a square, 16 to a game pixel. When
+       worldOff == pixelOff << 4 this works out to the same value Classic
+       gives, so a sprite carrying nothing finer than its game pixel does
+       not move differently here. */
+    float smooth =
+        ((float)(square * 256 + worldOff) / 16.0f) * (float)ctx->zoomFactor;
+    if (mode == GFX_ANIM_SMOOTH) {
+      return smooth;
+    }
+    /* Match pixelation: snap to the size of one sheet texel on screen, which
+       covers zoomFactor / sheetScale screen pixels. With the sheet built at
+       sheetScale == zoomFactor that is a whole screen pixel, a step between
+       Classic's whole game pixels and Smooth's continuous motion. */
+    {
+      int ss = ctx->sheetScale < 1 ? 1 : ctx->sheetScale;
+      float step = (float)ctx->zoomFactor / (float)ss;
+      return SDL_floorf(smooth / step + 0.5f) * step;
+    }
+  }
+  /* Classic, and anything unrecognised. Whole game pixels, worked out in
+     integers and cast once, so the result is the position the game drew
+     before this setting existed. */
+  return (float)((square * TILE_SIZE_X + pixelOff) * ctx->zoomFactor);
+}
 
 
 /*********************************************************
@@ -82,10 +115,19 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
+  /* Shells are small and fast, so quantised motion shows on them most and
+     sub-pixel blur least. That is why the smooth-shells setting overrides
+     the mode here and in no other draw. */
+  int mode = gfxGetSmoothShells() ? (int)GFX_ANIM_SMOOTH
+                                  : (int)gfxGetAnimSmoothness();
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
     screenBulletsGetItem(sBullets, count, &mx, &my, &px, &py, &frame);
+    /* Default the world offsets to the game pixel, so an entry that carries
+       nothing finer sits exactly where Classic puts it. */
+    BYTE wx = (BYTE)(px << 4), wy = (BYTE)(py << 4);
+    screenBulletsGetSubPixel(sBullets, count, &wx, &wy);
 
     int srcX, srcY, srcW, srcH;
     switch (frame) {
@@ -116,10 +158,10 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
       default: continue;
     }
 
-    int bbx = (int)mx * TILE_SIZE_X + (int)px;
-    int bby = (int)my * TILE_SIZE_Y + (int)py;
-    float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
-    float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+    float sx = (float)(originX - tileW - edgeX) +
+               mapViewSpriteOffset(ctx, mode, (int)mx, (int)px, (int)wx);
+    float sy = (float)(originY - tileH - edgeY) +
+               mapViewSpriteOffset(ctx, mode, (int)my, (int)py, (int)wy);
 
     /* Anchor-pixel positioning: place the sprite so its leading pixel lands
      * exactly on the shell's world position (the collision point).
@@ -168,11 +210,14 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
+  int mode = (int)gfxGetAnimSmoothness();
   BYTE total = screenTanksGetNumEntries(tks);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame, playerNum;
     char playerName[256];
     screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum, playerName);
+    BYTE wx = (BYTE)(px << 4), wy = (BYTE)(py << 4), angle = 0;
+    screenTanksGetSubPixel(tks, count, &wx, &wy, &angle);
 
     int srcX = 0, srcY = 0;
     switch (frame) {
@@ -278,10 +323,10 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     /* Win32 adds 2 to px/py before computing position */
     int apx = (int)px;// + 2;
     int apy = (int)py;// + 2;
-    int bbx = (int)mx * TILE_SIZE_X + apx;
-    int bby = (int)my * TILE_SIZE_Y + apy;
-    float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
-    float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+    float sx = (float)(originX - tileW - edgeX) +
+               mapViewSpriteOffset(ctx, mode, (int)mx, apx, (int)wx);
+    float sy = (float)(originY - tileH - edgeY) +
+               mapViewSpriteOffset(ctx, mode, (int)my, apy, (int)wy);
 
     {
       int ss = ctx->sheetScale;
@@ -304,10 +349,13 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY) {
+  int mode = (int)gfxGetAnimSmoothness();
   BYTE total = screenLgmGetNumEntries(lgms);
   for (BYTE count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
     screenLgmGetItem(lgms, count, &mx, &my, &px, &py, &frame);
+    BYTE wx = (BYTE)(px << 4), wy = (BYTE)(py << 4);
+    screenLgmGetSubPixel(lgms, count, &wx, &wy);
 
     int srcX, srcY, srcW, srcH;
     switch (frame) {
@@ -321,10 +369,10 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
         srcX=LGM_HELICOPTER_X; srcY=LGM_HELICOPTER_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
     }
 
-    int bbx = (int)mx * TILE_SIZE_X + (int)px;
-    int bby = (int)my * TILE_SIZE_Y + (int)py;
-    float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
-    float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
+    float baseX = (float)(originX - tileW - edgeX);
+    float baseY = (float)(originY - tileH - edgeY);
+    float sx = baseX + mapViewSpriteOffset(ctx, mode, (int)mx, (int)px, (int)wx);
+    float sy = baseY + mapViewSpriteOffset(ctx, mode, (int)my, (int)py, (int)wy);
 
     /* Centre the LGM sprite on its authoritative hit pixel. LGM_WIDTH=3,
      * LGM_HEIGHT=4, so the precise sub-pixel centre is (1.5, 2.0) game
@@ -334,15 +382,20 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
      * sits on. So compute the precise centre, then snap only the DISPLAYED
      * position to the nearest whole game pixel — rounded relative to the
      * scroll origin so the LGM stays in lockstep with smoothly-scrolling
-     * sprites instead of snapping to an absolute grid. */
+     * sprites instead of snapping to an absolute grid.
+     *
+     * Smooth drops the snap: motion finer than a game pixel is the whole
+     * point of that mode, and the grid it lines up with is the one Smooth
+     * has already left. Classic and Match pixelation keep it. The (1.5, 2.0)
+     * centre applies in all three. */
     if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
       float z = (float)ctx->zoomFactor;
-      float baseX = (float)(originX - tileW - edgeX);
-      float baseY = (float)(originY - tileH - edgeY);
       sx -= 1.5f * z;   /* precise sub-pixel centre */
       sy -= 2.0f * z;
-      sx = baseX + SDL_floorf((sx - baseX) / z + 0.5f) * z;  /* display snaps to a pixel */
-      sy = baseY + SDL_floorf((sy - baseY) / z + 0.5f) * z;
+      if (mode != GFX_ANIM_SMOOTH) {
+        sx = baseX + SDL_floorf((sx - baseX) / z + 0.5f) * z;  /* display snaps to a pixel */
+        sy = baseY + SDL_floorf((sy - baseY) / z + 0.5f) * z;
+      }
     }
 
     {
