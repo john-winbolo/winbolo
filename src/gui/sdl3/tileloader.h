@@ -28,6 +28,8 @@
 extern "C" {
 #endif
 
+struct SkinSource;
+
 /*********************************************************
  * NAME:          tileLoaderBuildSheet
  * PURPOSE:
@@ -36,9 +38,27 @@ extern "C" {
  *     1. Try data/svg/<name>.svg  (nanosvg rasterize)
  *     2. Try data/svg/<name>.png  (stb_image load)
  *     3. Fall back to blitting from data/skin.bmp
+ *   The active skin, when there is one, is consulted ahead
+ *   of all three.
  *   Returns NULL on failure.  Caller owns the surface.
  *********************************************************/
 SDL_Surface *tileLoaderBuildSheet(int tileSize);
+
+/*********************************************************
+ * NAME:          tileLoaderBuildSheetFor
+ * PURPOSE:
+ *   tileLoaderBuildSheet against a caller-chosen skin.
+ *   Each sprite resolves in this order:
+ *     1. skin <name>.svg
+ *     2. skin <name>.png
+ *     3. crop from the skin's tiles.bmp or skin.bmp
+ *     4. data/svg/<name>.svg
+ *     5. data/svg/<name>.png
+ *     6. crop from data/skin.bmp
+ *   A NULL skin skips 1-3 and builds the stock sheet.
+ *   Returns NULL on failure.  Caller owns the surface.
+ *********************************************************/
+SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize);
 
 /*********************************************************
  * NAME:          tileLoaderCleanup

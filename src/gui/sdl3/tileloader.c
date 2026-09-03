@@ -21,6 +21,7 @@
 
 #include "tileloader.h"
 #include "tilemap.h"
+#include "skin_source.h"
 #include "../tiles.h"
 
 #include "../../common/wb_log.h"
@@ -53,16 +54,14 @@ static void blitRGBA(SDL_Surface *sheet, int dstX, int dstY,
     }
 }
 
-/* Try loading an SVG file and rasterizing it at the given size.
- * Uses SDL_LoadFile so that Android APK assets are accessible.
+/* Rasterize SVG bytes at the given size.  nanosvg parses in place, so `data`
+ * must be writable and NUL-terminated at [len] — both SDL_LoadFile and
+ * skinSourceRead hand back a buffer like that.
  * Returns true on success and writes RGBA pixels into `out`. */
-static bool tryLoadSVG(const char *path, int w, int h,
-                       unsigned char *out, NSVGrasterizer *rast) {
-    size_t fileSize = 0;
-    char *fileData = (char *)SDL_LoadFile(path, &fileSize);
-    if (!fileData) return false;
-    NSVGimage *image = nsvgParse(fileData, "px", 96.0f);
-    SDL_free(fileData);
+static bool decodeSVG(char *data, size_t len, int w, int h,
+                      unsigned char *out, NSVGrasterizer *rast) {
+    (void)len;
+    NSVGimage *image = nsvgParse(data, "px", 96.0f);
     if (!image) return false;
     if (image->width < 1.0f || image->height < 1.0f) {
         nsvgDelete(image);
@@ -77,29 +76,24 @@ static bool tryLoadSVG(const char *path, int w, int h,
     return true;
 }
 
-/* Try loading a PNG file via stb_image.
- * Uses SDL_IOFromFile so that Android APK assets are accessible.
+/* Decode PNG bytes via stb_image, scaling to the target size when they do
+ * not already match.
  * Returns true on success and writes RGBA pixels into `out`. */
-static bool tryLoadPNG(const char *path, int w, int h,
-                       unsigned char *out) {
+static bool decodePNG(const void *data, size_t len, int w, int h,
+                      unsigned char *out) {
     int imgW = 0, imgH = 0, channels = 0;
-    unsigned char *data = NULL;
+    unsigned char *img = NULL;
 
-    /* Read file via SDL I/O (works with Android assets). */
-    size_t fileSize = 0;
-    void *fileData = SDL_LoadFile(path, &fileSize);
-    if (fileData && fileSize > 0) {
-        data = stbi_load_from_memory((const unsigned char *)fileData,
-                                     (int)fileSize,
-                                     &imgW, &imgH, &channels, 4);
-        SDL_free(fileData);
+    if (data && len > 0) {
+        img = stbi_load_from_memory((const unsigned char *)data, (int)len,
+                                    &imgW, &imgH, &channels, 4);
     }
-    if (!data) return false;
+    if (!img) return false;
 
     /* If sizes match exactly, just copy. */
     if (imgW == w && imgH == h) {
-        memcpy(out, data, (size_t)(w * h * 4));
-        stbi_image_free(data);
+        memcpy(out, img, (size_t)(w * h * 4));
+        stbi_image_free(img);
         return true;
     }
 
@@ -111,13 +105,39 @@ static bool tryLoadPNG(const char *path, int w, int h,
         for (int x = 0; x < w; x++) {
             int srcX = x * imgW / w;
             if (srcX >= imgW) srcX = imgW - 1;
-            const unsigned char *sp = data + (srcY * imgW + srcX) * 4;
+            const unsigned char *sp = img + (srcY * imgW + srcX) * 4;
             unsigned char *dp = out + (y * w + x) * 4;
             dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = sp[3];
         }
     }
-    stbi_image_free(data);
+    stbi_image_free(img);
     return true;
+}
+
+/* Try loading an SVG file and rasterizing it at the given size.
+ * Uses SDL_LoadFile so that Android APK assets are accessible.
+ * Returns true on success and writes RGBA pixels into `out`. */
+static bool tryLoadSVG(const char *path, int w, int h,
+                       unsigned char *out, NSVGrasterizer *rast) {
+    size_t fileSize = 0;
+    char *fileData = (char *)SDL_LoadFile(path, &fileSize);
+    if (!fileData) return false;
+    bool ok = decodeSVG(fileData, fileSize, w, h, out, rast);
+    SDL_free(fileData);
+    return ok;
+}
+
+/* Try loading a PNG file via stb_image.
+ * Uses SDL_LoadFile so that Android APK assets are accessible.
+ * Returns true on success and writes RGBA pixels into `out`. */
+static bool tryLoadPNG(const char *path, int w, int h,
+                       unsigned char *out) {
+    size_t fileSize = 0;
+    void *fileData = SDL_LoadFile(path, &fileSize);
+    if (!fileData) return false;
+    bool ok = decodePNG(fileData, fileSize, w, h, out);
+    SDL_free(fileData);
+    return ok;
 }
 
 /* Blit a rectangle from the BMP fallback surface (with color key applied)
@@ -131,7 +151,84 @@ static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
     SDL_BlitSurface(bmp, &srcRect, sheet, &dstRect);
 }
 
-SDL_Surface *tileLoaderBuildSheet(int tileSize) {
+/* Cut one sprite out of a whole-sheet BMP (either the skin's own or
+ * data/skin.bmp) into the output sheet, nearest-neighbor scaled when the
+ * tile size is above 16.  False when there is no source sheet. */
+static bool blitSheetSprite(SDL_Surface *sheet, SDL_Surface *src,
+                            const TileMapEntry *e, int scale) {
+    if (!src) return false;
+
+    int w = e->width  * scale;
+    int h = e->height * scale;
+    int dstX = e->sheetX * scale;
+    int dstY = e->sheetY * scale;
+
+    if (scale == 1) {
+        blitFromBMP(sheet, src, dstX, dstY,
+                    e->sheetX, e->sheetY, e->width, e->height);
+    } else {
+        /* Blit the sprite at 1x, then nearest-neighbor scale it up. */
+        SDL_Surface *tmpSurf = SDL_CreateSurface(e->width, e->height,
+                                                 SDL_PIXELFORMAT_RGBA32);
+        if (tmpSurf) {
+            SDL_Rect srcR = { e->sheetX, e->sheetY, e->width, e->height };
+            SDL_Rect dstR = { 0, 0, e->width, e->height };
+            SDL_BlitSurface(src, &srcR, tmpSurf, &dstR);
+            /* Nearest-neighbor scale into sheet */
+            unsigned char *sp = (unsigned char *)tmpSurf->pixels;
+            unsigned char *dp = (unsigned char *)sheet->pixels;
+            for (int row = 0; row < h; row++) {
+                int srcRow = row * e->height / h;
+                for (int col = 0; col < w; col++) {
+                    int srcCol = col * e->width / w;
+                    const unsigned char *s = sp + (srcRow * tmpSurf->pitch) + srcCol * 4;
+                    unsigned char *d = dp + ((dstY + row) * sheet->pitch) + (dstX + col) * 4;
+                    d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+                }
+            }
+            SDL_DestroySurface(tmpSurf);
+        }
+    }
+    return true;
+}
+
+/* Apply the green color key to a freshly loaded sheet BMP and convert it to
+ * RGBA32 so the key becomes real transparency.  Consumes `raw`; NULL in
+ * gives NULL out. */
+static SDL_Surface *loadKeyedSheetFromSurface(SDL_Surface *raw) {
+    if (!raw) return NULL;
+    Uint32 key = SDL_MapRGB(SDL_GetPixelFormatDetails(raw->format),
+                            NULL, 0, 255, 0);
+    SDL_SetSurfaceColorKey(raw, true, key);
+    SDL_Surface *out = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(raw);
+    return out;
+}
+
+/* Load the skin's own whole sheet — tiles.bmp, else skin.bmp — color-keyed
+ * the same way as data/skin.bmp.  NULL when the skin holds neither. */
+static SDL_Surface *loadSkinSheet(struct SkinSource *skin) {
+    static const char *names[] = { "tiles.bmp", "skin.bmp" };
+
+    for (int i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++) {
+        void *buf = NULL;
+        size_t len = 0;
+        if (!skinSourceRead(skin, names[i], &buf, &len)) continue;
+        SDL_Surface *keyed = NULL;
+        SDL_IOStream *io = len > 0 ? SDL_IOFromMem(buf, len) : NULL;
+        if (io) {
+            /* true closes the stream for us; the buffer stays ours to free. */
+            keyed = loadKeyedSheetFromSurface(SDL_LoadBMP_IO(io, true));
+        }
+        SDL_free(buf);
+        if (keyed) return keyed;
+        WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: skin %s is not a usable BMP",
+                names[i]);
+    }
+    return NULL;
+}
+
+SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
     /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
        and the sheet is the classic 496x176.  When tileSize==32, scale==2
        and SVGs are rasterized at 2x for crisper rendering. */
@@ -162,17 +259,26 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
        If scale > 1 we scale the BMP up so it lands at the right position. */
     char bmpPathBuf[512];
     SDL_snprintf(bmpPathBuf, sizeof(bmpPathBuf), "%sdata/skin.bmp", basePath);
-    SDL_Surface *bmpRaw = SDL_LoadBMP(bmpPathBuf);
-    SDL_Surface *bmp = NULL;
-    if (bmpRaw) {
-        Uint32 key = SDL_MapRGB(SDL_GetPixelFormatDetails(bmpRaw->format),
-                                NULL, 0, 255, 0);
-        SDL_SetSurfaceColorKey(bmpRaw, true, key);
-        bmp = SDL_ConvertSurface(bmpRaw, SDL_PIXELFORMAT_RGBA32);
-        SDL_DestroySurface(bmpRaw);
-    }
+    SDL_Surface *bmp = loadKeyedSheetFromSurface(SDL_LoadBMP(bmpPathBuf));
     if (!bmp) {
         WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: could not load %s fallback", bmpPathBuf);
+    }
+
+    /* The skin's whole sheet is read once and cropped per sprite, so a
+       sheet-only skin costs one decode per build. */
+    SDL_Surface *skinSheet = skin ? loadSkinSheet(skin) : NULL;
+
+    /* Name the skin in the summary below so a skin resolving to the wrong
+       assets can be told apart from the built-in set in the log. */
+    const char *skinLabel = "none";
+    SkinInfo    skinInfo;
+    if (skin) {
+        if (skin == skinGetActiveSource() && skinGetActive()[0] != '\0') {
+            skinLabel = skinGetActive();
+        } else {
+            skinSourceReadIni(skin, &skinInfo);
+            skinLabel = skinInfo.name[0] ? skinInfo.name : "(unnamed)";
+        }
     }
 
     NSVGrasterizer *rast = nsvgCreateRasterizer();
@@ -184,6 +290,7 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 
     char pathBuf[512];
     int svgCount = 0, pngCount = 0, bmpCount = 0;
+    int skinSvgCount = 0, skinPngCount = 0, skinSheetCount = 0;
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const TileMapEntry *e = &gTileMap[i];
@@ -192,6 +299,40 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         int dstX = e->sheetX * scale;
         int dstY = e->sheetY * scale;
         bool loaded = false;
+
+        /* The skin gets first refusal on every sprite: its own SVG, then its
+           own PNG, then a cutout of its whole sheet. */
+        if (skin) {
+            void *buf = NULL;
+            size_t len = 0;
+
+            SDL_snprintf(pathBuf, sizeof(pathBuf), "%s.svg", e->name);
+            if (skinSourceRead(skin, pathBuf, &buf, &len)) {
+                if (decodeSVG((char *)buf, len, w, h, tmpBuf, rast)) {
+                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                    loaded = true;
+                    skinSvgCount++;
+                }
+                SDL_free(buf);
+            }
+
+            if (!loaded) {
+                SDL_snprintf(pathBuf, sizeof(pathBuf), "%s.png", e->name);
+                if (skinSourceRead(skin, pathBuf, &buf, &len)) {
+                    if (decodePNG(buf, len, w, h, tmpBuf)) {
+                        blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                        loaded = true;
+                        skinPngCount++;
+                    }
+                    SDL_free(buf);
+                }
+            }
+
+            if (!loaded && blitSheetSprite(sheet, skinSheet, e, scale)) {
+                loaded = true;
+                skinSheetCount++;
+            }
+        }
 
         /* Try SVG first — rasterized at scaled size. */
         SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/svg/%s.svg", basePath, e->name);
@@ -212,45 +353,25 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
         }
 
         /* Fall back to BMP — blit at 1x then scale up if needed. */
-        if (!loaded && bmp) {
-            if (scale == 1) {
-                blitFromBMP(sheet, bmp, dstX, dstY,
-                            e->sheetX, e->sheetY, e->width, e->height);
-            } else {
-                /* Blit BMP into tmpBuf at 1x, then nearest-neighbor scale up. */
-                SDL_Surface *tmpSurf = SDL_CreateSurface(e->width, e->height,
-                                                         SDL_PIXELFORMAT_RGBA32);
-                if (tmpSurf) {
-                    SDL_Rect srcR = { e->sheetX, e->sheetY, e->width, e->height };
-                    SDL_Rect dstR = { 0, 0, e->width, e->height };
-                    SDL_BlitSurface(bmp, &srcR, tmpSurf, &dstR);
-                    /* Nearest-neighbor scale into sheet */
-                    unsigned char *sp = (unsigned char *)tmpSurf->pixels;
-                    unsigned char *dp = (unsigned char *)sheet->pixels;
-                    for (int row = 0; row < h; row++) {
-                        int srcRow = row * e->height / h;
-                        for (int col = 0; col < w; col++) {
-                            int srcCol = col * e->width / w;
-                            const unsigned char *s = sp + (srcRow * tmpSurf->pitch) + srcCol * 4;
-                            unsigned char *d = dp + ((dstY + row) * sheet->pitch) + (dstX + col) * 4;
-                            d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
-                        }
-                    }
-                    SDL_DestroySurface(tmpSurf);
-                }
-            }
+        if (!loaded && blitSheetSprite(sheet, bmp, e, scale)) {
             bmpCount++;
         }
     }
 
-    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites",
-            scale, sheetW, sheetH, svgCount, pngCount, bmpCount);
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d sheet sprites",
+            scale, sheetW, sheetH, svgCount, pngCount, bmpCount,
+            skinLabel, skinSvgCount, skinPngCount, skinSheetCount);
 
     SDL_free(tmpBuf);
     if (rast) nsvgDeleteRasterizer(rast);
     if (bmp) SDL_DestroySurface(bmp);
+    if (skinSheet) SDL_DestroySurface(skinSheet);
 
     return sheet;
+}
+
+SDL_Surface *tileLoaderBuildSheet(int tileSize) {
+    return tileLoaderBuildSheetFor(skinGetActiveSource(), tileSize);
 }
 
 void tileLoaderCleanup(void) {

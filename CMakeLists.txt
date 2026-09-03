@@ -443,16 +443,17 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_compile_options(cjson PRIVATE -Wno-error)
     endif()
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE2}" CACHE BOOL "" FORCE)
-
-    # minizip library from zlib's contrib/minizip
-    add_library(minizip STATIC
-        ${zlib_SOURCE_DIR}/contrib/minizip/zip.c
-        ${zlib_SOURCE_DIR}/contrib/minizip/unzip.c
-        ${zlib_SOURCE_DIR}/contrib/minizip/ioapi.c
-    )
-    target_include_directories(minizip PUBLIC ${zlib_SOURCE_DIR}/contrib/minizip)
-    target_link_libraries(minizip PUBLIC zlibstatic)
 endif()
+
+# minizip library from zlib's contrib/minizip.  Outside the guard above: zlib
+# is fetched on iOS too, and the iOS client reads skin archives through it.
+add_library(minizip STATIC
+    ${zlib_SOURCE_DIR}/contrib/minizip/zip.c
+    ${zlib_SOURCE_DIR}/contrib/minizip/unzip.c
+    ${zlib_SOURCE_DIR}/contrib/minizip/ioapi.c
+)
+target_include_directories(minizip PUBLIC ${zlib_SOURCE_DIR}/contrib/minizip)
+target_link_libraries(minizip PUBLIC zlibstatic)
 
 # nanosvg — header-only SVG parser/rasterizer (vendored)
 add_library(nanosvg STATIC src/third_party/nanosvg/nanosvg_impl.c)
@@ -728,6 +729,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/sdl3/skin_source.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/lang.c
@@ -910,7 +912,7 @@ bolo_grant_internal_source_access(WinBoloIOS
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc zlibstatic cjson
+    nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -1341,7 +1343,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -2111,6 +2113,7 @@ add_executable(LogViewer
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/sdl3/skin_source.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )
@@ -2446,7 +2449,7 @@ set(BRAINTEST_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/braintest/braintest_lifecycle_stub.c
@@ -2591,7 +2594,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -3237,8 +3240,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_server_address_parse.c
     # Skin asset reads: a directory, a flat zip and a zip wrapped in one
     # top-level folder must resolve the same relative names to the same
-    # bytes. skin_source.c is compiled here only — no shipping target
-    # reads assets through it yet.
+    # bytes.
     tests/unit/test_skin_source.c
     src/gui/sdl3/skin_source.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
