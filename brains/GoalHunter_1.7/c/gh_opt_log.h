@@ -21,7 +21,11 @@
  *                                     a trailing newline unless raw is true;
  *                                     returns true when it was queued
  *   gh_opt_log.flush()             -- block until the queue is on disk
- *   gh_opt_log.close()             -- flush remaining queue, stop thread, close file
+ *   gh_opt_log.close()             -- block until the queue is on disk. Does NOT
+ *                                     stop the thread: it is shared by every
+ *                                     brain instance in the process (1.6's
+ *                                     optimize.lua closes at Brain.close while
+ *                                     1.7 brains are still appending)
  */
 
 void naOptLogRegister(lua_State *L);

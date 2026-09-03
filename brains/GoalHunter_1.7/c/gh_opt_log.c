@@ -403,28 +403,22 @@ static int l_flush(lua_State *L) {
     return 0;
 }
 
-/* gh_opt_log.close() -- drain remaining queue, stop thread */
+/* gh_opt_log.close() -- drain the queue to disk. The writer thread is NOT
+ * stopped: it is one process-wide thread shared by every brain instance in
+ * the process (each lua_State registers this module, but s_thread / the
+ * queue are file-statics), and a brain has no way to know it is the last
+ * user. GoalHunter 1.6's optimize.lua calls close() at its Brain.close;
+ * when it used to stop the thread, every 1.7 brain closing after it found
+ * append() returning false and died in print2's fail_hard -- two
+ * brain_crash logs at the end of every 1.6-vs-1.7 game (20260903_105448
+ * block 2), and, now that the server rebuilds every bot's brain at each
+ * round start, it would have been two per round. A synchronous drain gives
+ * close() everything it was ever used for (the log is complete on disk
+ * before the state goes away); the thread idles until the next append or
+ * process exit. */
 static int l_close(lua_State *L) {
     (void)L;
-    gh_mutex_lock(&s_open_mutex);
-    if (!s_running) {
-        gh_mutex_unlock(&s_open_mutex);
-        return 0;
-    }
-    gh_mutex_lock(&s_mutex);
-    s_shutdown = 1;
-    gh_cond_signal(&s_cond);
-    gh_cond_broadcast(&s_drained);   /* release a producer waiting for room */
-    gh_mutex_unlock(&s_mutex);
-    gh_thread_join(&s_thread);
-    gh_mutex_destroy(&s_mutex);
-    gh_cond_destroy(&s_cond);
-    gh_cond_destroy(&s_drained);
-    s_running  = 0;
-    s_shutdown = 0;
-    s_head = s_tail = NULL;
-    s_count = s_bytes = 0;
-    gh_mutex_unlock(&s_open_mutex);
+    naOptLogFlushSync();
     return 0;
 }
 
