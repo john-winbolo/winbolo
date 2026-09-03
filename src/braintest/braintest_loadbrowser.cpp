@@ -14,8 +14,128 @@
 #include "braintest_loadbrowser.h"
 
 /* The path-tail compare (loadBrowserSameSession) and the segment lookup
- * (loadBrowserFindSegment) live in braintest_loadbrowser_segment.c — plain C,
- * so tests/unit can link them. */
+ * (loadBrowserFindSegment) live in braintest_loadbrowser_segment.c; the name
+ * grammar and the rename planner (loadBrowserSplitName,
+ * loadBrowserRenameFamily, loadBrowserApplyRenames) in
+ * braintest_loadbrowser_rename.c — both plain C, so tests/unit can link them
+ * and every decision below is testable without ImGui. */
+
+/* ---- Rename editor state ----------------------------------------------
+ * One row at a time owns the editor. Keyed by row index (the popup ID lives
+ * under the row's PushID) AND by name, so a listing that changed under us
+ * closes the editor instead of renaming the wrong session. */
+static int  s_renameRow = -1;
+static char s_renameName[LOADBROWSER_MAX_NAME] = "";
+static char s_renameLabel[LOADBROWSER_LABEL_MAX + 1] = "";
+static char s_renameOrig[LOADBROWSER_LABEL_MAX + 1] = "";  /* label on open */
+static bool s_renameFocus = false;
+static char s_renamePlan[LOADBROWSER_PLAN_MAX][2][300];
+
+/* Outcome of the LAST apply, shown as a banner in the window itself rather
+ * than in the editor: the editor closes on apply (and the rescan behind it
+ * renames the very rows it was anchored to), so a message living in the popup
+ * would vanish before it could be read. The plan's own refusals are different
+ * — those are recomputed every frame and shown inline in the editor. */
+static char s_renameBanner[400] = "";
+static bool s_renameBannerBad  = false;
+
+static void renameEditorClose() {
+    s_renameRow = -1;
+    s_renameName[0] = '\0';
+}
+
+/* The per-row "Rename..." editor, drawn as a popup anchored under the button.
+ * Returns true when renames were applied and the caller must rescan. */
+static bool renameEditor(const LoadSessionEntry *list, int count,
+                         const LoadSessionEntry *e, const char *loadedDir) {
+    bool applied = false;
+    if (!ImGui::BeginPopup("renameeditor")) return false;
+
+    /* The list was rebuilt under the open editor — bail rather than act on a
+     * row that may now be a different session. */
+    if (!loadBrowserNameEq(s_renameName, e->name)) {
+        renameEditorClose();
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return false;
+    }
+
+    ImGui::Text("Rename %s", e->name);
+    ImGui::TextDisabled("The label is shared by every 15-minute block and split");
+    ImGui::TextDisabled("part of this game, so they all move together.");
+    ImGui::Separator();
+
+    ImGui::SetNextItemWidth(300.0f);
+    if (s_renameFocus) { ImGui::SetKeyboardFocusHere(); s_renameFocus = false; }
+    const bool enter = ImGui::InputText("Label", s_renameLabel, sizeof s_renameLabel,
+                                        ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_CharsNoBlank);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(A-Z a-z 0-9 _ -; empty drops it)");
+
+    /* Recomputed every frame: what the user types IS the preview, and the
+     * refusal (bad character, name taken, loaded session) is the same check
+     * OK would make. */
+    char err[400] = "";
+    const int n = loadBrowserRenameFamily(list, count, e->dir, s_renameLabel,
+                                          loadedDir, s_renamePlan,
+                                          LOADBROWSER_PLAN_MAX, err, sizeof err);
+    if (n > 0) {
+        ImGui::Text("%d dir%s:", n, n == 1 ? "" : "s");
+        if (ImGui::BeginChild("##renameplan", ImVec2(560.0f, 110.0f),
+                              ImGuiChildFlags_Borders)) {
+            for (int i = 0; i < n; i++) {
+                char oldb[LOADBROWSER_MAX_NAME], newb[LOADBROWSER_MAX_NAME];
+                loadBrowserBaseName(s_renamePlan[i][0], oldb, sizeof oldb);
+                loadBrowserBaseName(s_renamePlan[i][1], newb, sizeof newb);
+                ImGui::Text("%s  ->  %s", oldb, newb);
+            }
+        }
+        ImGui::EndChild();
+    } else if (SDL_strcmp(s_renameLabel, s_renameOrig) == 0) {
+        /* Nothing typed yet — the planner's "already labelled" is the truth,
+         * but on a freshly opened editor it is a prompt, not an error. */
+        ImGui::TextDisabled("Type a new label.");
+    } else {
+        ImGui::PushTextWrapPos(560.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", err);
+        ImGui::PopTextWrapPos();
+    }
+
+    ImGui::Separator();
+    if (n <= 0) ImGui::BeginDisabled();
+    const bool ok = ImGui::Button("OK") || enter;
+    if (n <= 0) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) {
+        renameEditorClose();
+        ImGui::CloseCurrentPopup();
+    } else if (ok && n > 0) {
+        char aerr[400] = "";
+        /* Explicit cast: C forbids the implicit char(*)[2][300] ->
+         * const char(*)[2][300] conversion at this nesting depth. */
+        const int done = loadBrowserApplyRenames((const char (*)[2][300])s_renamePlan,
+                                                 n, aerr, sizeof aerr);
+        if (done >= 0) {
+            SDL_snprintf(s_renameBanner, sizeof s_renameBanner,
+                         "Renamed %d dir%s to \"%s\".", done, done == 1 ? "" : "s",
+                         s_renameLabel[0] ? s_renameLabel : "(no label)");
+            s_renameBannerBad = false;
+        } else {
+            /* No rollback — the message says how many renames stand. */
+            SDL_strlcpy(s_renameBanner, aerr, sizeof s_renameBanner);
+            s_renameBannerBad = true;
+        }
+        /* Rescan either way: on a partial failure the dirs that DID move must
+         * show their new names, or the next plan would be built from stale
+         * rows. */
+        applied = true;
+        renameEditorClose();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+    return applied;
+}
 
 /* One segment-step button. `dir` is +1 (next) / -1 (prev); when there is no
  * such segment the button is drawn disabled with the reason in its label, so
@@ -40,9 +160,10 @@ static int segmentButton(const LoadSessionEntry *list, int count,
 }
 
 int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
-                      const char *loadedDir) {
+                      const char *loadedDir, bool *needsRescan) {
     if (!open || !*open) return -1;
     int chosen = -1;
+    bool renamed = false;
 
     ImGui::SetNextWindowSize(ImVec2(660, 440), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Load Session", open)) {
@@ -68,6 +189,17 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             ImGui::Separator();
         }
 
+        /* Result of the last rename, until dismissed. */
+        if (s_renameBanner[0]) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(s_renameBannerBad ? ImVec4(1.0f, 0.55f, 0.45f, 1.0f)
+                                                 : ImVec4(0.55f, 1.0f, 0.6f, 1.0f),
+                               "%s", s_renameBanner);
+            ImGui::PopTextWrapPos();
+            if (ImGui::SmallButton("Dismiss")) s_renameBanner[0] = '\0';
+            ImGui::Separator();
+        }
+
         if (count <= 0) {
             ImGui::TextDisabled("No debug_sessions/ recordings found.");
         } else if (ImGui::BeginTable("sessions", 6,
@@ -79,7 +211,7 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
             ImGui::TableSetupColumn("Players",  ImGuiTableColumnFlags_WidthFixed,   60.0f);
             ImGui::TableSetupColumn("Length",   ImGuiTableColumnFlags_WidthFixed,   64.0f);
             ImGui::TableSetupColumn("Size",     ImGuiTableColumnFlags_WidthFixed,   72.0f);
-            ImGui::TableSetupColumn("",         ImGuiTableColumnFlags_WidthFixed,   60.0f);
+            ImGui::TableSetupColumn("",         ImGuiTableColumnFlags_WidthFixed,  140.0f);
             ImGui::TableHeadersRow();
 
             const bool appearing = ImGui::IsWindowAppearing();
@@ -134,6 +266,26 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
                 ImGui::TableNextColumn();
                 ImGui::PushID(i);
                 if (ImGui::Button("Load")) chosen = i;
+                ImGui::SameLine();
+                /* The dir name carries the label the game was STARTED with
+                 * (WINBOLO_BRAINDBG_LABEL); this is how it gets corrected
+                 * afterwards, for the whole game at once. */
+                if (ImGui::Button("Rename...")) {
+                    char ts[16], label[LOADBROWSER_MAX_NAME];
+                    int blk = 0, px = 0, pn = 0;
+                    s_renameRow = i;
+                    SDL_strlcpy(s_renameName, e->name, sizeof s_renameName);
+                    s_renameLabel[0] = '\0';
+                    if (loadBrowserSplitName(e->name, ts, sizeof ts, &blk,
+                                             label, sizeof label, &px, &pn))
+                        SDL_strlcpy(s_renameLabel, label, sizeof s_renameLabel);
+                    SDL_strlcpy(s_renameOrig, s_renameLabel, sizeof s_renameOrig);
+                    s_renameBanner[0] = '\0';
+                    s_renameFocus = true;
+                    ImGui::OpenPopup("renameeditor");
+                }
+                if (s_renameRow == i && renameEditor(list, count, e, loadedDir))
+                    renamed = true;
                 ImGui::PopID();
             }
             ImGui::EndTable();
@@ -145,5 +297,8 @@ int loadBrowserRender(bool *open, const LoadSessionEntry *list, int count,
         ImGui::TextDisabled("(press O to toggle this window)");
     }
     ImGui::End();
-    return chosen;
+    if (needsRescan && renamed) *needsRescan = true;
+    /* A frame that renamed dirs never also loads one: the indices the caller
+     * would use are about to be rebuilt. */
+    return renamed ? -1 : chosen;
 }

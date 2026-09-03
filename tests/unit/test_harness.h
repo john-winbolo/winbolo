@@ -302,6 +302,11 @@ int run_loadbrowser_segment_no_neighbour(void);
 int run_loadbrowser_segment_path_forms(void);
 int run_loadbrowser_segment_labels(void);
 
+int run_loadbrowser_rename_splits_names(void);
+int run_loadbrowser_rename_family_plan(void);
+int run_loadbrowser_rename_rejections(void);
+int run_loadbrowser_rename_applies(void);
+
 int run_net_impair(void);
 
 /* ChannelMux reliability primitive (test_channel_mux.c): the full
