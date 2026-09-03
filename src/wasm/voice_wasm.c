@@ -8,7 +8,7 @@
  *
  * Replaces gui/sdl3/voice.c on the WASM target.  The client voice runtime
  * itself is shared (client_frontend/voice_client.c) and reaches the audio
- * device only through the thirteen functions below, so this file is the whole
+ * device only through the fourteen functions below, so this file is the whole
  * of what the web build has to supply.
  *
  * A microphone acquired through getUserMedia feeds an AudioWorklet that hands
@@ -75,6 +75,8 @@ EM_JS(void, wb_voice_init, (int frameSamples, int captureQueueMax,
     capNode: null,
     sinkNode: null,
     playNode: null,
+    /* The last queue depth the loopback bus reported, in frames. */
+    loopbackQueued: 0,
     /* One entry per remote talker, keyed by player number: their own
        playback node and the last queue depth it reported.  Sparse on
        purpose - a talker exists here only between their first frame and
@@ -206,6 +208,12 @@ EM_JS(void, wb_voice_init, (int frameSamples, int captureQueueMax,
     w.playNode = new AudioWorkletNode(w.ctx, "wb-voice-playback",
                                       { numberOfInputs: 0, numberOfOutputs: 1,
                                         outputChannelCount: [1] });
+    /* The bus's own report of how much it still holds, kept the way each
+       talker's is.  Anything that is not a number is not ours to read. */
+    w.playNode.port.onmessage = function(e2) {
+      var x = Module.WB_voice;
+      if (x && typeof e2.data === "number") x.loopbackQueued = e2.data;
+    };
     w.playNode.connect(w.ctx.destination);
     /* A silent sink for the capture node to feed.  A worklet with nothing
        downstream is not reliably pulled by every browser, so the capture
@@ -507,12 +515,24 @@ EM_JS(void, wb_voice_loopback_play, (const int16_t *pcm, int frameSamples), {
     f[i] = HEAP16[base + i] / 32768;
   }
   v.playNode.port.postMessage(f.buffer, [f.buffer]);
+  /* Counted in as it is handed over, so several frames queued within one
+     tick see the depth they are building rather than the figure from before
+     the first of them.  The node's next report replaces it outright. */
+  v.loopbackQueued++;
+});
+
+EM_JS(int, wb_voice_loopback_queued, (void), {
+  var v = Module.WB_voice;
+  return v ? v.loopbackQueued : 0;
 });
 
 EM_JS(void, wb_voice_loopback_clear, (void), {
   var v = Module.WB_voice;
   if (!v || !v.playNode) return;
   v.playNode.port.postMessage("clear");
+  /* "clear" empties the node's queue outright, so nothing is left in front
+     of the next frame. */
+  v.loopbackQueued = 0;
 });
 
 EM_JS(void, wb_voice_shutdown, (void), {
@@ -521,7 +541,12 @@ EM_JS(void, wb_voice_shutdown, (void), {
   try {
     if (v.srcNode) v.srcNode.disconnect();
     if (v.capNode) { v.capNode.port.onmessage = null; v.capNode.disconnect(); }
-    if (v.playNode) v.playNode.disconnect();
+    if (v.playNode) {
+      v.playNode.port.onmessage = null;
+      v.playNode.disconnect();
+      v.playNode = null;
+      v.loopbackQueued = 0;
+    }
     if (v.sinkNode) v.sinkNode.disconnect();
     /* Every talker goes too.  Closing the context alone would leave their
        nodes attached to it, each still holding a port this side is no
@@ -776,6 +801,32 @@ int voiceBackendSpeakerQueuedFrames(int player) {
 *********************************************************/
 void voiceBackendSpeakerPlay(int player, const int16_t *pcm) {
     wb_voice_speaker_play(player, pcm, VOICE_FRAME_SAMPLES);
+}
+
+/*********************************************************
+*NAME:          voiceBackendLoopbackQueuedFrames
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the whole frames the loopback bus still has
+*  waiting, and 0 when the bus was never brought up.
+*
+*  Cached from the node's own reports and corrected by
+*  counting each frame in as it is handed over, exactly as a
+*  talker's depth is.
+*
+*  Nothing in this build asks for it.  The one caller is the
+*  desktop's echo canceller reference, behind
+*  WINBOLO_VOICE_AEC, which the web build never defines
+*  because the browser cancels inside getUserMedia.  It is
+*  here because every backend supplies every entry point.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendLoopbackQueuedFrames(void) {
+    return wb_voice_loopback_queued();
 }
 
 /*********************************************************

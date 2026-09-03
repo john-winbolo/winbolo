@@ -262,8 +262,13 @@ bool voiceInit(void) {
 
 #if defined(WINBOLO_VOICE_AEC)
     /* A canceller that will not create is not fatal - voice runs on
-     * uncancelled audio, which is what every build did before it existed. */
-    voiceAecInit();
+     * uncancelled audio, which is what every build did before it existed.
+     * Said once, because nothing else tells the two apart: the on/off
+     * setting reports what the player asked for, not what came up. */
+    if (!voiceAecInit()) {
+        fprintf(stderr, "Voice error: echo canceller unavailable\n");
+        fflush(stderr);
+    }
 #endif
 
     isInitialised = true;
@@ -1116,6 +1121,15 @@ void voiceTick(struct ClientSim *cs) {
             if (decodedSamples != VOICE_FRAME_SAMPLES) {
                 continue;
             }
+#if defined(WINBOLO_VOICE_AEC)
+            /* The loopback is playback the microphone will hear like any
+             * other, and on loudspeakers it is the only thing there is to
+             * cancel while the test runs.  What is played, not what was
+             * captured, and the depth is read before the hand-over, since
+             * that is what sits in front of this frame. */
+            voiceAecAddReference(decodedPcm,
+                                 voiceBackendLoopbackQueuedFrames());
+#endif
             voiceBackendLoopbackPlay(decodedPcm);
         }
     }

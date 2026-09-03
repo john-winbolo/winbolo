@@ -177,6 +177,20 @@ int voiceBackendSpeakerQueuedFrames(int player);
 void voiceBackendSpeakerPlay(int player, const int16_t *pcm);
 
 /*********************************************************
+*NAME:          voiceBackendLoopbackQueuedFrames
+*PURPOSE:
+*  Returns the whole 20 ms frames still queued on the local
+*  microphone loopback test, i.e. handed over but not yet
+*  played - the loopback's answer to
+*  voiceBackendSpeakerQueuedFrames. In frames, not bytes.
+*  0 when there is no loopback output open.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendLoopbackQueuedFrames(void);
+
+/*********************************************************
 *NAME:          voiceBackendLoopbackPlay
 *PURPOSE:
 *  Queues exactly one VOICE_FRAME_SAMPLES frame of the

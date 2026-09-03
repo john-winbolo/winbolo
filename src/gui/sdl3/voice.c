@@ -332,6 +332,29 @@ void voiceBackendSpeakerPlay(int player, const int16_t *pcm) {
 }
 
 /*********************************************************
+*NAME:          voiceBackendLoopbackQueuedFrames
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the whole frames the microphone loopback test
+*  still has waiting to be played.
+*
+*  Counted the same way as a remote talker's: the bytes SDL
+*  still holds, as they were put in, over the size of a
+*  frame.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+int voiceBackendLoopbackQueuedFrames(void) {
+    if (playbackStream == NULL) {
+        return 0;
+    }
+    return (int)(SDL_GetAudioStreamQueued(playbackStream) / VOICE_FRAME_BYTES);
+}
+
+/*********************************************************
 *NAME:          voiceBackendLoopbackPlay
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
