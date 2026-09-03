@@ -117,10 +117,16 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+# The docking branch (not master) because the log viewer sets
+# ImGuiConfigFlags_DockingEnable, and sdl3imgui.cpp / imgui_lobby.cpp pass
+# ImGuiWindowFlags_NoDocking — none of which exist on master. Pin to a release
+# tag: tracking the branch head silently pulled a backend change that reset the
+# SDL renderer's default sampler to LINEAR and put a dark grid through the map
+# editor canvas.
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        v1.92.9b-docking
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
@@ -556,6 +562,48 @@ else()
         -Wno-sign-compare
         -Wno-implicit-fallthrough
     )
+    # -Werror=undef makes an undefined macro in #if an error instead of a
+    # silent 0, so a lobby source that tests one of the BOLO_* feature
+    # macros without including lobby_internal.h fails to build. Set on
+    # those sources rather than added above, because add_compile_options
+    # is inherited by every target created later in this directory --
+    # including the FetchContent dependencies, and libplum's log.c tests
+    # an undefined RELEASE. Not set for MSVC: C4668 is forced to level 1
+    # and fires throughout the Windows SDK headers, where /external:W3
+    # cannot suppress it and the /WX above would make it fatal.
+    #
+    # The second option makes a function with external linkage and no
+    # previous declaration an error, so every symbol the lobby's sources
+    # share has to be declared in lobby_internal.h, and a definition cannot
+    # lose its static without gaining a declaration. The spelling is not
+    # interchangeable between the two compilers: Clang wants
+    # -Wmissing-prototypes and uses -Wmissing-declarations for an unrelated
+    # diagnostic (a declaration that declares nothing), while GCC wants
+    # -Wmissing-declarations and rejects -Wmissing-prototypes outright in
+    # C++.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set(LOBBY_MISSING_DECL_OPTION -Werror=missing-prototypes)
+    else()
+        set(LOBBY_MISSING_DECL_OPTION -Werror=missing-declarations)
+    endif()
+    set_source_files_properties(
+        src/gui/sdl3/dialogs/imgui_lobby.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_status.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_players.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_rating.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
+        src/gui/sdl3/wbn_map_source.cpp
+        PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
+    )
 endif()
 
 # ---------------------------------------------------------------------------
@@ -728,6 +776,17 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_messagebox.cpp
     src/gui/sdl3/dialogs/imgui_keycap.cpp
     src/gui/sdl3/dialogs/imgui_lobby.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_status.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/dialogs/imgui_deck_pause.cpp
@@ -745,6 +804,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/wb_theme.cpp
 )
 
@@ -853,6 +913,7 @@ set_target_properties(WinBoloIOS PROPERTIES
 
 target_include_directories(WinBoloIOS PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/gui
     src/gui/ios
     src/gui/mobile
@@ -1289,13 +1350,14 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
@@ -1310,6 +1372,10 @@ set(CLIENT_SOURCES
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # Embedded editor's "Open from WinBolo.net" dialog — client only, it
+    # sits on the chooser + wbn_map_source stack the standalone MapEditor
+    # doesn't link (see MAPEDITOR_WBN_OPEN below).
+    src/mapeditor/mapeditor_wbn_open.cpp
     src/third_party/stb/stb_image_write_impl.c
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
@@ -1391,6 +1457,9 @@ add_executable(WinBolo ${CLIENT_SOURCES})
 target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
+    # Gates the embedded map editor's File > Open from WinBolo.net entry in
+    # the mapeditor TUs shared with the standalone MapEditor target.
+    MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -1439,6 +1508,7 @@ endif()
 
 target_include_directories(WinBolo PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/gui
     src/server
     src/mapeditor
@@ -2558,6 +2628,21 @@ set(MAPEDITOR_SOURCES
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
+    # File > Open from WinBolo.net: the map chooser wired to the WBN
+    # catalogue (MAPEDITOR_WBN_OPEN). The chooser drags in the preview
+    # popup, its claim-a-start list and the star cache; ui_mode.c's one
+    # external call (inputSourceCurrent) is already in gamefront_stubs.c.
+    # The WBN HTTP layer comes from winbolonet_core; tweetnacl.c is
+    # compiled per consumer like the WinBolo client and LogViewer do.
+    src/gui/sdl3/dialogs/imgui_mapchooser.cpp
+    src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_preview_popup.cpp
+    src/gui/sdl3/lobby_start_list.cpp
+    src/gui/ui_mode.c
+    src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wbn_map_source.cpp
+    src/mapeditor/mapeditor_wbn_open.cpp
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 file(GLOB MAPEDITOR_BSD_SOURCES src/bsd/*.c)
@@ -2573,6 +2658,7 @@ add_executable(MapEditor ${MAPEDITOR_SOURCES})
 target_sources(MapEditor PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(MapEditor PRIVATE
     HAVE_SCREEN_C=1
+    MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -2603,8 +2689,9 @@ endif()
 
 target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
+    winbolonet_core winbolonet_client
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
-    nanosvg stb_image utf8proc cjson
+    nanosvg stb_image utf8proc cjson CURL::libcurl
 )
 
 # macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the

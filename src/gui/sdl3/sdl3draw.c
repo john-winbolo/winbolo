@@ -51,7 +51,6 @@
 #include "dialogs/imgui_news.h"
 #endif
 #include "cursor.h"
-#include "input_source.h"
 #include "mapview.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
@@ -692,17 +691,15 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
            moving the pointer in the view repositions it whether or not cursor
            mode is active, so toggling build mode picks up exactly where the
            pointer is (no jump between a separate mouse reticle and the gamepad
-           cursor).  Only on real movement (skip zero-delta focus/warp events)
-           and only while the pointer is in the view (handled by cursorPos) —
-           so the pointer leaving the window leaves the gamepad in control.
+           cursor).  Only on real movement (skip zero-delta focus events) and
+           only while the pointer is in the view (handled by cursorPos) — so
+           the pointer leaving the window leaves the gamepad in control.
            cx/cy are 1-based screen tiles; absolute map tile = offset + tile.
-           Skip motion that is the echo of a scroll-tracking cursor warp: that
-           synthetic event isn't the player moving the mouse, and re-deriving
-           the tile from the warped pointer would nudge the build cursor off the
-           world tile it is locked to (and jitter it ±1 from warp rounding).
-           Real hand movement (no warp pending) repositions it as before. */
-        if ((ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) &&
-            !inputSourceCursorWarpActive()) {
+
+           This latch is the selection: it is what the reticle draws and what a
+           click builds at, and hand movement is the only thing that moves it.
+           The view scrolling under a resting hand must not change it. */
+        if (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) {
           buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
                              (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
         }
@@ -717,8 +714,22 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+          /* Build at the latched target — the square the reticle is drawn on,
+             i.e. where the player last moved the mouse.  Deriving the tile
+             from the pointer here instead would re-target the build to
+             whatever square the pointer happens to sit over at click time:
+             the view scrolls with the tank under a resting hand, and pressing
+             a button also resyncs SDL's pointer position, so a click with no
+             hand movement would silently move the selection.  Same dispatch
+             the gamepad Build Now uses (input.c). */
+          BYTE bx = 0, by = 0;
           clientMutexWaitFor();
-          clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
+          if (buildCursorGetTargetTile(&bx, &by)) {
+            clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
+          } else {
+            /* Nothing latched yet — this click is the first placement. */
+            clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
+          }
           clientMutexRelease();
         } else {
           /* Check if click landed on one of the 5 build-select buttons */

@@ -46,8 +46,6 @@ void inputSourceNoteKeyboard(void) { note(INPUT_SOURCE_KEYBOARD); }
 
 void inputSourceNoteCursorWarp(void) { s_warp_ignore_frames = 2; }
 
-bool inputSourceCursorWarpActive(void) { return s_warp_ignore_frames > 0; }
-
 void inputSourceUpdate(const SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {

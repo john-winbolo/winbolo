@@ -213,6 +213,17 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keycap.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_nav_outline.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_status.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
@@ -223,6 +234,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
+    ${SRC_ROOT}/gui/sdl3/wbn_map_source.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
@@ -365,6 +377,7 @@ add_executable(winbolo
 
 target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui/sdl3
+    ${SRC_ROOT}/gui/sdl3/dialogs
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
@@ -405,7 +418,7 @@ target_compile_definitions(winbolo PRIVATE
     # target too.
     WINBOLO_VOICE=1
 )
-target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
+target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
 target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
