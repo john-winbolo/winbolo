@@ -39,7 +39,8 @@ struct SkinSource;
  *     2. Try data/svg/<name>.png  (stb_image load)
  *     3. Fall back to blitting from data/skin.bmp
  *   The active skin, when there is one, is consulted ahead
- *   of all three.
+ *   of all three, at the density the player's Tile Detail
+ *   setting asks for.
  *   Returns NULL on failure.  Caller owns the surface.
  *********************************************************/
 SDL_Surface *tileLoaderBuildSheet(int tileSize);
@@ -47,18 +48,30 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize);
 /*********************************************************
  * NAME:          tileLoaderBuildSheetFor
  * PURPOSE:
- *   tileLoaderBuildSheet against a caller-chosen skin.
- *   Each sprite resolves in this order:
- *     1. skin <name>.svg
- *     2. skin <name>.png
- *     3. crop from the skin's tiles.bmp or skin.bmp
- *     4. data/svg/<name>.svg
- *     5. data/svg/<name>.png
- *     6. crop from data/skin.bmp
- *   A NULL skin skips 1-3 and builds the stock sheet.
+ *   tileLoaderBuildSheet against a caller-chosen skin,
+ *   under a TILE_DETAIL_* mode.
+ *   tileLoaderPickDensity says what density N each sprite
+ *   is wanted at.  Above 1, these come first:
+ *     1. skin <name>@<N>x.png
+ *     2. skin <name>@<M>x.png, smallest M above N
+ *     3. skin <name>.svg, unless MaxPixelDensity caps
+ *        the skin below N
+ *     4. skin <name>@<M>x.png, largest M below N, M >= 2
+ *   Then, at N == 1 and whenever none of those loaded:
+ *     5. skin <name>.svg
+ *     6. skin <name>.png
+ *     7. crop from the skin's tiles.bmp or skin.bmp
+ *     8. data/svg/<name>.svg
+ *     9. data/svg/<name>.png
+ *    10. crop from data/skin.bmp
+ *   Every one of them is decoded straight to the sprite's
+ *   slot in the sheet, point-sampled when the file is not
+ *   already that size.
+ *   A NULL skin skips 1-7 and builds the stock sheet.
  *   Returns NULL on failure.  Caller owns the surface.
  *********************************************************/
-SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize);
+SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
+                                     int mode);
 
 /*********************************************************
  * NAME:          tileLoaderCleanup

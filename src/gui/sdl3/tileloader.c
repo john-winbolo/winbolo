@@ -22,6 +22,9 @@
 #include "tileloader.h"
 #include "tilemap.h"
 #include "skin_source.h"
+/* Only tileLoaderBuildSheet reads this, to turn the player's Tile Detail
+   setting into the TILE_DETAIL_* value the rest of the file works in. */
+#include "gfx_settings.h"
 #include "../tiles.h"
 
 #include "platform_types.h"   /* BOLO_STATIC_ASSERT */
@@ -134,7 +137,10 @@ void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
         if (!skinSourceRead(skin, sheetNames[i], &sheetBuf, &sheetLen)) continue;
         sheetDensity = tileLoaderSheetDensityFromBmp(sheetBuf, sheetLen);
         SDL_free(sheetBuf);
-        break;
+        /* Bytes that are not a usable sheet do not settle the question: the
+           build's own loader moves on to the next name as well, so stopping
+           here would leave the scan naming a sheet the build never uses. */
+        if (sheetDensity > 0) break;
     }
     if (sheetDensity >= 2) {
         for (int i = 0; i < out->spriteCount; i++) {
@@ -328,6 +334,58 @@ static bool tryLoadPNG(const char *path, int w, int h,
     return ok;
 }
 
+/* Load <name>@<n>x.png out of the skin into `out` at the slot size.
+ * decodePNG point-samples whatever it decodes to that size, and that is what
+ * this art wants in both directions: the sprites are color-keyed pixel art,
+ * so averaging neighbours to fit a finer file into a coarser slot softens
+ * every edge and invents part-transparent pixels the art never had.
+ * Returns true on success. */
+static bool tryLoadSkinDensityPNG(struct SkinSource *skin, const char *name,
+                                  int n, int w, int h, unsigned char *out) {
+    char rel[SKIN_PATH_MAX];
+    void *buf = NULL;
+    size_t len = 0;
+    bool ok;
+
+    SDL_snprintf(rel, sizeof(rel), "%s@%dx.png", name, n);
+    if (!skinSourceRead(skin, rel, &buf, &len)) return false;
+    ok = decodePNG(buf, len, w, h, out);
+    SDL_free(buf);
+    return ok;
+}
+
+/* The nearest @Mx the skin holds for one sprite: searching up from `want`
+ * when `up` is set, and down towards 2 when it is not.  Name-index lookups
+ * only, which is cheaper than reads that fail.  0 when there is none. */
+static int skinNearestDensity(struct SkinSource *skin, const char *name,
+                              int want, bool up) {
+    char rel[SKIN_PATH_MAX];
+
+    if (up) {
+        for (int n = want + 1; n <= SKIN_DENSITY_MAX; n++) {
+            SDL_snprintf(rel, sizeof(rel), "%s@%dx.png", name, n);
+            if (skinSourceExists(skin, rel)) return n;
+        }
+    } else {
+        int n = want - 1;
+        if (n > SKIN_DENSITY_MAX) n = SKIN_DENSITY_MAX;
+        for (; n >= 2; n--) {
+            SDL_snprintf(rel, sizeof(rel), "%s@%dx.png", name, n);
+            if (skinSourceExists(skin, rel)) return n;
+        }
+    }
+    return 0;
+}
+
+/* The Tile Detail mode's name for the build summary. */
+static const char *tileDetailName(int mode) {
+    switch (mode) {
+        case TILE_DETAIL_MATCH_ZOOM: return "match zoom";
+        case TILE_DETAIL_HIGH:       return "high detail";
+        default:                     return "classic";
+    }
+}
+
 /* Blit a rectangle from the BMP fallback surface (with color key applied)
  * into the RGBA sheet. The BMP surface has a green color key so green
  * pixels become transparent in the output. */
@@ -454,12 +512,19 @@ static SDL_Surface *loadSkinSheet(struct SkinSource *skin, int *outDensity) {
     return NULL;
 }
 
-SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
+SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
+                                     int mode) {
     /* Scale factor: tileSize / BASE_TILE (16).  When tileSize==16, scale==1
        and the sheet is the classic 496x176.  When tileSize==32, scale==2
        and SVGs are rasterized at 2x for crisper rendering. */
     int scale = tileSize / TILE_SIZE_X;
     if (scale < 1) scale = 1;
+
+    /* What the skin can serve, fetched once for the whole build.  The mode
+       and the scan are the same for every sprite, so the per-sprite loop
+       only asks tileLoaderPickDensity what to do with them. */
+    const SkinDensityInfo *density = skin ? tileLoaderGetDensityInfo(skin)
+                                          : NULL;
 
     int sheetW = TILE_FILE_X * scale;
     int sheetH = TILE_FILE_Y * scale;
@@ -496,14 +561,18 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
     SDL_Surface *skinSheet = skin ? loadSkinSheet(skin, &skinSheetDensity) : NULL;
 
     /* Name the skin in the summary below so a skin resolving to the wrong
-       assets can be told apart from the built-in set in the log. */
+       assets can be told apart from the built-in set in the log.  The same
+       read carries MaxPixelDensity, the finest the author means their vector
+       art to be rasterized at; 0 is uncapped. */
     const char *skinLabel = "none";
     SkinInfo    skinInfo;
+    int         svgCap = 0;
     if (skin) {
+        skinSourceReadIni(skin, &skinInfo);
+        svgCap = skinInfo.maxPixelDensity;
         if (skin == skinGetActiveSource() && skinGetActive()[0] != '\0') {
             skinLabel = skinGetActive();
         } else {
-            skinSourceReadIni(skin, &skinInfo);
             skinLabel = skinInfo.name[0] ? skinInfo.name : "(unnamed)";
         }
     }
@@ -518,6 +587,7 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
     char pathBuf[512];
     int svgCount = 0, pngCount = 0, bmpCount = 0;
     int skinSvgCount = 0, skinPngCount = 0, skinSheetCount = 0;
+    int skinDensityCount = 0;
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const TileMapEntry *e = &gTileMap[i];
@@ -527,9 +597,63 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
         int dstY = e->sheetY * scale;
         bool loaded = false;
 
+        /* The density this sprite is wanted at under the current mode.  1 is
+           Classic, and anything the mode cannot better; the chain below is
+           then exactly the one that has always run. */
+        int want = tileLoaderPickDensity(density, i, mode, scale);
+
+        /* Above 1 the finer art comes first: the exact @Nx, the nearest @Mx
+           above it, the skin's own SVG, then the nearest @Mx below.  Each of
+           these is decoded straight to the slot size, so the sheet needs no
+           scaling pass of its own. */
+        if (skin && want >= 2) {
+            if (tryLoadSkinDensityPNG(skin, e->name, want, w, h, tmpBuf)) {
+                blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                loaded = true;
+                skinDensityCount++;
+            }
+
+            if (!loaded) {
+                int above = skinNearestDensity(skin, e->name, want, true);
+                if (above > 0 &&
+                    tryLoadSkinDensityPNG(skin, e->name, above, w, h, tmpBuf)) {
+                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                    loaded = true;
+                    skinDensityCount++;
+                }
+            }
+
+            /* Past MaxPixelDensity the author has said their vector art is
+               not meant to go, so the coarser @Mx below is the better
+               answer. */
+            if (!loaded && (svgCap == 0 || want <= svgCap)) {
+                void *buf = NULL;
+                size_t len = 0;
+                SDL_snprintf(pathBuf, sizeof(pathBuf), "%s.svg", e->name);
+                if (skinSourceRead(skin, pathBuf, &buf, &len)) {
+                    if (decodeSVG((char *)buf, len, w, h, tmpBuf, rast)) {
+                        blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                        loaded = true;
+                        skinSvgCount++;
+                    }
+                    SDL_free(buf);
+                }
+            }
+
+            if (!loaded) {
+                int below = skinNearestDensity(skin, e->name, want, false);
+                if (below > 0 &&
+                    tryLoadSkinDensityPNG(skin, e->name, below, w, h, tmpBuf)) {
+                    blitRGBA(sheet, dstX, dstY, w, h, tmpBuf);
+                    loaded = true;
+                    skinDensityCount++;
+                }
+            }
+        }
+
         /* The skin gets first refusal on every sprite: its own SVG, then its
            own PNG, then a cutout of its whole sheet. */
-        if (skin) {
+        if (skin && !loaded) {
             void *buf = NULL;
             size_t len = 0;
 
@@ -586,10 +710,11 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
         }
     }
 
-    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d sheet sprites from a density %d sheet",
-            scale, sheetW, sheetH, svgCount, pngCount, bmpCount,
-            skinLabel, skinSvgCount, skinPngCount, skinSheetCount,
-            skinSheetDensity);
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, tile detail=%s, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d @Nx, %d sheet sprites from a density %d sheet",
+            scale, sheetW, sheetH, tileDetailName(mode),
+            svgCount, pngCount, bmpCount,
+            skinLabel, skinSvgCount, skinPngCount, skinDensityCount,
+            skinSheetCount, skinSheetDensity);
 
     SDL_free(tmpBuf);
     if (rast) nsvgDeleteRasterizer(rast);
@@ -600,7 +725,8 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize) {
 }
 
 SDL_Surface *tileLoaderBuildSheet(int tileSize) {
-    return tileLoaderBuildSheetFor(skinGetActiveSource(), tileSize);
+    return tileLoaderBuildSheetFor(skinGetActiveSource(), tileSize,
+                                   (int)gfxGetTileDetail());
 }
 
 void tileLoaderCleanup(void) {

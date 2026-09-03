@@ -47,6 +47,8 @@ extern "C" {
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
+#include "../gfx_settings.h"
+#include "../tileloader.h"
 #include "../../lang.h"
 #include "imgui_settings.h"
 #include "imgui_keyboard.h"
@@ -776,6 +778,45 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             }
         }
         imguiHandOnHover();
+
+        /* Tile detail.  A pick only shows once the sheet is rebuilt, so it
+           asks for a skin reload the same way picking a skin does.  Nothing
+           to choose between when the skin has no art above its base size,
+           which is the common case: all three modes build the same sheet.
+           tileLoaderGetDensityInfo caches on the source pointer, so asking
+           every frame is a pointer compare, not a rescan. */
+        {
+            const char *detailLabels[] = {
+                langGetText(STR_DLGSKIN_TILEDETAIL_CLASSIC),
+                langGetText(STR_DLGSKIN_TILEDETAIL_MATCHZOOM),
+                langGetText(STR_DLGSKIN_TILEDETAIL_HIGH),
+            };
+            int tdIdx = (int)gfxGetTileDetail();
+            if (tdIdx < 0 || tdIdx > 2) tdIdx = 0;
+            bool oneSizeOnly =
+                tileLoaderGetDensityInfo(skinGetActiveSource())->highestAny <= 1;
+
+            ImGui::BeginDisabled(oneSizeOnly);
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_TILEDETAIL));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##tiledetail", detailLabels[tdIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool sel = (tdIdx == i);
+                    if (ImGui::Selectable(detailLabels[i], sel) && i != tdIdx) {
+                        gfxSetTileDetail((GfxTileDetail)i);
+                        gameFrontSaveCurrentPrefs();
+                        ctx->wantSkinReload = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::EndDisabled();
+            if (oneSizeOnly) {
+                imguiHelpTooltip("This skin supplies its art at one size "
+                                 "only, so all three settings build the "
+                                 "same tiles.");
+            }
+        }
     }
 
     /* ---- Sound ---- */

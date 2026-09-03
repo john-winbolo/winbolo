@@ -772,6 +772,10 @@
 #define STR_DLGSKIN_OPENFOLDER              1954
 #define STR_DLGSKIN_BROWSE_WORKSHOP         1955
 #define STR_DLGSKIN_PUBLISH                 1956
+#define STR_DLGSKIN_TILEDETAIL              1957
+#define STR_DLGSKIN_TILEDETAIL_CLASSIC      1958
+#define STR_DLGSKIN_TILEDETAIL_MATCHZOOM    1959
+#define STR_DLGSKIN_TILEDETAIL_HIGH         1960
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771

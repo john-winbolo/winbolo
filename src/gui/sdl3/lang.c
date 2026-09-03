@@ -1847,6 +1847,10 @@ static const LangEntry langTable[] = {
     {1954, "Open skins folder"},
     {1955, "Browse Workshop"},
     {1956, "Publish to Workshop..."},
+    {1957, "Tile detail"},
+    {1958, "Classic"},
+    {1959, "Match to zoom"},
+    {1960, "High detail"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
