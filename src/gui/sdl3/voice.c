@@ -252,6 +252,46 @@ bool voiceBackendCaptureIsOpen(void) {
 }
 
 /*********************************************************
+*NAME:          voiceBackendOsCancelsEcho
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Whether the platform cancels echo on the capture device
+*  itself, which is true of exactly the drivers that act on
+*  the game chat role voiceOpenChatDevice declares.  Three of
+*  SDL's audio drivers do; every other one, CoreAudio among
+*  them, ignores the role and leaves the work to Speex.
+*
+*  The live driver is asked for by name rather than inferred
+*  from the platform, because more than one driver is built
+*  for most platforms and which of them comes up is decided
+*  at runtime - a Linux build carries PipeWire, PulseAudio
+*  and ALSA, and only the first of those cancels.
+*
+*  SDL hands back NULL when the audio subsystem is not up.
+*  That is not a driver that cancels, so it answers false.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceBackendOsCancelsEcho(void) {
+    const char *driver = SDL_GetCurrentAudioDriver();
+
+    if (driver == NULL) {
+        return false;
+    }
+
+    /* Matched case sensitively against the names the drivers register
+     * themselves under.  "AAudio" really is the odd one out: that is the
+     * capitalisation SDL gives Android's driver, not a slip to tidy up, and
+     * lower-casing it would quietly leave Android running both cancellers. */
+    return SDL_strcmp(driver, "wasapi") == 0 ||
+           SDL_strcmp(driver, "pipewire") == 0 ||
+           SDL_strcmp(driver, "AAudio") == 0;
+}
+
+/*********************************************************
 *NAME:          voiceBackendCaptureRead
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026

@@ -38,6 +38,7 @@
 #include <speex/speex_preprocess.h>
 #include <string.h>
 
+#include "voice_backend.h"
 #include "voice_core.h"
 
 /* Samples of echo the filter can cancel - 200 ms at 48 kHz.  The plan's range
@@ -72,6 +73,11 @@ static SpeexPreprocessState *preprocessState = NULL;
  * and restores on a machine where the state could not be created. */
 static bool aecEnabled = true;
 
+/* Whether the platform is cancelling echo itself, answered once at init.  A
+ * fact about the machine, not a setting: nothing the player does changes it,
+ * and while it is true no Speex state exists to do the work. */
+static bool platformCancels = false;
+
 /* One mono frame per tick of playback that the microphone has not heard yet.
  * refTick is the slot for the frame being captured now. */
 static int16_t refRing[VOICE_AEC_REF_FRAMES][VOICE_FRAME_SAMPLES];
@@ -93,6 +99,16 @@ static int refTick = 0;
 bool voiceAecInit(void) {
     int rate = VOICE_SAMPLE_RATE;
     int denoise = 1;
+
+    /* Asked before anything is created, because on a platform that cancels
+     * the answer is that nothing should be.  True is the honest return: the
+     * question is whether cancellation is usable, and it is - the OS is doing
+     * it.  Returning false would print an "echo canceller unavailable"
+     * warning on exactly the machines where nothing is wrong. */
+    platformCancels = voiceBackendOsCancelsEcho();
+    if (platformCancels) {
+        return true;
+    }
 
     if (echoState != NULL) {
         return true;
@@ -149,6 +165,7 @@ void voiceAecShutdown(void) {
         speex_echo_state_destroy(echoState);
         echoState = NULL;
     }
+    platformCancels = false;
     memset(refRing, 0, sizeof(refRing));
     refTick = 0;
 }
@@ -220,19 +237,44 @@ bool voiceAecIsEnabled(void) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Whether a canceller exists.  echoState is non-NULL exactly
-*  when one does: every failing path in voiceAecInit leaves it
-*  NULL and voiceAecShutdown clears it.  Also false when voice
-*  as a whole failed to come up, since voiceInit returns before
-*  reaching voiceAecInit if the codec could not be created -
-*  which is what we want, because either way the honest thing
-*  to tell the player is that cancellation is not running.
+*  Whether something is cancelling, whether that something is
+*  Speex or the platform.  echoState is non-NULL exactly when
+*  a Speex canceller exists: every failing path in voiceAecInit
+*  leaves it NULL and voiceAecShutdown clears it.  Also false
+*  when voice as a whole failed to come up, since voiceInit
+*  returns before reaching voiceAecInit if the codec could not
+*  be created - which is what we want, because either way the
+*  honest thing to tell the player is that cancellation is not
+*  running.
+*
+*  Its caller is the settings row, which must not report
+*  "unavailable" on a machine where the work is being done,
+*  merely by someone else.  Use voiceAecIsPlatform to tell the
+*  two apart.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 bool voiceAecIsAvailable(void) {
-    return echoState != NULL;
+    return platformCancels || echoState != NULL;
+}
+
+/*********************************************************
+*NAME:          voiceAecIsPlatform
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Whether the cancellation voiceAecIsAvailable reports is the
+*  platform's rather than this file's.  False both when Speex
+*  is doing the work and when nothing is; ask
+*  voiceAecIsAvailable first.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceAecIsPlatform(void) {
+    return platformCancels;
 }
 
 /*********************************************************

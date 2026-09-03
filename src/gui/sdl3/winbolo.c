@@ -1596,6 +1596,13 @@ bool windowGetVoiceEchoCancel(void) {
 bool windowGetVoiceEchoCancelAvailable(void) {
   return voiceAecIsAvailable();
 }
+
+/* Whether that canceller is the operating system's rather than ours, which
+ * is a different row in Settings: switched off and greyed, because there is
+ * nothing here for the player to switch. */
+bool windowGetVoiceEchoCancelPlatform(void) {
+  return voiceAecIsPlatform();
+}
 #endif
 
 /* Tank-label microphone icons are held by the status renderer that

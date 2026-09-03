@@ -119,6 +119,7 @@ extern "C" {
   void windowSetVoiceEchoCancel(bool on);
   bool windowGetVoiceEchoCancel(void);
   bool windowGetVoiceEchoCancelAvailable(void);
+  bool windowGetVoiceEchoCancelPlatform(void);
 #endif
 #endif
   void windowMenuNewswire_toggle(struct ClientSim *cs);
@@ -698,22 +699,25 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     }
 #if defined(WINBOLO_VOICE_AEC)
     {
-        /* Greyed out when no canceller came up, still showing what the
-           player chose: the setting is saved either way, so the row reports
-           the canceller's state rather than taking the choice away. */
-        bool aecAvailable = windowGetVoiceEchoCancelAvailable();
+        /* Three states, and the checkbox shows the saved preference in all
+           of them: the setting is saved either way, so the row reports who
+           is cancelling rather than taking the player's choice away.  Greyed
+           when the system is doing the work, because then there is nothing
+           here to switch, and greyed when no canceller came up at all. */
+        bool aecPlatform = windowGetVoiceEchoCancelPlatform();
+        bool aecOurs = !aecPlatform && windowGetVoiceEchoCancelAvailable();
         bool echoCancel = windowGetVoiceEchoCancel();
-        if (!aecAvailable) ImGui::BeginDisabled();
+        if (!aecOurs) ImGui::BeginDisabled();
         if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ECHOCANCEL),
                             &echoCancel)) {
             windowSetVoiceEchoCancel(echoCancel);
         }
-        if (!aecAvailable) {
+        if (!aecOurs) {
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::TextDisabled(
-                "%s",
-                langGetText(STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE));
+            ImGui::TextDisabled("%s", langGetText(
+                aecPlatform ? STR_DLGSETTINGS_VOICE_ECHOCANCEL_PLATFORM
+                            : STR_DLGSETTINGS_VOICE_ECHOCANCEL_UNAVAILABLE));
         }
     }
 #endif

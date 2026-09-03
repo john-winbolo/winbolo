@@ -8,7 +8,7 @@
  *
  * Replaces gui/sdl3/voice.c on the WASM target.  The client voice runtime
  * itself is shared (client_frontend/voice_client.c) and reaches the audio
- * device only through the fourteen functions below, so this file is the whole
+ * device only through the fifteen functions below, so this file is the whole
  * of what the web build has to supply.
  *
  * A microphone acquired through getUserMedia feeds an AudioWorklet that hands
@@ -689,6 +689,28 @@ void voiceBackendCaptureStop(void) {
 *********************************************************/
 bool voiceBackendCaptureIsOpen(void) {
     return wb_voice_capture_is_open() != 0;
+}
+
+/*********************************************************
+*NAME:          voiceBackendOsCancelsEcho
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  True.  The microphone is asked for with echoCancellation
+*  set, so the browser has cancelled before a frame ever
+*  reaches this file.
+*
+*  Nothing on this target reads the answer today: voice_aec.c
+*  is not compiled into the web build, so there is no
+*  software canceller here to stand down.  It is answered
+*  anyway so that the backend contract has no holes.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceBackendOsCancelsEcho(void) {
+    return true;
 }
 
 /*********************************************************

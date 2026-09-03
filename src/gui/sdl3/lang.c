@@ -1877,6 +1877,9 @@ static const LangEntry langTable[] = {
 
     /* Voice settings — echo canceller could not be created */
     {1975, "Unavailable on this system"},
+
+    /* Voice settings — the platform cancels echo itself, so Speex does not */
+    {1976, "Handled by the system"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

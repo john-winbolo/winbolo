@@ -96,18 +96,36 @@ bool voiceAecIsEnabled(void);
 /*********************************************************
 *NAME:          voiceAecIsAvailable
 *PURPOSE:
-*  Whether a canceller exists to do the work: voiceAecInit
-*  succeeded and voiceAecShutdown has not run since.  Separate
+*  Whether something is cancelling: voiceAecInit succeeded and
+*  voiceAecShutdown has not run since.  That something is
+*  Speex, or on a platform that cancels for us it is the
+*  platform - either way the work is being done.  Separate
 *  from voiceAecIsEnabled because that one is the player's
-*  setting and stays what they chose whether or not Speex came
-*  up, so it cannot answer this and must not be changed to.
-*  For the UI, which has both to report: switched on, and
-*  running.
+*  setting and stays what they chose whether or not a
+*  canceller came up, so it cannot answer this and must not be
+*  changed to.  For the UI, which has both to report: switched
+*  on, and running.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 bool voiceAecIsAvailable(void);
+
+/*********************************************************
+*NAME:          voiceAecIsPlatform
+*PURPOSE:
+*  Whether the cancellation voiceAecIsAvailable reports is the
+*  platform's own rather than this module's.  When it is, no
+*  Speex state was created at all: cancelling an already
+*  cancelled signal damages the speech in it rather than
+*  cleaning it further.  False both when Speex is doing the
+*  work and when nothing is, so it answers "which", not
+*  "whether".
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceAecIsPlatform(void);
 
 /*********************************************************
 *NAME:          voiceAecReset

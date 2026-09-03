@@ -113,6 +113,24 @@ void voiceBackendCaptureStop(void);
 bool voiceBackendCaptureIsOpen(void);
 
 /*********************************************************
+*NAME:          voiceBackendOsCancelsEcho
+*PURPOSE:
+*  Whether the platform is already cancelling echo on the
+*  voice capture device, so the software canceller stands
+*  down rather than processing the same signal twice.
+*  Cancelling once is cleaning up a microphone; cancelling
+*  the same signal twice damages the speech in it.
+*
+*  A backend that cannot tell must answer false.  Running
+*  Speex needlessly is a far smaller harm than running
+*  nothing at all.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceBackendOsCancelsEcho(void);
+
+/*********************************************************
 *NAME:          voiceBackendCaptureRead
 *PURPOSE:
 *  Takes the next captured frame. Writes exactly
