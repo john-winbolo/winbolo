@@ -72,7 +72,7 @@ you're touching a genuinely new subsystem. The string in the
 | Category               | Filter name | Purpose | Typical files |
 |------------------------|-------------|---------|---------------|
 | `WB_LOG_CAT_NET`       | `net`       | Transport, sockets, packet ingress/egress, discovery, NAT punch. | `bolo/transport_udp_*.c`, `bolo/discovery.c`, `bolo/nat_portmap.c` |
-| `WB_LOG_CAT_SERVER`    | `server`    | `ServerSim` lifecycle, player add/remove, lobby, balance, kicks. | `server/server_sim.c`, `server/server_lifecycle.c`, `server/servermain.c` |
+| `WB_LOG_CAT_SERVER`    | `server`    | `ServerSim` lifecycle, player add/remove, lobby, balance, kicks. | `server/server_sim.c` and `server/sim/*.c`, `server/server_lifecycle.c`, `server/servermain.c` |
 | `WB_LOG_CAT_SIM`       | `sim`       | Game-tick simulation events: tanks, shells, bases, pillboxes, terrain. | `bolo/tank.c`, `bolo/shells.c`, `bolo/bases.c`, `bolo/pillbox.c`, `bolo/game_sim.*` |
 | `WB_LOG_CAT_CLIENT`    | `client`    | Client-side game state, scrolling, snapshot apply, interpolation. | `bolo/client_sim.c`, `bolo/client_state.c`, `bolo/interpolation.c`, `bolo/screen.c` |
 | `WB_LOG_CAT_GUI`       | `gui`       | ImGui dialogs, menus, settings, lobby, gamebrowser. | `gui/sdl3/sdl3imgui.cpp`, `gui/sdl3/dialogs/*.cpp` |
