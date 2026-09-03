@@ -64,7 +64,7 @@ enum KeySetupField {
     ksNone = -1,
     ksForward, ksBackward, ksTurnLeft, ksTurnRight,
     ksShoot, ksLayMine, ksGunIncrease, ksGunDecrease,
-    ksTankView, ksPillView, ksOverviewZoom,
+    ksTankView, ksPillView, ksBaseView, ksAllyView, ksOverviewZoom,
     ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
     ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
 };
@@ -92,6 +92,8 @@ static int *fieldPtr(KeySetupField f, keyItems *ki) {
         case ksGunDecrease: return &ki->kiGunDecrease;
         case ksTankView:    return &ki->kiTankView;
         case ksPillView:    return &ki->kiPillView;
+        case ksBaseView:    return &ki->kiBaseView;
+        case ksAllyView:    return &ki->kiAllyView;
         case ksOverviewZoom:return &ki->kiOverviewZoom;
         case ksScrollUp:    return &ki->kiScrollUp;
         case ksScrollDown:  return &ki->kiScrollDown;
@@ -418,6 +420,8 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             section(langGetText(STR_DLGKEYSETUP_VIEW));
             keyRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
             keyRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
+            keyRow(langGetText(STR_DLGKEYSETUP_BASEVIEW), ksBaseView);
+            keyRow(langGetText(STR_DLGKEYSETUP_ALLYVIEW), ksAllyView);
             keyRow(langGetText(STR_DLGKEYSETUP_OVERVIEWZOOM), ksOverviewZoom);
             endSection();
 

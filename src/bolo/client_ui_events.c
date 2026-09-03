@@ -34,7 +34,6 @@
 #include "client_sim_internal.h"
 #include "tank.h"
 #include "bases.h"
-#include "pillbox.h"
 #include "messages.h"
 #include "scroll.h"
 #include "frontend.h"

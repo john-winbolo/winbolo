@@ -193,7 +193,7 @@ void sdl3DrawCleanup(void);
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
-                        int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
+                        int32_t srtDelay, bool isItemView, int edgeX, int edgeY,
                         bool useCursor, BYTE cursorLeft, BYTE cursorTop);
 
 /*********************************************************
@@ -311,12 +311,14 @@ void sdl3DrawSetNetFailed(bool v);
 void sdl3DrawNetFailed(void);
 
 /*********************************************************
-*NAME:          sdl3DrawPillInView
+*NAME:          sdl3DrawItemInView
 *PURPOSE:
-*  Renders "Pillbox View" text at the bottom of the game
-*  area while the player is spectating a pillbox.
+*  Names the current item view at the bottom of the game
+*  area — "Pillbox View", "Base View", or "Allied Tank
+*  View" with the ally's player name. Draws nothing in the
+*  tank view.
 *********************************************************/
-void sdl3DrawPillInView(void);
+void sdl3DrawItemInView(ClientSim *cs);
 
 /* sdl3DrawResetCachedText / sdl3DrawMessages / sdl3DrawKillsDeaths /
  * sdl3DrawTankLabel declared via sdl3draw_status.h (#included above). */

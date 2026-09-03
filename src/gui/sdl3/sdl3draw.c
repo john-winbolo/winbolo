@@ -63,6 +63,7 @@
 #include "glyphs.h"
 #include "global.h"
 #include "client_sim.h"
+#include "client_command.h" /* VIEW_KIND_* — which item view the label names */
 #include "client_net.h"   /* clientSimGetConnectState — map-transfer progress */
 #include "build_cursor.h"
 #include "../gamefront.h"
@@ -1802,7 +1803,7 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
-                        int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
+                        int32_t srtDelay, bool isItemView, int edgeX, int edgeY,
                         bool useCursor, BYTE cursorLeft, BYTE cursorTop) {
   (void)rcWindow;
 
@@ -1939,14 +1940,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
    * into edgeX/Y as a fractional drag offset. See the comment block at
    * the top of this file. */
   if (cs != NULL) {
-    /* Pill view is camera-locked on the pill and must stay exactly
-     * centred — no sub-tile drift. scrollCenterObject already zeroes
-     * subPos on entry / cycling / return-to-tank, but ignore it here
-     * too so the pill can never render a fraction of a tile off centre
-     * regardless of what subPos last held. */
-    bool inPillView = clientSimIsInPillView(cs);
-    int subX    = inPillView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
-    int subY    = inPillView ? 0 : clientSimGetSubPosY(cs);
+    /* An item view is camera-locked on what it is watching and must stay
+     * exactly centred — no sub-tile drift. scrollCenterObject already zeroes
+     * subPos on entry / cycling / return-to-tank, but ignore it here too so
+     * the pill, base or allied tank can never render a fraction of a tile
+     * off centre regardless of what subPos last held. */
+    bool inItemView = clientSimIsInItemView(cs);
+    int subX    = inItemView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
+    int subY    = inItemView ? 0 : clientSimGetSubPosY(cs);
     int tileWpx = TILE_SIZE_X * gZoomFactor;
     int tileHpx = TILE_SIZE_Y * gZoomFactor;
     edgeX += subX * tileWpx / 256;
@@ -2028,7 +2029,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           sdl3RenderText(gFontMsg, str, white, tx, ty);
         }
       }
-    } else if (!isPillView && clientSimGetMyTankDeathWait(cs) != 0 &&
+    } else if (!isItemView && clientSimGetMyTankDeathWait(cs) != 0 &&
                ((clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_DEEPSEA && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_DEEPSEA) ||
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_SHELL   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_SHELL) ||
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
@@ -2216,8 +2217,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
-      if (isPillView) {
-        sdl3DrawPillInView();
+      if (isItemView) {
+        sdl3DrawItemInView(cs);
       }
       if (gNetFailed) {
         sdl3DrawNetFailed();
@@ -2963,15 +2964,38 @@ void sdl3DrawNetFailed(void) {
   sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
 }
 
-void sdl3DrawPillInView(void) {
-  if (!gRenderer) return;
+void sdl3DrawItemInView(ClientSim *cs) {
+  if (!gRenderer || cs == NULL) return;
+  char allyLabel[128];
+  const char *label;
+  switch (clientSimGetViewKind(cs)) {
+    case VIEW_KIND_PILL:
+      label = "Pillbox View";
+      break;
+    case VIEW_KIND_BASE:
+      label = "Base View";
+      break;
+    case VIEW_KIND_ALLY: {
+      /* Name the ally we are riding along with. The player mirror is empty
+         for a slot we have no name for yet; then just say what the view is. */
+      const char *name = sdl3ImguiGetPlayerName(clientSimGetViewTarget(cs));
+      label = "Allied Tank View";
+      if (name[0] != '\0') {
+        snprintf(allyLabel, sizeof(allyLabel), "Allied Tank View \xE2\x80\x94 %s", name);
+        label = allyLabel;
+      }
+      break;
+    }
+    default:
+      return;
+  }
   SDL_Color white = {200, 200, 200, 255};
   int originX = MAIN_OFFSET_X * gZoomFactor;
   int originY = MAIN_OFFSET_Y * gZoomFactor;
   int fontH = 13 * gZoomFactor;
   float tx = (float)(originX + 2 * gZoomFactor);
   float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor - fontH - 2 * gZoomFactor);
-  sdl3RenderText(gFontMsg, "Pillbox View", white, tx, ty);
+  sdl3RenderText(gFontMsg, label, white, tx, ty);
 }
 
 /* sdl3DrawResetCachedText, sdl3DrawMessages, sdl3DrawGetCachedMessages,

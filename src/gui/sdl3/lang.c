@@ -91,6 +91,8 @@ static const LangEntry langTable[] = {
     {235,  "Lay Mine"},
     {236,  "Tank View"},
     {237,  "Pill View"},
+    {1964, "Base View"},
+    {1965, "Allied Tank View"},
     {1954, "Map Zoom (hold)"},
     {238,  "Up"},
     {240,  "Down"},

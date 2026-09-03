@@ -121,7 +121,7 @@ static bool gCachedBaseValid = false;
  * Local helpers (static — moved verbatim from sdl3draw.c).
  * sdl3RenderText is also kept as a static duplicate in sdl3draw.c
  * because non-moved code in that file (sdl3DrawStartDelay,
- * sdl3DrawNetFailed, sdl3DrawPillInView, sdl3DrawMainScreen) calls
+ * sdl3DrawNetFailed, sdl3DrawItemInView, sdl3DrawMainScreen) calls
  * it as well.
  * ----------------------------------------------------------------- */
 /*********************************************************

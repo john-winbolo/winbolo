@@ -256,6 +256,17 @@ void sdl3ImguiUpdatePlayerFlags(unsigned char playerNum, uint8_t clientType, uin
 void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 
 /*********************************************************
+*NAME:          sdl3ImguiGetPlayerName
+*PURPOSE:
+*  The display name last pushed for a player slot, or ""
+*  when the slot is empty or out of range. Same mirror the
+*  Players menu draws from, so it tracks in-game name
+*  changes. Never NULL; the pointer stays valid until the
+*  next update for that slot.
+*********************************************************/
+const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetSteamIcon
 *PURPOSE:
 *  Returns the SDL_Texture for the Steam icon.  Loads the SVG

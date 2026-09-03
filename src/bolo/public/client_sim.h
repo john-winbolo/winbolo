@@ -1003,7 +1003,8 @@ void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
 bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
 /* Enter an item view, or cycle to the next item once in it, with horz and
  * vert both 0; step to the nearest item in that direction otherwise.
- * Cycling past the last item goes back to the tank view.
+ * Cycling wraps around the items; it drops back to the tank view only when
+ * there is nothing of that kind left to watch.
  * clientSimStepView steps within whichever item view is current and does
  * nothing in the tank view. */
 void         clientSimPillView(ClientSim *cs, int horz, int vert);

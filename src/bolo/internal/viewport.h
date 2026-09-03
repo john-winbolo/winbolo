@@ -66,9 +66,10 @@ void viewportSetTankView(ViewPort *vp);
 /* Enter, cycle or step an item view. kind is a ViewStateKind
  * (client_command.h): VIEW_KIND_PILL, _BASE or _ALLY. horz/vert both 0 means
  * "enter this kind of view, or cycle to the next item if already in it";
- * either non-zero steps to the nearest item that way. Cycling past the last
- * item drops back to the tank. allyViewable is the alive-tank mask
- * playersCanAllyView takes and is ignored by the pill and base kinds. */
+ * either non-zero steps to the nearest item that way. Cycling wraps around
+ * the items, and drops back to the tank only when there is nothing of that
+ * kind left to watch. allyViewable is the alive-tank mask playersCanAllyView
+ * takes and is ignored by the pill and base kinds. */
 void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                        tank myTank, uint8_t kind, PlayerBitMap allyViewable,
                        int horz, int vert);

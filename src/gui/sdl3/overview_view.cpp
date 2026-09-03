@@ -995,16 +995,16 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * reads as up through overviewKeyDown, and only a bound one is read by
      * overviewBindingDown.
      *
-     * Not while pill view has them: there the scroll keys step between pills,
-     * which is still their job with the classic view hidden. Not while a text
-     * box has the keyboard either, or typing a message would pan the map
-     * behind it.
+     * Not while an item view has them: there the scroll keys step between
+     * pills, bases or allied tanks, which is still their job with the classic
+     * view hidden. Not while a text box has the keyboard either, or typing a
+     * message would pan the map behind it.
      *
      * Panning clears follow, the way a drag does, so a held key wins over the
      * tank exactly as manual scrolling wins over auto-scroll in the classic
      * view. Home / C hands the map back to the tank. */
     if (!io.WantTextInput) {
-        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInPillView(cs);
+        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs);
         float dx = 0.0f, dy = 0.0f;
         if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;

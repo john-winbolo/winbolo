@@ -5868,6 +5868,11 @@ void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *c
     s_playerEnabled[playerNum] = true;
 }
 
+const char *sdl3ImguiGetPlayerName(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return "";
+    return s_playerName[playerNum];
+}
+
 void sdl3ImguiClearPlayer(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerName[playerNum][0] = '\0';
