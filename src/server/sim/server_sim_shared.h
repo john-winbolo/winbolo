@@ -115,7 +115,7 @@ void publishServerMessage(ServerSim *sim, const char *message);
  * with the other control-event fillers in server_sim_control.c. */
 void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
 
-/* Defined in server_sim.c — the entry owned by the parent rather than by a
+/* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */
 
 /* Arms the per-thread active-sim slot that serverSimGetActive reads back; the
@@ -124,5 +124,13 @@ void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
  * server_sim_round.c and serverSimPublishControl in server_sim_control.c are
  * the callers. */
 void serverSimSetActive(ServerSim *sim);
+
+/* Records a terrain change into the active sim's dedicated map-event buffer,
+ * where map events never compete with sound and game events for slots.
+ * simRunHalfStep in server_sim_tick.c installs it through mapSetChangeCallback
+ * for the duration of a running half-step. It reads the activeSim slot
+ * directly, which is why it stays beside that slot in server_sim.c rather than
+ * travelling with its caller. */
+void simMapChangeCallback(BYTE x, BYTE y, BYTE terrain);
 
 #endif
