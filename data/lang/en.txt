@@ -716,6 +716,17 @@ STR_DLGSKIN_AUTHOR_LBL=Author:
 STR_DLGSKIN_NOTES_LBL=Notes:
 STR_DLGSKIN_LOADERR=Unable to load Skin File
 
+# Skin section of the Display & Sound settings tab
+STR_DLGSETTINGS_SKIN=Skin
+STR_DLGSKIN_DEFAULT=Default
+STR_DLGSKIN_SRC_BUILTIN=Built-in
+STR_DLGSKIN_SRC_USER=User
+STR_DLGSKIN_SRC_WORKSHOP=Workshop
+STR_DLGSKIN_DOWNLOADING=Downloading...
+STR_DLGSKIN_OPENFOLDER=Open skins folder
+STR_DLGSKIN_BROWSE_WORKSHOP=Browse Workshop
+STR_DLGSKIN_PUBLISH=Publish to Workshop...
+
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config
 STR_DLGTRACKER_INVALIDPORT=Invalid port number.
