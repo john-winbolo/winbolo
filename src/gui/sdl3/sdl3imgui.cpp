@@ -1562,88 +1562,10 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
 
 #if defined(WINBOLO_VOICE)
-        /* Microphone state, between the checkbox and the name. Resolved in
-         * precedence order: muting someone is this client's own doing, so it
-         * outranks whatever their microphone is doing — you have to be able
-         * to see that you muted them, and to undo it, whatever their state. */
-        {
-            bool mutedByMe = voiceIsPlayerMuted(i);
-            bool hasMic    = (s_playerFlags[i] & PLAYER_FLAG_HAS_MIC) != 0;
-            bool selfMuted = (s_playerFlags[i] & PLAYER_FLAG_VOICE_MUTED) != 0;
-            bool talking   = (talkingMap & ((PlayerBitMap)1u << i)) != 0;
-            bool isSelf    = (i == self);
-
-            SDL_Texture *micTex;
-            ImVec4       micTint;
-            langid       micTip;
-            if (mutedByMe) {
-                micTex  = s_iconMicMuted;
-                micTint = MIC_TINT_MUTED;
-                micTip  = STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
-            } else if (!hasMic) {
-                micTex  = s_iconMicOff;
-                micTint = MIC_TINT_DIM;
-                micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_NOMIC
-                                 : STR_PLAYER_TIP_VOICE_NOMIC;
-            } else if (talking) {
-                micTex  = s_iconMic;
-                micTint = MIC_TINT_TALKING;
-                micTip  = STR_PLAYER_TIP_VOICE_TALKING;
-            } else if (selfMuted) {
-                /* They have muted their own microphone. Folded into the idle
-                 * icon as a dimmer tint and its own tooltip rather than a
-                 * fourth asset — it is their doing, not ours, and it does not
-                 * warrant a shape of its own. */
-                micTex  = s_iconMic;
-                micTint = MIC_TINT_DIM;
-                micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
-                                 : STR_PLAYER_TIP_VOICE_SELFMUTED;
-            } else {
-                micTex  = s_iconMic;
-                micTint = MIC_TINT_NORMAL;
-                micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
-                                 : STR_PLAYER_TIP_VOICE_IDLE;
-            }
-
-            if (!micTex) {
-                /* An SVG that would not load must still hold the column, or
-                 * the name and ping shift between rows. */
-                ImGui::Dummy(ImVec2(micWidth, micWidth));
-            } else if (isSelf) {
-                /* Never clickable on your own row: self-mute is not a thing
-                 * here and the server rejects it. */
-                ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(micWidth, micWidth),
-                                   ImVec2(0, 0), ImVec2(1, 1),
-                                   ImVec4(0, 0, 0, 0), micTint);
-                imguiHelpTooltip(langGetText(micTip));
-            } else {
-                char micLabel[64];
-                snprintf(micLabel, sizeof(micLabel), "##mic%d", i);
-                /* Zero FramePadding so the button is exactly the icon: the
-                 * default padding would make this cell taller than the
-                 * Selectable beside it and leave a dead strip in the row. */
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.15f));
-                bool micClicked = ImGui::ImageButton(micLabel, (ImTextureID)micTex,
-                                                     ImVec2(micWidth, micWidth),
-                                                     ImVec2(0, 0), ImVec2(1, 1),
-                                                     ImVec4(0, 0, 0, 0), micTint);
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar();
-                imguiHelpTooltip(langGetText(micTip));
-                imguiHandOnHover();
-                if (micClicked) {
-                    /* Both legs, always: the local one covers the round trip
-                     * while the server is being told, and the server is the
-                     * authority — it also stops that player's chat. */
-                    voiceSetPlayerMuted(i, !voiceIsPlayerMuted(i));
-                    clientSimNetSendPlayerMute(cs, (BYTE)i, voiceIsPlayerMuted(i));
-                }
-            }
-            ImGui::SameLine();
-        }
+        /* Microphone state, between the checkbox and the name. */
+        renderPlayerMicCell(cs, i, s_playerFlags[i], talkingMap,
+                            i == self, micWidth);
+        ImGui::SameLine();
 #endif
 
         char selectLabel[64];
@@ -5347,6 +5269,92 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         }
     }
 }
+
+#if defined(WINBOLO_VOICE)
+void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
+                         PlayerBitMap talkingMap, bool isSelf, float size) {
+    ensureWbnIconsLoaded();
+
+    /* Resolved in precedence order: muting someone is this client's own
+     * doing, so it outranks whatever their microphone is doing — you have to
+     * be able to see that you muted them, and to undo it, whatever their
+     * state. */
+    bool mutedByMe = voiceIsPlayerMuted(playerNum);
+    bool hasMic    = (clientFlags & PLAYER_FLAG_HAS_MIC) != 0;
+    bool selfMuted = (clientFlags & PLAYER_FLAG_VOICE_MUTED) != 0;
+    bool talking   = (talkingMap & ((PlayerBitMap)1u << playerNum)) != 0;
+
+    SDL_Texture *micTex;
+    ImVec4       micTint;
+    langid       micTip;
+    if (mutedByMe) {
+        micTex  = s_iconMicMuted;
+        micTint = MIC_TINT_MUTED;
+        micTip  = STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
+    } else if (!hasMic) {
+        micTex  = s_iconMicOff;
+        micTint = MIC_TINT_DIM;
+        micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_NOMIC
+                         : STR_PLAYER_TIP_VOICE_NOMIC;
+    } else if (talking) {
+        micTex  = s_iconMic;
+        micTint = MIC_TINT_TALKING;
+        micTip  = STR_PLAYER_TIP_VOICE_TALKING;
+    } else if (selfMuted) {
+        /* They have muted their own microphone. Folded into the idle
+         * icon as a dimmer tint and its own tooltip rather than a
+         * fourth asset — it is their doing, not ours, and it does not
+         * warrant a shape of its own. */
+        micTex  = s_iconMic;
+        micTint = MIC_TINT_DIM;
+        micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
+                         : STR_PLAYER_TIP_VOICE_SELFMUTED;
+    } else {
+        micTex  = s_iconMic;
+        micTint = MIC_TINT_NORMAL;
+        micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
+                         : STR_PLAYER_TIP_VOICE_IDLE;
+    }
+
+    if (!micTex) {
+        /* An SVG that would not load must still hold the column, or
+         * the name and ping shift between rows. */
+        ImGui::Dummy(ImVec2(size, size));
+    } else if (isSelf) {
+        /* Never clickable on your own row: self-mute is not a thing
+         * here and the server rejects it. */
+        ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),
+                           ImVec2(0, 0), ImVec2(1, 1),
+                           ImVec4(0, 0, 0, 0), micTint);
+        imguiHelpTooltip(langGetText(micTip));
+    } else {
+        char micLabel[64];
+        snprintf(micLabel, sizeof(micLabel), "##mic%d", playerNum);
+        /* Zero FramePadding so the button is exactly the icon: the
+         * default padding would make this cell taller than the
+         * Selectable beside it and leave a dead strip in the row. */
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.15f));
+        bool micClicked = ImGui::ImageButton(micLabel, (ImTextureID)micTex,
+                                             ImVec2(size, size),
+                                             ImVec2(0, 0), ImVec2(1, 1),
+                                             ImVec4(0, 0, 0, 0), micTint);
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+        imguiHelpTooltip(langGetText(micTip));
+        imguiHandOnHover();
+        if (micClicked) {
+            /* Both legs, always: the local one covers the round trip
+             * while the server is being told, and the server is the
+             * authority — it also stops that player's chat. */
+            voiceSetPlayerMuted(playerNum, !voiceIsPlayerMuted(playerNum));
+            clientSimNetSendPlayerMute(cs, (BYTE)playerNum, voiceIsPlayerMuted(playerNum));
+        }
+    }
+}
+#endif
 
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
     if (playerNum >= MAX_PLAYERS) return;

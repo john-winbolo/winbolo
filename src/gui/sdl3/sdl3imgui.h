@@ -21,6 +21,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "platform_types.h"  /* PlayerBitMap */
+
 struct ClientSim;
 
 #ifdef __cplusplus
@@ -303,6 +305,37 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 *********************************************************/
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
+
+#if defined(WINBOLO_VOICE)
+/*********************************************************
+*NAME:          renderPlayerMicCell
+*PURPOSE:
+*  Renders one player's microphone cell for a player row:
+*  a size x size icon whose shape and tint reflect the
+*  player's voice state, resolved in precedence order
+*  (muted by this client, no microphone, talking, muted
+*  their own microphone, idle), with a tooltip naming that
+*  state. On another player's row the icon is a button that
+*  toggles this client's mute of that player, locally and on
+*  the server; on the local player's own row it is a plain
+*  image. If the icon texture failed to load a blank of the
+*  same size holds the column. Loads the icon textures on
+*  first use. Draws only — the caller owns layout
+*  (SameLine, cursor positioning).
+*
+*ARGUMENTS:
+*  cs          - client sim, for the server-side mute send
+*  playerNum   - player slot (0..MAX_PLAYERS-1); also keys
+*                the ImGui id so each row's button is unique
+*  clientFlags - that player's PLAYER_FLAG_* bits (HAS_MIC,
+*                VOICE_MUTED)
+*  talkingMap  - PlayerBitMap of players producing voice now
+*  isSelf      - true when playerNum is the local player
+*  size        - icon edge length in pixels
+*********************************************************/
+void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlags,
+                         PlayerBitMap talkingMap, bool isSelf, float size);
+#endif
 
 /* Draws the country flag for an alpha-2 code and, on hover, a localized
  * country-name tooltip. Returns true iff a flag image was drawn (false for
