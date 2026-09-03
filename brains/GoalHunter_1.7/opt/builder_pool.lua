@@ -218,13 +218,22 @@ end
 --
 -- Four parts, summed:
 --   base   TREE_RESERVE, the standing float every other spender respects;
---   pills  PILL_PLACE_TREE_COST per carried pill -- a GUARANTEE, exactly as in
---          road_tree_reserve: an errand must never eat the wood needed to
---          deploy every pill in the tank;
+--   pills  ONE placement's worth (PILL_PLACE_TREE_COST), and only while a pill
+--          is actually aboard -- see below;
 --   goal   b.need_trees, what set_mode declared for THIS goal (the take's wall
---          shields, the placement's 4/pill, the sea plan's 21);
+--          shields, the placement's 4, the sea plan's 21);
 --   sea    the LIVE sea plan's trees_need, which stays spoken for even while
 --          another goal briefly wins the tank pool.
+--
+-- WHY THE PILL COMPONENT IS FLAT, NOT 4 x CARRIED.
+-- It used to be PILL_PLACE_TREE_COST per carried pill, uncapped, on the
+-- road_tree_reserve argument that an errand must never eat the wood needed to
+-- deploy EVERY pill in the tank. That is the wrong horizon for the tank's own
+-- wood: getting ONE pill out is the priority, the next one triggers its own
+-- gather, and ambient farming usually covers it. Uncapped, it starved the tank
+-- of its own jobs -- 20260903_105448 bot2 stood beside three damaged friendly
+-- pills for 20 minutes with 21 trees while the reserve read
+-- base 4 + pills 16 + sea 21 = 41 and refused a ONE-tree repair.
 --
 -- This is NOT builder.road_tree_reserve, deliberately, and the difference is
 -- the point: that one adds "trees to repair the worst-damaged nearby friendly
@@ -238,7 +247,8 @@ end
 -- -------------------------------------------------------------------------
 function M.tree_reserve(state, info, b)
   local base  = C.TREE_RESERVE or 4
-  local pills = (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
+  local pills = ((info.carried_pills or 0) > 0)
+                and (C.PILL_PLACE_TREE_COST or 4) or 0
   local goal_need = (b and b.need_trees) or 0
   local sea = 0
   local sg = state._sea_live and state._sea_live.sea
@@ -958,9 +968,15 @@ function M.update(state, world, info, now)
   --   * the LEASH -- the goal's own danger-blended dispatch range (5 calm,
   --     widening to 12 under fire) is what decided "close enough", and
   --     narrowing that to the leash would change committed-repair behaviour;
-  --   * the GOAL component of the tree reserve -- set_mode set b.need_trees to
-  --     ceil(deficit/4) for THIS pill, so charging the row against it would
-  --     reserve the job's wood against the job.
+  --   * the TREE RESERVE, all of it. The reserve exists to stop an
+  --     OPPORTUNISTIC side-quest eating wood the tank's own plans need. A
+  --     seeded job IS the tank's own plan -- the whole goal is this repair --
+  --     so holding wood back from it reserves the job's wood against the job.
+  --     (The goal component always was waived for that reason; 20260903_105448
+  --     showed the other two doing the same thing from one step further out:
+  --     base 4 + pills 16 + sea 21 = 41 against 21 trees refused a committed
+  --     ONE-tree repair, every tick, for 20 minutes.) A seeded row therefore
+  --     asks for exactly its own tree cost, `have >= need`, and nothing more.
   -- Nothing else is waived. In particular the UNDER-FIRE clock still applies
   -- (seed_ctx takes d.fire_ok, not `true`): "my goal is this repair" is a
   -- reason to own the man, not a reason to walk him out of a tank that is
@@ -968,8 +984,7 @@ function M.update(state, world, info, now)
   -- every reject in score_row still runs.
   local seed = state._bp_seed
   local seed_ctx = { ok = d.fire_ok, reason = d.fire_reason,
-                     reserve = r_base + r_pills + r_sea
-                               + (C.BUILDER_POOL_TREE_RESERVE_EXTRA or 0),
+                     reserve = 0,
                      reserve_eta = nil }
 
   local rows = M.discover(state, world, info)
