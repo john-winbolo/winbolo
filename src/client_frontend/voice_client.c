@@ -82,15 +82,17 @@
  * over while still dropping within a quarter second of someone stopping. */
 #define VOICE_TALKING_HANGOVER_MS 250
 
-/* Ticks between attempts to open the recording device while the connection
- * carries voice and the microphone is wanted but has not come up.  The first
- * attempt is made on the tick the connection starts carrying voice, and on a
- * desktop that is the very moment the operating system puts its microphone
- * permission prompt up, so the open fails while the player is still reading
- * it.  Nothing tells this code when they click Allow, so it asks again - once
- * a second at the 50 Hz tick, which is prompt enough for the player and not
- * often enough to trouble the audio subsystem when there is no microphone at
- * all. */
+/* voiceTick calls between attempts to open the recording device while the
+ * connection carries voice and the microphone is wanted but has not come up.
+ * The first attempt is made on the tick the connection starts carrying voice,
+ * and on a desktop that is the very moment the operating system puts its
+ * microphone permission prompt up, so the open fails while the player is
+ * still reading it.  Nothing tells this code when they click Allow, so it
+ * asks again this many calls later.  Calls track the rate the loop calling
+ * them renders at rather than the wire cadence, so what that works out to in
+ * real time varies - roughly 0.4 s at 120 fps and 1.7 s at 30 - which is
+ * prompt enough for the player either way, and never often enough to trouble
+ * the audio subsystem when there is no microphone at all. */
 #define VOICE_CAPTURE_RETRY_TICKS 50
 
 /* How long the microphone test records for.  Frames are 20 ms, so 150 of them
@@ -1119,6 +1121,38 @@ static void micTestPlayTick(void) {
     }
 }
 
+#if defined(WINBOLO_VOICE_AEC)
+/*********************************************************
+*NAME:          voiceFrameRms
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the 0..1 RMS of one frame, clamped at 1.0f.  For
+*  a frame whatever gain it gets has already been applied to
+*  in place - the capture loop takes its own reading as part
+*  of applying that gain, and this is the second reading of
+*  the same frame afterwards.
+*
+*ARGUMENTS:
+*  pcm - VOICE_FRAME_SAMPLES mono S16 samples
+*********************************************************/
+static float voiceFrameRms(const int16_t *pcm) {
+    float sumSquares = 0.0f;
+    float level;
+    int i;
+
+    for (i = 0; i < VOICE_FRAME_SAMPLES; i++) {
+        sumSquares += (float)pcm[i] * (float)pcm[i];
+    }
+    level = sqrtf(sumSquares / (float)VOICE_FRAME_SAMPLES) / 32768.0f;
+    if (level > 1.0f) {
+        level = 1.0f;
+    }
+    return level;
+}
+#endif
+
 /*********************************************************
 *NAME:          voiceTick
 *AUTHOR:        John Morrison
@@ -1145,6 +1179,7 @@ void voiceTick(struct ClientSim *cs) {
     int encodedLen;
     float sample;
     float sumSquares;
+    float gateLevel;
 
     if (!isInitialised) {
         return;
@@ -1221,11 +1256,27 @@ void voiceTick(struct ClientSim *cs) {
             inputLevel = 1.0f;
         }
 
-        /* Open mic runs off the level the meter already has: over the
-         * threshold opens the gate and re-arms the hangover, under it counts
-         * the hangover down so the tail of a word is not cut off. */
+        gateLevel = inputLevel;
+#if defined(WINBOLO_VOICE_AEC)
+        /* Below the level meter, which reports the microphone as it is, and
+         * above both consumers of the cleaned signal - the open-mic gate and
+         * the encoder.  Above the transmit test too: every captured frame
+         * goes through, sent or not, because the filter tracks the room
+         * continuously and a frame it never sees is a hole in that. */
+        voiceAecProcess(pcm, pcm);
+
+        /* The gate's own reading, taken off the frame the canceller has just
+         * cleaned rather than off the meter's. */
+        gateLevel = voiceFrameRms(pcm);
+#endif
+
+        /* Open mic decides on the signal that will actually be sent, not on
+         * what the meter reports, so echo the canceller has just taken out
+         * cannot open the microphone.  Over the threshold opens the gate and
+         * re-arms the hangover, under it counts the hangover down so the tail
+         * of a word is not cut off. */
         if (voiceMode == VOICE_MODE_OPEN) {
-            if (inputLevel >= VOICE_OPEN_MIC_RMS_THRESHOLD) {
+            if (gateLevel >= VOICE_OPEN_MIC_RMS_THRESHOLD) {
                 gateOpen = true;
                 gateHangover = VOICE_OPEN_MIC_HANGOVER_FRAMES;
             } else if (gateHangover > 0) {
@@ -1237,16 +1288,6 @@ void voiceTick(struct ClientSim *cs) {
                 gateOpen = false;
             }
         }
-
-#if defined(WINBOLO_VOICE_AEC)
-        /* Below the level meter and the open-mic gate, which read the
-         * microphone as it is, and above the encoder, which is the only
-         * consumer of the cleaned signal.  Above the transmit test too:
-         * every captured frame goes through, sent or not, because the filter
-         * tracks the room continuously and a frame it never sees is a hole
-         * in that. */
-        voiceAecProcess(pcm, pcm);
-#endif
 
         sending = voiceIsTransmitting();
 
