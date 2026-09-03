@@ -321,6 +321,25 @@ If `data/dbip-country-lite.mmdb` is present, the server will use it for IP-to-co
 
 The database is the **DB-IP IP-to-Country Lite** file, distributed under CC BY 4.0 and rebuilt monthly. To refresh it, download the latest MaxMind-format (.mmdb) file from https://db-ip.com/db/download/ip-to-country-lite, gunzip it, and drop it in at `data/dbip-country-lite.mmdb`. Attribution lives in `THIRD_PARTY_NOTICES.md`.
 
+### Steam integration
+
+The Steamworks SDK is **not in the repository** — `third_party/steamworks/` is
+gitignored. Without it CMake configures a stub build: it prints
+
+```
+Steamworks SDK not found — Steam integration disabled (stubs)
+```
+
+does not define `HAVE_STEAM`, and links `src/steam/steam_wrapper_stub.c`
+instead of the real wrapper. Everything builds and runs; the Steam-only
+features (rich presence, Steam Input, Workshop) simply report themselves as
+unavailable at runtime.
+
+For a Steam build, copy the SDK into `third_party/steamworks/` before
+configuring. Copy it rather than symlinking — the ignore pattern has a trailing
+slash and only matches a real directory. A fresh worktree or clone will not have
+it, so a Steam build there needs the copy repeating.
+
 ### Sentry crash reporting
 
 Enabled by default. Pass a DSN to activate crash reporting:
