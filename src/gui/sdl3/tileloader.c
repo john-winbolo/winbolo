@@ -321,14 +321,18 @@ static bool blitSheetSprite(SDL_Surface *sheet, SDL_Surface *src,
         }
     } else {
         /* A sheet drawn at a different multiple than the slot it lands in.
-           Linear when shrinking, so a 2x sheet at zoom 1 keeps what every
-           source pixel contributes instead of dropping every other one. */
+           Point sampling either way: the sheet is color-keyed pixel art, so
+           its transparent pixels still hold the key green, and interpolating
+           across a key boundary invents green fringing and part-transparent
+           pixels the art never had.  Point sampling is also what 1.x did.
+           A sheet finer than the slot loses detail here; the alternative is
+           building the output sheet at the skin's density rather than
+           scaling into a coarser one. */
         SDL_Rect srcRect = { e->sheetX * D, e->sheetY * D,
                              e->width * D, e->height * D };
         SDL_Rect dstRect = { dstX, dstY, w, h };
         SDL_BlitSurfaceScaled(src, &srcRect, sheet, &dstRect,
-                              D > scale ? SDL_SCALEMODE_LINEAR
-                                        : SDL_SCALEMODE_NEAREST);
+                              SDL_SCALEMODE_NEAREST);
     }
     return true;
 }
