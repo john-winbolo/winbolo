@@ -400,9 +400,13 @@ void botManagerSetPreThinkHook(struct ServerSim *sim,
 /*********************************************************
  *NAME:          botManagerOnGameStart
  *PURPOSE:
- *  Called when a new round starts (countdown→running).
- *  Reloads each bot's map from the server, recreates
- *  tanks, and resets brain state for the new round.
+ *  Called when a new round starts (countdown→running, and the
+ *  no-lobby map-rotate / in-place start paths). Reloads each
+ *  bot's map from the server, recreates its tank, and gives it
+ *  a FRESH Lua brain: the old lua_State is closed (Brain.close)
+ *  and a new one opened, so nothing the brain remembered from
+ *  the previous round or the lobby survives. A bot whose brain
+ *  fails to reload is removed.
  *
  *ARGUMENTS:
  *  sim - The ServerSim
