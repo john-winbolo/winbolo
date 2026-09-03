@@ -823,6 +823,20 @@ int run_view_state_bad_claims_degrade(void);
 int run_view_state_invalidation(void);
 int run_view_state_lifecycle(void);
 
+/* Item-view cycling helpers (test_view_cycling.c): basesGetNextView and
+ * playersGetNextAllyView walk the allied bases and the allied live tanks in
+ * order and wrap, skipping enemy, neutral, dead and un-allied items and
+ * reporting FALSE when nothing qualifies; basesMoveView and
+ * playersMoveAllyView take the nearest item in the pressed direction on both
+ * axes and never one that is only nearer the other way; and
+ * viewportUpdateItemView drops the view once a base is captured or an ally
+ * dies or leaves, while following an ally that is still driving. */
+int run_view_cycle_bases(void);
+int run_view_cycle_base_direction(void);
+int run_view_cycle_allies(void);
+int run_view_cycle_ally_direction(void);
+int run_view_cycle_exits(void);
+
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
  * never yields TANK_TRANSPARENT, and resolves pill and base squares by the

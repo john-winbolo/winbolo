@@ -510,6 +510,15 @@ bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out, size_t
 bool         clientSimIsRunning(const ClientSim *cs);
 bool         clientSimIsBot(const ClientSim *cs);
 bool         clientSimIsInPillView(const ClientSim *cs);
+/* True in any of the item views (pill, base or ally) — i.e. whenever the
+ * camera is parked on something instead of following the local tank. */
+bool         clientSimIsInItemView(const ClientSim *cs);
+/* What the camera is parked on. The kind is a ViewStateKind value
+ * (VIEW_KIND_TANK / _PILL / _BASE / _ALLY in client_command.h); the target is
+ * the pill or base index, or the ally's player number, and is 0 in tank
+ * view. */
+uint8_t      clientSimGetViewKind(const ClientSim *cs);
+BYTE         clientSimGetViewTarget(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
@@ -992,7 +1001,22 @@ void    clientSimClearLobbyLastReject(ClientSim *cs);
 void         clientSimTankView(ClientSim *cs);
 void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
 bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
+/* Enter an item view, or cycle to the next item once in it, with horz and
+ * vert both 0; step to the nearest item in that direction otherwise.
+ * Cycling past the last item goes back to the tank view.
+ * clientSimStepView steps within whichever item view is current and does
+ * nothing in the tank view. */
 void         clientSimPillView(ClientSim *cs, int horz, int vert);
+void         clientSimBaseView(ClientSim *cs, int horz, int vert);
+void         clientSimAllyView(ClientSim *cs, int horz, int vert);
+void         clientSimStepView(ClientSim *cs, int horz, int vert);
+/* Report the current view to the server (CMD_VIEW_STATE) when it has changed
+ * since the last report. Called once per display tick.
+ * clientSimResetViewStateReport forgets what was last reported, so the next
+ * tick sends again — used where the client resets its view for a new round or
+ * a freshly installed map. */
+void         clientSimSyncViewState(ClientSim *cs);
+void         clientSimResetViewStateReport(ClientSim *cs);
 void         clientSimRecalc(ClientSim *cs);
 void         clientSimUpdateView(ClientSim *cs, updateType value);
 void         clientSimPanX(ClientSim *cs, int dxTiles);

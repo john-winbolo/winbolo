@@ -366,6 +366,75 @@ BYTE basesSetOwner(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BY
 BYTE basesGetBaseNum(bases *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
+*NAME:          basesCanView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* The one base-view predicate: a base can be watched when it
+* belongs to somebody the view player is allied with. A
+* neutral base belongs to nobody, so it never qualifies.
+*
+*ARGUMENTS:
+*  sim        - Pointer to the game sim
+*  value      - Pointer to the bases structure
+*  baseIdx    - Base index (0 based)
+*  viewPlayer - Player doing the watching
+*********************************************************/
+bool basesCanView(struct GameSim *sim, bases *value, BYTE baseIdx, BYTE viewPlayer);
+
+/*********************************************************
+*NAME:          basesCheckView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* We are currently watching the base at position mx and my.
+* This function checks it is still ours to watch, so we can
+* carry on viewing through it.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the bases structure
+*  mx    - X Map position
+*  my    - Y Map position
+*********************************************************/
+bool basesCheckView(struct GameSim *sim, bases *value, BYTE mx, BYTE my);
+
+/*********************************************************
+*NAME:          basesMoveView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Allows players to step through their bases in a direction.
+* Returns whether a base was found that way. The base
+* equivalent of pillsMoveView.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim
+*  value  - Pointer to the bases structure
+*  mx     - Pointer to hold X Map position (and prev)
+*  my     - Pointer to hold Y Map position (and prev)
+*  xMove  - -1 for moving left, 1 for right, 0 for neither
+*  yMove  - -1 for moving up, 1 for down, 0 for neither
+*********************************************************/
+bool basesMoveView(struct GameSim *sim, bases *value, BYTE *mx, BYTE *my, int xMove, int yMove);
+
+/*********************************************************
+*NAME:          basesGetNextView
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Returns whether a next allied base exists. If so then it
+* puts its map co-ordinates into the parameters passed. If a
+* previous base is being used then the parameter 'prev' is
+* true and mx & my are set to the last base's location. The
+* base equivalent of pillsGetNextView.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim
+*  value  - Pointer to the bases structure
+*  mx     - Pointer to hold X Map position (and prev)
+*  my     - Pointer to hold Y Map position (and prev)
+*  prev   - Whether a previous base is being passed
+*********************************************************/
+bool basesGetNextView(struct GameSim *sim, bases *value, BYTE *mx, BYTE *my, bool prev);
+
+/*********************************************************
 *NAME:          basesRefueling
 *AUTHOR:        John Morrison
 *CREATION DATE: 10/1/99

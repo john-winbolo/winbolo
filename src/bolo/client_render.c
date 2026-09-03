@@ -95,7 +95,7 @@ bool clientRenderCanScroll(ClientSim *csPtr, updateType value) {
    *     zeroed at the edge instead of building up against it).
    * The autoscroll auto-follow itself does not go through here, so its
    * behaviour is unaffected. */
-  if (clientSimIsInPillView(csPtr)) return TRUE; /* pill view scrolls freely */
+  if (clientSimIsInItemView(csPtr)) return TRUE; /* item views scroll freely */
 
   xOff = (int)clientSimGetXOffset(csPtr);
   yOff = (int)clientSimGetYOffset(csPtr);
@@ -201,7 +201,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
   case redraw:
     break;
   case left:
-    if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (clientSimIsInItemView(csPtr) == FALSE) {
       if (manualScrollKeepsTankOnScreen(csPtr, (int)clientSimGetXOffset(csPtr) - 1, clientSimGetYOffset(csPtr))) {
         clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) - 1);
         if (clientSimGetXOffset(csPtr) != oldXOffset) {
@@ -213,12 +213,12 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         manScrollLog("left", csPtr);
       }
     } else {
-      clientSimPillView(csPtr, -1, 0);
+      clientSimStepView(csPtr, -1, 0);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   case right:
-    if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (clientSimIsInItemView(csPtr) == FALSE) {
       if (manualScrollKeepsTankOnScreen(csPtr, (int)clientSimGetXOffset(csPtr) + 1, clientSimGetYOffset(csPtr))) {
         clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) + 1);
         if (clientSimGetXOffset(csPtr) != oldXOffset) {
@@ -230,12 +230,12 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         manScrollLog("right", csPtr);
       }
     } else {
-      clientSimPillView(csPtr, 1, 0);
+      clientSimStepView(csPtr, 1, 0);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   case up:
-    if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (clientSimIsInItemView(csPtr) == FALSE) {
       if (manualScrollKeepsTankOnScreen(csPtr, clientSimGetXOffset(csPtr), (int)clientSimGetYOffset(csPtr) - 1)) {
         clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) - 1);
         if (clientSimGetYOffset(csPtr) != oldYOffset) {
@@ -247,13 +247,13 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         manScrollLog("up", csPtr);
       }
     } else {
-      clientSimPillView(csPtr, 0, -1);
+      clientSimStepView(csPtr, 0, -1);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
   case down:
   default:
-    if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (clientSimIsInItemView(csPtr) == FALSE) {
       if (manualScrollKeepsTankOnScreen(csPtr, clientSimGetXOffset(csPtr), (int)clientSimGetYOffset(csPtr) + 1)) {
         clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) + 1);
         if (clientSimGetYOffset(csPtr) != oldYOffset) {
@@ -265,7 +265,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         manScrollLog("down", csPtr);
       }
     } else {
-      clientSimPillView(csPtr, 0, 1);
+      clientSimStepView(csPtr, 0, 1);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;

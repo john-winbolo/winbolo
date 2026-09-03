@@ -29,6 +29,7 @@
 #include <math.h>
 #include <SDL3/SDL.h>
 #include "client_sim.h"
+#include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
 #include "client_sim_internal.h"
 #include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
 #include "spectator_replay.h"          /* extract a seed's control-snapshot slice */
@@ -229,6 +230,10 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
+  /* No view state reported yet — the first display tick of the session sends
+   * one. The memset above would otherwise read as "tank view already sent". */
+  cs->lastSentViewKind = 0xFF;
+  cs->lastSentViewTarget = 0xFF;
   /* Default chat-send callback: route outbound chat through this cs's
    * own transport. Bots, SP host humans, and UDP-connected humans all
    * use the same path out of the box. Frontends that want different
@@ -1554,7 +1559,10 @@ bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out,
 
 bool clientSimIsRunning(const ClientSim *cs)              { return cs->running; }
 bool clientSimIsBot(const ClientSim *cs)                  { return cs->isBot; }
-bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.inPillView; }
+bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.viewKind == VIEW_KIND_PILL; }
+bool clientSimIsInItemView(const ClientSim *cs)           { return cs->viewport.viewKind != VIEW_KIND_TANK; }
+uint8_t clientSimGetViewKind(const ClientSim *cs)         { return cs->viewport.viewKind; }
+BYTE clientSimGetViewTarget(const ClientSim *cs)          { return cs->viewport.viewTarget; }
 bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
@@ -1591,8 +1599,8 @@ BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewpor
 BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
 int      clientSimGetSubPosX(const ClientSim *cs)           { return (int)cs->scroll.subPosX; }
 int      clientSimGetSubPosY(const ClientSim *cs)           { return (int)cs->scroll.subPosY; }
-BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.pillViewX; }
-BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.pillViewY; }
+BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.viewX; }
+BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.viewY; }
 BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
 BYTE     clientSimGetPendingBuildX(const ClientSim *cs)     { return cs->pendingBuildX; }
 BYTE     clientSimGetPendingBuildY(const ClientSim *cs)     { return cs->pendingBuildY; }
@@ -1763,8 +1771,8 @@ struct ViewPort       *clientSimViewportMut(ClientSim *cs)     { return &cs->vie
 
 BYTE *clientSimGetXOffsetPtr(ClientSim *cs)          { return &cs->viewport.xOffset; }
 BYTE *clientSimGetYOffsetPtr(ClientSim *cs)          { return &cs->viewport.yOffset; }
-BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->viewport.pillViewX; }
-BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->viewport.pillViewY; }
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->viewport.viewX; }
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->viewport.viewY; }
 
 char *clientSimGetMapNameMutable(ClientSim *cs)      { return cs->mapName; }
 
@@ -1789,9 +1797,9 @@ void clientSimSetYOffset(ClientSim *cs, BYTE v)            { cs->viewport.yOffse
 void clientSimSetCursorPosX(ClientSim *cs, int v)          { cs->viewport.cursorPosX = v; }
 void clientSimSetCursorPosY(ClientSim *cs, int v)          { cs->viewport.cursorPosY = v; }
 void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v)   { cs->viewport.needRecalc = v; }
-void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->viewport.inPillView = v; }
-void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->viewport.pillViewX = v; }
-void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->viewport.pillViewY = v; }
+void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->viewport.viewKind = (uint8_t)(v ? VIEW_KIND_PILL : VIEW_KIND_TANK); }
+void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->viewport.viewX = v; }
+void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->viewport.viewY = v; }
 void clientSimSetView(ClientSim *cs, screen v)             { cs->viewport.view = v; }
 void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->viewport.mineView = v; }
 
@@ -1936,6 +1944,11 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->errY = 0.0f;
   cs->errAngle = 0.0f;
   cs->basePassableSmoothSnapshots = 0;
+
+  /* The server resets every client's view state on the round reset too, so
+   * report ours again once the next round is running. */
+  viewportSetTankView(clientSimViewportMut(cs));
+  clientSimResetViewStateReport(cs);
 }
 
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,
@@ -1959,6 +1972,9 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
    * terrain either way, so the swapped-in map still renders in place. */
   if (initViewport) {
     viewportInit(clientSimViewportMut(cs));
+    /* viewportInit parks the camera back on the tank; say so to the server
+     * once the next display tick runs. */
+    clientSimResetViewStateReport(cs);
     /* New map, so nothing seen on the old one still means anything. The
      * next overview tick seeds the memory from the map just installed —
      * the whole map dimmed, live regions bright over it. The resync path
@@ -2659,9 +2675,82 @@ bool clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY) {
   return viewportGetCursor(clientSimViewport(cs), posX, posY);
 }
 
+PlayerBitMap clientSimAllyViewMask(const ClientSim *cs) {
+  PlayerBitMap mask;
+  BYTE playerNum;
+
+  mask = 0;
+  if (cs == NULL) {
+    return mask;
+  }
+  for (playerNum = 0; playerNum < MAX_TANKS; playerNum++) {
+    if (playerNum == cs->myPlayerNum) {
+      continue;
+    }
+    if (interpIsAlive(&cs->interpCtx, playerNum) == TRUE) {
+      mask |= (PlayerBitMap)1 << playerNum;
+    }
+  }
+  return mask;
+}
+
+/* The one body behind clientSimPillView / clientSimBaseView /
+ * clientSimAllyView. */
+static void clientSimItemView(ClientSim *cs, uint8_t kind, int horz, int vert) {
+  viewportPanInView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
+                    clientSimGetScroll(cs), MY_TANK(cs), kind,
+                    clientSimAllyViewMask(cs), horz, vert);
+}
+
 void clientSimPillView(ClientSim *cs, int horz, int vert) {
-  viewportPanInPillView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
-                        clientSimGetScroll(cs), MY_TANK(cs), horz, vert);
+  clientSimItemView(cs, VIEW_KIND_PILL, horz, vert);
+}
+
+void clientSimBaseView(ClientSim *cs, int horz, int vert) {
+  clientSimItemView(cs, VIEW_KIND_BASE, horz, vert);
+}
+
+void clientSimAllyView(ClientSim *cs, int horz, int vert) {
+  clientSimItemView(cs, VIEW_KIND_ALLY, horz, vert);
+}
+
+void clientSimStepView(ClientSim *cs, int horz, int vert) {
+  uint8_t kind = clientSimGetViewKind(cs);
+
+  if (kind == VIEW_KIND_TANK) {
+    return;
+  }
+  clientSimItemView(cs, kind, horz, vert);
+}
+
+void clientSimSyncViewState(ClientSim *cs) {
+  uint8_t kind;
+  uint8_t target;
+
+  if (cs == NULL || !cs->hasTransport) {
+    /* Nothing to report through — leave the last-sent pair alone so the
+     * report still goes out once a transport is bound. */
+    return;
+  }
+  kind = cs->viewport.viewKind;
+  target = cs->viewport.viewTarget;
+  if (kind == VIEW_KIND_TANK) {
+    target = 0;
+  }
+  if (kind == cs->lastSentViewKind && target == cs->lastSentViewTarget) {
+    return;
+  }
+  clientSimNetSendViewState(cs, kind, target);
+  cs->lastSentViewKind = kind;
+  cs->lastSentViewTarget = target;
+}
+
+void clientSimResetViewStateReport(ClientSim *cs) {
+  if (cs == NULL) {
+    return;
+  }
+  cs->lastSentViewKind = 0xFF;
+  cs->lastSentViewTarget = 0xFF;
 }
 
 void clientSimRecalc(ClientSim *cs) {
@@ -2695,8 +2784,8 @@ bool clientSimTankIsDead(ClientSim *cs) {
 }
 
 bool clientSimTankScroll(ClientSim *cs) {
-  /* Don't scroll the view while in pill view — the view is locked on the pill */
-  if (clientSimIsInPillView(cs) == TRUE) {
+  /* Don't scroll the view while watching an item — the view is locked on it */
+  if (clientSimIsInItemView(cs) == TRUE) {
     return FALSE;
   }
 

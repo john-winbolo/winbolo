@@ -25,11 +25,13 @@
 
 #include "global.h"
 #include "viewport.h"
+#include "client_command.h"   /* ViewStateKind — the ViewPort's viewKind values */
 #include "client_sim_internal.h"
 #include "game_sim.h"
 #include "bolo_map.h"
 #include "bases.h"
 #include "pillbox.h"
+#include "players.h"
 #include "mines.h"
 #include "tank.h"
 #include "scroll.h"
@@ -46,9 +48,10 @@ void viewportInit(ViewPort *vp) {
   vp->cursorPosX = -1;
   vp->cursorPosY = -1;
   vp->needRecalc = FALSE;
-  vp->inPillView = FALSE;
-  vp->pillViewX = 0;
-  vp->pillViewY = 0;
+  vp->viewKind = VIEW_KIND_TANK;
+  vp->viewTarget = 0;
+  vp->viewX = 0;
+  vp->viewY = 0;
 }
 
 void viewportDestroy(ViewPort *vp) {
@@ -324,48 +327,204 @@ void viewportPanY(ViewPort *vp, int dyTiles) {
   vp->yOffset = (BYTE)(vp->yOffset + dyTiles);
 }
 
+void viewportSetTankView(ViewPort *vp) {
+  vp->viewKind = VIEW_KIND_TANK;
+  vp->viewTarget = 0;
+}
+
 void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank) {
-  vp->inPillView = FALSE;
+  viewportSetTankView(vp);
   viewportCenterOnTank(vp, scroll, myTank);
 }
 
-void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
-                           tank myTank, int horz, int vert) {
+/* The pill and base index a square holds, as the 0-based number the server's
+ * CMD_VIEW_STATE uses. Only ever called for a square a cycling helper has just
+ * reported, so the not-found case is unreachable; 0 stands in for it. */
+static BYTE viewportPillIndexAt(struct GameSim *sim, BYTE mx, BYTE my) {
+  BYTE pillNum = pillsGetPillNum(&sim->pb, mx, my, FALSE, FALSE);
+  return (BYTE)(pillNum == PILL_NOT_FOUND ? 0 : pillNum - 1);
+}
+
+static BYTE viewportBaseIndexAt(struct GameSim *sim, BYTE mx, BYTE my) {
+  BYTE baseNum = basesGetBaseNum(&sim->bs, mx, my);
+  return (BYTE)(baseNum == BASE_NOT_FOUND ? 0 : baseNum - 1);
+}
+
+/* Is the item the view is parked on still watchable? A pill or base is
+ * identified by its square, so the index is re-derived from it; an ally is
+ * identified by its player number, and its x/y are refreshed to where it is
+ * now so the view does not centre on a square it has driven away from. */
+static bool viewportItemCheck(struct GameSim *sim, uint8_t kind,
+                              PlayerBitMap allyViewable,
+                              BYTE *target, BYTE *x, BYTE *y) {
+  switch (kind) {
+  case VIEW_KIND_PILL:
+    if (pillsCheckView(sim, &sim->pb, *x, *y) == FALSE) {
+      return FALSE;
+    }
+    *target = viewportPillIndexAt(sim, *x, *y);
+    return TRUE;
+  case VIEW_KIND_BASE:
+    if (basesCheckView(sim, &sim->bs, *x, *y) == FALSE) {
+      return FALSE;
+    }
+    *target = viewportBaseIndexAt(sim, *x, *y);
+    return TRUE;
+  case VIEW_KIND_ALLY:
+    if (playersCanAllyView(sim, allyViewable, *target) == FALSE) {
+      return FALSE;
+    }
+    *x = (*sim->plyrs).item[*target].mapX;
+    *y = (*sim->plyrs).item[*target].mapY;
+    return TRUE;
+  default:
+    return FALSE;
+  }
+}
+
+/* Step to the next watchable item of this kind, wrapping when prev is set. */
+static bool viewportItemNext(struct GameSim *sim, uint8_t kind,
+                             PlayerBitMap allyViewable,
+                             BYTE *target, BYTE *x, BYTE *y, bool prev) {
   bool result;
 
-  if (vp->inPillView == FALSE) {
-    if (pillsCheckView(sim, &sim->pb, vp->pillViewX, vp->pillViewY) == TRUE) {
-      vp->inPillView = TRUE;
-      scrollCenterObject(scroll, &vp->xOffset, &vp->yOffset, vp->pillViewX, vp->pillViewY);
-      viewportRecalc(vp);
+  switch (kind) {
+  case VIEW_KIND_PILL:
+    result = pillsGetNextView(sim, &sim->pb, x, y, prev);
+    if (result == TRUE) {
+      *target = viewportPillIndexAt(sim, *x, *y);
+    }
+    return result;
+  case VIEW_KIND_BASE:
+    result = basesGetNextView(sim, &sim->bs, x, y, prev);
+    if (result == TRUE) {
+      *target = viewportBaseIndexAt(sim, *x, *y);
+    }
+    return result;
+  case VIEW_KIND_ALLY:
+    return playersGetNextAllyView(sim, allyViewable, target, x, y, prev);
+  default:
+    return FALSE;
+  }
+}
+
+/* Step to the nearest watchable item of this kind in the pressed direction. */
+static bool viewportItemMove(struct GameSim *sim, uint8_t kind,
+                             PlayerBitMap allyViewable,
+                             BYTE *target, BYTE *x, BYTE *y, int horz, int vert) {
+  bool result;
+
+  switch (kind) {
+  case VIEW_KIND_PILL:
+    result = pillsMoveView(sim, &sim->pb, x, y, horz, vert);
+    if (result == TRUE) {
+      *target = viewportPillIndexAt(sim, *x, *y);
+    }
+    return result;
+  case VIEW_KIND_BASE:
+    result = basesMoveView(sim, &sim->bs, x, y, horz, vert);
+    if (result == TRUE) {
+      *target = viewportBaseIndexAt(sim, *x, *y);
+    }
+    return result;
+  case VIEW_KIND_ALLY:
+    return playersMoveAllyView(sim, allyViewable, target, x, y, horz, vert);
+  default:
+    return FALSE;
+  }
+}
+
+/* Park the camera on an item and remember what it is. */
+static void viewportEnterItemView(ViewPort *vp, ScrollState *scroll, uint8_t kind,
+                                  BYTE target, BYTE x, BYTE y) {
+  vp->viewKind = kind;
+  vp->viewTarget = target;
+  vp->viewX = x;
+  vp->viewY = y;
+  scrollCenterObject(scroll, &vp->xOffset, &vp->yOffset, x, y);
+  viewportRecalc(vp);
+}
+
+void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
+                       tank myTank, uint8_t kind, PlayerBitMap allyViewable,
+                       int horz, int vert) {
+  bool result;
+  BYTE target;
+  BYTE x;
+  BYTE y;
+
+  target = vp->viewTarget;
+  x = vp->viewX;
+  y = vp->viewY;
+
+  if (vp->viewKind != kind) {
+    /* Entering this kind of view from the tank: resume on the item we were
+     * last parked on if it is still watchable, otherwise take the first one
+     * there is. Switching straight from another kind of item view always
+     * starts that kind's cycle at its first item — the remembered square and
+     * target belong to the kind being left, not this one. */
+    if (vp->viewKind == VIEW_KIND_TANK &&
+        viewportItemCheck(sim, kind, allyViewable, &target, &x, &y) == TRUE) {
+      viewportEnterItemView(vp, scroll, kind, target, x, y);
     } else {
-      result = pillsGetNextView(sim, &sim->pb, &vp->pillViewX, &vp->pillViewY, FALSE);
+      result = viewportItemNext(sim, kind, allyViewable, &target, &x, &y, FALSE);
       if (result == TRUE) {
         /* Center on the object */
-        vp->inPillView = TRUE;
-        scrollCenterObject(scroll, &vp->xOffset, &vp->yOffset, vp->pillViewX, vp->pillViewY);
-        viewportRecalc(vp);
+        viewportEnterItemView(vp, scroll, kind, target, x, y);
       } else {
-        vp->inPillView = FALSE;
+        /* Nothing of this kind to watch — back to the tank. The camera is
+         * left where it is; the per-tick tank follow brings it back. */
+        viewportSetTankView(vp);
       }
     }
   } else {
     if (horz == 0 && vert == 0) {
-      result = pillsGetNextView(sim, &sim->pb, &vp->pillViewX, &vp->pillViewY, TRUE);
+      result = viewportItemNext(sim, kind, allyViewable, &target, &x, &y, TRUE);
       if (result == FALSE) {
         viewportFollowTank(vp, scroll, myTank);
       } else {
         /* Center on the object */
-        scrollCenterObject(scroll, &vp->xOffset, &vp->yOffset, vp->pillViewX, vp->pillViewY);
-        viewportRecalc(vp);
+        viewportEnterItemView(vp, scroll, kind, target, x, y);
       }
     } else {
-      if (pillsMoveView(sim, &sim->pb, &vp->pillViewX, &vp->pillViewY, horz, vert) == TRUE) {
-        scrollCenterObject(scroll, &vp->xOffset, &vp->yOffset, vp->pillViewX, vp->pillViewY);
-        viewportRecalc(vp);
+      if (viewportItemMove(sim, kind, allyViewable, &target, &x, &y, horz, vert) == TRUE) {
+        viewportEnterItemView(vp, scroll, kind, target, x, y);
       }
     }
   }
+}
+
+void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
+                           tank myTank, int horz, int vert) {
+  viewportPanInView(vp, sim, scroll, myTank, VIEW_KIND_PILL, 0, horz, vert);
+}
+
+bool viewportUpdateItemView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
+                            PlayerBitMap allyViewable) {
+  BYTE target;
+  BYTE x;
+  BYTE y;
+
+  if (vp->viewKind == VIEW_KIND_TANK) {
+    return TRUE;
+  }
+
+  target = vp->viewTarget;
+  x = vp->viewX;
+  y = vp->viewY;
+  if (viewportItemCheck(sim, vp->viewKind, allyViewable, &target, &x, &y) == FALSE) {
+    return FALSE;
+  }
+
+  /* A pill or base never moves, so only an ally view has anything to do here:
+   * re-centre on where the ally has driven to since the last tick. The pill
+   * and base kinds still take the index the check re-derived from the square,
+   * so what gets reported to the server keeps matching what is on screen. */
+  vp->viewTarget = target;
+  if (vp->viewKind == VIEW_KIND_ALLY && (x != vp->viewX || y != vp->viewY)) {
+    viewportEnterItemView(vp, scroll, vp->viewKind, target, x, y);
+  }
+  return TRUE;
 }
 
 void viewportSetCursor(ViewPort *vp, BYTE posX, BYTE posY) {

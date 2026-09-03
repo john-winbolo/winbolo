@@ -95,7 +95,7 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     /* Same shift math as tankGetScreenMX/MY. */
     rmx = (BYTE)(((WORLD)(rwx - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
     rmy = (BYTE)(((WORLD)(rwy - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
-    if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (clientSimIsInItemView(csPtr) == FALSE) {
       int oldXOffset = clientSimGetXOffset(csPtr);
       int oldYOffset = clientSimGetYOffset(csPtr);
       if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), rmx, rmy, TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr), rwx, rwy) == TRUE) {
@@ -120,7 +120,7 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
   }
 
   /* Follow the death fireball when the tank is dead */
-  if (clientSimIsInPillView(csPtr) == FALSE && clientSimTankIsDead(csPtr)) {
+  if (clientSimIsInItemView(csPtr) == FALSE && clientSimTankIsDead(csPtr)) {
     BYTE expMX, expMY;
     if (tkExplosionGetOwnPosition(&clientSimGetGameSim(csPtr)->tankExplosions, clientSimGetMyPlayerNum(csPtr), &expMX, &expMY)) {
       scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), expMX, expMY);
@@ -128,12 +128,20 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     }
   }
 
-  /* Check we are still allowed to be in pillbox view */
-  if (clientSimIsInPillView(csPtr) == TRUE) {
-    if (pillsCheckView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr)) == FALSE) {
+  /* Check we are still allowed to be watching what we are watching — the pill
+   * is alive and ours, the base has not been captured or gone neutral, the
+   * ally is alive, still allied and still here. An ally view also re-centres
+   * on its target as it drives. */
+  if (clientSimIsInItemView(csPtr) == TRUE) {
+    if (viewportUpdateItemView(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
+                               clientSimGetScroll(csPtr),
+                               clientSimAllyViewMask(csPtr)) == FALSE) {
       clientSimTankView(csPtr);
     }
   }
+
+  /* Tell the server which view we are in, if it has changed. */
+  clientSimSyncViewState(csPtr);
 
   /* Update tank status bars — the server runs tankDeath/tankUpdate with
    * isServer=TRUE so frontEndUpdateTankStatusBars is not called from game

@@ -71,9 +71,17 @@ struct ViewPort {
     BYTE        yOffset;
     screen      view;
     screenMines mineView;
-    bool        inPillView;
-    BYTE        pillViewX;
-    BYTE        pillViewY;
+    /* What the camera is parked on. viewKind is a ViewStateKind
+     * (client_command.h): VIEW_KIND_TANK follows the local tank, the other
+     * three watch one item. viewTarget is the pill or base index (0-based,
+     * the same numbering the server's CMD_VIEW_STATE expects) or the ally's
+     * player number, and is 0 in tank view. viewX/viewY are the map square
+     * the item view is centred on; a pill or base view keeps them fixed,
+     * an ally view rewrites them each display tick as the ally drives. */
+    uint8_t     viewKind;
+    BYTE        viewTarget;
+    BYTE        viewX;
+    BYTE        viewY;
     int         cursorPosX;
     int         cursorPosY;
     bool        needRecalc;
@@ -624,6 +632,14 @@ struct ClientSim {
     ControlObserverCb transportObserverCb;
     void             *transportObserverCtx;
 
+    /* Last view state reported to the server with CMD_VIEW_STATE.
+     * clientSimSyncViewState compares the viewport against these each
+     * display tick and only sends when they differ. Both start at 0xFF —
+     * no kind or target has that value, so the first tick of a session (and
+     * of every round, which resets them) always reports. */
+    uint8_t lastSentViewKind;
+    uint8_t lastSentViewTarget;
+
     /* Pending alliance request from another player. 0xFF when none.
      * Set by the CTRL_ALLIANCE_REQUEST arm when toPlayer == myPlayerNum;
      * frontends poll via clientSimGetPendingAllianceRequest and clear
@@ -644,6 +660,13 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+
+/* One bit per player slot: the remote tanks this client currently believes
+ * are alive. The client holds no tanks[] object for anyone but itself, so a
+ * remote tank's armour is only ever seen through the interpolation context —
+ * this turns that into the "is it alive" input the ally-view helpers in
+ * players.c take. The local slot is never set. */
+PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
 
 /* ── Render-only error smoothing ─────────────────────────────────────
  * Reconciliation corrections are deposited into the per-axis render

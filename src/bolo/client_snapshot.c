@@ -192,7 +192,7 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
 
     /* Client-side display actions (pill/tank view toggle) */
     if (testkey(*tapKeys, KEY_TankView) || testkey(*holdKeys, KEY_TankView)) {
-      csPtr->viewport.inPillView = FALSE;
+      viewportSetTankView(&csPtr->viewport);
       clientSimCenterTank(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
@@ -895,11 +895,11 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
             tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
-            /* Dying drops pill view back to the tank: the death static is
-             * suppressed while in pill view, so without this you'd watch the
-             * pill through your own death instead of seeing the static. */
+            /* Dying drops any item view back to the tank: the death static is
+             * suppressed while watching an item, so without this you'd watch
+             * the pill through your own death instead of seeing the static. */
             if (isHuman) {
-              csPtr->viewport.inPillView = FALSE;
+              viewportSetTankView(&csPtr->viewport);
             }
             /* Death is a hard transition — drop any render offset. */
             csPtr->errX = 0.0f;
@@ -910,7 +910,7 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* dead→alive: recenter view on respawn */
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
-              csPtr->viewport.inPillView = FALSE;
+              viewportSetTankView(&csPtr->viewport);
               clientSimCenterTank(csPtr);
             }
             /* Respawn teleports the tank — snap, don't slide. */

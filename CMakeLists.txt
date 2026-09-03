@@ -3086,6 +3086,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_view_state.c
+    tests/unit/test_view_cycling.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
     tests/unit/test_overview_camera.cpp
@@ -3772,6 +3773,11 @@ set(_unit_test_names
     view_state_bad_claims_degrade
     view_state_invalidation
     view_state_lifecycle
+    view_cycle_bases
+    view_cycle_base_direction
+    view_cycle_allies
+    view_cycle_ally_direction
+    view_cycle_exits
     viewport_calc_square_pure
     overview_regions
     overview_reveal

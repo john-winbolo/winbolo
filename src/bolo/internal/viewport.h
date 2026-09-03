@@ -59,8 +59,28 @@ BYTE viewportCalcSquarePure(struct GameSim *sim, BYTE myPlayerNum,
 void viewportPanX(ViewPort *vp, int dxTiles);
 void viewportPanY(ViewPort *vp, int dyTiles);
 void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank);
+/* Drop back to the tank view without moving the camera — for the exit paths
+ * that recentre themselves (or deliberately don't), where viewportFollowTank
+ * would centre too early. */
+void viewportSetTankView(ViewPort *vp);
+/* Enter, cycle or step an item view. kind is a ViewStateKind
+ * (client_command.h): VIEW_KIND_PILL, _BASE or _ALLY. horz/vert both 0 means
+ * "enter this kind of view, or cycle to the next item if already in it";
+ * either non-zero steps to the nearest item that way. Cycling past the last
+ * item drops back to the tank. allyViewable is the alive-tank mask
+ * playersCanAllyView takes and is ignored by the pill and base kinds. */
+void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
+                       tank myTank, uint8_t kind, PlayerBitMap allyViewable,
+                       int horz, int vert);
 void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                            tank myTank, int horz, int vert);
+/* Per-display-tick upkeep for an item view: returns FALSE once the watched
+ * item stops qualifying (pill dead or carried, base captured or gone neutral,
+ * ally dead, un-allied or gone), leaving the caller to drop to the tank view.
+ * An ally view also re-centres on its target as it drives. Always TRUE in the
+ * tank view. */
+bool viewportUpdateItemView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
+                            PlayerBitMap allyViewable);
 void viewportSetCursor(ViewPort *vp, BYTE posX, BYTE posY);
 bool viewportGetCursor(const ViewPort *vp, BYTE *posX, BYTE *posY);
 void viewportCenterOnTank(ViewPort *vp, ScrollState *scroll, tank myTank);
