@@ -1416,6 +1416,22 @@ M.STRATEGIC_PLACE_URGENCY_RANGE_BONUS = 6
 -- priority compared to attack/capture goals. Trimmed 0.1 ??? 0.085 to make
 -- deploying a carried pill win a bit more readily across the board.
 M.STRATEGIC_PLACE_COST_MULT          = 0.085
+-- How close a hostile TANK has to be for goal_selection to pin a normal
+-- place_pill_strategic under the cheapest attack_tank row ("fighting a tank
+-- beats casually dropping a pill"). Manhattan tiles, measured from OUR tank to
+-- the nearest VISIBLE hostile tank (perception.nearest_hostile_tank). Default
+-- 7 = TANK_COMBAT_ENGAGE_RANGE, i.e. gun range: the pin means "fight first
+-- when the fight is imminent", and a tank that cannot shoot us this second is
+-- not an imminent fight. Incident 20260903_105448 bot2 t=34774: a cost-1.0
+-- placement (four pills aboard, carry discount maxed) was pinned to 2163
+-- because an attack_tank row priced 2162 for an enemy 15 tiles away across
+-- water this tank could not cross -- so nothing was ever placed and the bot
+-- died carrying all four. Distance, not "is the fight winnable": attack_tank's
+-- own viability check called that 2162 row viable, so any cost/odds threshold
+-- would have to be tuned against attack_tank's pricing and would drift with
+-- it. The EMERGENCY build (goal._place_forced) is exempt from the pin at any
+-- range, as before.
+M.PLACE_PIN_ENEMY_RANGE              = 7
 -- Defensive pill build: when an enemy tank is visible, place at ??45?? from
 -- the threat direction, 2-5 tiles out, with clear LGM path.
 M.DEFENSIVE_BUILD_MIN_DIST     = 1    -- tiles from tank (inner bound, tried FIRST ??? nearest spiral out)

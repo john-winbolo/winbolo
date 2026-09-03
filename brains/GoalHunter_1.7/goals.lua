@@ -15308,11 +15308,22 @@ local function goal_selection(state, world, info, quiet)
     if not quiet and BRAIN_DEBUG_MODE then
       print2("goal_selection: pool size=", #pool, " cur_group=", cur_group, " commitment=", commitment)
     end
-    -- A NORMAL place_pill_strategic must never out-rank an attack_tank: fighting
-    -- a tank beats casually dropping a pill. The EMERGENCY defensive build
-    -- (goal._place_forced, set on the offensive_build path) is exempt — that's the
-    -- "build now while fighting before I die" behavior and stays as-is. Done on
-    -- the post-penalty pool costs so it's weight/penalty aware.
+    -- A NORMAL place_pill_strategic must never out-rank an attack_tank WHILE A
+    -- HOSTILE TANK IS IN SHOOTING RANGE: fighting a tank beats casually
+    -- dropping a pill, but only when the fight is actually imminent. Outside
+    -- C.PLACE_PIN_ENEMY_RANGE (7 tiles = gun range) the placement competes on
+    -- its own cost and the carry pressure decides — 20260903_105448 bot2
+    -- t=34774 pinned a cost-1.0 placement (four pills aboard) to 2163 against
+    -- an attack_tank row for an enemy 15 tiles away on the far side of water,
+    -- and never placed anything again. The EMERGENCY defensive build
+    -- (goal._place_forced, set on the offensive_build path) is exempt at any
+    -- range — that's the "build now while fighting before I die" behavior and
+    -- stays as-is. Done on the post-penalty pool costs so it's weight/penalty
+    -- aware.
+    --
+    -- The verdict is stamped on the place entry's desc as a ` pin{...}` /
+    -- ` nopin{...}` chip so the FINAL_SCORES row still reproduces its own
+    -- number: without it the pin silently overwrote the cost the chips print.
     do
       local at_cost, place_entry
       for _, e in ipairs(pool) do
@@ -15325,7 +15336,25 @@ local function goal_selection(state, world, info, quiet)
         end
       end
       if at_cost and place_entry and place_entry.cost <= at_cost then
-        place_entry.cost = at_cost + 1
+        local nh = state.perc and state.perc.nearest_hostile_tank
+        local ed = nh and nh.dist or nil
+        local rng = C.PLACE_PIN_ENEMY_RANGE or 7
+        local chip
+        if ed and ed <= rng then
+          chip = string.format(" pin{atk %.1f+1, enemy %dt<=%d}", at_cost, ed, rng)
+          place_entry.cost = at_cost + 1
+          place_entry.pin_atk_cost = at_cost
+          place_entry.pin_enemy_d  = ed
+        elseif ed then
+          chip = string.format(" nopin{enemy %dt>%d, atk %.1f}", ed, rng, at_cost)
+          place_entry.pin_enemy_d = ed
+        else
+          chip = string.format(" nopin{no visible enemy tank, atk %.1f}", at_cost)
+        end
+        place_entry.pin_range = rng
+        if place_entry.desc and place_entry.desc ~= "" then
+          place_entry.desc = place_entry.desc .. chip
+        end
       end
     end
     -- ── Sort by cost, pick winner ──
