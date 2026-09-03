@@ -31,6 +31,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* serverSimStartGame, serverSimReturnToLobby, serverSimEnterGameOver — the state-machine transitions */
 #include "log.h"                    /* logIsRecording, logAddEvent, logWriteTick — the per-tick .wbv and spectator-ring tap */
+#include "log_internal.h"           /* logHasSpectatorRing — runs the spectator-ring tap when no .wbv is recording */
 #include "interpolation.h"          /* INTERP_BUFFER_MS — the lag-compensation and gunsight-delay budget */
 #include "screenbullet.h"           /* the screenBullets list the per-tick shell and explosion sweep fills */
 #include "playersrejoin.h"          /* playersRejoinUpdate — the per-tick rejoin timer */

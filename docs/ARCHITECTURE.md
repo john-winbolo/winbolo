@@ -751,7 +751,7 @@ network play, because the broken side never got told.
 
 Server-authoritative state changes flow through one call:
 `serverSimPublishControl(sim, &evt)` (defined in
-`src/server/server_sim.c`). The implementation walks the registered
+`src/server/sim/server_sim_control.c`). The implementation walks the registered
 subscriber array and invokes each `deliverCb`. Two kinds of
 subscribers are attached:
 
@@ -934,7 +934,7 @@ client runtime. The bus publish reaches subscribers; the wire branch
 handles the transport-aware display.
 
 For single-player and bots the same funnel holds via
-`serverSimDeliverToClientSim` (in `src/server/server_sim.c`) and the
+`serverSimDeliverToClientSim` (in `src/server/sim/server_sim_control.c`) and the
 bot manager's deliver callback — both end in
 `clientSimApplyControl`. SP, bots, and network converge on one
 funnel.

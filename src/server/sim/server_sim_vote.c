@@ -26,7 +26,7 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 
-#include "server_sim_shared.h"      /* serverSimFillMapSkipStateEvent — the event body, encoded in server_sim.c */
+#include "server_sim_shared.h"      /* serverSimFillMapSkipStateEvent — the event body, encoded in server_sim_control.c */
 #include "server_sim_internal.h"
 #include "netpacks.h"               /* the GAME_VOTE_* kind, toggle, deadline and pass-percentage constants */
 #include "wire_limits.h"            /* PACKET_MAX_CHAT_MESSAGE — the chat-body clamp */

@@ -66,7 +66,7 @@ void serverSimCbConsoleMessage(void *ctx, char *msg);
 void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n);
 
 /* Defined in server_sim_snapshot.c — the base and pill collectors. They fill
- * the snapshot's periodic full sync, and the tick core in server_sim.c reads
+ * the snapshot's periodic full sync, and the tick core in server_sim_tick.c reads
  * them each half-step to diff this frame's bases and pills against the last. */
 int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
 int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
@@ -85,7 +85,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim);
  * the map, or NEUTRAL when no side has. Same predicate as
  * serverSimCheckGameWin: a base at or below MIN_ARMOUR_CAPTURE is dead
  * and recapturable, so it does not count toward a sweep. The tick core in
- * server_sim.c reads it each half-step to spot a win. */
+ * server_sim_tick.c reads it each half-step to spot a win. */
 BYTE serverSimWinningOwner(ServerSim *sim);
 
 /* Caches the active map's BMAPBOLO MD5 so WinBolo.net can match the map against
@@ -103,7 +103,7 @@ void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
 void publishMapSkipState(ServerSim *sim);
 
 /* Server-originated English broadcast, published as CTRL_SERVER_TEXT to every
- * subscriber. The base-sweep branch of the tick core in server_sim.c calls
+ * subscriber. The base-sweep branch of the tick core in server_sim_tick.c calls
  * it. */
 void publishServerMessage(ServerSim *sim, const char *message);
 

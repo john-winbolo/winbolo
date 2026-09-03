@@ -78,7 +78,7 @@ int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap);
  * [u16 type][u16 bodyLen][body] records (big-endian) into out, returning the
  * byte count or -1 if cap is too small (or on a bad argument). Read-only: it
  * runs the sync replay through a buffer-writing sink and mutates no sim state.
- * Implemented in server_sim.c, where it can reach the file-static
+ * Implemented in server/sim/server_sim_control.c, where it can reach the file-static
  * serverSimSyncSubscriber. */
 int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap);
 
