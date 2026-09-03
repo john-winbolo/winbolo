@@ -34,6 +34,7 @@
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
+#include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -246,6 +247,9 @@ typedef struct ControlEvent {
             uint16_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
             uint8_t  hostSlot;   /* current lobby host's player slot */
+            /* Visibility rules, indexed by ViewCategory. */
+            ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
+            uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

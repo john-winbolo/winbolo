@@ -28,6 +28,7 @@
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
+#include "view_policy.h"    /* ViewPolicy / ViewCategory — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
@@ -142,6 +143,14 @@ struct ServerSim {
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+    /* Per-category visibility rules, indexed by ViewCategory. Set from
+     * the CLI / hosting prefs at startup and from the lobby via
+     * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW; broadcast in the
+     * lobby-settings event. decaySecs only matters for viewPolicyDecay
+     * but is carried for every category so the lobby UI can keep the
+     * host's value while they flip between modes. */
+    ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
+    uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
@@ -181,6 +190,8 @@ struct ServerSim {
         bool     autoLockOnGameStart;
         bool     ranked;
         uint16_t serverLocks;
+        ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
+        uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running

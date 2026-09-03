@@ -469,8 +469,10 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
  *   [lobbyStartDelay 4 BE] [hostSlot 1]
+ *   [pillView 1] [baseView 1] [allyView 1]
+ *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *
- * The trailing four bytes are appended after the base layout so the
+ * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
  * optionally and leaves zero-init defaults in place when the sender
  * omits them, which keeps old/new codec pairs interoperable.
@@ -479,8 +481,10 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
- * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1). */
-#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1)
+ * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
+ * policies(3) + three view decay seconds(6). */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD \
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -519,6 +523,13 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
     pos += 4;
     buf[pos++] = evt->u.lobbySettings.hostSlot;
+    for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+        buf[pos++] = (uint8_t)evt->u.lobbySettings.viewPolicy[vc];
+    }
+    for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+        packU16(buf + pos, evt->u.lobbySettings.viewDecaySecs[vc]);
+        pos += 2;
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1796,6 +1807,17 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.hostSlot = buf[pos++];
+    }
+    if (len >= pos + VIEW_CATEGORY_COUNT) {
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            outEvt->u.lobbySettings.viewPolicy[vc] = (ViewPolicy)buf[pos++];
+        }
+    }
+    if (len >= pos + (2 * VIEW_CATEGORY_COUNT)) {
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            outEvt->u.lobbySettings.viewDecaySecs[vc] = unpackU16(buf + pos);
+            pos += 2;
+        }
     }
     return true;
 }

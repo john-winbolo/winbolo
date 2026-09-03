@@ -984,4 +984,24 @@ void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 
+/* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
+ * Read by gameFrontGetPrefs and pushed onto the sim with
+ * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
+ * holds a ViewPolicy value; the decay globals hold seconds in the
+ * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Defaults match the
+ * sim: pills and allied tanks always visible, bases off. */
+extern int gameFrontViewPillPolicy;     /* default viewPolicyAlways (0) */
+extern int gameFrontViewBasePolicy;     /* default viewPolicyOff (3)    */
+extern int gameFrontViewAllyPolicy;     /* default viewPolicyAlways (0) */
+extern int gameFrontViewPillDecaySecs;  /* 5-600, default 30 */
+extern int gameFrontViewBaseDecaySecs;
+extern int gameFrontViewAllyDecaySecs;
+
+void gameFrontSetViewPillPolicy(int policy);
+void gameFrontSetViewBasePolicy(int policy);
+void gameFrontSetViewAllyPolicy(int policy);
+void gameFrontSetViewPillDecaySecs(int secs);
+void gameFrontSetViewBaseDecaySecs(int secs);
+void gameFrontSetViewAllyDecaySecs(int secs);
+
 #endif

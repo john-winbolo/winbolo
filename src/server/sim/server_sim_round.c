@@ -76,6 +76,10 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->autoLockOnGameStart = sim->originalLobbySettings.autoLockOnGameStart;
         sim->ranked              = sim->originalLobbySettings.ranked;
         sim->serverLocks         = sim->originalLobbySettings.serverLocks;
+        for (i = 0; i < VIEW_CATEGORY_COUNT; i++) {
+            sim->viewPolicy[i]    = sim->originalLobbySettings.viewPolicy[i];
+            sim->viewDecaySecs[i] = sim->originalLobbySettings.viewDecaySecs[i];
+        }
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -445,6 +449,9 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.freePills       = serverSimGetNumNeutralPills(sim);
     info.numHumans       = serverSimGetNumHumans(sim);
     info.numBots         = botManagerGetNumBots(sim);
+    info.pillView        = (BYTE)sim->viewPolicy[viewCategoryPill];
+    info.baseView        = (BYTE)sim->viewPolicy[viewCategoryBase];
+    info.allyView        = (BYTE)sim->viewPolicy[viewCategoryAlly];
     winbolonetSetLobbyInfo(&info);
 }
 

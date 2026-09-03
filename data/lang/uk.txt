@@ -1910,3 +1910,14 @@ STR_DLGLOBBY_REEL_TOO_LARGE=Раунд був занадто довгим для
 STR_DLGWBN_ACCOUNT_LOCKED=Облікові записи WinBolo.net можна змінювати лише з головного меню, а не під час гри.
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Надсилати повтори гравцям
 STR_LV_HIDE_LOBBY=Сховати Лобі
+
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Видимість
+STR_DLGLOBBY_VIEW_PILL=Вид бункера
+STR_DLGLOBBY_VIEW_BASE=Вид бази
+STR_DLGLOBBY_VIEW_ALLY=Вид союзних танків
+STR_DLGLOBBY_VIEW_ALWAYS=Завжди
+STR_DLGLOBBY_VIEW_KEY=Клавіша
+STR_DLGLOBBY_VIEW_DECAY=Згасання
+STR_DLGLOBBY_VIEW_OFF=Вимк.
+STR_DLGLOBBY_VIEW_DECAY_SECS=сек

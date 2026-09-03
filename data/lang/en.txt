@@ -1915,3 +1915,14 @@ STR_WEB_JOIN_CODE_UNREACHABLE=Could not reach the server to get a join code.
 STR_WEB_CONNECT_FAILED=Could not connect to the server.
 STR_WEB_JOIN_NO_RESPONSE=Could not join the game (the server did not respond, or your invite link has already been used or expired).
 
+
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibility
+STR_DLGLOBBY_VIEW_PILL=Pill View
+STR_DLGLOBBY_VIEW_BASE=Base View
+STR_DLGLOBBY_VIEW_ALLY=Allied Tank View
+STR_DLGLOBBY_VIEW_ALWAYS=Always
+STR_DLGLOBBY_VIEW_KEY=Key
+STR_DLGLOBBY_VIEW_DECAY=Decay
+STR_DLGLOBBY_VIEW_OFF=Off
+STR_DLGLOBBY_VIEW_DECAY_SECS=secs

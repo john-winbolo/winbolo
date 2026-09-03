@@ -91,6 +91,10 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   sim->originalLobbySettings.autoLockOnGameStart = sim->autoLockOnGameStart;
   sim->originalLobbySettings.ranked              = sim->ranked;
   sim->originalLobbySettings.serverLocks         = sim->serverLocks;
+  for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+    sim->originalLobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
+    sim->originalLobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -351,6 +355,20 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
                     serverSimSetAutoLockOnGameStart(sim, true);
                 }
             }
+            return true;
+        }
+        case LST_PILL_VIEW:
+        case LST_BASE_VIEW:
+        case LST_ALLY_VIEW: {
+            /* [policy 1][decaySecs 2 BE]. Reject an unknown policy the
+             * same way LST_AI_POLICY rejects an out-of-range aiType;
+             * the decay seconds are clamped by the setter. */
+            if (len != 3 || value[0] > (uint8_t)viewPolicyOff) return false;
+            ViewCategory cat = (lst == LST_PILL_VIEW) ? viewCategoryPill
+                             : (lst == LST_BASE_VIEW) ? viewCategoryBase
+                                                      : viewCategoryAlly;
+            uint16_t secs = (uint16_t)((value[1] << 8) | value[2]);
+            serverSimSetViewPolicy(sim, cat, (ViewPolicy)value[0], secs);
             return true;
         }
         default:

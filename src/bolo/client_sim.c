@@ -2028,6 +2028,20 @@ bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs
 uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
 
+ViewPolicy clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat) {
+  if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
+    return viewPolicyAlways;
+  }
+  return cs->viewPolicy[cat];
+}
+
+uint16_t clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat) {
+  if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
+    return 0;
+  }
+  return cs->viewDecaySecs[cat];
+}
+
 uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {
   if (teamId >= 16) return 0;
   return cs->lobbyTeamInUse[teamId];

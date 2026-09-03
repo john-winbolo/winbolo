@@ -662,13 +662,23 @@ void printArgs() {
   fprintf(stderr, "                slot re-opens when the host leaves\n");
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
-  fprintf(stderr, "                autolock, password, ranked, openhost, map.\n");
+  fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
+  fprintf(stderr, "                baseview, allyview.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
   fprintf(stderr, "-maxspectators <N> - Maximum number of spectator connections (default 16,\n");
   fprintf(stderr, "                0 disables spectating).\n");
   fprintf(stderr, "-specdelay <S> - Spectator view delay in seconds (default 90, 0 = live).\n");
+
+  fprintf(stderr, "\nVisibility (what players see of pills, bases and allied tanks):\n");
+  fprintf(stderr, "-pillview <M> - Pillbox visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-baseview <M> - Base visibility: always, key, decay, off (default off)\n");
+  fprintf(stderr, "-allyview <M> - Allied tank visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-pillviewdecay <S> - Seconds a pill stays visible under \"decay\"\n");
+  fprintf(stderr, "                (5-600, default 30)\n");
+  fprintf(stderr, "-baseviewdecay <S> - Same for bases (5-600, default 30)\n");
+  fprintf(stderr, "-allyviewdecay <S> - Same for allied tanks (5-600, default 30)\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -1588,13 +1598,76 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "ranked") == 0)    serverLocks |= LOBBY_LOCK_RANKED;
         else if (strcmp(lo, "openhost") == 0)  serverLocks |= LOBBY_LOCK_OPEN_HOST;
         else if (strcmp(lo, "map") == 0)       serverLocks |= LOBBY_LOCK_MAP;
+        else if (strcmp(lo, "pillview") == 0)  serverLocks |= LOBBY_LOCK_PILL_VIEW;
+        else if (strcmp(lo, "baseview") == 0)  serverLocks |= LOBBY_LOCK_BASE_VIEW;
+        else if (strcmp(lo, "allyview") == 0)  serverLocks |= LOBBY_LOCK_ALLY_VIEW;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
-                  "openhost, map)\n", lo);
+                  "openhost, map, pillview, baseview, allyview)\n", lo);
         }
       }
+    }
+  }
+
+  /* -pillview / -baseview / -allyview and their decay values. Applied
+   * straight onto the created sim rather than through
+   * ServerInstanceConfig, so serverSimCreate* keeps its signature. Every
+   * category is set on every run — with no switches given that writes
+   * back the same defaults serverSimInit already put there. An unknown
+   * mode word or an out-of-range decay warns and falls back, matching
+   * -uploadpolicy / -uploadmaxfiles. */
+  {
+    static const struct {
+      const char  *modeArg;
+      const char  *decayArg;
+      ViewCategory cat;
+      ViewPolicy   def;
+    } viewArgs[] = {
+      { "pillview", "pillviewdecay", viewCategoryPill, viewPolicyAlways },
+      { "baseview", "baseviewdecay", viewCategoryBase, viewPolicyOff    },
+      { "allyview", "allyviewdecay", viewCategoryAlly, viewPolicyAlways },
+    };
+    for (int vi = 0; vi < (int)(sizeof(viewArgs) / sizeof(viewArgs[0])); vi++) {
+      ViewPolicy policy = viewArgs[vi].def;
+      int secs = VIEW_DECAY_DEFAULT_SECS;
+      int modeNum = findArg(argc, argv, viewArgs[vi].modeArg);
+      if (modeNum != ARG_NOT_FOUND) {
+        char modeStr[32];
+        strncpy(modeStr, (char *)argv[modeNum], sizeof(modeStr) - 1);
+        modeStr[sizeof(modeStr) - 1] = '\0';
+        strlower(modeStr);
+        if (strcmp(modeStr, "always") == 0) {
+          policy = viewPolicyAlways;
+        } else if (strcmp(modeStr, "key") == 0) {
+          policy = viewPolicyKey;
+        } else if (strcmp(modeStr, "decay") == 0) {
+          policy = viewPolicyDecay;
+        } else if (strcmp(modeStr, "off") == 0) {
+          policy = viewPolicyOff;
+        } else {
+          fprintf(stderr, "Unknown -%s '%s'; using %s\n",
+                  viewArgs[vi].modeArg, modeStr,
+                  viewArgs[vi].def == viewPolicyOff ? "off" : "always");
+          policy = viewArgs[vi].def;
+        }
+      }
+      int decayNum = findArg(argc, argv, viewArgs[vi].decayArg);
+      if (decayNum != ARG_NOT_FOUND) {
+        secs = atoi((char *)argv[decayNum]);
+        if (secs < VIEW_DECAY_MIN_SECS) {
+          fprintf(stderr, "-%s %d out of range; clamping to %d\n",
+                  viewArgs[vi].decayArg, secs, VIEW_DECAY_MIN_SECS);
+          secs = VIEW_DECAY_MIN_SECS;
+        } else if (secs > VIEW_DECAY_MAX_SECS) {
+          fprintf(stderr, "-%s %d out of range; clamping to %d\n",
+                  viewArgs[vi].decayArg, secs, VIEW_DECAY_MAX_SECS);
+          secs = VIEW_DECAY_MAX_SECS;
+        }
+      }
+      serverSimSetViewPolicy(serverSim, viewArgs[vi].cat, policy,
+                             (uint16_t)secs);
     }
   }
 

@@ -1908,3 +1908,14 @@ STR_DLGLOBBY_REEL_TOO_LARGE=Kolo bylo na odeslání příliš dlouhé
 STR_DLGWBN_ACCOUNT_LOCKED=Účty WinBolo.net lze měnit pouze z hlavní nabídky, ne během hry.
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Odesílat záznamy hráčům
 STR_LV_HIDE_LOBBY=Skrýt Lobby
+
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Viditelnost
+STR_DLGLOBBY_VIEW_PILL=Pohled na bunkr
+STR_DLGLOBBY_VIEW_BASE=Pohled na základnu
+STR_DLGLOBBY_VIEW_ALLY=Pohled na spojenecké tanky
+STR_DLGLOBBY_VIEW_ALWAYS=Vždy
+STR_DLGLOBBY_VIEW_KEY=Klávesa
+STR_DLGLOBBY_VIEW_DECAY=Slábnutí
+STR_DLGLOBBY_VIEW_OFF=Vypnuto
+STR_DLGLOBBY_VIEW_DECAY_SECS=s

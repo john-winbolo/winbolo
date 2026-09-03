@@ -33,6 +33,7 @@
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
 #include "client_command.h"    /* ClientCommand / CmdResult — serverSimApplyCommand */
 #include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
+#include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -1568,6 +1569,21 @@ bool        serverSimRankedShapeReady(const ServerSim *sim);
 /* serverSimSetRanked: moved to internal/server_sim_lifecycle.h —
  * applied by serverInstanceStartup and by the shared
  * serverSimApplyLobbySetting helper. */
+
+/* Per-category visibility rules (pillboxes / bases / allied tanks).
+ * Set from the dedicated-server and headless CLI switches and from the
+ * GUI hosting prefs after the sim is created, and from the lobby via
+ * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW. Defaults are
+ * pill = viewPolicyAlways, base = viewPolicyOff, ally = viewPolicyAlways,
+ * all with VIEW_DECAY_DEFAULT_SECS.
+ *
+ * The setter clamps decaySecs to VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS
+ * and ignores an out-of-range category or policy. The getters return the
+ * defaults for a NULL sim or an out-of-range category. */
+void        serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
+                                   ViewPolicy policy, uint16_t decaySecs);
+ViewPolicy  serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat);
+uint16_t    serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat);
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */

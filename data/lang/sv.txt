@@ -1910,3 +1910,14 @@ STR_DLGLOBBY_REEL_TOO_LARGE=Omgången var för lång för att skickas
 STR_DLGWBN_ACCOUNT_LOCKED=WinBolo.net-konton kan bara ändras från huvudmenyn, inte under ett spel.
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Skicka repriser till spelare
 STR_LV_HIDE_LOBBY=Göm lobbyn
+
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Synlighet
+STR_DLGLOBBY_VIEW_PILL=Bunkervy
+STR_DLGLOBBY_VIEW_BASE=Basvy
+STR_DLGLOBBY_VIEW_ALLY=Vy för allierade tanks
+STR_DLGLOBBY_VIEW_ALWAYS=Alltid
+STR_DLGLOBBY_VIEW_KEY=Tangent
+STR_DLGLOBBY_VIEW_DECAY=Uttoning
+STR_DLGLOBBY_VIEW_OFF=Av
+STR_DLGLOBBY_VIEW_DECAY_SECS=sek

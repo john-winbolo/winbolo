@@ -401,6 +401,82 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     }
 
     ImGui::Columns(1);
+
+    /* ── Visibility (pillboxes / bases / allied tanks) ─────────────
+     * One row per category: a 4-way combo, plus a decay-seconds input
+     * that is only enabled while that row's combo reads Decay. Each
+     * edit sends the 3-byte [policy][decay hi][decay lo] payload for
+     * that category's LST_* id. Full width rather than a fourth
+     * column — three combos don't fit in a third of the form. */
+    {
+        struct ViewRow {
+            int          label;
+            ViewCategory cat;
+            uint8_t      lst;
+            uint16_t     lockBit;
+            const char  *id;
+        };
+        static const ViewRow rows[] = {
+            { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill,
+              LST_PILL_VIEW, LOBBY_LOCK_PILL_VIEW, "pill" },
+            { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase,
+              LST_BASE_VIEW, LOBBY_LOCK_BASE_VIEW, "base" },
+            { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly,
+              LST_ALLY_VIEW, LOBBY_LOCK_ALLY_VIEW, "ally" },
+        };
+        const char *modes[] = {
+            langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+            langGetText(STR_DLGLOBBY_VIEW_KEY),
+            langGetText(STR_DLGLOBBY_VIEW_DECAY),
+            langGetText(STR_DLGLOBBY_VIEW_OFF),
+        };
+        auto sendView = [&](uint8_t lst, int policy, int secs) {
+            if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_MIN_SECS;
+            if (secs > VIEW_DECAY_MAX_SECS) secs = VIEW_DECAY_MAX_SECS;
+            uint8_t v[3] = { (uint8_t)policy,
+                             (uint8_t)((secs >> 8) & 0xFF),
+                             (uint8_t)(secs & 0xFF) };
+            lobbySendSetting(cs, lst, v, 3);
+        };
+
+        ImGui::Spacing();
+        ImGui::Text("%s", langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
+        for (int r = 0; r < 3; r++) {
+            const ViewRow &row = rows[r];
+            bool locked = (clientSimGetLobbyServerLocks(cs) & row.lockBit) != 0;
+            bool disable = !effectiveHost || locked;
+            int policy = (int)clientSimGetViewPolicy(cs, row.cat);
+            int secs   = (int)clientSimGetViewDecaySecs(cs, row.cat);
+            if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_DEFAULT_SECS;
+
+            ImGui::PushID(row.id);
+            if (disable) ImGui::BeginDisabled();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(langGetText(row.label));
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f * s);
+            if (ImGui::Combo("##mode", &policy, modes, 4)) {
+                sendView(row.lst, policy, secs);
+            }
+            /* The seconds box stays on screen for every mode so the row
+             * doesn't reflow as the host tries the options; it is only
+             * interactive while the row is on Decay. */
+            ImGui::SameLine();
+            ImGui::BeginDisabled(policy != (int)viewPolicyDecay);
+            ImGui::SetNextItemWidth(80.0f * s);
+            if (ImGui::InputInt("##decay", &secs, 1, 5,
+                                ImGuiInputTextFlags_EnterReturnsTrue)) {
+                sendView(row.lst, policy, secs);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+            ImGui::EndDisabled();
+            if (disable) ImGui::EndDisabled();
+            if (locked) lobbyRenderLockBadge();
+            ImGui::PopID();
+        }
+    }
+
     /* Restore the larger lobby-font scale before the Hide button so
      * its text isn't shrunk to the 0.85x the columns body uses. The
      * game-settings section's content auto-sizes to fit the columns

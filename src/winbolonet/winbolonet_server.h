@@ -72,6 +72,9 @@ typedef struct {
   BYTE     freePills;                /* Neutral pills */
   BYTE     numHumans;                /* Connected human players */
   BYTE     numBots;                  /* Bot players */
+  BYTE     pillView;                 /* ViewPolicy for pillboxes (0..3) */
+  BYTE     baseView;                 /* ViewPolicy for bases (0..3) */
+  BYTE     allyView;                 /* ViewPolicy for allied tanks (0..3) */
 } WbnLobbyInfo;
 
 /*********************************************************

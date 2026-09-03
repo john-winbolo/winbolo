@@ -1910,3 +1910,14 @@ STR_DLGLOBBY_REEL_TOO_LARGE=Tur, göndermek için çok uzundu
 STR_DLGWBN_ACCOUNT_LOCKED=WinBolo.net hesapları yalnızca ana menüden değiştirilebilir, oyun sırasında değil.
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Oyunculara Kayıt Gönder
 STR_LV_HIDE_LOBBY=Lobiyi Gizle
+
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Görünürlük
+STR_DLGLOBBY_VIEW_PILL=Bunker Görünümü
+STR_DLGLOBBY_VIEW_BASE=Üs Görünümü
+STR_DLGLOBBY_VIEW_ALLY=Müttefik Tank Görünümü
+STR_DLGLOBBY_VIEW_ALWAYS=Her zaman
+STR_DLGLOBBY_VIEW_KEY=Tuş
+STR_DLGLOBBY_VIEW_DECAY=Solma
+STR_DLGLOBBY_VIEW_OFF=Kapalı
+STR_DLGLOBBY_VIEW_DECAY_SECS=sn

@@ -4448,6 +4448,11 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
         }
     }
 
+    pkt.view_policies = infoPacketPackViewPolicies(
+        serverSimGetViewPolicy(sim, viewCategoryPill),
+        serverSimGetViewPolicy(sim, viewCategoryBase),
+        serverSimGetViewPolicy(sim, viewCategoryAlly));
+
     /* wire-only: tracker / external reply (no in-process audience) */
     srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
 
@@ -5109,6 +5114,11 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
             memcpy(pkt.map_md5, md5Hex, 32);
         }
     }
+
+    pkt.view_policies = infoPacketPackViewPolicies(
+        serverSimGetViewPolicy(sim, viewCategoryPill),
+        serverSimGetViewPolicy(sim, viewCategoryBase),
+        serverSimGetViewPolicy(sim, viewCategoryAlly));
 
     srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
 }

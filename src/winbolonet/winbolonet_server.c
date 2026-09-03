@@ -76,6 +76,9 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddNumberToObject(body, "lobby_locks", s_lobbyInfo.lobbyLocks);
   cJSON_AddNumberToObject(body, "num_humans", s_lobbyInfo.numHumans);
   cJSON_AddNumberToObject(body, "num_bots", s_lobbyInfo.numBots);
+  cJSON_AddNumberToObject(body, "pillview", s_lobbyInfo.pillView);
+  cJSON_AddNumberToObject(body, "baseview", s_lobbyInfo.baseView);
+  cJSON_AddNumberToObject(body, "allyview", s_lobbyInfo.allyView);
 }
 
 void winbolonetSendLobbyUpdate(void) {

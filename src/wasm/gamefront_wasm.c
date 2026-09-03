@@ -226,6 +226,15 @@ bool           gameFrontHostingLogging          = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays     = TRUE;
 
+/* Visibility rules a hosted game starts with. Same story as the hosting
+ * knobs above — held for the dialogs, never applied to a server here. */
+int gameFrontViewPillPolicy    = viewPolicyAlways;
+int gameFrontViewBasePolicy    = viewPolicyOff;
+int gameFrontViewAllyPolicy    = viewPolicyAlways;
+int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
@@ -892,6 +901,13 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
 }
+
+void gameFrontSetViewPillPolicy(int policy)  { gameFrontViewPillPolicy = policy; }
+void gameFrontSetViewBasePolicy(int policy)  { gameFrontViewBasePolicy = policy; }
+void gameFrontSetViewAllyPolicy(int policy)  { gameFrontViewAllyPolicy = policy; }
+void gameFrontSetViewPillDecaySecs(int secs) { gameFrontViewPillDecaySecs = secs; }
+void gameFrontSetViewBaseDecaySecs(int secs) { gameFrontViewBaseDecaySecs = secs; }
+void gameFrontSetViewAllyDecaySecs(int secs) { gameFrontViewAllyDecaySecs = secs; }
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
 void gameFrontSetSteamPresenceMenu(void)           { }

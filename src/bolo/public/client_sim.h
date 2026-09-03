@@ -41,6 +41,7 @@
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 
 #ifndef GAMESIM_TYPEDEF
@@ -834,6 +835,14 @@ uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
+
+/* Server visibility rules (pillboxes / bases / allied tanks) as last
+ * broadcast in the lobby-settings event. Raw mirror: both read back 0
+ * (viewPolicyAlways / 0 seconds) until the first event arrives, and a
+ * payload that predates the fields leaves them at 0 too. Out-of-range
+ * categories read back the same zeros. */
+ViewPolicy  clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat);
+uint16_t    clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);

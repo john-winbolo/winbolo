@@ -284,6 +284,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->savedAllowNewPlayers = TRUE;
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
+    /* Visibility rules. Pills and allied tanks stay always-visible (the
+     * historical behaviour); bases start off. memset would give every
+     * category viewPolicyAlways and a zero decay, so set all three. */
+    sim->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+    sim->viewPolicy[viewCategoryBase] = viewPolicyOff;
+    sim->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+    for (count = 0; count < VIEW_CATEGORY_COUNT; count++) {
+        sim->viewDecaySecs[count] = VIEW_DECAY_DEFAULT_SECS;
+    }
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;

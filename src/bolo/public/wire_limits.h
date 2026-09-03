@@ -73,6 +73,9 @@
 #define LOBBY_LOCK_RANKED            (1u << 6)
 #define LOBBY_LOCK_OPEN_HOST         (1u << 7)
 #define LOBBY_LOCK_MAP               (1u << 8)
+#define LOBBY_LOCK_PILL_VIEW         (1u << 9)
+#define LOBBY_LOCK_BASE_VIEW         (1u << 10)
+#define LOBBY_LOCK_ALLY_VIEW         (1u << 11)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -93,13 +96,16 @@ typedef enum {
     LST_TIME_LIMIT        = 4,  /* 1 byte bool */
     LST_TIME_MINUTES      = 5,  /* 2 bytes uint16 BE */
     LST_AUTO_LOCK_ON_GAME = 6,  /* 1 byte bool */
-    LST_RANKED            = 7   /* 1 byte bool. When true the server
+    LST_RANKED            = 7,  /* 1 byte bool. When true the server
                                  * forces ai=none, refuses game_type
                                  * Open, and removes any existing
                                  * bots. The client mirrors the value
                                  * so every viewer sees the ranked
                                  * badge — toggle is still host /
                                  * admin only. */
+    LST_PILL_VIEW         = 8,  /* 3 bytes: [policy][decaySecs hi][decaySecs lo] */
+    LST_BASE_VIEW         = 9,  /* same */
+    LST_ALLY_VIEW         = 10  /* same */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

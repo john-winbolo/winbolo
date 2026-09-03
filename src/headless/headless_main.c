@@ -130,6 +130,16 @@ static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
+/* Visibility rules for the fast-mode server sim, indexed by
+ * ViewCategory. Defaults match serverSimInit: pills and allied tanks
+ * always visible, bases off, 30-second decay everywhere. */
+static ViewPolicy optViewPolicy[VIEW_CATEGORY_COUNT] = {
+  viewPolicyAlways, viewPolicyOff, viewPolicyAlways
+};
+static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
+  VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS
+};
+
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
 #define BINARY_NUM_CHANNELS 10
@@ -1506,8 +1516,43 @@ static void printUsage(const char *prog) {
     "Fast mode options:\n"
     "  --fast            Run locally as fast as possible (no wall-clock gating)\n"
     "  --map FILE        Path to .map file (required with --fast)\n"
-    "  --stdin           Read input from stdin (one JSON line per game tick)\n",
+    "  --stdin           Read input from stdin (one JSON line per game tick)\n"
+    "\n"
+    "Visibility options (apply to the fast-mode server sim):\n"
+    "  --pillview MODE   Pillbox visibility: always (default), key, decay, off\n"
+    "  --baseview MODE   Base visibility: always, key, decay, off (default off)\n"
+    "  --allyview MODE   Allied tank visibility: always (default), key, decay, off\n"
+    "  --pillviewdecay S Seconds a pill stays visible under \"decay\" (5-600,\n"
+    "                    default 30)\n"
+    "  --baseviewdecay S Same for bases (5-600, default 30)\n"
+    "  --allyviewdecay S Same for allied tanks (5-600, default 30)\n",
     prog, prog);
+}
+
+/* Shared body for --pillview / --baseview / --allyview. Rejects an
+ * unknown mode word the same way --ai and --gametype reject one. */
+static bool parseViewPolicyWord(const char *word, ViewPolicy *out) {
+  if (strcmp(word, "always") == 0) *out = viewPolicyAlways;
+  else if (strcmp(word, "key") == 0) *out = viewPolicyKey;
+  else if (strcmp(word, "decay") == 0) *out = viewPolicyDecay;
+  else if (strcmp(word, "off") == 0) *out = viewPolicyOff;
+  else {
+    fprintf(stderr, "Error: unknown view policy '%s' (use: always, key, decay, off)\n", word);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* Shared body for the three --*viewdecay switches. */
+static bool parseViewDecayWord(const char *word, const char *sw, int *out) {
+  int secs = atoi(word);
+  if (secs < VIEW_DECAY_MIN_SECS || secs > VIEW_DECAY_MAX_SECS) {
+    fprintf(stderr, "Error: %s %d out of range (%d-%d)\n", sw, secs,
+            VIEW_DECAY_MIN_SECS, VIEW_DECAY_MAX_SECS);
+    return FALSE;
+  }
+  *out = secs;
+  return TRUE;
 }
 
 static bool parseArgs(int argc, char **argv) {
@@ -1563,6 +1608,21 @@ static bool parseArgs(int argc, char **argv) {
         fprintf(stderr, "Error: unknown game type '%s' (use: strict, tournament, open)\n", argv[i]);
         return FALSE;
       }
+    } else if (strcmp(argv[i], "--pillview") == 0 && i + 1 < argc) {
+      if (!parseViewPolicyWord(argv[++i], &optViewPolicy[viewCategoryPill])) return FALSE;
+    } else if (strcmp(argv[i], "--baseview") == 0 && i + 1 < argc) {
+      if (!parseViewPolicyWord(argv[++i], &optViewPolicy[viewCategoryBase])) return FALSE;
+    } else if (strcmp(argv[i], "--allyview") == 0 && i + 1 < argc) {
+      if (!parseViewPolicyWord(argv[++i], &optViewPolicy[viewCategoryAlly])) return FALSE;
+    } else if (strcmp(argv[i], "--pillviewdecay") == 0 && i + 1 < argc) {
+      if (!parseViewDecayWord(argv[++i], "--pillviewdecay",
+                              &optViewDecaySecs[viewCategoryPill])) return FALSE;
+    } else if (strcmp(argv[i], "--baseviewdecay") == 0 && i + 1 < argc) {
+      if (!parseViewDecayWord(argv[++i], "--baseviewdecay",
+                              &optViewDecaySecs[viewCategoryBase])) return FALSE;
+    } else if (strcmp(argv[i], "--allyviewdecay") == 0 && i + 1 < argc) {
+      if (!parseViewDecayWord(argv[++i], "--allyviewdecay",
+                              &optViewDecaySecs[viewCategoryAlly])) return FALSE;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1674,6 +1734,14 @@ static bool fastModeSetupGame(void) {
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
+  /* Visibility rules from the CLI, applied to the created sim rather
+   * than through ServerInstanceConfig. Runs on every reset; with no
+   * switches given it writes back the defaults serverSimInit set. */
+  for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+    serverSimSetViewPolicy(fastServerSim, (ViewCategory)vc,
+                           optViewPolicy[vc],
+                           (uint16_t)optViewDecaySecs[vc]);
+  }
 
   transportActive = TRUE;
   playerNum = 0;

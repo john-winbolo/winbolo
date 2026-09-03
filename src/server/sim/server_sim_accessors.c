@@ -561,6 +561,9 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_TIME_MINUTES:      return LOBBY_LOCK_TIME_LIMIT;
         case LST_AUTO_LOCK_ON_GAME: return LOBBY_LOCK_AUTO_LOCK_ON_GAME;
         case LST_RANKED:            return LOBBY_LOCK_RANKED;
+        case LST_PILL_VIEW:         return LOBBY_LOCK_PILL_VIEW;
+        case LST_BASE_VIEW:         return LOBBY_LOCK_BASE_VIEW;
+        case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
         default:                    return 0xFFFFu;  /* unknown setting */
     }
 }
@@ -574,6 +577,31 @@ bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
 
 void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
     if (sim) sim->aiPolicy = v;
+}
+
+void serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
+                            ViewPolicy policy, uint16_t decaySecs) {
+    if (sim == NULL) return;
+    if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return;
+    if ((int)policy < viewPolicyAlways || (int)policy > viewPolicyOff) return;
+    if (decaySecs < VIEW_DECAY_MIN_SECS) decaySecs = VIEW_DECAY_MIN_SECS;
+    if (decaySecs > VIEW_DECAY_MAX_SECS) decaySecs = VIEW_DECAY_MAX_SECS;
+    sim->viewPolicy[cat]    = policy;
+    sim->viewDecaySecs[cat] = decaySecs;
+}
+
+ViewPolicy serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat) {
+    if (sim == NULL) return viewPolicyAlways;
+    if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return viewPolicyAlways;
+    return sim->viewPolicy[cat];
+}
+
+uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {
+    if (sim == NULL) return VIEW_DECAY_DEFAULT_SECS;
+    if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
+        return VIEW_DECAY_DEFAULT_SECS;
+    }
+    return sim->viewDecaySecs[cat];
 }
 
 bool serverSimGetTimeLimit(const ServerSim *sim) {

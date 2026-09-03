@@ -392,6 +392,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            cs->viewPolicy[vc]    = evt->u.lobbySettings.viewPolicy[vc];
+            cs->viewDecaySecs[vc] = evt->u.lobbySettings.viewDecaySecs[vc];
+        }
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
          * gameLength (it decrements every running tick), so applying it

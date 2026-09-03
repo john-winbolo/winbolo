@@ -1910,3 +1910,14 @@ STR_DLGLOBBY_REEL_TOO_LARGE=La manche était trop longue pour être envoyée
 STR_DLGWBN_ACCOUNT_LOCKED=Les comptes WinBolo.net ne peuvent être modifiés que depuis le menu principal, pas en cours de partie.
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Envoyer les replays aux joueurs
 STR_LV_HIDE_LOBBY=Masquer le salon
+
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibilité
+STR_DLGLOBBY_VIEW_PILL=Vue pillbox
+STR_DLGLOBBY_VIEW_BASE=Vue base
+STR_DLGLOBBY_VIEW_ALLY=Vue tanks alliés
+STR_DLGLOBBY_VIEW_ALWAYS=Toujours
+STR_DLGLOBBY_VIEW_KEY=Touche
+STR_DLGLOBBY_VIEW_DECAY=Estompage
+STR_DLGLOBBY_VIEW_OFF=Désactivé
+STR_DLGLOBBY_VIEW_DECAY_SECS=s

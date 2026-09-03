@@ -1391,6 +1391,16 @@ static const LangEntry langTable[] = {
     {1382, "Single player"},
     {1383, "Internet"},
     {1384, "Test in progress"},
+    /* Lobby visibility block */
+    {1955, "Visibility"},
+    {1956, "Pill View"},
+    {1957, "Base View"},
+    {1958, "Allied Tank View"},
+    {1959, "Always"},
+    {1960, "Key"},
+    {1961, "Decay"},
+    {1962, "Off"},
+    {1963, "secs"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the

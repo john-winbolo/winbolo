@@ -35,6 +35,7 @@
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
 #include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
+#include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT — server view-rule mirror */
 #include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
@@ -312,6 +313,11 @@ struct ClientSim {
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
+    /* Server visibility rules, indexed by ViewCategory. Raw mirror of
+     * the lobby-settings event — a payload that predates the fields
+     * leaves them at zero (viewPolicyAlways / 0 seconds). */
+    ViewPolicy       viewPolicy[VIEW_CATEGORY_COUNT];
+    uint16_t         viewDecaySecs[VIEW_CATEGORY_COUNT];
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
     bool             lobbyAvailable;    /* Server runs a lobby (CTRL_LOBBY_SETTINGS
                                          * inLobby). False on -nolobby/-maprotate;

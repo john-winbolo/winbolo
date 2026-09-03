@@ -58,6 +58,9 @@ int run_lobby_lock_bit_lookup(void) {
     UT_ASSERT(serverSimGetSettingLockBit(LST_AUTO_LOCK_ON_GAME) == LOBBY_LOCK_AUTO_LOCK_ON_GAME);
     UT_ASSERT_MSG(serverSimGetSettingLockBit(LST_RANKED)        == LOBBY_LOCK_RANKED,
                   "LST_RANKED used to hardcode 0; ensure the new bit is wired");
+    UT_ASSERT(serverSimGetSettingLockBit(LST_PILL_VIEW)         == LOBBY_LOCK_PILL_VIEW);
+    UT_ASSERT(serverSimGetSettingLockBit(LST_BASE_VIEW)         == LOBBY_LOCK_BASE_VIEW);
+    UT_ASSERT(serverSimGetSettingLockBit(LST_ALLY_VIEW)         == LOBBY_LOCK_ALLY_VIEW);
 
     /* Unknown setting ids must return 0xFFFF so the packet handler can
      * silently drop them (forward-compat) instead of treating them as
@@ -71,10 +74,11 @@ int run_lobby_lock_bit_lookup(void) {
         LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_MINES | LOBBY_LOCK_AI_POLICY |
         LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
         LOBBY_LOCK_RANKED | LOBBY_LOCK_PASSWORD | LOBBY_LOCK_OPEN_HOST |
-        LOBBY_LOCK_MAP;
+        LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
+        LOBBY_LOCK_ALLY_VIEW;
     int popcount = 0;
     for (int i = 0; i < 16; i++) if (allBits & (1u << i)) popcount++;
-    UT_ASSERT_MSG(popcount == 9, "every defined LOBBY_LOCK_* bit must be distinct");
+    UT_ASSERT_MSG(popcount == 12, "every defined LOBBY_LOCK_* bit must be distinct");
 
     return 0;
 }
@@ -92,6 +96,9 @@ int run_lobby_lock_rejects_settings(void) {
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_TIME_MINUTES));
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_AUTO_LOCK_ON_GAME));
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_RANKED));
+    UT_ASSERT(!serverSimIsSettingLocked(sim, LST_PILL_VIEW));
+    UT_ASSERT(!serverSimIsSettingLocked(sim, LST_BASE_VIEW));
+    UT_ASSERT(!serverSimIsSettingLocked(sim, LST_ALLY_VIEW));
 
     /* Lock just GAME_TYPE — only that LST_* reports locked. */
     serverSimSetServerLocks(sim, LOBBY_LOCK_GAME_TYPE);
@@ -117,14 +124,18 @@ int run_lobby_lock_rejects_settings(void) {
      * else does. Mirrors a real "-lock gametype,ranked,autolock"
      * invocation. */
     uint16_t composite = LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_RANKED |
-                         LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+                         LOBBY_LOCK_AUTO_LOCK_ON_GAME | LOBBY_LOCK_BASE_VIEW;
     serverSimSetServerLocks(sim, composite);
     UT_ASSERT(serverSimGetServerLocks(sim) == composite);
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_GAME_TYPE));
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_RANKED));
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_AUTO_LOCK_ON_GAME));
+    UT_ASSERT(serverSimIsSettingLocked(sim, LST_BASE_VIEW));
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_HIDDEN_MINES));
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_AI_POLICY));
+    UT_ASSERT_MSG(!serverSimIsSettingLocked(sim, LST_PILL_VIEW),
+                  "the base-view lock must not gate the pill-view setting");
+    UT_ASSERT(!serverSimIsSettingLocked(sim, LST_ALLY_VIEW));
 
     /* Lock bits with no LST_* counterpart (PASSWORD / OPEN_HOST / MAP
      * are enforced by their own dedicated packet handlers, not by
@@ -152,7 +163,8 @@ int run_lobby_lock_mask_roundtrip(void) {
         LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_AI_POLICY | LOBBY_LOCK_MINES |
         LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
         LOBBY_LOCK_PASSWORD | LOBBY_LOCK_RANKED | LOBBY_LOCK_OPEN_HOST |
-        LOBBY_LOCK_MAP;
+        LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
+        LOBBY_LOCK_ALLY_VIEW;
     serverSimSetServerLocks(sim, allLocks);
     UT_ASSERT_MSG(serverSimGetServerLocks(sim) == allLocks,
                   "all-locks mask must round-trip unchanged");

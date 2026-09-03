@@ -227,6 +227,16 @@ bool           gameFrontHostingLogging         = TRUE;
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
 
+/* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
+ * Defaults match serverSimInit so hosting with an untouched INI leaves
+ * the sim exactly as it was created. */
+int gameFrontViewPillPolicy    = viewPolicyAlways;
+int gameFrontViewBasePolicy    = viewPolicyOff;
+int gameFrontViewAllyPolicy    = viewPolicyAlways;
+int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
@@ -2050,6 +2060,58 @@ void gameFrontSetHostingServeReplays(bool serve) {
   prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
 }
 
+/* Visibility write-through setters. Same shape as the hosting ones
+ * above: update the global and persist the [GAME OPTIONS] key now. The
+ * policies are stored as words so a hand-edited INI reads clearly. */
+static const char *viewPolicyPrefWord(int policy) {
+  return (policy == viewPolicyKey)   ? "Key"
+       : (policy == viewPolicyDecay) ? "Decay"
+       : (policy == viewPolicyOff)   ? "Off"
+                                     : "Always";
+}
+
+static int viewDecayClamp(int secs) {
+  if (secs < VIEW_DECAY_MIN_SECS) return VIEW_DECAY_MIN_SECS;
+  if (secs > VIEW_DECAY_MAX_SECS) return VIEW_DECAY_MAX_SECS;
+  return secs;
+}
+
+void gameFrontSetViewPillPolicy(int policy) {
+  gameFrontViewPillPolicy = policy;
+  prefsSetString("GAME OPTIONS", "Pill View", viewPolicyPrefWord(policy));
+}
+
+void gameFrontSetViewBasePolicy(int policy) {
+  gameFrontViewBasePolicy = policy;
+  prefsSetString("GAME OPTIONS", "Base View", viewPolicyPrefWord(policy));
+}
+
+void gameFrontSetViewAllyPolicy(int policy) {
+  gameFrontViewAllyPolicy = policy;
+  prefsSetString("GAME OPTIONS", "Ally View", viewPolicyPrefWord(policy));
+}
+
+void gameFrontSetViewPillDecaySecs(int secs) {
+  char buf[16];
+  gameFrontViewPillDecaySecs = viewDecayClamp(secs);
+  intToStr(gameFrontViewPillDecaySecs, buf, sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Pill View Decay", buf);
+}
+
+void gameFrontSetViewBaseDecaySecs(int secs) {
+  char buf[16];
+  gameFrontViewBaseDecaySecs = viewDecayClamp(secs);
+  intToStr(gameFrontViewBaseDecaySecs, buf, sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Base View Decay", buf);
+}
+
+void gameFrontSetViewAllyDecaySecs(int secs) {
+  char buf[16];
+  gameFrontViewAllyDecaySecs = viewDecayClamp(secs);
+  intToStr(gameFrontViewAllyDecaySecs, buf, sizeof(buf));
+  prefsSetString("GAME OPTIONS", "Ally View Decay", buf);
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2602,6 +2664,18 @@ bool gameFrontSetupServer(void) {
   /* Embedded listen server: silence its console messages — no server console. */
   serverSimSetQuiet(spServerSim, true);
 
+  /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
+   * after create rather than through ServerInstanceConfig. */
+  serverSimSetViewPolicy(spServerSim, viewCategoryPill,
+                         (ViewPolicy)gameFrontViewPillPolicy,
+                         (uint16_t)gameFrontViewPillDecaySecs);
+  serverSimSetViewPolicy(spServerSim, viewCategoryBase,
+                         (ViewPolicy)gameFrontViewBasePolicy,
+                         (uint16_t)gameFrontViewBaseDecaySecs);
+  serverSimSetViewPolicy(spServerSim, viewCategoryAlly,
+                         (ViewPolicy)gameFrontViewAllyPolicy,
+                         (uint16_t)gameFrontViewAllyDecaySecs);
+
   /* Resolve a brain path so the lobby's "Add Bot" works regardless of
    * whether the host set compTanks at startup. The AI Policy can be
    * flipped on later via the lobby UI; without a pre-resolved brain
@@ -3110,6 +3184,42 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* Visibility rules for games this client hosts. Clamped on read so a
+   * hand-edited INI can't inject an out-of-range decay. */
+  {
+    static const struct {
+      const char *policyKey;
+      const char *decayKey;
+      const char *policyDefault;
+      int        *policyOut;
+      int        *decayOut;
+    } viewPrefs[] = {
+      { "Pill View", "Pill View Decay", "Always",
+        &gameFrontViewPillPolicy, &gameFrontViewPillDecaySecs },
+      { "Base View", "Base View Decay", "Off",
+        &gameFrontViewBasePolicy, &gameFrontViewBaseDecaySecs },
+      { "Ally View", "Ally View Decay", "Always",
+        &gameFrontViewAllyPolicy, &gameFrontViewAllyDecaySecs },
+    };
+    intToStr(VIEW_DECAY_DEFAULT_SECS, def, sizeof(def));
+    for (int vi = 0; vi < (int)(sizeof(viewPrefs) / sizeof(viewPrefs[0])); vi++) {
+      prefsGetString("GAME OPTIONS", viewPrefs[vi].policyKey,
+                     viewPrefs[vi].policyDefault, buff, FILENAME_MAX);
+      if (strcmp(buff, "Key") == 0) {
+        *viewPrefs[vi].policyOut = viewPolicyKey;
+      } else if (strcmp(buff, "Decay") == 0) {
+        *viewPrefs[vi].policyOut = viewPolicyDecay;
+      } else if (strcmp(buff, "Off") == 0) {
+        *viewPrefs[vi].policyOut = viewPolicyOff;
+      } else {
+        *viewPrefs[vi].policyOut = viewPolicyAlways;
+      }
+      prefsGetString("GAME OPTIONS", viewPrefs[vi].decayKey, def, buff,
+                     FILENAME_MAX);
+      *viewPrefs[vi].decayOut = viewDecayClamp(atoi(buff));
+    }
+  }
+
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
   gameFrontUseUpnp = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("SETTINGS", "Use NAT Traversal", "Yes", buff, FILENAME_MAX);
@@ -3429,6 +3539,18 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("GAME OPTIONS", "Time Length", buff);
   prefsSetString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow));
   prefsSetString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide));
+  prefsSetString("GAME OPTIONS", "Pill View",
+                 viewPolicyPrefWord(gameFrontViewPillPolicy));
+  prefsSetString("GAME OPTIONS", "Base View",
+                 viewPolicyPrefWord(gameFrontViewBasePolicy));
+  prefsSetString("GAME OPTIONS", "Ally View",
+                 viewPolicyPrefWord(gameFrontViewAllyPolicy));
+  intToStr(gameFrontViewPillDecaySecs, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "Pill View Decay", buff);
+  intToStr(gameFrontViewBaseDecaySecs, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "Base View Decay", buff);
+  intToStr(gameFrontViewAllyDecaySecs, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "Ally View Decay", buff);
 
   prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
   prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));

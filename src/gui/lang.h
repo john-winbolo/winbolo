@@ -1514,6 +1514,16 @@
 #define STR_DLGLOBBY_SERVERDISP_INTERNET    1383
 /* Connectivity badge */
 #define STR_DLGLOBBY_CONN_TEST_TIP          1384
+/* Visibility block (pill / base / allied tank view rules) */
+#define STR_DLGLOBBY_VISIBILITY_LBL         1955
+#define STR_DLGLOBBY_VIEW_PILL              1956
+#define STR_DLGLOBBY_VIEW_BASE              1957
+#define STR_DLGLOBBY_VIEW_ALLY              1958
+#define STR_DLGLOBBY_VIEW_ALWAYS            1959
+#define STR_DLGLOBBY_VIEW_KEY               1960
+#define STR_DLGLOBBY_VIEW_DECAY             1961
+#define STR_DLGLOBBY_VIEW_OFF               1962
+#define STR_DLGLOBBY_VIEW_DECAY_SECS        1963
 
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467

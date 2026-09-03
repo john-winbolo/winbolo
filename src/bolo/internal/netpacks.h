@@ -31,6 +31,7 @@
 #include "global.h"
 #include "platform_net.h"  /* struct in_addr */
 #include "wire_limits.h"   /* PACKET_MAX_CHAT_MESSAGE */
+#include "view_policy.h"   /* ViewPolicy — INFO_PACKET.view_policies helpers */
 #include "playername_validate.h"  /* playerNameValidate / playerNameCompare */
 
 #define MAX_UDPPACKET_SIZE 1024
@@ -94,14 +95,49 @@ typedef struct BOLO_PACK_ATTR {
   BYTE max_players;       /* server's join-slot cap (MAX_TANKS when unset) */
   char map_md5[32];       /* 32 lowercase hex chars, no NUL; zero-filled  */
                           /* when the map is random/unknown               */
+  BYTE view_policies;     /* 2 bits per ViewCategory: pill = bits 0-1,    */
+                          /* base = bits 2-3, ally = bits 4-5; 6-7 spare  */
 } INFO_PACKET;
 #pragma pack(pop)
-BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 112, INFO_PACKET_must_be_112_bytes);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
  * appended. Servers older than those additions send this; discovery accepts
  * it and parses only the common prefix. */
 #define INFO_PACKET_LEGACY_SIZE 76
+
+/* INFO_PACKET wire size before view_policies was appended. Discovery
+ * accepts this length and reports the built-in view defaults for it. */
+#define INFO_PACKET_PRE_VIEWS_SIZE 111
+
+/* Pack the three per-category policies into INFO_PACKET.view_policies. */
+static inline BYTE infoPacketPackViewPolicies(ViewPolicy pill,
+                                              ViewPolicy base,
+                                              ViewPolicy ally) {
+  return (BYTE)(((unsigned)pill & 0x3u)
+              | (((unsigned)base & 0x3u) << 2)
+              | (((unsigned)ally & 0x3u) << 4));
+}
+
+/* Read the three policies back out of a received INFO_PACKET. A packet
+ * shorter than the full layout predates the byte, so it reports the
+ * built-in defaults (pill always, base off, ally always) instead of
+ * whatever the short read left in the struct. */
+static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
+                                              size_t len,
+                                              ViewPolicy *pill,
+                                              ViewPolicy *base,
+                                              ViewPolicy *ally) {
+  if (info == NULL || len < sizeof(INFO_PACKET)) {
+    if (pill) *pill = viewPolicyAlways;
+    if (base) *base = viewPolicyOff;
+    if (ally) *ally = viewPolicyAlways;
+    return;
+  }
+  if (pill) *pill = (ViewPolicy)(info->view_policies & 0x3u);
+  if (base) *base = (ViewPolicy)((info->view_policies >> 2) & 0x3u);
+  if (ally) *ally = (ViewPolicy)((info->view_policies >> 4) & 0x3u);
+}
 #endif
 
 /* INFO_PACKET.flags bit values (the byte that was spare1). */
