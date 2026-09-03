@@ -395,10 +395,19 @@ function M.set_mode(state, world, info, goal)
   -- actually fires when the LGM can walk there.
   if kind == "place_pill_strategic" and goal.substate == "seek_trees" then
     -- Seek-trees: goal target is a SAFE forest (not a drop spot). Harvest there
-    -- until we have enough wood to place our carried pills, then eval flips the
-    -- goal back to a real placement. need_trees stops the gather at "enough".
+    -- until we have enough wood to place ONE pill, then eval flips the goal
+    -- back to a real placement. need_trees stops the gather at "enough".
+    --
+    -- ONE placement, not one per carried pill. The redirect itself already
+    -- fires on `trees < PILL_PLACE_TREE_COST` (goals.lua), so asking for
+    -- 4 x carried on the way out was a different question from the one that
+    -- sent us: it kept the tank in the forest long after it could deploy, and
+    -- -- because b.need_trees is the `goal` term of builder_pool.tree_reserve
+    -- -- it froze 4 x carried trees against every other job while it did.
+    -- 20260903_105448 bot2 carried four. Getting one pill out is the priority;
+    -- the next one triggers its own gather.
     b.mode       = "gather"
-    b.need_trees = (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
+    b.need_trees = C.PILL_PLACE_TREE_COST or 4
   elseif kind == "place_pill_strategic"
          and (goal.follow_through
               or (state._place_trip and state._place_trip.harvest
