@@ -102,7 +102,7 @@ SEA_REJECT_RE = re.compile(
 SEA_ABORT_RE = re.compile(r"SEA_ABORT t=(\d+) reason=(\S+)")
 SEA_SHOT_RE = re.compile(r"SEA_SHOT t=(\d+) #(\d+) at S=\((\d+),(\d+)\)")
 SEA_DISPATCH_RE = re.compile(r"SEA_DISPATCH t=(\d+) action=(\S+) S=\((\d+),(\d+)\)")
-TREES_RE = re.compile(r"ENGINE_DUMP t=\d+ .*? tr=(\d+)")
+TREES_RE = re.compile(r"ENGINE_DUMP t=(\d+) .*? tr=(\d+)")
 DUMP_RE = re.compile(
     r"ENGINE_DUMP t=(\d+) self=\((\d+),(\d+)\).*?arm=(\d+) sh=(\d+) mn=(\d+) "
     r"tr=(\d+).*?boat=(\w+)")
@@ -323,13 +323,27 @@ def run_one(variant, ticks, build_dir, port):
     # -- What the whole cluster COST ------------------------------------
     mine_dispatches = [d2 for d2 in dispatches if d2[1] == "MINE"]
     boat_dispatches = [d2 for d2 in dispatches if d2[1].startswith("BUILD")]
-    trees = [int(m.group(1)) for m in TREES_RE.finditer(text)]
-    trees_spent = 0
-    for a, b in zip(trees, trees[1:]):
+    # Trees the HARVEST cost, which means trees spent BEFORE the cluster came
+    # out of the water. What the tank does with its wood afterwards is not this
+    # test's business: from 2026-09-03 the sea plan (and its 21-tree reserve)
+    # is released the tick the goal stops being that harvest, so the tank goes
+    # on to DEPLOY the pills it just fetched -- 4 wood a piece. That used to be
+    # impossible (builder.decide bailed `sea_trees_reserved` on the retired
+    # plan forever) and it is the whole point of the change, so counting those
+    # placements against the boat's budget would assert the bug back in.
+    trees = [(int(m.group(1)), int(m.group(2))) for m in TREES_RE.finditer(text)]
+    harvest_end = (done_tick // 2) if done_tick is not None else None
+    trees_spent, trees_after = 0, 0
+    for (ta, a), (_, b) in zip(trees, trees[1:]):
         if b < a:
-            trees_spent += a - b
+            if harvest_end is None or ta <= harvest_end:
+                trees_spent += a - b
+            else:
+                trees_after += a - b
     emit(f"  cluster cost: {len(mine_dispatches)} mine dispatch(es), "
-          f"{len(boat_dispatches)} boat build(s), {trees_spent} trees spent")
+          f"{len(boat_dispatches)} boat build(s), {trees_spent} trees spent"
+          + (f" (+{trees_after} after the cluster was aboard, brain tick > "
+             f"{harvest_end})" if trees_after else ""))
     for (x, y), got in sorted(per_pill.items()):
         emit(f"    pill ({x},{y}): {'collected' if got else 'LEFT at sea'}")
 
@@ -596,9 +610,16 @@ def check(variant, plans, subs, rejects, aborts, dispatches,
         if closest_afloat is not None and closest_afloat <= PILLBOX_RANGE_TILES:
             return False, (f"the boat came within {closest_afloat:.2f} tiles of "
                            f"the hostile pill (its circle is {PILLBOX_RANGE_TILES})")
-        if final_carry is not None and final_carry != 2:
+        # The split raft is worth exactly 2, and the per-pill check above
+        # already says WHICH 2 came out of the water (a placed pill is alive
+        # somewhere else, so it still reads as collected). Carry is only a
+        # ceiling: more than 2 would mean the covered member was fetched
+        # anyway. FEWER is fine and now normal -- since the sea plan is
+        # released with the goal (2026-09-03) the tank can afford to deploy
+        # what it fetched instead of driving around with it.
+        if final_carry is not None and final_carry > 2:
             return False, (f"the tank ended carrying {final_carry} pills; the "
-                           f"split raft is worth exactly 2")
+                           f"split raft is worth at most 2")
         if done_tick is None:
             done_tick = 0
         return True, (f"raft SPLIT: {want_taken[0]} and {want_taken[1]} taken, "
