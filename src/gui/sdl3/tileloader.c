@@ -248,6 +248,129 @@ static void blitRGBA(SDL_Surface *sheet, int dstX, int dstY,
     }
 }
 
+/* Copy one slot's RGBA pixels back out of the sheet surface.  The sheet is
+ * plain RGBA32 memory built by this file, so the slot already holds the
+ * final scaled sprite and nothing needs reloading. */
+static void readSheetRGBA(const SDL_Surface *sheet, int srcX, int srcY,
+                          int w, int h, unsigned char *pixels) {
+    if (!pixels) return;
+    const unsigned char *src = (const unsigned char *)sheet->pixels;
+    int pitch = sheet->pitch;
+    SDL_memset(pixels, 0, (size_t)(w * h * 4));
+    for (int row = 0; row < h; row++) {
+        if (srcY + row < 0 || srcY + row >= sheet->h) continue;
+        const unsigned char *srcRow = src + (srcY + row) * pitch + srcX * 4;
+        unsigned char *dstRow = pixels + row * w * 4;
+        for (int col = 0; col < w; col++) {
+            if (srcX + col < 0 || srcX + col >= sheet->w) continue;
+            dstRow[col * 4 + 0] = srcRow[col * 4 + 0];
+            dstRow[col * 4 + 1] = srcRow[col * 4 + 1];
+            dstRow[col * 4 + 2] = srcRow[col * 4 + 2];
+            dstRow[col * 4 + 3] = srcRow[col * 4 + 3];
+        }
+    }
+}
+
+/* Rotate a square RGBA sprite about its centre.  Every destination pixel's
+ * centre is turned back by the angle to find where it came from, and that
+ * point is read from the four texels around it.  A source point outside the
+ * sprite leaves the destination pixel fully transparent.
+ *
+ * The four texels are weighted by alpha as well as by distance: the colour
+ * is sum(weight * alpha * rgb) divided by sum(weight * alpha), so a fully
+ * transparent texel contributes no colour at all.  Plain bilinear would drag
+ * the colour of transparent texels into the sprite's edges, and the sheet's
+ * colour-keyed pixels keep their green after the conversion to RGBA — that
+ * produced visible green fringing here once already.  Do not simplify this
+ * back to a straight four-way average. */
+static void rotateRGBA(const unsigned char *src, unsigned char *dst,
+                       int size, float degrees) {
+    const float rad = degrees * 3.14159265358979323846f / 180.0f;
+    const float cs = SDL_cosf(rad);
+    const float sn = SDL_sinf(rad);
+    const float centre = (float)size * 0.5f;
+
+    SDL_memset(dst, 0, (size_t)(size * size * 4));
+
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            /* This pixel's centre relative to the sprite centre, turned back
+               by the angle.  y grows downward, so a positive angle here is a
+               clockwise turn on screen. */
+            float dx = (float)x + 0.5f - centre;
+            float dy = (float)y + 0.5f - centre;
+            float sx = ( cs * dx + sn * dy) + centre - 0.5f;
+            float sy = (-sn * dx + cs * dy) + centre - 0.5f;
+
+            /* No texel can reach this far out, so the pixel stays clear. */
+            if (sx <= -1.0f || sx >= (float)size ||
+                sy <= -1.0f || sy >= (float)size) {
+                continue;
+            }
+
+            int x0 = (int)SDL_floorf(sx);
+            int y0 = (int)SDL_floorf(sy);
+            float fx = sx - (float)x0;
+            float fy = sy - (float)y0;
+
+            float aSum = 0.0f, rSum = 0.0f, gSum = 0.0f, bSum = 0.0f;
+            for (int j = 0; j < 2; j++) {
+                int ty = y0 + j;
+                float wy = j ? fy : 1.0f - fy;
+                for (int i = 0; i < 2; i++) {
+                    int tx = x0 + i;
+                    float wx = i ? fx : 1.0f - fx;
+                    /* Off the edge reads as fully transparent, which adds
+                       neither colour nor alpha. */
+                    if (tx < 0 || tx >= size || ty < 0 || ty >= size) continue;
+                    const unsigned char *sp = src + (ty * size + tx) * 4;
+                    float w = wx * wy;
+                    float wa = w * (float)sp[3];
+                    aSum += wa;
+                    rSum += wa * (float)sp[0];
+                    gSum += wa * (float)sp[1];
+                    bSum += wa * (float)sp[2];
+                }
+            }
+            if (aSum <= 0.0f) continue;
+
+            unsigned char *dp = dst + (y * size + x) * 4;
+            dp[0] = (unsigned char)(rSum / aSum + 0.5f);
+            dp[1] = (unsigned char)(gSum / aSum + 0.5f);
+            dp[2] = (unsigned char)(bSum / aSum + 0.5f);
+            /* The four weights sum to one, so aSum is already the blended
+               alpha. */
+            dp[3] = (unsigned char)(aSum + 0.5f);
+        }
+    }
+}
+
+/* Index of a sprite in gTileMap[] by name, -1 when there is none.  The
+ * sixteen frames of one group are neither adjacent nor in order in the
+ * table, so every frame is found by name rather than by offset. */
+static int tileMapIndexOf(const char *name) {
+    for (int i = 0; gTileMap[i].name != NULL; i++) {
+        if (strcmp(gTileMap[i].name, name) == 0) return i;
+    }
+    return -1;
+}
+
+/* The sprite groups whose sixteen frames are facings, listed rather than
+ * inferred from "has sixteen frames": pillbox_good_00..15 and
+ * pillbox_evil_00..15 run to sixteen too, but those are armour levels and
+ * turning them would be wrong.
+ *
+ * Shells are left out on purpose.  Their sprites change size by direction —
+ * SHELL_0 is 3x4, SHELL_4 is 4x3, SHELL_2 is 4x4 in src/gui/tiles.h — so a
+ * rotated copy would not fit the slot it lands in.  They are turned at draw
+ * time instead. */
+static const char *const kRotationGroups[] = {
+    "tank_self", "tank_good", "tank_evil",
+    "tank_selfboat", "tank_goodboat", "tank_evilboat"
+};
+
+#define ROTATION_GROUP_FRAMES 16
+
 /* Rasterize SVG bytes at the given size.  nanosvg parses in place, so `data`
  * must be writable and NUL-terminated at [len] — both SDL_LoadFile and
  * skinSourceRead hand back a buffer like that.
@@ -567,9 +690,11 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
     const char *skinLabel = "none";
     SkinInfo    skinInfo;
     int         svgCap = 0;
+    bool        inGameRotate = false;
     if (skin) {
         skinSourceReadIni(skin, &skinInfo);
         svgCap = skinInfo.maxPixelDensity;
+        inGameRotate = skinInfo.inGameRotate != 0;
         if (skin == skinGetActiveSource() && skinGetActive()[0] != '\0') {
             skinLabel = skinGetActive();
         } else {
@@ -588,6 +713,13 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
     int svgCount = 0, pngCount = 0, bmpCount = 0;
     int skinSvgCount = 0, skinPngCount = 0, skinSheetCount = 0;
     int skinDensityCount = 0;
+    int rotatedCount = 0;
+
+    /* Which sprites came out of the skin rather than out of data/svg/ or
+       data/skin.bmp, indexed the same way as gTileMap[].  The static assert
+       at the top of the file is what makes that index safe here too. */
+    bool skinSupplied[SKIN_DENSITY_MAX_SPRITES];
+    SDL_memset(skinSupplied, 0, sizeof(skinSupplied));
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         const TileMapEntry *e = &gTileMap[i];
@@ -686,6 +818,10 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
             }
         }
 
+        /* Everything above this point is the skin's own art; everything below
+           is the built-in chain. */
+        skinSupplied[i] = loaded;
+
         /* Try SVG first — rasterized at scaled size. */
         SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/svg/%s.svg", basePath, e->name);
         if (!loaded && tryLoadSVG(pathBuf, w, h, tmpBuf, rast)) {
@@ -710,11 +846,76 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
         }
     }
 
-    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, tile detail=%s, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d @Nx, %d sheet sprites from a density %d sheet",
+    /* A skin with InGameRotate=1 draws one north-facing frame per tank group
+       and leaves the other fifteen to be turned from it.  Filling them into
+       the sheet here keeps every consumer — the status bar, the ImGui atlas
+       icons, the map editor, the log viewer, the menu background — working
+       without knowing anything about rotation. */
+    if (inGameRotate && tmpBuf) {
+        unsigned char *frame0 = (unsigned char *)SDL_malloc(
+            (size_t)(maxSpriteSize * maxSpriteSize * 4));
+
+        for (int g = 0;
+             frame0 && g < (int)(sizeof(kRotationGroups) /
+                                 sizeof(kRotationGroups[0]));
+             g++) {
+            char nameBuf[64];
+
+            SDL_snprintf(nameBuf, sizeof(nameBuf), "%s_00", kRotationGroups[g]);
+            int baseIdx = tileMapIndexOf(nameBuf);
+            /* No _00 from the skin means there is nothing of the author's to
+               turn, so the whole group keeps the built-in art. */
+            if (baseIdx < 0 || !skinSupplied[baseIdx]) continue;
+
+            const TileMapEntry *base = &gTileMap[baseIdx];
+            /* Turning about the centre only lands back in the same slot when
+               the sprite is square.  Every group here is 16x16 at density 1,
+               but check it rather than trust it. */
+            if (base->width != base->height) {
+                WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                        "tileLoaderBuildSheet: %s_00 is %dx%d, not square; not rotating this group",
+                        kRotationGroups[g], base->width, base->height);
+                continue;
+            }
+
+            int size = base->width * scale;
+            readSheetRGBA(sheet, base->sheetX * scale, base->sheetY * scale,
+                          size, size, frame0);
+
+            for (int f = 1; f < ROTATION_GROUP_FRAMES; f++) {
+                SDL_snprintf(nameBuf, sizeof(nameBuf), "%s_%02d",
+                             kRotationGroups[g], f);
+                int idx = tileMapIndexOf(nameBuf);
+                if (idx < 0) continue;
+                /* A facing the author drew always beats a rotated one. */
+                if (skinSupplied[idx]) continue;
+
+                const TileMapEntry *m = &gTileMap[idx];
+                if (m->width != base->width || m->height != base->height) {
+                    WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                            "tileLoaderBuildSheet: %s is %dx%d, not %dx%d like _00; leaving it alone",
+                            nameBuf, m->width, m->height,
+                            base->width, base->height);
+                    continue;
+                }
+
+                /* Frame 0 faces north and the frames go clockwise, so this
+                   is a clockwise turn of one sixteenth of a circle per
+                   frame. */
+                rotateRGBA(frame0, tmpBuf, size, (float)f * 22.5f);
+                blitRGBA(sheet, m->sheetX * scale, m->sheetY * scale,
+                         size, size, tmpBuf);
+                rotatedCount++;
+            }
+        }
+        SDL_free(frame0);
+    }
+
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: scale=%d, sheet=%dx%d, tile detail=%s, loaded %d SVG, %d PNG, %d BMP fallback sprites; skin=%s: %d SVG, %d PNG, %d @Nx, %d sheet sprites from a density %d sheet, %d slots filled by rotation",
             scale, sheetW, sheetH, tileDetailName(mode),
             svgCount, pngCount, bmpCount,
             skinLabel, skinSvgCount, skinPngCount, skinDensityCount,
-            skinSheetCount, skinSheetDensity);
+            skinSheetCount, skinSheetDensity, rotatedCount);
 
     SDL_free(tmpBuf);
     if (rast) nsvgDeleteRasterizer(rast);
