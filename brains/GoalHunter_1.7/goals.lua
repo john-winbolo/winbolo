@@ -8642,22 +8642,31 @@ local function sea_set_sub(state, g, to, reason)
     state.tick or 0, from, tostring(to), tostring(reason)))
 end
 
+-- The RELEASE half of an abort, on its own: forget the plan and everything
+-- that hangs off it. Extracted so the goal-change release below runs exactly
+-- the same code as sea_abort rather than a second, drifting copy of it.
+-- Optionally blacklists the entrance S (a bad entrance, not a bad moment).
+local function sea_release_live(state, sea, blacklist_S)
+  local now = state.tick or 0
+  if blacklist_S and sea and sea.S then
+    state._sea_blacklist = state._sea_blacklist or {}
+    state._sea_blacklist[sea.S[2] * 256 + sea.S[1]] =
+      now + (C.SEA_PILL_BLACKLIST_TICKS or 1500)
+  end
+  state._sea = nil          -- force a fresh plan next tick
+  state._sea_live = nil
+  state._sea_afloat = nil
+  state._sea_nogo = nil
+end
+
 local function sea_abort(state, g, reason, blacklist_S)
   local now = state.tick or 0
   print2(string.format("SEA_ABORT t=%d reason=%s sub=%s S=%s", now, tostring(reason),
     tostring(g.substate),
     (g.sea and g.sea.S) and string.format("(%d,%d)", g.sea.S[1], g.sea.S[2]) or "-"))
-  if blacklist_S and g.sea and g.sea.S then
-    state._sea_blacklist = state._sea_blacklist or {}
-    state._sea_blacklist[g.sea.S[2] * 256 + g.sea.S[1]] =
-      now + (C.SEA_PILL_BLACKLIST_TICKS or 1500)
-  end
+  sea_release_live(state, g.sea, blacklist_S)
   g.sea = nil
   g.substate = nil
-  state._sea = nil          -- force a fresh plan next tick
-  state._sea_live = nil
-  state._sea_afloat = nil
-  state._sea_nogo = nil
   attack.clear_attack_goal(state, "sea harvest abort: " .. tostring(reason))
 end
 
@@ -8798,6 +8807,37 @@ function M.sea_update(state, world, info)
     if mine then sea_live_attach(state, g, cid) end
   end
   if not (g and g.kind == "capture_pill" and g.sea) then
+    -- THE PLAN ENDS WITH THE GOAL (T = 0, no grace window).
+    --
+    -- state._sea_live exists for ONE reason: a capture_pill goal object is
+    -- rebuilt on every replan, and hanging the plan solely off the goal made
+    -- each rebuild restart the chain at entrance_plan. That is a SAME-GOAL
+    -- concern. Keeping the plan alive while the tank is doing something else
+    -- buys a slightly smoother resume after a detour and costs
+    -- sea.trees_need (21) frozen trees for as long as the detour lasts --
+    -- because both readers (builder_pool.tree_reserve's `sea` term and
+    -- builder.decide's sea rung) are keyed on the LIVE plan, not on the goal.
+    --
+    -- 20260903_105448 bot2: the harvest's LGM died at t=28997, the tank moved
+    -- on, and nothing ever retired the plan. For the remaining 20 minutes the
+    -- reserve read base 4 + pills 16 + sea 21 = 41 against 21 trees, so every
+    -- repair and every blocker wall was refused (BP_DENY tree_reserve(41,21,1))
+    -- while the bot stood next to three damaged friendly pills.
+    --
+    -- Dropping it is not giving up: the mine and the boat are visible terrain,
+    -- perception still flags whatever is left in the water, and the next
+    -- rescan prices a fresh plan for it. The entrance is NOT blacklisted --
+    -- a goal change says nothing bad about the entrance.
+    if state._sea_live then
+      local L = state._sea_live
+      print2(string.format(
+        "SEA_RELEASE t=%d reason=goal_changed goal=%s sub=%s cluster=%s"
+        .. " trees_need=%d -- the plan and its tree reserve end with the goal",
+        state.tick or 0, tostring(g and g.kind or "none"),
+        tostring(L.substate), tostring(L.cluster),
+        (L.sea and L.sea.trees_need) or 0))
+      sea_release_live(state, L.sea, false)
+    end
     state._sea_afloat = nil
     state._sea_nogo = nil
     return
