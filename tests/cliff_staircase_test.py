@@ -31,6 +31,11 @@ import glob
 import subprocess
 from pathlib import Path
 
+# -asap by default: ticks run back-to-back instead of one per 20 ms of wall
+# clock. Same seed -> byte-identical game, just faster. --no-asap (or
+# WINBOLO_ASAP=0) puts this run back on the 20 ms live-game pacing.
+from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
@@ -73,7 +78,7 @@ def run(ticks, build_dir):
            "-ai", "yesfull",
            "-limit", "20",
            "-brain-debug", "-seed", "42", "-ticks", str(ticks),
-           "-nowinbolonet", "-quiet", "-threads", "1"]
+           "-nowinbolonet", "-quiet", "-threads", "1"] + asap_args()
     subprocess.run(cmd, cwd=str(build_dir), env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    timeout=max(240, ticks // 40))
@@ -139,6 +144,8 @@ def main():
     ticks = 4000
     build = DEFAULT_BUILD
     args = sys.argv[1:]
+    take_asap_flag(args)      # consumes --asap / --no-asap
+    print(pacing_line(""))
     i = 0
     while i < len(args):
         if args[i] == "--ticks":

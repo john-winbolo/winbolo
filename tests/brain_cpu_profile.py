@@ -98,6 +98,8 @@ import sys
 import time
 from pathlib import Path
 
+from asap import asap_args, asap_mode, pacing_line, take_asap_flag
+
 ROOT = Path(__file__).resolve().parent.parent
 DS = ROOT / "debug_sessions"
 OUT = ROOT / "cpuprof_out"
@@ -126,15 +128,20 @@ BASE = [
     "-brain-tier", "10",
     "-allow-unsafe-brains",
 ]
-# WINBOLO_ASAP=1 adds -asap, which runs ticks back-to-back instead of one per
+# -asap is now the DEFAULT (see tests/asap.py); asap_args() is spliced into the
+# command line in run_mode().  It runs ticks back-to-back instead of one per
 # 20 ms of wall clock.  It does not change what a think does (the -asap games
 # are byte-identical by -snapjson), it just removes the idle time between
 # ticks, so a 12000-tick run takes ~15 s instead of ~120 s.  That makes it
 # practical to INTERLEAVE before/after runs, which matters: this machine drifts
 # ~20% over an hour of back-to-back measurement, enough to swamp the effects
 # being measured if A and B are an hour apart.
-if os.environ.get("WINBOLO_ASAP") == "1":
-    BASE.append("-asap")
+#
+# --no-asap (or WINBOLO_ASAP=0) goes back to 20 ms pacing.  Do that when the
+# number you want is "what does this cost in a REAL game" with the idle time
+# in the denominator (e.g. eff_hz / the braindbg_perf ms-per-tick windows read
+# against the 50 Hz budget); the per-think distributions themselves are
+# pacing-independent, which is the whole point of measuring them.
 # -brain-tier 10 is redundant with -brain-no-budget-kill (a 1000 ms budget
 # already drives the derived tier to 10) but makes the pin explicit, so every
 # mode does the SAME amount of work and the only difference is debug output.
@@ -206,7 +213,7 @@ def run_mode(mode, ticks, seed, port, tag):
         for f in ROOT.glob(pat):
             f.unlink()
 
-    cmd = [str(ROOT / DS_EXE)] + BASE + [
+    cmd = [str(ROOT / DS_EXE)] + BASE + asap_args() + [
         "-brain", brain, "-port", str(port), "-seed", str(seed),
         "-ticks", str(ticks)] + extra
 
@@ -252,6 +259,7 @@ def run_mode(mode, ticks, seed, port, tag):
 
     meta = {
         "mode": mode, "ticks": ticks, "seed": seed, "wall_s": round(wall, 1),
+        "pacing": asap_mode(),
         "session": sess.name if sess else None,
         "cmd": " ".join(cmd[1:]),
         "contention_before": contention_before,
@@ -378,7 +386,7 @@ def parse_session_sizes(sess):
 def report(sess, probe, meta, warmup=200, topn=8, us_total=None):
     print("=" * 78)
     print(f"MODE {meta['mode']}   ticks={meta['ticks']} seed={meta['seed']} "
-          f"wall={meta['wall_s']}s")
+          f"wall={meta['wall_s']}s pacing={meta.get('pacing', '?')}")
     print(f"session: {sess.name if sess else '(none)'}")
     if meta["contention_before"] or meta["contention_after"]:
         print("CONTENTION: other WinBolo processes were running:")
@@ -531,7 +539,17 @@ def main():
     ap.add_argument("--summary", action="store_true")
     ap.add_argument("--keep", action="store_true",
                     help="keep the .btr / big streams (default: delete them)")
+    ap.add_argument("--no-asap", dest="no_asap", action="store_true",
+                    help="run the server at the live 20 ms/tick pacing instead "
+                         "of -asap (same as WINBOLO_ASAP=0)")
+    ap.add_argument("--asap", dest="force_asap", action="store_true",
+                    help="force -asap on even under WINBOLO_ASAP=0 (the default)")
     a = ap.parse_args()
+    # Feed the two switches through the shared resolver so the CLI beats the
+    # WINBOLO_ASAP environment variable exactly as it does in the scenario tests.
+    take_asap_flag((["--no-asap"] if a.no_asap else [])
+                   + (["--asap"] if a.force_asap else []))
+    print(pacing_line(""))
 
     OUT.mkdir(exist_ok=True)
 
@@ -541,7 +559,8 @@ def main():
     if a.report:
         sess = Path(a.report)
         meta = {"mode": "(reported)", "ticks": a.ticks, "seed": a.seed,
-                "wall_s": 0, "contention_before": [], "contention_after": [],
+                "wall_s": 0, "pacing": "(from the run's *_meta.json)",
+                "contention_before": [], "contention_after": [],
                 "contention_checked": False}
         report(sess, {}, meta, a.warmup)
         return
