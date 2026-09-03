@@ -24,6 +24,15 @@
  *  out of that set keep the tile they last carried, so what
  *  the player has walked past stays as they left it.
  *
+ *  Two kinds of square are held current wherever they are,
+ *  because the status panels report both live and a frozen
+ *  square would leave the map contradicting them: the one a
+ *  pillbox has just been lifted from, and every base's. A
+ *  base square is its alliance and nothing else. The lifted
+ *  pill's square is the one place a square outside a live
+ *  region reads current ground, which is one square, and the
+ *  alternative is a pillbox drawn where there is none.
+ *
  *  The memory opens seeded: when a map lands, every square
  *  is stamped once from it in the remembered (not-live)
  *  style, so the whole map reads dimmed from the first
@@ -37,6 +46,7 @@
 
 #include "global.h"
 #include "overview_map.h"
+#include "bases.h"
 #include "game_sim.h"
 #include "pillbox.h"
 #include "viewport.h"
@@ -237,8 +247,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   BYTE useMY;    /* Centre of that region */
   bool changed;  /* Did anything move this update */
   BYTE numPills; /* Pills on the map */
+  BYTE numBases; /* Bases on the map */
   bool nowInTank;      /* Is this pill being carried this update */
-  OverviewRect square; /* The one square a carried pill was lifted from */
+  OverviewRect square; /* A single square being held current on its own */
   int idx;       /* Which prevLive rect the replay is up to */
   int i;         /* Looping variable */
 
@@ -328,6 +339,31 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
       }
     }
     om->pillWasInTank[i] = nowInTank;
+  }
+
+  /* Ownership stamp. A base changing hands shows on the status panel the
+   * moment it happens, whoever took it, so a map still drawing the old colour
+   * on a square the player has walked away from is the map contradicting the
+   * panel. Every base square outside the live regions is kept current
+   * instead. It gives nothing else away: a base square's tile is its
+   * alliance and nothing more - the per-square calculator answers from the
+   * base before it looks at terrain or mines - so this says only what the
+   * panel is already saying. Dead does not enter into it, because a dead base
+   * draws in its owner's colour and the tile does not move.
+   *
+   * A base inside a live region is skipped and left to the pass below, which
+   * is about to write the square anyway. */
+  numBases = basesGetNumBases(&sim->bs);
+  for (i = 0; i < (int)numBases; i++) {
+    square.left = square.right = (int)sim->bs->item[i].x;
+    square.top = square.bottom = (int)sim->bs->item[i].y;
+    if (overviewPointInRects(om->live, om->liveCount, square.left,
+                             square.top) == TRUE) {
+      continue;
+    }
+    if (overviewStampRect(om, sim, myPlayerNum, &square, FALSE) == TRUE) {
+      changed = TRUE;
+    }
   }
 
   for (i = 0; i < om->liveCount; i++) {

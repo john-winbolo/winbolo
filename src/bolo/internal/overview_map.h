@@ -58,6 +58,11 @@ int  overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
  * memory, and gives any region that has just stopped being live one last
  * stamp so it freezes as it is now rather than as it was a tick ago.
  *
+ * Two single squares are also written outside any live region, so the map
+ * cannot contradict the status panels, which report both of these live: the
+ * square a pillbox has just been lifted from, on the tick it goes in-tank,
+ * and every base's own square, on any tick its tile has moved.
+ *
  * tankDeathWait says the tank is still in its slot but dead. It keeps its
  * block live on the square it last held - the caller has no position to give
  * for a dead tank - so the player watches the explosion and the ground round
