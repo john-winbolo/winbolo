@@ -671,10 +671,29 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         }
     }
     {
-        bool on = voiceLoopbackIsEnabled();
-        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK), &on)) {
-            voiceLoopbackSetEnabled(on);
+        /* Records first and plays back after, rather than monitoring live:
+           on laptop speakers a live monitor is a feedback loop that howls.
+           Scoped, because the cancel shares its label with the buttons the
+           in-game overlay puts in this same window. */
+        ImGui::PushID("voiceMicTest");
+        VoiceMicTestState micTest = voiceMicTestGetState();
+        if (micTest == VOICE_MICTEST_IDLE) {
+            if (ImGui::Button(langGetText(STR_DLGSETTINGS_VOICE_LOOPBACK))) {
+                voiceMicTestStart();
+            }
+        } else {
+            if (ImGui::Button(langGetText(STR_CANCEL))) {
+                voiceMicTestCancel();
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(
+                langGetText(micTest == VOICE_MICTEST_RECORDING
+                                ? STR_DLGSETTINGS_VOICE_MICTEST_RECORDING
+                                : STR_DLGSETTINGS_VOICE_MICTEST_PLAYING));
+            ImGui::SameLine();
+            ImGui::ProgressBar(voiceMicTestProgress(), ImVec2(200.0f, 0.0f));
         }
+        ImGui::PopID();
     }
 #if defined(WINBOLO_VOICE_AEC)
     {

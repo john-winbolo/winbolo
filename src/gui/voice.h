@@ -35,7 +35,7 @@ extern "C" {
 struct ClientSim;
 
 /* How captured audio reaches the other players.
- *  OFF  - never transmits; the microphone runs only for the loopback test.
+ *  OFF  - never transmits; the microphone runs only for the microphone test.
  *  PTT  - transmits while the push-to-talk key is held. The default.
  *  OPEN - transmits while the captured level is above the gate. */
 typedef enum {
@@ -43,6 +43,16 @@ typedef enum {
     VOICE_MODE_PTT = 1,
     VOICE_MODE_OPEN = 2
 } VoiceMode;
+
+/* Where the microphone test has got to.
+ *  IDLE      - not running; the test wants nothing.
+ *  RECORDING - the microphone is open and frames are being kept.
+ *  PLAYING   - what was kept is being played back to the speakers. */
+typedef enum {
+    VOICE_MICTEST_IDLE = 0,
+    VOICE_MICTEST_RECORDING,
+    VOICE_MICTEST_PLAYING
+} VoiceMicTestState;
 
 /*********************************************************
 *NAME:          voiceInit
@@ -71,32 +81,56 @@ bool voiceInit(void);
 void voiceCleanup(void);
 
 /*********************************************************
-*NAME:          voiceLoopbackSetEnabled
+*NAME:          voiceMicTestStart
 *PURPOSE:
-*  Starts or stops the microphone loopback test. While it
-*  is on, voiceTick plays captured audio back through the
-*  codec to the speakers.
-*
-*ARGUMENTS:
-*  on - true to start capturing, false to stop
-*********************************************************/
-void voiceLoopbackSetEnabled(bool on);
-
-/*********************************************************
-*NAME:          voiceLoopbackIsEnabled
-*PURPOSE:
-*  Returns whether the microphone loopback test is running.
+*  Starts the microphone test: records a few seconds and
+*  then plays them back. Only starts from idle, and only
+*  when the master switch is on and the recording device
+*  opens; otherwise it stays idle.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
-bool voiceLoopbackIsEnabled(void);
+void voiceMicTestStart(void);
+
+/*********************************************************
+*NAME:          voiceMicTestCancel
+*PURPOSE:
+*  Stops the microphone test wherever it has got to and
+*  returns it to idle, dropping what was recorded and
+*  whatever of it has not been played yet.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceMicTestCancel(void);
+
+/*********************************************************
+*NAME:          voiceMicTestGetState
+*PURPOSE:
+*  Returns where the microphone test has got to.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+VoiceMicTestState voiceMicTestGetState(void);
+
+/*********************************************************
+*NAME:          voiceMicTestProgress
+*PURPOSE:
+*  Returns how far through the current phase the microphone
+*  test is, as 0..1, for a progress bar. Zero when idle.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceMicTestProgress(void);
 
 /*********************************************************
 *NAME:          voiceSetEnabled
 *PURPOSE:
 *  The master switch. With it off nothing is captured, sent
-*  or played, whatever the mode and the loopback test say.
+*  or played, whatever the mode and the microphone test say.
 *  Switching off pauses the microphone but does not close it,
 *  so switching back on does not ask for it a second time.
 *
@@ -121,7 +155,7 @@ bool voiceIsEnabled(void);
 *  Chooses how captured audio reaches the other players.
 *  Opens the microphone if a transmitting mode is chosen and
 *  this is the first ask, and pauses it once no mode and no
-*  loopback test wants it. A mode change never leaves the
+*  microphone test wants it. A mode change never leaves the
 *  microphone latched open.
 *
 *ARGUMENTS:

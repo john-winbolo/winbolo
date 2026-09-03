@@ -34,6 +34,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "global.h"
 #include "client_net.h"
@@ -92,10 +93,14 @@
  * all. */
 #define VOICE_CAPTURE_RETRY_TICKS 50
 
+/* How long the microphone test records for.  Frames are 20 ms, so 150 of them
+ * is three seconds - long enough to say a whole sentence and hear it come
+ * back, short enough that nobody is left waiting on it. */
+#define VOICE_MICTEST_FRAMES 150
+
 static bool isInitialised = false;
 static VoiceEncoder *encoder = NULL;
 static VoiceDecoder *decoder = NULL;
-static bool loopbackOn = false;
 static bool voiceEnabled = true;
 static VoiceMode voiceMode = VOICE_MODE_PTT;
 static bool pushToTalkHeld = false;
@@ -107,6 +112,18 @@ static float inputLevel = 0.0f;
  * hangover counts the frames it is held open for after the level drops. */
 static bool gateOpen = false;
 static int gateHangover = 0;
+
+/* The microphone test.  What was recorded is kept as encoded frames rather
+ * than samples: the codec is what the other players hear through, so playing
+ * it back decoded is the honest answer to "how do I sound", and three seconds
+ * of packets cost a fraction of what the same three seconds of PCM would.
+ * micTestPlayed counts frames handed to the backend, not frames the device
+ * has finished with. */
+static VoiceMicTestState micTestState = VOICE_MICTEST_IDLE;
+static uint8_t micTestFrames[VOICE_MICTEST_FRAMES][CLIENT_VOICE_MAX_FRAME_BYTES];
+static uint8_t micTestLengths[VOICE_MICTEST_FRAMES];
+static int micTestRecorded = 0;
+static int micTestPlayed = 0;
 
 /* Whether the connection we are on carries this client's voice at all - it
  * has to exist, and a viewer's voice is not passed to the players.  Refreshed
@@ -160,8 +177,11 @@ static bool reportedSelfMuted = false;
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Returns whether anything still wants the microphone: the
-*  loopback test, or a mode that can put audio on the wire.
-*  The master switch overrides both.
+*  microphone test while it is recording, or a mode that can
+*  put audio on the wire.  The master switch overrides both.
+*
+*  The test wants it while recording and at no other time -
+*  playing back its recording is speakers only.
 *
 *  A mode that can transmit holds the recording device open
 *  even between words, so the level meter keeps reading and
@@ -175,7 +195,8 @@ static bool captureIsWanted(void) {
     if (!voiceEnabled) {
         return false;
     }
-    return loopbackOn || voiceMode != VOICE_MODE_OFF;
+    return micTestState == VOICE_MICTEST_RECORDING ||
+           voiceMode != VOICE_MODE_OFF;
 }
 
 /*********************************************************
@@ -184,9 +205,10 @@ static bool captureIsWanted(void) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Pauses the microphone once neither the loopback test nor
-*  a transmitting mode wants it any more.  They share one
-*  recording stream, so none of them may stop it on its own.
+*  Pauses the microphone once neither the microphone test
+*  nor a transmitting mode wants it any more.  They share
+*  one recording stream, so none of them may stop it on its
+*  own.
 *
 *ARGUMENTS:
 *  (none)
@@ -226,6 +248,45 @@ static bool startCaptureIfWanted(void) {
         return false;
     }
     return voiceBackendCaptureStart();
+}
+
+/*********************************************************
+*NAME:          micTestEnd
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns the microphone test to idle from wherever it had
+*  got to.  Every route out of the test comes through here,
+*  so the recording is dropped, the microphone released and
+*  the echo canceller reset exactly once however it ends.
+*
+*ARGUMENTS:
+*  discardPlayback - true to drop what is still queued for
+*                    the speakers, false to let it finish
+*********************************************************/
+static void micTestEnd(bool discardPlayback) {
+    if (micTestState == VOICE_MICTEST_IDLE) {
+        return;
+    }
+
+    micTestState = VOICE_MICTEST_IDLE;
+    micTestRecorded = 0;
+    micTestPlayed = 0;
+
+    if (discardPlayback) {
+        voiceBackendLoopbackClear();
+    }
+
+#if defined(WINBOLO_VOICE_AEC)
+    /* The test's reference was the player's own voice played back at them,
+     * which is not the room the canceller will meet in a game and is the one
+     * signal an adaptive filter cannot learn from.  What it took from that
+     * must not be carried in. */
+    voiceAecReset();
+#endif
+
+    stopCaptureIfIdle();
 }
 
 /*********************************************************
@@ -297,7 +358,6 @@ void voiceCleanup(void) {
     encoder = NULL;
     voiceDecoderDestroy(decoder);
     decoder = NULL;
-    loopbackOn = false;
     voiceEnabled = true;
     voiceMode = VOICE_MODE_PTT;
     pushToTalkHeld = false;
@@ -381,6 +441,9 @@ void voiceReset(void) {
     for (i = 0; i < MAX_TANKS; i++) {
         voiceForgetPlayer(i);
     }
+    /* A microphone test left running is per-connection state like any other:
+     * it must not be found still recording on the other side of this. */
+    micTestEnd(true);
     /* Forget what the last server was told, so the next connection is sent
      * this client's mic status rather than inheriting a match against a
      * server that never heard it. */
@@ -393,58 +456,87 @@ void voiceReset(void) {
 }
 
 /*********************************************************
-*NAME:          voiceLoopbackSetEnabled
+*NAME:          voiceMicTestStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Starts or stops the microphone loopback test.  Turning it
-*  on opens the recording device if this is the first ask,
-*  and stays off if there is no device to open or the user
-*  refuses the microphone.
-*
-*ARGUMENTS:
-*  on - true to start capturing, false to stop
-*********************************************************/
-void voiceLoopbackSetEnabled(bool on) {
-    if (!isInitialised || on == loopbackOn) {
-        return;
-    }
-
-    if (on) {
-        /* The master switch outranks the test - it is what decides whether
-         * the microphone runs at all. */
-        if (!voiceEnabled || !voiceBackendCaptureStart()) {
-            return;
-        }
-        loopbackOn = true;
-    } else {
-        loopbackOn = false;
-        voiceBackendLoopbackClear();
-#if defined(WINBOLO_VOICE_AEC)
-        /* The test's reference was the player's own voice played back at
-         * them, which is not the room the canceller will meet in a game and
-         * is the one signal an adaptive filter cannot learn from.  What it
-         * took from that must not be carried in. */
-        voiceAecReset();
-#endif
-        stopCaptureIfIdle();
-    }
-}
-
-/*********************************************************
-*NAME:          voiceLoopbackIsEnabled
-*AUTHOR:        John Morrison
-*CREATION DATE: 2026
-*LAST MODIFIED: 2026
-*PURPOSE:
-*  Returns whether the loopback test is running.
+*  Starts the microphone test recording.  Opens the
+*  recording device if this is the first ask, and stays idle
+*  if there is no device to open or the user refuses the
+*  microphone.  Does nothing if a test is already running.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
-bool voiceLoopbackIsEnabled(void) {
-    return loopbackOn;
+void voiceMicTestStart(void) {
+    if (!isInitialised || micTestState != VOICE_MICTEST_IDLE) {
+        return;
+    }
+
+    /* The master switch outranks the test - it is what decides whether the
+     * microphone runs at all. */
+    if (!voiceEnabled || !voiceBackendCaptureStart()) {
+        return;
+    }
+
+    micTestRecorded = 0;
+    micTestPlayed = 0;
+    micTestState = VOICE_MICTEST_RECORDING;
+}
+
+/*********************************************************
+*NAME:          voiceMicTestCancel
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Stops the microphone test wherever it had got to.  A
+*  cancel is the player asking for it to stop now, so what
+*  is still queued for the speakers goes with it.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceMicTestCancel(void) {
+    micTestEnd(true);
+}
+
+/*********************************************************
+*NAME:          voiceMicTestGetState
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns where the microphone test has got to.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+VoiceMicTestState voiceMicTestGetState(void) {
+    return micTestState;
+}
+
+/*********************************************************
+*NAME:          voiceMicTestProgress
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns how far through the current phase the microphone
+*  test is, as 0..1.  Zero when idle.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+float voiceMicTestProgress(void) {
+    if (micTestState == VOICE_MICTEST_RECORDING) {
+        return (float)micTestRecorded / (float)VOICE_MICTEST_FRAMES;
+    }
+    if (micTestState == VOICE_MICTEST_PLAYING && micTestRecorded > 0) {
+        return (float)micTestPlayed / (float)micTestRecorded;
+    }
+    return 0.0f;
 }
 
 /*********************************************************
@@ -454,8 +546,8 @@ bool voiceLoopbackIsEnabled(void) {
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  The master switch.  Off means no capture, nothing sent
-*  and nothing played, whatever the mode and the loopback
-*  test are set to.  The recording device is paused rather
+*  and nothing played, whatever the mode and the microphone
+*  test are doing.  The recording device is paused rather
 *  than closed, so switching back on does not ask for the
 *  microphone a second time.
 *
@@ -481,6 +573,7 @@ void voiceSetEnabled(bool on) {
     pushToTalkHeld = false;
     gateOpen = false;
     gateHangover = 0;
+    micTestEnd(true);
     voiceBackendLoopbackClear();
     stopCaptureIfIdle();
 
@@ -967,30 +1060,89 @@ void voiceReportState(struct ClientSim *cs) {
 }
 
 /*********************************************************
+*NAME:          micTestPlayTick
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Plays the microphone test's recording back, decoding the
+*  stored frames one at a time and keeping the playback
+*  stream topped up to the same depth a remote talker is
+*  held at.  Paced off that depth rather than off the tick,
+*  because voiceTick is called at whatever rate the loop
+*  calling it renders at, which is not the fifty frames a
+*  second the recording was made at.
+*
+*  Handing the last frame over ends the test.  The device
+*  still has a fraction of a second of it left to play, and
+*  that is left to finish on its own rather than waited for.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static void micTestPlayTick(void) {
+    int16_t pcm[VOICE_FRAME_SAMPLES];
+    int pops;
+    int queued;
+
+    for (pops = 0; pops < VOICE_PLAYBACK_MAX_POPS_PER_CALL; pops++) {
+        if (micTestPlayed >= micTestRecorded) {
+            micTestEnd(false);
+            return;
+        }
+
+        /* The queued depth is in whole 20 ms frames, so it compares directly
+         * against the target. */
+        queued = voiceBackendLoopbackQueuedFrames();
+        if (queued >= VOICE_PLAYBACK_TARGET_FRAMES) {
+            break;
+        }
+
+        if (voiceDecoderDecode(decoder, micTestFrames[micTestPlayed],
+                               (int)micTestLengths[micTestPlayed],
+                               pcm) != VOICE_FRAME_SAMPLES) {
+            /* A frame that will not decode costs the playback 20 ms and
+             * nothing else - the rest of the recording is still worth
+             * hearing. */
+            micTestPlayed++;
+            continue;
+        }
+        micTestPlayed++;
+
+#if defined(WINBOLO_VOICE_AEC)
+        /* What is played, not what was captured, and the depth is read
+         * before the hand-over, since that is what sits in front of this
+         * frame and so how long it is until the room hears it. */
+        voiceAecAddReference(pcm, queued);
+#endif
+        voiceBackendLoopbackPlay(pcm);
+    }
+}
+
+/*********************************************************
 *NAME:          voiceTick
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
 *  Drains whole captured frames, applies mic gain, and hands
-*  each encoded frame to the loopback test, the server, or
-*  both.  Then plays whatever the other players sent.  Main
-*  thread only.
+*  each encoded frame to the microphone test's recording,
+*  the server, or both.  Plays whatever the other players
+*  sent, and whatever the microphone test has recorded.
+*  Main thread only.
 *
 *ARGUMENTS:
 *  cs - the connected client, or NULL when there is no
-*       network (the loopback test still runs)
+*       network (the microphone test still runs)
 *********************************************************/
 void voiceTick(struct ClientSim *cs) {
     int16_t pcm[VOICE_FRAME_SAMPLES];
-    int16_t decodedPcm[VOICE_FRAME_SAMPLES];
     uint8_t packet[VOICE_MAX_PACKET];
     bool sending;
     int frame;
     int i;
     int got;
     int encodedLen;
-    int decodedSamples;
     float sample;
     float sumSquares;
 
@@ -1004,7 +1156,7 @@ void voiceTick(struct ClientSim *cs) {
 
     /* The connection has to be one that carries voice at all - the local
      * transport single-player attaches goes nowhere - and a viewer captures
-     * for the loopback test like anyone else, but its voice is not carried
+     * for the microphone test like anyone else, but its voice is not carried
      * to the players, so there is nothing to send.  Kept here rather than
      * asked for inside voiceIsTransmitting, which the settings dialog calls
      * with no client of its own. */
@@ -1033,6 +1185,12 @@ void voiceTick(struct ClientSim *cs) {
      * of one. */
     if (cs != NULL) {
         voiceReportState(cs);
+    }
+
+    /* Above the capture check: the test plays its recording back with the
+     * microphone closed, which is the whole point of recording it first. */
+    if (micTestState == VOICE_MICTEST_PLAYING) {
+        micTestPlayTick();
     }
 
     /* Nothing accumulates while the microphone is unwanted - the recording
@@ -1092,10 +1250,10 @@ void voiceTick(struct ClientSim *cs) {
 
         sending = voiceIsTransmitting();
 
-        /* Between words in push-to-talk, and with the loopback test off,
-         * the frame is only worth its level reading - which is already
-         * taken.  Encoding it would be work nobody consumes. */
-        if (!sending && !loopbackOn) {
+        /* Between words in push-to-talk, and with the microphone test not
+         * recording, the frame is only worth its level reading - which is
+         * already taken.  Encoding it would be work nobody consumes. */
+        if (!sending && micTestState != VOICE_MICTEST_RECORDING) {
             continue;
         }
 
@@ -1122,22 +1280,22 @@ void voiceTick(struct ClientSim *cs) {
             }
         }
 
-        if (loopbackOn) {
-            decodedSamples = voiceDecoderDecode(decoder, packet, encodedLen,
-                                                decodedPcm);
-            if (decodedSamples != VOICE_FRAME_SAMPLES) {
-                continue;
+        /* Kept at the same size a frame may be on the wire, so the test hears
+         * what a listener would.  A frame over that is dropped here exactly as
+         * the send above drops it. */
+        if (micTestState == VOICE_MICTEST_RECORDING &&
+            encodedLen <= CLIENT_VOICE_MAX_FRAME_BYTES) {
+            memcpy(micTestFrames[micTestRecorded], packet, (size_t)encodedLen);
+            micTestLengths[micTestRecorded] = (uint8_t)encodedLen;
+            micTestRecorded++;
+            if (micTestRecorded == VOICE_MICTEST_FRAMES) {
+                micTestState = VOICE_MICTEST_PLAYING;
+                micTestPlayed = 0;
+                /* The recording is done, so the test has no further use for
+                 * the microphone.  This closes it unless a transmitting mode
+                 * still wants it, and clears the level meter with it. */
+                stopCaptureIfIdle();
             }
-#if defined(WINBOLO_VOICE_AEC)
-            /* The loopback is playback the microphone will hear like any
-             * other, and on loudspeakers it is the only thing there is to
-             * cancel while the test runs.  What is played, not what was
-             * captured, and the depth is read before the hand-over, since
-             * that is what sits in front of this frame. */
-            voiceAecAddReference(decodedPcm,
-                                 voiceBackendLoopbackQueuedFrames());
-#endif
-            voiceBackendLoopbackPlay(decodedPcm);
         }
     }
 }

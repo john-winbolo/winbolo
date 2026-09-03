@@ -1839,7 +1839,7 @@ static const LangEntry langTable[] = {
 
     /* Voice section of the Display/Sound settings tab */
     {1948, "Voice"},
-    {1949, "Microphone loopback test"},
+    {1949, "Test microphone"},
     {1950, "Mic gain"},
     {1951, "Input level"},
     {1952, "Transmit voice"},
@@ -1871,6 +1871,10 @@ static const LangEntry langTable[] = {
 
     /* Voice settings — acoustic echo cancellation */
     {1972, "Echo cancellation"},
+
+    /* Voice settings — microphone test progress */
+    {1973, "Recording..."},
+    {1974, "Playing back..."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
