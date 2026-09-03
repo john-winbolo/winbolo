@@ -1316,8 +1316,30 @@ void botManagerOnGameStart(ServerSim *sim) {
         }
         tankCreate(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
 
-        /* Reset brain so full-map fill triggers again for aiFull bots */
-        bot->brain.isFirst = true;
+        /* Fresh Lua VM for the new round. Flagging isFirst on the old state
+         * (the previous behaviour) only re-ran the full-map fill and handed
+         * the brain one newtank=TRUE, which GoalHunter treats as a RESPAWN:
+         * its whole `state` table survived — tick counter, goal, last-known
+         * base/pill owners, influence, refuel target — so a game opened
+         * with the bot chasing a base from the previous map at brain tick
+         * ~1000 (debug session 20260903_030637 bot2 t=1087: goal
+         * refuel_at_base #8 (109,137) on a map whose base #8 is at
+         * (114,140)). Destroy + recreate instead: Brain.close on the old
+         * state, luaL_newstate + Brain.open on the new one, with the same
+         * seed/tier/debug wiring botManagerAddBot did (seeding happens
+         * inside luaBrainInstanceCreate; the budget hook and tier override
+         * are applied per think). Done AFTER the map + tank rebuild so
+         * Brain.open reads the new round's world. DEBUG_SESSION_DIR is not
+         * handed over here: the recorder opens the round's block on the
+         * first running tick, before any think, and publishes it to every
+         * bot then (serverLifecycleOpenBraindbgBlock) — exactly what a
+         * bot born at server startup gets. */
+        if (!botManagerReloadBrain(sim, bot, bot->brainPath)) {
+            WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "botManager: bot %d could not get a fresh brain for the new round; removing it",
+                    (int)i);
+            botManagerRemoveBot(sim, i);
+        }
     }
 }
 
