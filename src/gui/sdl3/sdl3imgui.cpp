@@ -206,6 +206,7 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
                                                 int *outW, int *outH, int *outX, int *outY);
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
+extern "C" void windowFullScreenChoose(bool on);
 extern "C" void windowSaveMap(struct ClientSim *cs);
 extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
@@ -3199,7 +3200,7 @@ static void renderMenuBar(ClientSim *cs) {
                                 cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen)) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
-            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), nullptr,
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
                                 cs != nullptr && clientSimIsRunning(cs))) {
                 overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
@@ -4326,6 +4327,28 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.key.windowID == SDL_GetWindowID(s_window)) {
             imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
             /* Do NOT forward to the game — key was consumed by the dialog. */
+            continue;
+        }
+
+        /* Alt+Enter is the full screen key, the way it is everywhere else.
+         * In a game that means the full screen map — the same toggle the File
+         * menu item and the Settings switch drive, which carries the window
+         * full screen with it; outside one there is no map to show, so it is
+         * the plain app full screen flag. Read here rather than through the
+         * bindings because it is a window command, not a game action: it is
+         * not in keyItems, so no binding can shadow it and it works while an
+         * ImGui panel has the keyboard. After the Key Setup capture above, so
+         * a player binding a key to Alt or Enter still gets the keystroke. */
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            (ev.key.mod & SDL_KMOD_ALT) != 0 &&
+            (ev.key.scancode == SDL_SCANCODE_RETURN ||
+             ev.key.scancode == SDL_SCANCODE_KP_ENTER)) {
+            if (cs != nullptr && clientSimIsRunning(cs)) {
+                sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+            } else {
+                windowFullScreenChoose(!gameFrontFullScreen);
+            }
             continue;
         }
 
@@ -6027,6 +6050,13 @@ void sdl3ImguiCleanup(void) {
        overviewInWindowSet's call, and stays full screen while app full screen
        is on. */
     overviewInWindowSet(false);
+    /* And the edge that brings it back has to be rearmed with it. A return to
+       the lobby keeps the ClientSim — winbolo.c skips the teardown on that
+       path — so clientSimIsRunning never goes false and the per-frame test
+       above never sees the not-running-then-running edge that reopens the map.
+       Left latched, the second game of a session came up windowed-view inside
+       a still-full-screen window, and the pop-out did not come back either. */
+    s_overviewWasRunning = false;
     inputGamepadShutdown();
     /* Before the loop: all of these were made on the Map Overview pop-out's
        renderer, which popOutDestroy tears down. */

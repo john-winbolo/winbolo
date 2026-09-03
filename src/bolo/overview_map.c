@@ -177,6 +177,7 @@ void overviewMapReset(OverviewMap *om) {
   om->lastTankMY = 0;
   om->haveLastTank = FALSE;
   memset(om->pillWasLive, 0, sizeof(om->pillWasLive));
+  memset(om->pillWasInTank, 0, sizeof(om->pillWasInTank));
   om->generation = 0;
   om->seenCount = 0;
 }
@@ -236,6 +237,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   BYTE useMY;    /* Centre of that region */
   bool changed;  /* Did anything move this update */
   BYTE numPills; /* Pills on the map */
+  bool nowInTank;      /* Is this pill being carried this update */
+  OverviewRect square; /* The one square a carried pill was lifted from */
   int idx;       /* Which prevLive rect the replay is up to */
   int i;         /* Looping variable */
 
@@ -301,6 +304,30 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
       }
     }
     idx++;
+  }
+
+  /* Pickup stamp. A pillbox that has just been lifted into a tank leaves the
+   * square it stood on, and the memory has to be told: the square is frozen,
+   * so nothing else will ever rewrite it and the map would keep drawing a
+   * pillbox on ground that has not had one since. Only the one square is
+   * restamped, and a pill leaves its map position behind when it is carried,
+   * so that position is the square the memory is showing it at.
+   *
+   * This says nothing the player was not already being told - the status
+   * panel draws every carried pill as in-tank, whoever is carrying it. Where
+   * it is put down is a different matter, and stays hidden: the new square is
+   * written only if it is one the player can see. */
+  numPills = pillsGetNumPills(&sim->pb);
+  for (i = 0; i < MAX_PILLS; i++) {
+    nowInTank = (i < (int)numPills) ? sim->pb->item[i].inTank : FALSE;
+    if (nowInTank == TRUE && om->pillWasInTank[i] == FALSE) {
+      square.left = square.right = (int)sim->pb->item[i].x;
+      square.top = square.bottom = (int)sim->pb->item[i].y;
+      if (overviewStampRect(om, sim, myPlayerNum, &square, FALSE) == TRUE) {
+        changed = TRUE;
+      }
+    }
+    om->pillWasInTank[i] = nowInTank;
   }
 
   for (i = 0; i < om->liveCount; i++) {

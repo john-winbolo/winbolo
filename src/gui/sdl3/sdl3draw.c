@@ -98,6 +98,13 @@ static SDL_Texture  *gTilesTex      = NULL;
 /* User option (winbolo.c): gray letterbox/pillarbox bars instead of black. */
 extern bool letterboxBarsGray;
 
+/* The status-panel label options the last game frame was drawn with. Every
+   game frame is handed them as arguments, but the returning-to-lobby frame
+   redraws the same map without going through that call; holding the last pair
+   keeps the labels from blinking off for the last moments of a round. */
+static bool gLastPillLabels = FALSE;
+static bool gLastBaseLabels = FALSE;
+
 /* Fill the whole window before the game render target is composited into
    gGameDestRect.  The exposed border is the letterbox/pillarbox area; make
    it gray instead of black when the option is on.  The fill only shows where
@@ -174,6 +181,11 @@ static float  gOverviewNewsSlide     = 1.0f;
 static Uint64 gOverviewNewsSlideTick = 0;
 #define OVERVIEW_NEWS_HOLD_MS  30000
 #define OVERVIEW_NEWS_SLIDE_MS 300
+
+/* How far the map is taken down behind the returning-to-lobby caption. Dark
+   enough that the caption reads and the round is plainly over, light enough
+   that the map is still the thing on screen. */
+#define OVERVIEW_LOBBY_DIM_ALPHA 150
 
 /* A whole classic frame at gZoomFactor, drawn offscreen so the HUD column can
    be cut out of it as source rects. gGameRenderTarget cannot be borrowed for
@@ -1766,6 +1778,11 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     return;
   }
 
+  /* Held for the returning-to-lobby frame, which redraws the map with no
+     arguments of its own. */
+  gLastPillLabels = showPillLabels;
+  gLastBaseLabels = showBaseLabels;
+
   if (gOverviewInWindow) {
     sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
     return;
@@ -2618,6 +2635,37 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
 
 void sdl3DrawReturningToLobby(ClientSim *cs) {
   if (!gRenderer) return;
+
+  /* Full screen map: keep drawing the map and put the caption over it behind
+     a dim. The classic path below draws the 15x15 chrome around a black
+     playfield, which is a different screen entirely — taking it while the
+     overview owns the window swapped the whole picture out from under the
+     player for the last moments of a round, in a window that is still full
+     screen. The map is what they have been looking at, so it stays. */
+  if (gOverviewInWindow) {
+    const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
+    int textW = 0;
+    int textH = 0;
+
+    sdl3DrawOverviewInWindowFrame(cs, gLastPillLabels, gLastBaseLabels);
+
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, OVERVIEW_LOBBY_DIM_ALPHA);
+    SDL_RenderFillRect(gRenderer, NULL);
+
+    if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
+      /* Centred on the map, which is the whole window bar the menu bar. The
+         frame above sets the rect it blitted to; before it has blitted once
+         there is nothing to centre on and the caption waits a frame. */
+      if (gOverviewRect.w > 0.0f && gOverviewRect.h > 0.0f) {
+        SDL_Color white = {200, 200, 200, 255};
+        sdl3RenderText(gFontMsg, caption, white,
+                       gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
+                       gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
+      }
+    }
+    return;
+  }
 
   sdl3DrawAdaptRenderTarget();
   bool tabletMode = uiModeIsTablet();

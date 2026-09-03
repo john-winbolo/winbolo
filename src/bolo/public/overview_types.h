@@ -63,6 +63,7 @@ typedef struct OverviewMap {
     BYTE         lastTankMX, lastTankMY;                 /* where the tank last had a live block */
     bool         haveLastTank;                           /* whether the two above mean anything yet */
     bool         pillWasLive[MAX_PILLS];                 /* pill i had a region last update */
+    bool         pillWasInTank[MAX_PILLS];               /* pill i was being carried last update */
     unsigned     generation;                             /* +1 per update that changed anything */
     unsigned     seenCount;                              /* squares with tile != OVERVIEW_UNSEEN */
 } OverviewMap;
