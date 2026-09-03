@@ -78,6 +78,12 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 
+/* Counter bumped every time the tile atlas is rebuilt. A caller that
+ * builds its own sheet from tileLoaderBuildSheet can hold the value it
+ * last saw and rebuild when it no longer matches — that is how a skin
+ * change reaches an atlas the renderer does not own. */
+unsigned int sdl3DrawGetTilesGeneration(void);
+
 /* TRUE if the caller is on the thread that created the renderer. The SDL
  * renderer / Metal command queue must only be touched from that thread, so
  * sim-tick front-end callbacks that would otherwise draw defer to the

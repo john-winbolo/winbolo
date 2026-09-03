@@ -41,6 +41,10 @@ typedef struct BgGame {
      * when they differ. NULL = uninitialised (no texture has been
      * built yet). */
     SDL_Renderer *texRenderer;
+    /* Tile-atlas generation tilesTex was built from. A skin change
+     * rebuilds the shared atlas without touching the renderer, so this
+     * is what tells this copy it is stale. */
+    unsigned int  tilesGeneration;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
     WORLD        viewCenterX;   /* Camera world position */
     WORLD        viewCenterY;

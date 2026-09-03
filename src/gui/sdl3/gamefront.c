@@ -75,6 +75,7 @@
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
+#include "skin_source.h"
 
 #include "everard_map.h"
 #include "lobby_bot_pools.h"
@@ -236,6 +237,11 @@ static bool gameFrontShowTutorialButton = TRUE;
  * string means the user has not picked one yet — Phase 5 startup runs
  * langAutoDetect() in that case. */
 static char gameFrontLanguageCode[32] = "";
+
+/* Persisted skin id ("user:foo", "builtin:bar"). Read by
+ * gameFrontGetPrefs and applied by gameFrontSetup before the first tile
+ * sheet is built. Empty string means the built-in assets. */
+static char gameFrontSkinId[SKIN_ID_MAX] = "";
 
 /* One-shot flag set by the Settings dialog's "Play Tutorial" button.
  * Consumed by the openSettings handler in gameFrontDialogs() so that
@@ -607,6 +613,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
 
+  /* Make the saved skin current before anything builds a tile sheet or
+   * loads the background. An id that no longer resolves leaves the
+   * built-in assets active. */
+  if (!skinSetActive(gameFrontSkinId) && gameFrontSkinId[0] != '\0') {
+    WB_LOG_DEBUG(WB_LOG_CAT_ASSET,
+                 "gameFrontStart: skin '%s' did not resolve — using the "
+                 "built-in assets", gameFrontSkinId);
+  }
+
   /* Apply persisted language, or auto-detect if this is a fresh
    * install (empty Language slot in the INI). Either way, this runs
    * before any dialog draws so langGetText() returns the right text
@@ -970,10 +985,6 @@ static bool gameFrontDialogs(void) {
     }
     case openLang:
       /* Language dialog disabled on SDL3 */
-      dlgState = openWelcome;
-      break;
-    case openSkins:
-      /* Skins dialog not yet ported */
       dlgState = openWelcome;
       break;
     case openUdp:
@@ -2953,6 +2964,12 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     uiUiScaleSet((UiScalePref)v);
   }
 
+  /* Skin id.  Applied in gameFrontSetup before the tile sheet is built;
+     an empty value keeps the built-in assets. */
+  prefsGetString("SETTINGS", "Skin", "", buff, FILENAME_MAX);
+  strncpy(gameFrontSkinId, buff, sizeof(gameFrontSkinId) - 1);
+  gameFrontSkinId[sizeof(gameFrontSkinId) - 1] = '\0';
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -3328,6 +3345,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large). */
   intToStr((int)uiUiScaleGet(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "UI Scale", buff);
+
+  /* Skin id, "" for the built-in assets. */
+  prefsSetString("SETTINGS", "Skin", skinGetActive());
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

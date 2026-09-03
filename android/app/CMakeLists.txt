@@ -197,7 +197,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_setname.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_skins.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keycap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
@@ -238,7 +237,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/tileloader.c
     ${PROJ_ROOT}/src/gui/sdl3/skin_source.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl_bmp.c
-    ${PROJ_ROOT}/src/gui/skins.c
     ${PROJ_ROOT}/src/gui/sdl3/input.c
     ${PROJ_ROOT}/src/gui/sdl3/input_touch.c
     ${PROJ_ROOT}/src/gui/sdl3/input_joystick.c

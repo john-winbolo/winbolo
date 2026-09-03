@@ -57,6 +57,7 @@
 #include "../ui_mode.h"
 #include "../../steam/steam_wrapper.h"
 #include "tileloader.h"
+#include "skin_source.h"
 #include "sdl_bmp.h"
 #include "glyphs.h"
 #include "global.h"
@@ -125,6 +126,9 @@ void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
+/* Bumped on every successful sheet build so a caller holding its own
+   atlas (bg_game) can tell that copy is stale after a skin change. */
+static unsigned int  gTilesGeneration = 0;
 
 /* Phase 4 render-target textures.
    Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -363,7 +367,12 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
   SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
+  gTilesGeneration++;
   return TRUE;
+}
+
+unsigned int sdl3DrawGetTilesGeneration(void) {
+  return gTilesGeneration;
 }
 
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading
@@ -375,13 +384,37 @@ void sdl3DrawReloadTiles(void) {
   sdl3LoadTiles();
 }
 
-/* Loads data/background.bmp as gBackgroundTex. */
+/* Loads background.bmp as gBackgroundTex: from the active skin when it
+ * carries one, otherwise from data/background.bmp beside the
+ * executable. */
 static bool sdl3LoadBackground(void) {
   if (gBackgroundTex != NULL) {
     return TRUE;
   }
 
-  gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, "data/background.bmp", false);
+  SkinSource *skin = skinGetActiveSource();
+  if (skin != NULL) {
+    void  *buf = NULL;
+    size_t len = 0;
+    if (skinSourceRead(skin, "background.bmp", &buf, &len)) {
+      SDL_IOStream *io = SDL_IOFromMem(buf, len);
+      if (io != NULL) {
+        /* closeio closes the stream, not the bytes behind it. */
+        gBackgroundTex = sdlLoadBmpStreamAsTexture(gRenderer, io, true, false);
+      }
+      SDL_free(buf);
+    }
+  }
+
+  if (gBackgroundTex == NULL) {
+    /* Use SDL_GetBasePath() so the file is found regardless of CWD. */
+    const char *basePath = SDL_GetBasePath();
+    if (!basePath) basePath = "";
+    char pathBuf[512];
+    SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/background.bmp", basePath);
+    gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, pathBuf, false);
+  }
+
   if (gBackgroundTex == NULL) {
     WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
     return FALSE;

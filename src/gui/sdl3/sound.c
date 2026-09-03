@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
+#include "skin_source.h"
 
 #define NUM_SOUNDS 31
 #define MAX_SOUND_SLOTS 16  /* Maximum simultaneous sounds */
@@ -142,13 +143,46 @@ static bool convertAudioData(const Uint8 *srcData, Uint32 srcSize,
 }
 
 /*********************************************************
+*NAME:          loadWavFromSkin
+*PURPOSE:
+*  Reads one WAV out of a skin and decodes it. Leaves the
+*  outputs untouched when the skin does not hold relName.
+*
+*ARGUMENTS:
+*  src       - Skin to read from
+*  relName   - Name of the WAV inside the skin
+*  spec      - Filled with the WAV's format
+*  data      - Filled with the WAV bytes (SDL_free by caller)
+*  length    - Filled with the byte count
+*
+*RETURNS:
+*  true if the skin held relName and it decoded
+*********************************************************/
+static bool loadWavFromSkin(SkinSource *src, const char *relName,
+                            SDL_AudioSpec *spec, Uint8 **data, Uint32 *length) {
+    void  *buf = NULL;
+    size_t len = 0;
+
+    if (!skinSourceRead(src, relName, &buf, &len)) {
+        return false;
+    }
+    /* closeio closes the stream, not the bytes behind it. */
+    bool ok = SDL_LoadWAV_IO(SDL_IOFromMem(buf, len), true, spec, data, length);
+    SDL_free(buf);
+    return ok;
+}
+
+/*********************************************************
 *NAME:          loadSoundFromFile
 *AUTHOR:        John Morrison
 *CREATION DATE: 2024
 *LAST MODIFIED: 2024
 *PURPOSE:
-*  Loads a WAV file from disk and converts it to the
-*  device audio format.
+*  Loads a WAV from the active skin or from disk and
+*  converts it to the device audio format.  The skin is
+*  tried under sounds/ first, then at its top level for
+*  the flat 1.x layout; a sound the skin lacks comes from
+*  data/sounds/ beside the executable.
 *
 *ARGUMENTS:
 *  basePath  - Base path to look for sounds
@@ -160,16 +194,29 @@ static bool convertAudioData(const Uint8 *srcData, Uint32 srcSize,
 *********************************************************/
 static bool loadSoundFromFile(const char *basePath, const char *filename, SoundData *sound) {
     SDL_AudioSpec wavSpec;
-    Uint8 *wavData;
-    Uint32 wavLength;
+    Uint8 *wavData = NULL;
+    Uint32 wavLength = 0;
     char fullPath[4096];
+    bool loaded = false;
 
     sound->data = NULL;
     sound->size = 0;
 
-    SDL_snprintf(fullPath, sizeof(fullPath), "%sdata/sounds/%s", basePath, filename);
+    SkinSource *skin = skinGetActiveSource();
+    if (skin != NULL) {
+        SDL_snprintf(fullPath, sizeof(fullPath), "sounds/%s", filename);
+        loaded = loadWavFromSkin(skin, fullPath, &wavSpec, &wavData, &wavLength);
+        if (!loaded) {
+            loaded = loadWavFromSkin(skin, filename, &wavSpec, &wavData, &wavLength);
+        }
+    }
 
-    if (!SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength)) {
+    if (!loaded) {
+        SDL_snprintf(fullPath, sizeof(fullPath), "%sdata/sounds/%s", basePath, filename);
+        loaded = SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength);
+    }
+
+    if (!loaded) {
         return false;
     }
 

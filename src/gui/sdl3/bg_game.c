@@ -153,6 +153,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         return false;
     }
     bg->texRenderer = renderer;
+    bg->tilesGeneration = sdl3DrawGetTilesGeneration();
 
     bg->valid = true;
     bg->createdTicks = SDL_GetTicks();
@@ -401,20 +402,28 @@ static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW,
     SDL_SetRenderScale(renderer, 1.0f, 1.0f);
 }
 
-/* If the SDL renderer has been destroyed and recreated (zoom change,
- * skin reload) since bg->tilesTex was built, rebuild the texture
- * against the current renderer. Cheap fast-path: a single pointer
- * compare when the renderer is unchanged. */
+/* Rebuild bg->tilesTex when it no longer matches the live renderer or
+ * the current tile atlas. A zoom change destroys and recreates the
+ * renderer; a skin change keeps the renderer and rebuilds the atlas in
+ * place, which the generation counter catches. Cheap fast-path: a
+ * pointer compare and an int compare when neither has moved. */
 static void bgGameEnsureTexture(BgGame *bg) {
     SDL_Renderer *cur = sdl3DrawGetRenderer();
-    if (bg->texRenderer == cur) return;
+    unsigned int gen = sdl3DrawGetTilesGeneration();
+    if (bg->texRenderer == cur && bg->tilesGeneration == gen) return;
 
-    /* The previous renderer is gone — its textures are already
-     * invalidated by SDL3 when SDL_DestroyRenderer ran. Calling
+    if (bg->texRenderer == cur) {
+        /* Same renderer, new atlas: the texture is still live and ours
+         * to destroy. */
+        if (bg->tilesTex) SDL_DestroyTexture(bg->tilesTex);
+    }
+    /* Otherwise the previous renderer is gone — its textures are
+     * already invalidated by SDL3 when SDL_DestroyRenderer ran. Calling
      * SDL_DestroyTexture on the stale handle is undefined behaviour,
      * so we elide the destroy and just NULL the field. */
     bg->tilesTex = NULL;
     bg->texRenderer = cur;
+    bg->tilesGeneration = gen;
     if (cur == NULL) return;   /* No renderer to rebuild against yet. */
 
     static Uint64 sLastTexErrLogMs = 0;
@@ -424,7 +433,7 @@ static void bgGameEnsureTexture(BgGame *bg) {
         if (now - sLastTexErrLogMs > 5000) {
             WB_LOG_ERROR(WB_LOG_CAT_ASSET,
                          "[BgGame] tileLoaderBuildSheet failed during "
-                         "renderer-recreate rebuild");
+                         "tile texture rebuild");
             sLastTexErrLogMs = now;
         }
         return;
@@ -438,7 +447,7 @@ static void bgGameEnsureTexture(BgGame *bg) {
         if (now - sLastTexErrLogMs > 5000) {
             WB_LOG_ERROR(WB_LOG_CAT_ASSET,
                          "[BgGame] SDL_CreateTextureFromSurface failed "
-                         "during renderer-recreate rebuild");
+                         "during tile texture rebuild");
             sLastTexErrLogMs = now;
         }
     }
