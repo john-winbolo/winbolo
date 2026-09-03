@@ -115,6 +115,10 @@ extern "C" {
   void windowSetVoiceVolume(float gain);
   void windowSetShowTankMicIcons(bool on);
   bool windowGetShowTankMicIcons(void);
+#if defined(WINBOLO_VOICE_AEC)
+  void windowSetVoiceEchoCancel(bool on);
+  bool windowGetVoiceEchoCancel(void);
+#endif
 #endif
   void windowMenuNewswire_toggle(struct ClientSim *cs);
   void windowMenuAssistant_toggle(struct ClientSim *cs);
@@ -672,6 +676,15 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             voiceLoopbackSetEnabled(on);
         }
     }
+#if defined(WINBOLO_VOICE_AEC)
+    {
+        bool echoCancel = windowGetVoiceEchoCancel();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_ECHOCANCEL),
+                            &echoCancel)) {
+            windowSetVoiceEchoCancel(echoCancel);
+        }
+    }
+#endif
     {
         float vol = voiceGetOutputVolume();
         ImGui::SetNextItemWidth(200.0f);

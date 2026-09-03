@@ -41,6 +41,9 @@
 #include "voice_core.h"
 #include "voice_backend.h"
 #include "voice.h"
+#if defined(WINBOLO_VOICE_AEC)
+#include "voice_aec.h"
+#endif
 
 /* Frames drained per voiceTick.  A tick that has been stalled long enough to
  * bank more than this leaves the excess queued for the ticks that follow,
@@ -257,6 +260,12 @@ bool voiceInit(void) {
         return false;
     }
 
+#if defined(WINBOLO_VOICE_AEC)
+    /* A canceller that will not create is not fatal - voice runs on
+     * uncancelled audio, which is what every build did before it existed. */
+    voiceAecInit();
+#endif
+
     isInitialised = true;
     return true;
 }
@@ -276,6 +285,9 @@ bool voiceInit(void) {
 void voiceCleanup(void) {
     voiceReset();
     voiceBackendShutdown();
+#if defined(WINBOLO_VOICE_AEC)
+    voiceAecShutdown();
+#endif
     voiceEncoderDestroy(encoder);
     encoder = NULL;
     voiceDecoderDestroy(decoder);
@@ -846,6 +858,7 @@ static void voicePlayRemote(struct ClientSim *cs) {
     int len;
     int i;
     int pops;
+    int queued;
 
     while ((len = clientSimNetReceiveVoice(cs, &fromPlayer, &seq, &flags,
                                            packet, (int)sizeof(packet))) > 0) {
@@ -877,8 +890,8 @@ static void voicePlayRemote(struct ClientSim *cs) {
         /* The queued depth is in whole 20 ms frames, so it compares directly
          * against the target. */
         for (pops = 0; pops < VOICE_PLAYBACK_MAX_POPS_PER_CALL; pops++) {
-            if (voiceBackendSpeakerQueuedFrames(i) >=
-                VOICE_PLAYBACK_TARGET_FRAMES) {
+            queued = voiceBackendSpeakerQueuedFrames(i);
+            if (queued >= VOICE_PLAYBACK_TARGET_FRAMES) {
                 break;
             }
             /* Nothing left to play - the jitter buffer is waiting on a frame
@@ -888,6 +901,13 @@ static void voicePlayRemote(struct ClientSim *cs) {
                 break;
             }
             applyOutputVolume(pcm);
+#if defined(WINBOLO_VOICE_AEC)
+            /* Taken after the output gain, so the reference is at the level
+             * the loudspeakers will carry, and before the hand-over, since
+             * queued is how much sits in front of this frame on that talker
+             * and so how long it is until the microphone hears it. */
+            voiceAecAddReference(pcm, queued);
+#endif
             voiceBackendSpeakerPlay(i, pcm);
         }
     }
@@ -1047,6 +1067,16 @@ void voiceTick(struct ClientSim *cs) {
                 gateOpen = false;
             }
         }
+
+#if defined(WINBOLO_VOICE_AEC)
+        /* Below the level meter and the open-mic gate, which read the
+         * microphone as it is, and above the encoder, which is the only
+         * consumer of the cleaned signal.  Above the transmit test too:
+         * every captured frame goes through, sent or not, because the filter
+         * tracks the room continuously and a frame it never sees is a hole
+         * in that. */
+        voiceAecProcess(pcm, pcm);
+#endif
 
         sending = voiceIsTransmitting();
 

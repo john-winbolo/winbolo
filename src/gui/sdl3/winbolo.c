@@ -71,6 +71,9 @@
 #include "../lang.h"
 #include "../sound.h"
 #include "../voice.h"
+#if defined(WINBOLO_VOICE_AEC)
+#include "voice_aec.h"
+#endif
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
@@ -1575,6 +1578,19 @@ void windowSetVoiceVolume(float gain) {
 float windowGetVoiceVolume(void) {
   return voiceGetOutputVolume();
 }
+
+#if defined(WINBOLO_VOICE_AEC)
+/* Echo cancellation of the other players' voices out of this microphone.
+ * Same shape as the voice settings above: the canceller module holds the
+ * switch and gameFrontPutPrefs reads it back through the getter. */
+void windowSetVoiceEchoCancel(bool on) {
+  voiceAecSetEnabled(on);
+}
+
+bool windowGetVoiceEchoCancel(void) {
+  return voiceAecIsEnabled();
+}
+#endif
 
 /* Tank-label microphone icons are held by the status renderer that
  * draws them; same façade shape as the voice settings above. */

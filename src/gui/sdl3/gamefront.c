@@ -123,6 +123,10 @@ void  windowSetVoiceVolume(float gain);
 float windowGetVoiceVolume(void);
 void  windowSetShowTankMicIcons(bool on);
 bool  windowGetShowTankMicIcons(void);
+#if defined(WINBOLO_VOICE_AEC)
+void  windowSetVoiceEchoCancel(bool on);
+bool  windowGetVoiceEchoCancel(void);
+#endif
 
 /* Mode is stored as a name, not a number, so a hand-edited prefs file reads
    as something. An unrecognised name falls back to the default. */
@@ -3251,6 +3255,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
   prefsGetString("VOICE", "Tank Icons", "Yes", buff, FILENAME_MAX);
   windowSetShowTankMicIcons(YESNO_TO_TRUEFALSE(buff[0]));
+#if defined(WINBOLO_VOICE_AEC)
+  prefsGetString("VOICE", "Echo Cancel", "Yes", buff, FILENAME_MAX);
+  windowSetVoiceEchoCancel(YESNO_TO_TRUEFALSE(buff[0]));
+#endif
 #endif
 
   /* Winbolo.net */
@@ -3495,6 +3503,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceVolume());
   prefsSetString("VOICE", "Voice Volume", buff);
   prefsSetString("VOICE", "Tank Icons", TRUEFALSE_TO_STR(windowGetShowTankMicIcons()));
+#if defined(WINBOLO_VOICE_AEC)
+  prefsSetString("VOICE", "Echo Cancel", TRUEFALSE_TO_STR(windowGetVoiceEchoCancel()));
+#endif
 #endif
 
   /* Winbolo.net */

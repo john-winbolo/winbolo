@@ -171,6 +171,16 @@ FetchContent_Declare(
     SYSTEM
     EXCLUDE_FROM_ALL
 )
+FetchContent_Declare(
+    speexdsp
+    GIT_REPOSITORY https://github.com/xiph/speexdsp.git
+    # Pinned to a commit rather than a release: the newest tag (SpeexDSP-1.2.1)
+    # ships autotools only, and the CMake build lives on main.  A commit hash
+    # rules out GIT_SHALLOW, which needs a branch or tag name.
+    GIT_TAG        ba75b509fb1c5940ea07fa2ba5552e44f3a3576b
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 # curl is only built from source on Windows (uses Schannel for SSL).
 # On Linux/macOS, the system libcurl is used via find_package().
 if(WIN32)
@@ -462,6 +472,17 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(opus)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE3}" CACHE BOOL "" FORCE)
+
+    # SpeexDSP — the acoustic echo canceller in the voice capture path, forced
+    # static.  Its CMake build declares no test or program targets, so there is
+    # nothing of that kind to switch off; the one option it does carry picks
+    # fixed- over floating-point arithmetic, and every platform we build for
+    # has an FPU.
+    set(BUILD_SHARED_LIBS_SAVE4 "${BUILD_SHARED_LIBS}")
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(USE_FIXED_POINT OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(speexdsp)
+    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE4}" CACHE BOOL "" FORCE)
 
     # minizip library from zlib's contrib/minizip
     add_library(minizip STATIC
@@ -1575,6 +1596,14 @@ target_link_libraries(WinBolo PRIVATE
 # targets that do not build the voice sources.
 target_link_libraries(WinBolo PRIVATE Opus::opus)
 target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE=1)
+
+# Acoustic echo cancellation of remote voice out of the microphone
+# (src/client_frontend/voice_aec.c).  This target only: the browser build uses
+# getUserMedia's own canceller and never sees SpeexDSP, and no other target
+# compiles the voice sources at all.
+target_sources(WinBolo PRIVATE src/client_frontend/voice_aec.c)
+target_link_libraries(WinBolo PRIVATE speexdsp)
+target_compile_definitions(WinBolo PRIVATE WINBOLO_VOICE_AEC=1)
 
 # libplum NAT port mapping (optional)
 if(HAVE_LIBPLUM)
