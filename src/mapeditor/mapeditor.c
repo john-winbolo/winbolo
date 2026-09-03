@@ -24,6 +24,7 @@
 #include "mapeditor_stamp.h"
 #include "mapeditor_undo.h"
 #include "mapeditor_export.h"
+#include "mapeditor_wbn_open.h"  /* meWbnOpen* — empty unless MAPEDITOR_WBN_OPEN (WinBolo client build) */
 #include "macos_pinch.h"
 #ifdef __APPLE__
 #include "platform/mac_menubar.h"
@@ -86,7 +87,8 @@ typedef enum {
     FILE_OP_SAVE_AS,
     FILE_OP_SAVE_THEN_NEW,     /* Save current, then create new */
     FILE_OP_SAVE_THEN_OPEN,    /* Save current, then open another */
-    FILE_OP_SAVE_THEN_EXIT     /* Save current, then exit */
+    FILE_OP_SAVE_THEN_EXIT,    /* Save current, then exit */
+    FILE_OP_SAVE_THEN_OPEN_WBN /* Save current, then open the WinBolo.net chooser */
 } FileOp;
 
 /* Map editor state */
@@ -2289,6 +2291,56 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
     return true;
 }
 
+#ifdef MAPEDITOR_WBN_OPEN
+/* -------------------------------------------------------
+ * Load a map from an in-memory .map image (a WinBolo.net
+ * download). Returns true on success. The map has no file
+ * behind it, so currentFilePath is cleared and Save routes
+ * through Save As; nothing is added to the recent list.
+ * ------------------------------------------------------- */
+static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
+                             int len, const char *displayName) {
+    map newMp;
+    pillboxes newPb;
+    bases newBs;
+    starts newSs;
+
+    mapCreate(&newMp);
+    pillsCreate(&newPb);
+    basesCreate(&newBs);
+    startsCreate(&newSs);
+
+    if (!mapReadFromMemory((const BYTE *)bytes, len, &newMp, &newPb, &newBs, &newSs)) {
+        mapDestroy(&newMp);
+        pillsDestroy(&newPb);
+        basesDestroy(&newBs);
+        startsDestroy(&newSs);
+        snprintf(ed->errorMessage, sizeof(ed->errorMessage),
+                 "Failed to read map from WinBolo.net:\n%s", displayName);
+        return false;
+    }
+
+    /* Replace current map data */
+    meFreeMapData(ed);
+    ed->mp = newMp;
+    ed->pb = newPb;
+    ed->bs = newBs;
+    ed->ss = newSs;
+
+    ed->currentFilePath[0] = '\0';
+    ed->dirty = false;
+    ed->currentStartIndex = 0;
+    undoStackClear(&ed->undoStack);
+    ed->selectedObjKind = ME_SEL_NONE;
+    ed->selectedObjIndex = -1;
+    ed->minimapDirty = true;
+    ed->statsDirty = true;
+    ed->tabCycleIndex = 0;
+    meUpdateWindowTitle(ed);
+    return true;
+}
+#endif /* MAPEDITOR_WBN_OPEN */
+
 /* -------------------------------------------------------
  * New blank map
  * ------------------------------------------------------- */
@@ -2761,6 +2813,18 @@ static void meActionOpen(MapEditorState *ed) {
     }
 }
 
+#ifdef MAPEDITOR_WBN_OPEN
+/* Begin "Open from WinBolo.net" — checks dirty flag, may open modal. */
+static void meActionOpenWbn(MapEditorState *ed) {
+    ed->pendingOpenPath[0] = '\0';
+    if (ed->dirty) {
+        ed->deferredAction = FILE_OP_SAVE_THEN_OPEN_WBN;
+    } else {
+        meWbnOpenShow();
+    }
+}
+#endif /* MAPEDITOR_WBN_OPEN */
+
 /* Begin "Save" — saves to current path or falls through to Save As. */
 static void meActionSave(MapEditorState *ed) {
     if (ed->currentFilePath[0]) {
@@ -2813,6 +2877,13 @@ static void meHandleFileDialogResult(MapEditorState *ed) {
             meShowOpenDialog(ed, FILE_OP_OPEN);
         }
         break;
+#ifdef MAPEDITOR_WBN_OPEN
+    case FILE_OP_SAVE_THEN_OPEN_WBN:
+        if (meSaveToPath(ed, path)) {
+            meWbnOpenShow();
+        }
+        break;
+#endif
     case FILE_OP_SAVE_THEN_EXIT:
         if (meSaveToPath(ed, path)) {
             ed->quit = true;
@@ -2859,6 +2930,11 @@ static void meHandleUnsavedChoice(MapEditorState *ed, int choice) {
             meShowOpenDialog(ed, FILE_OP_OPEN);
         }
         break;
+#ifdef MAPEDITOR_WBN_OPEN
+    case FILE_OP_SAVE_THEN_OPEN_WBN:
+        meWbnOpenShow();
+        break;
+#endif
     case FILE_OP_SAVE_THEN_EXIT:
         ed->quit = true;
         break;
@@ -4120,6 +4196,12 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             meActionOpen(ed);
             if (ed->deferredAction) openUnsavedModal = true;
         }
+#ifdef MAPEDITOR_WBN_OPEN
+        if (menuAction.wantOpenWbn) {
+            meActionOpenWbn(ed);
+            if (ed->deferredAction) openUnsavedModal = true;
+        }
+#endif
         if (menuAction.wantSave) {
             meActionSave(ed);
         }
@@ -4379,6 +4461,22 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 ed->viewCenterY = (WORLD)(gotoY << 8);
             }
         }
+
+#ifdef MAPEDITOR_WBN_OPEN
+        /* Open from WinBolo.net dialog. A completed download hands
+         * back the raw .map bytes; a parse failure lands in
+         * errorMessage and surfaces through the error modal. */
+        {
+            unsigned char *wbnBytes = NULL;
+            int wbnLen = 0;
+            char wbnName[128];
+            if (meWbnOpenFrame(ed->renderer, &wbnBytes, &wbnLen,
+                               wbnName, sizeof(wbnName))) {
+                meLoadFromMemory(ed, wbnBytes, wbnLen, wbnName);
+                SDL_free(wbnBytes);
+            }
+        }
+#endif
 
         /* Generate map dialog */
         if (ed->showGenerateDialog) {
@@ -4729,6 +4827,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     imageImportFree(&ed->imageImportCfg);
     validateResultFree(&ed->lastValidation);
     macOSPinchZoomDestroy();
+#ifdef MAPEDITOR_WBN_OPEN
+    /* The preview worker and any in-flight download must not outlive
+     * the editor — the client goes back to the welcome screen. */
+    meWbnOpenShutdown();
+#endif
 #ifdef __APPLE__
     /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
      * empty stub when standalone since the process is exiting). */

@@ -390,20 +390,12 @@ void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
 void lobbyChatInputAppendTime(uint32_t curMs);
 #endif
 
-/* wbnmaps */
+/* wbnmaps — the sim-facing half of the WinBolo.net tab's provider; the
+ * catalogue callbacks come from wbn_map_source.h. */
 #ifndef __EMSCRIPTEN__
-void lobbySpWbnReset(void);
-void lobbyWbnMapsListProvider(MapChooserState *state,
-                              const char *relPath, void *ctx);
 void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx);
-void lobbyWbnMapsOnFolderJump(MapChooserState *state,
-                              const char *jumpPath, void *ctx);
-bool lobbyWbnGeneratePreview(const char *entryPath,
-                             MapPreviewPixels *outBuf,
-                             void *ctx);
 void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
                       void *ctx);
-void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx);
 #endif
 
 /* mappreview */

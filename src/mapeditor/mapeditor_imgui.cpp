@@ -36,6 +36,7 @@
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
 #include "mapeditor_stamp.h"
+#include "mapeditor_wbn_open.h"  /* meWbnOpenAvailable — empty unless MAPEDITOR_WBN_OPEN */
 #include "tilenum.h"
 #include "../gui/lang.h"
 #include "../gui/tiles.h"
@@ -164,6 +165,13 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             if (ImGui::MenuItem(langGetText(STR_MAPEDIT_MENU_OPEN), "Ctrl+O")) {
                 action->wantOpen = true;
             }
+#ifdef MAPEDITOR_WBN_OPEN
+            /* Greyed out when the WBN HTTP layer failed to come up. */
+            if (ImGui::MenuItem(langGetText(STR_LV_MENU_OPEN_WBN), nullptr,
+                                false, meWbnOpenAvailable())) {
+                action->wantOpenWbn = true;
+            }
+#endif
             if (ImGui::BeginMenu(langGetText(STR_MAPEDIT_MENU_RECENT), numRecent > 0)) {
                 for (int i = 0; i < numRecent; i++) {
                     /* Show just the filename, not the full path */

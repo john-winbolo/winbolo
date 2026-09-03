@@ -207,6 +207,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
+    ${SRC_ROOT}/gui/sdl3/wbn_map_source.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c

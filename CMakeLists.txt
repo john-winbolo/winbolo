@@ -582,6 +582,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
+        src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
     )
 endif()
@@ -784,6 +785,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/wb_theme.cpp
 )
 
@@ -1336,6 +1338,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
@@ -1347,6 +1350,10 @@ set(CLIENT_SOURCES
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # Embedded editor's "Open from WinBolo.net" dialog — client only, it
+    # sits on the chooser + wbn_map_source stack the standalone MapEditor
+    # doesn't link (see MAPEDITOR_WBN_OPEN below).
+    src/mapeditor/mapeditor_wbn_open.cpp
     src/third_party/stb/stb_image_write_impl.c
     # GIF encoder for the recap's clip export. Client only — no other target
     # exports clips, and the LogViewer already omits stb_image_write_impl.c.
@@ -1428,6 +1435,9 @@ add_executable(WinBolo ${CLIENT_SOURCES})
 target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
+    # Gates the embedded map editor's File > Open from WinBolo.net entry in
+    # the mapeditor TUs shared with the standalone MapEditor target.
+    MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -2590,6 +2600,21 @@ set(MAPEDITOR_SOURCES
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
+    # File > Open from WinBolo.net: the map chooser wired to the WBN
+    # catalogue (MAPEDITOR_WBN_OPEN). The chooser drags in the preview
+    # popup, its claim-a-start list and the star cache; ui_mode.c's one
+    # external call (inputSourceCurrent) is already in gamefront_stubs.c.
+    # The WBN HTTP layer comes from winbolonet_core; tweetnacl.c is
+    # compiled per consumer like the WinBolo client and LogViewer do.
+    src/gui/sdl3/dialogs/imgui_mapchooser.cpp
+    src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_preview_popup.cpp
+    src/gui/sdl3/lobby_start_list.cpp
+    src/gui/ui_mode.c
+    src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wbn_map_source.cpp
+    src/mapeditor/mapeditor_wbn_open.cpp
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 file(GLOB MAPEDITOR_BSD_SOURCES src/bsd/*.c)
@@ -2605,6 +2630,7 @@ add_executable(MapEditor ${MAPEDITOR_SOURCES})
 target_sources(MapEditor PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(MapEditor PRIVATE
     HAVE_SCREEN_C=1
+    MAPEDITOR_WBN_OPEN=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -2635,8 +2661,9 @@ endif()
 
 target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
+    winbolonet_core winbolonet_client
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
-    nanosvg stb_image utf8proc cjson
+    nanosvg stb_image utf8proc cjson CURL::libcurl
 )
 
 # macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
