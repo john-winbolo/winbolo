@@ -328,6 +328,17 @@ struct ServerSim {
     struct mapObj clientKnownMapObj[MAX_TANKS];
     map           clientKnownMap[MAX_TANKS];
 
+    /* The terrain as it stood when the current map was installed — sim create,
+     * a map load, a lobby map change, the round reset — which for a running
+     * game is the terrain the round started on. A player joining a running
+     * game over the wire is handed this instead of the live map, so arriving
+     * (or rejoining) tells it nothing about what has happened since; it learns
+     * the differences from the catch-up sweep as its viewports cover them.
+     * roundStartMap holds &roundStartMapObj once a map has been copied in, and
+     * is NULL until then. */
+    struct mapObj roundStartMapObj;
+    map           roundStartMap;
+
     /* Bit i set: slot i's copy is written by the UDP transport rather than by
      * the tick, because that transport only sends it the changes inside its
      * viewports. The transport sets the bit when it takes the slot and clears
@@ -516,6 +527,17 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
  * server holds. */
 void serverSimShadowSeed(ServerSim *sim, BYTE slot);
 void serverSimShadowSeedAll(ServerSim *sim);
+
+/* The round-start copy of the terrain (roundStartMap above). Capture copies the
+ * live map into it; it is called from serverSimShadowSeedAll, so every point
+ * that installs a map takes a fresh copy and nothing else has to remember to.
+ * SeedRoundStart starts one slot's copy from it instead of from the live map —
+ * what the UDP join does for a slot joining a running game, so the blob
+ * compressed from that copy carries the round-start terrain. With nothing
+ * captured yet it falls back to the live-map seed, so a slot can never be
+ * handed an empty map. */
+void serverSimShadowCaptureRoundStart(ServerSim *sim);
+void serverSimShadowSeedRoundStart(ServerSim *sim, BYTE slot);
 
 /* Write this tick's map changes into the copies the tick owns. Called once per
  * running frame from the tick core, after both half-steps have finished

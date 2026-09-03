@@ -15,11 +15,18 @@
  *
  * A slot the UDP transport has marked culled is the exception: the tick leaves
  * its copy alone, because that transport sends it only the changes inside its
- * viewports and writes the copy as it sends. The last three cases pin the sim
- * side of that — what the tick withholds, and the catch-up sweep that closes
- * the gap once the client can see the ground again. The transport side of the
- * coupling (in-viewport changes queued and written, everything else left owed)
- * is driven end-to-end in test_loopback_map_cull.c.
+ * viewports and writes the copy as it sends. Three cases pin the sim side of
+ * that — what the tick withholds, and the catch-up sweep that closes the gap
+ * once the client can see the ground again. The transport side of the coupling
+ * (in-viewport changes queued and written, everything else left owed) is driven
+ * end-to-end in test_loopback_map_cull.c.
+ *
+ * The last three cases pin the round-start copy: it is re-taken wherever a map
+ * is installed and does not follow the live map between those points, a slot
+ * seeded from it holds — and compresses to — the round-start terrain rather
+ * than the live map, and a sweep over the changed ground converges it. That is
+ * what a player joining a running game downloads, so rejoining reveals nothing
+ * about what has changed since the round started.
  *
  * Every case drives ut_make_running_sim and pokes the GameSim directly (the
  * unittests profile permits T2-internal access).
@@ -104,6 +111,18 @@ static BYTE ms_known(ServerSim *sim, BYTE slot, BYTE x, BYTE y) {
 static BYTE ms_live(ServerSim *sim, BYTE x, BYTE y) {
     GameSim *gs = serverSimGetGameSim(sim);
     return (*gs->mp).mapItem[x][y];
+}
+
+/* What the round-start copy holds at one square, and whether it matches the
+ * live map everywhere. */
+static BYTE ms_round_start(ServerSim *sim, BYTE x, BYTE y) {
+    return sim->roundStartMapObj.mapItem[x][y];
+}
+
+static bool ms_round_start_matches_live(ServerSim *sim) {
+    GameSim *gs = serverSimGetGameSim(sim);
+    return memcmp(sim->roundStartMapObj.mapItem, (*gs->mp).mapItem,
+                  sizeof((*gs->mp).mapItem)) == 0;
 }
 
 /* -1 when every slot's copy matches the live map, else the first slot that
@@ -638,6 +657,197 @@ int run_map_shadow_sweep_bounds(void) {
         got = serverSimShadowSweep(sim, 0, pair, 2, out, 16);
         UT_ASSERT_MSG(got == 1, "overlapping rects emitted %d, expected 1", got);
     }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Blob buffers for the round-start cases. 131,072 bytes is the headroom
+ * serverSimReloadMap allocates; static rather than on the stack because three
+ * of them do not fit there. */
+static BYTE msStartBlob[131072];
+static BYTE msJoinBlob[131072];
+static BYTE msLiveBlob[131072];
+
+/* 8. The round-start copy is taken wherever a map is installed and stands
+ *    still between those points: it matches the live map on a fresh sim, keeps
+ *    the old terrain through a frame of changes the live map and the copies
+ *    the tick owns both take, and is taken again by a round reset — from the
+ *    reloaded map, not from what it was holding. */
+int run_map_shadow_round_start_capture(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    UT_ASSERT_MSG(sim->roundStartMap == &sim->roundStartMapObj,
+                  "the sim's map install did not bind the round-start handle");
+    UT_ASSERT_MSG(ms_round_start_matches_live(sim),
+                  "the round-start copy differs from the live map on a fresh sim");
+
+    /* What the frame below moves those squares off, so the copy is checked
+     * against the terrain rather than against itself. */
+    const int n1 = (int)(sizeof(kTick1) / sizeof(kTick1[0]));
+    BYTE before[sizeof(kTick1) / sizeof(kTick1[0])];
+    int i;
+    for (i = 0; i < n1; i++) {
+        before[i] = ms_live(sim, kTick1[i].x, kTick1[i].y);
+    }
+
+    ms_run_tick(sim, kTick1, n1);
+    UT_ASSERT_MSG(sim->mapEventCount == (uint16_t)n1,
+                  "mapSetPos recorded %u map events, expected %d — the change "
+                  "callback did not fire, so this case proves nothing",
+                  (unsigned)sim->mapEventCount, n1);
+
+    for (i = 0; i < n1; i++) {
+        BYTE x = kTick1[i].x, y = kTick1[i].y;
+        UT_ASSERT_MSG(ms_live(sim, x, y) != before[i],
+                      "square %u,%u did not move — the frame proves nothing",
+                      (unsigned)x, (unsigned)y);
+        UT_ASSERT_MSG(ms_round_start(sim, x, y) == before[i],
+                      "the round-start copy took the change at %u,%u",
+                      (unsigned)x, (unsigned)y);
+        UT_ASSERT_MSG(ms_known(sim, 0, x, y) == ms_live(sim, x, y),
+                      "exempt slot 0's copy missed the change at %u,%u",
+                      (unsigned)x, (unsigned)y);
+    }
+    UT_ASSERT_MSG(!ms_round_start_matches_live(sim),
+                  "the round-start copy still matches the live map after a "
+                  "frame of terrain changes");
+
+    /* The reset reinstalls the map from the cached round-start data, so the
+     * copy is taken again and comes out equal to the reloaded terrain. */
+    serverSimResetGameWorld(sim);
+    for (i = 0; i < n1; i++) {
+        UT_ASSERT_MSG(ms_live(sim, kTick1[i].x, kTick1[i].y) == before[i],
+                      "the reset did not restore the terrain at %u,%u, so the "
+                      "re-capture below proves nothing",
+                      (unsigned)kTick1[i].x, (unsigned)kTick1[i].y);
+    }
+    UT_ASSERT_MSG(ms_round_start_matches_live(sim),
+                  "the round reset did not take the round-start copy again");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 9. What a player joining a running game is handed. The terrain moves
+ *    mid-round, then the slot is seeded the way the join does it — the add's
+ *    live-map seed, then the round-start re-seed — and its copy, and the blob
+ *    compressed from it, hold the terrain the round started on rather than the
+ *    terrain as it stands. Driving over the changed ground then pays it back:
+ *    the sweep emits exactly the changed squares and converges. */
+int run_map_shadow_join_seeds_round_start(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    /* The blob a joiner would have downloaded at round start, taken from an
+     * untouched slot before anything moves. */
+    int startLen = serverSimGetCompressedMapFor(sim, 1, msStartBlob);
+    UT_ASSERT_MSG(startLen > 0, "the round-start blob is empty (%d)", startLen);
+
+    /* Mid-round, with slot 2 marked the way the UDP transport marks the slot it
+     * takes, so nothing but the seed and the sweep writes its copy. */
+    serverSimSetShadowCulled(sim, 2, true);
+    int changed = ms_change_block(sim);
+    UT_ASSERT_MSG(changed == MS_BLOCK_SQUARES,
+                  "only %d of %d squares moved — the round has not diverged",
+                  changed, MS_BLOCK_SQUARES);
+
+    /* The join: the add seeds the slot from the live map, then the accept
+     * restarts it from the round-start terrain. */
+    serverSimShadowSeed(sim, 2);
+    UT_ASSERT_MSG(ms_block_stale(sim, 2) == 0,
+                  "the live-map seed left slot 2 behind on %d squares",
+                  ms_block_stale(sim, 2));
+    serverSimShadowSeedRoundStart(sim, 2);
+
+    UT_ASSERT_MSG(memcmp(sim->clientKnownMapObj[2].mapItem,
+                         sim->roundStartMapObj.mapItem,
+                         sizeof(sim->roundStartMapObj.mapItem)) == 0,
+                  "the joining slot's copy is not the round-start terrain");
+    UT_ASSERT_MSG(ms_block_stale(sim, 2) == MS_BLOCK_SQUARES,
+                  "the joining slot is behind on %d of the block's %d changed "
+                  "squares — it is still holding the live map",
+                  ms_block_stale(sim, 2), MS_BLOCK_SQUARES);
+
+    /* So the blob it downloads is the round-start blob, byte for byte. */
+    int joinLen = serverSimGetCompressedMapFor(sim, 2, msJoinBlob);
+    UT_ASSERT_MSG(joinLen == startLen,
+                  "the join blob is %d bytes, the round-start blob %d",
+                  joinLen, startLen);
+    UT_ASSERT_MSG(memcmp(msJoinBlob, msStartBlob, (size_t)startLen) == 0,
+                  "the join blob's bytes differ from the round-start blob's");
+
+    /* And is not the live map's: slot 0 took the frame, and its blob differs. */
+    int liveLen = serverSimGetCompressedMapFor(sim, 0, msLiveBlob);
+    UT_ASSERT_MSG(liveLen > 0, "the live blob is empty (%d)", liveLen);
+    UT_ASSERT_MSG(liveLen != joinLen ||
+                      memcmp(msLiveBlob, msJoinBlob, (size_t)joinLen) != 0,
+                  "the join blob is identical to the live map's blob — the "
+                  "round-start seed changed nothing");
+
+    /* Ground the joiner drives up to: the sweep hands it the difference, all of
+     * it inside the block that changed, and then falls silent. */
+    ViewportRect over;
+    GameEvent out[MS_BLOCK_SQUARES];
+    int got, k;
+    ms_set_rect(&over, MS_BLOCK_X0, MS_BLOCK_X0 + MS_BLOCK_N - 1,
+                MS_BLOCK_Y0, MS_BLOCK_Y0 + MS_BLOCK_N - 1);
+    got = serverSimShadowSweep(sim, 2, &over, 1, out, MS_BLOCK_SQUARES);
+    UT_ASSERT_MSG(got == MS_BLOCK_SQUARES,
+                  "the sweep emitted %d squares, expected the block's %d",
+                  got, MS_BLOCK_SQUARES);
+    for (k = 0; k < got; k++) {
+        BYTE x = out[k].data[0], y = out[k].data[1];
+        UT_ASSERT_MSG(out[k].type == EVENT_MAP_CHANGE,
+                      "emitted event %d has type %u, expected EVENT_MAP_CHANGE",
+                      k, (unsigned)out[k].type);
+        UT_ASSERT_MSG(x >= MS_BLOCK_X0 && x < MS_BLOCK_X0 + MS_BLOCK_N &&
+                          y >= MS_BLOCK_Y0 && y < MS_BLOCK_Y0 + MS_BLOCK_N,
+                      "emitted square %u,%u is outside the changed block",
+                      (unsigned)x, (unsigned)y);
+        UT_ASSERT_MSG(out[k].data[2] == ms_live(sim, x, y),
+                      "emitted square %u,%u carries terrain %u, live is %u",
+                      (unsigned)x, (unsigned)y, (unsigned)out[k].data[2],
+                      (unsigned)ms_live(sim, x, y));
+    }
+    UT_ASSERT_MSG(ms_block_stale(sim, 2) == 0,
+                  "%d squares are still owed after the sweep",
+                  ms_block_stale(sim, 2));
+    UT_ASSERT_MSG(serverSimShadowSweep(sim, 2, &over, 1, out,
+                                       MS_BLOCK_SQUARES) == 0,
+                  "the sweep still emits once the joiner has caught up");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 10. With nothing captured — the state the struct is in before the first map
+ *     is installed — the round-start seed is the live-map seed, so a slot can
+ *     never be handed an empty map. */
+int run_map_shadow_round_start_fallback(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    /* Every map install takes the copy, so the never-captured state cannot be
+     * reached from the outside once the sim is up — put it back by hand. */
+    sim->roundStartMap = NULL;
+
+    /* Move the live map first, so a copy seeded from anything else shows up. */
+    ms_run_tick(sim, kTick1, (int)(sizeof(kTick1) / sizeof(kTick1[0])));
+
+    ms_dirty(sim, 3, 70, 70);
+    ms_dirty(sim, 3, 71, 70);
+    UT_ASSERT_MSG(ms_first_mismatch(sim) == 3,
+                  "hand-dirtying slot 3 should leave it as the first mismatch "
+                  "(got %d)", ms_first_mismatch(sim));
+
+    serverSimShadowSeedRoundStart(sim, 3);
+    UT_ASSERT_MSG(sim->clientKnownMap[3] == &sim->clientKnownMapObj[3],
+                  "the fallback left slot 3's handle unbound");
+    UT_ASSERT_MSG(ms_first_mismatch(sim) < 0,
+                  "slot %d's copy is not the live map — the fallback did not "
+                  "seed from it", ms_first_mismatch(sim));
 
     serverSimDestroy(sim);
     return 0;

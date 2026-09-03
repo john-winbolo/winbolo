@@ -3232,10 +3232,23 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                 "join accept: slot=%d clientType=%u clientHints=0x%02x",
                 slot, (unsigned)clientType, (unsigned)clientHints);
 
+    /* Joining a game already in progress downloads the map the round started
+     * on, not the map as it stands now, so arriving (or leaving and rejoining)
+     * shows nothing about what has happened since. The add above seeded this
+     * slot's copy from the live map — correct for an in-process client, which
+     * takes every change — so restart it from the round-start terrain here and
+     * the blob below carries that. The joiner is paid the differences by the
+     * catch-up sweep as its viewports cover the ground. A lobby or countdown
+     * joiner keeps the current map: nothing has changed it yet, and there is no
+     * running sweep to settle a difference with. */
+    if (serverSimGetState(sim) == serverStateRunning) {
+        serverSimShadowSeedRoundStart(sim, (BYTE)slot);
+    }
+
     /* Compress this slot's copy of the map for the joining player.
-     * Done after serverSimAddPlayer so rejoin ownership is included — the add
-     * also seeds the slot's copy, so the blob carries exactly the terrain the
-     * slot's snapshot checksum is taken over. */
+     * Done after serverSimAddPlayer so rejoin ownership is included — the
+     * copy the blob is taken from is the one the slot's snapshot checksum is
+     * taken over, so the two always describe the same tiles. */
     {
         int mapLen = serverSimGetCompressedMapFor(sim, (BYTE)slot,
                                                   udpServer.compressedMap);

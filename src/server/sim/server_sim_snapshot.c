@@ -180,11 +180,39 @@ void serverSimShadowSeed(ServerSim *sim, BYTE slot) {
            sizeof(sim->clientKnownMapObj[slot].mapItem));
 }
 
+void serverSimShadowCaptureRoundStart(ServerSim *sim) {
+    if (sim == NULL || sim->sim.mp == NULL) return;
+    memcpy(sim->roundStartMapObj.mapItem, (*sim->sim.mp).mapItem,
+           sizeof(sim->roundStartMapObj.mapItem));
+    /* Bound after the copy, not before it as the per-slot seed does: a NULL
+     * handle here has to mean "nothing has been captured", so the seed below
+     * can fall back to the live map rather than hand out a zeroed one. */
+    sim->roundStartMap = &sim->roundStartMapObj;
+}
+
 void serverSimShadowSeedAll(ServerSim *sim) {
     BYTE slot;
     for (slot = 0; slot < MAX_TANKS; slot++) {
         serverSimShadowSeed(sim, slot);
     }
+    /* Every caller of SeedAll is a point where a map is installed — sim create,
+     * the map loaders, a lobby map change, the round reset — which is exactly
+     * where the round-start copy has to be taken, so it is taken here rather
+     * than from a second list of call sites that could drift from this one. */
+    serverSimShadowCaptureRoundStart(sim);
+}
+
+void serverSimShadowSeedRoundStart(ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (sim->roundStartMap == NULL) {
+        /* No map has been installed since create, so there is no round-start
+         * terrain to differ from the live map. */
+        serverSimShadowSeed(sim, slot);
+        return;
+    }
+    sim->clientKnownMap[slot] = &sim->clientKnownMapObj[slot];
+    memcpy(sim->clientKnownMapObj[slot].mapItem, sim->roundStartMapObj.mapItem,
+           sizeof(sim->clientKnownMapObj[slot].mapItem));
 }
 
 void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,

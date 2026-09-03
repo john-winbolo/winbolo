@@ -3858,6 +3858,9 @@ set(_unit_test_names
     map_shadow_cull_withholds
     map_shadow_sweep_converges
     map_shadow_sweep_bounds
+    map_shadow_round_start_capture
+    map_shadow_join_seeds_round_start
+    map_shadow_round_start_fallback
     loopback_map_cull
     loopback_map_cull_resync
     resync_finalize_corrupt_keeps_gen

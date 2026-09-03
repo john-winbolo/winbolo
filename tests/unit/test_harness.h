@@ -1116,6 +1116,16 @@ int run_map_shadow_cull_withholds(void);
 int run_map_shadow_sweep_converges(void);
 int run_map_shadow_sweep_bounds(void);
 
+/* The round-start copy (test_map_shadow.c): it is taken wherever a map is
+ * installed and stands still between those points; a slot seeded from it — what
+ * a player joining a running game gets — holds and compresses to the terrain
+ * the round started on rather than the live map, and a sweep over the changed
+ * ground converges it; with nothing captured the seed falls back to the live
+ * map. */
+int run_map_shadow_round_start_capture(void);
+int run_map_shadow_join_seeds_round_start(void);
+int run_map_shadow_round_start_fallback(void);
+
 /* Map-event culling over the loopback transport (test_loopback_map_cull.c): a
  * change a wire client cannot see is neither queued to it nor written into its
  * copy, its checksum still describes the map it holds so it never resyncs, an
