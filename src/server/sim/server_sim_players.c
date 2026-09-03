@@ -178,6 +178,12 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
         serverSimPublishControl(sim, &skipEvt);
     }
 
+    /* Start this slot's copy of the terrain from the map as it stands now.
+     * The join blob the caller sends next is compressed from this copy, so
+     * the client and the copy begin the session holding the same tiles; the
+     * rejoin ownership restore above has already run, matching the point the
+     * blob is taken. */
+    serverSimShadowSeed(sim, playerNum);
 }
 
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE playerNum) {

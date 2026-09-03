@@ -3216,10 +3216,13 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                 "join accept: slot=%d clientType=%u clientHints=0x%02x",
                 slot, (unsigned)clientType, (unsigned)clientHints);
 
-    /* Compress current map state for the joining player.
-     * Done after serverSimAddPlayer so rejoin ownership is included. */
+    /* Compress this slot's copy of the map for the joining player.
+     * Done after serverSimAddPlayer so rejoin ownership is included — the add
+     * also seeds the slot's copy, so the blob carries exactly the terrain the
+     * slot's snapshot checksum is taken over. */
     {
-        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        int mapLen = serverSimGetCompressedMapFor(sim, (BYTE)slot,
+                                                  udpServer.compressedMap);
         if (mapLen <= 0) {
             serverSimRemovePlayer(sim, (BYTE)slot);
             udpServer.clients[slot].connected = false;
@@ -5476,12 +5479,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                      * bulk channel retransmits its own unacked segments, so
                      * there is nothing to re-poke. */
                 } else {
-                    /* Idle slot: refresh the live blob into this slot's copy,
-                     * cut the map-event queue so the blob and the queue can't
-                     * both carry the same change, then arm a resync transfer.
+                    /* Idle slot: compress this slot's copy of the terrain into
+                     * its download buffer — the client is asking for the map
+                     * it was given, not some other slot's — cut the map-event
+                     * queue so the blob and the queue can't both carry the
+                     * same change, then arm a resync transfer.
                      * It begins on CHANNEL_BULK once the channel is idle
                      * (serverServiceMapTransfer) and rides the snapshot trailer. */
-                    int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+                    int mapLen = serverSimGetCompressedMapFor(
+                        sim, (BYTE)clientIdx, udpServer.compressedMap);
                     if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
                         udpServer.compressedMapSize = (uint32_t)mapLen;
                         if (dl->compressedMap != NULL) free(dl->compressedMap);
@@ -6945,9 +6951,10 @@ bool transportUdpServerTestDownloadComplete(int slot) {
 }
 
 /* Test-only: stage one terrain change for a slot exactly as a real sim tick
- * does — mutate the live server map AND enqueue an EVENT_MAP_CHANGE into the
- * slot's map-event hold queue (mirroring simMapChangeCallback →
- * transportUdpServerDrainEvents). Mutating the map keeps its snapshot checksum
+ * does — mutate the live server map, write the tile into every slot's copy of
+ * the terrain, AND enqueue an EVENT_MAP_CHANGE into the slot's map-event hold
+ * queue (mirroring simMapChangeCallback → serverSimShadowTick →
+ * transportUdpServerDrainEvents). Mutating both keeps the snapshot checksum
  * in step with the change the client applies, so the client doesn't see a
  * spurious terrain divergence and self-trigger a resync. The event then flows
  * through the real hold → channel drain → tagged channelSend(CHANNEL_MAP) path,
@@ -6964,6 +6971,13 @@ bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
     if (!eventQueueHasSpace(mq)) return false;
     if (sim != NULL) {
         mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, FALSE, TRUE);
+        /* A real tick also writes the change into every slot's copy of the
+         * terrain (serverSimShadowTick over the tick's map events). Nothing
+         * runs that here — the map-change callback is dormant between ticks,
+         * so no map event is recorded — so apply it directly, or the slot's
+         * snapshot checksum would describe the pre-change map and the client
+         * would see a spurious divergence. */
+        serverSimShadowApply(sim, x, y, terrain);
     }
     idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
     mq->buffer[idx].event.type = EVENT_MAP_CHANGE;

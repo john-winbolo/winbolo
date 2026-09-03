@@ -169,6 +169,57 @@ int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
     return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
 }
 
+void serverSimShadowSeed(ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    /* Bind the handle here rather than at create: serverSimInit memsets the
+     * whole struct, so every path that can reach a slot's copy goes through a
+     * seed first and the handle is never left NULL. */
+    sim->clientKnownMap[slot] = &sim->clientKnownMapObj[slot];
+    if (sim->sim.mp == NULL) return;
+    memcpy(sim->clientKnownMapObj[slot].mapItem, (*sim->sim.mp).mapItem,
+           sizeof(sim->clientKnownMapObj[slot].mapItem));
+}
+
+void serverSimShadowSeedAll(ServerSim *sim) {
+    BYTE slot;
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        serverSimShadowSeed(sim, slot);
+    }
+}
+
+void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
+    BYTE slot;
+    if (sim == NULL) return;
+    /* Written per slot rather than once for all of them: each slot's copy
+     * records what that client was sent, so which slots take a given change
+     * is a per-slot decision. */
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        if (sim->clientKnownMap[slot] == NULL) continue;
+        sim->clientKnownMapObj[slot].mapItem[x][y] = terrain;
+    }
+}
+
+void serverSimShadowTick(ServerSim *sim) {
+    uint16_t e;
+
+    if (sim == NULL) return;
+    /* EVENT_MAP_CHANGE data is [mx, my, newTerrain] — the same triple
+     * simMapChangeCallback records and the client replays through mapSetPos. */
+    for (e = 0; e < sim->mapEventCount; e++) {
+        serverSimShadowApply(sim, sim->mapEvents[e].data[0],
+                             sim->mapEvents[e].data[1],
+                             sim->mapEvents[e].data[2]);
+    }
+}
+
+int serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output) {
+    if (sim == NULL || slot >= MAX_TANKS || sim->clientKnownMap[slot] == NULL) {
+        return 0;
+    }
+    return mapSaveCompressedMap(&sim->clientKnownMap[slot], &sim->sim.pb,
+                                &sim->sim.bs, &sim->sim.ss, output);
+}
+
 /* One screen-sized rect centred on a map square. */
 static void addViewRect(ViewportRect *out, int *n, int centerMX, int centerMY,
                         int halfView) {
@@ -615,7 +666,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
-        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp, &sim->sim.bs, &sim->sim.pb);
+        /* Checksum the terrain this recipient has actually been given — its
+         * own copy — so the comparison the client makes is against the map it
+         * was sent. The recording paths (noCull) have no client copy behind
+         * them and checksum the live map. */
+        hdr->mapChecksum = (noCull || sim->clientKnownMap[clientIdx] == NULL)
+            ? mapCalcChecksum(&sim->sim.mp, &sim->sim.bs, &sim->sim.pb)
+            : mapCalcChecksum(&sim->clientKnownMap[clientIdx], &sim->sim.bs,
+                              &sim->sim.pb);
         sim->lastFullSyncTick[clientIdx] = sim->tick;
     } else {
         hdr->baseCount = 0;

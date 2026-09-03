@@ -792,7 +792,8 @@ bool transportUdpServerTestPendingRemove(int slot);
  * client's connect state, or the producer skips the slot as still-downloading. */
 bool transportUdpServerTestDownloadComplete(int slot);
 /* Stage one terrain change for a slot as a real tick does: mutate the live
- * server map (so its checksum tracks the change) and enqueue an
+ * server map, write the tile into every slot's copy of the terrain (so the
+ * checksum each client is sent tracks the change), and enqueue an
  * EVENT_MAP_CHANGE into the slot's map-event hold queue, so it flows through
  * the real hold → tagged channelSend(CHANNEL_MAP) drain. Call between ticks. */
 bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,

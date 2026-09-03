@@ -1062,6 +1062,12 @@ static void serverSimApplyMapChange(ServerSim *sim) {
               sim->mapName, sim->cachedMapDataLen,
               (int)sim->randomMapEnabled);
 
+    /* The live map has just been replaced and every audience is about to be
+     * handed the new one, so restart every slot's copy of the terrain from it.
+     * Without this a slot's copy would still hold the previous map and the
+     * checksum in its snapshot header would not match what it was sent. */
+    serverSimShadowSeedAll(sim);
+
     /* A reservation from the previous map can index past the new map's
      * start list; drop those, then re-cluster every now-unassigned slot
      * into the new map's free starts. Slots whose reservation is still

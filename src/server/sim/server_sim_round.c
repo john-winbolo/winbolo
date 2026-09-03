@@ -852,6 +852,12 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 4. Clear mines from under bases */
     basesClearMines(&sim->sim);
 
+    /* Every client is about to be handed the reloaded map (the caller
+     * republishes it to UDP and in-process audiences alike), so restart every
+     * slot's copy of the terrain from it. Placed after the mine clear so the
+     * copies match the map the blob is compressed from. */
+    serverSimShadowSeedAll(sim);
+
     /* 5. Reset lag compensation state */
     for (i = 0; i < MAX_TANKS; i++) {
         posHistoryInit(&sim->posHistory[i]);
@@ -1315,6 +1321,11 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     serverSimCacheMapMd5FromFile(sim, mapFileName);
 
     basesClearMines(&sim->sim);
+
+    /* A different map is installed — restart every slot's copy of the terrain
+     * from it, so a lobby client's snapshot checksum is taken against the map
+     * the lobby now holds. */
+    serverSimShadowSeedAll(sim);
 
     /* Update cached map data */
     len = serverSimGetCompressedMap(sim, tempBuf);

@@ -317,6 +317,16 @@ struct ServerSim {
     GameEvent    mapEvents[MAX_MAP_EVENTS];
     uint16_t     mapEventCount;
 
+    /* What each connected client's copy of the terrain looks like: every
+     * tile the server has actually sent it. Identical to the real map while
+     * every map event is broadcast; the CRC in that client's snapshot header
+     * and its resync blob read this copy, so the two ends agree about the
+     * map the client was really given. The handle array holds
+     * &clientKnownMapObj[i] so the bolo_map.c entry points, which all take a
+     * `map *`, can be called against a slot's copy. */
+    struct mapObj clientKnownMapObj[MAX_TANKS];
+    map           clientKnownMap[MAX_TANKS];
+
     /* Previous pill/base state for change detection */
     PillSnapshot prevPills[MAX_SNAPSHOT_PILLS];
     BaseSnapshot prevBases[MAX_SNAPSHOT_BASES];
@@ -487,6 +497,31 @@ typedef struct {
  * category off). */
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
+
+/* Per-client copies of the terrain (clientKnownMap above). Seed points a
+ * slot's handle at its storage and copies the live map into it; SeedAll does
+ * every slot. Called wherever the real map is installed or replaced — sim
+ * create, map load, lobby map change, round reset — and for one slot when a
+ * player joins, so the copy a client is given always starts as the map the
+ * server holds. */
+void serverSimShadowSeed(ServerSim *sim, BYTE slot);
+void serverSimShadowSeedAll(ServerSim *sim);
+
+/* Write this tick's map changes into every slot's copy. Called once per
+ * running frame from the tick core, after both half-steps have finished
+ * filling mapEvents and before any transport drains them, so in-process
+ * clients and bots track the same way UDP clients do. Apply writes one tile
+ * into every slot's copy — the per-event step ShadowTick loops over, also
+ * called directly by the transport's test-only map-event injector, which
+ * stages a change without a tick to carry it. */
+void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain);
+void serverSimShadowTick(ServerSim *sim);
+
+/* serverSimGetCompressedMap over one slot's copy of the terrain, with the
+ * live pills, bases and starts. The blob a client downloads on join or
+ * resync comes from here, so it carries the terrain that client's snapshot
+ * checksum is computed over. Returns the compressed length. */
+int  serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output);
 
 /* Stamp the proximity clocks the viewPolicyDecay categories read: for every
  * connected player with a live tank, every pill/base/tank within

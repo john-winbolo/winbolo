@@ -376,6 +376,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.baseTimer[0] = BASE_TICKS_BETWEEN_REFUEL;
     }
 
+    /* Bind every slot's copy of the terrain to the map just created. The
+     * three creators re-seed once their map is loaded; doing it here as well
+     * means no slot's handle is left NULL by the memset above. */
+    serverSimShadowSeedAll(sim);
+
     /* Publish the sim as live before any caller can arm an activeSim slot
      * for it.  Paired with serverSimUnregisterLive in serverSimDestroy,
      * which the failure paths of the three creators also route through. */
@@ -440,6 +445,9 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         }
     }
 
+    /* The map is loaded — restart every slot's copy of the terrain from it. */
+    serverSimShadowSeedAll(sim);
+
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;
 }
@@ -473,6 +481,9 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
             sim->cachedMapDataLen = len;
         }
     }
+
+    /* The map is loaded — restart every slot's copy of the terrain from it. */
+    serverSimShadowSeedAll(sim);
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;
@@ -548,6 +559,9 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
+
+    /* The generated map is in place — restart every slot's copy from it. */
+    serverSimShadowSeedAll(sim);
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
     return sim;

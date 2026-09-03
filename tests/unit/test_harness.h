@@ -1095,6 +1095,18 @@ int run_map_compress_roundtrip_mutated(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
 
+/* Per-client copies of the terrain (test_map_shadow.c): each slot's
+ * clientKnownMap follows the live map across frames of scattered terrain
+ * changes; its checksum equals the live map's and equals what
+ * serverSimBuildSnapshot stamps into that slot's header;
+ * serverSimGetCompressedMapFor produces the same bytes as
+ * serverSimGetCompressedMap; and a join, a round reset and a lobby map change
+ * each re-seed the copies. */
+int run_map_shadow_tracks_real(void);
+int run_map_shadow_crc_matches(void);
+int run_map_shadow_blob_identical(void);
+int run_map_shadow_seed_lifecycle(void);
+
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a
  * valid blob advances them; installCompressedMap reports failure on garbage. */
