@@ -126,8 +126,11 @@ void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
-/* Bumped on every successful sheet build so a caller holding its own
-   atlas (bg_game) can tell that copy is stale after a skin change. */
+/* Bumped by sdl3DrawReloadTiles, the skin / tile-detail reload, so a caller
+   holding its own atlas (bg_game, the lobby map preview) can tell that copy
+   is stale. Not bumped by the zoom rebuild: that changes only this
+   texture's scale, and the other atlases are built at their own sizes from
+   art that has not changed. */
 static unsigned int  gTilesGeneration = 0;
 
 /* How the tile sheet is sampled.  Held here rather than read from
@@ -373,7 +376,6 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
   SDL_SetTextureScaleMode(gTilesTex, gTilesScaleMode);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
-  gTilesGeneration++;
   return TRUE;
 }
 
@@ -399,10 +401,13 @@ void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
 
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading
  * the skin assets from disk.  Does not touch the renderer, window, fonts,
- * or zoom. */
+ * or zoom.  Bumps the generation whether or not the build succeeds: the art
+ * has changed either way, and a consumer that rebuilds against it will see
+ * the same failure this path did. */
 void sdl3DrawReloadTiles(void) {
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
   sdl3DrawStatusSetAtlas(NULL, 1);
+  gTilesGeneration++;
   sdl3LoadTiles();
 }
 

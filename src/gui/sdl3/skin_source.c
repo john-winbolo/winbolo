@@ -54,6 +54,11 @@ struct SkinSource {
     int             cap;
     int            *buckets;
     int             bucketCount;           /* always a power of two */
+    /* skin.ini, parsed on the first skinSourceReadIni and kept: the settings
+     * tab asks for it every frame, and on a zip source each read is an
+     * inflate. A source is immutable once open, so it never goes stale. */
+    bool            iniLoaded;
+    SkinInfo        ini;
 };
 
 static char        s_activeId[SKIN_ID_MAX];
@@ -488,6 +493,44 @@ bool skinSourceRead(SkinSource *src, const char *relName,
     }
 }
 
+bool skinSourceReadHead(SkinSource *src, const char *relName,
+                        void *buf, size_t max, size_t *got) {
+    const SkinIndexEntry *e;
+    size_t n = 0;
+    if (!src || !relName || !buf || !got || max == 0) return false;
+    e = indexFind(src, relName);
+    if (!e) return false;
+
+    if (!src->isZip) {
+        char full[SKIN_PATH_MAX * 2];
+        SDL_IOStream *io;
+        SDL_snprintf(full, sizeof(full), "%s/%s", src->path, e->rel);
+        io = SDL_IOFromFile(full, "rb");
+        if (!io) return false;
+        n = SDL_ReadIO(io, buf, max);
+        SDL_CloseIO(io);
+        *got = n;
+        return true;
+    }
+
+    {
+        unz_file_pos pos = e->pos;
+        unsigned char *p = (unsigned char *)buf;
+        if (unzGoToFilePos(src->zip, &pos) != UNZ_OK) return false;
+        if (unzOpenCurrentFile(src->zip) != UNZ_OK) return false;
+        /* Inflate only as far as the caller asked; the rest of the entry
+         * stays compressed. */
+        while (n < max) {
+            int r = unzReadCurrentFile(src->zip, p + n, (unsigned int)(max - n));
+            if (r <= 0) break;
+            n += (size_t)r;
+        }
+        unzCloseCurrentFile(src->zip);
+        *got = n;
+        return true;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* skin.ini                                                            */
 /* ------------------------------------------------------------------ */
@@ -558,14 +601,22 @@ static void parseSkinIni(char *text, SkinInfo *out) {
 }
 
 void skinSourceReadIni(SkinSource *src, SkinInfo *out) {
-    void *buf = NULL;
-    size_t len = 0;
     if (!out) return;
     SDL_memset(out, 0, sizeof(*out));
     if (!src) return;
-    if (!skinSourceRead(src, "skin.ini", &buf, &len)) return;
-    parseSkinIni((char *)buf, out);
-    SDL_free(buf);
+    if (!src->iniLoaded) {
+        void *buf = NULL;
+        size_t len = 0;
+        SDL_memset(&src->ini, 0, sizeof(src->ini));
+        if (skinSourceRead(src, "skin.ini", &buf, &len)) {
+            parseSkinIni((char *)buf, &src->ini);
+            SDL_free(buf);
+        }
+        /* A missing or unreadable ini is an answer too: an empty SkinInfo,
+         * and no reason to go looking again. */
+        src->iniLoaded = true;
+    }
+    *out = src->ini;
 }
 
 /* ------------------------------------------------------------------ */

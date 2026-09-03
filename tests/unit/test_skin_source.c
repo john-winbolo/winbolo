@@ -46,6 +46,52 @@ static int checkIni(const SkinInfo *info, const char *label) {
     return 0;
 }
 
+/* A head read has to hand back a prefix of the full read: the first bytes
+   when the file is longer than asked for, and every byte when it is not.
+   The density scan reads sheet headers this way, so a zip source must not
+   need the whole entry inflated to answer. */
+static int checkHead(SkinSource *src, const char *label,
+                     const unsigned char *refPng, size_t refLen) {
+    unsigned char head[16];
+    unsigned char *whole;
+    size_t got = 0;
+
+    UT_ASSERT_MSG(refLen > sizeof(head),
+                  "%s: fixture PNG is %d bytes, too short for the head check",
+                  label, (int)refLen);
+
+    if (!skinSourceReadHead(src, "tank_self_00.png", head, sizeof(head), &got)) {
+        UT_FAIL("%s: head read of tank_self_00.png failed", label);
+    }
+    UT_ASSERT_MSG(got == sizeof(head),
+                  "%s: head read returned %d bytes, asked for %d",
+                  label, (int)got, (int)sizeof(head));
+    UT_ASSERT_MSG(memcmp(head, refPng, sizeof(head)) == 0,
+                  "%s: head read differs from the start of the full read",
+                  label);
+
+    /* Asking for more than the file holds gets the whole file and no more. */
+    whole = (unsigned char *)SDL_malloc(refLen + 64);
+    if (whole == NULL) {
+        UT_FAIL("%s: out of memory", label);
+    }
+    if (!skinSourceReadHead(src, "tank_self_00.png", whole, refLen + 64, &got)) {
+        SDL_free(whole);
+        UT_FAIL("%s: oversized head read of tank_self_00.png failed", label);
+    }
+    if (got != refLen || memcmp(whole, refPng, refLen) != 0) {
+        SDL_free(whole);
+        UT_FAIL("%s: oversized head read gave %d bytes, full read gave %d, "
+                "or the bytes differ", label, (int)got, (int)refLen);
+    }
+    SDL_free(whole);
+
+    if (skinSourceReadHead(src, "not_in_this_skin.png", head, sizeof(head), &got)) {
+        UT_FAIL("%s: head read of a name that isn't there succeeded", label);
+    }
+    return 0;
+}
+
 /* Open an archive and match it against the directory source's answers. */
 static int checkArchive(const char *zipPath, const char *label,
                         const unsigned char *refPng, size_t refLen) {
@@ -90,10 +136,11 @@ static int checkArchive(const char *zipPath, const char *label,
         skinSourceClose(src);
         UT_FAIL("%s: read buffer is not NUL-terminated at [len]", label);
     }
-
     SDL_free(png);
+
+    rc = checkHead(src, label, refPng, refLen);
     skinSourceClose(src);
-    return 0;
+    return rc;
 }
 
 static int checkSkinSources(const char *fixture) {
@@ -140,6 +187,25 @@ static int checkSkinSources(const char *fixture) {
         SDL_free(png);
         skinSourceClose(dirSrc);
         UT_FAIL("directory: read buffer is not NUL-terminated at [len]");
+    }
+
+    rc = checkHead(dirSrc, "directory", (const unsigned char *)png, pngLen);
+    if (rc != 0) {
+        SDL_free(png);
+        skinSourceClose(dirSrc);
+        return rc;
+    }
+
+    /* The ini is parsed once and cached, so a second read is the same
+       answer out of the cache rather than a fresh parse. */
+    {
+        SkinInfo again;
+        skinSourceReadIni(dirSrc, &again);
+        if (memcmp(&again, &info, sizeof(info)) != 0) {
+            SDL_free(png);
+            skinSourceClose(dirSrc);
+            UT_FAIL("directory: a second skinSourceReadIni disagrees with the first");
+        }
     }
     skinSourceClose(dirSrc);
 

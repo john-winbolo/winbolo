@@ -100,10 +100,25 @@ bool        skinSourceRead(SkinSource *src, const char *relName,
                            void **buf, size_t *len);
 
 /*********************************************************
+ * NAME:          skinSourceReadHead
+ * PURPOSE:
+ *   Reads at most max bytes from the start of relName into
+ *   buf and writes how many it got, which is fewer than max
+ *   only when the file is shorter. A zip entry is inflated
+ *   only that far, so a header check on a large sheet does
+ *   not cost the whole sheet. False on a miss or a read
+ *   failure.
+ *********************************************************/
+bool        skinSourceReadHead(SkinSource *src, const char *relName,
+                               void *buf, size_t max, size_t *got);
+
+/*********************************************************
  * NAME:          skinSourceReadIni
  * PURPOSE:
  *   Fills out from the skin's skin.ini [Skin] section.
  *   Zeroes out first, so a missing ini leaves it empty.
+ *   Parsed once per source and cached, so calling it every
+ *   frame is a struct copy.
  *********************************************************/
 void        skinSourceReadIni(SkinSource *src, SkinInfo *out);
 

@@ -124,19 +124,19 @@ void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
 
     /* A whole sheet drawn at N times the layout carries every sprite at N,
        so it counts as full coverage up to N before a single @Nx file is
-       looked at.  Reading the first sheet the skin holds costs one file read
-       per scan - about a megabyte for a 2x sheet - which the scan can afford
-       because it runs once per skin change and tileLoaderGetDensityInfo
-       caches the result.  Only the header is parsed, and the per-sprite loop
+       looked at.  Only the BMP header says how big the sheet is, so only
+       the header is read: 26 bytes, whether the sheet is a file or a zip
+       entry that would otherwise be inflated whole.  The per-sprite loop
        below stays pure index lookups. */
     static const char *sheetNames[] = { "tiles.bmp", "skin.bmp", "skin32.bmp" };
     int sheetDensity = 0;
     for (int i = 0; i < (int)(sizeof(sheetNames) / sizeof(sheetNames[0])); i++) {
-        void *sheetBuf = NULL;
-        size_t sheetLen = 0;
-        if (!skinSourceRead(skin, sheetNames[i], &sheetBuf, &sheetLen)) continue;
-        sheetDensity = tileLoaderSheetDensityFromBmp(sheetBuf, sheetLen);
-        SDL_free(sheetBuf);
+        unsigned char head[26];
+        size_t got = 0;
+        if (!skinSourceReadHead(skin, sheetNames[i], head, sizeof(head), &got)) {
+            continue;
+        }
+        sheetDensity = tileLoaderSheetDensityFromBmp(head, got);
         /* Bytes that are not a usable sheet do not settle the question: the
            build's own loader moves on to the next name as well, so stopping
            here would leave the scan naming a sheet the build never uses. */
