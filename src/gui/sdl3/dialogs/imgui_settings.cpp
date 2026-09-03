@@ -476,9 +476,27 @@ static const char *skinKindLabel(SkinKind kind) {
     }
 }
 
+/* Which scan location an id came from.  The scan stamps the location into
+   the id's prefix, so the closed combo can tag the active skin without
+   listing the directories again. */
+static SkinKind skinKindFromId(const char *id) {
+    if (strncmp(id, "builtin:", 8) == 0)  return SKIN_KIND_BUILTIN;
+    if (strncmp(id, "workshop:", 9) == 0) return SKIN_KIND_WORKSHOP;
+    return SKIN_KIND_USER;
+}
+
 /* Set when a pick fails to load, cleared by the next one that succeeds.
    File scope because both settings shells share the tab renderer. */
 static bool s_skinLoadFailed = false;
+
+/* Rows for the open picker, plus whether it was open on the previous frame.
+   A scan is a directory listing across three locations and a skin.ini read
+   per candidate, so it runs on the frame the popup opens and not again
+   until it is reopened — which also means a skin dropped into the folder
+   while the dialog is up shows up the next time the combo is opened.
+   File scope because both settings shells share the tab renderer. */
+static std::vector<SkinEntry> s_skinRows;
+static bool s_skinPopupWasOpen = false;
 
 /* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
@@ -585,16 +603,6 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     /* ---- Skin ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SKIN));
     {
-        /* Rescanned every frame: a directory listing plus one skin.ini read
-           per skin.  Cheap at the handful of skins a player installs. */
-        std::vector<SkinEntry> skins;
-        int found = skinScanCount();
-        if (found > 0) {
-            skins.resize((size_t)found);
-            found = skinScan(skins.data(), found);
-            skins.resize((size_t)(found > 0 ? found : 0));
-        }
-
         /* Copied, not aliased: skinSetActive() below rewrites the registry's
            own copy of the active id. */
         char activeId[SKIN_ID_MAX];
@@ -603,34 +611,62 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             SDL_strlcpy(activeId, a != nullptr ? a : "", sizeof(activeId));
         }
 
-        /* -1 is the Default row, which has no id and no source tag. */
-        int cur = -1;
-        for (int i = 0; i < (int)skins.size(); i++) {
-            if (strcmp(skins[(size_t)i].id, activeId) == 0) { cur = i; break; }
-        }
-
+        /* The shut combo needs only the active skin, so it takes the name
+           from that skin's own ini — falling back to the id's text after the
+           ':', which is what the scan would name it — and the source tag
+           from the id's prefix.  No id is the built-in assets, which have no
+           source tag. */
         char preview[SKIN_NAME_MAX + 32];
-        if (cur < 0) {
+        if (activeId[0] == '\0') {
             SDL_strlcpy(preview, langGetText(STR_DLGSKIN_DEFAULT),
                         sizeof(preview));
         } else {
-            SDL_snprintf(preview, sizeof(preview), "%s (%s)",
-                         skins[(size_t)cur].displayName,
-                         skinKindLabel(skins[(size_t)cur].kind));
+            SkinInfo info;
+            skinSourceReadIni(skinGetActiveSource(), &info);
+            const char *name = info.name;
+            if (name[0] == '\0') {
+                const char *colon = strchr(activeId, ':');
+                name = (colon != nullptr) ? colon + 1 : activeId;
+            }
+            SDL_snprintf(preview, sizeof(preview), "%s (%s)", name,
+                         skinKindLabel(skinKindFromId(activeId)));
         }
 
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
         if (ImGui::BeginCombo("##skin", preview)) {
+            if (!s_skinPopupWasOpen) {
+                s_skinPopupWasOpen = true;
+                s_skinRows.clear();
+                int found = skinScanCount();
+                if (found > 0) {
+                    s_skinRows.resize((size_t)found);
+                    found = skinScan(s_skinRows.data(), found);
+                    s_skinRows.resize((size_t)(found > 0 ? found : 0));
+                }
+            }
+
+            /* -1 is the Default row, which has no id and no source tag.  An
+               active skin deleted since it was picked is not in the rows
+               either, and lands here too. */
+            int cur = -1;
+            for (int i = 0; i < (int)s_skinRows.size(); i++) {
+                if (strcmp(s_skinRows[(size_t)i].id, activeId) == 0) {
+                    cur = i;
+                    break;
+                }
+            }
+
             /* Default first: clears back to the built-in assets. */
-            if (ImGui::Selectable(langGetText(STR_DLGSKIN_DEFAULT), cur < 0) &&
-                cur >= 0) {
+            if (ImGui::Selectable(langGetText(STR_DLGSKIN_DEFAULT),
+                                  activeId[0] == '\0') &&
+                activeId[0] != '\0') {
                 skinSetActive("");
                 s_skinLoadFailed = false;
                 gameFrontSaveCurrentPrefs();
                 ctx->wantSkinReload = true;
             }
-            for (int i = 0; i < (int)skins.size(); i++) {
-                const SkinEntry &e = skins[(size_t)i];
+            for (int i = 0; i < (int)s_skinRows.size(); i++) {
+                const SkinEntry &e = s_skinRows[(size_t)i];
                 bool sel = (cur == i);
                 char tag[64];
                 SDL_snprintf(tag, sizeof(tag), "(%s)", skinKindLabel(e.kind));
@@ -646,7 +682,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 if (ImGui::Selectable(e.displayName, sel,
                                       ImGuiSelectableFlags_None,
                                       ImVec2(rowW, 0.0f)) &&
-                    i != cur) {
+                    strcmp(e.id, activeId) != 0) {
                     if (skinSetActive(e.id)) {
                         s_skinLoadFailed = false;
                         gameFrontSaveCurrentPrefs();
@@ -664,6 +700,8 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 ImGui::PopID();
             }
             ImGui::EndCombo();
+        } else {
+            s_skinPopupWasOpen = false;
         }
         if (s_skinLoadFailed) {
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),

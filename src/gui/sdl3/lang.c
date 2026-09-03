@@ -1843,10 +1843,10 @@ static const LangEntry langTable[] = {
     {1950, "Built-in"},
     {1951, "User"},
     {1952, "Workshop"},
-    {1953, "Downloading…"},
+    {1953, "Downloading..."},
     {1954, "Open skins folder"},
     {1955, "Browse Workshop"},
-    {1956, "Publish to Workshop…"},
+    {1956, "Publish to Workshop..."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
