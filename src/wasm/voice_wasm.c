@@ -75,6 +75,11 @@ EM_JS(void, wb_voice_init, (int frameSamples, int captureQueueMax,
     capNode: null,
     sinkNode: null,
     playNode: null,
+    /* One entry per remote talker, keyed by player number: their own
+       playback node and the last queue depth it reported.  Sparse on
+       purpose - a talker exists here only between their first frame and
+       being forgotten. */
+    speakers: {},
     capQueue: [],
     capMax: captureQueueMax,
     moduleOk: false,
@@ -168,12 +173,20 @@ EM_JS(void, wb_voice_init, (int frameSamples, int captureQueueMax,
     "  }" +
     "  process(inputs, outputs) {" +
     "    const out = outputs[0][0];" +
+    "    let drained = false;" +
     "    for (let i = 0; i < out.length; i++) {" +
     "      if (this.q.length === 0) { out[i] = 0; continue; }" +
     "      const f = this.q[0];" +
     "      out[i] = f[this.pos++];" +
-    "      if (this.pos >= f.length) { this.q.shift(); this.pos = 0; }" +
+    "      if (this.pos >= f.length) { this.q.shift(); this.pos = 0; drained = true; }" +
     "    }" +
+    /* The depth lives on the audio thread, where the main thread cannot
+       read it, so report it out whenever a frame finishes - an absolute
+       count rather than a change, so a message lost or arriving late costs
+       one stale reading rather than a running total that never recovers.
+       A frame spans several render quanta, so this is one bare number per
+       frame played, and none at all once a node goes quiet. */
+    "    if (drained) this.port.postMessage(this.q.length);" +
     "    return true;" +
     "  }" +
     "}" +
@@ -373,6 +386,83 @@ EM_JS(int, wb_voice_capture_read, (int16_t *pcm, int frameSamples), {
   return frameSamples;
 });
 
+/* Gives one talker a playback node of their own and returns 1 once they
+ * have one.  Every node is an instance of the same wb-voice-playback class
+ * connected straight to the destination, so the context mixes the talkers
+ * against each other and against the loopback bus.
+ *
+ * Returns 0 while the worklet module is still loading.  Frames can arrive
+ * before it has: the runtime treats that as "not playable yet" and asks
+ * again on that talker's next frame, which is a fifth of a second of their
+ * first word at worst. */
+EM_JS(int, wb_voice_speaker_open, (int player), {
+  var v = Module.WB_voice;
+  if (!v || !v.ctx || !v.moduleOk) return 0;
+  if (v.speakers[player]) return 1;
+
+  var node;
+  try {
+    node = new AudioWorkletNode(v.ctx, "wb-voice-playback",
+                                { numberOfInputs: 0, numberOfOutputs: 1,
+                                  outputChannelCount: [1] });
+  } catch (e) {
+    console.warn("[WB_voice] no playback node for player " + player + ":", e);
+    return 0;
+  }
+
+  var entry = { node: node, queued: 0 };
+  /* The node's own report of how much it still holds.  Anything that is not
+     a number is not ours to read. */
+  node.port.onmessage = function(e2) {
+    if (typeof e2.data === "number") entry.queued = e2.data;
+  };
+  node.connect(v.ctx.destination);
+  v.speakers[player] = entry;
+  return 1;
+});
+
+EM_JS(void, wb_voice_speaker_close, (int player), {
+  var v = Module.WB_voice;
+  if (!v || !v.speakers) return;
+  var s = v.speakers[player];
+  if (!s) return;
+  /* Port first, then the graph: a depth report already in flight lands on a
+     handler that is gone rather than on an entry that has been dropped. */
+  try { s.node.port.onmessage = null; } catch (e) { }
+  try { s.node.disconnect(); } catch (e) { }
+  delete v.speakers[player];
+});
+
+EM_JS(int, wb_voice_speaker_queued, (int player), {
+  var v = Module.WB_voice;
+  if (!v || !v.speakers) return 0;
+  var s = v.speakers[player];
+  return s ? s.queued : 0;
+});
+
+EM_JS(void, wb_voice_speaker_play, (int player, const int16_t *pcm,
+                                    int frameSamples), {
+  var v = Module.WB_voice;
+  if (!v || !v.speakers) return;
+  var s = v.speakers[player];
+  /* A talker with no node is one the open declined; the frame goes nowhere
+     rather than being held for a node that may never exist. */
+  if (!s) return;
+  /* A fresh array per call, copied out of the heap and then transferred,
+     for the same reason as the loopback path: a view of the heap is
+     something the next allocation can detach. */
+  var f = new Float32Array(frameSamples);
+  var base = pcm >> 1;
+  for (var i = 0; i < frameSamples; i++) {
+    f[i] = HEAP16[base + i] / 32768;
+  }
+  s.node.port.postMessage(f.buffer, [f.buffer]);
+  /* Counted in as it is handed over, so several frames queued within one
+     tick see the depth they are building rather than the figure from before
+     the first of them.  The node's next report replaces it outright. */
+  s.queued++;
+});
+
 EM_JS(void, wb_voice_loopback_play, (const int16_t *pcm, int frameSamples), {
   var v = Module.WB_voice;
   if (!v || !v.playNode) return;
@@ -401,6 +491,17 @@ EM_JS(void, wb_voice_shutdown, (void), {
     if (v.capNode) { v.capNode.port.onmessage = null; v.capNode.disconnect(); }
     if (v.playNode) v.playNode.disconnect();
     if (v.sinkNode) v.sinkNode.disconnect();
+    /* Every talker goes too.  Closing the context alone would leave their
+       nodes attached to it, each still holding a port this side is no
+       longer listening on. */
+    if (v.speakers) {
+      Object.keys(v.speakers).forEach(function(k) {
+        var s = v.speakers[k];
+        try { s.node.port.onmessage = null; } catch (e2) { }
+        try { s.node.disconnect(); } catch (e3) { }
+      });
+      v.speakers = {};
+    }
     if (v.micStream) {
       v.micStream.getTracks().forEach(function(t) { t.stop(); });
     }
@@ -557,18 +658,25 @@ int voiceBackendCaptureRead(int16_t *pcm) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Declines to play a remote talker: there is no output
-*  path yet.  The shared runtime drops that player's frames
-*  rather than buffering audio nothing will ever drain.
-*  Giving each talker a node on the AudioContext will happen
-*  here.
+*  Gives one remote talker a playback node of their own on
+*  the voice context, on the first frame heard from them,
+*  and reports whether they can be played.  Talkers mix:
+*  each node is connected to the same destination, so the
+*  context sums them.
+*
+*  Calling it again for a talker who already has a node
+*  succeeds without building a second one.
+*
+*  False while the worklet module is still loading, which is
+*  the one case a frame can beat the output path into
+*  existence.  The runtime drops that frame and asks again
+*  on the next one.
 *
 *ARGUMENTS:
 *  player - the player number the frame came from
 *********************************************************/
 bool voiceBackendSpeakerOpen(int player) {
-    (void)player;
-    return false;
+    return wb_voice_speaker_open(player) != 0;
 }
 
 /*********************************************************
@@ -577,14 +685,18 @@ bool voiceBackendSpeakerOpen(int player) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  No talker was ever opened, so there is nothing to
-*  release.
+*  Unhooks one talker's playback node from the context and
+*  forgets it.  Whatever that node still held goes with it,
+*  so a talker who is dropped stops where they are rather
+*  than playing out the tail that had already arrived.
+*
+*  Safe for a talker who was never opened.
 *
 *ARGUMENTS:
 *  player - the player number to release
 *********************************************************/
 void voiceBackendSpeakerClose(int player) {
-    (void)player;
+    wb_voice_speaker_close(player);
 }
 
 /*********************************************************
@@ -593,15 +705,22 @@ void voiceBackendSpeakerClose(int player) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Reports nothing queued for that talker, which is what an
-*  unopened talker holds.
+*  Returns the whole frames one talker's node still has
+*  waiting, and 0 for a talker who was never opened.
+*
+*  The depth itself belongs to the audio thread, which this
+*  one cannot read, so the node reports it after each frame
+*  it finishes and the figure is cached here.  That makes it
+*  a reading from up to one frame ago, corrected by counting
+*  in each frame as it is handed over.  It is what paces
+*  playback, and pacing to a figure 20 ms old costs nothing
+*  a jitter buffer measured in whole frames can see.
 *
 *ARGUMENTS:
 *  player - the player number to ask about
 *********************************************************/
 int voiceBackendSpeakerQueuedFrames(int player) {
-    (void)player;
-    return 0;
+    return wb_voice_speaker_queued(player);
 }
 
 /*********************************************************
@@ -610,18 +729,20 @@ int voiceBackendSpeakerQueuedFrames(int player) {
 *CREATION DATE: 2026
 *LAST MODIFIED: 2026
 *PURPOSE:
-*  Discards the frame: there is nowhere to play it.  This
-*  is only reached if a talker was opened, which cannot
-*  happen yet.  Queueing onto that talker's output node
-*  will happen here.
+*  Queues one frame onto that talker's playback node.  The
+*  samples are converted to float and copied out of the wasm
+*  heap into an array of their own, which is then handed to
+*  the node; nothing of the heap is retained past the call.
+*
+*  A talker with no node - one whose open declined - has
+*  their frame dropped.
 *
 *ARGUMENTS:
 *  player - the player number the frame came from
 *  pcm    - VOICE_FRAME_SAMPLES mono S16 samples
 *********************************************************/
 void voiceBackendSpeakerPlay(int player, const int16_t *pcm) {
-    (void)player;
-    (void)pcm;
+    wb_voice_speaker_play(player, pcm, VOICE_FRAME_SAMPLES);
 }
 
 /*********************************************************
