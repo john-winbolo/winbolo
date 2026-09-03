@@ -191,9 +191,12 @@ struct Row {
     bool   blitz;
 };
 
-/* Maximum section index the renderer knows how to place. 1..10 are the 2x5
- * grid; 11..15 are full-width strips below it. Bump this (and MAX_SECT_IDX's
- * users) when the brain adds a strip -- everything below is sized from it. */
+/* Maximum section index the renderer knows how to place. 1..10 fill the first
+ * five columns of the 2x6 grid; 15 (BUILDER) is the top half of the sixth
+ * column, whose bottom half is deliberately left empty (every column is split
+ * in two, used or not); 11..14 are full-width strips below the grid. Bump this
+ * (and MAX_SECT_IDX's users) when the brain adds a section -- everything below
+ * is sized from it. */
 enum { MAX_SECT_IDX = 15 };
 
 struct Section {
@@ -931,63 +934,71 @@ void renderPoolGrid(int registry_idx, const char *body) {
         "    *=winner per pool   wt=cost*phase_weight");
     ImGui::Separator();
 
-    /* 2x5 grid for sections 1..10. */
+    /* 2x6 grid: sections 1..10 in the first five columns (1..5 on top, 6..10
+     * below), and the BUILDER section (15) in the top half of the sixth
+     * column. The sixth column's bottom half stays empty on purpose -- the
+     * grid's pattern is "every column split in two", and BUILDER is the only
+     * section that lives there. (It used to be a full-width strip under the
+     * grid; the author wanted a column that follows the pattern instead.) */
     ImVec2 avail = ImGui::GetContentRegionAvail();
     /* Reserve room at the bottom for the def_build (11) / wait_for_lgm (12) /
-     * kill_lgm (13) / take_cover (14) / BUILDER (15) strips when those
-     * sections exist. BUILDER is taller because it carries three header lines
-     * (owner, eligibility, active job) above its candidate rows. */
+     * kill_lgm (13) / take_cover (14) strips when those sections exist. */
     const float kStripH        = 52.0f;
     const float kStripStrideH  = 56.0f;
-    const float kBuilderH      = 128.0f;
     float reservedH = 0.0f;
     if (byIdx[11]) reservedH += kStripStrideH;
     if (byIdx[12]) reservedH += kStripStrideH;
     if (byIdx[13]) reservedH += kStripStrideH;
     if (byIdx[14]) reservedH += kStripStrideH;
-    if (byIdx[15]) reservedH += kBuilderH + 4.0f;
     const float gap = 4.0f;
+    const int   kCols = 6;
     float gridH = avail.y - reservedH;
     if (gridH < 100.0f) gridH = 100.0f;
     float rowH = (gridH - gap) * 0.5f;
-    float colW = (avail.x - gap * 4.0f) / 5.0f;
+    float colW = (avail.x - gap * (float)(kCols - 1)) / (float)kCols;
 
     if (isReplanTick) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg,
                               IM_COL32(48, 48, 52, 255));
     }
     for (int row = 0; row < 2; row++) {
-        for (int col = 0; col < 5; col++) {
+        for (int col = 0; col < kCols; col++) {
             if (col > 0) ImGui::SameLine(0.0f, gap);
-            int sidx = row * 5 + col + 1;
+            /* Section for this cell: pools 1..10 fill columns 0..4; the sixth
+             * column is BUILDER (15) on top and nothing underneath. */
+            int sidx;
+            if (col < 5)        sidx = row * 5 + col + 1;
+            else if (row == 0)  sidx = 15;
+            else                sidx = 0;
             char cellId[24];
-            SDL_snprintf(cellId, sizeof(cellId), "##cell%d", sidx);
+            SDL_snprintf(cellId, sizeof(cellId), "##cell%d%d", row, col);
             ImGui::BeginChild(cellId, ImVec2(colW, rowH), true);
-            if (byIdx[sidx]) {
+            if (sidx > 0 && byIdx[sidx]) {
                 renderSection(st, byIdx[sidx]);
-            } else {
+            } else if (sidx == 15) {
+                ImGui::TextColored(poolColorFor(sidx), "BUILDER (no data)");
+            } else if (sidx > 0) {
                 ImGui::TextColored(poolColorFor(sidx),
                                    "%d. (no data)", sidx);
             }
+            /* sidx == 0: the empty bottom half of the BUILDER column. */
             ImGui::EndChild();
         }
     }
     if (isReplanTick) ImGui::PopStyleColor();
 
     /* Full-width strips below the grid, in brain-emission order:
-     *   11 def_build      12 wait_for_lgm   13 kill_lgm
-     *   14 take_cover     15 BUILDER (the builder pool)
+     *   11 def_build      12 wait_for_lgm   13 kill_lgm   14 take_cover
      * 13 and 14 are injected straight into pool_cache by the brain (no
      * eval_queue / goal_competition path) so they come and go with a visible
-     * hostile LGM / a live cover scan. 15 is not a pool at all -- it is the
-     * second arbiter, spending the MAN rather than the tank -- which is why it
-     * gets the tall cell: three header lines then its candidate rows. */
+     * hostile LGM / a live cover scan. BUILDER (15) is not a strip any more:
+     * it is the sixth grid column above (three header lines then its
+     * candidate rows, in a cell as tall as any pool's). */
     struct { int idx; const char *id; float h; } kStrips[] = {
         { 11, "##cell11", kStripH },
         { 12, "##cell12", kStripH },
         { 13, "##cell13", kStripH },
         { 14, "##cell14", kStripH },
-        { 15, "##cell15", kBuilderH },
     };
     for (size_t i = 0; i < sizeof(kStrips) / sizeof(kStrips[0]); i++) {
         Section *sec = byIdx[kStrips[i].idx];
