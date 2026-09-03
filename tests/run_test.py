@@ -48,6 +48,14 @@ import sys
 import time
 from pathlib import Path
 
+# Only test 3.1 (finaljson) uses this: it is the one scenario here that runs a
+# self-contained WinBoloDS with no client attached, so the server is free to
+# burn through its ticks as fast as it can.  Every OTHER test in this file
+# drives the server with real WinBoloHeadless clients over UDP, and those
+# clients ARE timer-paced -- running the server -asap would let it finish the
+# game before the clients had connected.  Do not add asap_args() to
+# TestRunner.start_server.
+from asap import asap_args, pacing_line, take_asap_flag
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
@@ -1247,7 +1255,7 @@ def test_finaljson(runner, ticks=200):
         "-ticks", str(ticks),
         "-finaljson", str(out_path),
         "-quiet", "-noinput", "-nowinbolonet",
-    ]
+    ] + asap_args()          # no client attached, so the pacing is free
     if runner.verbose:
         print(f"  Server cmd: {' '.join(cmd)}")
 
@@ -1357,7 +1365,19 @@ def main():
                         help="Run specific test")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show server/client output")
+    parser.add_argument("--no-asap", dest="no_asap", action="store_true",
+                        help="Run test 3.1's client-free server at the live "
+                             "20 ms/tick pacing instead of -asap (same as "
+                             "WINBOLO_ASAP=0). The client-driven tests are "
+                             "timer-paced either way.")
+    parser.add_argument("--asap", dest="force_asap", action="store_true",
+                        help="Force -asap on for test 3.1 even under "
+                             "WINBOLO_ASAP=0 (the default)")
     args = parser.parse_args()
+    take_asap_flag((["--no-asap"] if args.no_asap else [])
+                   + (["--asap"] if args.force_asap else []))
+    print(pacing_line("") + "  (test 3.1 only; the client-driven tests are "
+                            "always timer-paced)")
 
     build_dir = Path(args.build_dir)
     if not build_dir.is_absolute():
