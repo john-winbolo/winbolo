@@ -134,6 +134,15 @@ void sdl3DrawKillsDeaths(int x, int y, int kills, int deaths);
 void sdl3DrawTankLabel(char *str, BYTE playerNum,
                        BYTE mx, BYTE my, BYTE px, BYTE py);
 
+#if defined(WINBOLO_VOICE)
+/* Whether sdl3DrawTankLabel draws a microphone icon beside the label
+ * of a player whose voice is being heard. Owned here, by the module
+ * that reads it, the way the voice module owns the other voice
+ * settings; winbolo.c wraps it for the settings dialog and prefs. */
+void sdl3DrawStatusSetShowMicIcons(bool on);
+bool sdl3DrawStatusGetShowMicIcons(void);
+#endif
+
 /* Lifted from static — flushes the message-line + kills/deaths text
  * caches into the current render target. */
 void sdl3RenderCachedText(void);

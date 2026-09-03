@@ -257,6 +257,17 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void);
 *********************************************************/
 SDL_Texture *sdl3ImguiGetBrainIcon(void);
 
+#if defined(WINBOLO_VOICE)
+/*********************************************************
+*NAME:          sdl3ImguiGetMicIcon
+*PURPOSE:
+*  Returns the SDL_Texture for the talking-microphone icon
+*  drawn beside a tank's on-map label. Loads the SVG lazily
+*  on first call. Returns NULL if the SVG could not be loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiGetMicIcon(void);
+#endif
+
 /*********************************************************
 *NAME:          sdl3ImguiPlayerIsBot
 *PURPOSE:

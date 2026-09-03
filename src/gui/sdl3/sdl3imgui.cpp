@@ -326,6 +326,9 @@ static SDL_Texture *s_iconBrainLg = nullptr;
 static SDL_Texture *s_iconMic      = nullptr;
 static SDL_Texture *s_iconMicMuted = nullptr;
 static SDL_Texture *s_iconMicOff   = nullptr;
+/* Tank-label rasterization of the talking microphone, for the same reason
+ * s_iconBrainLg exists beside s_iconBrain. */
+static SDL_Texture *s_iconMicLg    = nullptr;
 /* Mic icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
  * further down the file because the players panel is rendered above them.
  * Talking is the only one that has to catch the eye mid-game; the rest sit
@@ -351,6 +354,8 @@ static void ensureWbnIconsLoaded(void) {
     s_iconMic      = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",       WBN_ICON_SIZE);
     s_iconMicMuted = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg", WBN_ICON_SIZE);
     s_iconMicOff   = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",   WBN_ICON_SIZE);
+    s_iconMicLg    = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",
+                                           WBN_ICON_TANK_LABEL_SIZE);
 #endif
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconSteam,
@@ -5153,6 +5158,16 @@ SDL_Texture *sdl3ImguiGetBrainIcon(void) {
     return s_iconBrainLg;
 }
 
+#if defined(WINBOLO_VOICE)
+SDL_Texture *sdl3ImguiGetMicIcon(void) {
+    /* Same arrangement as the brain icon: the tank-label overlay is the
+     * only consumer, so it gets the label-height rasterization rather
+     * than the 14-px players-panel texture. */
+    ensureWbnIconsLoaded();
+    return s_iconMicLg;
+}
+#endif
+
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return false;
     return (s_playerFlags[playerNum] & PLAYER_FLAG_BOT) != 0;
@@ -5381,6 +5396,7 @@ void sdl3ImguiCleanup(void) {
     if (s_iconMic) { SDL_DestroyTexture(s_iconMic); s_iconMic = nullptr; }
     if (s_iconMicMuted) { SDL_DestroyTexture(s_iconMicMuted); s_iconMicMuted = nullptr; }
     if (s_iconMicOff) { SDL_DestroyTexture(s_iconMicOff); s_iconMicOff = nullptr; }
+    if (s_iconMicLg) { SDL_DestroyTexture(s_iconMicLg); s_iconMicLg = nullptr; }
 #endif
     s_wbnIconsLoaded = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {

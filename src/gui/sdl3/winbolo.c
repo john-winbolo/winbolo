@@ -1576,6 +1576,16 @@ float windowGetVoiceVolume(void) {
   return voiceGetOutputVolume();
 }
 
+/* Tank-label microphone icons are held by the status renderer that
+ * draws them; same façade shape as the voice settings above. */
+void windowSetShowTankMicIcons(bool on) {
+  sdl3DrawStatusSetShowMicIcons(on);
+}
+
+bool windowGetShowTankMicIcons(void) {
+  return sdl3DrawStatusGetShowMicIcons();
+}
+
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);

@@ -121,6 +121,8 @@ void  windowSetVoiceMicGain(float gain);
 float windowGetVoiceMicGain(void);
 void  windowSetVoiceVolume(float gain);
 float windowGetVoiceVolume(void);
+void  windowSetShowTankMicIcons(bool on);
+bool  windowGetShowTankMicIcons(void);
 
 /* Mode is stored as a name, not a number, so a hand-edited prefs file reads
    as something. An unrecognised name falls back to the default. */
@@ -3247,6 +3249,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (!(vv >= 0.0f && vv <= 2.0f)) vv = 1.0f;
     windowSetVoiceVolume(vv);
   }
+  prefsGetString("VOICE", "Tank Icons", "Yes", buff, FILENAME_MAX);
+  windowSetShowTankMicIcons(YESNO_TO_TRUEFALSE(buff[0]));
 #endif
 
   /* Winbolo.net */
@@ -3490,6 +3494,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("VOICE", "Mic Gain", buff);
   snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceVolume());
   prefsSetString("VOICE", "Voice Volume", buff);
+  prefsSetString("VOICE", "Tank Icons", TRUEFALSE_TO_STR(windowGetShowTankMicIcons()));
 #endif
 
   /* Winbolo.net */

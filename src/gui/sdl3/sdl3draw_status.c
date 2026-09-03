@@ -47,6 +47,9 @@
 #include "tilenum.h"
 #include "flags.h"           /* country-flag textures for tank labels */
 #include "sdl3imgui.h"       /* brain icon + per-player bot flag */
+#if defined(WINBOLO_VOICE)
+#include "../voice.h"        /* talking map for the tank-label mic icon */
+#endif
 
 /* Local copies of constants that sdl3draw.c keeps as file-local
  * #defines. Duplicating them is the simplest way to keep this
@@ -78,6 +81,12 @@ static TTF_Font     *gFallbackFontLabel = NULL;
 
 static int           gCurrentEdgeX  = 0;
 static int           gCurrentEdgeY  = 0;
+
+#if defined(WINBOLO_VOICE)
+/* Tank-label microphone icons; on unless the player turns them off in
+ * Settings.  Persisted by gamefront.c through the winbolo.c wrappers. */
+static bool          gShowMicIcons  = true;
+#endif
 
 static SDL_Texture  *gTankBarsTex   = NULL;
 static SDL_Texture  *gBaseBarsTex   = NULL;
@@ -786,6 +795,8 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
    * renders, so the alpha mod is restored to 255 after drawing. */
   SDL_Texture *icon = NULL;
   float iconW = 0.0f, iconH = 0.0f;
+  float gap = 2.0f * (float)gZoomFactor;
+  float iconX = sx + texW + gap;  /* advances past each icon drawn */
   if (gLabelBot[playerNum]) {
     icon = sdl3ImguiGetBrainIcon();
     if (icon) { iconH = texH * 0.75f; iconW = iconH; }  /* brain icon is square */
@@ -794,14 +805,44 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
     if (icon) { iconH = texH * 0.75f; iconW = iconH * (float)FLAG_WIDTH / (float)FLAG_HEIGHT; }
   }
   if (icon) {
-    float gap = 2.0f * (float)gZoomFactor;
     SDL_SetTextureBlendMode(icon, SDL_BLENDMODE_BLEND);
     SDL_SetTextureAlphaMod(icon, 170);
-    SDL_FRect id = { sx + texW + gap, sy + (texH - iconH) * 0.5f, iconW, iconH };
+    SDL_FRect id = { iconX, sy + (texH - iconH) * 0.5f, iconW, iconH };
     SDL_RenderTexture(gRenderer, icon, NULL, &id);
     SDL_SetTextureAlphaMod(icon, 255);
+    iconX += iconW + gap;
   }
+
+#if defined(WINBOLO_VOICE)
+  /* Microphone icon while this player's voice is being heard here, drawn
+   * after the flag/brain icon, or straight after the name when there was
+   * none. The talking map is local — a player muted here never appears in
+   * it — so there is no muted state to draw. Same sizing, alpha and
+   * restore-to-255 as the icon above, since the texture is shared. */
+  if (gShowMicIcons &&
+      (voiceGetTalkingMap() & ((PlayerBitMap)1u << playerNum)) != 0) {
+    SDL_Texture *mic = sdl3ImguiGetMicIcon();
+    if (mic) {
+      float micH = texH * 0.75f;  /* mic icon is square */
+      SDL_SetTextureBlendMode(mic, SDL_BLENDMODE_BLEND);
+      SDL_SetTextureAlphaMod(mic, 170);
+      SDL_FRect md = { iconX, sy + (texH - micH) * 0.5f, micH, micH };
+      SDL_RenderTexture(gRenderer, mic, NULL, &md);
+      SDL_SetTextureAlphaMod(mic, 255);
+    }
+  }
+#endif
 }
+
+#if defined(WINBOLO_VOICE)
+void sdl3DrawStatusSetShowMicIcons(bool on) {
+  gShowMicIcons = on;
+}
+
+bool sdl3DrawStatusGetShowMicIcons(void) {
+  return gShowMicIcons;
+}
+#endif
 
 void sdl3DrawStatusGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {
   *shells = gCachedTankShells;

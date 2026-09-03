@@ -113,6 +113,8 @@ extern "C" {
   void windowSetVoiceMode(int mode);
   void windowSetVoiceMicGain(float gain);
   void windowSetVoiceVolume(float gain);
+  void windowSetShowTankMicIcons(bool on);
+  bool windowGetShowTankMicIcons(void);
 #endif
   void windowMenuNewswire_toggle(struct ClientSim *cs);
   void windowMenuAssistant_toggle(struct ClientSim *cs);
@@ -676,6 +678,12 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         if (ImGui::SliderFloat(langGetText(STR_DLGSETTINGS_VOICE_VOLUME), &vol,
                                0.0f, 2.0f, "%.2fx")) {
             windowSetVoiceVolume(vol);
+        }
+    }
+    {
+        bool micIcons = windowGetShowTankMicIcons();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_VOICE_TANKICONS), &micIcons)) {
+            windowSetShowTankMicIcons(micIcons);
         }
     }
     if (!voiceOn) ImGui::EndDisabled();

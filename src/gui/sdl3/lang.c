@@ -1865,6 +1865,9 @@ static const LangEntry langTable[] = {
     {1968, "Your microphone"},
     {1969, "You have no microphone"},
     {1970, "Your microphone is off"},
+
+    /* Voice settings — tank-label microphone icons */
+    {1971, "Show microphone icons over tanks"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
