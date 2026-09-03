@@ -879,6 +879,10 @@ int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
                                         flags, out, outCap);
 }
 
+bool clientSimNetHasVoiceTransport(const ClientSim *cs) {
+  return cs != NULL && cs->hasTransport && cs->isUdpTransport;
+}
+
 /* === Net stats === */
 
 uint16_t clientSimGetNetPing(const ClientSim *cs) {

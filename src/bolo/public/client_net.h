@@ -359,6 +359,11 @@ void clientSimNetSendVoice(ClientSim *cs, const uint8_t *opus, int opusLen);
 int clientSimNetReceiveVoice(ClientSim *cs, uint8_t *fromPlayer, uint8_t *seq,
                              uint8_t *flags, uint8_t *out, int outCap);
 
+/* True when voice sent on this client actually reaches the wire: a UDP
+ * transport is attached. False with no transport and for the in-process
+ * (local) transport single-player uses, which never carries voice. */
+bool clientSimNetHasVoiceTransport(const ClientSim *cs);
+
 /* === Net stats === */
 uint16_t clientSimGetNetPing(const ClientSim *cs);
 void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,

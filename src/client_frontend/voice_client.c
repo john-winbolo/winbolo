@@ -100,6 +100,11 @@ static int gateHangover = 0;
  * which has no client of its own to ask. */
 static bool connectionCarriesVoice = false;
 
+/* Previous tick's connectionCarriesVoice.  The microphone is opened on the
+ * rising edge - joining a connection that carries voice is what asks for it,
+ * so starting the game on its own never prompts. */
+static bool wasCarryingVoice = false;
+
 /* One remote talker per tank slot, keyed by player number.  Both the decoder
  * and the backend's playback are brought up the first time a frame arrives
  * from that player, so a quiet game costs nothing. */
@@ -346,6 +351,7 @@ void voiceReset(void) {
     reportedHasMic = false;
     reportedSelfMuted = false;
     connectionCarriesVoice = false;
+    wasCarryingVoice = false;
 }
 
 /*********************************************************
@@ -944,11 +950,21 @@ void voiceTick(struct ClientSim *cs) {
         voiceReportState(cs);
     }
 
-    /* A viewer captures for the loopback test like anyone else, but its
-     * voice is not carried to the players, so there is nothing to send.
-     * Kept here rather than asked for inside voiceIsTransmitting, which the
-     * settings dialog calls with no client of its own. */
-    connectionCarriesVoice = (cs != NULL) && !clientSimIsSpectator(cs);
+    /* The connection has to be one that carries voice at all - the local
+     * transport single-player attaches goes nowhere - and a viewer captures
+     * for the loopback test like anyone else, but its voice is not carried
+     * to the players, so there is nothing to send.  Kept here rather than
+     * asked for inside voiceIsTransmitting, which the settings dialog calls
+     * with no client of its own. */
+    connectionCarriesVoice =
+        clientSimNetHasVoiceTransport(cs) && !clientSimIsSpectator(cs);
+
+    /* Joining a connection that carries voice is what opens the microphone;
+     * the start is idempotent, so only the edge matters. */
+    if (connectionCarriesVoice && !wasCarryingVoice) {
+        startCaptureIfWanted();
+    }
+    wasCarryingVoice = connectionCarriesVoice;
 
     /* Nothing accumulates while the microphone is unwanted - the recording
      * device is paused, so there is no backlog to drain here. */

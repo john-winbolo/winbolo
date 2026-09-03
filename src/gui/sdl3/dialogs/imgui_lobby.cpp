@@ -57,6 +57,9 @@ extern "C" {
 #include "imgui_lobby.h"
 #include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
+#if defined(WINBOLO_VOICE)
+#include "../../voice.h"
+#endif
 
 }
 
@@ -2405,6 +2408,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (hasTransport) {
             clientSimNetTick(cs);
         }
+#if defined(WINBOLO_VOICE)
+        /* This dialog owns the event loop while it is up, so the voice pump
+         * the in-game loop runs each frame has to run here too - otherwise
+         * lobby voice neither plays nor sends, and the mic-state command
+         * does not reach the server until the game starts. */
+        voiceTick(cs);
+#endif
 
         /* Check for game start */
         if (clientSimGetNetStatus(cs) == netRunning) {
