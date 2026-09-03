@@ -1,14 +1,14 @@
 -- patrol_ns.lua -- the moving-danger source for
--- tests/refuel_stickiness_test.py.
+-- tests/refuel_lowstock_test.py.
 --
 -- It does exactly one thing: keep a hostile tank MOVING up and down a lane
 -- that runs past two friendly bases, so goals.lua contested_penalty (which
 -- only counts enemy tanks with speed > 0) charges first one base and then the
--- other.  That alternating surcharge is what made the field incident's refuel
--- target flap, and it is what the REFUEL_TARGET_HOLD is supposed to absorb.
+-- other.  That alternating surcharge keeps both bases' prices LIVE, so the
+-- low-stock markup under test sits on top of a real, moving price.
 --
 -- It lives on an island across an uncrossable moat (see
--- tests/generate_refuel_stickiness_map.py), and the arena is TOURNAMENT with
+-- tests/generate_refuel_lowstock_map.py), and the arena is TOURNAMENT with
 -- zero neutral bases, so it holds no shells at all.  It therefore cannot be
 -- reached, cannot kill the bot, cannot shoot a base down, and cannot capture
 -- anything.  Pure motion.

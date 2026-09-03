@@ -385,6 +385,78 @@ local function count_new_exposure_pills(world, spot_mx, spot_my, tmx, tmy, neutr
   return n
 end
 
+-- =========================================================================
+-- Low-stock markup for refuel candidates (author, 2026-09-03).
+--
+-- The low_stock REJECT (in both refuel scoring paths below) only drops a base
+-- that can supply NOTHING we need. A base that is full of armour but down to
+-- four shells survives it and was then priced exactly like one holding ninety.
+-- So: for each resource we ACTUALLY NEED, a base whose observed stock is below
+-- REFUEL_MIN_STOCK marks its whole cost up:
+--   need armour (armour < armour_target) and obs_armour < REFUEL_MIN_STOCK
+--                                              -> cost x REFUEL_LOW_ARMOUR_MULT
+--   need shells (shells < shell_target)  and obs_shells < REFUEL_MIN_STOCK
+--                                              -> cost x REFUEL_LOW_SHELLS_MULT
+-- Both at once compounds (1.10 x 1.10 = 1.21). A multiplier, not an additive
+-- charge, so a short base under the tank's nose stays cheap to top up at while
+-- a short base across the map is priced out.
+--
+-- FRESHNESS: only a live observation (obs_tick within REFUEL_OBS_STALE) marks
+-- anything up. Absent or stale pays nothing -- bases regenerate, and the
+-- low_stock/depleted rejects plus STALE_PENALTY_* already own that case.
+--
+-- UNITS: obs_armour is compared against REFUEL_MIN_STOCK exactly the way the
+-- low_stock reject compares it, deliberately. Base armour reaches the brain
+-- through TWO engine paths that disagree by 5x -- EVENT_BASE_STOCK carries it
+-- raw (world.lua writes 90) while the per-tick "closest base" item divides by
+-- five (bases.c basesGetBrainBaseItem: armour/5, which perception.lua writes
+-- into the same obs_armour field, 90 -> 18) -- so the field's units depend on
+-- which source wrote last. Reading it the same way as the reject means the
+-- markup can never contradict the reject, whichever number is in there.
+--
+-- Returns mult, detail (detail carries the chip inputs for the panels).
+-- =========================================================================
+local function refuel_low_stock_mult(b, info, state, now)
+  local d = {
+    fresh = false, low_arm = false, low_sh = false,
+    need_arm = false, need_sh = false,
+    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
+    age = b.obs_tick and (now - b.obs_tick) or nil,
+  }
+  if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
+    return 1.0, d
+  end
+  d.fresh = true
+  local sh_t  = (state and state.shell_target)  or C.TANK_FULL_SHELLS
+  local arm_t = (state and state.armour_target) or C.TANK_FULL_ARMOUR
+  d.need_arm = (info.armour or 0) < arm_t
+  d.need_sh  = (info.shells or 0) < sh_t
+  local mult = 1.0
+  if d.need_arm and (b.obs_armour or 0) < C.REFUEL_MIN_STOCK then
+    d.low_arm = true
+    mult = mult * (C.REFUEL_LOW_ARMOUR_MULT or 1.0)
+  end
+  if d.need_sh and (b.obs_shells or 0) < C.REFUEL_MIN_STOCK then
+    d.low_sh = true
+    mult = mult * (C.REFUEL_LOW_SHELLS_MULT or 1.0)
+  end
+  return mult, d
+end
+
+-- One chip per markup so every log line / panel says the same thing: which
+-- resource the base is short of and what that multiplied the cost by.
+local function refuel_low_stock_chip(d)
+  if not d then return "" end
+  local s = ""
+  if d.low_arm then
+    s = s .. string.format(" lowarm{x%.2f}", C.REFUEL_LOW_ARMOUR_MULT or 1.0)
+  end
+  if d.low_sh then
+    s = s .. string.format(" lowsh{x%.2f}", C.REFUEL_LOW_SHELLS_MULT or 1.0)
+  end
+  return s
+end
+
 -- Helper: find the best friendly or neutral base for resupply.
 -- danger_weight: REFUEL_DANGER_WEIGHT for normal top-up, FLEE_DANGER_WEIGHT
 --               when health is critical (scales pill-danger penalty steeply).
@@ -461,225 +533,6 @@ local function contested_penalty(state, bmx, bmy, info, now)
   end
   return sum, n, handled
 end
-
--- =========================================================================
--- Stock-aware refuel pricing — shared by BOTH refuel scoring paths
--- (nearest_resupply_base's candidate loop and the pool-1 cost_cache builder)
--- so the two can never drift apart, exactly like contested_penalty above.
---
--- REFUEL_MIN_STOCK is a threshold REJECT only: above it a base holding 4
--- shells priced identically to one holding 90. 20260902_120856 block 3:
--- bot2 (0 shells) docked at #11, which held 4-8 shells, took THREE, and left
--- one frame later, while #3/#4/#9 held 80-90 shells the whole time. Price
--- what a base can actually GIVE:
---   need       = target - what we carry            (per resource)
---   obtainable = min(observed stock, need)
---   shortfall  = need - obtainable                 (what we'd come back for)
---   frac       = max over NEEDED resources of shortfall/need     (0..1)
---   cost       = frac x travel x REFUEL_SHORTFALL_TRIP_K, capped
---
--- The charge is a fraction of THIS TRIP, not a flat per-unit price, because
--- what a half-empty base actually costs you is making the trip again — see
--- REFUEL_SHORTFALL_TRIP_K in constants.lua for the incident that killed the
--- flat form (a tank at armour 0 priced out of the base 3 tiles away).
---
--- FRESHNESS: only a live observation (obs_tick within REFUEL_OBS_STALE) is
--- priced. An absent or stale observation pays 0 here — bases regenerate, and
--- the existing staleness handling (the low_stock/depleted rejects and
--- STALE_PENALTY_*) already owns that case.
---
--- Returns cost, detail.
--- =========================================================================
-local function refuel_shortfall(b, info, state, now, travel)
-  local d = {
-    fresh = false, frac = 0, travel = travel or 0,
-    need_sh = 0, get_sh = 0, need_arm = 0, get_arm = 0,
-    obs_sh = b.obs_shells, obs_arm = b.obs_armour,
-    age = b.obs_tick and (now - b.obs_tick) or nil,
-  }
-  if not d.age or d.age >= (C.REFUEL_OBS_STALE or 500) then
-    return 0, d
-  end
-  d.fresh    = true
-  local sh_t  = (state and state.shell_target)  or C.TANK_FULL_SHELLS
-  local arm_t = (state and state.armour_target) or C.TANK_FULL_ARMOUR
-  d.need_sh  = math.max(0, sh_t  - (info.shells or 0))
-  d.need_arm = math.max(0, arm_t - (info.armour or 0))
-  d.get_sh   = math.min(d.need_sh,  b.obs_shells or 0)
-  d.get_arm  = math.min(d.need_arm, b.obs_armour or 0)
-  -- SHELLS ONLY. b.obs_armour is not a trustworthy number to price against:
-  -- the engine reports base armour through TWO paths that disagree by 5x.
-  -- EVENT_BASE_STOCK carries it raw (world.lua ~612 writes 90), while the
-  -- per-tick "closest base" item divides by five —
-  --   bases.c basesGetBrainBaseItem:  *armour = item[baseNum].armour / 5;
-  -- which perception.lua ~951 writes into the same obs_armour field (90 → 18).
-  -- So the value flips depending on which source wrote last, and a shortfall
-  -- priced off it is up to 5x too pessimistic. Armour is still covered: the
-  -- "empty" and "low_stock" rejects and depletion_cost all gate on it, they
-  -- just compare against thresholds instead of scaling a price by it.
-  if d.need_sh > 0 then
-    d.frac = (d.need_sh - d.get_sh) / d.need_sh
-  end
-  local trip = travel or 0
-  if trip < 0 or trip ~= trip or trip > 1e28 then trip = 0 end
-  local cost = d.frac * (trip * (C.REFUEL_SHORTFALL_TRIP_K or 0.6)
-                       + (C.REFUEL_SHORTFALL_BASE or 0))
-  if cost > (C.REFUEL_SHORTFALL_CAP or 400) then cost = C.REFUEL_SHORTFALL_CAP or 400 end
-  return cost, d
-end
-
--- One chip for the stock term so every log line / row desc says the same
--- thing: what the base holds, what we need, what that costs.
-local function refuel_shortfall_chip(cost, d)
-  if not d then return "" end
-  if not d.fresh then return " stock{stale/unseen → 0}" end
-  if (cost or 0) <= 0 then
-    return string.format(" stock{obs sh%d covers need sh%d → 0}",
-      d.obs_sh or 0, d.need_sh)
-  end
-  return string.format(
-    " stock{obs sh%d, need sh%d, short sh%d → frac %.2f × (trip %.0f × %.1f + %.0f) = +%.0f}",
-    d.obs_sh or 0, d.need_sh, d.need_sh - d.get_sh,
-    d.frac, d.travel, C.REFUEL_SHORTFALL_TRIP_K or 0.6,
-    C.REFUEL_SHORTFALL_BASE or 0, cost)
-end
-
--- =========================================================================
--- 0-shell desperation (Sep-1 discussion: "scale the danger weight down as
--- need gets desperate"). A tank at/below REFUEL_DESPERATE_SHELLS has no
--- fight at all — explore / capture_base / attack_* are worthless to it, and
--- the danger surcharge on the one goal that fixes the problem is backwards.
--- Returns desperate, dw_scale (multiplier on REFUEL_DANGER_WEIGHT), cap
--- (final refuel-row cost ceiling, nil when not desperate).
--- =========================================================================
-local function refuel_desperation(info)
-  local sh = (info and info.shells) or 0
-  if sh > (C.REFUEL_DESPERATE_SHELLS or 0) then return false, 1.0, nil end
-  return true, (C.REFUEL_DESPERATE_DANGER_SCALE or 1.0),
-         (C.REFUEL_DESPERATE_COST_CAP or nil)
-end
-
-local function refuel_desperation_chip(desperate, info, dw_scale, cap)
-  if not desperate then return "" end
-  return string.format(" desp{sh=%d≤%d dw×%.2f cap=%.0f}",
-    info.shells or 0, C.REFUEL_DESPERATE_SHELLS or 0, dw_scale or 1,
-    cap or math.huge)
-end
-
--- =========================================================================
--- Refuel target stickiness.
---
--- The ONLY place the refuel target is chosen is pool 1's winner pick (plus
--- the critical-flee injection, which re-picks via nearest_resupply_base).
--- The goal layer cannot hold it: pool 1 publishes exactly ONE row, so the
--- moment its internal winner changes, the previous target has no pool entry
--- left for the multiplicative GOAL_SWITCH_RATIO bar to hold onto, and the
--- additive GOAL_TARGET_SWITCH_PENALTY (15) is nothing against a ±30 score
--- jitter between two comparable bases.
---
--- The held target is KEPT unless:
---   * it is gone from the viable candidate set — depleted (REFUEL_QUEUE
---     FILTER-REJECT depleted), blocked, unreachable or hostile-captured are
---     all rejected upstream and simply stop appearing here;
---   * the tank is FULL (goal_selection's completion branch) -- docking alone
---     does NOT release it, see the note under this function;
---   * the hold has run REFUEL_TARGET_HOLD_MAX_TICKS without the tank filling up; or
---   * a rival costs LESS THAN REFUEL_TARGET_SWITCH_RATIO × the held
---     target's CURRENT cost, and at least REFUEL_TARGET_MIN_HOLD_TICKS have
---     passed since the last (re)target.
---
--- cands: array of { id = , cost = } — viable candidates only.
--- Returns id, cost, mode ("hold" | "switch" | "adopt" | "none"), chip.
--- =========================================================================
-local function refuel_target_hold(state, info, now, cands, best_id, best_cost, where)
-  if best_id == nil then return nil, nil, "none", "" end
-  local held = state._refuel_target
-  local min_hold  = C.REFUEL_TARGET_MIN_HOLD_TICKS or 0
-  local ratio     = C.REFUEL_TARGET_SWITCH_RATIO or 1.0
-  local hold_max  = C.REFUEL_TARGET_HOLD_MAX_TICKS or math.huge
-  -- Tile of a candidate id, carried on the hold for the debug panels.
-  local function tile_of(id)
-    for _, c in ipairs(cands) do
-      if c.id == id then return c.mx, c.my end
-    end
-  end
-  local function adopt(why)
-    local mx, my = tile_of(best_id)
-    state._refuel_target = { id = best_id, since = now, mx = mx, my = my }
-    print2(string.format("REFUEL_TARGET_SWITCH t=%d [%s] → base#%s cost=%.0f (%s)",
-      now, tostring(where), tostring(best_id), best_cost or -1, why))
-    return best_id, best_cost, "adopt",
-           string.format(" switch{→#%s: %s}", tostring(best_id), why)
-  end
-  if not held then return adopt("no held target") end
-  if held.id == best_id then
-    -- Same target: nothing to hold against, just keep the clock running.
-    return best_id, best_cost, "hold",
-           string.format(" hold{#%s %dt}", tostring(held.id), now - (held.since or now))
-  end
-  -- Is the held target still viable this cycle?
-  local held_cost = nil
-  for _, c in ipairs(cands) do
-    if c.id == held.id and type(c.cost) == "number" and c.cost < 1e29 then
-      held_cost = c.cost
-      break
-    end
-  end
-  if not held_cost then
-    return adopt(string.format("held #%s no longer viable (depleted/blocked/unreachable)",
-      tostring(held.id)))
-  end
-  local age = now - (held.since or now)
-  if age >= hold_max then
-    return adopt(string.format("held #%s ran %dt ≥ HOLD_MAX %d without filling up",
-      tostring(held.id), age, hold_max))
-  end
-  local bar = held_cost * ratio
-  if age < min_hold then
-    print2(string.format(
-      "REFUEL_TARGET_HOLD t=%d [%s] keep #%s cost=%.0f vs rival #%s cost=%.0f — min hold %dt (%d/%d)",
-      now, tostring(where), tostring(held.id), held_cost, tostring(best_id),
-      best_cost or -1, min_hold, age, min_hold))
-    return held.id, held_cost, "hold",
-           string.format(" hold{#%s %dt<%dt min}", tostring(held.id), age, min_hold)
-  end
-  if (best_cost or math.huge) >= bar then
-    print2(string.format(
-      "REFUEL_TARGET_HOLD t=%d [%s] keep #%s cost=%.0f — rival #%s %.0f ≥ %.2f×%.0f=%.0f",
-      now, tostring(where), tostring(held.id), held_cost, tostring(best_id),
-      best_cost or -1, ratio, held_cost, bar))
-    return held.id, held_cost, "hold",
-           string.format(" hold{#%s %dt: rival %.0f ≥ %.1f×%.0f}",
-             tostring(held.id), age, best_cost or -1, ratio, held_cost)
-  end
-  local _nmx, _nmy = tile_of(best_id)
-  state._refuel_target = { id = best_id, since = now, mx = _nmx, my = _nmy }
-  print2(string.format(
-    "REFUEL_TARGET_SWITCH t=%d [%s] #%s → #%s — rival %.0f < %.2f×%.0f=%.0f (held %dt)",
-    now, tostring(where), tostring(held.id), tostring(best_id),
-    best_cost or -1, ratio, held_cost, bar, age))
-  return best_id, best_cost, "switch",
-         string.format(" switch{#%s→#%s: rival %.0f < %.1f×%.0f}",
-           tostring(held.id), tostring(best_id), best_cost or -1, ratio, held_cost)
-end
-
--- NOTE — there is deliberately NO "release the hold because we docked".
--- Touching the pad is not the end of the errand; being FULL is. An earlier
--- cut released on arrival at any base, and the 20260902_173428 smoke showed
--- what that costs: 121 of 121 releases were "docked", not one was "refuel
--- complete", so every trip's hold ended the instant the tank rolled onto a
--- pad and the very next replan was free to pick a different base. That is
--- precisely the incident shape — 20260902_120856 t=131998: docked at #11
--- (which held 4 shells), took three, and left for #4 one frame later.
--- The hold now ends only when:
---   * the tank is at both targets  (the COMPLETION branch in goal_selection),
---   * the held base stops being a viable candidate — depleted / blocked /
---     unreachable / hostile-captured (refuel_target_hold's viability test;
---     this is also what frees a tank that drained the base it is standing on),
---   * REFUEL_TARGET_HOLD_MAX_TICKS elapse without either, or
---   * the tank dies (init.lua's dead→alive edge).
--- While standing on a base, REFUEL_BASE_HOP_PENALTY (+500 on every OTHER
--- base) already keeps us there, so the hold costs nothing extra in that state.
 
 -- Returns best, best_id, best_score, candidates
 local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info,
@@ -798,12 +651,6 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
         local contested = contest_pen > 0
         score = score + contest_pen
 
-        -- Stock-aware pricing: a base that can only give us a fraction of
-        -- what we came for costs the shortfall (shared helper, identical in
-        -- the pool-1 cost_cache path). Fresh observations only.
-        local short_cost, short_d = refuel_shortfall(b, info, state, now, travel)
-        score = score + short_cost
-
         -- Anti-base-hop (mirrors the cost_cache path): while standing ON a refuel
         -- base, every OTHER base costs more so we finish here instead of bouncing
         -- between bases (the GOAL_TARGET_SWITCH_PENALTY at the goal layer is too
@@ -850,15 +697,18 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           hist_pen = math.min(hist_pen, C.GOAL_HISTORY_PEN_CAP or math.huge)
           score = score + hist_pen
         end
+        -- Low-stock markup: x1.10 per resource we need that this base is
+        -- observed short of (see refuel_low_stock_mult). Multiplies the whole
+        -- score above, so it scales with the trip.
+        local low_mult, low_d = refuel_low_stock_mult(b, info, state, now)
+        score = score * low_mult
         candidates[#candidates + 1] = {
           id = id, mx = b.mx, my = b.my, own = b.owner,
           travel = travel, danger = danger, dw = danger_weight,
           score = score, hyst = hysteresis, contested = contested,
+          low_mult = low_mult, low_d = low_d,
           contest_pen = contest_pen, contest_n = contest_n, contest_h = contest_h,
-          short_cost = short_cost, short_d = short_d,
           stale = b.last_seen and (now - b.last_seen) or 0,
-          -- refuel_target_hold reads `cost`; the helper path scores in `score`.
-          cost = score,
         }
         -- Contested chip carries the whole computation: how many moving
         -- enemies counted, how many were dropped as already-handled by an
@@ -868,7 +718,7 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           _c_tok = string.format(" CONTESTED{n=%d handled=%d pen=%.0f}",
                                  contest_n, contest_h, contest_pen)
         end
-        print2(string.format("REFUEL_CAND base#%d @(%d,%d) OK score=%.1f travel=%.1f danger=%.1f×%.1f%s%s%s obs_sh=%d obs_arm=%d", id, b.mx, b.my, score, travel, danger, danger_weight, hysteresis and " HYST" or "", _c_tok, refuel_shortfall_chip(short_cost, short_d), b.obs_shells or -1, b.obs_armour or -1))
+        print2(string.format("REFUEL_CAND base#%d @(%d,%d) OK score=%.1f travel=%.1f danger=%.1f×%.1f%s%s%s obs_sh=%d obs_arm=%d", id, b.mx, b.my, score, travel, danger, danger_weight, hysteresis and " HYST" or "", _c_tok, refuel_low_stock_chip(low_d), b.obs_shells or -1, b.obs_armour or -1))
         if score < best_score then
           best_score = score; best_id = id; best = b
         end
@@ -8931,332 +8781,7 @@ function M.sea_nogo_tick(state, info)
     end
   else
     state._sea_nogo_last = nil
-    if not (state.goal and state.goal.sea)
-       and not state._spawn_escape then state._sea_nogo = nil end
-  end
-end
-
--- =========================================================================
--- SPAWN ESCAPE — respawn into pill fire.
---
--- Every respawn puts the tank on a BOAT at a fixed start square with 0
--- shells / 0 mines / 0 trees. Once the enemy owns the pills around those
--- squares the boat is shot out from under the tank and the tank drowns:
--- 20260902_120856 blocks 3-4, all 45 respawns were on a start-square boat,
--- and several died cause=1 (LAST_DEATH_BY_DEEPSEA, killer == self) within
--- 61-800 frames of RESPAWN_DETECTED — bot3 t=138874 spawn -> t=138935 dead
--- ON the spawn tile (112,142). The brain sat still a median 12 frames after
--- the respawn re-root and then drove its first goal (explore / refuel)
--- straight back through whatever covered the square.
---
--- IMPLEMENTATION NOTE — this is an OVERRIDE goal (the escape_water shape),
--- NOT a pool. Pool rows are rendered by the C++ braintest_panels/
--- pool_grid.cpp, and a pool 15 would need a C change. Instead every
--- decision, including the rejects (not_covered / no_safe_tile), is printed
--- as SPAWN_ESCAPE and drawn under the "spawn_escape" viz overlay.
---
--- While the escape is live init.lua denies goal selection entirely, so the
--- pool cannot talk the tank back into the coverage.
--- =========================================================================
-
--- Water a boat can move over.
-local function se_water(tt)
-  return tt == C.T_RIVER or tt == C.T_DEEPSEA or tt == C.T_BOAT
-end
-
--- The live hostile/neutral pillboxes whose fire actually reaches (mx,my):
--- in range, alive, deployed, and with no wall between. Same three gates the
--- crossfire helper uses. Returns count, id list.
-local function se_covering_pills(world, mx, my)
-  local n, ids = 0, {}
-  local fr = C.PILL_FIRE_RANGE or 8
-  for pid, p in pairs(world.pills) do
-    if (p.owner == "hostile" or p.owner == "neutral")
-       and (p.health or 0) > 0 and not p.in_tank
-       and U.mdist(p.mx, p.my, mx, my) <= fr
-       and PF.wall_hp_between(p.mx, p.my, mx, my) == 0 then
-      n = n + 1
-      ids[#ids + 1] = tostring(pid)
-    end
-  end
-  return n, ids
-end
-
--- Straight-line passability from (ax,ay) to (bx,by) for the current hull.
--- Deliberately NOT a Dijkstra/A* query: the respawn re-root has just
--- restarted all four slates, so cost lookups read INF for a couple of
--- seconds — exactly the seconds the tank is being shot at. A ray walk is
--- immediate and is all the direct steering below actually needs.
-local function se_ray_clear(ax, ay, bx, by, boat)
-  local dx, dy = bx - ax, by - ay
-  local steps = math.max(math.abs(dx), math.abs(dy))
-  if steps == 0 then return true end
-  for i = 1, steps do
-    local x = ax + math.floor(dx * i / steps + 0.5)
-    local y = ay + math.floor(dy * i / steps + 0.5)
-    if not U.in_map(x, y) then return false end
-    local tt = U.ttype(x, y)
-    if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
-      return false
-    end
-    if not boat and (tt == C.T_DEEPSEA or tt == C.T_RIVER) then return false end
-  end
-  return true
-end
-
--- Nearest friendly/neutral base that we have no fresh evidence is empty.
-local function se_nearest_stocked_base(world, state, now, mx, my)
-  local best, bd = nil, math.huge
-  for _, b in pairs(world.bases) do
-    if b.owner == "friendly" or b.owner == "neutral" then
-      local stocked = true
-      if b.obs_tick and (now - b.obs_tick) < (C.REFUEL_OBS_STALE or 500) then
-        stocked = (b.obs_shells or 0) >= (C.REFUEL_MIN_STOCK or 5)
-               or (b.obs_armour or 0) >= (C.REFUEL_MIN_STOCK or 5)
-      end
-      if stocked then
-        local d = U.mdist(mx, my, b.mx, b.my)
-        if d < bd then bd = d; best = b end
-      end
-    end
-  end
-  return best, bd
-end
-
--- Covered WATER inside the search box, as a tile-key set. Published as
--- state._sea_nogo so init.lua's existing post-steer SEA_NOGO_SPEED_CAP choke
--- point slows the boat through its turns — one place decides how fast a boat
--- may turn, shared with the sea harvest. Cheap on purpose (O(1) coverage
--- lookups, no rays, no base search): this is the one that runs every tick
--- while the escape is live.
-local function se_nogo_set(tmx, tmy)
-  local R = C.SPAWN_ESCAPE_SEARCH_RADIUS or 14
-  local nogo, any = {}, false
-  for dy = -R, R do
-    for dx = -R, R do
-      local x, y = tmx + dx, tmy + dy
-      if U.in_map(x, y) and (threat.coverage_at(x, y) or 0) > 0
-         and se_water(U.ttype(x, y)) then
-        nogo[y * 256 + x] = true
-        any = true
-      end
-    end
-  end
-  return any and nogo or nil
-end
-
--- The full scan, run ONCE when the escape arms. Returns best tile
--- (mx,my,cost,bdist) or nil, the covered-water set, and the candidate list
--- for the overlay.
-local function se_scan(state, world, info, tmx, tmy, now)
-  local R    = C.SPAWN_ESCAPE_SEARCH_RADIUS or 14
-  local boat = info.inboat and true or false
-  local nogo, cands = {}, {}
-  local best, bmx, bmy, bcost, bbase = nil, nil, nil, math.huge, nil
-  for dy = -R, R do
-    for dx = -R, R do
-      local x, y = tmx + dx, tmy + dy
-      if U.in_map(x, y) then
-        local tt  = U.ttype(x, y)
-        local cov = threat.coverage_at(x, y) or 0
-        if cov > 0 and se_water(tt) then nogo[y * 256 + x] = true end
-        local ok, why = true, nil
-        if x == tmx and y == tmy then ok, why = false, "here"
-        elseif cov > 0 then ok, why = false, "covered"
-        elseif not (se_water(tt) or tc_standable(x, y, boat)) then
-          ok, why = false, "impassable"
-        elseif not se_ray_clear(tmx, tmy, x, y, boat) then
-          ok, why = false, "blocked"
-        end
-        if ok then
-          local _, bdist = se_nearest_stocked_base(world, state, now, x, y)
-          if bdist == math.huge then bdist = 0 end
-          local cost = U.mdist(tmx, tmy, x, y) * (C.SPAWN_ESCAPE_TRAVEL_W or 3.0)
-                     + bdist * (C.SPAWN_ESCAPE_BASE_BIAS or 1.5)
-          cands[#cands + 1] = { mx = x, my = y, cost = cost, bdist = bdist }
-          if cost < bcost then
-            bcost, bmx, bmy, bbase = cost, x, y, bdist
-            best = true
-          end
-        elseif BRAIN_DEBUG_MODE then
-          cands[#cands + 1] = { mx = x, my = y, reject = why }
-        end
-      end
-    end
-  end
-  return best and { mx = bmx, my = bmy, cost = bcost, bdist = bbase } or nil,
-         nogo, cands
-end
-
--- Per-tick driver. Called from init.lua right after the water/escape_water
--- block and BEFORE goal selection. Returns true while it owns the goal.
-function M.spawn_escape_tick(state, world, info)
-  if not C.SPAWN_ESCAPE_ENABLED then return false end
-  local now  = state.tick or 0
-  local tmx  = bit.rshift(info.tankx, 8)
-  local tmy  = bit.rshift(info.tanky, 8)
-
-  -- ── Live escape: exit checks first ──────────────────────────────────
-  local se = state._spawn_escape
-  if se then
-    local cov = threat.coverage_at(tmx, tmy) or 0
-    -- Shells count as "still in trouble" ONLY while afloat — that is the
-    -- failure this exists for (one hit sinks the boat and the tank drowns).
-    -- On land a shell overhead is an ordinary firefight and the pools should
-    -- have the goal back.
-    local still_shelled = info.inboat and danger.shells_incoming_near(
-      info, info.tankx, info.tanky, C.SPAWN_ESCAPE_SHELL_RADIUS) or false
-    local why = nil
-    if not info.inboat and not se_water(U.ttype(tmx, tmy)) then
-      why = "landed"
-    elseif cov == 0 and not still_shelled then
-      why = "clear"
-    elseif tmx == se.mx and tmy == se.my then
-      why = "arrived"
-    elseif (now - se.since) > (C.SPAWN_ESCAPE_MAX_TICKS or 600) then
-      why = "timeout"
-    end
-    if why then
-      print2(string.format(
-        "SPAWN_ESCAPE_DONE t=%d why=%s at=(%d,%d) coverage=%d ticks=%d",
-        now, why, tmx, tmy, cov, now - se.since))
-      state._spawn_escape     = nil
-      state._spawn_escape_arm = nil
-      state._sea_nogo         = nil
-      state._sea_nogo_last    = nil
-      -- Hand the goal back with a REAL tile on it. A bare { kind = "none" }
-      -- is only safe if goal selection runs the very same tick, and it may
-      -- not (urgent_soft still has to clear the replan floor) — logger.
-      -- log_tick then formats goal.mx/goal.my as %d and the whole think()
-      -- dies: "bad argument #20 to 'format' (number expected, got nil)",
-      -- observed on the very first escape of the first smoke run.
-      state.goal = { kind = "none", mx = tmx, my = tmy,
-                     wx = U.m2w(tmx), wy = U.m2w(tmy) }
-      -- ...and make sure selection DOES run this tick, so the tank starts on
-      -- its refuel/explore errand the frame it is clear instead of idling on
-      -- goal=none until the replan timer comes round.
-      state._force_replan_reason = "spawn_escape_done:" .. why
-      return false
-    end
-    -- Still escaping: re-assert the goal (nothing else may own it) and keep
-    -- the covered-water set fresh for the boat speed cap. Only the cheap
-    -- no-go pass runs per tick; the destination was chosen once at arm time.
-    state._sea_nogo = se_nogo_set(tmx, tmy)
-    -- Re-set only when it actually differs (the escape_water pattern), so a
-    -- fresh goal table isn't churned every tick under the GOAL_CHANGE log.
-    if state.goal.kind ~= "spawn_escape"
-       or state.goal.mx ~= se.mx or state.goal.my ~= se.my then
-      state.goal = { kind = "spawn_escape", mx = se.mx, my = se.my,
-                     wx = U.m2w(se.mx), wy = U.m2w(se.my) }
-      state.pf.status = "idle"
-    end
-    return true
-  end
-
-  -- ── Arming window ───────────────────────────────────────────────────
-  local arm = state._spawn_escape_arm
-  if not arm then return false end
-  if (now - arm) > (C.SPAWN_ESCAPE_WINDOW_TICKS or 250) then
-    state._spawn_escape_arm = nil
-    return false
-  end
-  -- AFLOAT ONLY. The failure this exists for is the spawn BOAT being shot out
-  -- from under the tank; a tank that has already made land and driven inland
-  -- inside the arming window is in an ordinary firefight, and take_cover owns
-  -- that. Without this gate the window kept arming ashore: 20260902_171055
-  -- bot3 armed at t=1263 on land at (143,136) and released one frame later
-  -- with why=landed — noise at best, and a 600-frame goal-selection denial on
-  -- dry land at worst. Start squares are DEEP SEA by engine rule
-  -- (starts.c startsIsValidSquare), so a real respawn always passes this.
-  if not (info.inboat or se_water(U.ttype(tmx, tmy))) then
-    state._spawn_escape_arm = nil
-    if BRAIN_DEBUG_MODE then
-      print2(string.format(
-        "SPAWN_ESCAPE t=%d from=(%d,%d) REJECT why=ashore (window closed: the spawn boat is behind us; take_cover owns land danger)",
-        now, tmx, tmy))
-    end
-    return false
-  end
-
-  -- Decide on the SAME number the scan and the exit test use — the C
-  -- coverage grid (threat.coverage_at: distinct live hostile/neutral pills
-  -- that can fire on the tile, occlusion applied). se_covering_pills is only
-  -- asked for the pill IDS, so the log can name who is shooting; if the two
-  -- ever disagree, both counts are printed rather than one silently winning.
-  local cov = threat.coverage_at(tmx, tmy) or 0
-  local lof_n, cov_ids = se_covering_pills(world, tmx, tmy)
-  -- Shells arm the escape only while afloat (see the exit test above).
-  local shelled = info.inboat and danger.shells_incoming_near(
-    info, info.tankx, info.tanky, C.SPAWN_ESCAPE_SHELL_RADIUS) or false
-  if cov == 0 and not shelled then
-    -- Not in trouble. Keep the window open (coverage can become visible a
-    -- few frames later as perception catches up) but say why we passed.
-    if (now - (state._spawn_escape_log or -1e9)) >= 50 then
-      state._spawn_escape_log = now
-      print2(string.format(
-        "SPAWN_ESCAPE t=%d from=(%d,%d) REJECT why=not_covered (no hostile pill fire reaches the tile, no shells inbound; window %d/%d)",
-        now, tmx, tmy, now - arm, C.SPAWN_ESCAPE_WINDOW_TICKS or 250))
-    end
-    return false
-  end
-
-  local pick, nogo, cands = se_scan(state, world, info, tmx, tmy, now)
-  state._spawn_escape_cands = BRAIN_DEBUG_MODE and cands or nil
-  if not pick then
-    print2(string.format(
-      "SPAWN_ESCAPE t=%d from=(%d,%d) covered_by=%d[#%s] lof=%d REJECT why=no_safe_tile (nothing uncovered, passable and ray-clear within %d tiles)",
-      now, tmx, tmy, cov, table.concat(cov_ids, ",#"), lof_n,
-      C.SPAWN_ESCAPE_SEARCH_RADIUS or 14))
-    state._spawn_escape_arm = nil
-    return false
-  end
-
-  state._spawn_escape = { mx = pick.mx, my = pick.my, since = now,
-                          from_mx = tmx, from_my = tmy,
-                          cov = cov, cov_ids = table.concat(cov_ids, ","),
-                          cost = pick.cost, bdist = pick.bdist }
-  state._sea_nogo = next(nogo) ~= nil and nogo or nil
-  state.goal = { kind = "spawn_escape", mx = pick.mx, my = pick.my,
-                 wx = U.m2w(pick.mx), wy = U.m2w(pick.my) }
-  state.pf.status = "idle"
-  print2(string.format(
-    "SPAWN_ESCAPE t=%d from=(%d,%d) covered_by=%d[#%s] lof=%d to=(%d,%d) cost=%.0f (travel %d x %.1f + base_dist %d x %.1f) why=%s",
-    now, tmx, tmy, cov, table.concat(cov_ids, ",#"), lof_n,
-    pick.mx, pick.my, pick.cost,
-    U.mdist(tmx, tmy, pick.mx, pick.my), C.SPAWN_ESCAPE_TRAVEL_W or 3.0,
-    pick.bdist or 0, C.SPAWN_ESCAPE_BASE_BIAS or 1.5,
-    shelled and (cov > 0 and "pill_coverage+shells_inbound" or "shells_inbound")
-            or "pill_coverage"))
-  return true
-end
-
--- Map overlay for the spawn escape (viz id "spawn_escape", default OFF).
-function M.draw_spawn_escape(viz, state)
-  if not viz or not viz.is_on or not viz.is_on("spawn_escape") then return end
-  local se = state._spawn_escape
-  for _, c in ipairs(state._spawn_escape_cands or {}) do
-    if c.reject then
-      if c.reject == "covered" then
-        viz.rect("spawn_escape", c.mx, c.my, c.mx + 1, c.my + 1, 200, 60, 60, 60, true)
-      else
-        viz.rect("spawn_escape", c.mx, c.my, c.mx + 1, c.my + 1, 110, 110, 110, 45, true)
-      end
-    else
-      viz.rect("spawn_escape", c.mx, c.my, c.mx + 1, c.my + 1, 60, 200, 90, 55, true)
-      viz.text("spawn_escape", c.mx + 0.5, c.my + 0.5,
-               string.format("%.0f", c.cost or 0), "center", 220, 255, 220, 170, 0.3)
-    end
-  end
-  if se then
-    viz.circle("spawn_escape", se.from_mx + 0.5, se.from_my + 0.5, 0.6, 255, 90, 90, 240)
-    viz.circle("spawn_escape", se.mx + 0.5, se.my + 0.5, 0.7, 60, 255, 120, 240)
-    viz.line("spawn_escape", se.from_mx + 0.5, se.from_my + 0.5,
-             se.mx + 0.5, se.my + 0.5, 60, 255, 120, 200)
-    viz.text("spawn_escape", se.mx + 0.5, se.my - 0.8,
-             string.format("SPAWN_ESCAPE cov=%d[#%s] cost=%.0f %dt",
-               se.cov or 0, tostring(se.cov_ids), se.cost or 0,
-               (state.tick or 0) - (se.since or 0)),
-             "center", 60, 255, 120, 230)
+    if not (state.goal and state.goal.sea) then state._sea_nogo = nil end
   end
 end
 
@@ -10417,58 +9942,32 @@ local function get_formula_inner(e)
         "|hop:%.0f[REFUEL_BASE_HOP_PENALTY] — we're parked on ANOTHER base; switching to this one is wasteful churn, so it's penalised. Finish where you are (a depleted current base drops out, freeing the move).",
         e._hop)
       or ""
+    -- Low-stock markup chips (refuel_low_stock_mult): one per short resource,
+    -- multiplied in right after the danger penalty, before the additive
+    -- mine/hop terms -- same order the code applies them.
+    local _low_token, _low_detail = "", ""
+    if e._low_d and (e._low_d.low_arm or e._low_d.low_sh) then
+      _low_token = " ×" .. refuel_low_stock_chip(e._low_d)
+      _low_detail = string.format(
+        "|low:observed stock below %d[REFUEL_MIN_STOCK] for a resource we need (obs %dt ago, fresh < %d[REFUEL_OBS_STALE]): %s%s— multiply by %.2f",
+        C.REFUEL_MIN_STOCK, e._low_d.age or 0, C.REFUEL_OBS_STALE,
+        e._low_d.low_arm and string.format("armour obs %d, we need armour → x%.2f[REFUEL_LOW_ARMOUR_MULT] ",
+                                           e._low_d.obs_arm or 0, C.REFUEL_LOW_ARMOUR_MULT or 1) or "",
+        e._low_d.low_sh and string.format("shells obs %d, we need shells → x%.2f[REFUEL_LOW_SHELLS_MULT] ",
+                                          e._low_d.obs_sh or 0, C.REFUEL_LOW_SHELLS_MULT or 1) or "",
+        e._low_mult or 1)
+    end
     local _d_astar = string.format(
       "danger-weighted Dijkstra-slate travel cost to base (%d,%d) = %.0f; path %s",
       e._mx or 0, e._my or 0, raw, e._path or "(not traced)")
     local _d_base = string.format(
       "%.0f[REFUEL_BASE_COST] flat floor so refuel-at-own-base isn't ~0",
       C.REFUEL_BASE_COST)
-    -- Stock shortfall: what the base can actually GIVE vs what we came for.
-    local _sd = e._short_d
-    local _d_stock
-    if not _sd or not _sd.fresh then
-      _d_stock = string.format(
-        "no fresh stock observation (age=%s, REFUEL_OBS_STALE=%d) → 0; staleness is handled by the stale/depleted terms instead",
-        _sd and tostring(_sd.age) or "never seen", C.REFUEL_OBS_STALE)
-    else
-      _d_stock = string.format(
-        "SHELLS only (base armour reaches the brain through two engine paths that disagree 5x — bases.c divides it by 5 for the per-tick item, EVENT_BASE_STOCK does not — so it is not priced here; the empty/low_stock rejects and deplete cover armour). obtainable = min(obs %d, need %d) = %d → short %d → frac %d/%d = %.2f; %.2f x (trip %.0f x %.1f[REFUEL_SHORTFALL_TRIP_K] + %.0f[REFUEL_SHORTFALL_BASE]) = %.0f (cap %.0f). A half-empty base costs you the trip AGAIN, so it is priced as a fraction of THIS trip — which is why a base under your nose stays cheap to top up at; the flat part keeps the term meaningful between two bases that are both close.",
-        _sd.obs_sh or 0, _sd.need_sh, _sd.get_sh,
-        _sd.need_sh - _sd.get_sh,
-        _sd.need_sh - _sd.get_sh, _sd.need_sh,
-        _sd.frac or 0, _sd.frac or 0, _sd.travel or 0,
-        C.REFUEL_SHORTFALL_TRIP_K or 0.6, C.REFUEL_SHORTFALL_BASE or 0,
-        e._short or 0, C.REFUEL_SHORTFALL_CAP)
-    end
-    -- 0-shell desperation: danger weight scaled down, final cost capped.
-    local _desp_token = e._desp
-      and string.format(" [desp dw×%.2f%s]", e._desp_dw or 1,
-            e._desp_cap and string.format(" cap→%.0f", e._desp_cap) or "")
-      or ""
-    local _desp_detail = e._desp
-      and string.format(
-        "|desperate:shells at/below %d[REFUEL_DESPERATE_SHELLS] — REFUEL_DANGER_WEIGHT scaled x%.2f[REFUEL_DESPERATE_DANGER_SCALE]%s. A tank that cannot fight has to reach a base; the danger surcharge on the only goal that fixes that is backwards.",
-        C.REFUEL_DESPERATE_SHELLS or 0, e._desp_dw or 1,
-        e._desp_cap and string.format(", and the final row cost capped at %.0f[REFUEL_DESPERATE_COST_CAP]", e._desp_cap) or "")
-      or ""
-    -- Refuel target hold: which base pool 1 is committed to, and why.
-    -- (_held_id/_held_age are stashed onto every pool-1 entry alongside the
-    -- live cost shape in goal_selection; get_formula_inner has no `state`.)
-    local _hold_token, _hold_detail = "", ""
-    if e._held_id ~= nil then
-      _hold_token = string.format(" [hold #%s %dt%s]", tostring(e._held_id),
-        e._held_age or 0, (e._held_id == e._id) and " ←this" or "")
-      _hold_detail = string.format(
-        "|hold:pool 1 is holding base #%s (%dt). A rival only takes the target when it costs < %.2f[REFUEL_TARGET_SWITCH_RATIO] x the held base's CURRENT score AND the hold is at least %d[REFUEL_TARGET_MIN_HOLD_TICKS] ticks old. Released when the tank is full, when the held base goes depleted/blocked/unreachable/hostile, on death, or after %d[REFUEL_TARGET_HOLD_MAX_TICKS] -- docking on a base does NOT release it.",
-        tostring(e._held_id), e._held_age or 0,
-        C.REFUEL_TARGET_SWITCH_RATIO, C.REFUEL_TARGET_MIN_HOLD_TICKS,
-        C.REFUEL_TARGET_HOLD_MAX_TICKS)
-    end
     f = string.format(
-      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f} + stock{%.0f}%s%s%s%s%s%s"..
-      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s|stock:%s%s%s%s%s%s%s",
-      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, e._short or 0, _shape_head, _safe_token, _mine_token, _hop_token, _desp_token, _hold_token,
-      _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _d_stock, _shape_detail, _safe_detail, _mine_detail, _hop_detail, _desp_detail, _hold_detail)
+      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s%s%s%s"..
+      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s%s%s%s",
+      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token, _low_token, _mine_token, _hop_token,
+      _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail, _low_detail, _mine_detail, _hop_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
@@ -11263,6 +10762,14 @@ function M.step_eval_queue(state, world, info)
         end
         entry.tick = now
       end
+      -- Pool-1 candidate trace: every base the refuel pool looked at, priced
+      -- or rejected, one line each, so a log answers "why not THAT base".
+      if BRAIN_DEBUG_MODE and pool_idx == 1 then
+        print2(string.format("REFUEL_P1 t=%d base#%s @(%d,%d) REJECT %s obs_sh=%s obs_arm=%s obs_age=%s",
+          now, tostring(id), obj.mx or 0, obj.my or 0, tostring(item.reject.reason),
+          tostring(obj.obs_shells), tostring(obj.obs_armour),
+          obj.obs_tick and tostring(now - obj.obs_tick) or "never"))
+      end
       goto continue
     end
 
@@ -11371,11 +10878,7 @@ function M.step_eval_queue(state, world, info)
       -- in cautious mode, danger terms get pumped so exposure costs
       -- much more — biases hard toward safer refuel candidates.
       local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
-      -- Desperation: at/below REFUEL_DESPERATE_SHELLS the tank cannot fight,
-      -- so the danger surcharge on the one goal that fixes that is scaled
-      -- down (the final row cost is also capped, in goal_selection below).
-      local _desp, _desp_dw = refuel_desperation(info)
-      local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT * _lgm_mult * _desp_dw
+      local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT * _lgm_mult
 
       -- Depletion penalty: penalize bases that can't get us above LOW thresholds.
       -- need_* anchored at LOW (not TANK_FULL) so supply_ratio=1 once the base
@@ -11395,13 +10898,6 @@ function M.step_eval_queue(state, world, info)
       if supply_ratio < 1.0 then
         depletion_cost = (1.0 - supply_ratio) * C.REFUEL_DEPLETION_PENALTY
       end
-
-      -- Stock-aware shortfall. depletion_cost above is anchored at the LOW
-      -- thresholds and caps out at REFUEL_DEPLETION_PENALTY (80), which is
-      -- nothing next to a 13-tile detour; this prices the FULL top-up we came
-      -- for (state.shell_target / armour_target) as a fraction of THIS trip.
-      -- Shared helper — nearest_resupply_base charges the identical term.
-      local short_cost, short_d = refuel_shortfall(obj, info, state, now, raw_cost)
 
       local stale_cost = 0
       local _p1_age = (obj.owner == "neutral" and obj.last_seen and now > 0)
@@ -11433,7 +10929,7 @@ function M.step_eval_queue(state, world, info)
       local hysteresis_cost = 0
       -- Floor the TOTAL at REFUEL_BASE_COST so no discount can drive refuel
       -- negative and dominate cheap cross-pool goals (dead pills etc).
-      local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost + short_cost
+      local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
       score = math.max(score, C.REFUEL_BASE_COST)
       -- Danger PENALTY (was a safe discount): an EXPOSED base (danger_val > 0)
       -- multiplies its cost so refueling out in the open is less attractive — a
@@ -11444,6 +10940,11 @@ function M.step_eval_queue(state, world, info)
       if not _safe_refuel then
         score = score * (C.REFUEL_DANGER_PENALTY or (1 / 0.75))
       end
+      -- Low-stock markup: x1.10 per resource we need that this base is
+      -- observed short of (refuel_low_stock_mult). Multiplicative like the
+      -- danger penalty above; the additive ally/hop terms below come after.
+      local _low_mult, _low_d = refuel_low_stock_mult(obj, info, state, now)
+      score = score * _low_mult
 
       -- Ally-claimed SOFT penalty: +ALLY_CLAIMED_REFUEL_PENALTY for EACH ally
       -- currently broadcasting refuel_at_base on THIS base. Refuel is NOT in
@@ -11541,8 +11042,6 @@ function M.step_eval_queue(state, world, info)
         _stale=stale_cost, _contest=contested_cost,
         _contest_n=_contest_n, _contest_h=_contest_h,
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
-        _short = short_cost, _short_d = short_d,
-        _desp = _desp or nil, _desp_dw = _desp_dw,
         _lgm_mult = _lgm_mult,
         _safe_refuel = _safe_refuel or nil,
         _path = _p1_path_str,
@@ -11550,27 +11049,30 @@ function M.step_eval_queue(state, world, info)
         ally_claimed_pen = (ally_claimed_cost > 0) and ally_claimed_cost or nil,
         ally_claimed_by  = ally_claimed_by,
         _hop = (_hop_cost > 0) and _hop_cost or nil,
+        _low_mult = (_low_mult ~= 1.0) and _low_mult or nil,
+        _low_d = _low_d,
       }
-
-      if BRAIN_DEBUG_MODE then
-        print2(string.format(
-          "REFUEL_CAND base#%s @(%d,%d) OK score=%.1f travel=%.1f danger=%.1f×%.1f×%.2f[desp] stale=%.0f contest=%.0f dep=%.0f%s obs_sh=%d obs_arm=%d",
-          tostring(id), obj.mx, obj.my, score, raw_cost, danger_val,
-          C.REFUEL_DANGER_WEIGHT * _lgm_mult, _desp_dw,
-          stale_cost, contested_cost, depletion_cost,
-          refuel_shortfall_chip(short_cost, short_d),
-          obj.obs_shells or -1, obj.obs_armour or -1))
-      end
 
       pr.candidates[#pr.candidates + 1] = {
         id = id, mx = obj.mx, my = obj.my, own = obj.owner,
         travel = raw_cost, danger = danger_val, score = score,
-        short_cost = short_cost, short_d = short_d,
         -- rederive_pool_partial_best (run at finalize) re-derives the pool
         -- winner from cand.cost + cand.obj; without these it would reset
         -- best_obj to nil and refuel would never win after a replan.
         cost = score, obj = obj,
       }
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "REFUEL_P1 t=%d base#%s @(%d,%d) OK score=%.1f = max(raw %.0f + base %.0f + danger %.0f + stale %.0f + contest %.0f + dep %.0f, %.0f)%s%s + ally %.0f + hop %.0f | need arm=%d/%d sh=%d/%d obs_sh=%s obs_arm=%s obs_age=%s",
+          now, tostring(id), obj.mx, obj.my, score, raw_cost, C.REFUEL_BASE_COST,
+          danger_cost, stale_cost, contested_cost, depletion_cost, C.REFUEL_BASE_COST,
+          _safe_refuel and "" or string.format(" ×danger{%.2f}", C.REFUEL_DANGER_PENALTY or (1 / 0.75)),
+          refuel_low_stock_chip(_low_d), ally_claimed_cost, _hop_cost,
+          info.armour or 0, state.armour_target or C.TANK_FULL_ARMOUR,
+          info.shells or 0, state.shell_target or C.TANK_FULL_SHELLS,
+          tostring(obj.obs_shells), tostring(obj.obs_armour),
+          obj.obs_tick and tostring(now - obj.obs_tick) or "never"))
+      end
       if score < pr.best_cost then
         pr.best_cost = score; pr.best_id = id; pr.best_obj = obj
       end
@@ -13621,68 +13123,6 @@ function M.finalize_pools(state, world, info)
     local bid = pr1.best_id
     local bscore = pr1.best_cost
 
-    -- ── Refuel target stickiness ──────────────────────────────────────
-    -- pool 1's winner IS the refuel target, and this is the only place it
-    -- is chosen, so the hold belongs here (see refuel_target_hold). The
-    -- viable set is every candidate with a finite cost and no _reject —
-    -- depleted / blocked / unreachable / hostile-captured bases have
-    -- already dropped out upstream, which is exactly the "release the
-    -- hold" condition.
-    -- Only hold a target while a refuel is actually WANTED. A tank at both
-    -- targets has pool 1 declined in goal_selection anyway, and running the
-    -- hold there would adopt-and-release a target on every replan.
-    local _hid, _hcost, _hmode, _hchip
-    local _refuel_needed =
-         (info.armour or 0) < (state.armour_target or C.TANK_FULL_ARMOUR)
-      or (info.shells or 0) < (state.shell_target or C.TANK_FULL_SHELLS)
-    if not _refuel_needed then
-      -- THIS is where a hold normally ends, and it used to end silently. The
-      -- twin message in goal_selection's completion-decline branch
-      -- ("RELEASED — refuel complete") never actually printed, because this
-      -- clear always gets there first — measured across four test sessions
-      -- and a 2600-tick soak in which the tank did fill up and drive away:
-      -- zero RELEASED lines of any kind. The end of a hold is exactly the
-      -- event that made the "121 of 121 releases were docked" diagnosis
-      -- readable, so it gets said here.
-      if BRAIN_DEBUG_MODE then
-        if state._refuel_target then
-          print2(string.format(
-            "REFUEL_TARGET_HOLD t=%d RELEASED — at target (arm %d/%d sh %d/%d), held #%s for %dt",
-            now, info.armour or -1, state.armour_target or -1,
-            info.shells or -1, state.shell_target or -1,
-            tostring(state._refuel_target.id),
-            now - (state._refuel_target.since or now)))
-        end
-      end
-      state._refuel_target = nil
-      _hmode, _hchip = "none", ""
-    else
-      -- Standing on a base does NOT release the hold — see the note above
-      -- refuel_target_hold. Being full does; so does the base going depleted.
-      local _hold_cands = {}
-      for _, cand in ipairs(pr1.candidates or {}) do
-        local ce = state.cost_cache and state.cost_cache["1:" .. tostring(cand.id)]
-        if not (ce and ce._reject)
-           and type(cand.cost) == "number" and cand.cost < 1e29 then
-          _hold_cands[#_hold_cands + 1] = cand
-        end
-      end
-      _hid, _hcost, _hmode, _hchip =
-        refuel_target_hold(state, info, now, _hold_cands, bid, bscore, "finalize")
-      if _hid ~= nil and _hid ~= bid then
-        local hb = world.bases and world.bases[_hid]
-        if hb then
-          base, bid, bscore = hb, _hid, _hcost
-          pr1.best_obj, pr1.best_id, pr1.best_cost = hb, _hid, _hcost
-        else
-          -- The held id has no world.bases entry any more (base vanished):
-          -- drop the hold and take the pool winner.
-          state._refuel_target = nil
-          _hchip = " switch{held base gone}"
-        end
-      end
-    end
-
     -- Base urgency from current supplies vs low thresholds.
     -- Squared so low resources discount more aggressively
     -- (armour=10/15 → 0.44 instead of 0.67).
@@ -13745,25 +13185,13 @@ function M.finalize_pools(state, world, info)
         disp_cands[i] = nc
       end
     end
-    -- Chips: the stickiness verdict and the winner's stock term, appended
-    -- OUTSIDE the BRAIN_POOL_VIZ gate so FINAL_SCORES always carries the
-    -- numbers behind the pick (house rule: every number in the row must be
-    -- reproducible from the row).
-    local _win_ce = state.cost_cache and state.cost_cache["1:" .. tostring(bid)]
-    local _stock_chip = _win_ce
-      and refuel_shortfall_chip(_win_ce._short, _win_ce._short_d) or ""
-    local _desp_w, _desp_dw_w, _desp_cap_w = refuel_desperation(info)
     pc[1] = {
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = (BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
-             bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells) or
-             string.format("refuel#%d@(%d,%d)", bid, base.mx, base.my))
-             .. (_hchip or "") .. _stock_chip
-             .. refuel_desperation_chip(_desp_w, info, _desp_dw_w, _desp_cap_w),
+      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
+             bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells) or "",
       cands = disp_cands,
-      _hold_mode = _hmode,
     }
   else
     pc[1] = nil
@@ -14982,26 +14410,6 @@ local function goal_selection(state, world, info, quiet)
     local base, bid, bdist, base_cands = nearest_resupply_base(world, tmx, tmy, boat, ammo, state, info,
                                                     C.FLEE_DANGER_WEIGHT, cur_mx, cur_my, C.FLEE_DANGER_REJECT)
     if base then
-      -- Same stickiness as the pool-1 finalize. The critical flee re-picks
-      -- its base from scratch on every replan, so without the hold it flaps
-      -- between two comparable bases exactly the way refuel did — and this
-      -- is the path a DYING tank is on. Rejected candidates carry score = -1
-      -- and a `reject` string; they are not viable, so they drop out here
-      -- (which is also how a depleted/blocked held base releases the hold).
-      local _fcands = {}
-      for _, c in ipairs(base_cands) do
-        if not c.reject and type(c.cost) == "number" and c.cost < 1e29 then
-          _fcands[#_fcands + 1] = c
-        end
-      end
-      local _fid, _fcost, _fmode, _fchip =
-        refuel_target_hold(state, info, state.tick or 0, _fcands, bid, bdist,
-                           "critical_flee")
-      if _fid ~= nil and _fid ~= bid then
-        local fb = world.bases and world.bases[_fid]
-        if fb then base, bid, bdist = fb, _fid, _fcost
-        else state._refuel_target = nil; _fchip = " switch{held base gone}" end
-      end
       local win_cand = nil
       for _, c in ipairs(base_cands) do
         if c.id == bid then win_cand = c; break end
@@ -15016,11 +14424,8 @@ local function goal_selection(state, world, info, quiet)
       -- BASE_COST/DEFICIT/LGM_WAIT don't layer on top.
       local _prev_cost = (state.pool_cache[1] and state.pool_cache[1].cost) or math.huge
       local _crit_cost = math.min(40, _prev_cost)
-      local flee_desc = (BRAIN_POOL_VIZ and string.format("CRITICAL flee_to_base#%d arm=%.0f<%d dist=%.0f cost=%.0f",
-                                       bid, info.armour, flee_threshold, bdist, _crit_cost)
-                        or string.format("CRITICAL flee_to_base#%d", bid))
-                        .. (_fchip or "")
-                        .. ((win_cand and refuel_shortfall_chip(win_cand.short_cost, win_cand.short_d)) or "")
+      local flee_desc = BRAIN_POOL_VIZ and string.format("CRITICAL flee_to_base#%d arm=%.0f<%d dist=%.0f cost=%.0f",
+                                       bid, info.armour, flee_threshold, bdist, _crit_cost) or ""
       state.pool_cache[1] = {
         goal = {
           kind = "flee_to_base", mx = base.mx, my = base.my,
@@ -15353,11 +14758,6 @@ local function goal_selection(state, world, info, quiet)
           e._arm_def        = _ref_arm_def
           e._sh_def         = _ref_sh_def
           e._lgm_wait_floor = nil
-          -- Refuel target hold (get_formula_inner has no `state`).
-          e._held_id        = state._refuel_target and state._refuel_target.id or nil
-          e._held_age       = state._refuel_target
-                              and (now - (state._refuel_target.since or now)) or nil
-          e._desp_cap       = nil
           e.formula         = nil  -- invalidate cached formula so live shape re-renders
         end
       end
@@ -15459,21 +14859,6 @@ local function goal_selection(state, world, info, quiet)
               info.armour or -1, state.armour_target or -1,
               info.shells or -1, state.shell_target or -1,
               lgm_returning and ", but LGM not returning" or ", no LGM wait")
-            -- Refuel is finished (armour AND shells at target), so the target
-            -- hold has nothing left to protect. Release it here rather than
-            -- waiting out REFUEL_TARGET_HOLD_MAX_TICKS, so the NEXT trip
-            -- picks freely. (A mid-requeue gap where pool 1 simply has no
-            -- entry does NOT reach this branch — that is the whole point of
-            -- the COMPLETION-decline flag above.)
-            if state._refuel_target then
-              print2(string.format(
-                "REFUEL_TARGET_HOLD t=%d RELEASED — refuel complete (arm %d/%d sh %d/%d), held #%s for %dt",
-                now, info.armour or -1, state.armour_target or -1,
-                info.shells or -1, state.shell_target or -1,
-                tostring(state._refuel_target.id),
-                now - (state._refuel_target.since or now)))
-              state._refuel_target = nil
-            end
             if (state._refuel_skip_log_tick or -1) ~= now then
               state._refuel_skip_log_tick = now
               print2(string.format(
@@ -15514,29 +14899,6 @@ local function goal_selection(state, world, info, quiet)
             if BRAIN_POOL_VIZ and entry.goal.target_id and state.cost_cache then
               local ce = state.cost_cache["1:" .. entry.goal.target_id]
               if ce then ce._lgm_wait_floor = wait_floor end
-            end
-          end
-          -- 0-shell desperation cap: a tank that cannot fight must get to a
-          -- base, so a far / exposed base stops pricing itself out of reach.
-          -- A CEILING, never a floor — a cheap nearby base keeps its lower
-          -- cost. Tuned to out-bid explore but NOT capture_base or a live
-          -- free-pill harvest (see REFUEL_DESPERATE_COST_CAP in constants).
-          -- Depleted / blocked bases never reach here — they are rejected
-          -- upstream — so this can only cap a base we could actually use.
-          local _dsp, _dsp_dw, _dsp_cap = refuel_desperation(info)
-          if _dsp and _dsp_cap and final_cost > _dsp_cap then
-            if (state._refuel_desp_log_tick or -1) ~= now then
-              state._refuel_desp_log_tick = now
-              print2(string.format(
-                "REFUEL_DESPERATE t=%d sh=%d≤%d base=(%d,%d) cost %.0f → cap %.0f (danger weight ×%.2f)",
-                now, info.shells or -1, C.REFUEL_DESPERATE_SHELLS or 0,
-                entry.goal.mx or -1, entry.goal.my or -1,
-                final_cost, _dsp_cap, _dsp_dw))
-            end
-            final_cost = _dsp_cap
-            if BRAIN_POOL_VIZ and entry.goal.target_id and state.cost_cache then
-              local ce = state.cost_cache["1:" .. entry.goal.target_id]
-              if ce then ce._desp_cap = _dsp_cap end
             end
           end
           entry = { goal = entry.goal, desc = entry.desc,
@@ -15696,16 +15058,6 @@ local function goal_selection(state, world, info, quiet)
     -- penalties (even when we're mid-pill-take). Local (same-group, target-to-
     -- target) hysteresis still applies via the HYST_EXEMPT branch below.
     HYST_EXEMPT.attack_tank = true
-    -- NOT exempted: refuel at 0 shells. Adding refuel_at_base/flee_to_base to
-    -- HYST_EXEMPT while desperate was tried and reverted — it also skips the
-    -- SEA_PILL_COMMITMENT / WALL_SHIELD_COMMITMENT surcharges, so a bot that
-    -- dipped to 3 shells walked away from a live sea-pill harvest mid-chain
-    -- (tests/sea_pills D and E: "no mine was ever laid"). The desperation cap
-    -- does not need it: REFUEL_DESPERATE_COST_CAP (60) plus the worst ordinary
-    -- switch stack (GOAL_SWITCH_PENALTY 30 + GOAL_COMMITMENT_CAP 75) is 165,
-    -- which still comfortably beats explore (~500 -- the goal the 0-shell tank
-    -- was actually losing to in 20260902_120856), while a committed multi-leg
-    -- plan that needs no ammo keeps its protection.
     if C.EARLY_CAPTURE_BASE_HYST_EXEMPT and state.phase == "opening" then
       HYST_EXEMPT.capture_base = true
     end
