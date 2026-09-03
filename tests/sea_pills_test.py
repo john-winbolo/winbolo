@@ -54,6 +54,11 @@ import sys
 import time
 from pathlib import Path
 
+# -asap by default: ticks run back-to-back instead of one per 20 ms of wall
+# clock. Same seed -> byte-identical game, just faster. --no-asap (or
+# WINBOLO_ASAP=0) puts this run back on the 20 ms live-game pacing.
+from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
@@ -212,7 +217,7 @@ def run_one(variant, ticks, build_dir, port):
            "-brain-no-budget-kill", "-brain-lua-seed", "42",
            "-finaljson", str(final),
            "-snapjson", str(snap), "-snapinterval", str(SNAP_INTERVAL),
-           "-nowinbolonet", "-quiet", "-threads", "1"]
+           "-nowinbolonet", "-quiet", "-threads", "1"] + asap_args()
     if scripted_spawn:
         cmd.append("-noemptyreset")
     with open(stderr, "wb") as errf:
@@ -666,6 +671,8 @@ def main():
     build = DEFAULT_BUILD
     jobs = MAX_JOBS
     args = sys.argv[1:]
+    take_asap_flag(args)      # consumes --asap / --no-asap
+    print(pacing_line(""))
     i = 0
     while i < len(args):
         if args[i] == "--variant":

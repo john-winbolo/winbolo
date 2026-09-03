@@ -118,6 +118,11 @@ try:
 except (AttributeError, ValueError):        # pragma: no cover - old Pythons
     pass
 
+# -asap by default: ticks run back-to-back instead of one per 20 ms of wall
+# clock. Same seed -> byte-identical game, just faster. --no-asap (or
+# WINBOLO_ASAP=0) puts this run back on the 20 ms live-game pacing.
+from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
@@ -268,7 +273,7 @@ def play(variant, ticks, build_dir, port=None):
            # 100-tick snapshots: fine enough that a death inside the 600-frame
            # survival window cannot hide between two samples.
            "-snapjson", str(snap), "-snapinterval", "100",
-           "-nowinbolonet", "-quiet", "-threads", "1"]
+           "-nowinbolonet", "-quiet", "-threads", "1"] + asap_args()
     with open(stderr, "wb") as errf:
         subprocess.run(cmd, cwd=str(build_dir), env=env,
                        stdout=errf, stderr=subprocess.STDOUT,
@@ -629,6 +634,8 @@ def main():
     port = None
     build = DEFAULT_BUILD
     args = sys.argv[1:]
+    take_asap_flag(args)      # consumes --asap / --no-asap
+    print(pacing_line(""))
     i = 0
     while i < len(args):
         if args[i] == "--variant":
