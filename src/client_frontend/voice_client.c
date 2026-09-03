@@ -421,6 +421,13 @@ void voiceLoopbackSetEnabled(bool on) {
     } else {
         loopbackOn = false;
         voiceBackendLoopbackClear();
+#if defined(WINBOLO_VOICE_AEC)
+        /* The test's reference was the player's own voice played back at
+         * them, which is not the room the canceller will meet in a game and
+         * is the one signal an adaptive filter cannot learn from.  What it
+         * took from that must not be carried in. */
+        voiceAecReset();
+#endif
         stopCaptureIfIdle();
     }
 }

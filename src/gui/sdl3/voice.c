@@ -53,6 +53,55 @@ static SDL_AudioStream *playbackStream = NULL;
 static SDL_AudioStream *speakerStreams[MAX_TANKS];
 
 /*********************************************************
+*NAME:          voiceOpenChatDevice
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Opens one voice device with its stream role declared as
+*  game chat, and hands back the stream or NULL.
+*
+*  The role tells the OS this is a voice call, which on the
+*  backends that implement it - AAudio, WASAPI and PipeWire -
+*  is what lets the platform apply its own echo
+*  cancellation, gain control and noise suppression.
+*  CoreAudio ignores it, so this buys macOS nothing.
+*  "GameChat" rather than "Communications": SDL treats the
+*  two alike except that "GameChat" does not attenuate other
+*  audio streams, and a voice call must not duck the game.
+*
+*  The hint is global to the process and sound.c opens the
+*  effects device through the same SDL, so the previous
+*  value is put back before returning - including back to
+*  unset - and the open is wrapped rather than the hint left
+*  standing.
+*
+*ARGUMENTS:
+*  device - the device to open
+*  spec   - the format to open it in
+*********************************************************/
+static SDL_AudioStream *voiceOpenChatDevice(SDL_AudioDeviceID device,
+                                            const SDL_AudioSpec *spec) {
+    SDL_AudioStream *stream;
+    const char *previous = SDL_GetHint(SDL_HINT_AUDIO_DEVICE_STREAM_ROLE);
+    /* Copied because SDL_GetHint hands back a string it owns, and only its
+     * internals say how long that lives. */
+    char *saved = previous ? SDL_strdup(previous) : NULL;
+
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_STREAM_ROLE, "GameChat");
+    stream = SDL_OpenAudioDeviceStream(device, spec, NULL, NULL);
+
+    if (saved) {
+        SDL_SetHint(SDL_HINT_AUDIO_DEVICE_STREAM_ROLE, saved);
+        SDL_free(saved);
+    } else {
+        SDL_ResetHint(SDL_HINT_AUDIO_DEVICE_STREAM_ROLE);
+    }
+
+    return stream;
+}
+
+/*********************************************************
 *NAME:          voiceBackendInit
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -80,8 +129,8 @@ bool voiceBackendInit(void) {
     spec.channels = 1;
     spec.freq = VOICE_SAMPLE_RATE;
 
-    playbackStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
-                                               &spec, NULL, NULL);
+    playbackStream =
+        voiceOpenChatDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
     if (!playbackStream) {
         fprintf(stderr, "Voice error: open playback device: %s\n",
                 SDL_GetError());
@@ -149,8 +198,8 @@ bool voiceBackendCaptureStart(void) {
         spec.channels = 1;
         spec.freq = VOICE_SAMPLE_RATE;
 
-        captureStream = SDL_OpenAudioDeviceStream(
-            SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, NULL, NULL);
+        captureStream =
+            voiceOpenChatDevice(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec);
         if (!captureStream) {
             fprintf(stderr, "Voice error: open recording device: %s\n",
                     SDL_GetError());
@@ -254,8 +303,8 @@ bool voiceBackendSpeakerOpen(int player) {
     spec.channels = 1;
     spec.freq = VOICE_SAMPLE_RATE;
 
-    speakerStreams[player] = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+    speakerStreams[player] =
+        voiceOpenChatDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
     if (speakerStreams[player] == NULL) {
         fprintf(stderr, "Voice error: open playback device: %s\n",
                 SDL_GetError());

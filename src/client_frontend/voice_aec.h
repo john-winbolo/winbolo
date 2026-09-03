@@ -94,6 +94,21 @@ void voiceAecSetEnabled(bool on);
 bool voiceAecIsEnabled(void);
 
 /*********************************************************
+*NAME:          voiceAecReset
+*PURPOSE:
+*  Throws away what the filter has learned and empties the
+*  delay line, so the next captured frame starts a fresh
+*  convergence.  For the times the reference stops
+*  describing the room - a gap in what was fed in, or a
+*  reference that was never the room to begin with.  Safe to
+*  call when the canceller was never created.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceAecReset(void);
+
+/*********************************************************
 *NAME:          voiceAecAddReference
 *PURPOSE:
 *  Sums one frame that is about to be played into the delay

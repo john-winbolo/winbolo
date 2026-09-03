@@ -154,6 +154,27 @@ void voiceAecShutdown(void) {
 }
 
 /*********************************************************
+*NAME:          voiceAecReset
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Drops the filter's adaptation and the delay line, so the
+*  next captured frame converges from silence.  Does nothing
+*  harmful if the canceller was never created.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+void voiceAecReset(void) {
+    if (echoState != NULL) {
+        speex_echo_state_reset(echoState);
+    }
+    memset(refRing, 0, sizeof(refRing));
+    refTick = 0;
+}
+
+/*********************************************************
 *NAME:          voiceAecSetEnabled
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -171,14 +192,10 @@ void voiceAecSetEnabled(bool on) {
     aecEnabled = on;
 
     /* Nothing reached the filter or the delay line while it was off, so both
-     * describe a room from before the gap.  Clearing them makes it converge
+     * describe a room from before the gap.  Starting over makes it converge
      * from silence rather than from that. */
     if (on) {
-        if (echoState != NULL) {
-            speex_echo_state_reset(echoState);
-        }
-        memset(refRing, 0, sizeof(refRing));
-        refTick = 0;
+        voiceAecReset();
     }
 }
 
