@@ -211,6 +211,15 @@ static int checkSheetOnlyScan(SkinSource *src, int iBare) {
                   "Match to Zoom picked %d at scale 2, the sheet serves 2",
                   tileLoaderPickDensity(&info, iBare,
                                         TILE_DETAIL_MATCH_ZOOM, 2));
+
+    /* The cached scan has to be this skin's, not the fixture's.  The
+       fixture was scanned through the cache and then closed, so this source
+       may well sit at the same address; the fixture's highestAll is 1 and
+       this skin's is 2, which tells the two apart. */
+    UT_ASSERT_MSG(tileLoaderGetDensityInfo(src)->highestAll == 2,
+                  "cached scan reports highestAll %d for the sheet-only skin; "
+                  "it is the previous source's scan",
+                  tileLoaderGetDensityInfo(src)->highestAll);
     return 0;
 }
 
@@ -355,6 +364,14 @@ int run_skin_density_scan(void) {
     tileLoaderScanDensity(src, &info);
     rc = checkScan(&info, iTank, iGrass, iRoad, iBare);
     if (rc == 0) rc = checkPick(&info, iTank, iBare);
+    /* Prime the one-entry cache with this source before it goes away, so
+       the sheet-only skin opened later can show it is not served the
+       fixture's scan. */
+    if (rc == 0 && tileLoaderGetDensityInfo(src)->highestAll != 1) {
+        rc = 1;
+        UT_FAIL("cached scan of the fixture reports highestAll %d, not 1",
+                tileLoaderGetDensityInfo(src)->highestAll);
+    }
     skinSourceClose(src);
     if (rc != 0) return rc;
 

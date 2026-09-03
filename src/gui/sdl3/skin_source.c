@@ -59,10 +59,14 @@ struct SkinSource {
      * inflate. A source is immutable once open, so it never goes stale. */
     bool            iniLoaded;
     SkinInfo        ini;
+    /* Never reused, unlike the address: a cache keyed on this cannot
+     * mistake a source opened into a freed one's block for that source. */
+    uint64_t        serial;
 };
 
 static char        s_activeId[SKIN_ID_MAX];
 static SkinSource *s_activeSource;
+static uint64_t    s_nextSerial = 1;   /* 0 is reserved for "no source" */
 
 /* ------------------------------------------------------------------ */
 /* Name handling                                                       */
@@ -260,7 +264,12 @@ static SkinSource *sourceAlloc(bool isZip, const char *path) {
     if (!src) return NULL;
     src->isZip = isZip;
     SDL_strlcpy(src->path, path, sizeof(src->path));
+    src->serial = s_nextSerial++;
     return src;
+}
+
+uint64_t skinSourceSerial(const SkinSource *src) {
+    return src ? src->serial : 0;
 }
 
 /* If every indexed name sits under one top-level folder, drop that folder so

@@ -192,18 +192,22 @@ void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
     }
 }
 
-/* One-entry scan cache.  skinSetActive closes and reopens the source, so a
-   different skin always presents a different pointer.  The valid flag is
-   what makes a NULL skin a real key rather than "not scanned yet". */
-static struct SkinSource *s_densitySkin  = NULL;
-static SkinDensityInfo    s_densityInfo;
-static bool               s_densityValid = false;
+/* One-entry scan cache, keyed on the source's serial rather than its
+   address.  skinSetActive closes one source and opens the next, and the
+   allocator is free to give the new one the old one's block; a pointer key
+   would then hand the new skin the old skin's scan.  Serials are never
+   reused.  The valid flag is what makes a NULL skin (serial 0) a real key
+   rather than "not scanned yet". */
+static uint64_t        s_densitySerial = 0;
+static SkinDensityInfo s_densityInfo;
+static bool            s_densityValid  = false;
 
 const SkinDensityInfo *tileLoaderGetDensityInfo(struct SkinSource *skin) {
-    if (!s_densityValid || s_densitySkin != skin) {
+    uint64_t serial = skinSourceSerial(skin);
+    if (!s_densityValid || s_densitySerial != serial) {
         tileLoaderScanDensity(skin, &s_densityInfo);
-        s_densitySkin  = skin;
-        s_densityValid = true;
+        s_densitySerial = serial;
+        s_densityValid  = true;
     }
     return &s_densityInfo;
 }
@@ -993,11 +997,11 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 }
 
 void tileLoaderCleanup(void) {
-    /* Drop the density scan: once the source is freed its address can be
-     * handed to a later skin, and the cache is keyed on that pointer.
+    /* Drop the density scan.  The serial key already keeps a later skin from
+     * hitting it, so this is housekeeping rather than correctness.
      * Reserved for future caching (e.g. keeping parsed SVGs for re-rasterization). */
-    s_densitySkin  = NULL;
-    s_densityValid = false;
+    s_densitySerial = 0;
+    s_densityValid  = false;
 #if WB_SKIN_DRAWTIME_ROTATION
     /* And the slots the last build turned: there is no sheet left for them
      * to describe. */

@@ -158,6 +158,17 @@ const char  *skinGetActive(void);             /* "" when none */
 SkinSource  *skinGetActiveSource(void);       /* NULL when none */
 
 /*********************************************************
+ * NAME:          skinSourceSerial
+ * PURPOSE:
+ *   A number unique to this source for the life of the
+ *   process, 0 for NULL. Key caches on it rather than on
+ *   the pointer: skinSetActive closes one source and opens
+ *   the next, and the allocator can hand the new one the
+ *   old one's address.
+ *********************************************************/
+uint64_t     skinSourceSerial(const SkinSource *src);
+
+/*********************************************************
  * NAME:          skinScanCount
  * PURPOSE:
  *   How many skins the scan locations hold, so a caller
