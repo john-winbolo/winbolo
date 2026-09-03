@@ -6987,37 +6987,11 @@ static void serverPumpVoice(ServerSim *sim) {
         }
     }
 
-    /* A viewer is allied to nobody, so the alliance rule above would silence
-     * every player for them; they are listeners on the whole game and get all
-     * of it. The talker cap still applies — it is about what a listener can
-     * follow, which a viewer is no better at than a player. */
-    for (s = 0; s < MAX_SPECTATORS; s++) {
-        uint8_t chosen[VOICE_MAX_FORWARDED_TALKERS];
-        PlayerBitMap chosenMask = 0;
-        int chosenCount;
-        int t, f;
-
-        if (!udpServer.spectators[s].connected) continue;
-        if (talkerCount == 0) continue;
-
-        chosenCount = voiceSelectTalkers(talkers, talkerCount,
-                                         VOICE_MAX_FORWARDED_TALKERS, chosen);
-        for (t = 0; t < chosenCount; t++) {
-            chosenMask |= (PlayerBitMap)1u << chosen[t];
-        }
-
-        for (f = 0; f < stagedCount; f++) {
-            if ((chosenMask & ((PlayerBitMap)1u << staged[f].from)) == 0) {
-                udpServer.voiceSegsTalkerCapped++;
-                continue;
-            }
-            channelSendBestEffort(&udpServer.spectators[s].channelMux,
-                                  CHANNEL_VOICE, staged[f].bytes,
-                                  staged[f].len);
-        }
-    }
-
-    /* A viewer sees the whole map, so anything it says would be coaching.
+    /* A viewer is sent no voice. It watches the game on the anti-ghosting
+     * delay, but voice would arrive live, and a viewer relaying what it
+     * heard would hand out exactly what the delay is there to withhold.
+     *
+     * A viewer sees the whole map, so anything it says would be coaching.
      * Its voice is forwarded nowhere; draining it keeps the channel's ring
      * from filling and stalling behind frames nobody will ever read. */
     for (s = 0; s < MAX_SPECTATORS; s++) {
