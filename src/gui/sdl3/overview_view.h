@@ -79,10 +79,14 @@ OverviewCamera *overviewViewCamera(OverviewView *v);
    which case every key is the view's.
 
    The wheel belongs to the gunsight, as it does over the main view, and zooms
-   only while kiOverviewZoom is held — cleared, it zooms unconditionally. */
+   only while kiOverviewZoom is held — cleared, it zooms unconditionally.
+
+   `ownsWindow` says this view has replaced the classic one rather than sitting
+   beside it in a pop-out. The scroll keys then have no other map to scroll, so
+   they pan this one; beside the classic view they are left to it. */
 void          overviewViewHandleInput(OverviewView *v, bool hovered,
                                       int viewW, int viewH, ClientSim *cs,
-                                      const keyItems *keys);
+                                      const keyItems *keys, bool ownsWindow);
 
 /* Hand the OS pointer back if this view switched it to the crosshair. The
    host calls it whenever the view stops being shown: nothing else will put

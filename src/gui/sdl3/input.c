@@ -116,6 +116,18 @@ static bool keyDown(int sc) {
 
 #define KEY_DOWN(sc) keyDown(sc)
 
+/* True while the full screen map has the scroll keys. It is the only map on
+   screen there, so it is what they scroll (overviewViewHandleInput) — leaving
+   them wired here as well would drag the hidden classic view off the tank and
+   latch the manual-scroll override, so the player drops back to a view sitting
+   somewhere they never scrolled it to. Pill view is unaffected: it takes the
+   keys before either map sees them, and stepping between pills is still what
+   they do there. The gamepad stick is unaffected too — it drives the build
+   cursor as well, and neither of those has moved. */
+static bool overviewOwnsScrollKeys(void) {
+  return sdl3DrawIsOverviewInWindow();
+}
+
 /*********************************************************
 *NAME:          inputSetup
 *PURPOSE:
@@ -295,7 +307,7 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      through the legacy step-scroll path instead, so feeding them here too
      would double-scroll.  The gamepad stick below is analog and always
      uses this smooth path regardless of the preference. */
-  if (smoothScrollingEnabled) {
+  if (smoothScrollingEnabled && !overviewOwnsScrollKeys()) {
     if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
     if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
     if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
@@ -698,7 +710,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
        smoothScrollingEnabled; when that is off, the scroll keys fall
        through to the legacy step-scroll below. */
     smoothScrollTick(cs, setKeys);
-    if (!smoothScrollingEnabled) {
+    if (!smoothScrollingEnabled && !overviewOwnsScrollKeys()) {
       scrollKeyCount++;
       if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
         scrollKeyCount = 0;
@@ -760,7 +772,7 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
      smoothScrollingEnabled; when off, the scroll keys fall through to the
      legacy step-scroll below. */
   smoothScrollTick(cs, setKeys);
-  if (smoothScrollingEnabled) {
+  if (smoothScrollingEnabled || overviewOwnsScrollKeys()) {
     return;
   }
 

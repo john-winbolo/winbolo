@@ -1642,7 +1642,7 @@ static void renderMapOverviewContent(ClientSim *cs) {
     keyItems keys;
     windowGetKeys(&keys);
     overviewViewHandleInput(s_overviewView, ImGui::IsItemHovered(),
-                            texW, texH, cs, &keys);
+                            texW, texH, cs, &keys, false);
 
     /* Persist zoom and follow the moment the player changes either. The
        comparison is exact on purpose: the stored zoom came out of the same
@@ -1780,7 +1780,7 @@ static void renderOverviewInWindow(ClientSim *cs) {
         keyItems keys;
         windowGetKeys(&keys);
         overviewViewHandleInput(view, hovered && !overHud,
-                                (int)rw, (int)rh, cs, &keys);
+                                (int)rw, (int)rh, cs, &keys, true);
 
         /* Zoom and follow state along the top of the map — the pop-out puts the
            same readout bottom-left, but here the bottom of the window is where

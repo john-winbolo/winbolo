@@ -681,6 +681,16 @@ static bool overviewWheelZooms(const keyItems *keys) {
     return state && state[sc];
 }
 
+/* An in-game binding held, read straight off the keyboard for the same reason
+ * overviewWheelZooms is: keyIsClaimedByGame counts every keyItems field, so a
+ * binding the view is deliberately taking over reads as up through
+ * overviewKeyDown. Unbound is never held. */
+static bool overviewBindingDown(int scancode) {
+    if (scancode <= 0 || scancode >= SDL_SCANCODE_COUNT) return false;
+    const bool *state = SDL_GetKeyboardState(NULL);
+    return state && state[scancode];
+}
+
 /* The map square under the mouse pointer, taken against the item the caller
  * submitted immediately before this — the same rect the wheel zoom anchors
  * to. False when the pointer is off the map; the square is still written, so
@@ -697,7 +707,7 @@ static bool overviewSquareUnderMouse(const OverviewCamera *cam,
 
 extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
                                         int viewW, int viewH, ClientSim *cs,
-                                        const keyItems *keys) {
+                                        const keyItems *keys, bool ownsWindow) {
     if (!v || viewW <= 0 || viewH <= 0) return;
 
     ImGuiIO &io = ImGui::GetIO();
@@ -818,14 +828,36 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
         overviewCameraZoomAt(cam, viewW, viewH, midX, midY, -1);
     }
 
-    /* Arrows are the keyboard's pan, and panning is what follow mode does
-     * for you — while it is on they would fight it for one frame and lose. */
-    if (!cam->follow) {
+    /* The keyboard's pan. The arrows are the view's own and are given up to
+     * whatever in-game binding has taken them; the scroll keys are added while
+     * this view owns the window, because the classic view they would otherwise
+     * scroll is not on screen — and on the default bindings the scroll keys
+     * *are* the arrows, so without this there is no keyboard pan at all. The
+     * two sets never both report the same key: a bound one is claimed and
+     * reads as up through overviewKeyDown, and only a bound one is read by
+     * overviewBindingDown.
+     *
+     * Not while pill view has them: there the scroll keys step between pills,
+     * which is still their job with the classic view hidden. Not while a text
+     * box has the keyboard either, or typing a message would pan the map
+     * behind it.
+     *
+     * Panning clears follow, the way a drag does, so a held key wins over the
+     * tank exactly as manual scrolling wins over auto-scroll in the classic
+     * view. Home / C hands the map back to the tank. */
+    if (!io.WantTextInput) {
+        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInPillView(cs);
         float dx = 0.0f, dy = 0.0f;
         if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_UpArrow))    dy -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_DownArrow))  dy += OVERVIEW_ARROW_STEP_PX;
+        if (scrollKeysArePan && keys) {
+            if (overviewBindingDown(keys->kiScrollLeft))  dx -= OVERVIEW_ARROW_STEP_PX;
+            if (overviewBindingDown(keys->kiScrollRight)) dx += OVERVIEW_ARROW_STEP_PX;
+            if (overviewBindingDown(keys->kiScrollUp))    dy -= OVERVIEW_ARROW_STEP_PX;
+            if (overviewBindingDown(keys->kiScrollDown))  dy += OVERVIEW_ARROW_STEP_PX;
+        }
         if (dx != 0.0f || dy != 0.0f) {
             overviewCameraPan(cam, viewW, viewH, dx, dy);
         }
