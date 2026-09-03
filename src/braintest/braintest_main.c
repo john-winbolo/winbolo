@@ -5616,8 +5616,12 @@ static void appRender(BrainTestApp *app) {
     mainImGuiRenderShortcuts(&app->showShortcuts);
     vizDetailWindowRender((int)app->followBot);
     {
+        bool rescan = false;
         int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount,
-                                    optLoadSession);
+                                    optLoadSession, &rescan);
+        /* A rename moved dirs on disk, so every g_sessionList name (and every
+         * index the browser hands back) is stale until we look again. */
+        if (rescan) { scanSessions(); sel = -1; }
         if (sel >= 0 && sel < g_sessionCount) relaunchWithSession(g_sessionList[sel].dir);
     }
     mainImGuiEndFrame(app->renderer);

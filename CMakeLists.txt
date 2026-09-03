@@ -2427,6 +2427,7 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_vizwindow.cpp
     src/braintest/braintest_loadbrowser.cpp
     src/braintest/braintest_loadbrowser_segment.c
+    src/braintest/braintest_loadbrowser_rename.c
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
@@ -2998,6 +2999,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # browser (braintest_loadbrowser.cpp) is not part of this target.
     tests/unit/test_loadbrowser_segment.c
     src/braintest/braintest_loadbrowser_segment.c
+    # ... and the session-name grammar + rename planner that walk is built on
+    # (braintest_loadbrowser_rename.c). Its apply step is the only part that
+    # touches disk, so test_loadbrowser_rename.c exercises that against a
+    # throwaway dir tree under the working directory.
+    tests/unit/test_loadbrowser_rename.c
+    src/braintest/braintest_loadbrowser_rename.c
     # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
     # is emscripten-only but the parse compiles everywhere).
     tests/unit/test_proxy_meta_parse.c
@@ -3588,6 +3595,10 @@ set(_unit_test_names
     loadbrowser_segment_no_neighbour
     loadbrowser_segment_path_forms
     loadbrowser_segment_labels
+    loadbrowser_rename_splits_names
+    loadbrowser_rename_family_plan
+    loadbrowser_rename_rejections
+    loadbrowser_rename_applies
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback
