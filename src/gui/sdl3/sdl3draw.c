@@ -1659,7 +1659,7 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   if (!gOverviewView) return;
 
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
-                              gCrosshairTex, w, h, cs);
+                              gCrosshairTex, w, h, cs, true);
 
   /* Both offscreen passes belong here, before anything is drawn to the
      window: each of them swaps the render target. */

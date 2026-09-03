@@ -5424,7 +5424,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                                         s_popMapOverview.renderer,
                                         ovTiles, s_overviewTilesScale, ovCross,
                                         s_popMapOverview.width,
-                                        s_popMapOverview.height, cs);
+                                        s_popMapOverview.height, cs, false);
             clientMutexRelease();
         }
         if (popOutBeginFrame(&s_popMapOverview)) {

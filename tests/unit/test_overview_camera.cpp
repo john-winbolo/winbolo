@@ -272,6 +272,147 @@ static int camera_follow_centres_on_tank(void) {
     return 0;
 }
 
+/* The nudge that keeps the tank on screen once the view has stopped following
+ * it: the least move that brings it back inside, with a margin of ground on
+ * the edge it came in over, and nothing at all while it is already inside. */
+static int camera_keeps_tank_on_screen(void) {
+    const int viewW = 800;
+    const int viewH = 600;
+
+    for (int z = 0; z < overviewCameraZoomCount(); z++) {
+        OverviewCamera cam;
+        overviewCameraInit(&cam);
+        cam.follow = false;
+        cam.zoomIndex = z;
+
+        float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(&cam);
+        float halfW  = (float)viewW / (2.0f * tilePx);
+        float halfH  = (float)viewH / (2.0f * tilePx);
+        /* Well clear of both map edges at every rung, so what is asserted is
+         * the nudge and never the map clamp underneath it. */
+        const float tankX = 128.5f;
+        const float tankY = 128.5f;
+
+        /* A tank comfortably inside is left where it is, camera untouched. */
+        cam.cx = tankX + halfW * 0.25f;
+        cam.cy = tankY - halfH * 0.25f;
+        float wasX = cam.cx;
+        float wasY = cam.cy;
+        overviewCameraKeepTankOnScreen(&cam, viewW, viewH, tankX, tankY);
+        UT_ASSERT_MSG(cam.cx == wasX && cam.cy == wasY,
+                      "zoom index %d: a tank already on screen moved the "
+                      "centre from (%.4f,%.4f) to (%.4f,%.4f)",
+                      z, (double)wasX, (double)wasY, (double)cam.cx,
+                      (double)cam.cy);
+
+        /* The view is a long way right of the tank, so the tank is off to the
+         * left: the centre comes left only as far as it has to, which is the
+         * margin inside the left edge — not onto the tank. */
+        if (halfW > OVERVIEW_TANK_EDGE_MARGIN) {
+            cam.cx = tankX + halfW * 3.0f;
+            cam.cy = tankY;
+            overviewCameraKeepTankOnScreen(&cam, viewW, viewH, tankX, tankY);
+
+            float want = tankX + halfW - OVERVIEW_TANK_EDGE_MARGIN;
+            UT_ASSERT_MSG(std::fabs(cam.cx - want) < 0.001f,
+                          "zoom index %d: a tank off to the left put the "
+                          "centre at %.4f, expected %.4f",
+                          z, (double)cam.cx, (double)want);
+            UT_ASSERT_MSG(cam.cx != tankX,
+                          "zoom index %d: the nudge centred on the tank", z);
+
+            /* Which is to say: on screen, that far in from the edge it came
+             * in over. */
+            float sx = 0.0f;
+            overviewCameraWorldToScreen(&cam, viewW, viewH, tankX, tankY, &sx,
+                                        nullptr);
+            UT_ASSERT_MSG(
+                sx >= 0.0f && sx <= (float)viewW,
+                "zoom index %d: the nudged tank drew at x %.4f, outside the "
+                "view", z, (double)sx);
+            UT_ASSERT_MSG(
+                std::fabs(sx - OVERVIEW_TANK_EDGE_MARGIN * tilePx) < 1.0f,
+                "zoom index %d: the nudged tank drew %.4f px from the left "
+                "edge, expected %.4f",
+                z, (double)sx,
+                (double)(OVERVIEW_TANK_EDGE_MARGIN * tilePx));
+        }
+
+        /* And the other three edges, each in the direction that has to move. */
+        if (halfW > OVERVIEW_TANK_EDGE_MARGIN) {
+            cam.cx = tankX - halfW * 3.0f;
+            cam.cy = tankY;
+            overviewCameraKeepTankOnScreen(&cam, viewW, viewH, tankX, tankY);
+            float want = tankX - halfW + OVERVIEW_TANK_EDGE_MARGIN;
+            UT_ASSERT_MSG(std::fabs(cam.cx - want) < 0.001f,
+                          "zoom index %d: a tank off to the right put the "
+                          "centre at %.4f, expected %.4f",
+                          z, (double)cam.cx, (double)want);
+        }
+        if (halfH > OVERVIEW_TANK_EDGE_MARGIN) {
+            cam.cx = tankX;
+            cam.cy = tankY + halfH * 3.0f;
+            overviewCameraKeepTankOnScreen(&cam, viewW, viewH, tankX, tankY);
+            float want = tankY + halfH - OVERVIEW_TANK_EDGE_MARGIN;
+            UT_ASSERT_MSG(std::fabs(cam.cy - want) < 0.001f,
+                          "zoom index %d: a tank off the top put the centre at "
+                          "%.4f, expected %.4f",
+                          z, (double)cam.cy, (double)want);
+
+            cam.cy = tankY - halfH * 3.0f;
+            overviewCameraKeepTankOnScreen(&cam, viewW, viewH, tankX, tankY);
+            want = tankY - halfH + OVERVIEW_TANK_EDGE_MARGIN;
+            UT_ASSERT_MSG(std::fabs(cam.cy - want) < 0.001f,
+                          "zoom index %d: a tank off the bottom put the centre "
+                          "at %.4f, expected %.4f",
+                          z, (double)cam.cy, (double)want);
+        }
+
+        /* Follow is not claimed on the way past — the nudge corrects a free
+         * camera, it does not take it over. */
+        UT_ASSERT_MSG(!cam.follow, "zoom index %d: the nudge turned follow on",
+                      z);
+    }
+
+    /* A view too small to hold both margins has no centre that satisfies
+     * either edge, and puts the tank in the middle rather than favouring one.
+     * Sixteen pixels at 0.5x is one square across, well inside two. */
+    {
+        OverviewCamera cam;
+        overviewCameraInit(&cam);
+        cam.follow = false;
+        cam.zoomIndex = 0;
+        cam.cx = 200.0f;
+        cam.cy = 40.0f;
+        overviewCameraKeepTankOnScreen(&cam, 16, 16, 128.5f, 128.5f);
+        UT_ASSERT_MSG(cam.cx == 128.5f && cam.cy == 128.5f,
+                      "a view smaller than the margins put the centre at "
+                      "(%.4f,%.4f), expected the tank",
+                      (double)cam.cx, (double)cam.cy);
+    }
+
+    /* A tank against the map's own edge: the map clamp has the last word, and
+     * it must not undo the nudge — the tank still has to be on screen. */
+    {
+        OverviewCamera cam;
+        overviewCameraInit(&cam);
+        cam.follow = false;
+        cam.zoomIndex = overviewCameraZoomCount() - 1;
+        cam.cx = 200.0f;
+        cam.cy = 200.0f;
+        overviewCameraKeepTankOnScreen(&cam, viewW, viewH, 0.5f, 0.5f);
+
+        float sx = 0.0f;
+        float sy = 0.0f;
+        overviewCameraWorldToScreen(&cam, viewW, viewH, 0.5f, 0.5f, &sx, &sy);
+        UT_ASSERT_MSG(sx >= 0.0f && sx <= (float)viewW && sy >= 0.0f &&
+                          sy <= (float)viewH,
+                      "a tank in the map's corner drew at (%.4f,%.4f), outside "
+                      "the view", (double)sx, (double)sy);
+    }
+    return 0;
+}
+
 /* Zoom steps stop at the ladder's ends and pans stop at the map's. */
 static int camera_clamps_zoom_and_centre(void) {
     const int viewW = 800;
@@ -488,6 +629,7 @@ extern "C" int run_overview_camera(void) {
     rc = camera_round_trip_every_zoom();    if (rc) return rc;
     rc = camera_zoom_anchors_cursor();      if (rc) return rc;
     rc = camera_follow_centres_on_tank();   if (rc) return rc;
+    rc = camera_keeps_tank_on_screen();     if (rc) return rc;
     rc = camera_clamps_zoom_and_centre();   if (rc) return rc;
     rc = camera_visible_range_at_edges();   if (rc) return rc;
     rc = camera_set_zoom_scale();           if (rc) return rc;

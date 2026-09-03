@@ -58,11 +58,17 @@ void          overviewViewDestroy(OverviewView *v);
    requested size changes. tiles/sheetScale belong to the host, not the view,
    and so does crosshair — the local player's gunsight sprite, on the same
    renderer as the tile sheet for the same reason. NULL just leaves the
-   crosshair undrawn. */
+   crosshair undrawn.
+
+   `ownsWindow` means the same thing it does in overviewViewHandleInput: this
+   view has replaced the classic one rather than sitting beside it. Then the
+   camera keeps the tank on screen the way the classic view's scroll always
+   has — see overviewCameraKeepTankOnScreen. */
 void          overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                           SDL_Texture *tiles, int sheetScale,
                                           SDL_Texture *crosshair,
-                                          int w, int h, ClientSim *cs);
+                                          int w, int h, ClientSim *cs,
+                                          bool ownsWindow);
 SDL_Texture  *overviewViewGetTexture(const OverviewView *v);
 void          overviewViewGetSize(const OverviewView *v, int *outW, int *outH);
 OverviewCamera *overviewViewCamera(OverviewView *v);

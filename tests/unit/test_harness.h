@@ -801,7 +801,11 @@ int run_viewport_calc_square_pure(void);
 /* Overview region geometry (test_overview_map.c): overviewMapBuildRegions
  * gives the tank a 29x29 block and every viewable pillbox a 15x15 one,
  * trimmed at the map edges, tank rect first and pills in index order, and
- * never writes more rects than the caller allowed for. */
+ * never writes more rects than the caller allowed for;
+ * overviewMapDeathTankHalf shrinks that tank block to nothing once a death
+ * reaches the tick the classic view cuts to static; and overviewMapDeathStatic
+ * puts the overview's static in the last stretch of the wait, after the block
+ * has closed. */
 int run_overview_regions(void);
 
 /* Overview reveal (test_overview_map.c): one display tick on a freshly joined

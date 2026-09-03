@@ -127,6 +127,28 @@ void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
                               float tankMapX, float tankMapY);
 
+/* Squares of map kept between the tank and the edge of the view by the nudge
+ * below. Two: half of one is the tank's own square, and the rest is the tile
+ * of ground behind it that stops it riding the edge it was pulled in over. */
+#define OVERVIEW_TANK_EDGE_MARGIN 2.0f
+
+/* Move the centre the least it takes to bring the tank back inside the view,
+ * with OVERVIEW_TANK_EDGE_MARGIN squares to spare on the edge it came in
+ * over. A tank already that far inside moves nothing, and neither edge pulls
+ * the view further than it has to — a tank off to the left slides the view
+ * left until it is on, rather than the view jumping to centre on it.
+ *
+ * For the mode where this view has replaced the classic one: there the
+ * overview is the player's only picture, and the same rule the classic view
+ * has always had (scroll.c's hard clamp — the tank never leaves the screen)
+ * has to hold here. Beside the classic view, which is still showing the tank,
+ * the pop-out is left free to roam.
+ *
+ * Follow mode centres the camera anyway, so this is a no-op there. Leaves the
+ * follow flag alone: it corrects a free camera without claiming it. */
+void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
+                                    float tankMapX, float tankMapY);
+
 /* Inclusive square range intersecting the view, clamped to
  * 0..MAP_ARRAY_SIZE-1. Returns false when no square is visible. */
 bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,

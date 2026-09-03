@@ -232,6 +232,42 @@ void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
     overviewCameraClamp(cam);
 }
 
+void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
+                                    float tankMapX, float tankMapY) {
+    if (!cam || viewW <= 0 || viewH <= 0) return;
+
+    float tilePx = overviewTilePx(cam);
+    float halfW  = (float)viewW / (2.0f * tilePx);
+    float halfH  = (float)viewH / (2.0f * tilePx);
+
+    /* The two edges of an axis ask for opposite things, and the window they
+     * leave between them is the view minus both margins. A window narrower
+     * than the margins it is being asked to keep has no centre that satisfies
+     * either edge, so the tank goes in the middle — the nearest thing to what
+     * was asked, and the only answer that does not favour one edge. */
+    if (halfW <= OVERVIEW_TANK_EDGE_MARGIN) {
+        cam->cx = tankMapX;
+    } else {
+        float lowest  = tankMapX - halfW + OVERVIEW_TANK_EDGE_MARGIN;
+        float highest = tankMapX + halfW - OVERVIEW_TANK_EDGE_MARGIN;
+        if (cam->cx < lowest)  cam->cx = lowest;
+        if (cam->cx > highest) cam->cx = highest;
+    }
+
+    if (halfH <= OVERVIEW_TANK_EDGE_MARGIN) {
+        cam->cy = tankMapY;
+    } else {
+        float lowest  = tankMapY - halfH + OVERVIEW_TANK_EDGE_MARGIN;
+        float highest = tankMapY + halfH - OVERVIEW_TANK_EDGE_MARGIN;
+        if (cam->cy < lowest)  cam->cy = lowest;
+        if (cam->cy > highest) cam->cy = highest;
+    }
+
+    /* The map clamp can only pull the centre back towards the map, and the
+     * tank is on the map, so it cannot undo what was just done here. */
+    overviewCameraClamp(cam);
+}
+
 bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,
                                 int *outLeft, int *outTop,
                                 int *outRight, int *outBottom) {

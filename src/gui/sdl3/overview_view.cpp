@@ -23,6 +23,12 @@
  *                the squares it says are visible; the camera
  *                maths it sits on lives in overview_camera.cpp
  *                and the fog mask in overview_fog.cpp.
+ *
+ *                Death is answered here too: the fog closing
+ *                over the wreck is the sim's doing, and this
+ *                file draws the static that follows it — the
+ *                map goes dark, then the snow comes up and
+ *                holds until the tank is back.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -38,6 +44,7 @@ extern "C" {
 #include "global.h"
 #include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPosF,
                                clientSimIsMyTankAlive,
+                               clientSimIsMyTankDeathStatic,
                                clientSimPrepareOverviewEntities,
                                clientSimManMoveToMap,
                                clientSimGetCurrentBuildSelect */
@@ -84,6 +91,21 @@ extern "C" bool smoothScrollingEnabled;
  * than the tanks are apart and the picture turns into text. */
 #define OVERVIEW_LABEL_MIN_ZOOM 1.0f
 
+/* The death static, held over the map for the last couple of seconds of the
+ * death wait — the sim says when (clientSimIsMyTankDeathStatic), and it runs
+ * out as the tank comes back, so the snow is the last thing the player sees
+ * before they respawn. By then the fog has already closed over the wreck, so
+ * this is a curtain over a dark map rather than one over a picture the player
+ * still had.
+ *
+ * It fades in rather than cutting: the classic view's static arrives over a
+ * live picture and the cut is the point of it, but here the map has already
+ * gone, and a hard cut to full-contrast noise across a screen this size reads
+ * as a flash rather than as a signal going. */
+#define OVERVIEW_DEATH_STATIC_FADE_MS 200   /* to come up to full */
+#define OVERVIEW_DEATH_STATIC_STEP_MS 60    /* how often the snow is rolled */
+#define OVERVIEW_DEATH_STATIC_DIV     3     /* view pixels to a noise pixel */
+
 struct OverviewView {
     OverviewCamera cam;
 
@@ -121,6 +143,19 @@ struct OverviewView {
      * square solid — so this view does too, keeping the faint rendering for
      * a target the gamepad flow left behind. */
     bool           mouseOnMap;
+
+    /* The death static's own texture, one pixel to every
+     * OVERVIEW_DEATH_STATIC_DIV of the view, bound to a renderer the way the
+     * two above are. staticTick is when the snow came up and 0 when there is
+     * none, which is also the edge the fade is measured from — one death, one
+     * fade. */
+    SDL_Texture   *noise;
+    SDL_Renderer  *noiseRenderer;
+    int            noiseW;
+    int            noiseH;
+    Uint64         noiseRolledTick;
+    Uint64         staticTick;
+    Uint32         noiseSeed;
 
     /* This view's tank-label cache — the shared drawer in tank_label.c
      * builds its textures on whichever renderer hosts the view (the classic
@@ -301,6 +336,109 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                       tilePx * (float)MAP_ARRAY_SIZE,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
+}
+
+/* The snow's own PRNG, the xorshift the classic view's static runs on. Seeded
+ * off the tick the snow first comes up, and never seeded with zero: the shift
+ * cycle cannot climb out of it. */
+static Uint32 overviewNoiseRand(OverviewView *v) {
+    v->noiseSeed ^= v->noiseSeed << 13;
+    v->noiseSeed ^= v->noiseSeed >> 17;
+    v->noiseSeed ^= v->noiseSeed << 5;
+    return v->noiseSeed;
+}
+
+/* (Re)create the snow texture at the size the view is running at. Kept once
+ * made rather than freed at the respawn: a player who has died once will die
+ * again, and the allocation is not worth repeating every time. */
+static bool overviewViewEnsureNoise(OverviewView *v, SDL_Renderer *r,
+                                    int viewW, int viewH) {
+    int w = viewW / OVERVIEW_DEATH_STATIC_DIV;
+    int h = viewH / OVERVIEW_DEATH_STATIC_DIV;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    if (v->noise && v->noiseRenderer == r && v->noiseW == w && v->noiseH == h) {
+        return true;
+    }
+
+    if (v->noise) {
+        SDL_DestroyTexture(v->noise);
+        v->noise = NULL;
+    }
+    v->noiseRenderer = NULL;
+
+    v->noise = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA8888,
+                                 SDL_TEXTUREACCESS_STREAMING, w, h);
+    if (!v->noise) return false;
+
+    SDL_SetTextureBlendMode(v->noise, SDL_BLENDMODE_BLEND);
+    /* Blocky on purpose — a dot the size of a map square is the classic
+     * view's snow, and filtering it would come out as grey wash. */
+    SDL_SetTextureScaleMode(v->noise, SDL_SCALEMODE_NEAREST);
+    v->noiseRenderer = r;
+    v->noiseW = w;
+    v->noiseH = h;
+    v->noiseRolledTick = 0;
+    return true;
+}
+
+/* New grain. RGBA8888 is one Uint32 per texel with red in the top byte and
+ * alpha in the bottom, so black is 0x000000FF and white 0xFFFFFFFF. Every
+ * texel is one or the other and none is left clear: at full strength this is
+ * meant to cover the map the way the classic view's static covers the main
+ * view, and what is under it has gone dark anyway. */
+static void overviewViewRollNoise(OverviewView *v) {
+    void *pixels = NULL;
+    int   pitch  = 0;
+
+    if (!SDL_LockTexture(v->noise, NULL, &pixels, &pitch)) return;
+
+    for (int y = 0; y < v->noiseH; y++) {
+        Uint32 *row = (Uint32 *)((Uint8 *)pixels + (size_t)y * (size_t)pitch);
+        for (int x = 0; x < v->noiseW; x++) {
+            row[x] = (overviewNoiseRand(v) & 1u) ? 0xFFFFFFFFu : 0x000000FFu;
+        }
+    }
+    SDL_UnlockTexture(v->noise);
+}
+
+/* The static over the finished frame, for as long as the sim says the death
+ * is in its last couple of seconds. It fades up over
+ * OVERVIEW_DEATH_STATIC_FADE_MS and then holds; the respawn ends it outright,
+ * which is the cut back to the map the classic view makes too. */
+static void overviewViewDrawDeathStatic(OverviewView *v, SDL_Renderer *r,
+                                        int viewW, int viewH, ClientSim *cs) {
+    bool showing = (cs != NULL) && clientSimIsMyTankDeathStatic(cs);
+    Uint64 now = SDL_GetTicks();
+
+    if (!showing) {
+        v->staticTick = 0;
+        return;
+    }
+    if (v->staticTick == 0) {
+        v->staticTick = now;
+        if (v->noiseSeed == 0) v->noiseSeed = (Uint32)now | 1u;
+        v->noiseRolledTick = 0;
+    }
+
+    if (!overviewViewEnsureNoise(v, r, viewW, viewH)) return;
+    if (v->noiseRolledTick == 0 ||
+        now - v->noiseRolledTick >= OVERVIEW_DEATH_STATIC_STEP_MS) {
+        overviewViewRollNoise(v);
+        v->noiseRolledTick = now;
+    }
+
+    Uint64 elapsed = now - v->staticTick;
+    Uint8  alpha   = 255;
+    if (elapsed < OVERVIEW_DEATH_STATIC_FADE_MS) {
+        alpha = (Uint8)(255.0f * (float)elapsed /
+                        (float)OVERVIEW_DEATH_STATIC_FADE_MS);
+    }
+    SDL_SetTextureAlphaMod(v->noise, alpha);
+
+    SDL_FRect dst = { 0.0f, 0.0f, (float)viewW, (float)viewH };
+    SDL_RenderTexture(r, v->noise, NULL, &dst);
 }
 
 /* Copies the entries the player is allowed to see into a second set of lists.
@@ -530,6 +668,10 @@ extern "C" OverviewView *overviewViewCreate(void) {
 extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
+    if (v->noise) {
+        SDL_DestroyTexture(v->noise);
+        v->noise = NULL;
+    }
     if (v->fog) {
         SDL_DestroyTexture(v->fog);
         v->fog = NULL;
@@ -557,7 +699,8 @@ extern "C" OverviewCamera *overviewViewCamera(OverviewView *v) {
 extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             SDL_Texture *tiles, int sheetScale,
                                             SDL_Texture *crosshair,
-                                            int w, int h, ClientSim *cs) {
+                                            int w, int h, ClientSim *cs,
+                                            bool ownsWindow) {
     if (!v || !r || w <= 0 || h <= 0) return;
     if (!overviewViewEnsureTarget(v, r, w, h)) return;
 
@@ -586,6 +729,14 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                 tankY = SDL_floorf(tankY) + 0.5f;
             }
             overviewCameraFollowTick(&v->cam, w, h, tankX, tankY);
+            /* With follow off the camera stays where it was put, and the tank
+             * can drive out of the view — or respawn outside it. In the mode
+             * where this is the only picture the player has, it gets nudged
+             * back on rather than lost. A no-op under follow, which has just
+             * centred on it. */
+            if (ownsWindow) {
+                overviewCameraKeepTankOnScreen(&v->cam, w, h, tankX, tankY);
+            }
         }
 
         int left = 0, top = 0, right = 0, bottom = 0;
@@ -602,6 +753,13 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
                                  w, h, om, cs);
     }
+
+    /* Over the lot, and outside the test above: a death is worth answering
+     * even on a frame with no map to draw. The host's own chrome — the status
+     * panels in full screen, the window's furniture in the pop-out — goes on
+     * afterwards and stays clear of it, so the player can still read what
+     * they died with. */
+    overviewViewDrawDeathStatic(v, r, w, h, cs);
 
     SDL_SetRenderTarget(r, NULL);
 }

@@ -700,13 +700,23 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
  * waiting to respawn is still in its slot, but its position is deliberately
  * not read, because a dead tank reads as the map origin and stamping a block
  * there would reveal map the player has never reached. The overview is told
- * it is dead rather than gone and holds the block on the square it remembers,
- * so the player watches the explosion where it happened. */
+ * how far through its death wait it is rather than simply that it is gone: it
+ * holds the block on the square it remembers so the player watches the
+ * explosion where it happened, then closes it over the wreck. */
 static void overviewMapTick(ClientSim *cs) {
   BYTE mx = 0, my = 0;
   bool haveTank = clientSimIsMyTankAlive(cs) &&
                   clientSimGetMyTankMapPos(cs, &mx, &my);
-  bool deathWait = !haveTank && MY_TANK(cs) != NULL;
+  bool inSlot = !haveTank && MY_TANK(cs) != NULL;
+  int deathWait = inSlot ? tankGetDeathWait(&MY_TANK(cs)) : 0;
+  int lastDeath = inSlot ? tankGetLastTankDeath(&MY_TANK(cs)) : 0;
+
+  /* Armour goes over full the tick the tank takes the hit; the wait is written
+   * by the update after it. Reporting a full wait across that gap holds the
+   * block, where a wait of 0 would close it and reopen it a tick later. */
+  if (inSlot == TRUE && deathWait <= 0) {
+    deathWait = TANK_DEATH_WAIT;
+  }
 
   /* A map install armed this: stamp the whole map dimmed before the live
    * regions brighten over it, now that myPlayerNum is settled. */
@@ -715,7 +725,7 @@ static void overviewMapTick(ClientSim *cs) {
     cs->overviewSeedPending = FALSE;
   }
   overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank,
-                    deathWait, mx, my);
+                    deathWait, lastDeath, mx, my);
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
@@ -1333,6 +1343,13 @@ int clientSimGetMyTankDeathWait(ClientSim *cs) {
 int clientSimGetMyTankLastDeath(ClientSim *cs) {
   if (cs == NULL) return 0;
   return tankGetLastTankDeath(&MY_TANK(cs));
+}
+
+bool clientSimIsMyTankDeathStatic(ClientSim *cs) {
+  if (cs == NULL || MY_TANK(cs) == NULL || clientSimIsMyTankAlive(cs)) {
+    return false;
+  }
+  return overviewMapDeathStatic(clientSimGetMyTankDeathWait(cs));
 }
 
 /* Game info (per-instance) */
