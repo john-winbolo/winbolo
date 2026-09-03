@@ -192,9 +192,10 @@ struct Row {
 };
 
 /* Maximum section index the renderer knows how to place. 1..10 fill the first
- * five columns of the 2x6 grid; 15 (BUILDER) is the top half of the sixth
- * column, whose bottom half is deliberately left empty (every column is split
- * in two, used or not); 11..14 are full-width strips below the grid. Bump this
+ * five columns of the 2x6 grid; 15 (BUILDER) is the BOTTOM half of the sixth
+ * column, beside the winners pool (10), and its top half is deliberately left
+ * empty (every column is split in two, used or not); 11..14 are full-width
+ * strips below the grid. Bump this
  * (and MAX_SECT_IDX's users) when the brain adds a section -- everything below
  * is sized from it. */
 enum { MAX_SECT_IDX = 15 };
@@ -935,10 +936,10 @@ void renderPoolGrid(int registry_idx, const char *body) {
     ImGui::Separator();
 
     /* 2x6 grid: sections 1..10 in the first five columns (1..5 on top, 6..10
-     * below), and the BUILDER section (15) in the top half of the sixth
-     * column. The sixth column's bottom half stays empty on purpose -- the
-     * grid's pattern is "every column split in two", and BUILDER is the only
-     * section that lives there. (It used to be a full-width strip under the
+     * below), and the BUILDER section (15) in the BOTTOM half of the sixth
+     * column, next to the winners pool (10). The sixth column's top half
+     * stays empty on purpose -- the grid's pattern is "every column split in
+     * two", and BUILDER is the only section that lives there. (It used to be a full-width strip under the
      * grid; the author wanted a column that follows the pattern instead.) */
     ImVec2 avail = ImGui::GetContentRegionAvail();
     /* Reserve room at the bottom for the def_build (11) / wait_for_lgm (12) /
@@ -965,10 +966,11 @@ void renderPoolGrid(int registry_idx, const char *body) {
         for (int col = 0; col < kCols; col++) {
             if (col > 0) ImGui::SameLine(0.0f, gap);
             /* Section for this cell: pools 1..10 fill columns 0..4; the sixth
-             * column is BUILDER (15) on top and nothing underneath. */
+             * column is empty on top and BUILDER (15) underneath, beside the
+             * winners pool. */
             int sidx;
             if (col < 5)        sidx = row * 5 + col + 1;
-            else if (row == 0)  sidx = 15;
+            else if (row == 1)  sidx = 15;
             else                sidx = 0;
             char cellId[24];
             SDL_snprintf(cellId, sizeof(cellId), "##cell%d%d", row, col);
@@ -981,7 +983,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
                 ImGui::TextColored(poolColorFor(sidx),
                                    "%d. (no data)", sidx);
             }
-            /* sidx == 0: the empty bottom half of the BUILDER column. */
+            /* sidx == 0: the empty top half of the BUILDER column. */
             ImGui::EndChild();
         }
     }
@@ -992,8 +994,9 @@ void renderPoolGrid(int registry_idx, const char *body) {
      * 13 and 14 are injected straight into pool_cache by the brain (no
      * eval_queue / goal_competition path) so they come and go with a visible
      * hostile LGM / a live cover scan. BUILDER (15) is not a strip any more:
-     * it is the sixth grid column above (three header lines then its
-     * candidate rows, in a cell as tall as any pool's). */
+     * it is the bottom cell of the sixth grid column above, beside the
+     * winners pool (three header lines then its candidate rows, in a cell as
+     * tall as any pool's). */
     struct { int idx; const char *id; float h; } kStrips[] = {
         { 11, "##cell11", kStripH },
         { 12, "##cell12", kStripH },
