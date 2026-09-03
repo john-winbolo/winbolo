@@ -37,6 +37,7 @@
 #include "../glyphs.h"   /* glyphForActionAuto — controller footer legend */
 
 #include "lobby/lobby_internal.h"
+#include "../wbn_map_source.h"  /* wbnMapSourceResetDownload — drops a WinBolo.net map fetch left in flight */
 extern "C" {
 #include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
@@ -232,7 +233,7 @@ extern "C" void imguiLobbyFrameReset(void) {
 #ifndef __EMSCRIPTEN__
     /* A single-player map fetch left in flight holds a whole map's bytes in
      * its result slot; nothing drains it once the lobby is gone. */
-    lobbySpWbnReset();
+    wbnMapSourceResetDownload();
 #endif
 
     lobbyPlayersReset();

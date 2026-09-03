@@ -2830,9 +2830,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
             } else if (strncmp(state->selectedPath, "wbn:", 4) == 0) {
                 /* WBN download in progress — selectedPath is the
-                 * synthetic "wbn:<id>" placeholder until spWbnPoll
-                 * lands the bytes on disk and flips selectedPath
-                 * to .wbn_preview.map.  Render a tiny rotating
+                 * synthetic "wbn:<id>" placeholder until the host
+                 * drains the wbn_map_source download and points the
+                 * chooser at the map bytes. Render a tiny rotating
                  * spinner glyph so the user sees activity rather
                  * than "no preview". */
                 double t = ImGui::GetTime() * 8.0;

@@ -211,6 +211,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/overview_fog.cpp
     ${SRC_ROOT}/gui/sdl3/overview_hud_layout.cpp
     ${SRC_ROOT}/gui/sdl3/overview_view.cpp
+    ${SRC_ROOT}/gui/sdl3/wbn_map_source.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c

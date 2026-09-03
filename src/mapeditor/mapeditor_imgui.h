@@ -53,6 +53,7 @@ typedef struct {
     bool wantExit;
     bool wantNew;
     bool wantOpen;
+    bool wantOpenWbn;   /* File > Open from WinBolo.net (WinBolo client build only) */
     bool wantSave;
     bool wantSaveAs;
     bool wantCenter;
