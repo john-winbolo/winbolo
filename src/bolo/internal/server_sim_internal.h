@@ -318,14 +318,22 @@ struct ServerSim {
     uint16_t     mapEventCount;
 
     /* What each connected client's copy of the terrain looks like: every
-     * tile the server has actually sent it. Identical to the real map while
-     * every map event is broadcast; the CRC in that client's snapshot header
+     * tile the server has actually sent it. Identical to the real map for a
+     * slot that is handed every map event, and behind it by whatever a culled
+     * slot has not been sent yet; the CRC in that client's snapshot header
      * and its resync blob read this copy, so the two ends agree about the
      * map the client was really given. The handle array holds
      * &clientKnownMapObj[i] so the bolo_map.c entry points, which all take a
      * `map *`, can be called against a slot's copy. */
     struct mapObj clientKnownMapObj[MAX_TANKS];
     map           clientKnownMap[MAX_TANKS];
+
+    /* Bit i set: slot i's copy is written by the UDP transport rather than by
+     * the tick, because that transport only sends it the changes inside its
+     * viewports. The transport sets the bit when it takes the slot and clears
+     * it when the slot goes; every other slot — the local host player, bots,
+     * anything in-process — keeps its bit clear and takes every change. */
+    uint16_t      shadowCulledSlots;
 
     /* Previous pill/base state for change detection */
     PillSnapshot prevPills[MAX_SNAPSHOT_PILLS];
@@ -480,6 +488,8 @@ struct ServerSim {
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
 
+BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
+
 /* Per-recipient visibility region: the client's tank screen plus a screen for
  * each allied pillbox, base and tank the view policies let through. Shared by
  * the snapshot cull and the best-effort game-event cull. Sized for the worst
@@ -507,15 +517,38 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 void serverSimShadowSeed(ServerSim *sim, BYTE slot);
 void serverSimShadowSeedAll(ServerSim *sim);
 
-/* Write this tick's map changes into every slot's copy. Called once per
+/* Write this tick's map changes into the copies the tick owns. Called once per
  * running frame from the tick core, after both half-steps have finished
  * filling mapEvents and before any transport drains them, so in-process
- * clients and bots track the same way UDP clients do. Apply writes one tile
- * into every slot's copy — the per-event step ShadowTick loops over, also
- * called directly by the transport's test-only map-event injector, which
- * stages a change without a tick to carry it. */
+ * clients and bots track the same way UDP clients do. Culled slots are skipped
+ * — the UDP drain writes those, one tile per event it actually queues. Apply
+ * writes one tile into every slot's copy regardless of culling; it is what the
+ * transport's test-only map-event injector calls, which stages a change
+ * without a tick to carry it. ApplySlot writes the one slot. */
 void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain);
+void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,
+                              BYTE terrain);
 void serverSimShadowTick(ServerSim *sim);
+
+/* Which slots the tick skips (shadowCulledSlots above). The UDP transport owns
+ * this: it marks a slot on join and unmarks it on disconnect. Nothing else
+ * should set it — an unmarked slot is one whose client is handed every map
+ * change, which is what every in-process client is. */
+void serverSimSetShadowCulled(ServerSim *sim, BYTE slot, bool culled);
+bool serverSimIsShadowCulled(const ServerSim *sim, BYTE slot);
+uint16_t serverSimGetShadowCulledMask(const ServerSim *sim);
+
+/* Diff a culled slot's copy of the terrain against the live map inside `vps`
+ * and describe the difference as up to maxOut synthesized EVENT_MAP_CHANGE
+ * events (data[0..2] = mx, my, live terrain). Every emitted tile is written
+ * into the slot's copy before returning, so the caller must queue all of them
+ * — that write-through is the record of what was sent, and it also means a
+ * tile covered by two overlapping rects is only emitted once. Squares outside
+ * the rects are left alone however stale they are: that staleness is the
+ * standing record of what the client is still owed, and a later sweep with
+ * rects over it is what pays it. Returns the number of events written. */
+int  serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,
+                          int numVps, GameEvent *out, int maxOut);
 
 /* serverSimGetCompressedMap over one slot's copy of the terrain, with the
  * live pills, bases and starts. The blob a client downloads on join or

@@ -798,6 +798,13 @@ bool transportUdpServerTestDownloadComplete(int slot);
  * the real hold → tagged channelSend(CHANNEL_MAP) drain. Call between ticks. */
 bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
                                        uint8_t y, uint8_t terrain);
+/* How many map events a slot's queue has ever been given, and whether any of
+ * them was for a given square. Both read the queue the drain writes, so a test
+ * can tell "this client was sent that change" from "this client was not" —
+ * what the viewport cull turns on. The square lookup scans the whole ring, so
+ * it still answers for events already sent and acked. */
+uint32_t transportUdpServerTestMapQueueCount(int slot);
+bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y);
 /* Queue one whole game event on a slot's reliable game channel (CHANNEL_GAME),
  * as the real producer does — lets a test stage a distinguishable ch0 event
  * (e.g. one left unacked across game start). False on a bad slot/event or a

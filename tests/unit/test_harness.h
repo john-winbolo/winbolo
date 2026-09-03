@@ -1107,6 +1107,24 @@ int run_map_shadow_crc_matches(void);
 int run_map_shadow_blob_identical(void);
 int run_map_shadow_seed_lifecycle(void);
 
+/* Culled copies (test_map_shadow.c): a slot the UDP transport has marked is
+ * skipped by the tick — the transport writes it one square at a time as it
+ * queues events — and the catch-up sweep pays back what such a slot is owed
+ * inside the rects it is given, at the cap it is given, converging to silence
+ * and clamping rects that run off the map. */
+int run_map_shadow_cull_withholds(void);
+int run_map_shadow_sweep_converges(void);
+int run_map_shadow_sweep_bounds(void);
+
+/* Map-event culling over the loopback transport (test_loopback_map_cull.c): a
+ * change a wire client cannot see is neither queued to it nor written into its
+ * copy, its checksum still describes the map it holds so it never resyncs, an
+ * in-process slot takes the same change, a visible change arrives as before,
+ * and driving over to the stale ground catches it up. The second case forces a
+ * resync while the client is behind: the blob is its copy, not the live map. */
+int run_loopback_map_cull(void);
+int run_loopback_map_cull_resync(void);
+
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a
  * valid blob advances them; installCompressedMap reports failure on garbage. */

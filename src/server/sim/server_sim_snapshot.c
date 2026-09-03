@@ -187,6 +187,13 @@ void serverSimShadowSeedAll(ServerSim *sim) {
     }
 }
 
+void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,
+                              BYTE terrain) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (sim->clientKnownMap[slot] == NULL) return;
+    sim->clientKnownMapObj[slot].mapItem[x][y] = terrain;
+}
+
 void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
     BYTE slot;
     if (sim == NULL) return;
@@ -194,21 +201,47 @@ void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
      * records what that client was sent, so which slots take a given change
      * is a per-slot decision. */
     for (slot = 0; slot < MAX_TANKS; slot++) {
-        if (sim->clientKnownMap[slot] == NULL) continue;
-        sim->clientKnownMapObj[slot].mapItem[x][y] = terrain;
+        serverSimShadowApplySlot(sim, slot, x, y, terrain);
     }
 }
 
+void serverSimSetShadowCulled(ServerSim *sim, BYTE slot, bool culled) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (culled) {
+        sim->shadowCulledSlots |= (uint16_t)(1u << slot);
+    } else {
+        sim->shadowCulledSlots &= (uint16_t)~(1u << slot);
+    }
+}
+
+bool serverSimIsShadowCulled(const ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return false;
+    return (sim->shadowCulledSlots & (uint16_t)(1u << slot)) != 0;
+}
+
+uint16_t serverSimGetShadowCulledMask(const ServerSim *sim) {
+    return (sim == NULL) ? 0u : sim->shadowCulledSlots;
+}
+
 void serverSimShadowTick(ServerSim *sim) {
+    BYTE slot;
     uint16_t e;
 
     if (sim == NULL) return;
-    /* EVENT_MAP_CHANGE data is [mx, my, newTerrain] — the same triple
-     * simMapChangeCallback records and the client replays through mapSetPos. */
-    for (e = 0; e < sim->mapEventCount; e++) {
-        serverSimShadowApply(sim, sim->mapEvents[e].data[0],
-                             sim->mapEvents[e].data[1],
-                             sim->mapEvents[e].data[2]);
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        if (sim->clientKnownMap[slot] == NULL) continue;
+        /* A culled slot's copy advances in the UDP drain instead, one tile per
+         * event that slot is actually sent. Advancing it here would claim the
+         * client had been told about changes the drain then culls. */
+        if (serverSimIsShadowCulled(sim, slot)) continue;
+        /* EVENT_MAP_CHANGE data is [mx, my, newTerrain] — the same triple
+         * simMapChangeCallback records and the client replays through
+         * mapSetPos. */
+        for (e = 0; e < sim->mapEventCount; e++) {
+            serverSimShadowApplySlot(sim, slot, sim->mapEvents[e].data[0],
+                                     sim->mapEvents[e].data[1],
+                                     sim->mapEvents[e].data[2]);
+        }
     }
 }
 
@@ -218,6 +251,56 @@ int serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output) {
     }
     return mapSaveCompressedMap(&sim->clientKnownMap[slot], &sim->sim.pb,
                                 &sim->sim.bs, &sim->sim.ss, output);
+}
+
+int serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,
+                         int numVps, GameEvent *out, int maxOut) {
+    int count = 0;
+    int r;
+
+    if (sim == NULL || slot >= MAX_TANKS || vps == NULL || out == NULL) return 0;
+    if (maxOut <= 0 || sim->clientKnownMap[slot] == NULL || sim->sim.mp == NULL) {
+        return 0;
+    }
+
+    for (r = 0; r < numVps && count < maxOut; r++) {
+        /* The rects are built around map squares without a bounds check, so a
+         * view near an edge runs off the map — clamp before indexing. */
+        int minX = vps[r].minMX < 0 ? 0 : vps[r].minMX;
+        int minY = vps[r].minMY < 0 ? 0 : vps[r].minMY;
+        int maxX = vps[r].maxMX > MAP_ARRAY_SIZE - 1 ? MAP_ARRAY_SIZE - 1 : vps[r].maxMX;
+        int maxY = vps[r].maxMY > MAP_ARRAY_SIZE - 1 ? MAP_ARRAY_SIZE - 1 : vps[r].maxMY;
+        int x;
+
+        if (minX > maxX || minY > maxY) continue;  /* wholly off the map */
+
+        for (x = minX; x <= maxX && count < maxOut; x++) {
+            BYTE *known = sim->clientKnownMapObj[slot].mapItem[x];
+            const BYTE *live = (*sim->sim.mp).mapItem[x];
+            int y;
+
+            /* Nearly every row of a mostly-current copy matches, so compare the
+             * whole span first and skip the per-square walk when it does. */
+            if (memcmp(known + minY, live + minY,
+                       (size_t)(maxY - minY + 1)) == 0) {
+                continue;
+            }
+            for (y = minY; y <= maxY && count < maxOut; y++) {
+                if (known[y] == live[y]) continue;
+                out[count].type = EVENT_MAP_CHANGE;
+                memset(out[count].data, 0, sizeof(out[count].data));
+                out[count].data[0] = (BYTE)x;
+                out[count].data[1] = (BYTE)y;
+                out[count].data[2] = live[y];
+                /* The caller queues every event returned, so the copy takes the
+                 * square here. It also keeps overlapping rects from emitting
+                 * the same square twice — the second pass finds them equal. */
+                known[y] = live[y];
+                count++;
+            }
+        }
+    }
+    return count;
 }
 
 /* One screen-sized rect centred on a map square. */

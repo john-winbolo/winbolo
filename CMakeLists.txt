@@ -3116,6 +3116,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_preview.c
     tests/unit/test_loopback_download.c
     tests/unit/test_loopback_map_change.c
+    tests/unit/test_loopback_map_cull.c
     tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
@@ -3854,6 +3855,11 @@ set(_unit_test_names
     map_shadow_crc_matches
     map_shadow_blob_identical
     map_shadow_seed_lifecycle
+    map_shadow_cull_withholds
+    map_shadow_sweep_converges
+    map_shadow_sweep_bounds
+    loopback_map_cull
+    loopback_map_cull_resync
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage
