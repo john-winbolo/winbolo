@@ -562,6 +562,16 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum);
  * written by the PONG handler. No-op for an out-of-range or unconnected slot. */
 void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs);
 
+/* Test seam: read a slot's high-ping enforcement tally. Deliberately NOT gated
+ * on the slot being connected — the thing worth asserting is that a freed slot
+ * carries no strikes into its next occupant. Any out pointer may be NULL.
+ * No-op for an out-of-range slot. */
+void transportUdpServerGetPingStrikesForTest(BYTE playerNum,
+                                             uint8_t *outKickStrikes,
+                                             uint8_t *outWarnStrikes,
+                                             bool *outWarned,
+                                             uint16_t *outLastEnforcedMs);
+
 /* Writes "ip:port" for a connected player into out; returns false (and an
  * empty string) for an out-of-range slot or one with no UDP client (bots,
  * the in-process host). out must be non-NULL with outLen > 0. */

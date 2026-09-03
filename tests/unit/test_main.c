@@ -498,6 +498,7 @@ static const UnitTestEntry s_tests[] = {
     { "control_overflow_defers_disconnect",      run_control_overflow_defers_disconnect      },
     { "shells_survive_cleared_lgm_slot",         run_shells_survive_cleared_lgm_slot         },
     { "ping_kick_defers_teardown",               run_ping_kick_defers_teardown               },
+    { "ping_kick_clears_strikes_on_disconnect",  run_ping_kick_clears_strikes_on_disconnect  },
     { "tkexp_lgm_pairing",                       run_tkexp_lgm_pairing                       },
     { "input_gate_taxonomy",                     run_input_gate_taxonomy                     },
     { "addrparse_host_only",                     run_addrparse_host_only                     },
