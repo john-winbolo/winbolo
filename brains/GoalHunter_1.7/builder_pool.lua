@@ -456,8 +456,9 @@ end
 -- always -- the 200-vs-15 base gap is wider than any trip term inside the
 -- leash can close.
 --
--- Fills row.formula with the short||long pair the pool-grid renderer wants;
--- every number on the row is reproducible from the chips on that row.
+-- Leaves every chip the pool-grid row prints on the row itself; M.row_formula
+-- assembles them into the short||long pair on the panel's cold path, so every
+-- number on the row stays reproducible from the chips on that row.
 -- -------------------------------------------------------------------------
 function M.score_row(state, world, info, now, row, ctx)
   local FMAX = C.BUILDER_POOL_FRONT_MAX_TILES or 12
@@ -545,19 +546,44 @@ function M.score_row(state, world, info, now, row, ctx)
   end
   row.reject = reject
 
+  -- The two inputs the formula needs that live on `info`/`ctx` rather than on
+  -- the row.  Everything else it prints is already a row field, so the string
+  -- can be rebuilt later from the row alone.
+  row.f_trees   = info.trees or 0
+  row.f_reserve = ctx.reserve
+  return row
+end
+
+-- -------------------------------------------------------------------------
+-- The pool-grid detail string for one scored row: the short line before "||"
+-- and the long term-by-term breakdown after it.
+--
+-- COLD PATH.  This used to run inside score_row, so a ~35-argument
+-- string.format (plus the label and score_str formats feeding it) executed for
+-- every candidate on every tick even in production, where the only consumer --
+-- M.panel_section, below, driving BrainTest's pool grid -- never asked for it.
+-- It is built on demand instead; every chip is read straight back off the row,
+-- so the text is byte-for-byte what score_row used to store.
+-- -------------------------------------------------------------------------
+function M.row_formula(row)
+  local FMAX     = C.BUILDER_POOL_FRONT_MAX_TILES or 12
+  local fd       = row.front_dist or 0
+  local trip     = row.trip
+  local out_ticks = row.out_ticks
+  local dgr      = row.danger or 0
+  local reject   = row.reject
   local label = (row.type == "farm")
     and string.format("farm@(%d,%d)", row.mx, row.my)
     or string.format("%s p#%d@(%d,%d) %s hp=%d/%d", row.type, row.id,
                      row.mx, row.my, row.own or "?",
                      row.hp or 0, C.PILLS_MAX_HEALTH or 15)
-  row.label = label
   -- A row with no walkable route has no score to print: the sentinel that
   -- sorts it last (-1e9) is an ordering device, not an arithmetic result, and
   -- printing it as one ("= -1000000000") invites the reader to check a sum
   -- that does not exist. Say what actually happened instead.
   local score_str = trip and string.format("%.0f", row.score)
                     or "n/a (no walkable route for the man)"
-  row.formula = string.format(
+  return string.format(
     "%s val{base %.0f + hp %.0f + front %.0f(d=%d/%d)} - trip{%.2fx%s=%.0f}"
     .. " - danger{%.2fx%.0f=%.0f} = %s%s"
     .. "||%s. value = BUILDER_POOL_VALUE_%s(%.0f)%s + FRONT_URGENCY(%d) x"
@@ -580,17 +606,16 @@ function M.score_row(state, world, info, now, row, ctx)
           and string.format(
             " + FARM_URGENCY(%d) x max(0, FARM_LOW_TREES(%d) - trees(%d)) = %.0f",
             C.BUILDER_POOL_FARM_URGENCY or 12, C.BUILDER_POOL_FARM_LOW_TREES or 12,
-            info.trees or 0, row.v_hp)
+            row.f_trees or 0, row.v_hp)
           or ""),
     C.BUILDER_POOL_FRONT_URGENCY or 120, FMAX, fd, row.value,
     C.BUILDER_POOL_TRIP_W or 0.5, tostring(trip or "-"), tostring(out_ticks or "-"),
     C.LGM_BUILD_TIME or 20,
     C.BUILDER_POOL_DANGER_W or 1.5, dgr, row.c_trip + row.c_danger,
     score_str, C.BUILDER_POOL_MIN_SCORE or 20,
-    row.trees_need or 0, info.trees or 0, ctx.reserve,
+    row.trees_need or 0, row.f_trees or 0, row.f_reserve,
     C.BUILDER_POOL_LEASH or 8, row.dist or -1,
     reject and (" REJECTED: " .. reject) or " ACCEPTED.")
-  return row
 end
 
 -- Deterministic ordering: a SEEDED row first (a feeder's job outranks any
@@ -1235,7 +1260,9 @@ function M.panel_section(state)
       -- higher-is-better, so the row cost is its negation; a rejected row
       -- shows INF like every other rejected row in the grid.
       cost = r.reject and 1e30 or -(r.score or 0),
-      formula = r.formula or "",
+      -- Built here, on the panel's cold path, rather than stored on the row by
+      -- score_row (see M.row_formula).
+      formula = M.row_formula(r),
       stale = 0,
       reject = r.reject and (r.reject:match("^[a-z_]+") or r.reject) or nil,
       reject_remaining = 0,

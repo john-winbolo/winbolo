@@ -4,18 +4,34 @@
 #include <lua.h>
 
 /*
- * gh_opt_log — threaded optimize.log writer.
+ * gh_opt_log — threaded log writer for the brain's optimize.log and print2 logs.
  *
- * Moves file I/O off the Lua tick thread so log writes don't stall the bot.
- * The main thread enqueues strings; a background thread drains them to disk.
+ * Moves file I/O off the Lua tick threads so log writes don't stall a bot.
+ * Brain threads enqueue strings; one background thread drains them to disk,
+ * keeping each output file open between batches.
  *
  * Lua API (registered as global table "gh_opt_log"):
  *   gh_opt_log.open(path)          -- open main log file, start writer thread
+ *   gh_opt_log.ensure()            -- start the writer thread WITHOUT claiming
+ *                                     the main log file, for append-only users
+ *                                     such as print2
  *   gh_opt_log.write(text)         -- enqueue text for main log (no added newline)
- *   gh_opt_log.append(path, text)  -- enqueue text + "\n" to an arbitrary file
+ *   gh_opt_log.append(path, text[, raw])
+ *                                  -- enqueue text to an arbitrary file, adding
+ *                                     a trailing newline unless raw is true;
+ *                                     returns true when it was queued
+ *   gh_opt_log.flush()             -- block until the queue is on disk
  *   gh_opt_log.close()             -- flush remaining queue, stop thread, close file
  */
 
 void naOptLogRegister(lua_State *L);
+
+/*
+ * Block until everything enqueued so far has been written and fflush'd. Safe
+ * from any thread and a no-op when the writer isn't running. Installed as
+ * braincore's crash-log flush hook (brainCoreSetLogFlushHook) so a brain crash
+ * report is not written while the last second of print2 is still queued.
+ */
+void naOptLogFlushSync(void);
 
 #endif /* GH_OPT_LOG_H */

@@ -463,18 +463,24 @@ function Brain.open(info)
   print2("=== BRAIN STARTUP === player=", info.player_number,
          " name=", tostring(info.player_name),
          " debug_session_dir=", tostring(_G.DEBUG_SESSION_DIR))
-  local t_open0 = clock_us()
+  local t_open0 = BRAIN_PROFILE and clock_us() or 0
   -- Diagnostic: emit a SELF_DR line per pool-6 candidate per replan
   -- showing raw / subtracted / c_reduction / manual_reduction so we can
   -- verify the target-pill danger subtraction in pool_6's spot_cost.
   -- BRAIN_DEBUG_MODE-gated so it's stripped from opt/.
-  -- Switch to Lua 5.4 generational GC. Brain ticks allocate lots of
-  -- short-lived tables (closures, per-tick scratch); generational keeps
-  -- minor collections cheap and frequent. minor=10 fires minor passes
-  -- when heap grows 10% over the last minor (2x default frequency, each
-  -- pass tiny). DO NOT add later setpause/setstepmul calls — those flip
-  -- the collector back to incremental in 5.4.
-  collectgarbage("generational", 10, 100)
+  -- GC tuning. Production runs on LuaJIT, where the 5.4->5.1 compat shim in
+  -- luabrainshandler.c swallows collectgarbage("generational") and returns 0 —
+  -- so this call had no effect at all and the brain ran on LuaJIT's stock
+  -- pause/stepmul. Use the knobs LuaJIT has (see C.GC_PAUSE / C.GC_STEPMUL for
+  -- the measured values), and keep the 5.4 generational request for a PUC-Lua
+  -- host, where setpause/setstepmul would flip the collector back to
+  -- incremental. `jit` is the standard "am I on LuaJIT" probe.
+  if jit then
+    collectgarbage("setpause",   C.GC_PAUSE)
+    collectgarbage("setstepmul", C.GC_STEPMUL)
+  else
+    collectgarbage("generational", 10, 100)
+  end
   -- Register every viz_id with the host's V dialog. No-op when
   -- braintest_viz_register isn't bound (e.g. running under WinBolo
   -- client); the brain still emits overlay commands but they're
@@ -542,8 +548,10 @@ function Brain.open(info)
         string.format("return brain.shotsim_shield_candidate_wu(%d)", i))
     end
   end
-  local t_open_register = clock_us()
-  opt(string.format("  viz/panel/POI register done %.2f ms", (t_open_register - t_open0) / 1000))
+  local t_open_register = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  viz/panel/POI register done %.2f ms", (t_open_register - t_open0) / 1000))
+  end
 
   -- Clear module-level caches from any previous game
   U.reset()
@@ -555,8 +563,10 @@ function Brain.open(info)
   hearing.reset()
   shot_tracker.reset()
   for i = #changes.terrain, 1, -1 do changes.terrain[i] = nil end
-  local t_open_resets = clock_us()
-  opt(string.format("  module resets done %.2f ms", (t_open_resets - t_open_register) / 1000))
+  local t_open_resets = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  module resets done %.2f ms", (t_open_resets - t_open_register) / 1000))
+  end
 
   state.tick          = 0
   state.player_number = info.player_number
@@ -657,33 +667,47 @@ function Brain.open(info)
   state.frontier     = expl.new_frontier()
   state.frontier_set = {}
 
-  local t_open_state = clock_us()
-  opt(string.format("  state init done %.2f ms", (t_open_state - t_open_resets) / 1000))
+  local t_open_state = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  state init done %.2f ms", (t_open_state - t_open_resets) / 1000))
+  end
 
   -- World knowledge
   world.bases = {}
   world.pills = {}
   W.reset(world)
-  local t_open_wreset = clock_us()
-  opt(string.format("  W.reset done %.2f ms", (t_open_wreset - t_open_state) / 1000))
+  local t_open_wreset = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  W.reset done %.2f ms", (t_open_wreset - t_open_state) / 1000))
+  end
   W.update(world, info, 0)
-  local t_open_wupd = clock_us()
-  opt(string.format("  W.update (initial) done %.2f ms", (t_open_wupd - t_open_wreset) / 1000))
+  local t_open_wupd = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  W.update (initial) done %.2f ms", (t_open_wupd - t_open_wreset) / 1000))
+  end
 
   -- Pre-build edge costs + pre-warm threat so tick-1 doesn't pay for them.
   -- pf->map is set by the C host before brain.open() is called.
   cpf.rebuild_edge_costs()
-  opt(string.format("  rebuild_edge_costs done %.2f ms", (clock_us() - t_open_wupd) / 1000))
-  local _t_open_danger = clock_us()
+  if BRAIN_PROFILE then
+    opt(string.format("  rebuild_edge_costs done %.2f ms", (clock_us() - t_open_wupd) / 1000))
+  end
+  local _t_open_danger = BRAIN_PROFILE and clock_us() or 0
   danger.update(info, 0)
-  opt(string.format("  danger.update done %.2f ms", (clock_us() - _t_open_danger) / 1000))
-  local _t_open_threat = clock_us()
+  if BRAIN_PROFILE then
+    opt(string.format("  danger.update done %.2f ms", (clock_us() - _t_open_danger) / 1000))
+  end
+  local _t_open_threat = BRAIN_PROFILE and clock_us() or 0
   threat.update(state, world, info)
-  opt(string.format("  threat.update done %.2f ms", (clock_us() - _t_open_threat) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  threat.update done %.2f ms", (clock_us() - _t_open_threat) / 1000))
+  end
 
   -- Strategy phase detection
   strategy.init(state)
-  opt(string.format("  strategy.init done %.2f ms", (clock_us() - t_open_wupd) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  strategy.init done %.2f ms", (clock_us() - t_open_wupd) / 1000))
+  end
 
   -- Load precomputed shield stamp cache (C binary via gh_shield.load).
   shield.load_stamp_bin()
@@ -730,16 +754,18 @@ function Brain.open(info)
       log_fname = log.make_filename("brain_p" .. info.player_number)
     end
   end
-  local t_open_logsetup = clock_us()
+  local t_open_logsetup = BRAIN_PROFILE and clock_us() or 0
   if log_fname then
     if log.open(log_fname) then
       log.dump_map()
       log.dump_world(world)
     end
   end
-  local t_open_logdump = clock_us()
-  opt(string.format("  log.dump_map+world done %.2f ms (fname=%s)",
-    (t_open_logdump - t_open_logsetup) / 1000, tostring(log_fname)))
+  local t_open_logdump = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  log.dump_map+world done %.2f ms (fname=%s)",
+      (t_open_logdump - t_open_logsetup) / 1000, tostring(log_fname)))
+  end
 
   -- Open perf-metrics files for the debug bot (player 0, or any bot
   -- whose debug_log flag is set). Independent of the JSONL logger flag —
@@ -751,7 +777,9 @@ function Brain.open(info)
     local prefix = "player" .. info.player_number
     metrics.open_files(dir, prefix)
   end
-  opt(string.format("END Brain.open total=%.2f ms", (clock_us() - t_open0) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("END Brain.open total=%.2f ms", (clock_us() - t_open0) / 1000))
+  end
   opt.flush()
 
   -- --run-script mode: run the specified Lua file in this brain's VM then exit.
@@ -870,8 +898,10 @@ function Brain.think(info)
     state._think_start_us = clock_us()
   end
   -- Capture wall clock at think entry; the matching exit-time
-  -- snapshot at the bottom drives the top-left tick-info HUD.
-  local _think_t0 = os.clock()
+  -- snapshot at the bottom drives the top-left tick-info HUD.  Debug-only:
+  -- the sole reader is inside `if BRAIN_DEBUG_MODE`, so in opt/ this was one
+  -- os.clock() per think feeding nothing.
+  local _think_t0 = BRAIN_DEBUG_MODE and os.clock() or 0
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
@@ -1546,11 +1576,13 @@ function Brain.think(info)
   -- per-tick work (threat rebuild, long Dijkstra, pool eval, etc.) so
   -- tick-1 cost falls from ~11 ms to ~2 ms.
   if state.startup_mode then
-    local _t_su = clock_us()
+    local _t_su = BRAIN_PROFILE and clock_us() or 0
     -- Fresh world data so world.bases / world.pills are populated.
     W.process_events(world, info, state)
     W.update(world, info, now)
-    opt(string.format("  [startup] W.update %.2f ms", (clock_us() - _t_su) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  [startup] W.update %.2f ms", (clock_us() - _t_su) / 1000))
+    end
 
     local tmx_s     = bit.rshift(info.tankx, 8)
     local tmy_s     = bit.rshift(info.tanky, 8)
@@ -1559,15 +1591,19 @@ function Brain.think(info)
     -- Pre-warm the threat grid during startup so tick-11 (first normal tick)
     -- doesn't pay the full 4-5 ms rebuild cost. danger + threat are cheap
     -- on repeat calls once the grid is built; only the first call rebuilds.
-    local _t_danger = clock_us()
+    local _t_danger = BRAIN_PROFILE and clock_us() or 0
     danger.update(info, now)
-    opt(string.format("  [startup] danger.update %.2f ms", (clock_us() - _t_danger) / 1000))
-    local _t_threat = clock_us()
+    if BRAIN_PROFILE then
+      opt(string.format("  [startup] danger.update %.2f ms", (clock_us() - _t_danger) / 1000))
+    end
+    local _t_threat = BRAIN_PROFILE and clock_us() or 0
     threat.update(state, world, info)
-    opt(string.format("  [startup] threat.update %.2f ms", (clock_us() - _t_threat) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  [startup] threat.update %.2f ms", (clock_us() - _t_threat) / 1000))
+    end
 
     -- Step (or first-time start) the short slate.
-    local _t_dij = clock_us()
+    local _t_dij = BRAIN_PROFILE and clock_us() or 0
     local active_s, _, _, _, _, _, _, _, _, _, _ = cpf.dijkstra_status(0)
     if not active_s then
       cpf.dijkstra_start(
@@ -1578,7 +1614,9 @@ function Brain.think(info)
         1.0, 0 --[[KIND_NORMAL]], in_boat_s)
     end
     cpf.dijkstra_step(0, now, C.DIJKSTRA_SHORT_BUDGET)
-    opt(string.format("  [startup] dijkstra_step %.2f ms", (clock_us() - _t_dij) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  [startup] dijkstra_step %.2f ms", (clock_us() - _t_dij) / 1000))
+    end
     _diag_log_dij_base_discoveries(now, 0, in_boat_s)
 
     -- Look for the closest reachable neutral base. Only set the goal
@@ -1610,8 +1648,10 @@ function Brain.think(info)
         state.goal_set_tick   = now
         state.pf.status       = "idle"
         state._startup_goal_set = true
-        opt(string.format("startup: capture_base #%d at (%d,%d) cost=%.0f tick=%d",
-                          best_id, best_b.mx, best_b.my, best_cost, now))
+        if BRAIN_PROFILE then
+          opt(string.format("startup: capture_base #%d at (%d,%d) cost=%.0f tick=%d",
+                            best_id, best_b.mx, best_b.my, best_cost, now))
+        end
       end
     end
 
@@ -1625,7 +1665,9 @@ function Brain.think(info)
           " goal_set=", tostring(state._startup_goal_set))
     end
 
-    opt(string.format("STARTUP TICK TOTAL %.2f ms", (clock_us() - t_tick_start) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("STARTUP TICK TOTAL %.2f ms", (clock_us() - t_tick_start) / 1000))
+    end
     opt.flush()
 
     -- STARTUP_HOLD_TICKS already prevents driving during this window,
@@ -1881,7 +1923,7 @@ function Brain.think(info)
   -- hitboxes.log for one-off bug hunts. Rendering is handled by
   -- draw_shell_hitbox_viz above; this block ONLY writes the log.
   if BRAIN_DEBUG_MODE and viz.is_on("hitbox_logs") then
-  local t_hb0 = clock_us()
+  local t_hb0 = BRAIN_PROFILE and clock_us() or 0
   do
     local hb_log = io.open("hitboxes.log", "a")
     if hb_log and info.objects then
@@ -1904,7 +1946,9 @@ function Brain.think(info)
       end
     end
     if hb_log then hb_log:close() end
-    opt(string.format("  hitboxes.log write done %.2f ms", (clock_us() - t_hb0) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  hitboxes.log write done %.2f ms", (clock_us() - t_hb0) / 1000))
+    end
 
     -- Tank position readout. Three lines next to the tank: world
     -- units (0..65535), game pixels (wu/16), and tile + sub-tile
@@ -2044,7 +2088,7 @@ function Brain.think(info)
     -- any tank at tick-start. Per our collision analysis this should NEVER
     -- happen for still-alive enemy shells — the hit test would have fired
     -- same tick. Writes to intersect.log; empty = no anomalies.
-    local t_ix0 = clock_us()
+    local t_ix0 = BRAIN_PROFILE and clock_us() or 0
     if info.objects then
       local tanks = {}
       for i = 1, #info.objects do
@@ -2090,7 +2134,9 @@ function Brain.think(info)
         end
       end
     end
-    opt(string.format("  intersect.log scan done %.2f ms", (clock_us() - t_ix0) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  intersect.log scan done %.2f ms", (clock_us() - t_ix0) / 1000))
+    end
   end
   end -- BRAIN_DEBUG_MODE (hitboxes/tank-pos/lgm/intersect debug block)
 
@@ -2162,7 +2208,12 @@ function Brain.think(info)
   -- HUD: goal info in top-right + per-tick goal log (logging always runs;
   -- HUD draws gated by viz toggles). The log captures the goal on every
   -- tick regardless of viz state — it's a debug audit trail, not display.
-  do
+  --
+  -- Whole block under BRAIN_DEBUG_MODE (was a bare `do`): its only effects are
+  -- the print2 and the viz.hud_text calls, both of which lua_strip removes, so
+  -- in opt/ it was building `goal_str` (one string.format, plus a `{}` for a
+  -- nil goal) every tick for nobody. --strip-block now takes the lot.
+  if BRAIN_DEBUG_MODE then
     local g = state.goal or {}
     local gkind = g.kind or "none"
     local tid = g.target_id
@@ -2247,7 +2298,9 @@ function Brain.think(info)
   -- Section timing (clock_us is a C function returning microseconds)
   local t0 = clock_us()
   metrics.set("us_early_viz", t0 - t_early)
-  opt(string.format("early-viz/HUD done %.2f ms", (t0 - t_early) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("early-viz/HUD done %.2f ms", (t0 - t_early) / 1000))
+  end
 
   -- Process game events (instant updates before object scan)
   W.process_events(world, info, state)
@@ -2279,13 +2332,17 @@ function Brain.think(info)
     end
   end
 
-  local t_events = clock_us()
-  opt(string.format("  events+assist done %.2f ms", (t_events - t0) / 1000))
+  local t_events = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  events+assist done %.2f ms", (t_events - t0) / 1000))
+  end
 
   -- Selective cache invalidation based on pill/terrain changes
   PF.begin_tick(now, world)
-  local t_pf_begin = clock_us()
-  opt(string.format("  PF.begin_tick done %.2f ms", (t_pf_begin - t_events) / 1000))
+  local t_pf_begin = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  PF.begin_tick done %.2f ms", (t_pf_begin - t_events) / 1000))
+  end
 
   -- Expire wounded pill memory:
   --   1. After WOUNDED_FINISH_DECAY_TICKS (matches the cost-curve decay
@@ -2312,36 +2369,48 @@ function Brain.think(info)
   end
 
   -- Update world knowledge
-  local t_wu0 = clock_us()
+  local t_wu0 = BRAIN_PROFILE and clock_us() or 0
   W.update(world, info, now)
-  local t_wu1 = clock_us()
-  opt(string.format("  W.update done %.2f ms", (t_wu1 - t_wu0) / 1000))
+  local t_wu1 = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  W.update done %.2f ms", (t_wu1 - t_wu0) / 1000))
+  end
 
   -- Update exploration frontier
   expl.update(state, info)
-  opt(string.format("  expl.update done %.2f ms", (clock_us() - t_wu1) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  expl.update done %.2f ms", (clock_us() - t_wu1) / 1000))
+  end
 
   local t1 = clock_us()
   metrics.set("us_world", t1 - t0)
-  opt(string.format("world done %.2f ms", (t1 - t0) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("world done %.2f ms", (t1 - t0) / 1000))
+  end
 
   -- Update shell-trajectory danger map
   danger.update(info, now)
 
   local t2 = clock_us()
   metrics.set("us_danger", t2 - t1)
-  opt(string.format("danger done %.2f ms", (t2 - t1) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("danger done %.2f ms", (t2 - t1) / 1000))
+  end
 
   -- Process sound events into combat heat map
-  local t_hearing0 = clock_us()
+  local t_hearing0 = BRAIN_PROFILE and clock_us() or 0
   hearing.update(info, now)
-  local t_hearing1 = clock_us()
-  opt(string.format("  hearing.update done %.2f ms", (t_hearing1 - t_hearing0) / 1000))
+  local t_hearing1 = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  hearing.update done %.2f ms", (t_hearing1 - t_hearing0) / 1000))
+  end
 
   -- Rebuild spatial threat grid (pill + tank layers, O(1) lookup for consumers)
   threat.update(state, world, info)
-  local t_threat_upd = clock_us()
-  opt(string.format("  threat.update done %.2f ms", (t_threat_upd - t_hearing1) / 1000))
+  local t_threat_upd = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  threat.update done %.2f ms", (t_threat_upd - t_hearing1) / 1000))
+  end
 
   -- Populate C pathfinder danger grid from Lua threat grid (single source of
   -- truth). Batch-load the whole grid in one C call instead of ~13K per-tile
@@ -2353,8 +2422,10 @@ function Brain.think(info)
     metrics.inc("danger_skips")
   end
   local t_load_danger = clock_us()
-  opt(string.format("  cpf.load_danger done %.2f ms (rebuilt=%s)",
-    (t_load_danger - t_threat_upd) / 1000, tostring(threat.rebuilt_this_tick)))
+  if BRAIN_PROFILE then
+    opt(string.format("  cpf.load_danger done %.2f ms (rebuilt=%s)",
+      (t_load_danger - t_threat_upd) / 1000, tostring(threat.rebuilt_this_tick)))
+  end
 
   -- The two build scores. Must run AFTER threat.update: imdanger's exposure
   -- term reads threat.pill_at, which is only valid once the grid is rebuilt.
@@ -2364,8 +2435,10 @@ function Brain.think(info)
     danger.scores(info, world, state)
   local t_scores = clock_us()
   metrics.set("us_scores", t_scores - t_load_danger)
-  opt(string.format("  danger.scores done %.2f ms (vuln=%.1f imd=%.1f)",
-    (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
+  if BRAIN_PROFILE then
+    opt(string.format("  danger.scores done %.2f ms (vuln=%.1f imd=%.1f)",
+      (t_scores - t_load_danger) / 1000, state.vuln, state.imdanger))
+  end
 
   -- ── Placement trip lifecycle ─────────────────────────────────────────────
   -- state._place_trip is set when a placement request goes out (after
@@ -2501,6 +2574,11 @@ function Brain.think(info)
   -- pathfinder. Moved here (right after danger load) so all downstream
   -- goal evaluation sees fresh overlays — previously ran much later and
   -- A* queries during eval would hit stale impassable stamps from dead pills.
+  local t_trip_life = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  placement trip lifecycle done %.2f ms",
+      (t_trip_life - t_scores) / 1000))
+  end
   threat.check_overlay_dirty(world)
   if threat.overlay_dirty then
     threat.rebuild_overlay(world)
@@ -2508,9 +2586,11 @@ function Brain.think(info)
   else
     metrics.inc("overlay_skips")
   end
-  local t_overlay_early = clock_us()
-  opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
-    (t_overlay_early - t_load_danger) / 1000, tostring(not threat.overlay_dirty)))
+  local t_overlay_early = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
+      (t_overlay_early - t_trip_life) / 1000, tostring(not threat.overlay_dirty)))
+  end
 
   -- Ally avoidance: stamp a cost penalty around the pill target of
   -- allied bots that are mid-pill-take so we don't drive through
@@ -2854,6 +2934,16 @@ function Brain.think(info)
     end
   end
 
+  -- The ally-avoidance stamping above (pill radius + firing lane + tank 5x5
+  -- for every ally mid-take) is the real cost of this stretch; it used to be
+  -- reported under "pillcontrib export" because that marker measured from
+  -- t_load_danger and swallowed everything in between.
+  local t_ally_avoid = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  ally-avoid stamp done %.2f ms",
+      (t_ally_avoid - t_overlay_early) / 1000))
+  end
+
   -- Push per-pill contribution maps to the host (BrainTest reads
   -- this for the shift-2 cycle-pill-overlay). Bindings no-op
   -- under non-host runtimes (game client, headless server).
@@ -2897,13 +2987,20 @@ function Brain.think(info)
       end
     end
   end
-  local t_pillcontrib = clock_us()
-  opt(string.format("  pillcontrib export done %.2f ms", (t_pillcontrib - t_load_danger) / 1000))
+  local t_pillcontrib = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  pillcontrib export done %.2f ms", (t_pillcontrib - t_ally_avoid) / 1000))
+  end
 
   -- Populate influence grid (friendly = positive, hostile = negative).
   -- Rebuilt every tick — it's cheap and consumers expect fresh values.
   cpf.clear_influence()
   local _inf_bf, _inf_bh, _inf_pf, _inf_ph, _inf_sig = 0, 0, 0, 0, 0
+  -- Neutral-pill signature for the influence tail below. Accumulated in the
+  -- same pill walk as the friendly/hostile stamps rather than in a second
+  -- pairs(world.pills) pass: it is a plain sum, so it does not depend on
+  -- iteration order and folding the two walks together cannot change it.
+  local _nsig = 0
   for id, b in pairs(world.bases) do
     if b.owner == "friendly" then
       cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, C.BASE_INFLUENCE_STRENGTH)
@@ -2924,6 +3021,10 @@ function Brain.think(info)
       elseif pm.owner == "hostile" then
         cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, -C.PILL_INFLUENCE_STRENGTH)
         _inf_ph = _inf_ph + 1; _inf_sig = _inf_sig + (id * 9173 + 2 + pm.mx * 7 + pm.my * 13)
+      elseif pm.owner == "neutral" then
+        -- No stamp (a neutral pill holds no ground for either side); it only
+        -- feeds the tail's rebuild signature.
+        _nsig = _nsig + (id * 9173 + 3 + pm.mx * 7 + pm.my * 13)
       end
     end
   end
@@ -2940,16 +3041,12 @@ function Brain.think(info)
   -- as a backstop); merged into influence_grid every tick, since the stamp
   -- loop above wipes it. Must run BEFORE anything reads influence this tick.
   if C.EXPAND_ENABLED then
-    local _nsig = 0
-    for id, pm in pairs(world.pills) do
-      if pm.owner == "neutral" and pm.health > 0 and not pm.in_tank then
-        _nsig = _nsig + (id * 9173 + 3 + pm.mx * 7 + pm.my * 13)
-      end
-    end
     local _tsig = _inf_sig + _nsig
     if state._tail_sig ~= _tsig
        or (now - (state._tail_tick or -1e9)) >= (C.EXPAND_REFRESH_TICKS or 250) then
-      local _t_tail = clock_us()
+      -- Debug-only stopwatch (read by the TAIL_REBUILD print2 below, which
+      -- lua_strip removes), so don't pay for the clock read in opt/.
+      local _t_tail = BRAIN_DEBUG_MODE and clock_us() or 0
       cpf.clear_neutral_zones()
       for _, pm in pairs(world.pills) do
         if pm.owner == "neutral" and pm.health > 0 and not pm.in_tank then
@@ -2964,6 +3061,14 @@ function Brain.think(info)
       print2(string.format("TAIL_REBUILD t=%d sig=%d deep_margin=%d %.2fms",
         now, _tsig, C.EXPAND_DEEP_MARGIN or 0, (clock_us() - _t_tail) / 1000))
     end
+    -- Merged unconditionally, even when _tsig says the tail is unchanged:
+    -- cpf.clear_influence() above wipes influence_grid at the top of EVERY
+    -- tick, so the merge is not re-applying an idempotent overlay, it is the
+    -- only thing that puts the tail back on the freshly-restamped grid.
+    -- brainPathfinderMergeInfluenceTail also refreshes influence_base_grid,
+    -- which brainPathfinderInfluenceTailStats reads to report what the tail
+    -- won this tick. Skipping it on an unchanged stamp set would drop the tail
+    -- from the grid entirely, so it stays.
     cpf.merge_influence_tail()
     -- What the tail did this rebuild: how much ground each side's tail
     -- covers, how much of it actually won the merge (was not already
@@ -3006,27 +3111,36 @@ function Brain.think(info)
   -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
   -- diffed to find residual divergence and its cause (lag vs missed broadcast).
   -- Token: <id><cls><lastseen>; pills add 'T' when in_tank, 'A' if ally-sourced.
-  if (now % 8) == 0 then
-    local _kc = { friendly="f", hostile="h", neutral="n", allied="a" }
-    local _bids, _pids = {}, {}
-    for id in pairs(world.bases) do _bids[#_bids+1] = id end
-    for id in pairs(world.pills) do _pids[#_pids+1] = id end
-    table.sort(_bids); table.sort(_pids)
-    local _bp, _pp = {}, {}
-    for _, id in ipairs(_bids) do
-      local b = world.bases[id]
-      _bp[#_bp+1] = string.format("%d%s(%d,%d)%s", id, _kc[b.owner] or "?", b.mx, b.my, b._ally_only and "A" or "")
-    end
-    for _, id in ipairs(_pids) do
-      local p = world.pills[id]
-      if (p.health or 0) > 0 then
-        _pp[#_pp+1] = string.format("%d%s%s(%d,%d)%s", id, _kc[p.owner] or "?", p.in_tank and "T" or "", p.mx, p.my, p._ally_only and "A" or "")
+  -- The whole block (the two sorted id lists and the token tables, not just the
+  -- print2 that consumes them) sits under `if BRAIN_DEBUG_MODE` so lua_strip's
+  -- --strip-block drops all of it from opt/. Stripping only the print2 line left
+  -- ~9 table allocations + two sorts + one string.format per object running
+  -- every 8th tick in production for output nobody could read.
+  if BRAIN_DEBUG_MODE then
+    if (now % 8) == 0 then
+      local _kc = { friendly="f", hostile="h", neutral="n", allied="a" }
+      local _bids, _pids = {}, {}
+      for id in pairs(world.bases) do _bids[#_bids+1] = id end
+      for id in pairs(world.pills) do _pids[#_pids+1] = id end
+      table.sort(_bids); table.sort(_pids)
+      local _bp, _pp = {}, {}
+      for _, id in ipairs(_bids) do
+        local b = world.bases[id]
+        _bp[#_bp+1] = string.format("%d%s(%d,%d)%s", id, _kc[b.owner] or "?", b.mx, b.my, b._ally_only and "A" or "")
       end
+      for _, id in ipairs(_pids) do
+        local p = world.pills[id]
+        if (p.health or 0) > 0 then
+          _pp[#_pp+1] = string.format("%d%s%s(%d,%d)%s", id, _kc[p.owner] or "?", p.in_tank and "T" or "", p.mx, p.my, p._ally_only and "A" or "")
+        end
+      end
+      print2(string.format("KWDIAG t=%s pn=%s B[%s] P[%s]", tostring(now), tostring(info.player_number), table.concat(_bp, ","), table.concat(_pp, ",")))
     end
-    print2(string.format("KWDIAG t=%s pn=%s B[%s] P[%s]", tostring(now), tostring(info.player_number), table.concat(_bp, ","), table.concat(_pp, ",")))
   end
-  local t_influence = clock_us()
-  opt(string.format("  influence stamp done %.2f ms", (t_influence - t_pillcontrib) / 1000))
+  local t_influence = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  influence stamp done %.2f ms", (t_influence - t_pillcontrib) / 1000))
+  end
 
   -- Front-line circles (R2): self-throttling rebuild (~5 s) from the now-fresh
   -- influence grid. Maintains state for circle win/loss + reinforcement (R3).
@@ -3050,12 +3164,16 @@ function Brain.think(info)
 
   local t3 = clock_us()
   metrics.set("us_threat", t3 - t2)
-  opt(string.format("threat done %.2f ms", (t3 - t2) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("threat done %.2f ms", (t3 - t2) / 1000))
+  end
 
   -- Build shared perception snapshot (before goal selection / builder / steering)
   percept.update(state, world, info)
-  local t_percept_upd = clock_us()
-  opt(string.format("  percept.update done %.2f ms", (t_percept_upd - t3) / 1000))
+  local t_percept_upd = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  percept.update done %.2f ms", (t_percept_upd - t3) / 1000))
+  end
 
   -- SEA-PILL HARVEST plan refresh. Reads perc.deepsea_pill_ids, so it has to
   -- run after percept.update and before the pools (build_eval_queue prices
@@ -3065,22 +3183,30 @@ function Brain.think(info)
   -- tick this is a handful of comparisons, and on a map with no dead pills in
   -- deep sea it returns on the first line.
   goals.sea_refresh(state, world, info)
-  opt(string.format("  sea_refresh done %.2f ms", (clock_us() - t_percept_upd) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  sea_refresh done %.2f ms", (clock_us() - t_percept_upd) / 1000))
+  end
 
   -- Track our own fired shots from fire-to-impact (uses info.shells decrement
   -- to detect fires and info.objects OBJECT_SHOT entries to verify in-flight).
   shot_tracker.update(info, now)
   if BRAIN_DEBUG_MODE then shot_tracker.draw_overlay(now) end
-  local t_shot_tr = clock_us()
-  opt(string.format("  shot_tracker done %.2f ms", (t_shot_tr - t_percept_upd) / 1000))
+  local t_shot_tr = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  shot_tracker done %.2f ms", (t_shot_tr - t_percept_upd) / 1000))
+  end
 
   -- Classify game phase (reads state.perc, must run after percept.update)
   strategy.update(state, world, info)
-  opt(string.format("  strategy.update done %.2f ms", (clock_us() - t_shot_tr) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  strategy.update done %.2f ms", (clock_us() - t_shot_tr) / 1000))
+  end
 
   local t4 = clock_us()
   metrics.set("us_percept", t4 - t3)
-  opt(string.format("percept done %.2f ms", (t4 - t3) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("percept done %.2f ms", (t4 - t3) / 1000))
+  end
 
   -- Track per-tick damage for base shield timing: dispatch LGM right
   -- after taking a hit (pill just fired, max time until next shot)
@@ -3117,7 +3243,7 @@ function Brain.think(info)
   -- state.dij.slates is a Lua-side mirror of slate metadata for
   -- inspection / debugging. Each entry tracks the parameters used to
   -- start it so the brain can reason about what's in each slot.
-  local t_dij0 = clock_us()
+  local t_dij0 = BRAIN_PROFILE and clock_us() or 0
   do
     -- Slate layout (all KIND_NORMAL):
     --   0 = short-range main    (restarts every DIJKSTRA_SHORT_INTERVAL)
@@ -3148,7 +3274,11 @@ function Brain.think(info)
     local in_boat = info.inboat and 1 or 0
     local d = state.dij
     if not d then
-      d = { slates = {} }
+      -- `main`: the two slates the stepper advances (the odd indices are their
+      -- frozen backups). Built once with the slate table instead of as a
+      -- { SLATE_SHORT_MAIN, SLATE_LONG_MAIN } literal inside the per-tick
+      -- scheduler loop, which allocated it every tick.
+      d = { slates = {}, main = { SLATE_SHORT_MAIN, SLATE_LONG_MAIN } }
       for i = 0, 3 do
         d.slates[i] = {
           index = i, kind = nil,
@@ -3238,10 +3368,12 @@ function Brain.think(info)
       end
       if not s.active or schedule_hit then
         if s.active then
-          local t_cs = clock_us()
+          local t_cs = BRAIN_PROFILE and clock_us() or 0
           cpf.dijkstra_copy_slate(main_idx, backup_idx)
-          opt(string.format("dij COPY %d->%d done %.2f ms",
-            main_idx, backup_idx, (clock_us() - t_cs) / 1000))
+          if BRAIN_PROFILE then
+            opt(string.format("dij COPY %d->%d done %.2f ms",
+              main_idx, backup_idx, (clock_us() - t_cs) / 1000))
+          end
           refresh_slate(backup_idx)
           if BRAIN_DEBUG_MODE then print2(string.format("dij COPY %d->%d at tick=%d age=%d", main_idx, backup_idx, now, age)) end
         end
@@ -3293,7 +3425,7 @@ function Brain.think(info)
       end
     end
     local active_slates = {}
-    for _, idx in ipairs({ SLATE_SHORT_MAIN, SLATE_LONG_MAIN }) do
+    for _, idx in ipairs(d.main) do
       refresh_slate(idx)
       if d.slates[idx].active and not d.slates[idx].done then
         active_slates[#active_slates + 1] = idx
@@ -3329,15 +3461,19 @@ function Brain.think(info)
         end
       end
       local step_us = clock_us() - t_step
-      opt(string.format("dij STEP %.2f ms  active=%d  budget(s/l=%d/%d)  total_exp=%d",
-                           step_us / 1000, #active_slates, budget_short, budget_long, total_exp))
+      if BRAIN_PROFILE then
+        opt(string.format("dij STEP %.2f ms  active=%d  budget(s/l=%d/%d)  total_exp=%d",
+                             step_us / 1000, #active_slates, budget_short, budget_long, total_exp))
+      end
       -- Scan for newly-reached bases on the short slate (the one most
       -- likely to gate goal selection at startup).
       _diag_log_dij_base_discoveries(now, SLATE_SHORT_MAIN, in_boat)
     end
   end
   local t_dij1 = clock_us()
-  opt(string.format("dij sched done %.2f ms", (t_dij1 - t_dij0) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("dij sched done %.2f ms", (t_dij1 - t_dij0) / 1000))
+  end
 
   -- Outgoing message -- only one per tick
   local send_msg = nil
@@ -3917,8 +4053,10 @@ function Brain.think(info)
   state.last_mx = cur_mx
   state.last_my = cur_my
 
-  local t_stuck1 = clock_us()
-  opt(string.format("  stuck-detection done %.2f ms", (t_stuck1 - t_stuck0) / 1000))
+  local t_stuck1 = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  stuck-detection done %.2f ms", (t_stuck1 - t_stuck0) / 1000))
+  end
 
   -- Expire stale blocked entries
   if now % 200 == 0 then
@@ -3941,8 +4079,10 @@ function Brain.think(info)
 
   -- Water escape emergency
   local t_mid = clock_us()
-  opt(string.format("  blocked/banned sweep done %.2f ms (sweep=%s)",
-    (t_mid - t_stuck1) / 1000, tostring(now % 200 == 0)))
+  if BRAIN_PROFILE then
+    opt(string.format("  blocked/banned sweep done %.2f ms (sweep=%s)",
+      (t_mid - t_stuck1) / 1000, tostring(now % 200 == 0)))
+  end
   -- mid covers from end-of-dij-sched (t_dij1) to here. Was using t4,
   -- which double-counted the dij sched block since that has its own
   -- main "dij sched done" emit. The unattributed remainder of mid
@@ -3951,7 +4091,9 @@ function Brain.think(info)
   -- and t_stuck0. Dropped the "  comms+stuck done" sub-emit since it
   -- measured essentially the same span as mid itself.
   metrics.set("us_mid", t_mid - t_dij1)
-  opt(string.format("mid done %.2f ms", (t_mid - t_dij1) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("mid done %.2f ms", (t_mid - t_dij1) / 1000))
+  end
   local t_water0 = t_mid
   local t_goal0 = clock_us()   -- initialized here; updated below if goal section runs
   local t_goal1 = nil
@@ -4274,11 +4416,11 @@ function Brain.think(info)
     -- the current goal.  If not, force an immediate replan rather than
     -- waiting for the periodic 25-tick cycle.  In aiFull mode the world
     -- data is fresh every tick so this reacts instantly.
-    local t_gv0 = clock_us()
+    local t_gv0 = BRAIN_PROFILE and clock_us() or 0
     local goal_valid = true
     local gk = state.goal.kind
     local gmx, gmy = state.goal.mx, state.goal.my
-    local t_gv1 = clock_us()
+    local t_gv1 = BRAIN_PROFILE and clock_us() or 0
     if gk == "capture_base" then
       local b = W.base_at(world, gmx, gmy)
       -- Accept neutral (normal capture) and hostile (weakened base drive-over capture)
@@ -4643,8 +4785,12 @@ function Brain.think(info)
         (t_goal0 - t_gv1) / 1000,
         tostring(gk)))
     end
-    opt(string.format("  goal-validation chain done %.2f ms (gk=%s)", (t_goal0 - t_gv0) / 1000, tostring(gk)))
-    opt(string.format("water+goal_invalid done %.2f ms", (t_goal0 - t_water0) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  goal-validation chain done %.2f ms (gk=%s)", (t_goal0 - t_gv0) / 1000, tostring(gk)))
+    end
+    if BRAIN_PROFILE then
+      opt(string.format("water+goal_invalid done %.2f ms", (t_goal0 - t_water0) / 1000))
+    end
     -- PROFILING LITE checkpoint 1/3 — "prelude" ends here: everything before
     -- goal selection (world/danger/threat/percept, the incremental Dijkstra
     -- scheduler, mid, water + goal-validation). See the NEAR_BUDGET block at
@@ -4653,11 +4799,13 @@ function Brain.think(info)
 
     -- Rolling candidate evaluation: 2 A* cost_to calls per tick
     -- Skip on ticks where threat grid rebuilt (both are expensive, don't stack)
-    local t_pc0 = clock_us()
+    local t_pc0 = BRAIN_PROFILE and clock_us() or 0
     if not threat.rebuilt_this_tick then
       goals.update_pool_cache(state, world, info)
     end
-    opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
+    end
 
     -- Opening-phase base freshness: ONE TICK BEFORE every timer replan, force a
     -- strict-A* rescore of bases within OPENING_BASE_RESCORE_TILES so the
@@ -5614,21 +5762,27 @@ function Brain.think(info)
         -- corpses; the spike-splitting tradeoff is explicit here.
         state._deferred_build_eval = true
       else
-        local t_be0 = clock_us()
+        local t_be0 = BRAIN_PROFILE and clock_us() or 0
         goals.build_eval_queue(state, world, info)
-        opt(string.format("  build_eval_queue done %.2f ms", (clock_us() - t_be0) / 1000))
+        if BRAIN_PROFILE then
+          opt(string.format("  build_eval_queue done %.2f ms", (clock_us() - t_be0) / 1000))
+        end
       end
-      local t_fp0 = clock_us()
+      local t_fp0 = BRAIN_PROFILE and clock_us() or 0
       goals.finalize_pools(state, world, info)
-      opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
+      if BRAIN_PROFILE then
+        opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
+      end
       if now <= 3 then print(TAG .. " tick=" .. now .. " build_eval_queue done, calling pick_goal") end
       metrics.inc("goal_replan")
-      local t_pg0 = clock_us()
+      local t_pg0 = BRAIN_PROFILE and clock_us() or 0
       local new_goal = goals.pick_goal(state, world, info)
       if BRAIN_PROFILE and state._pick_goal_timing then
         for _, entry in ipairs(state._pick_goal_timing) do opt(entry) end
       end
-      opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
+      if BRAIN_PROFILE then
+        opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
+      end
       if BRAIN_DEBUG_MODE then print2("pick_goal -> ", new_goal and new_goal.kind or "nil",
              " mx=", new_goal and new_goal.mx, " sub=", new_goal and new_goal.substate) end
       -- Dump all pool_cache winners with costs for diagnosing goal switches.
@@ -5975,10 +6129,12 @@ function Brain.think(info)
   if BRAIN_DEBUG_MODE then state._plite_cp_replan = print2.elapsed_ms() end
 
   -- Per-tick attack substate machine (runs every tick, not just on replan)
-  local t_as0 = clock_us()
+  local t_as0 = BRAIN_PROFILE and clock_us() or 0
   attack.update_attack_substate(state.goal, state, world, info)
-  local t_as1 = clock_us()
-  opt(string.format("  attack_substate done %.2f ms", (t_as1 - t_as0) / 1000))
+  local t_as1 = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  attack_substate done %.2f ms", (t_as1 - t_as0) / 1000))
+  end
   if BRAIN_PROFILE_LOG and t_as1 - t_as0 > 500 then
     opt.append("optimize.log", string.format(
       "  [as] SLOW sub=%s total=%.3f ms",
@@ -6074,7 +6230,9 @@ function Brain.think(info)
 
   t_goal1 = clock_us()
   metrics.set("us_goals", t_goal1 - t_goal0)
-  opt(string.format("goals done %.2f ms", (t_goal1 - t_goal0) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("goals done %.2f ms", (t_goal1 - t_goal0) / 1000))
+  end
   -- PROFILING LITE checkpoint 3/3 — "handler" ends here: the per-tick goal
   -- handler (attack.update_attack_substate) and the attack aim-point solve.
   -- Everything after this (demine, lookahead, steering, builder, HUD, squad/
@@ -6169,7 +6327,9 @@ function Brain.think(info)
   local t_steer0 = clock_us()
   if t_goal1 then
     metrics.set("us_lookahead", t_steer0 - t_goal1)
-    opt(string.format("lookahead done %.2f ms", (t_steer0 - t_goal1) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("lookahead done %.2f ms", (t_steer0 - t_goal1) / 1000))
+    end
   end
   state._cautious_lookahead_held = nil   -- reset each tick; the cautious near-ally guard sets it
   -- SEA-PILL HARVEST substate machine. Runs BEFORE steering and the builder so
@@ -6331,7 +6491,9 @@ function Brain.think(info)
 
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
-  opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
+  end
   if BRAIN_PROFILE_LOG and t_steer1 - t_steer0 > 5000 then
     opt.append("optimize.log", string.format(
       "  [steer] SLOW %.2f ms goal=%s sub=%s",
@@ -6468,8 +6630,10 @@ function Brain.think(info)
              string.format("other pills x%.2f", mult),
              "topleft", mr, mg, mb, 255, 0.30)
   end
-  local t_psv_wounded = clock_us()
-  opt(string.format("  crosshairs+wounded viz done %.2f ms", (t_psv_wounded - t_steer1) / 1000))
+  local t_psv_wounded = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  crosshairs+wounded viz done %.2f ms", (t_psv_wounded - t_steer1) / 1000))
+  end
 
   -- Per-pill self_dr labels for pool 6 (attack_pill). Shows the
   -- self-danger reduction the eval queue computed for each pill
@@ -6501,8 +6665,10 @@ function Brain.think(info)
       end
     end
   end
-  local t_psv_self_dr = clock_us()
-  opt(string.format("  pool6 self_dr labels done %.2f ms", (t_psv_self_dr - t_psv_wounded) / 1000))
+  local t_psv_self_dr = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  pool6 self_dr labels done %.2f ms", (t_psv_self_dr - t_psv_wounded) / 1000))
+  end
 
   -- Shift+click pill inspect overlay (computed once on click, toggle off/on to refresh)
   if BRAIN_DEBUG_MODE and state.inspect_pill and viz.is_on("inspect_pill") then
@@ -6592,9 +6758,11 @@ function Brain.think(info)
       state.inspect_pill = nil
     end
   end
-  local t_psv_inspect = clock_us()
-  opt(string.format("  inspect_pill done %.2f ms (active=%s)",
-    (t_psv_inspect - t_psv_self_dr) / 1000, tostring(state.inspect_pill ~= nil)))
+  local t_psv_inspect = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  inspect_pill done %.2f ms (active=%s)",
+      (t_psv_inspect - t_psv_self_dr) / 1000, tostring(state.inspect_pill ~= nil)))
+  end
 
   -- Opportunistic tank shot: fire at enemy tanks while doing other things.
   -- Only if not already in tank combat and not shooting at something else.
@@ -7024,7 +7192,9 @@ function Brain.think(info)
         pf.status, step, kstr, info.speed, state.stuck_for, co_str))
     end
   end
-  opt(string.format("  oppshot+nav-debug done %.2f ms", (clock_us() - t_psv_inspect) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  oppshot+nav-debug done %.2f ms", (clock_us() - t_psv_inspect) / 1000))
+  end
 
   -- Builder: set mode from current goal, then decide what to build/farm
   local t_build0 = clock_us()
@@ -7119,10 +7289,14 @@ function Brain.think(info)
     end
   end
   metrics.set("us_post_steer_viz", t_build0 - t_steer1)
-  opt(string.format("post-steer viz done %.2f ms", (t_build0 - t_steer1) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("post-steer viz done %.2f ms", (t_build0 - t_steer1) / 1000))
+  end
   builder.set_mode(state, world, info, state.goal)
-  local t_build_setmode = clock_us()
-  opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
+  local t_build_setmode = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
+  end
   -- Builder POOL, between set_mode and decide, in that order for a reason:
   -- set_mode is what publishes the mode and b.reserve_eta the eligibility
   -- stack reads, and decide()'s new rung only executes the winner this pass
@@ -7131,6 +7305,11 @@ function Brain.think(info)
   -- rule the other strips follow) and because the job lifecycle + the tank's
   -- under-fire clock have to keep ticking while the man is out.
   bpool.update(state, world, info, now)
+  local t_build_pool = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  builder_pool.update done %.2f ms",
+      (t_build_pool - t_build_setmode) / 1000))
+  end
   local build_cmd = builder.decide(state, world, info, now)
   -- Repair-pill completion: the builder dispatched the LGM onto a
   -- friendly damaged pill (engine auto-repairs on arrival). Clear the
@@ -7144,9 +7323,13 @@ function Brain.think(info)
     end
   end
   local t_build1 = clock_us()
-  opt(string.format("  builder.decide done %.2f ms", (t_build1 - t_build_setmode) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  builder.decide done %.2f ms", (t_build1 - t_build_pool) / 1000))
+  end
   metrics.set("us_builder", t_build1 - t_build0)
-  opt(string.format("builder done %.2f ms", (t_build1 - t_build0) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("builder done %.2f ms", (t_build1 - t_build0) / 1000))
+  end
   -- Track what kind of action was most recently dispatched so steering can
   -- decide whether to pace the tank while the LGM is moving.
   if build_cmd and info.man_status == C.LGM_INTANK then
@@ -7270,8 +7453,10 @@ function Brain.think(info)
         "topleft", sr, sg, 50)
     end
   end -- BRAIN_DEBUG_MODE (LGM/stuck HUD)
-  local t_pbh_lgm = clock_us()
-  opt(string.format("  LGM/stuck HUD done %.2f ms", (t_pbh_lgm - t_pbh_start) / 1000))
+  local t_pbh_lgm = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  LGM/stuck HUD done %.2f ms", (t_pbh_lgm - t_pbh_start) / 1000))
+  end
 
   -- Blocked destinations (show on map)
   if BRAIN_DEBUG_MODE and state.blocked and viz.is_on("blocked_tiles") then
@@ -7284,8 +7469,10 @@ function Brain.think(info)
     end
   end
 
-  local t_pbh_blocked = clock_us()
-  opt(string.format("  blocked-tiles viz done %.2f ms", (t_pbh_blocked - t_pbh_lgm) / 1000))
+  local t_pbh_blocked = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  blocked-tiles viz done %.2f ms", (t_pbh_blocked - t_pbh_lgm) / 1000))
+  end
 
   -- Pill reposition overlay: mark badly-positioned friendly pills
   if BRAIN_DEBUG_MODE and C.PILL_REPOSITION_ENABLED and viz.is_on("pill_reposition_marker") then
@@ -7307,8 +7494,10 @@ function Brain.think(info)
     end
   end
 
-  local t_pbh_repos = clock_us()
-  opt(string.format("  pill-reposition viz done %.2f ms", (t_pbh_repos - t_pbh_blocked) / 1000))
+  local t_pbh_repos = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  pill-reposition viz done %.2f ms", (t_pbh_repos - t_pbh_blocked) / 1000))
+  end
 
   -- Deep sea bait pill overlay: mark dead pills on known deep sea
   if BRAIN_DEBUG_MODE and state.perc and state.perc.deepsea_pill_ids and viz.is_on("bait_pill_marker") then
@@ -7321,8 +7510,10 @@ function Brain.think(info)
     end
   end
 
-  local t_pbh_bait = clock_us()
-  opt(string.format("  bait-pill viz done %.2f ms", (t_pbh_bait - t_pbh_repos) / 1000))
+  local t_pbh_bait = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  bait-pill viz done %.2f ms", (t_pbh_bait - t_pbh_repos) / 1000))
+  end
 
   -- Friendly pill barrier overlay: mark friendly pills used as shields
   if BRAIN_DEBUG_MODE and state.goal and (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill") and viz.is_on("friendly_pill_shield") then
@@ -7343,8 +7534,10 @@ function Brain.think(info)
     end
   end
 
-  local t_pbh_barrier = clock_us()
-  opt(string.format("  friendly-pill-barrier viz done %.2f ms", (t_pbh_barrier - t_pbh_bait) / 1000))
+  local t_pbh_barrier = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  friendly-pill-barrier viz done %.2f ms", (t_pbh_barrier - t_pbh_bait) / 1000))
+  end
 
   -- Allied LGM protection overlay: mark allied LGM positions
   if BRAIN_DEBUG_MODE and state.perc and state.perc.allied_lgm_positions and viz.is_on("ally_lgm_marker") then
@@ -7747,8 +7940,10 @@ function Brain.think(info)
   end
 
 
-  local t_pbh_ally = clock_us()
-  opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
+  local t_pbh_ally = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
+  end
 
   -- Ally-state overlay (right-middle table of every active player's
   -- goal / sub / target / k=v data). The slate is populated from the
@@ -7851,24 +8046,32 @@ function Brain.think(info)
       end
     end
   end
-  local t_pbh_ally_state = clock_us()
-  opt(string.format("  ally-state overlay done %.2f ms", (t_pbh_ally_state - t_pbh_ally) / 1000))
+  local t_pbh_ally_state = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  ally-state overlay done %.2f ms", (t_pbh_ally_state - t_pbh_ally) / 1000))
+  end
 
   -- Log this tick
   log.log_tick(state, info, state.goal, keys, taps, build_cmd)
-  opt(string.format("  log.log_tick done %.2f ms", (clock_us() - t_pbh_ally) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("  log.log_tick done %.2f ms", (clock_us() - t_pbh_ally) / 1000))
+  end
 
   -- Total tick time and worst-case tracking
   local t_end = clock_us()
   local us_total = t_end - t0
   metrics.set("us_post_build_hud", t_end - t_build1)
-  opt(string.format("post-build HUD done %.2f ms", (t_end - t_build1) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("post-build HUD done %.2f ms", (t_end - t_build1) / 1000))
+  end
   -- Anchor for the (tail) timer: real clock immediately after the last
   -- named main-section emit. Anything between here and opt.flush() is
   -- attributed to (tail) so the named-section sum equals the actual
   -- tick wall-clock with no gap.
   local _t_tail_anchor = clock_us()
-  opt(string.format("TICK TOTAL %.2f ms", us_total / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("TICK TOTAL %.2f ms", us_total / 1000))
+  end
   metrics.set("us_total", us_total)
   metrics.max("us_total", us_total)
   metrics.max("us_world", t1 - t0)
@@ -7892,14 +8095,16 @@ function Brain.think(info)
 
   -- Label all pills and bases with their IDs (centered on tile)
   if BRAIN_DEBUG_MODE and viz.is_on("pill_id_label") then
-    local t_label0 = clock_us()
+    local t_label0 = BRAIN_PROFILE and clock_us() or 0
     for id, p in pairs(world.pills) do
       viz.text("pill_id_label", p.mx + 0.5, p.my + 0.5, tostring(id), "center", 0, 0, 200, 255)
     end
     for id, b in pairs(world.bases) do
       viz.text("pill_id_label", b.mx + 0.5, b.my + 0.5, tostring(id), "center", 0, 255, 255, 255, 2.4)
     end
-    opt(string.format("  pill+base id labels done %.2f ms", (clock_us() - t_label0) / 1000))
+    if BRAIN_PROFILE then
+      opt(string.format("  pill+base id labels done %.2f ms", (clock_us() - t_label0) / 1000))
+    end
   end
 
   -- Defend-pill tier overlay: ring + "tier cost" label per team pill from
@@ -8016,8 +8221,12 @@ function Brain.think(info)
   -- (tail) main: total from _t_tail_anchor to NOW. Emit AFTER the
   -- indented subs above so the parser sees pending subs and attaches
   -- them to this section.
-  opt(string.format("(tail) done %.2f ms", (clock_us() - _t_tail_anchor) / 1000))
-  opt(string.format("END tick=%d total=%.2f ms", now, (clock_us() - t_tick_start) / 1000))
+  if BRAIN_PROFILE then
+    opt(string.format("(tail) done %.2f ms", (clock_us() - _t_tail_anchor) / 1000))
+  end
+  if BRAIN_PROFILE then
+    opt(string.format("END tick=%d total=%.2f ms", now, (clock_us() - t_tick_start) / 1000))
+  end
   -- Anchor right before the flush itself. opt.flush()'s sync work
   -- (rebuild_sections walk + queue-push to the threaded log writer)
   -- happens between (tail) emit and the END marker — captured below
@@ -9222,6 +9431,10 @@ function Brain.close(info)
   if state._instr_prof_on then prof.shutdown() end
   log.dump_world(world)
   log.close()
+  -- Push print2's batched tail (up to FLUSH_INTERVAL_S of lines) into the
+  -- writer's queue BEFORE opt.close() drains it, so the last second of a run
+  -- reaches disk instead of dying with the process.
+  print2.force_flush()
   opt.close()
   metrics.close_files()
 
