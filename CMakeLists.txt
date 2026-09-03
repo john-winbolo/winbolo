@@ -3235,6 +3235,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
     tests/unit/test_server_address_parse.c
+    # Skin asset reads: a directory, a flat zip and a zip wrapped in one
+    # top-level folder must resolve the same relative names to the same
+    # bytes. skin_source.c is compiled here only — no shipping target
+    # reads assets through it yet.
+    tests/unit/test_skin_source.c
+    src/gui/sdl3/skin_source.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -3393,6 +3399,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
+    # Committed skin fixture directory: the parity test opens
+    # <dir>/basic and zips it into the working directory at run time.
+    WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -3896,6 +3905,7 @@ set(_unit_test_names
     bot_pool_wire_chunk_transport
     active_sim_armed_on_lobby_tick
     active_sim_cleared_on_cross_thread_destroy
+    skin_source_dir_and_zip
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

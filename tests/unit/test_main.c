@@ -509,6 +509,7 @@ static const UnitTestEntry s_tests[] = {
     { "addrparse_port_bounds",                   run_addrparse_port_bounds                   },
     { "addrparse_bad_port",                      run_addrparse_bad_port                      },
     { "addrparse_empty",                         run_addrparse_empty                         },
+    { "skin_source_dir_and_zip",                 run_skin_source_dir_and_zip                 },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

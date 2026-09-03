@@ -1,0 +1,181 @@
+/*
+ * SkinSource directory/zip parity (src/gui/sdl3/skin_source.c).
+ *
+ * A skin is a directory or a zip, and every asset reader resolves names the
+ * same way whichever it is. This test opens the committed directory fixture,
+ * zips it twice with skinSourceZipDirectory — once flat, once under a
+ * wrapping top-level folder, the shape a 1.x .wsf has — and asserts all three
+ * sources answer the same relative names with the same bytes: skin.ini parses
+ * to the same SkinInfo, the 2.x sounds/ wav and the 1.x flat wav both
+ * resolve, and a sprite reads back byte-for-byte. The wrapped zip passing
+ * proves the single common top-level folder is stripped from the index.
+ *
+ * No .wsf or .zip is committed: the archives are built in the working
+ * directory and removed at the end.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <SDL3/SDL.h>
+
+#include "skin_source.h"
+#include "test_harness.h"
+
+#ifndef WB_SKINS_FIXTURE_DIR
+#define WB_SKINS_FIXTURE_DIR "tests/fixtures/skins"
+#endif
+
+#define FLAT_ZIP    "skin_flat_test.zip"
+#define WRAPPED_ZIP "skin_wrapped_test.zip"
+
+/* Every source must agree with the directory fixture's skin.ini. */
+static int checkIni(const SkinInfo *info, const char *label) {
+    UT_ASSERT_MSG(strcmp(info->name, "Basic Test Skin") == 0,
+                  "%s: Name is '%s'", label, info->name);
+    UT_ASSERT_MSG(strcmp(info->author, "WinBolo Tests") == 0,
+                  "%s: Author is '%s'", label, info->author);
+    UT_ASSERT_MSG(strcmp(info->notes, "Fixture for test_skin_source") == 0,
+                  "%s: Notes is '%s'", label, info->notes);
+    UT_ASSERT_MSG(info->maxPixelDensity == 2,
+                  "%s: MaxPixelDensity is %d", label, info->maxPixelDensity);
+    UT_ASSERT_MSG(info->inGameRotate == 0,
+                  "%s: InGameRotate is %d", label, info->inGameRotate);
+    UT_ASSERT_MSG(info->workshopId == 0,
+                  "%s: WorkshopId is not zero", label);
+    return 0;
+}
+
+/* Open an archive and match it against the directory source's answers. */
+static int checkArchive(const char *zipPath, const char *label,
+                        const unsigned char *refPng, size_t refLen) {
+    SkinSource *src;
+    SkinInfo info;
+    void *png = NULL;
+    size_t pngLen = 0;
+    int rc;
+
+    src = skinSourceOpen(zipPath);
+    UT_ASSERT_MSG(src != NULL, "%s: skinSourceOpen('%s') failed",
+                  label, zipPath);
+
+    skinSourceReadIni(src, &info);
+    rc = checkIni(&info, label);
+    if (rc != 0) {
+        skinSourceClose(src);
+        return rc;
+    }
+
+    if (!skinSourceExists(src, "tank_self_00.png") ||
+        !skinSourceExists(src, "grass.png") ||
+        !skinSourceExists(src, "sounds/hit_tank_far.wav") ||
+        !skinSourceExists(src, "bubbles.wav")) {
+        skinSourceClose(src);
+        UT_FAIL("%s: an expected name is missing from the index", label);
+    }
+
+    if (!skinSourceRead(src, "tank_self_00.png", &png, &pngLen)) {
+        skinSourceClose(src);
+        UT_FAIL("%s: reading tank_self_00.png failed", label);
+    }
+    if (pngLen != refLen ||
+        memcmp(png, refPng, refLen) != 0) {
+        SDL_free(png);
+        skinSourceClose(src);
+        UT_FAIL("%s: tank_self_00.png differs from the directory read "
+                "(%d vs %d bytes)", label, (int)pngLen, (int)refLen);
+    }
+    if (((const unsigned char *)png)[pngLen] != '\0') {
+        SDL_free(png);
+        skinSourceClose(src);
+        UT_FAIL("%s: read buffer is not NUL-terminated at [len]", label);
+    }
+
+    SDL_free(png);
+    skinSourceClose(src);
+    return 0;
+}
+
+static int checkSkinSources(const char *fixture) {
+    SkinSource *dirSrc;
+    SkinInfo info;
+    void *png = NULL;
+    size_t pngLen = 0;
+    int rc;
+
+    dirSrc = skinSourceOpen(fixture);
+    if (dirSrc == NULL) {
+        UT_FAIL("fixture missing or unreadable: %s", fixture);
+    }
+
+    skinSourceReadIni(dirSrc, &info);
+    rc = checkIni(&info, "directory");
+    if (rc != 0) {
+        skinSourceClose(dirSrc);
+        return rc;
+    }
+
+    if (!skinSourceExists(dirSrc, "tank_self_00.png") ||
+        !skinSourceExists(dirSrc, "sounds/hit_tank_far.wav") ||
+        !skinSourceExists(dirSrc, "bubbles.wav")) {
+        skinSourceClose(dirSrc);
+        UT_FAIL("directory: an expected name is missing from the index");
+    }
+    if (skinSourceExists(dirSrc, "not_in_this_skin.png")) {
+        skinSourceClose(dirSrc);
+        UT_FAIL("directory: a name that isn't there resolved");
+    }
+
+    if (!skinSourceRead(dirSrc, "tank_self_00.png", &png, &pngLen)) {
+        skinSourceClose(dirSrc);
+        UT_FAIL("directory: reading tank_self_00.png failed");
+    }
+    if (pngLen == 0) {
+        SDL_free(png);
+        skinSourceClose(dirSrc);
+        UT_FAIL("directory: tank_self_00.png read as empty");
+    }
+    /* SDL_LoadFile's contract, which the zip arm has to match. */
+    if (((const unsigned char *)png)[pngLen] != '\0') {
+        SDL_free(png);
+        skinSourceClose(dirSrc);
+        UT_FAIL("directory: read buffer is not NUL-terminated at [len]");
+    }
+    skinSourceClose(dirSrc);
+
+    if (!skinSourceZipDirectory(fixture, FLAT_ZIP, NULL)) {
+        SDL_free(png);
+        UT_FAIL("skinSourceZipDirectory('%s', '%s', NULL) failed",
+                fixture, FLAT_ZIP);
+    }
+    if (!skinSourceZipDirectory(fixture, WRAPPED_ZIP, "basic")) {
+        SDL_free(png);
+        UT_FAIL("skinSourceZipDirectory('%s', '%s', \"basic\") failed",
+                fixture, WRAPPED_ZIP);
+    }
+
+    rc = checkArchive(FLAT_ZIP, "flat zip",
+                      (const unsigned char *)png, pngLen);
+    if (rc == 0) {
+        rc = checkArchive(WRAPPED_ZIP, "wrapped zip",
+                          (const unsigned char *)png, pngLen);
+    }
+
+    SDL_free(png);
+    return rc;
+}
+
+int run_skin_source_dir_and_zip(void) {
+    const char *dir = getenv("WB_SKINS_FIXTURE_DIR");
+    char fixture[512];
+    int rc;
+
+    if (dir == NULL || dir[0] == '\0') dir = WB_SKINS_FIXTURE_DIR;
+    snprintf(fixture, sizeof(fixture), "%s/basic", dir);
+
+    rc = checkSkinSources(fixture);
+
+    remove(FLAT_ZIP);
+    remove(WRAPPED_ZIP);
+    return rc;
+}

@@ -1021,6 +1021,9 @@ int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
 
+/* Skin asset reads out of a directory vs a zip (test_skin_source.c). */
+int run_skin_source_dir_and_zip(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */
