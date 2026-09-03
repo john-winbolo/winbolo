@@ -32,7 +32,7 @@
 #ifndef OVERVIEW_TYPES_H
 #define OVERVIEW_TYPES_H
 
-#include "types.h"          /* MAP_ARRAY_SIZE, MAX_PILLS */
+#include "types.h"          /* MAP_ARRAY_SIZE, MAX_PILLS, MAX_BASES, MAX_TANKS */
 #include "viewport_types.h" /* MAIN_SCREEN_SIZE_X */
 
 #define OVERVIEW_UNSEEN      0xFF   /* tile[] sentinel; the per-square calculator
@@ -40,14 +40,20 @@
 #define OVERVIEW_F_MINE      0x01   /* mine was visible on the square when last seen */
 #define OVERVIEW_F_LIVE      0x02   /* inside a live region on the latest update */
 
-/* The tank region is the full scroll envelope of the main view; the pill
- * region is what pill view can reach. */
+/* The tank region is the full scroll envelope of the main view; a base or an
+ * allied tank is watched through the same block its own kind of view reaches,
+ * so a base takes the pill block and an ally the tank one. */
 #define OVERVIEW_TANK_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
 #define OVERVIEW_PILL_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
-#define OVERVIEW_MAX_REGIONS (1 + MAX_PILLS)
+#define OVERVIEW_MAX_REGIONS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)
 
-/* Inclusive on all four edges, clamped to 0..255. */
-typedef struct OverviewRect { int left, top, right, bottom; } OverviewRect;
+/* Inclusive on all four edges, clamped to 0..255. alpha is 255 for a region
+ * the player holds outright and ramps down over the last VIEW_DECAY_FADE_SECS
+ * of a decay window, reaching 0 as the window runs out. */
+typedef struct OverviewRect {
+    int  left, top, right, bottom;
+    BYTE alpha;
+} OverviewRect;
 
 typedef struct OverviewMap {
     BYTE         tile[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] tilenum index as last seen */
@@ -63,6 +69,8 @@ typedef struct OverviewMap {
     BYTE         lastTankMX, lastTankMY;                 /* where the tank last had a live block */
     bool         haveLastTank;                           /* whether the two above mean anything yet */
     bool         pillWasLive[MAX_PILLS];                 /* pill i had a region last update */
+    bool         baseWasLive[MAX_BASES];                 /* base i had a region last update */
+    bool         allyWasLive[MAX_TANKS];                 /* player i's tank had a region last update */
     bool         pillWasInTank[MAX_PILLS];               /* pill i was being carried last update */
     unsigned     generation;                             /* +1 per update that changed anything */
     unsigned     seenCount;                              /* squares with tile != OVERVIEW_UNSEEN */

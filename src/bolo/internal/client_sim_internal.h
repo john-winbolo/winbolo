@@ -321,11 +321,23 @@ struct ClientSim {
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
-    /* Server visibility rules, indexed by ViewCategory. Raw mirror of
-     * the lobby-settings event — a payload that predates the fields
-     * leaves them at zero (viewPolicyAlways / 0 seconds). */
+    /* Server visibility rules, indexed by ViewCategory. Raw mirror of the
+     * lobby-settings event; until one lands these hold the same three a
+     * server starts with (clientSimCreate), so what the overview draws
+     * before the settings arrive matches what the server is sending. */
     ViewPolicy       viewPolicy[VIEW_CATEGORY_COUNT];
     uint16_t         viewDecaySecs[VIEW_CATEGORY_COUNT];
+    /* The client's own copy of the proximity clocks a viewPolicyDecay
+     * category runs on, for the local player as the viewer. The server keeps
+     * the same clocks and they are what decides which rects it sends; these
+     * are display only — what the overview may draw a block round, and how
+     * bright, with the data that has already arrived. Same convention as the
+     * server's: 0 means the player has never been near that item, so a stamp
+     * is never 0. Cleared with the rest of the per-round view state. */
+    uint32_t         viewDecayTick;              /* display ticks this round */
+    uint32_t         pillNearTick[MAX_PILLS];
+    uint32_t         baseNearTick[MAX_BASES];
+    uint32_t         allyNearTick[MAX_TANKS];
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
     bool             lobbyAvailable;    /* Server runs a lobby (CTRL_LOBBY_SETTINGS
                                          * inLobby). False on -nolobby/-maprotate;
@@ -667,6 +679,36 @@ void                    clientSimSetConnectErrorReason(ClientSim *cs, const char
  * this turns that into the "is it alive" input the ally-view helpers in
  * players.c take. The local slot is never set. */
 PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
+
+/* ── Decay view clocks ───────────────────────────────────────────────
+ * The clocks above run on the display tick, which is the 20ms game tick, so a
+ * decay window in seconds converts at GAME_NUMGAMETICKS_SEC. The server's own
+ * clocks run on its 10ms tick and convert at GAME_NUMTOTALTICKS_SEC; both come
+ * out as the same stretch of real time. */
+#define CLIENT_VIEW_DECAY_TICKS_SEC GAME_NUMGAMETICKS_SEC
+
+/* Advances the clock and re-stamps every item the local tank is within
+ * VIEW_DECAY_NEAR_TILES of, for the categories on viewPolicyDecay. Proximity
+ * and nothing else: alliance, armour and the rest are the region build's
+ * business, and an item can change hands long after the player drove past it.
+ * Runs once per display tick, before the overview reads the clocks. */
+void                    clientSimViewDecayTick(ClientSim *cs);
+
+/* Clears the clocks back to "never been near anything". Called wherever the
+ * round's view state is reset. */
+void                    clientSimResetViewDecay(ClientSim *cs);
+
+/* TRUE when the camera is parked on an item whose category is on
+ * viewPolicyDecay and whose clock has run out. The server has already stopped
+ * sending that item's squares, so the view has nothing left to show. */
+bool                    clientSimViewDecayExpired(const ClientSim *cs);
+
+/* Fills the view rules, clocks and camera state the overview's region build
+ * takes. Declared here rather than reached through overview_map.h so this
+ * header stays clear of the overview module. */
+struct OverviewViewInputs;
+void                    clientSimFillOverviewViewInputs(const ClientSim *cs,
+                                                        struct OverviewViewInputs *in);
 
 /* ── Render-only error smoothing ─────────────────────────────────────
  * Reconciliation corrections are deposited into the per-axis render

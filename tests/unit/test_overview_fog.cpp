@@ -41,7 +41,7 @@ static int fogGuardIntact(void) {
 /* A live square is clear, ground well past the ramp is fully fogged, and the
  * region's own edge — the square the fade starts from — is clear too. */
 static int fog_live_is_clear_and_far_is_fogged(void) {
-    OverviewRect live = { 100, 100, 120, 120 };
+    OverviewRect live = { 100, 100, 120, 120, 255 };
 
     fogBuild(&live, 1);
 
@@ -62,7 +62,7 @@ static int fog_live_is_clear_and_far_is_fogged(void) {
  * for, since a step from clear to full in one square is the hard edge it
  * replaces. */
 static int fog_ramps_out_of_the_region(void) {
-    OverviewRect live = { 100, 100, 120, 120 };
+    OverviewRect live = { 100, 100, 120, 120, 255 };
 
     fogBuild(&live, 1);
 
@@ -101,7 +101,7 @@ static int fog_ramps_out_of_the_region(void) {
  * from an edge, so it is darker — which is what stops the lit area coming to
  * a square point at every corner. */
 static int fog_corners_are_rounded(void) {
-    OverviewRect live = { 100, 100, 120, 120 };
+    OverviewRect live = { 100, 100, 120, 120, 255 };
 
     fogBuild(&live, 1);
 
@@ -118,7 +118,8 @@ static int fog_corners_are_rounded(void) {
  * brightest answer has to win. A square another region has live must come out
  * clear however deep in this one's ramp it sits. */
 static int fog_overlapping_regions_take_the_brightest(void) {
-    OverviewRect live[2] = { { 100, 100, 120, 120 }, { 118, 118, 130, 130 } };
+    OverviewRect live[2] = { { 100, 100, 120, 120, 255 },
+                             { 118, 118, 130, 130, 255 } };
 
     fogBuild(live, ARRAY_LEN(live));
 
@@ -131,7 +132,8 @@ static int fog_overlapping_regions_take_the_brightest(void) {
 
     /* Between two regions, near either one is brighter than midway between
      * them: each square takes its distance from whichever is closer. */
-    OverviewRect pair[2] = { { 100, 100, 120, 120 }, { 124, 100, 140, 120 } };
+    OverviewRect pair[2] = { { 100, 100, 120, 120, 255 },
+                             { 124, 100, 140, 120, 255 } };
     fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(121, 110) == fogAt(123, 110),
@@ -150,10 +152,10 @@ static int fog_overlapping_regions_take_the_brightest(void) {
  * the end of the mask getting there. */
 static int fog_regions_clamp_to_the_map(void) {
     static const OverviewRect kCorners[] = {
-        {   0,   0,  10,  10 },
-        { 245, 245, 255, 255 },
-        {   0, 245,  10, 255 },
-        { 245,   0, 255,  10 }
+        {   0,   0,  10,  10, 255 },
+        { 245, 245, 255, 255, 255 },
+        {   0, 245,  10, 255, 255 },
+        { 245,   0, 255,  10, 255 }
     };
 
     for (int i = 0; i < ARRAY_LEN(kCorners); i++) {
@@ -176,7 +178,7 @@ static int fog_regions_clamp_to_the_map(void) {
 /* No regions at all is a real state — a dead tank holding no block and no
  * pill to see through — and fogs the whole map rather than clearing it. */
 static int fog_no_regions_fogs_the_map(void) {
-    OverviewRect live = { 100, 100, 120, 120 };
+    OverviewRect live = { 100, 100, 120, 120, 255 };
 
     fogBuild(&live, 0);
     UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,

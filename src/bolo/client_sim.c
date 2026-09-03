@@ -332,6 +332,15 @@ bool clientSimCreate(ClientSim *cs) {
   cs->networkGameType = netNone;
   cs->netStat = netRunning;
 
+  /* Visibility rules, until the server's own arrive with the lobby settings.
+   * The three a server starts with (server_sim.c), so a display tick before
+   * they land draws what the server is actually sending rather than a block
+   * round every allied base. The memset above would leave every category on
+   * viewPolicyAlways. */
+  cs->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+  cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
+  cs->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));
   cs->countdownSeconds = 0;
@@ -700,6 +709,186 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
   }
 }
 
+/* Chebyshev distance in map squares — the shape of the proximity test, the
+ * same one the server stamps its own clocks on. */
+static bool viewDecayNearSquare(int aMX, int aMY, int bMX, int bMY) {
+  int dx; /* Squares apart across */
+  int dy; /* Squares apart down */
+
+  dx = aMX - bMX;
+  dy = aMY - bMY;
+  if (dx < 0) {
+    dx = -dx;
+  }
+  if (dy < 0) {
+    dy = -dy;
+  }
+  return dx <= VIEW_DECAY_NEAR_TILES && dy <= VIEW_DECAY_NEAR_TILES;
+}
+
+void clientSimResetViewDecay(ClientSim *cs) {
+  if (cs == NULL) {
+    return;
+  }
+  cs->viewDecayTick = 0;
+  memset(cs->pillNearTick, 0, sizeof(cs->pillNearTick));
+  memset(cs->baseNearTick, 0, sizeof(cs->baseNearTick));
+  memset(cs->allyNearTick, 0, sizeof(cs->allyNearTick));
+}
+
+void clientSimViewDecayTick(ClientSim *cs) {
+  GameSim *gs;      /* The client's own world */
+  uint32_t stamp;   /* What a fresh clock reads */
+  bool pillDecay;   /* Is this category on viewPolicyDecay */
+  bool baseDecay;   /* Is this category on viewPolicyDecay */
+  bool allyDecay;   /* Is this category on viewPolicyDecay */
+  BYTE mx;          /* Where our tank is */
+  BYTE my;          /* Where our tank is */
+  BYTE num;         /* Items of the kind being walked */
+  BYTE i;           /* Looping variable */
+
+  if (cs == NULL) {
+    return;
+  }
+
+  /* The clock runs whatever the player is doing, the way the server's tick
+   * does: a window has to be able to run out while its owner is dead or
+   * standing still, or dying would freeze what they can see. Advanced before
+   * it is read, so a stamp is never the 0 that means never. */
+  cs->viewDecayTick++;
+
+  pillDecay = (cs->viewPolicy[viewCategoryPill] == viewPolicyDecay);
+  baseDecay = (cs->viewPolicy[viewCategoryBase] == viewPolicyDecay);
+  allyDecay = (cs->viewPolicy[viewCategoryAlly] == viewPolicyDecay);
+  if (pillDecay == FALSE && baseDecay == FALSE && allyDecay == FALSE) {
+    return;
+  }
+
+  /* A tank waiting to respawn has no position to be near anything from — it
+   * reads as the map origin — so nothing is stamped while it is dead, which
+   * is what the server does with the same players. */
+  mx = 0;
+  my = 0;
+  if (clientSimGetMyTankMapPos(cs, &mx, &my) != TRUE) {
+    return;
+  }
+
+  gs = &cs->sim;
+  stamp = cs->viewDecayTick;
+
+  if (pillDecay == TRUE && gs->pb != NULL) {
+    num = pillsGetNumPills(&gs->pb);
+    for (i = 0; i < num; i++) {
+      if (viewDecayNearSquare(mx, my, gs->pb->item[i].x, gs->pb->item[i].y) ==
+          TRUE) {
+        cs->pillNearTick[i] = stamp;
+      }
+    }
+  }
+  if (baseDecay == TRUE && gs->bs != NULL) {
+    num = basesGetNumBases(&gs->bs);
+    for (i = 0; i < num; i++) {
+      if (viewDecayNearSquare(mx, my, gs->bs->item[i].x, gs->bs->item[i].y) ==
+          TRUE) {
+        cs->baseNearTick[i] = stamp;
+      }
+    }
+  }
+  if (allyDecay == TRUE) {
+    /* Everybody else's last known square, allied or not — the same square the
+     * ally view reads, and the only one the client has for a remote tank. */
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (i == cs->myPlayerNum) {
+        continue;
+      }
+      if (playersIsInUse(&gs->plyrs, i) != TRUE) {
+        continue;
+      }
+      if (viewDecayNearSquare(mx, my, gs->plyrs->item[i].mapX,
+                              gs->plyrs->item[i].mapY) == TRUE) {
+        cs->allyNearTick[i] = stamp;
+      }
+    }
+  }
+}
+
+/* How many clocks a category keeps, so a view target that has gone out of
+ * range is never used to index one. */
+static BYTE viewDecayCategoryCount(ViewCategory cat) {
+  switch (cat) {
+  case viewCategoryPill: return MAX_PILLS;
+  case viewCategoryBase: return MAX_BASES;
+  default:               return MAX_TANKS;
+  }
+}
+
+bool clientSimViewDecayExpired(const ClientSim *cs) {
+  OverviewViewInputs in;  /* The rules and clocks the window test reads */
+  ViewCategory cat;       /* Which category the camera is parked on */
+  const uint32_t *clocks; /* That category's clocks */
+  BYTE target;            /* The item being watched */
+
+  if (cs == NULL) {
+    return FALSE;
+  }
+  switch (cs->viewport.viewKind) {
+  case VIEW_KIND_PILL:
+    cat = viewCategoryPill;
+    clocks = cs->pillNearTick;
+    break;
+  case VIEW_KIND_BASE:
+    cat = viewCategoryBase;
+    clocks = cs->baseNearTick;
+    break;
+  case VIEW_KIND_ALLY:
+    cat = viewCategoryAlly;
+    clocks = cs->allyNearTick;
+    break;
+  default:
+    return FALSE; /* the tank view, and a kind this client does not know */
+  }
+
+  if (cs->viewPolicy[cat] != viewPolicyDecay) {
+    return FALSE;
+  }
+  target = cs->viewport.viewTarget;
+  if (target >= viewDecayCategoryCount(cat)) {
+    /* Nothing to read a clock from. The item-view upkeep is what drops a
+     * target this far gone; claiming it has expired here would only say the
+     * same thing in a worse place. */
+    return FALSE;
+  }
+
+  clientSimFillOverviewViewInputs(cs, &in);
+  return overviewViewDecayLive(&in, cat, clocks[target], NULL) == FALSE;
+}
+
+void clientSimFillOverviewViewInputs(const ClientSim *cs,
+                                     OverviewViewInputs *in) {
+  int cat; /* Looping variable */
+
+  if (in == NULL) {
+    return;
+  }
+  overviewViewInputsDefaults(in);
+  if (cs == NULL) {
+    return;
+  }
+
+  for (cat = 0; cat < VIEW_CATEGORY_COUNT; cat++) {
+    in->policy[cat] = cs->viewPolicy[cat];
+    in->decaySecs[cat] = cs->viewDecaySecs[cat];
+  }
+  in->pillNearTick = cs->pillNearTick;
+  in->baseNearTick = cs->baseNearTick;
+  in->allyNearTick = cs->allyNearTick;
+  in->nowTick = cs->viewDecayTick;
+  in->ticksPerSec = CLIENT_VIEW_DECAY_TICKS_SEC;
+  in->allyViewable = clientSimAllyViewMask(cs);
+  in->viewKind = cs->viewport.viewKind;
+  in->viewTarget = cs->viewport.viewTarget;
+}
+
 /* Feeds the overview its per-tick view of the world. Reads the local tank's
  * map square, or reports that there isn't one. The two go together: a tank
  * waiting to respawn is still in its slot, but its position is deliberately
@@ -715,6 +904,7 @@ static void overviewMapTick(ClientSim *cs) {
   bool inSlot = !haveTank && MY_TANK(cs) != NULL;
   int deathWait = inSlot ? tankGetDeathWait(&MY_TANK(cs)) : 0;
   int lastDeath = inSlot ? tankGetLastTankDeath(&MY_TANK(cs)) : 0;
+  OverviewViewInputs in;
 
   /* Armour goes over full the tick the tank takes the hit; the wait is written
    * by the update after it. Reporting a full wait across that gap holds the
@@ -729,7 +919,8 @@ static void overviewMapTick(ClientSim *cs) {
     overviewMapSeedAll(&cs->overview, &cs->sim, cs->myPlayerNum);
     cs->overviewSeedPending = FALSE;
   }
-  overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, haveTank,
+  clientSimFillOverviewViewInputs(cs, &in);
+  overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, &in, haveTank,
                     deathWait, lastDeath, mx, my);
 }
 
@@ -737,6 +928,9 @@ void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
   if (cs == NULL) {
     return;
   }
+  /* Ahead of the overview, which reads the clocks this advances to decide
+   * which blocks it may draw and how bright. */
+  clientSimViewDecayTick(cs);
   /* The overview memory is the one consumer that needs the no-tank tick:
    * that is when a player who has left has their regions given a last stamp
    * and a spectating player keeps seeing what they saw. */
@@ -1946,9 +2140,12 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->basePassableSmoothSnapshots = 0;
 
   /* The server resets every client's view state on the round reset too, so
-   * report ours again once the next round is running. */
+   * report ours again once the next round is running, and start the decay
+   * clocks over — where the player drove last round earns them nothing in
+   * this one. */
   viewportSetTankView(clientSimViewportMut(cs));
   clientSimResetViewStateReport(cs);
+  clientSimResetViewDecay(cs);
 }
 
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,
@@ -1973,8 +2170,10 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
   if (initViewport) {
     viewportInit(clientSimViewportMut(cs));
     /* viewportInit parks the camera back on the tank; say so to the server
-     * once the next display tick runs. */
+     * once the next display tick runs. The decay clocks go with it: the items
+     * they were counting for belong to the map being replaced. */
     clientSimResetViewStateReport(cs);
+    clientSimResetViewDecay(cs);
     /* New map, so nothing seen on the old one still means anything. The
      * next overview tick seeds the memory from the map just installed —
      * the whole map dimmed, live regions bright over it. The resync path

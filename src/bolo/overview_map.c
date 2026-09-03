@@ -19,10 +19,22 @@
  *  Keeps an OverviewMap in step with the sim. Every update
  *  works out which squares the player can see right now -
  *  the block their tank could scroll over plus a block round
- *  each pillbox they can view through - and rewrites those
+ *  each item they can view through - and rewrites those
  *  squares from the current map. Squares that have dropped
  *  out of that set keep the tile they last carried, so what
  *  the player has walked past stays as they left it.
+ *
+ *  Which items those are is the server's business: each of
+ *  pillboxes, bases and allied tanks is on a visibility
+ *  policy, and the client is told what they are. A category
+ *  set to always gives every item of its kind the player
+ *  could watch a block; key gives one block, on whatever the
+ *  player is watching this moment; decay gives a block to
+ *  the items the player has driven near recently, fading out
+ *  as each clock runs down; and off gives none. The server
+ *  culls the data itself on the same rules - these blocks
+ *  only say what the client is allowed to draw with what it
+ *  has been sent.
  *
  *  Two kinds of square are held current wherever they are,
  *  because the status panels report both live and a frozen
@@ -59,14 +71,20 @@
 #include "bases.h"
 #include "game_sim.h"
 #include "pillbox.h"
+#include "players.h"
 #include "viewport.h"
 
-/* An inclusive square block centred on (cx,cy), trimmed to the map. The
- * centre and half-width are ints so a block over the top or left edge
- * clamps instead of wrapping through zero. */
+/* An inclusive square block centred on (cx,cy), trimmed to the map, live
+ * outright. The centre and half-width are ints so a block over the top or left
+ * edge clamps instead of wrapping through zero. Zeroed first so the whole
+ * object is written: the frontend compares stored rects byte for byte to
+ * decide it can reuse a fog mask, and padding it never sees would otherwise
+ * report a change on a tick where nothing moved. */
 static OverviewRect overviewRectAround(int cx, int cy, int half) {
   OverviewRect r; /* Rect to return */
 
+  memset(&r, 0, sizeof(r));
+  r.alpha = 255;
   r.left = cx - half;
   r.top = cy - half;
   r.right = cx + half;
@@ -164,7 +182,10 @@ static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r,
   return changed;
 }
 
-/* TRUE when the two region sets are not the same rects in the same order. */
+/* TRUE when the two region sets are not the same rects in the same order.
+ * Alpha counts: a region a tick further into its fade is a region the map has
+ * to be redrawn for, so a tick that only moves the fade still reports a
+ * change. */
 static bool overviewRegionsDiffer(const OverviewRect *a, int aCount,
                                   const OverviewRect *b, int bCount) {
   int i; /* Looping variable */
@@ -174,7 +195,8 @@ static bool overviewRegionsDiffer(const OverviewRect *a, int aCount,
   }
   for (i = 0; i < aCount; i++) {
     if (a[i].left != b[i].left || a[i].top != b[i].top ||
-        a[i].right != b[i].right || a[i].bottom != b[i].bottom) {
+        a[i].right != b[i].right || a[i].bottom != b[i].bottom ||
+        a[i].alpha != b[i].alpha) {
       return TRUE;
     }
   }
@@ -197,6 +219,8 @@ void overviewMapReset(OverviewMap *om) {
   om->lastTankMY = 0;
   om->haveLastTank = FALSE;
   memset(om->pillWasLive, 0, sizeof(om->pillWasLive));
+  memset(om->baseWasLive, 0, sizeof(om->baseWasLive));
+  memset(om->allyWasLive, 0, sizeof(om->allyWasLive));
   memset(om->pillWasInTank, 0, sizeof(om->pillWasInTank));
   om->generation = 0;
   om->seenCount = 0;
@@ -262,15 +286,128 @@ bool overviewMapDeathStatic(int deathWait) {
   return deathWait > 0 && deathWait <= OVERVIEW_DEATH_STATIC_TICKS;
 }
 
+void overviewViewInputsDefaults(OverviewViewInputs *in) {
+  if (in == NULL) {
+    return;
+  }
+
+  memset(in, 0, sizeof(*in));
+  in->policy[viewCategoryPill] = viewPolicyAlways;
+  in->policy[viewCategoryBase] = viewPolicyOff;
+  in->policy[viewCategoryAlly] = viewPolicyAlways;
+  in->viewKind = VIEW_KIND_TANK;
+}
+
+/* One item's proximity clock, or 0 for a caller that keeps no clocks. */
+static uint32_t overviewNearTick(const uint32_t *clocks, int idx) {
+  return (clocks == NULL) ? 0u : clocks[idx];
+}
+
+bool overviewViewDecayLive(const OverviewViewInputs *in, ViewCategory cat,
+                           uint32_t nearTick, BYTE *outAlpha) {
+  uint32_t window;    /* Ticks a stamp stays good for */
+  uint32_t fade;      /* Ticks of that window the fade takes */
+  uint32_t age;       /* Ticks since the stamp */
+  uint32_t remaining; /* Ticks of the window left */
+  BYTE     ignored;   /* Somewhere to put the alpha a caller does not want */
+
+  if (outAlpha == NULL) {
+    outAlpha = &ignored;
+  }
+  *outAlpha = 255;
+  if (in == NULL || nearTick == 0 || in->ticksPerSec == 0) {
+    return FALSE;
+  }
+  window = (uint32_t)in->decaySecs[cat] * in->ticksPerSec;
+  age = in->nowTick - nearTick;
+  if (age > window) {
+    return FALSE;
+  }
+
+  remaining = window - age;
+  fade = (uint32_t)VIEW_DECAY_FADE_SECS * in->ticksPerSec;
+  if (remaining < fade) {
+    *outAlpha = (BYTE)((255u * remaining + fade - 1u) / fade);
+  }
+  return TRUE;
+}
+
+/* Whether an item of this category earns a region this update, and how bright
+ * it is. qualifies is the item-view test for its kind — the policy only ever
+ * takes items away from that, never adds one. index is the pill or base index
+ * or the ally's player number, which viewPolicyKey compares against what the
+ * player is watching. */
+static bool overviewItemLive(const OverviewViewInputs *in, ViewCategory cat,
+                             bool qualifies, uint8_t kind, BYTE index,
+                             const uint32_t *clocks, BYTE *outAlpha) {
+  *outAlpha = 255;
+  if (in == NULL || qualifies == FALSE) {
+    return FALSE;
+  }
+
+  switch (in->policy[cat]) {
+  case viewPolicyAlways:
+    return TRUE;
+  case viewPolicyKey:
+    return in->viewKind == kind && in->viewTarget == index;
+  case viewPolicyDecay:
+    return overviewViewDecayLive(in, cat, overviewNearTick(clocks, (int)index),
+                                 outAlpha);
+  default: /* viewPolicyOff, and anything this client does not know */
+    return FALSE;
+  }
+}
+
+/* The three per-category predicates the build and the farewell replay share.
+ * Both have to reach the same answer for the same item, or a stale rect would
+ * be paired with the wrong region. */
+static bool overviewPillLive(struct GameSim *sim, BYTE myPlayerNum,
+                             const OverviewViewInputs *in, BYTE i,
+                             BYTE *outAlpha) {
+  bool canView = pillsCanView(sim, &sim->pb, i, myPlayerNum);
+
+  return overviewItemLive(in, viewCategoryPill, canView, VIEW_KIND_PILL, i,
+                          in == NULL ? NULL : in->pillNearTick, outAlpha);
+}
+
+static bool overviewBaseLive(struct GameSim *sim, BYTE myPlayerNum,
+                             const OverviewViewInputs *in, BYTE i,
+                             BYTE *outAlpha) {
+  bool canView = basesCanView(sim, &sim->bs, i, myPlayerNum);
+
+  return overviewItemLive(in, viewCategoryBase, canView, VIEW_KIND_BASE, i,
+                          in == NULL ? NULL : in->baseNearTick, outAlpha);
+}
+
+/* playersCanAllyView answers for sim->viewPlayer, which is the local player on
+ * a client. Our own slot is turned away here as well, so a caller whose
+ * viewPlayer has not been set still never watches itself. */
+static bool overviewAllyLive(struct GameSim *sim, BYTE myPlayerNum,
+                             const OverviewViewInputs *in, BYTE t,
+                             BYTE *outAlpha) {
+  bool canView;
+
+  *outAlpha = 255;
+  if (in == NULL || t == myPlayerNum) {
+    return FALSE;
+  }
+  canView = playersCanAllyView(sim, in->allyViewable, t);
+  return overviewItemLive(in, viewCategoryAlly, canView, VIEW_KIND_ALLY, t,
+                          in->allyNearTick, outAlpha);
+}
+
 int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
-                            bool haveTank, BYTE tankMX, BYTE tankMY,
-                            int tankHalf, OverviewRect *out, int maxOut) {
+                            const OverviewViewInputs *in, bool haveTank,
+                            BYTE tankMX, BYTE tankMY, int tankHalf,
+                            OverviewRect *out, int maxOut) {
   int count;     /* Rects written so far */
+  BYTE alpha;    /* How bright the item under test is */
   BYTE numPills; /* Pills on the map */
+  BYTE numBases; /* Bases on the map */
   BYTE i;        /* Looping variable */
 
   count = 0;
-  if (sim == NULL || out == NULL || maxOut <= 0) {
+  if (sim == NULL || in == NULL || out == NULL || maxOut <= 0) {
     return 0;
   }
 
@@ -281,10 +418,35 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
 
   numPills = pillsGetNumPills(&sim->pb);
   for (i = 0; i < numPills && count < maxOut; i++) {
-    if (pillsCanView(sim, &sim->pb, i, myPlayerNum) == TRUE) {
+    if (overviewPillLive(sim, myPlayerNum, in, i, &alpha) == TRUE) {
       out[count] = overviewRectAround((int)sim->pb->item[i].x,
                                       (int)sim->pb->item[i].y,
                                       OVERVIEW_PILL_HALF);
+      out[count].alpha = alpha;
+      count++;
+    }
+  }
+
+  numBases = basesGetNumBases(&sim->bs);
+  for (i = 0; i < numBases && count < maxOut; i++) {
+    if (overviewBaseLive(sim, myPlayerNum, in, i, &alpha) == TRUE) {
+      out[count] = overviewRectAround((int)sim->bs->item[i].x,
+                                      (int)sim->bs->item[i].y,
+                                      OVERVIEW_PILL_HALF);
+      out[count].alpha = alpha;
+      count++;
+    }
+  }
+
+  /* An allied tank is watched at the square it was last seen on, which is the
+   * one the ally view centres on — the client holds no tank object for anybody
+   * but itself, so the players struct is the only position there is. */
+  for (i = 0; i < MAX_TANKS && count < maxOut; i++) {
+    if (overviewAllyLive(sim, myPlayerNum, in, i, &alpha) == TRUE) {
+      out[count] = overviewRectAround((int)sim->plyrs->item[i].mapX,
+                                      (int)sim->plyrs->item[i].mapY,
+                                      OVERVIEW_TANK_HALF);
+      out[count].alpha = alpha;
       count++;
     }
   }
@@ -293,13 +455,16 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
 }
 
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
-                       bool haveTank, int tankDeathWait, int tankLastDeath,
+                       const OverviewViewInputs *in, bool haveTank,
+                       int tankDeathWait, int tankLastDeath,
                        BYTE tankMX, BYTE tankMY) {
   bool tankLive; /* Is there a tank region this update */
   BYTE useMX;    /* Centre of that region */
   BYTE useMY;    /* Centre of that region */
   int tankHalf;  /* Half-width of that region */
   bool changed;  /* Did anything move this update */
+  BYTE alpha;    /* Where the predicates report brightness; only whether
+                    there is a region at all is wanted here */
   BYTE numPills; /* Pills on the map */
   BYTE numBases; /* Bases on the map */
   bool nowInTank;      /* Is this pill being carried this update */
@@ -307,7 +472,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   int idx;       /* Which prevLive rect the replay is up to */
   int i;         /* Looping variable */
 
-  if (om == NULL || sim == NULL) {
+  if (om == NULL || sim == NULL || in == NULL) {
     return;
   }
 
@@ -340,19 +505,21 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   memcpy(om->prevLive, om->live, sizeof(om->prevLive));
   om->prevLiveCount = om->liveCount;
 
-  om->liveCount = overviewMapBuildRegions(sim, myPlayerNum, tankLive, useMX,
+  om->liveCount = overviewMapBuildRegions(sim, myPlayerNum, in, tankLive, useMX,
                                           useMY, tankHalf, om->live,
                                           OVERVIEW_MAX_REGIONS);
   changed = overviewRegionsDiffer(om->live, om->liveCount, om->prevLive,
                                   om->prevLiveCount);
 
   /* Farewell stamp. A region that has just stopped being live gets one last
-   * write from the state as it is now, so an allied pill that has died
-   * freezes dead and one that has been captured freezes in the captor's
-   * colour rather than a tick stale. overviewMapBuildRegions emits the tank
-   * rect first and then pills in ascending index, so walking the same order
-   * over last update's owners pairs each stale rect with the region that
-   * produced it. */
+   * write from the state as it is now, so an allied pill that has died freezes
+   * dead, one that has been captured freezes in the captor's colour, a base
+   * that has changed hands freezes in the new one, and an ally that has died
+   * or left freezes on the ground they were last standing on rather than a
+   * tick stale. A decay clock running out ends a region the same way.
+   * overviewMapBuildRegions emits the tank rect first, then pills, bases and
+   * allied tanks each in ascending index, so walking the same order over last
+   * update's owners pairs each stale rect with the region that produced it. */
   idx = 0;
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
@@ -368,7 +535,33 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
       continue;
     }
     if (idx < om->prevLiveCount &&
-        pillsCanView(sim, &sim->pb, (BYTE)i, myPlayerNum) == FALSE) {
+        overviewPillLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
+          TRUE) {
+        changed = TRUE;
+      }
+    }
+    idx++;
+  }
+  for (i = 0; i < MAX_BASES; i++) {
+    if (om->baseWasLive[i] == FALSE) {
+      continue;
+    }
+    if (idx < om->prevLiveCount &&
+        overviewBaseLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
+          TRUE) {
+        changed = TRUE;
+      }
+    }
+    idx++;
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (om->allyWasLive[i] == FALSE) {
+      continue;
+    }
+    if (idx < om->prevLiveCount &&
+        overviewAllyLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
           TRUE) {
         changed = TRUE;
@@ -444,14 +637,21 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
 
+  /* What produced a region this update, for the replay above to walk next
+   * time. Recorded from the same predicates the build just used, so the two
+   * cannot come apart. */
   om->tankWasLive = tankLive;
-  numPills = pillsGetNumPills(&sim->pb);
   for (i = 0; i < MAX_PILLS; i++) {
-    if (i < (int)numPills) {
-      om->pillWasLive[i] = pillsCanView(sim, &sim->pb, (BYTE)i, myPlayerNum);
-    } else {
-      om->pillWasLive[i] = FALSE;
-    }
+    om->pillWasLive[i] = overviewPillLive(sim, myPlayerNum, in, (BYTE)i,
+                                          &alpha);
+  }
+  for (i = 0; i < MAX_BASES; i++) {
+    om->baseWasLive[i] = overviewBaseLive(sim, myPlayerNum, in, (BYTE)i,
+                                          &alpha);
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    om->allyWasLive[i] = overviewAllyLive(sim, myPlayerNum, in, (BYTE)i,
+                                          &alpha);
   }
 
   if (changed == TRUE) {

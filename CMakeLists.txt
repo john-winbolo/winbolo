@@ -3089,6 +3089,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_cycling.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
+    tests/unit/test_overview_view_policy.c
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
@@ -3784,6 +3785,11 @@ set(_unit_test_names
     overview_freeze_no_leak
     overview_pill_capture
     overview_reset
+    overview_decay_mirror
+    overview_decay_view_exit
+    overview_policy_baseline
+    overview_policy_categories
+    overview_policy_decay
     overview_loopback
     overview_camera
     overview_fog

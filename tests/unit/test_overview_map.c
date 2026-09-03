@@ -37,6 +37,14 @@
  * leaves the block the player can see, while the player's own tank is drawn
  * wherever it is.
  *
+ * Two more drive the client's own decay clocks: a display tick stamps the
+ * items the tank is beside and only for the categories on viewPolicyDecay, an
+ * item's block appears while its clock is inside the window, fades over the
+ * end of it and freezes what it was showing once it runs out, and the clocks
+ * start over with the round. The view exit reads the same window, so an item
+ * view whose clock has run out drops back to the tank. The region build those
+ * two lean on is pinned in test_overview_view_policy.c.
+ *
  * One more covers the accessor the overview draws its own crosshair from,
  * clientSimGetGunsightPos: it declines for a hidden sight and for a tank that
  * is dead and waiting to respawn, where clientSimGetGunsightTile still answers
@@ -99,32 +107,38 @@ int run_overview_regions(void) {
     OverviewRect out[OVERVIEW_MAX_REGIONS + 1];
     int n;
 
+    /* The rules a server ships with, which is what every case here is about:
+     * pillboxes always, bases off, allied tanks always with nobody viewable.
+     * test_overview_view_policy.c is where the other policies are pinned. */
+    OverviewViewInputs in;
+    overviewViewInputsDefaults(&in);
+
     /* Tank alone, well clear of every edge: one 29x29 rect on it. */
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "tank with no pills gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
 
     /* Over the left and bottom edges the block is trimmed, not wrapped. */
-    n = overviewMapBuildRegions(gs, 0, TRUE, 3, 250, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 3, 250, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "corner tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 0, 236, 17, 255);
 
     /* A closing block is the same rect at a smaller half-width, centred where
      * it was; at nothing left it is the single square the wreck is on, and
      * past that the tank contributes no rect at all. */
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, 4, out,
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 4, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a closing block gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 96, 96, 104, 104);
 
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, 0, out,
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 0, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a closed block gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 100, 100, 100, 100);
 
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, -1, out,
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, -1, out,
                                 OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "a block that has gone gave %d regions, expected 0",
                   n);
@@ -139,50 +153,50 @@ int run_overview_regions(void) {
     gs->pb->item[0].x = 200;
     gs->pb->item[0].y = 50;
 
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "tank + own pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* An allied owner views the same as an own one. */
     gs->pb->item[0].owner = 1;
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "allied pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* A pill the player cannot view through contributes nothing: owned by
      * someone hostile, or dead, or carried in a tank. */
     gs->pb->item[0].owner = 2;
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "enemy pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].owner = 0;
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "dead pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].armour = PILLBOX_15;
     gs->pb->item[0].inTank = TRUE;
-    n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "carried pill gave %d regions, expected 1", n);
 
     /* No tank: a viewable pill still gives the player its block, and it is
      * the only rect. */
     gs->pb->item[0].inTank = FALSE;
-    n = overviewMapBuildRegions(gs, 0, FALSE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "pill without a tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 193, 43, 207, 57);
 
     /* No tank and nothing to view through: no live squares at all. */
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, FALSE, 100, 100, OVERVIEW_TANK_HALF, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 100, 100, OVERVIEW_TANK_HALF,
+                                out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "no tank and no viewable pill gave %d regions", n);
 
     /* A full map of viewable pills plus the tank wants more rects than a
@@ -205,8 +219,8 @@ int run_overview_regions(void) {
         out[maxOut].right = -1;
         out[maxOut].bottom = -1;
 
-        n = overviewMapBuildRegions(gs, 0, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                    out, maxOut);
+        n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100,
+                                    OVERVIEW_TANK_HALF, out, maxOut);
         UT_ASSERT_MSG(n == maxOut, "capped build returned %d, expected %d", n,
                       maxOut);
         ASSERT_RECT(out[maxOut], -1, -1, -1, -1);
@@ -433,6 +447,7 @@ static int overviewAwayFromEdge(BYTE mapCoord) {
 static OverviewRect overviewTestBlock(int cx, int cy, int half) {
     OverviewRect r; /* Rect to return */
 
+    r.alpha = 255;
     r.left = cx - half;
     r.top = cy - half;
     r.right = cx + half;
@@ -563,7 +578,9 @@ int run_overview_reveal(void) {
     UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
 
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
-    int n = overviewMapBuildRegions(f.gs, f.me, TRUE, f.tankMX, f.tankMY,
+    OverviewViewInputs in;
+    clientSimFillOverviewViewInputs(f.cs, &in);
+    int n = overviewMapBuildRegions(f.gs, f.me, &in, TRUE, f.tankMX, f.tankMY,
                                     OVERVIEW_TANK_HALF, expect,
                                     OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "expected the tank block and one pill block, got %d",
@@ -1421,6 +1438,315 @@ int run_overview_reset(void) {
 }
 
 /* --------------------------------------------------------------------------
+ * The client's own decay clocks, driven through the same fixture: what a
+ * display tick stamps, what the region build makes of it, and the view exit
+ * that reads the same window.
+ * -------------------------------------------------------------------------- */
+
+/* Ticks a stamp is good for under this client's rules, and the stretch of it
+ * the fade takes. */
+static uint32_t overviewDecayWindow(const ClientSim *cs, ViewCategory cat) {
+    return (uint32_t)clientSimGetViewDecaySecs(cs, cat) *
+           CLIENT_VIEW_DECAY_TICKS_SEC;
+}
+
+static uint32_t overviewDecayFade(void) {
+    return (uint32_t)VIEW_DECAY_FADE_SECS * CLIENT_VIEW_DECAY_TICKS_SEC;
+}
+
+/* The brightness of the region centred on that square, or -1 when the build
+ * gave it none. */
+static int overviewRegionAlphaAt(const OverviewMap *om, int cx, int cy,
+                                 int half) {
+    OverviewRect want = overviewTestBlock(cx, cy, half);
+    int i; /* Looping variable */
+
+    for (i = 0; i < om->liveCount; i++) {
+        if (om->live[i].left == want.left && om->live[i].top == want.top &&
+            om->live[i].right == want.right &&
+            om->live[i].bottom == want.bottom) {
+            return (int)om->live[i].alpha;
+        }
+    }
+    return -1;
+}
+
+int run_overview_decay_mirror(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "Decay");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    UT_ASSERT_MSG(basesGetNumBases(&f.gs->bs) >= 2,
+                  "this case needs two bases to move, the map has %u",
+                  (unsigned)basesGetNumBases(&f.gs->bs));
+
+    /* A base beside the tank and one a hundred squares off, for the proof that
+     * a category off viewPolicyDecay is never stamped and that a stamped one
+     * only reaches what the tank is beside. Moved before the pills are placed,
+     * so the base-free search below steps off this one too. */
+    int away = overviewAwayFromEdge(f.tankMX);
+    BYTE nearX = (BYTE)((int)f.tankMX + away * 5);
+    BYTE farX = (BYTE)((int)f.tankMX + away * 100);
+    f.gs->bs->item[0].x = (BYTE)((int)f.tankMX + away * 4);
+    f.gs->bs->item[0].y = f.tankMY;
+    f.gs->bs->item[1].x = farX;
+    f.gs->bs->item[1].y = f.tankMY;
+
+    /* Two pills of the client's own: one five squares off the tank, well
+     * inside VIEW_DECAY_NEAR_TILES, and one a hundred squares away that the
+     * player has never been near. The far one is kept off base squares — a
+     * base renders from its owner whatever sits on it, and the freeze arm
+     * below reads terrain. */
+    BYTE farY = f.tankMY;
+    int step;
+    for (step = 0; step < 16 && basesExistPos(&f.gs->bs, farX, farY) == TRUE;
+         step++) {
+        farY = (BYTE)(farY + 1);
+    }
+    UT_ASSERT_MSG(basesExistPos(&f.gs->bs, farX, farY) != TRUE,
+                  "no base-free square near %u,%u for the far pill",
+                  (unsigned)farX, (unsigned)f.tankMY);
+
+    f.gs->pb->numPills = 2;
+    f.gs->pb->item[0].owner = f.me;
+    f.gs->pb->item[0].armour = PILLBOX_15;
+    f.gs->pb->item[0].inTank = FALSE;
+    f.gs->pb->item[0].x = nearX;
+    f.gs->pb->item[0].y = f.tankMY;
+    f.gs->pb->item[1].owner = f.me;
+    f.gs->pb->item[1].armour = PILLBOX_15;
+    f.gs->pb->item[1].inTank = FALSE;
+    f.gs->pb->item[1].x = farX;
+    f.gs->pb->item[1].y = farY;
+
+    OverviewRect farRect = overviewTestBlock(farX, farY, OVERVIEW_PILL_HALF);
+    BYTE probeX = 0, probeY = 0;
+    UT_ASSERT_MSG(overviewFindTerrainSquare(f.gs, f.me, &farRect, &probeX,
+                                            &probeY) == TRUE,
+                  "no terrain-driven square in the far pill's block at %u,%u",
+                  (unsigned)farX, (unsigned)farY);
+
+    const OverviewMap *om = clientSimGetOverviewMap(f.cs);
+    UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
+
+    /* The rules the case runs under, said here rather than taken from
+     * whatever the join delivered: the shipped ones to start with, and a
+     * window long enough to have a fade inside it. */
+    f.cs->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+    f.cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
+    f.cs->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+    f.cs->viewDecaySecs[viewCategoryPill] = VIEW_DECAY_DEFAULT_SECS;
+    f.cs->viewDecaySecs[viewCategoryBase] = VIEW_DECAY_DEFAULT_SECS;
+
+    /* Nothing is on decay, so nothing has a clock worth keeping. */
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(f.cs->pillNearTick[0] == 0,
+                  "a pill was stamped at %u with no category on decay",
+                  (unsigned)f.cs->pillNearTick[0]);
+
+    /* Pills on decay: the one the tank is beside is stamped every tick, the
+     * one a hundred squares off never is. Proximity is the whole test — both
+     * are the player's own and both are alive. */
+    f.cs->viewPolicy[viewCategoryPill] = viewPolicyDecay;
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(f.cs->pillNearTick[0] == f.cs->viewDecayTick,
+                  "the pill beside the tank reads %u, expected this tick (%u)",
+                  (unsigned)f.cs->pillNearTick[0],
+                  (unsigned)f.cs->viewDecayTick);
+    UT_ASSERT_MSG(f.cs->pillNearTick[1] == 0,
+                  "the pill a hundred squares off was stamped at %u",
+                  (unsigned)f.cs->pillNearTick[1]);
+    UT_ASSERT_MSG(f.cs->baseNearTick[0] == 0,
+                  "the base beside the tank was stamped at %u while its "
+                  "category is off decay", (unsigned)f.cs->baseNearTick[0]);
+
+    /* Bases on decay as well, and the same split falls out. */
+    f.cs->viewPolicy[viewCategoryBase] = viewPolicyDecay;
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(f.cs->baseNearTick[0] == f.cs->viewDecayTick,
+                  "the base beside the tank reads %u, expected this tick (%u)",
+                  (unsigned)f.cs->baseNearTick[0],
+                  (unsigned)f.cs->viewDecayTick);
+    UT_ASSERT_MSG(f.cs->baseNearTick[1] == 0,
+                  "the base a hundred squares off was stamped at %u",
+                  (unsigned)f.cs->baseNearTick[1]);
+    f.cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
+
+    /* The far pill's block through a whole window, with its clock written by
+     * hand — the tank never goes near it, so nothing re-stamps behind the
+     * case's back. Never been near it: no block. */
+    uint32_t window = overviewDecayWindow(f.cs, viewCategoryPill);
+    uint32_t fade = overviewDecayFade();
+    UT_ASSERT_MSG(window > fade,
+                  "this case needs a window longer than the fade (%u vs %u)",
+                  (unsigned)window, (unsigned)fade);
+    ASSERT_RECT_LIVE(om, farRect, FALSE, "a pill the player has never neared");
+
+    /* Driven past: the block lights up, fully bright. */
+    f.cs->pillNearTick[1] = f.cs->viewDecayTick;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, farRect, TRUE, "a pill inside its decay window");
+    UT_ASSERT_MSG(overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF) ==
+                      255,
+                  "a fresh decay block came out at alpha %d, expected 255",
+                  overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF));
+    BYTE liveTile = om->tile[probeX][probeY];
+
+    /* Half way through the fade: still there, no longer full. */
+    f.cs->pillNearTick[1] = f.cs->viewDecayTick - (window - fade / 2);
+    clientSimDisplayTick(f.cs, false);
+    int fadedAlpha = overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF);
+    ASSERT_RECT_LIVE(om, farRect, TRUE, "a pill part way through its fade");
+    UT_ASSERT_MSG(fadedAlpha > 0 && fadedAlpha < 255,
+                  "half way through the fade the block is at alpha %d",
+                  fadedAlpha);
+
+    /* Run out: the block goes, and what it was showing freezes. */
+    f.cs->pillNearTick[1] = f.cs->viewDecayTick - window;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, farRect, FALSE, "a pill whose window has run out");
+    UT_ASSERT_MSG(overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF) < 0,
+                  "an expired pill still has a region");
+    BYTE frozenTile = om->tile[probeX][probeY];
+    UT_ASSERT_MSG(frozenTile != OVERVIEW_UNSEEN,
+                  "square %u,%u went unseen when its window ran out",
+                  (unsigned)probeX, (unsigned)probeY);
+    UT_ASSERT_MSG(frozenTile == liveTile,
+                  "the farewell stamp moved square %u,%u from tile %u to %u "
+                  "with nothing on the ground changed",
+                  (unsigned)probeX, (unsigned)probeY, (unsigned)liveTile,
+                  (unsigned)frozenTile);
+
+    {
+        bool isMine = FALSE;
+        BYTE was = mapGetPos(&f.gs->mp, probeX, probeY);
+        BYTE now = overviewFlipTerrain(was);
+
+        mapSetPos(f.gs, &f.gs->mp, probeX, probeY, now, TRUE, TRUE);
+        UT_ASSERT_MSG(viewportCalcSquarePure(f.gs, f.me, probeX, probeY,
+                                             &isMine) != frozenTile,
+                      "terrain %u and %u render as the same tile at %u,%u — "
+                      "the freeze check would pass on its own",
+                      (unsigned)was, (unsigned)now, (unsigned)probeX,
+                      (unsigned)probeY);
+    }
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(om->tile[probeX][probeY] == frozenTile,
+                  "an expired block picked up a terrain change at %u,%u: tile "
+                  "%u, expected %u", (unsigned)probeX, (unsigned)probeY,
+                  (unsigned)om->tile[probeX][probeY], (unsigned)frozenTile);
+
+    /* Driving past again starts the window over and the block comes back. */
+    f.cs->pillNearTick[1] = f.cs->viewDecayTick;
+    clientSimDisplayTick(f.cs, false);
+    ASSERT_RECT_LIVE(om, farRect, TRUE, "a pill the player has come back to");
+    UT_ASSERT_MSG(overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF) ==
+                      255,
+                  "coming back left the block at alpha %d, expected 255",
+                  overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF));
+
+    /* Where the player has been belongs to the round they were in: a world
+     * reset and a fresh map install each start the clocks over. */
+    clientSimResetWorld(f.cs);
+    UT_ASSERT_MSG(f.cs->viewDecayTick == 0 && f.cs->pillNearTick[1] == 0,
+                  "a world reset left the clock at tick %u, pill %u",
+                  (unsigned)f.cs->viewDecayTick,
+                  (unsigned)f.cs->pillNearTick[1]);
+
+    f.cs->pillNearTick[1] = 4242;
+    {
+        BYTE emap[6000] = E_MAP;
+        UT_ASSERT_MSG(installCompressedMap(f.cs, emap, OVERVIEW_EMAP_LEN,
+                                           "Everard Island", false) == TRUE,
+                      "installCompressedMap rejected the resync blob");
+    }
+    UT_ASSERT_MSG(f.cs->pillNearTick[1] == 4242,
+                  "a mid-game resync cleared a clock it should have left "
+                  "alone (%u)", (unsigned)f.cs->pillNearTick[1]);
+
+    {
+        BYTE emap[6000] = E_MAP;
+        UT_ASSERT_MSG(installCompressedMap(f.cs, emap, OVERVIEW_EMAP_LEN,
+                                           "Everard Island", true) == TRUE,
+                      "installCompressedMap rejected the fresh install");
+    }
+    UT_ASSERT_MSG(f.cs->pillNearTick[1] == 0,
+                  "a fresh map install left the clock at %u",
+                  (unsigned)f.cs->pillNearTick[1]);
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+int run_overview_decay_view_exit(void) {
+    OverviewFixture f;
+    const char *err = overviewFixtureStart(&f, "DecayView");
+    UT_ASSERT_MSG(err == NULL, "%s", err);
+
+    /* One pill of the client's own, a hundred squares off, so the tank is
+     * never near enough to re-stamp its clock. */
+    BYTE pillX = (BYTE)((int)f.tankMX + overviewAwayFromEdge(f.tankMX) * 100);
+    f.gs->pb->numPills = 1;
+    f.gs->pb->item[0].owner = f.me;
+    f.gs->pb->item[0].armour = PILLBOX_15;
+    f.gs->pb->item[0].inTank = FALSE;
+    f.gs->pb->item[0].x = pillX;
+    f.gs->pb->item[0].y = f.tankMY;
+
+    /* The exit lives in the per-tick UI pass, which is skipped while the game
+     * is starting, over or off the network. Say plainly that it is running, so
+     * what the case drives is the exit and not one of those. */
+    clientSimSetRunning(f.cs, TRUE);
+    clientSimSetNetStatus(f.cs, netRunning);
+    clientSimSetGmeStartDelay(f.cs, 0);
+    clientSimSetGmeLength(f.cs, -1);
+
+    f.cs->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+    f.cs->viewDecaySecs[viewCategoryPill] = VIEW_DECAY_DEFAULT_SECS;
+
+    clientSimPillView(f.cs, 0, 0);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL &&
+                      clientSimGetViewTarget(f.cs) == 0,
+                  "the pill view did not take (kind %u target %u)",
+                  (unsigned)clientSimGetViewKind(f.cs),
+                  (unsigned)clientSimGetViewTarget(f.cs));
+
+    /* Under the shipped rule the view is the player's to keep, tick after
+     * tick — the control for everything below. */
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL,
+                  "a tick under viewPolicyAlways dropped the pill view");
+
+    /* On decay, with a pill the player has never been near, the server has
+     * already stopped sending its squares — so the view goes. */
+    f.cs->viewPolicy[viewCategoryPill] = viewPolicyDecay;
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_TANK,
+                  "an unstamped pill left the client in view kind %u",
+                  (unsigned)clientSimGetViewKind(f.cs));
+
+    /* Freshly driven past, the same view holds. */
+    clientSimPillView(f.cs, 0, 0);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL,
+                  "the pill view did not take a second time");
+    f.cs->pillNearTick[0] = f.cs->viewDecayTick;
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL,
+                  "a pill inside its window lost the view");
+
+    /* And the tick the window runs out is the tick the view drops. */
+    f.cs->pillNearTick[0] =
+        f.cs->viewDecayTick - overviewDecayWindow(f.cs, viewCategoryPill);
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_TANK,
+                  "an expired window left the client in view kind %u",
+                  (unsigned)clientSimGetViewKind(f.cs));
+
+    overviewFixtureStop(&f);
+    return 0;
+}
+
+/* --------------------------------------------------------------------------
  * The same reveal over the real UDP path, where the map arrives as a download
  * and terrain changes arrive out of band as map events rather than being
  * written into the client's own sim. The mask has to come out the same.
@@ -1534,7 +1860,9 @@ int run_overview_loopback(void) {
     }
 
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
-    int n = overviewMapBuildRegions(gs, me, TRUE, tankMX, tankMY,
+    OverviewViewInputs in;
+    clientSimFillOverviewViewInputs(h.cs, &in);
+    int n = overviewMapBuildRegions(gs, me, &in, TRUE, tankMX, tankMY,
                                     OVERVIEW_TANK_HALF, expect,
                                     OVERVIEW_MAX_REGIONS);
     if (n < 1) {

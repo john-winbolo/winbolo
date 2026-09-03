@@ -130,11 +130,20 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
   /* Check we are still allowed to be watching what we are watching — the pill
    * is alive and ours, the base has not been captured or gone neutral, the
    * ally is alive, still allied and still here. An ally view also re-centres
-   * on its target as it drives. */
+   * on its target as it drives.
+   *
+   * Under a decay policy there is a second way to lose the view: the clock on
+   * the item runs out. The server stops sending its squares at the same
+   * moment, so staying parked there would only show ground going stale. The
+   * upkeep call comes first and always runs — it is what follows a moving
+   * ally, not just a test. */
   if (clientSimIsInItemView(csPtr) == TRUE) {
-    if (viewportUpdateItemView(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
+    bool stillWatchable =
+        viewportUpdateItemView(clientSimViewportMut(csPtr),
+                               clientSimGetGameSim(csPtr),
                                clientSimGetScroll(csPtr),
-                               clientSimAllyViewMask(csPtr)) == FALSE) {
+                               clientSimAllyViewMask(csPtr));
+    if (stillWatchable == FALSE || clientSimViewDecayExpired(csPtr) == TRUE) {
       clientSimTankView(csPtr);
     }
   }

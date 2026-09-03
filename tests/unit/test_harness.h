@@ -876,6 +876,28 @@ int run_overview_pill_capture(void);
  * exactly where it was. */
 int run_overview_reset(void);
 
+/* Overview decay clocks (test_overview_map.c): a display tick stamps the items
+ * the local tank is beside, for the categories on viewPolicyDecay and no
+ * others; an item's block appears while its clock is inside the window, fades
+ * over the end of it and freezes what it was showing when it runs out; and the
+ * clocks start over on a round reset and a fresh map install while surviving a
+ * mid-game resync. The view exit reads the same window: an item view whose
+ * clock has run out drops back to the tank view, while one inside its window
+ * and one on any other policy are left alone. */
+int run_overview_decay_mirror(void);
+int run_overview_decay_view_exit(void);
+
+/* Overview regions under the view policies (test_overview_view_policy.c): the
+ * rules a server ships with produce the region set the overview has always
+ * had; always sweeps a category, key grants only what the player is watching
+ * and off grants nothing, each kind in its own block size and in the order the
+ * farewell stamp replays; and a decay window runs from full brightness through
+ * the fade to nothing, with an item the player could never watch earning
+ * nothing from having been driven past. */
+int run_overview_policy_baseline(void);
+int run_overview_policy_categories(void);
+int run_overview_policy_decay(void);
+
 /* Overview over the wire (test_overview_map.c): the same reveal checks against
  * a world delivered by a real UDP join and map download, plus a staged map
  * event that reaches a live square's tile and leaves an unseen one alone. */
