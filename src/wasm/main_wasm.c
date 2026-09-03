@@ -611,6 +611,13 @@ void windowApplyMenuChecks(ClientSim *cs) {
 extern bool useAutoslow;   /* defined in gamefront_wasm.c */
 extern bool useAutohide;
 void windowSetSoundVolume(int pct);  /* defined below, after this function */
+/* Likewise the voice settings, defined below with the rest of them. */
+void windowSetVoiceEnabled(bool on);
+void windowSetVoiceMode(int mode);
+void windowSetVoiceMicGain(float gain);
+void windowSetVoiceVolume(float gain);
+void windowSetShowTankMicIcons(bool on);
+bool windowGetShowTankMicIcons(void);
 
 static bool prefBool(cJSON *o, const char *k, bool dflt) {
   cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
@@ -637,6 +644,13 @@ static float prefFloat(cJSON *o, const char *k, float dflt) {
   if (it == NULL) return dflt;
   if (cJSON_IsNumber(it)) return (float)it->valuedouble;
   if (cJSON_IsString(it) && it->valuestring) return (float)atof(it->valuestring);
+  return dflt;
+}
+
+static const char *prefStr(cJSON *o, const char *k, const char *dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsString(it) && it->valuestring) return it->valuestring;
   return dflt;
 }
 
@@ -717,6 +731,39 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     g_buildDoubleTapRoad = prefBool(s, "Build Double Tap Road", g_buildDoubleTapRoad);
     g_buildHoldMomentary = prefBool(s, "Build Hold Momentary", g_buildHoldMomentary);
     g_buildAutoCloseOnExecute = prefBool(s, "Build Auto Close On Execute", g_buildAutoCloseOnExecute);
+  }
+
+  /* VOICE: written by the desktop, adopted here, so a player's voice
+   * settings follow them into the browser. Applied straight onto the
+   * running voice module. The mode names and the clamps are the desktop
+   * reader's — keep them in step with gamefront.c. "Echo Cancel" is not
+   * read: it is desktop-only, the browser gets cancellation from
+   * getUserMedia. */
+  cJSON *v = cJSON_GetObjectItemCaseSensitive(root, "VOICE");
+  if (cJSON_IsObject(v)) {
+    windowSetVoiceEnabled(prefBool(v, "Enabled", voiceIsEnabled()));
+
+    const char *mode = prefStr(v, "Mode", NULL);
+    if (mode != NULL) {
+      if (strcmp(mode, "Off") == 0) {
+        windowSetVoiceMode(VOICE_MODE_OFF);
+      } else if (strcmp(mode, "Open Mic") == 0) {
+        windowSetVoiceMode(VOICE_MODE_OPEN);
+      } else {
+        windowSetVoiceMode(VOICE_MODE_PTT);
+      }
+    }
+
+    /* An out-of-range value is rejected back to 1.0 rather than clamped to
+     * the edge, so this reader and the desktop's agree on it. */
+    float mg = prefFloat(v, "Mic Gain", voiceGetMicGain());
+    if (!(mg >= 0.0f && mg <= 4.0f)) mg = 1.0f;
+    windowSetVoiceMicGain(mg);
+    float vv = prefFloat(v, "Voice Volume", voiceGetOutputVolume());
+    if (!(vv >= 0.0f && vv <= 2.0f)) vv = 1.0f;
+    windowSetVoiceVolume(vv);
+
+    windowSetShowTankMicIcons(prefBool(v, "Tank Icons", windowGetShowTankMicIcons()));
   }
 
   cJSON_Delete(root);
@@ -839,6 +886,18 @@ void windowSetVoiceVolume(float gain) {
   if (gain > 2.0f) gain = 2.0f;
   voiceSetOutputVolume(gain);
 }
+
+/* The mic icons live on the status pane, which is shared, so these are
+ * here for the same reason the setters above are: the settings dialog
+ * calls them and winbolo.c's copies are not part of this build. */
+void windowSetShowTankMicIcons(bool on) {
+  sdl3DrawStatusSetShowMicIcons(on);
+}
+
+bool windowGetShowTankMicIcons(void) {
+  return sdl3DrawStatusGetShowMicIcons();
+}
+
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
