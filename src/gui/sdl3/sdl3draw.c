@@ -464,9 +464,12 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
   return tex;
 }
 
-/* Render-thread-only rebuild of the man-status texture from cache; defined
-   later in this file. */
+/* Render-thread-only rebuild of the man-status texture from cache, and the
+   shared drawer it and the full screen HUD both go through; defined later in
+   this file. */
 static void sdl3RenderManStatusTex(void);
+static void sdl3DrawManStatusShape(float dstX, float dstY, float scale,
+                                   float stroke, bool isDead, TURNTYPE angle);
 
 /*********************************************************
 *NAME:          sdl3RenderStatusPanels
@@ -1757,10 +1760,39 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     SDL_SetTextureScaleMode(gHudSrcTex, SDL_SCALEMODE_LINEAR);
     for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
       const OverviewHudElement *e = &hud.el[i];
+      /* Every other element is artwork or text, which resamples from the
+         source frame's zoom to the fit scale well enough. The LGM indicator
+         is strokes — a ring one pixel wide and a line — and rescaling those
+         is what loses them: the ring comes out uneven, bright where it landed
+         on pixel centres and grey where it straddled two. It is drawn below
+         at the scale it is shown at instead. */
+      if (i == OVERVIEW_HUD_MANSTATUS) continue;
       SDL_FRect src = { (float)(e->srcX * gZoomFactor), (float)(e->srcY * gZoomFactor),
                         (float)(e->srcW * gZoomFactor), (float)(e->srcH * gZoomFactor) };
       SDL_FRect dst = { originX + e->dstX, originY + e->dstY, e->dstW, e->dstH };
       SDL_RenderTexture(gRenderer, gHudSrcTex, &src, &dst);
+    }
+
+    /* The LGM indicator, drawn rather than copied. The black behind it stands
+       in for the cleared texture the classic view blits, so the box reads the
+       same as the opaque chrome either side of it. Its stroke is half a source
+       pixel, which is the one pixel the classic view draws at zoom 2 and keeps
+       the ring the same weight against the circle as the HUD scales up. */
+    {
+      bool manDead = false;
+      TURNTYPE manAngle = 0;
+      if (sdl3DrawGetManStatusState(&manDead, &manAngle)) {
+        const OverviewHudElement *e = &hud.el[OVERVIEW_HUD_MANSTATUS];
+        float stroke = hud.scale * 0.5f;
+        if (stroke < 1.0f) stroke = 1.0f;
+
+        SDL_FRect box = { originX + e->dstX, originY + e->dstY,
+                          e->dstW, e->dstH };
+        SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+        SDL_RenderFillRect(gRenderer, &box);
+        sdl3DrawManStatusShape(box.x, box.y, hud.scale, stroke, manDead,
+                               manAngle);
+      }
     }
   }
 
@@ -2745,12 +2777,111 @@ void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
   gManStatusValid = true;
 }
 
+/* Passes needed to lay a stroke of `stroke` destination pixels down as lines
+   half a pixel apart, and where pass p sits across it. One pass at a stroke of
+   a pixel or less, which is the single SDL_RenderLine the classic view has
+   always drawn. */
+static int manStatusStrokePasses(float stroke) {
+  int passes = (int)SDL_ceilf((stroke - 1.0f) * 2.0f) + 1;
+  return (passes < 1) ? 1 : passes;
+}
+
+static float manStatusStrokeOffset(float stroke, int passes, int p) {
+  if (passes <= 1) return 0.0f;
+  return -(stroke - 1.0f) * 0.5f +
+         (stroke - 1.0f) * (float)p / (float)(passes - 1);
+}
+
+/* The LGM indicator itself: the circle, and the arrow inside it pointing at
+   the man. Drawn straight into the current render target at whatever size is
+   asked for — dstX/dstY are the top-left of the padded
+   (MAN_STATUS_WIDTH+2) x (MAN_STATUS_HEIGHT+2) box in destination pixels, and
+   `scale` takes source pixels to destination ones.
+
+   Both the circle and the arrow are strokes rather than art, so the only way
+   they come out clean is to draw them at the size they are shown at: a ring
+   drawn at one scale and resampled to another loses the ring — bright where
+   it landed on pixel centres and grey where it straddled two. The classic
+   view draws at gZoomFactor into a texture it blits 1:1, and the full screen
+   HUD at its own fit scale straight to the window; both come through here.
+   (The tablet overlay makes the same move with its own ImGui drawing, off the
+   same cached state.)
+
+   `stroke` is the line width in destination pixels. The classic view passes
+   one, which is the single SDL_RenderLine it has drawn at every zoom. */
+static void sdl3DrawManStatusShape(float dstX, float dstY, float scale,
+                                   float stroke, bool isDead, TURNTYPE angle) {
+  /* Padding of one source pixel on every edge, so the outline never clips. */
+  float scx = dstX + ((float)MAN_STATUS_CENTER_X + 1.0f) * scale;
+  float scy = dstY + ((float)MAN_STATUS_CENTER_Y + 1.0f) * scale;
+  float r   = ((float)MAN_STATUS_RADIUS - 1.0f) * scale;
+  int   passes = manStatusStrokePasses(stroke);
+
+  if (r < 1.0f) return;
+
+  if (isDead) {
+    /* Filled circle in red/orange using scan lines. */
+    int top = (int)SDL_floorf(-r);
+    int bot = (int)SDL_ceilf(r);
+    SDL_SetRenderDrawColor(gRenderer, 200, 80, 0, 255);
+    for (int dy = top; dy <= bot; dy++) {
+      float span = r * r - (float)dy * (float)dy;
+      if (span < 0.0f) continue;
+      float dx = SDL_sqrtf(span);
+      SDL_RenderLine(gRenderer, scx - dx, scy + (float)dy,
+                     scx + dx, scy + (float)dy);
+    }
+    return;
+  }
+
+  /* Outline circle using parametric line segments, one loop per pass so a
+     stroke wider than a pixel comes out solid rather than as separate
+     circles. */
+  SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, 255);
+  int steps = (int)(r * 16.0f);  /* ~4 steps per pixel of circumference */
+  if (steps < 64) steps = 64;
+  for (int p = 0; p < passes; p++) {
+    float rr = r + manStatusStrokeOffset(stroke, passes, p);
+    for (int i = 0; i < steps; i++) {
+      double a1 = (RADIANS_MAX * i) / steps;
+      double a2 = (RADIANS_MAX * (i + 1)) / steps;
+      SDL_RenderLine(gRenderer,
+                     (float)(scx + rr * cos(a1)), (float)(scy + rr * sin(a1)),
+                     (float)(scx + rr * cos(a2)), (float)(scy + rr * sin(a2)));
+    }
+  }
+
+  /* The arrow, from the centre out to the man's bearing. The four quadrant
+     cases the Win32 code split this into are one formula — x = cx + r sin,
+     y = cy - r cos — with the signs falling out of the trig, so it is written
+     once here. Kept in floats to the end: rounding the tip to a source pixel
+     first, as the old code did, snapped it in whole-pixel steps, and at the
+     HUD's scale one source pixel is several on screen. */
+  TURNTYPE a = angle + BRADIANS_SOUTH;
+  if (a >= BRADIANS_MAX) a -= BRADIANS_MAX;
+  double bearing = ((double)a / BRADIANS_MAX) * RADIANS_MAX;
+  float tipX = scx + r * (float)sin(bearing);
+  float tipY = scy - r * (float)cos(bearing);
+
+  /* Thickness across the line rather than along it, so the passes lie side by
+     side. */
+  float dx = tipX - scx;
+  float dy = tipY - scy;
+  float len = SDL_sqrtf(dx * dx + dy * dy);
+  float perpX = (len > 0.0f) ? (-dy / len) : 0.0f;
+  float perpY = (len > 0.0f) ? ( dx / len) : 0.0f;
+  for (int p = 0; p < passes; p++) {
+    float off = manStatusStrokeOffset(stroke, passes, p);
+    SDL_RenderLine(gRenderer, scx + perpX * off, scy + perpY * off,
+                   tipX + perpX * off, tipY + perpY * off);
+  }
+}
+
 /* Render thread only: rebuild the man-status texture from the cached
-   (dead, angle) values. Extracted verbatim from the old sdl3DrawSetManStatus
-   drawing body so behaviour is unchanged; only the thread it runs on moved. */
+   (dead, angle) values, at the zoom factor the classic chrome is drawn at.
+   The texture is (MAN_STATUS_WIDTH+2)*(MAN_STATUS_HEIGHT+2)*zf and is blitted
+   1:1, so the shape lands on the screen at exactly the size it was drawn. */
 static void sdl3RenderManStatusTex(void) {
-  bool isDead = gManStatusDead;
-  TURNTYPE angle = gManStatusAngle;
   SDL_Texture *prevTarget;
   SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !gManStatusTex) return;
@@ -2760,85 +2891,13 @@ static void sdl3RenderManStatusTex(void) {
      render-to-texture, not the screen. */
   prevTarget = SDL_GetRenderTarget(gRenderer);
 
-  /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
-  double dbAngle, dbTemp;
-  int addX, addY;
-  int cx = MAN_STATUS_CENTER_X;
-  int cy = MAN_STATUS_CENTER_Y;
-
-  TURNTYPE a = angle + BRADIANS_SOUTH;
-  if (a >= BRADIANS_MAX) a -= BRADIANS_MAX;
-
-  if (a >= BRADIANS_NORTH && a < BRADIANS_EAST) {
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
-  } else if (a >= BRADIANS_EAST && a < BRADIANS_SOUTH) {
-    a = (float)BRADIANS_SOUTH - a;
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
-  } else if (a >= BRADIANS_SOUTH && a < BRADIANS_WEST) {
-    a = (float)BRADIANS_WEST - a;
-    a = (float)BRADIANS_EAST - a;
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
-  } else {
-    a = (float)BRADIANS_MAX - a;
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
-  }
-
-  /* Texture is (MAN_STATUS_WIDTH+2)*(MAN_STATUS_HEIGHT+2)*zf — 1px padding on
-     each edge so the circle outline never clips. Shift center by +1 to match. */
-  int zf = gZoomFactor;
-  int scx = (MAN_STATUS_CENTER_X + 1) * zf;
-  int scy = (MAN_STATUS_CENTER_Y + 1) * zf;
-  int r   = (MAN_STATUS_RADIUS - 1) * zf;
-
-  /* Re-compute arrow endpoint in zoom-factor space */
-  int sAddX = addX * zf;
-  int sAddY = addY * zf;
-
   SDL_SetRenderTarget(gRenderer, gManStatusTex);
   SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
-  if (isDead) {
-    /* Filled circle in red/orange using scan lines */
-    SDL_SetRenderDrawColor(gRenderer, 200, 80, 0, 255);
-    for (int dy = -r; dy <= r; dy++) {
-      int dx = (int)sqrtf((float)(r * r - dy * dy));
-      SDL_RenderLine(gRenderer,
-                     (float)(scx - dx), (float)(scy + dy),
-                     (float)(scx + dx), (float)(scy + dy));
-    }
-  } else {
-    /* Outline circle using parametric line segments */
-    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, 255);
-    int steps = 4 * r * 4;  /* ~4 steps per pixel of circumference */
-    if (steps < 64) steps = 64;
-    for (int i = 0; i < steps; i++) {
-      double a1 = (RADIANS_MAX * i) / steps;
-      double a2 = (RADIANS_MAX * (i + 1)) / steps;
-      SDL_RenderLine(gRenderer,
-                     (float)(scx + r * cos(a1)), (float)(scy + r * sin(a1)),
-                     (float)(scx + r * cos(a2)), (float)(scy + r * sin(a2)));
-    }
-    /* Arrow from centre to endpoint */
-    SDL_RenderLine(gRenderer, (float)scx, (float)scy, (float)sAddX, (float)sAddY);
-  }
+  sdl3DrawManStatusShape(0.0f, 0.0f, (float)gZoomFactor, 1.0f,
+                         gManStatusDead, gManStatusAngle);
 
   SDL_SetRenderTarget(gRenderer, prevTarget);
   gManStatusReady = true;
