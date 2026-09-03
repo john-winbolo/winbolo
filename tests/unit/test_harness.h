@@ -1024,6 +1024,10 @@ int run_addrparse_empty(void);
 /* Skin asset reads out of a directory vs a zip (test_skin_source.c). */
 int run_skin_source_dir_and_zip(void);
 
+/* Which densities a skin serves, and what each Tile Detail mode picks
+ * out of that (test_skin_density.c). */
+int run_skin_density_scan(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

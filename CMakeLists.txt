@@ -3238,6 +3238,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # bytes.
     tests/unit/test_skin_source.c
     src/gui/sdl3/skin_source.c
+    # Which densities a skin serves and what each Tile Detail mode picks.
+    # Needs the tile loader itself, which no other unit test pulls in.
+    tests/unit/test_skin_density.c
+    src/gui/sdl3/tileloader.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -3423,6 +3427,8 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static ${SERVER_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
+    # tileloader.c reads SVG through nanosvg and PNG through stb_image.
+    nanosvg stb_image
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
     # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
     # so the include dir doesn't propagate transitively).
@@ -3903,6 +3909,7 @@ set(_unit_test_names
     active_sim_armed_on_lobby_tick
     active_sim_cleared_on_cross_thread_destroy
     skin_source_dir_and_zip
+    skin_density_scan
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

@@ -24,6 +24,8 @@
 #include "skin_source.h"
 #include "../tiles.h"
 
+#include "platform_types.h"   /* BOLO_STATIC_ASSERT */
+
 #include "../../common/wb_log.h"
 
 #include "nanosvg.h"
@@ -33,6 +35,131 @@
 
 #include <stdio.h>
 #include <string.h>
+
+/* SkinDensityInfo carries one byte per tilemap entry in a fixed array. */
+BOLO_STATIC_ASSERT(TILE_MAP_COUNT <= SKIN_DENSITY_MAX_SPRITES,
+                   tile_map_fits_skin_density_info);
+
+/* HUD chrome: the menu indents, the status pane items, the gunsight, the
+ * mouse square, the status tank icon, the transparent tank and the static
+ * screen.  These are left out of the per-density coverage count, so a skin
+ * that redraws every terrain tile but no chrome still counts as covering a
+ * density in full.  They keep a per-sprite max of their own either way. */
+static bool isNonWorldSprite(const char *name) {
+    static const char *chrome[] = {
+        "indent",
+        "status_",
+        "gunsight",
+        "mouse_square",
+        "tank_icon",
+        "tank_transparent",
+        "static"
+    };
+
+    for (int i = 0; i < (int)(sizeof(chrome) / sizeof(chrome[0])); i++) {
+        if (strncmp(name, chrome[i], strlen(chrome[i])) == 0) return true;
+    }
+    return false;
+}
+
+void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out) {
+    if (!out) return;
+
+    SDL_memset(out, 0, sizeof(*out));
+    out->spriteCount = (int)TILE_MAP_COUNT;
+
+    /* Density 1 needs no files: the per-sprite chain bottoms out at the
+       built-in assets, so every skin serves it in full. */
+    out->coverage[1] = SKIN_DENSITY_COVER_ALL;
+    out->highestAll  = 1;
+    out->highestAny  = 1;
+    for (int i = 0; i < out->spriteCount; i++) {
+        out->spriteMax[i] = 1;
+    }
+    if (!skin) return;
+
+    SkinInfo skinInfo;
+    skinSourceReadIni(skin, &skinInfo);
+    /* MaxPixelDensity=0 means unlimited, so an SVG counts at every density.
+       A non-zero value is the author saying their vector art is not meant to
+       be rasterized finer than that.  @Nx PNGs are never capped: shipping
+       the file is the statement. */
+    int svgCap = skinInfo.maxPixelDensity;
+
+    int worldTotal = 0;
+    int worldHits[SKIN_DENSITY_MAX + 1];
+    SDL_memset(worldHits, 0, sizeof(worldHits));
+
+    /* Name-index lookups only.  skinSourceExists is O(1) for a directory and
+       for an archive alike, so the whole scan costs no file I/O. */
+    char nameBuf[SKIN_PATH_MAX];
+    for (int i = 0; i < out->spriteCount; i++) {
+        const char *name = gTileMap[i].name;
+        bool isWorld = !isNonWorldSprite(name);
+        if (isWorld) worldTotal++;
+
+        SDL_snprintf(nameBuf, sizeof(nameBuf), "%s.svg", name);
+        bool hasSvg = skinSourceExists(skin, nameBuf);
+
+        for (int n = 2; n <= SKIN_DENSITY_MAX; n++) {
+            bool has = hasSvg && (svgCap == 0 || n <= svgCap);
+            if (!has) {
+                SDL_snprintf(nameBuf, sizeof(nameBuf), "%s@%dx.png", name, n);
+                has = skinSourceExists(skin, nameBuf);
+            }
+            if (!has) continue;
+
+            if (out->spriteMax[i] < n) out->spriteMax[i] = (unsigned char)n;
+            if (out->highestAny < n)   out->highestAny   = n;
+            if (isWorld) worldHits[n]++;
+        }
+    }
+
+    for (int n = 2; n <= SKIN_DENSITY_MAX; n++) {
+        if (worldTotal > 0 && worldHits[n] == worldTotal) {
+            out->coverage[n] = SKIN_DENSITY_COVER_ALL;
+            out->highestAll  = n;
+        } else if (worldHits[n] > 0) {
+            out->coverage[n] = SKIN_DENSITY_COVER_SOME;
+        }
+    }
+}
+
+/* One-entry scan cache.  skinSetActive closes and reopens the source, so a
+   different skin always presents a different pointer.  The valid flag is
+   what makes a NULL skin a real key rather than "not scanned yet". */
+static struct SkinSource *s_densitySkin  = NULL;
+static SkinDensityInfo    s_densityInfo;
+static bool               s_densityValid = false;
+
+const SkinDensityInfo *tileLoaderGetDensityInfo(struct SkinSource *skin) {
+    if (!s_densityValid || s_densitySkin != skin) {
+        tileLoaderScanDensity(skin, &s_densityInfo);
+        s_densitySkin  = skin;
+        s_densityValid = true;
+    }
+    return &s_densityInfo;
+}
+
+int tileLoaderPickDensity(const SkinDensityInfo *info, int spriteIndex,
+                          int mode, int scale) {
+    int density;
+
+    if (!info || scale < 1 ||
+        spriteIndex < 0 || spriteIndex >= SKIN_DENSITY_MAX_SPRITES) {
+        return 1;
+    }
+
+    if (mode == TILE_DETAIL_MATCH_ZOOM) {
+        /* One density for the whole sheet, so the sprite does not matter. */
+        density = info->highestAll < scale ? info->highestAll : scale;
+    } else if (mode == TILE_DETAIL_HIGH) {
+        density = info->spriteMax[spriteIndex];
+    } else {
+        return 1;   /* Classic, and anything unrecognised */
+    }
+    return density < 1 ? 1 : density;
+}
 
 /* Copy RGBA pixel data into the sheet surface at (dstX, dstY). */
 static void blitRGBA(SDL_Surface *sheet, int dstX, int dstY,
@@ -375,6 +502,9 @@ SDL_Surface *tileLoaderBuildSheet(int tileSize) {
 }
 
 void tileLoaderCleanup(void) {
-    /* Currently no persistent state to free.
+    /* Drop the density scan: once the source is freed its address can be
+     * handed to a later skin, and the cache is keyed on that pointer.
      * Reserved for future caching (e.g. keeping parsed SVGs for re-rasterization). */
+    s_densitySkin  = NULL;
+    s_densityValid = false;
 }

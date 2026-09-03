@@ -67,6 +67,68 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize);
  *********************************************************/
 void tileLoaderCleanup(void);
 
+/* Highest density the coverage scan looks for, and the ceiling on how many
+   gTileMap[] entries the per-sprite results can hold. */
+#define SKIN_DENSITY_MAX          8
+#define SKIN_DENSITY_MAX_SPRITES  512
+
+typedef enum SkinDensityCoverage {
+    SKIN_DENSITY_COVER_NONE = 0,
+    SKIN_DENSITY_COVER_SOME,
+    SKIN_DENSITY_COVER_ALL
+} SkinDensityCoverage;
+
+/* Which densities a skin can serve. Density N means N times each sprite's
+   own gTileMap[] size, not a fixed 16px. */
+typedef struct SkinDensityInfo {
+    int           spriteCount;                          /* gTileMap entries scanned */
+    unsigned char coverage[SKIN_DENSITY_MAX + 1];       /* SkinDensityCoverage; [0] unused */
+    unsigned char spriteMax[SKIN_DENSITY_MAX_SPRITES];  /* best density per sprite, >= 1 */
+    int           highestAll;   /* highest density with ALL coverage; always >= 1 */
+    int           highestAny;   /* highest density any sprite has; always >= 1 */
+} SkinDensityInfo;
+
+/* Tile Detail modes. Mirrors GfxTileDetail, which does not exist yet -
+   tileloader must not depend on the settings module. */
+#define TILE_DETAIL_CLASSIC      0
+#define TILE_DETAIL_MATCH_ZOOM   1
+#define TILE_DETAIL_HIGH         2
+
+/*********************************************************
+ * NAME:          tileLoaderScanDensity
+ * PURPOSE:
+ *   Records which densities a skin can serve, per density
+ *   and per sprite.  Pure name-index lookups: no file is
+ *   opened and no image is decoded, so this is cheap
+ *   enough to run whenever the active skin changes.
+ *   HUD chrome is left out of the per-density coverage so
+ *   a skin that redraws only the world still counts as
+ *   covering a density in full.  A NULL skin reports
+ *   density 1 and nothing above it.
+ *********************************************************/
+void tileLoaderScanDensity(struct SkinSource *skin, SkinDensityInfo *out);
+
+/*********************************************************
+ * NAME:          tileLoaderGetDensityInfo
+ * PURPOSE:
+ *   tileLoaderScanDensity behind a one-entry cache keyed
+ *   on the source pointer, so a sheet build does not
+ *   rescan per sprite.  Never returns NULL.
+ *********************************************************/
+const SkinDensityInfo *tileLoaderGetDensityInfo(struct SkinSource *skin);
+
+/*********************************************************
+ * NAME:          tileLoaderPickDensity
+ * PURPOSE:
+ *   The density to load one sprite at under a Tile Detail
+ *   mode.  Classic is always 1; Match to Zoom is the
+ *   highest fully covered density that fits the sheet
+ *   scale; High Detail is the best that sprite alone has.
+ *   Returns 1 for anything malformed.
+ *********************************************************/
+int  tileLoaderPickDensity(const SkinDensityInfo *info, int spriteIndex,
+                           int mode, int scale);
+
 #ifdef __cplusplus
 }
 #endif
