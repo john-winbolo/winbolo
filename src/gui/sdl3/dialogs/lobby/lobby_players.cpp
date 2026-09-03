@@ -55,6 +55,9 @@ extern "C" {
 #include "../../flags.h"         /* flagsGetTexture / FLAG_HEIGHT */
 #include "../../map_preview_popup.h"  /* mapPreviewPopupFocusMapSquare */
 #include "../../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning */
+#if defined(WINBOLO_VOICE)
+#include "../../../voice.h"   /* voiceGetTalkingMap — lobby mic icons */
+#endif
 }
 
 /* Player-list state: bot-row expansion, the tab-cycle's forced selection
@@ -1102,7 +1105,17 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          * divider dragged left does, and scaled by s throughout so it lands
          * the same at any DPI. */
         const float kColTankW    = 60.0f * s;
+#if defined(WINBOLO_VOICE)
+        /* The microphone cell follows the badge run, so the icons column
+         * carries one more LOBBY_WBN_ICON_SIZE icon plus the spacing before
+         * it. That raises needIconsCol, so the column sheds at a slightly
+         * wider window than it does without voice — the wider run needs the
+         * room, and the whole column still goes at once. */
+        const float kColIconsW   = 96.0f * s + (float)LOBBY_WBN_ICON_SIZE * s
+                                 + ImGui::GetStyle().ItemSpacing.x;
+#else
         const float kColIconsW   = 96.0f * s;
+#endif
         const float kColPingW    = 50.0f * s;
         const float kColReadyW   = 80.0f * s;
         const float kColXW       = 44.0f * s;
@@ -1129,6 +1142,11 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         const bool showPingCol   = contentW >= needPingCol;
         const bool showStartCol  = contentW >= needStartCol;
         const bool showIconsCol  = contentW >= needIconsCol;
+#if defined(WINBOLO_VOICE)
+        /* Who is producing voice right now, read once for the whole list
+         * rather than per row. */
+        const PlayerBitMap talkingMap = voiceGetTalkingMap();
+#endif
         /* Disabled is the master hide flag — the column takes no width and
          * ImGui skips every widget submitted into it, so the remaining
          * columns get the room back. The row blocks below still guard their
@@ -1396,6 +1414,16 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                          pflags,
                                          clientSimGetLobbySlot(cs, (BYTE)(i))->clientType,
                                          "", false);
+#if defined(WINBOLO_VOICE)
+                        /* Microphone state and the mute toggle. Lobby voice
+                         * is all-talk, so this shows for every player. The
+                         * slot's own flags, not pflags: the WBN masking
+                         * above has nothing to say about the microphone. */
+                        renderPlayerMicCell(cs, i,
+                                            clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags,
+                                            talkingMap, isSelf,
+                                            (float)LOBBY_WBN_ICON_SIZE);
+#endif
                     }
                 }
 
