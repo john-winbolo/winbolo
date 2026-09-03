@@ -842,11 +842,23 @@ static bool brc_should_suppress_crash_file(lua_State *L, time_t now) {
  * "think" / "init" / whatever — used in the banner and filename. Not
  * static so the unit test in tests/unit/test_brain_crash_log.c can
  * invoke it directly without standing up a full BrainInfo. */
+/* Set by the host once the brain C bindings are registered; see
+ * brainCoreSetLogFlushHook. NULL in binaries that don't link them. */
+static void (*s_log_flush_hook)(void) = NULL;
+
+void brainCoreSetLogFlushHook(void (*fn)(void)) { s_log_flush_hook = fn; }
+
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback) {
   if (err_or_traceback == NULL) err_or_traceback = "(no error message)";
   if (method == NULL) method = "?";
+
+  /* Push the brain's own buffered log output to disk BEFORE writing the crash
+   * report. The threaded writer batches roughly a second of print2 at a time,
+   * so without this the lines that explain the crash can still be sitting in
+   * the queue when the process goes down right after this function. */
+  if (s_log_flush_hook) s_log_flush_hook();
 
   /* Timestamps: UTC (for filenames + cross-host comparison) and local
    * (for at-a-glance reading next to other session logs). */

@@ -11760,8 +11760,12 @@ function M.step_eval_queue(state, world, info)
         -- winner progression plays out across consecutive frames for
         -- every cached pill.
         diff_cost = diff_score or 999
-        local _diff_us = clock_us() - _t_diff
-        local _spot_us = 0
+        -- NOT `local`: these are the per-candidate accumulators declared at the
+        -- top of the queue loop, which the [diag] slow cand line reads.  A
+        -- `local` here shadowed them and left diff/spot reading 0.00 while
+        -- their real cost showed up only in the unattributed remainder.
+        _diff_us = clock_us() - _t_diff
+        _spot_us = 0
         if best_spot then
           spot_found_mx = best_spot.mx
           spot_found_my = best_spot.my
@@ -12499,13 +12503,23 @@ function M.step_eval_queue(state, world, info)
     -- shows up on the per-tick summary). Includes sub-timings for the
     -- 8-neighbor adjacent sweep + smart_cost call so we can identify
     -- which inner step dominates.
+    --
+    -- The chips add up to `total` by construction: raw (the cost computation
+    -- up to _t_raw, of which adj + smart are the measured parts and `rest` is
+    -- everything else inside it) + diff + spot + a final `rest` for the work
+    -- after the raw window that has no timer of its own.  Before this, diff and
+    -- spot printed 0.00 because of a shadowed local (see above) and ~85% of
+    -- `total` was unaccounted for.
     if BRAIN_PROFILE_LOG and _t_total > 500 then
       opt.append("optimize.log", string.format(
-        "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
+        "  [diag] slow cand pool=%d id=%s total=%.2f = raw %.2f (adj %.2f + smart %.2f"
+        .. " + rest %.2f) + diff %.2f + spot %.2f + rest %.2f  cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
         _t_total / 1000, _t_raw / 1000,
         _t_adj / 1000, _t_smart / 1000,
+        (_t_raw - _t_adj - _t_smart) / 1000,
         _diff_us / 1000, _spot_us / 1000,
+        (_t_total - _t_raw - _diff_us - _spot_us) / 1000,
         raw_cost, obj.mx or -1, obj.my or -1, tostring(obj.health)))
     end
     ::continue::
@@ -12585,7 +12599,42 @@ function record_reject_history(state)
 end
 end
 
-local function sync_ally_claimed_rejects(state, info)
+-- SYNC_P6 edge trigger.  The four SYNC_P6 shapes below repeat verbatim for
+-- thousands of consecutive ticks -- together they were 58% of every byte print2
+-- wrote (37% entry dump, 21% NO_MATCH, measured over a 12000-tick 2v2) --
+-- because they describe a pool-6 cache entry that only changes when the pill,
+-- the cost or the ally does.  Each line is remembered per (shape, pid) and
+-- reprinted only when its text changes.  No information is lost: a line that is
+-- not printed is by construction identical to the last one printed under that
+-- key, so the log still states the current value of every field at every tick.
+-- Debug-only: every caller sits inside an `if BRAIN_DEBUG_MODE` block that
+-- lua_strip removes, so opt/ never reaches this.
+local function sync_p6_log(state, key, s)
+  local last = state._sync_p6_last
+  if not last then last = {}; state._sync_p6_last = last end
+  if last[key] ~= s then
+    last[key] = s
+    print2(s)
+  end
+end
+
+-- Goal kinds whose journey passes through danger, so they are worth a world
+-- simulation. Module scope: this is a constant set, and rebuilding it inside
+-- the per-candidate wsim loop cost one identical 7-entry table per candidate
+-- per replan.
+local WSIM_SIM_KINDS = { capture_base=true, capture_pill=true,
+                         attack_pill=true, attack_base=true,
+                         attack_tank=true, kill_lgm=true,
+                         place_pill_strategic=true }
+
+-- panel_refresh: the pool-grid JSON builder re-runs this sweep every time the
+-- panel is read, which happens from Brain.get_pool_breakdown_json -- OUTSIDE
+-- Brain.think, after print2.flush() has already run. Anything print2'd there
+-- lands in a buffer that the next tick's print2.set_tick() clears, so those
+-- SYNC_P6 lines never reached the log; they only moved the edge trigger's
+-- "last printed" state and made the think path drop or repeat a line. The
+-- panel pass does the same sync work, silently.
+local function sync_ally_claimed_rejects(state, info, panel_refresh)
   local cache = state.cost_cache
   if not cache then return end
   local now = state.tick or 0
@@ -12679,8 +12728,8 @@ local function sync_ally_claimed_rejects(state, info)
     -- fields look like.  Helps catch the "pool 6 entry exists but
     -- sync skips it because _id is missing / _REJECT_POOLS gate
     -- fails" class of bugs.
-    if BRAIN_DEBUG_MODE and pool_idx == 6 then
-      print2(string.format(
+    if BRAIN_DEBUG_MODE and pool_idx == 6 and not panel_refresh then
+      sync_p6_log(state, "E" .. tostring(e._id), string.format(
         "SYNC_P6 pid=%s mx=%s my=%s cost=%s _reject_in=%s skipped=%s in_REJECT_POOLS=%s",
         tostring(e._id), tostring(e._mx), tostring(e._my),
         ((e.cost or 0) >= 1e29) and "INF" or string.format("%.0f", e.cost or 0),
@@ -12905,6 +12954,7 @@ local function sync_ally_claimed_rejects(state, info)
       local match_sub = nil
       local tank_dead_at = state.tank_dead_at
       local _diag_p6 = BRAIN_DEBUG_MODE and pool_idx == 6 and e._id
+                       and not panel_refresh
       local _diag_scanned = 0
       for ally_pn, slot in ally_state.iter_active(now, 1750) do
         if ally_pn ~= self_pn
@@ -12952,13 +13002,13 @@ local function sync_ally_claimed_rejects(state, info)
       end
       if _diag_p6 then
         if match_pn then
-          print2(string.format(
+          sync_p6_log(state, "M" .. tostring(e._id), string.format(
             "SYNC_P6 pid=%d MATCHED ally=p%d sub=%s force_engaging=%s ally_cost=%s our_cost=%.0f",
             e._id, match_pn, tostring(match_sub or "?"),
             tostring(force_engaging_reject),
             tostring(match_cost), e.cost or 0))
         elseif _diag_scanned > 0 then
-          print2(string.format(
+          sync_p6_log(state, "M" .. tostring(e._id), string.format(
             "SYNC_P6 pid=%d NO_MATCH (%d allies scanned, none on attack_pill #%d)",
             e._id, _diag_scanned, e._id))
         end
@@ -13094,8 +13144,8 @@ local function sync_ally_claimed_rejects(state, info)
           -- wins above; pn only settles ties.
           we_keep = (self_pn < match_pn)
         end
-        if BRAIN_DEBUG_MODE and pool_idx == 6 and e._id then
-          print2(string.format(
+        if BRAIN_DEBUG_MODE and pool_idx == 6 and e._id and not panel_refresh then
+          sync_p6_log(state, "D" .. tostring(e._id), string.format(
             "SYNC_P6 pid=%d DECISION ally=p%d ally_cost=%s our_cost=%.0f frac=%.2f " ..
             "we_hold=%s force_engaging=%s -> %s [%s]",
             e._id, match_pn, tostring(match_cost), e.cost or 0, pool_steal_frac,
@@ -14152,7 +14202,9 @@ function M.finalize_pools(state, world, info)
         (_t_p6end - _t_p6start) / 1000,
         (_t_pf_end - _t_p6end) / 1000))
   end
-  local _t2 = clock_us()
+  -- Debug-only stopwatches: _t2/_t3 are read only by the fp_time print2 that
+  -- lua_strip removes.
+  local _t2 = BRAIN_DEBUG_MODE and clock_us() or 0
   -- Run cheap evaluators directly
   local _ev_ms = {}
   for _, idx in ipairs(FINALIZE_POOLS) do
@@ -14172,7 +14224,7 @@ function M.finalize_pools(state, world, info)
         state.tick or 0, tostring(POOL_NAMES[idx] or ("p" .. idx)), _dt))
     end
   end
-  local _t3 = clock_us()
+  local _t3 = BRAIN_DEBUG_MODE and clock_us() or 0
 
   -- wait_for_lgm: extra "park and wait for the LGM" candidate at a
   -- fixed low cost so it competes with normal pool winners. See
@@ -16119,11 +16171,6 @@ local function goal_selection(state, world, info, quiet)
       for _, c in ipairs(pool) do
         if _wsim_cap and _wsim_done >= _wsim_cap then break end
         _wsim_done = _wsim_done + 1
-        -- Only sim goals that travel through danger (skip refuel/explore)
-        local sim_kinds = { capture_base=true, capture_pill=true,
-                            attack_pill=true, attack_base=true,
-                            attack_tank=true, kill_lgm=true,
-                            place_pill_strategic=true }
         -- Don't sim our current attack target if we're mid-attack
         local skip = cur_attack_active
           and c.goal.kind == state.goal.kind
@@ -16134,7 +16181,7 @@ local function goal_selection(state, world, info, quiet)
         -- the tile we are already on) and no LGM dwell to add (the man is
         -- already out walking). A wsim add would also un-pin the flat cost the
         -- constant is documented against.
-        if sim_kinds[c.goal.kind] and not skip and not c.goal.follow_through then
+        if WSIM_SIM_KINDS[c.goal.kind] and not skip and not c.goal.follow_through then
           local attack_id = nil
           local spot_x, spot_y = nil, nil
           if c.goal.kind == "attack_pill" and c._pill_id then
@@ -17092,7 +17139,7 @@ function M.get_pool_breakdown_json(state)
   -- the displayed _reject flags track live ally_state without waiting
   -- for the next replan cycle.
   if state.player_number then _SELF_PN = state.player_number end
-  sync_ally_claimed_rejects(state)
+  sync_ally_claimed_rejects(state, nil, true)
   apply_blitz_target(state, state._last_info)
   apply_blitz_join_discount(state, state._last_info, state.world)
   apply_blitz_capture_defer(state, state._last_info)

@@ -42,6 +42,12 @@ local ally_state = require("ally_state")
 
 local M = {}
 
+-- Sample fractions along a straight LGM path: three interior samples for a
+-- path longer than 4 tiles, one midpoint otherwise. Module scope because they
+-- are constants -- lgm_path_safe built a fresh table on every call.
+local FRACS_LONG  = { 0.25, 0.5, 0.75 }
+local FRACS_SHORT = { 0.5 }
+
 -- M.shell_map[mkey] = expires_tick
 -- Cells on predicted hostile-shell trajectories this tick.
 -- Lives on M (not a closure-private local) so the state serializer can
@@ -194,8 +200,10 @@ function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world
     return danger_at_excl(tx, ty, tick, world, excl_pcontrib) <= threshold
   end
 
-  -- Sample at fractions along the straight line
-  local fracs = dist > 4 and {0.25, 0.5, 0.75} or {0.5}
+  -- Sample at fractions along the straight line. The two tables are constants
+  -- (see FRACS_LONG / FRACS_SHORT at module scope); building them here meant
+  -- one table per call, and this is called for every LGM path test.
+  local fracs = dist > 4 and FRACS_LONG or FRACS_SHORT
   for _, frac in ipairs(fracs) do
     local sx = math.floor(tx + ddx * frac + 0.5)
     local sy = math.floor(ty + ddy * frac + 0.5)

@@ -3224,4 +3224,50 @@ M.BUILDER_POOL_PANEL_IDX  = 15
 M.BUILDER_POOL_PANEL_ROWS = 8    -- cap on side-quest rows rendered (always-show rule
                                  -- keeps rejects visible; this only bounds a huge map)
 
+-- =========================================================================
+-- Lua garbage collector
+-- =========================================================================
+-- The brain allocates a lot: ~94 KB per think per bot (brain_alloc_stats via
+-- -brain-profile-log), which at 50 thinks/s across four bots is ~19 MB/s, so
+-- how the collector is configured is a fair question to ask.
+--
+-- Brain.open used to ask for Lua 5.4's generational collector, but production
+-- runs on LuaJIT, where the 5.4->5.1 compat shim in luabrainshandler.c swallows
+-- collectgarbage("generational") and the brain silently got LuaJIT's stock
+-- incremental settings.  These are the knobs LuaJIT actually has:
+--
+--   GC_PAUSE   -- % of the post-collection heap the heap may reach before the
+--                 next cycle starts. LuaJIT's default is 200 (collect when the
+--                 heap doubles).
+--   GC_STEPMUL -- how much work each incremental step does relative to
+--                 allocation. LuaJIT's default is 200. Higher = the same total
+--                 work in fewer, larger steps.
+--
+-- MEASURED on a 12000-tick 4-bot DH-Oil Rig prod run (per-think ms over all
+-- bots; full table in tests/cpuopt_results.md). The sweep is recorded here so
+-- nobody has to repeat it -- in the range these knobs cover, they do not move
+-- this workload:
+--
+--   pause/stepmul   mean    p50    p90    p99     max
+--   200/200 (dflt)  0.80   0.74   1.26   2.12   10.45
+--   150/200         0.82   0.76   1.30   2.20    9.33
+--   300/200         0.81   0.75   1.29   2.14   12.38
+--   150/400         0.79   0.73   1.27   2.25    7.55
+--   200/400         0.77   0.71   1.25   2.11   10.27
+--   250/400         0.78   0.72   1.22   2.15    9.60
+--   200/600         0.76   0.70   1.22   2.20    8.21
+--   200/200 again   0.76   0.70   1.22   2.12    8.40
+--   200/400 again   0.75   0.69   1.21   2.12    9.78
+--   200/800 again   0.77   0.70   1.22   2.31    7.86
+--
+-- The two repeats differ from their first sample by ~0.04 ms on p50, which is
+-- the size of the entire spread across the sweep: the collector is not what
+-- the tail is waiting on, and no setting here buys anything real. 200/400 is
+-- kept because it was a hair ahead of the default on p50/p90 in both samples
+-- and behind in neither. Setting them at all is still worth it -- the call
+-- these replaced did nothing on LuaJIT, so the collector was configured by
+-- accident rather than on purpose.
+M.GC_PAUSE   = 200
+M.GC_STEPMUL = 400
+
 return M

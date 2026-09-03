@@ -168,6 +168,28 @@ void brc_write_crash_log(lua_State *L,
                          const char *err_or_traceback);
 
 /*********************************************************
+ *NAME:          brainCoreSetLogFlushHook
+ *PURPOSE:
+ *  Registers a callback that brc_write_crash_log invokes
+ *  before it writes anything, so a brain's own buffered
+ *  log output reaches disk first and the crash file is
+ *  not the newest thing in the session directory while
+ *  the last second of print2 is still in a queue.
+ *
+ *  A hook rather than a direct call because the writer
+ *  lives in the brain C bindings (bot_brains_static), and
+ *  that library depends on bolo_static, not the other way
+ *  round; binaries that link bolo_static alone (the unit
+ *  tests) simply never install one.
+ *
+ *ARGUMENTS:
+ *  fn - flush function, or NULL to clear. Must be safe to
+ *       call from any thread and on an already-flushed
+ *       writer.
+ *********************************************************/
+void brainCoreSetLogFlushHook(void (*fn)(void));
+
+/*********************************************************
  *NAME:          brainCoreRegisterPathfinder
  *PURPOSE:
  *  Registers cpf_* Lua globals backed by a per-brain
