@@ -144,6 +144,11 @@ void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
  * has to hold here. Beside the classic view, which is still showing the tank,
  * the pop-out is left free to roam.
  *
+ * The caller drops the nudge while an item view is on, even in that mode: the
+ * classic view does not show the tank in an item view either, so there is
+ * nothing to keep on screen, and holding the tank in frame would fight
+ * whatever put the camera on the watched item.
+ *
  * Follow mode centres the camera anyway, so this is a no-op there. Leaves the
  * follow flag alone: it corrects a free camera without claiming it. */
 void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
