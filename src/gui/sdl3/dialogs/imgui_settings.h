@@ -54,7 +54,8 @@ void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
 void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx);
 
 /* Render the shared Hosting tab (settings for a game hosted from the finder).
- * Shown in both settings shells; currently renders only the apply-note. */
+ * Shown in both settings shells; renders the port, spectator, map-upload,
+ * replay-logging and visibility rows, with the apply-note last. */
 void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx);
 
 /* Render the shared General tab (validated player name + WinBolo.net account).

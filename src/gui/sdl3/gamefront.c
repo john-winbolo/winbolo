@@ -3185,7 +3185,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Visibility rules for games this client hosts. Clamped on read so a
-   * hand-edited INI can't inject an out-of-range decay. */
+   * hand-edited INI can't inject an out-of-range decay. A word that is
+   * none of the four reads as Always for every category, where the
+   * dedicated server's -pillview / -baseview / -allyview fall back to
+   * that switch's own default (Off for bases). */
   {
     static const struct {
       const char *policyKey;

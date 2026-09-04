@@ -5868,6 +5868,19 @@ void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *c
     s_playerEnabled[playerNum] = true;
 }
 
+/* Two things to know about this getter, neither of them introduced by it.
+ *
+ * The bound is MAX_PLAYERS, this file's own 16, while the ally-view label
+ * passes a tank slot (clientSimGetViewTarget). The two are the same number
+ * today, so the check holds by value rather than by name — a MAX_TANKS that
+ * ever diverged from it would want MAX_TANKS here instead.
+ *
+ * The read is unlocked, and s_playerName is written by sdl3ImguiSetPlayer
+ * from frontEndSetPlayer, which the sim can reach on the hosted-server timer
+ * thread while the render thread is drawing. The other readers of this mirror
+ * (the Players menu, the native menu-bar snapshot) already read it the same
+ * way; this getter widens that rather than starting it. Locking would be a
+ * job for the whole mirror, not for one accessor. */
 const char *sdl3ImguiGetPlayerName(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return "";
     return s_playerName[playerNum];

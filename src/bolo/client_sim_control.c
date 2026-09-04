@@ -392,6 +392,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        /* The policy byte is stored raw, with no range check. This mirror
+         * drives nothing the server does not enforce for itself, so a value
+         * outside the enum can only make the local display wrong, never more
+         * permissive: a server clamps the byte in serverSimApplyLobbySetting
+         * before it reaches the wire, and each reader degrades safely on its
+         * own — the overview's region test treats a policy it does not know as
+         * off, while the view keys and buttons ask only whether the policy is
+         * off, so they stay live and the server declines to send. */
         for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
             cs->viewPolicy[vc]    = evt->u.lobbySettings.viewPolicy[vc];
             cs->viewDecaySecs[vc] = evt->u.lobbySettings.viewDecaySecs[vc];

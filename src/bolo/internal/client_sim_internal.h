@@ -11,10 +11,14 @@
  * files that need direct field access must include this
  * header instead and use the implementation-internal view.
  *
- * Allowed includers: src/bolo/client_sim.c,
- * src/bolo/client_sim_control.c, src/bolo/client_snapshot.c,
- * src/bolo/transport_udp_client.c, src/bolo/viewport.c,
- * src/bolo/client_net.c.
+ * Allowed includers, all inside src/bolo/ — the client sim's own
+ * translation units (client_sim.c, client_sim_control.c,
+ * client_snapshot.c, client_net.c, client_ui_events.c,
+ * client_render.c, viewport.c) and the sim sources that reach a
+ * ClientSim while running (bases.c, brain_data.c, bot_manager.c,
+ * lgm.c, pillbox.c, players.c, screenlgm.c, sounddist.c, tank.c,
+ * transport_udp_client.c) — plus src/server/transport_udp_server.c,
+ * a co-owner of the sim, for the wire caps declared here.
  * All other callers must include client_sim.h and use the
  * public accessor API.
  *********************************************************/
@@ -706,6 +710,8 @@ PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
  * VIEW_DECAY_NEAR_TILES of, for the categories on viewPolicyDecay. Proximity
  * and nothing else: alliance, armour and the rest are the region build's
  * business, and an item can change hands long after the player drove past it.
+ * A tank slot whose players entry has been zeroed by a hidden stub has no
+ * position to measure from and is skipped, not read as the map origin.
  * Runs once per display tick, before the overview reads the clocks. */
 void                    clientSimViewDecayTick(ClientSim *cs);
 

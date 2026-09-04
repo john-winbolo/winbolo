@@ -3247,7 +3247,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     }
 
     /* Compress this slot's copy of the map for the joining player.
-     * Done after serverSimAddPlayer so rejoin ownership is included — the
+     * Done after addPlayerInternal so rejoin ownership is included — the
      * copy the blob is taken from is the one the slot's snapshot checksum is
      * taken over, so the two always describe the same tiles. */
     {
@@ -3338,9 +3338,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
         /* Publish a lobby-slot update for the new player so existing
          * clients pick up the joiner's team/ready/ping fields (the
-         * CTRL_PLAYER_JOIN already fanned out from serverSimAddPlayer
-         * carries name/country/clientType, but not the lobby-slot
-         * extras). */
+         * CTRL_PLAYER_JOIN already fanned out from
+         * fillAndPublishPlayerJoin carries name/country/clientType, but
+         * not the lobby-slot extras). */
         serverSimPublishLobbySlot(sim, (BYTE)slot);
         /* Dismiss any pending balance proposal — player composition changed */
         if (serverSimGetBalanceProposal(sim)->pending) {

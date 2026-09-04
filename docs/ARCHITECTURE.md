@@ -77,9 +77,22 @@ T2 access via dedicated CMake profiles.
    tile — alliance-correct pillboxes and bases, mines only where the
    client knows one — and freezes a square when it leaves view. The
    memory is seeded from the map when it lands (the terrain is in the
-   map file every client holds), so every square reads dimmed from the
-   first frame; entities stay gated on the live regions, and a seeded
-   square freezes like any other until the player can see it.
+   map file every client holds — for a client that joined a running
+   game, the terrain as the round started; see "Per-client terrain"),
+   so every square reads dimmed from the first frame; entities stay
+   gated on the live regions, and a seeded square freezes like any
+   other until the player can see it.
+
+   Which regions are live follows the server's view policies rather
+   than the client's own idea of what it may watch: the tank's own
+   block, plus a block on each viewable pillbox, allied base and
+   allied tank whose category the server allows. A category set to
+   `off` contributes none. Under `decay` a region also carries a
+   brightness — full while its proximity clock is inside the window,
+   ramping down over the last `VIEW_DECAY_FADE_SECS` seconds of it,
+   and gone once the clock runs out, at which point the squares under
+   it freeze the way any region leaving view does. So the fog never
+   shows as live a square the server is not feeding.
 
    `clientSimGetBrainMap` returns the terrain array brains reason
    over, and it is not a record of anything the player saw. It holds
@@ -87,8 +100,14 @@ T2 access via dedicated CMake profiles.
    the viewport passes over into it; `screenBrainMapFillFromMap`
    fills it from the entire map for bots; and `mapSetPos` refreshes
    a square on the server sim whenever the terrain there changes,
-   whoever can or cannot see it. Drawing from it would leak terrain
-   changes on ground the player cannot currently see.
+   whoever can or cannot see it. Drawing from it would show ground
+   the player cannot currently see: for the local host and for bots
+   it carries terrain changes made anywhere on the map, and a bot's
+   copy is filled from the whole map outright. A client on the wire
+   is the narrower case — the server withholds the changes outside
+   its viewports, so what never arrived cannot be in `brainMap`
+   either — but the rule is the same one either way, and
+   `OverviewMap` is the array that answers the question being asked.
 
    The two are deliberately not unified. Pointing brains at the fog
    memory would change how bots play, which is a gameplay decision
@@ -656,7 +675,7 @@ blocking is per-channel):
 | id | channel | flavor | carries |
 | --- | --- | --- | --- |
 | 0 | `CHANNEL_GAME` | message | reliable must-arrive game events: kills, mine reveals, server / assistant / LGM-lost text |
-| 1 | `CHANNEL_MAP` | message | terrain-change events (`EVENT_MAP_CHANGE`) |
+| 1 | `CHANNEL_MAP` | message | terrain-change events (`EVENT_MAP_CHANGE`), per recipient — a client on the wire is sent only the changes inside its own viewports; in-process clients take every change (see "Per-client terrain") |
 | 2 | `CHANNEL_CONTROL` | message | lobby / chat / alliance / phase control events |
 | 3 | `CHANNEL_BULK` | stream | map preview / upload / download / resync blobs |
 | 4 | `CHANNEL_GAME_EFFECT` | best-effort | ephemeral game events: sounds, explosions, captures, and pill/base state deltas |
@@ -732,13 +751,21 @@ hands the parsed header to a **recipient-agnostic sink** that decides where the
 blob lands and what to do on completion — so preview, upload, download, and resync
 (`BULK_KIND_*`) all ride the one machinery.
 
+The *contents* of a map download or resync blob are not shared between clients:
+each is built for the one slot it is going to, from that slot's own copy of the
+terrain (`serverSimGetCompressedMapFor`), so a client is never streamed ground it
+was culled out of. See "Per-client terrain". A lobby map preview and a lobby map
+change are lobby-wide and do serialise the live map.
+
 A join download is pull-started: the server arms it at `JOIN_ACCEPT` but streams
 only after the client's `PACKET_MAP_DL_READY` confirms its receive buffers exist,
 so the stream head can never race the accept that sizes them. The client re-sends
 the READY if the stream never starts or stalls outright, and the server answers a
 re-ask with a full restart behind a `CHANNEL_BULK` re-base — the recovery for a
 transfer whose bytes the channel has already acked but the receiver could not
-keep (e.g. its framing was reset mid-body).
+keep (e.g. its framing was reset mid-body). The restart recompresses that slot's
+own copy and re-sends `JOIN_ACCEPT` first, because the client drops a stream whose
+header size disagrees with the size its accept carried.
 
 **Off-socket testability.** Because the reliability burden lives behind a pure
 byte-buffer seam, the whole loss / reorder / dup matrix is a unit test with no
@@ -752,6 +779,66 @@ on `CHANNEL_CONTROL`, a new transfer in `bulk_transfer.c` on `CHANNEL_BULK` — 
 in a hand-rolled socket send. (The reliability logic was extracted into these small
 off-socket modules rather than shrinking `transport_udp_server.c`, which stayed
 large as per-client mux/bulk wiring moved in.)
+
+## Per-client terrain
+
+The server does not send every terrain change to every client. It keeps, per
+slot, a copy of the terrain that client is supposed to have —
+`clientKnownMap[MAX_TANKS]` in `ServerSim` — and every question of the form
+"what map does this client hold?" is answered from that copy rather than from
+the live map.
+
+**What writes the copy.** A slot the UDP transport has marked culled
+(`shadowCulledSlots`, set when the transport takes the slot and cleared when it
+goes) has each map event tested against that client's viewport set — the same
+rects `serverSimBuildViewports` produces for entity culling: the tank's own
+screen plus a screen for each pillbox, base and allied tank its view policies
+allow. An event inside the rects is queued on `CHANNEL_MAP` as before *and* its
+new terrain byte written into that slot's copy. An event outside them is
+skipped and the copy keeps the old byte — that staleness is the record of what
+the client is owed. The write is tied to the enqueue, not to the test, so a
+queue-full drop also leaves the copy stale and heals the same way. In-process
+clients — the local host player and bots — are never marked culled: they take
+every change, and their copy tracks the live map. The one gap is a tick that
+produces more than `MAX_MAP_EVENTS` terrain changes: the overflow never reaches
+any copy, and since each client's checksum is taken over its own copy, the two
+ends still agree and nothing asks for a resync. It takes a pathological tick to
+reach, and no normal round comes near it.
+
+**How ground fills in as a client drives into it.** There is no "this client
+entered an area" event; the disagreement itself is the trigger.
+`serverSimShadowSweep` compares a slot's copy against the live map *inside that
+slot's current rects* and turns each differing square into an
+`EVENT_MAP_CHANGE` on that client's queue, advancing the copy as it emits. It
+runs on a slot-staggered `MAP_SWEEP_STRIDE` cadence (each slot comes up every
+five frames) and emits at most `MAP_SWEEP_MAX_EVENTS` a sweep, and never more
+than the queue has room for, so driving into long-changed ground cannot crowd
+out live changes; whatever is left over is still a difference and goes out on a
+following sweep. The sweep is held off while a resync is in flight, since that
+transfer carries the whole copy anyway.
+
+**The checksum is taken over the copy.** `hdr.mapChecksum` is stamped on each
+client's own full-sync tick from `mapCalcChecksum` over
+`clientKnownMap[slot]`, not over the live map. This is what keeps a culled
+client out of a resync loop: it legitimately does not hold the live map, so
+hashing the live map would give it a mismatch it could never clear — three
+mismatches ask for a resync, the resync would deliver a map that still does not
+hash to the live one, and the client would keep asking until it hit
+`MAP_RESYNC_MAX_ATTEMPTS` and disconnected. Hashing what the client was
+actually sent makes the two ends agree by construction once the sweep has
+caught up. The recording paths (`noCull`) have no client copy behind them and
+hash the live map.
+
+**Resync and join read the copy too.** A resync blob is built by
+`serverSimGetCompressedMapFor(sim, slot, …)`, which serialises that slot's copy
+alongside the current (public) pill/base/start structs — streaming the live map
+there would hand a client exactly the ground it was culled out of. A wire client
+joining a game already running is re-seeded from the round-start copy of the
+terrain (`serverSimShadowSeedRoundStart`) and its download blob comes from that
+same copy, so arriving — or leaving and rejoining — tells it nothing about what
+has happened since the round began; it is paid the differences by the sweep as
+its viewports cover the ground. A lobby or countdown joiner keeps the current
+map, which nothing has changed yet.
 
 ## Adding a new server event
 
@@ -812,7 +899,7 @@ public/internal split provides.
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
 | Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
-| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c` |
+| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient |
 | Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
 
 These rows say where each payload is *defined*; **how** it is reliably
@@ -1802,25 +1889,37 @@ drops back to the standard public-only access.
 
 ### `tests/unit/`
 
-The `WinBoloUnitTests` binary exercises in-process invariants
-that aren't reachable through T1 today — passive transport
-queue mechanics under cross-thread access, subscriber-side
-ClientSim state after a control-event publish. It is not
-shipped to players, has a single consumer (CTest), and is not
-a runtime peer of the GUI / server / mobile / wasm clients, so
-the asymmetric-runtime bug class does not apply.
+The `WinBoloUnitTests` binary asserts on in-process invariants
+that have no T1 expression: wire-codec and channel-mux byte
+layouts, per-client snapshot and terrain-copy state, client-side
+view and overview bookkeeping, passive transport queue mechanics
+under cross-thread access, subscriber-side ClientSim state after a
+control-event publish. It is not shipped to players, has a single
+consumer (CTest), and is not a runtime peer of the GUI / server /
+mobile / wasm clients, so the asymmetric-runtime bug class does
+not apply.
 
-Scope: `transport.h` (the passive `transport_local` queue
-indices the concurrency test asserts on), `game_sim.h` plus
-`players.h` (the subscriber-dispatch test reads the client's
-player table back through `&cs->sim.plyrs` after
-`CTRL_PLAYER_NAME` delivery).
+Scope: broad, and deliberately so — a test asserts on the state
+the code actually keeps. In practice it reaches the sim state
+structs (`game_sim.h`, `players.h`, `tank.h`, `pillbox.h`,
+`bases.h`, `shells.h`, `mines.h`, `lgm.h`, `starts.h`,
+`allience.h`, `bolo_map.h`), both sim internals
+(`client_sim_internal.h`, `server_sim_internal.h` and the
+`server_sim_*` helper headers), the wire and transport layer
+(`transport.h`, `transport_udp.h`, `transport_udp_internal.h`,
+`channel_mux.h`, `bulk_transfer.h`, `netpacks.h`, `wire_codec.h`,
+`wire_messages.h`, the control and command codecs), the client's
+view and render internals (`viewport.h`, `overview_map.h`,
+`interpolation.h`, `scroll.h`, `messages.h`), and the bot and
+brain headers (`bot_manager.h`, `braincore.h`,
+`brain_pathfinder.h`).
 
-**Expires** the moment T1 accessors expose the passive
-transport's queue state and the subscriber-side player view
-the tests currently reach T2 to observe. At that point the
-tests migrate to T1+T3+T4 (the default `tests/` row in "Who
-may include what" above) and this profile is removed.
+**Expires** if the binary ever ships in a player-facing
+distribution, or gains a consumer beyond CTest — at that point it
+is a runtime peer like any other and the bug class applies to it.
+Short of that the scope narrows rather than ends: every T2 include
+a new T1 accessor makes unnecessary should go, and the target
+keeps only what still has no other way to be observed.
 
 ### Adding a new exception
 

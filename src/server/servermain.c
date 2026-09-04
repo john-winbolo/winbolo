@@ -679,6 +679,9 @@ void printArgs() {
   fprintf(stderr, "                (5-600, default 30)\n");
   fprintf(stderr, "-baseviewdecay <S> - Same for bases (5-600, default 30)\n");
   fprintf(stderr, "-allyviewdecay <S> - Same for allied tanks (5-600, default 30)\n");
+  fprintf(stderr, "                An unrecognised mode warns and falls back to that\n");
+  fprintf(stderr, "                switch's default; a decay outside the range is\n");
+  fprintf(stderr, "                clamped into it.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");

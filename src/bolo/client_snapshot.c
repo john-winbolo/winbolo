@@ -196,6 +196,10 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
       clientSimCenterTank(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
+      /* No pill-policy test here, unlike the human input path in input.c: a
+       * brain that asks for pill view while the category is viewPolicyOff
+       * moves its own camera and learns nothing by it, because the server
+       * grants no rect for a category it has turned off. Cosmetic only. */
       clientSimPillView(csPtr, 0, 0);
     }
 

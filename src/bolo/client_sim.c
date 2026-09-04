@@ -811,6 +811,18 @@ void clientSimViewDecayTick(ClientSim *cs) {
       if (playersIsInUse(&gs->plyrs, i) != TRUE) {
         continue;
       }
+      /* A slot the server is not sending arrives as a hidden stub, which
+       * zeroes its players entry. (0,0) is not a square a live tank can be
+       * on, so it reads as "no position", not as the map origin, and a tank
+       * of ours parked near that corner would otherwise stamp every stubbed
+       * slot as though it were standing beside us. Skipped rather than
+       * stamped from allyLastMapX/Y: VIEW_DECAY_NEAR_TILES is well inside our
+       * own tank rect, so an ally that close is never stubbed in the first
+       * place, while an ally that died beside us has been moved to its
+       * restart square and the server has stopped stamping the old one. */
+      if (gs->plyrs->item[i].mapX == 0 && gs->plyrs->item[i].mapY == 0) {
+        continue;
+      }
       if (viewDecayNearSquare(mx, my, gs->plyrs->item[i].mapX,
                               gs->plyrs->item[i].mapY) == TRUE) {
         cs->allyNearTick[i] = stamp;

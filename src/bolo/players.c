@@ -800,6 +800,12 @@ bool playersMoveAllyView(GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligi
     if (count != *playerNum && (eligible & ((PlayerBitMap)1 << count)) != 0 && playersCanAllyView(sim, viewable, count) == TRUE) {
       itemX = (*plrs)->item[count].mapX;
       itemY = (*plrs)->item[count].mapY;
+      /* An ally the server is not sending arrives as a hidden stub, which
+       * zeroes its players entry, so it reads here as (0,0) and sorts as
+       * up-and-left of everything. Only the step order is affected: the view
+       * centres on the square the client last saw the ally on once it lands
+       * there, which viewport.c substitutes. The store of last-known squares
+       * hangs off the ClientSim, which this layer has no handle on. */
       /* One axis at a time: a horizontal press only considers allies to the
        * left or right, a vertical press only ones above or below. */
       matches = FALSE;

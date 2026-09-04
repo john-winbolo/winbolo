@@ -519,7 +519,11 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
 }
 
 void serverSimUpdateViewDecay(ServerSim *sim) {
-    /* 0 is the "never been near" marker, so tick 0 stamps as 1. */
+    /* 0 is the "never been near" marker, so tick 0 stamps as 1. A stamp that
+     * lands on tick 0 therefore reads as not-viewable for that one frame —
+     * viewItemInWindow takes tick - nearTick, which underflows to a huge age —
+     * and comes good on the next one. Tick 0 is the frame the sim starts on,
+     * with nobody connected to notice. */
     uint32_t stamp = (sim->tick == 0) ? 1u : sim->tick;
     bool pillDecay = (sim->viewPolicy[viewCategoryPill] == viewPolicyDecay);
     bool baseDecay = (sim->viewPolicy[viewCategoryBase] == viewPolicyDecay);
@@ -566,6 +570,12 @@ void serverSimUpdateViewDecay(ServerSim *sim) {
         }
         if (allyDecay) {
             BYTE t;
+            /* A dead ally is stamped like any other item. Its tank still
+             * carries a position — tankDeath moves it to its restart square at
+             * once — and whether it may be seen through is decided at build
+             * time by viewAllyQualifies, which does test deathWait. The
+             * deathWait skip above is for the player doing the looking, not
+             * for the item being looked at, so the two are not symmetric. */
             for (t = 0; t < MAX_TANKS; t++) {
                 WORLD twx = 0, twy = 0;
                 if (t == c) continue;

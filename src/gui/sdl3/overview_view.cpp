@@ -308,7 +308,8 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
  *
  * The mask comes from the live regions rather than the per-square LIVE flag —
  * the sim writes the flag from those same rects, so they say the same thing,
- * and the rects are 17 structs to compare where the flags are 64K of bytes.
+ * and the rects are at most OVERVIEW_MAX_REGIONS structs to compare where the
+ * flags are 64K of bytes.
  *
  * One consequence of filtering: the fade starts at the last live square's
  * centre, not its outer edge, so the fully-clear area gives up half a square

@@ -1525,7 +1525,9 @@ static void printUsage(const char *prog) {
     "  --pillviewdecay S Seconds a pill stays visible under \"decay\" (5-600,\n"
     "                    default 30)\n"
     "  --baseviewdecay S Same for bases (5-600, default 30)\n"
-    "  --allyviewdecay S Same for allied tanks (5-600, default 30)\n",
+    "  --allyviewdecay S Same for allied tanks (5-600, default 30)\n"
+    "  An unknown mode word or a decay outside the range is an error here,\n"
+    "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
 }
 

@@ -38,10 +38,11 @@
  * wherever it is.
  *
  * Two more drive the client's own decay clocks: a display tick stamps the
- * items the tank is beside and only for the categories on viewPolicyDecay, an
- * item's block appears while its clock is inside the window, fades over the
- * end of it and freezes what it was showing once it runs out, and the clocks
- * start over with the round. The view exit reads the same window, so an item
+ * items the tank is beside and only for the categories on viewPolicyDecay, it
+ * skips an ally whose players entry has been zeroed by a hidden stub rather
+ * than reading that as the map origin, an item's block appears while its clock
+ * is inside the window, fades over the end of it and freezes what it was
+ * showing once it runs out, and the clocks start over with the round. The view exit reads the same window, so an item
  * view whose clock has run out drops back to the tank and cannot be entered
  * again until the player has been near the item. The region build those two
  * lean on is pinned in test_overview_view_policy.c.
@@ -1645,6 +1646,50 @@ int run_overview_decay_mirror(void) {
                       255,
                   "coming back left the block at alpha %d, expected 255",
                   overviewRegionAlphaAt(om, farX, farY, OVERVIEW_PILL_HALF));
+
+    /* An ally the server is not sending arrives as a hidden stub, which zeroes
+     * its players entry. A tank of the player's own parked by the map corner is
+     * the only place that zeroed entry could ever read as near, so that is
+     * where the stamp has to be shown to skip it. */
+    {
+        BYTE ally = MAX_TANKS;
+        BYTE cornerM = (BYTE)(VIEW_DECAY_NEAR_TILES / 2);
+        BYTE slot;
+
+        for (slot = 0; slot < MAX_TANKS; slot++) {
+            if (slot != f.me && playersIsInUse(&f.gs->plyrs, slot) != TRUE) {
+                ally = slot;
+                break;
+            }
+        }
+        UT_ASSERT_MSG(ally < MAX_TANKS,
+                      "no free player slot for the stubbed ally");
+
+        playersSetPlayer(f.cs, &f.gs->plyrs, f.me, ally, (char *)"Stub", "??",
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
+        tankSetWorld(f.gs, &f.gs->tanks[f.me],
+                     (WORLD)(cornerM << TANK_SHIFT_MAPSIZE),
+                     (WORLD)(cornerM << TANK_SHIFT_MAPSIZE), 0, false);
+        f.cs->viewPolicy[viewCategoryAlly] = viewPolicyDecay;
+        f.cs->viewDecaySecs[viewCategoryAlly] = VIEW_DECAY_DEFAULT_SECS;
+        f.cs->allyNearTick[ally] = 0;
+
+        clientSimDisplayTick(f.cs, false);
+        UT_ASSERT_MSG(f.cs->allyNearTick[ally] == 0,
+                      "a stubbed ally was stamped at %u off its zeroed entry",
+                      (unsigned)f.cs->allyNearTick[ally]);
+
+        /* The same slot with a real square beside the tank still stamps, so
+         * what the skip reads is the zeroed entry and not the whole category. */
+        playersUpdate(&f.gs->plyrs, ally, cornerM, (BYTE)(cornerM + 1), 0, 0, 0,
+                      FALSE, 0, 0, 0, 0, 0);
+        clientSimDisplayTick(f.cs, false);
+        UT_ASSERT_MSG(f.cs->allyNearTick[ally] == f.cs->viewDecayTick,
+                      "an ally beside the tank reads %u, expected this tick (%u)",
+                      (unsigned)f.cs->allyNearTick[ally],
+                      (unsigned)f.cs->viewDecayTick);
+        f.cs->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
+    }
 
     /* Where the player has been belongs to the round they were in: a world
      * reset and a fresh map install each start the clocks over. */

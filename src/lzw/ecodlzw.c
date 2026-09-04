@@ -44,6 +44,11 @@ static __inline int conend_of_data() {
 
 
 static __inline unsigned char conread_byte() {
+  /* No source bound check here, unlike decread_byte in dcodlzw.c. Every read
+   * in lzwencoding is guarded by a conend_of_data test first, and the source
+   * is a map the server already holds rather than anything off the wire, so
+   * the read cannot run past compressSrc as the encoder stands. A read added
+   * without that guard would need the check adding with it. */
   compressUpto++;
   return compressSrc[compressUpto-1];
 }
