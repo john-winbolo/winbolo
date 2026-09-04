@@ -436,12 +436,12 @@ BYTE clientSimGetTank256Dir(ClientSim *cs);
 int  clientSimGetMyTankDeathWait(ClientSim *cs);
 int  clientSimGetMyTankLastDeath(ClientSim *cs);
 
-/* True across the last couple of seconds of a death wait, which is where the
- * map overview puts its static: the fog has already closed over the wreck by
- * then, so the snow is the last thing the player sees before they respawn
- * rather than a curtain drawn over a picture they still had. False the moment
+/* True from the tick the classic main view cuts to static through to the
+ * respawn, which is where the map overview fades to black: the player watches
+ * their own explosion first, and black is the last thing they see before the
+ * tank is back. What killed them decides where that starts. False the moment
  * the tank is back. */
-bool clientSimIsMyTankDeathStatic(ClientSim *cs);
+bool clientSimIsMyTankDeathBlackout(ClientSim *cs);
 
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs);

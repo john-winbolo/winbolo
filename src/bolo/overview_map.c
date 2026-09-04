@@ -243,47 +243,21 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
   }
 }
 
-/* Where the classic main view cuts to static for a death of this kind, in
- * ticks left on the death wait. A tank that has drowned sinks slowly and is
- * given longer to watch; anything else takes the shell and mine figure, which
- * is also what an unrecognised cause gets - the block closing is what stops a
- * dead player watching the square that killed them, so a cause this does not
- * know has to close too. */
-static int overviewDeathStaticStart(int lastDeath) {
+/* Where the blackout starts for a death of this kind, in ticks left on the
+ * death wait — the same tick the classic main view cuts to static. A tank that
+ * has drowned sinks slowly and is given longer to watch; anything else takes
+ * the shell and mine figure, which is also what an unrecognised cause gets:
+ * the blackout is what stops a dead player watching the square that killed
+ * them, so a cause this does not know has to black out too. */
+static int overviewDeathBlackoutStart(int lastDeath) {
   if (lastDeath == LAST_DEATH_BY_DEEPSEA) {
     return STATIC_ON_TICKS_DEEPSEA;
   }
   return STATIC_ON_TICKS;
 }
 
-int overviewMapDeathTankHalf(int deathWait, int lastDeath) {
-  int closing; /* Ticks since the block started closing */
-  int lost;    /* Squares the block has given up so far */
-
-  /* The wait has not started counting yet: the tank died this tick and the
-   * update that sets the wait has not run. Still the watching phase - closing
-   * here would drop the block for a tick and reopen it on the next. */
-  if (deathWait <= 0) {
-    return OVERVIEW_TANK_HALF;
-  }
-
-  closing = overviewDeathStaticStart(lastDeath) - deathWait;
-  if (closing <= 0) {
-    return OVERVIEW_TANK_HALF;
-  }
-  if (closing >= OVERVIEW_DEATH_CLOSE_TICKS) {
-    return -1;
-  }
-
-  /* Even squares per tick across the close, rounded up so the last tick before
-   * the block goes is a single square rather than a jump from several. */
-  lost = (OVERVIEW_TANK_HALF * closing + OVERVIEW_DEATH_CLOSE_TICKS - 1) /
-         OVERVIEW_DEATH_CLOSE_TICKS;
-  return OVERVIEW_TANK_HALF - lost;
-}
-
-bool overviewMapDeathStatic(int deathWait) {
-  return deathWait > 0 && deathWait <= OVERVIEW_DEATH_STATIC_TICKS;
+bool overviewMapDeathBlackout(int deathWait, int lastDeath) {
+  return deathWait > 0 && deathWait <= overviewDeathBlackoutStart(lastDeath);
 }
 
 void overviewViewInputsDefaults(OverviewViewInputs *in) {
@@ -456,8 +430,7 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
 
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
-                       int tankDeathWait, int tankLastDeath,
-                       BYTE tankMX, BYTE tankMY) {
+                       int tankDeathWait, BYTE tankMX, BYTE tankMY) {
   bool tankLive; /* Is there a tank region this update */
   BYTE useMX;    /* Centre of that region */
   BYTE useMY;    /* Centre of that region */
@@ -476,15 +449,16 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     return;
   }
 
-  /* Which square the tank block sits on, if there is one at all, and how much
-   * of it there is. A tank with a position of its own records the square here
-   * on the way past; one that is dead and still in its slot has none to give -
-   * a dead tank reads as the map origin - so it holds the block on the square
-   * it last had one, and the player watches their own wreck instead of the
-   * ground round it greying out the moment they die. That held block then
-   * closes over the wreck, and once it has closed the tank has no block at all
-   * - the same state as a tank that has really gone, which is what releases it
-   * and lets the farewell stamp below run. */
+  /* Which square the tank block sits on, if there is one at all. A tank with a
+   * position of its own records the square here on the way past; one that is
+   * dead and still in its slot has none to give - a dead tank reads as the map
+   * origin - so it holds the block on the square it last had one, and the
+   * player watches their own wreck instead of the ground round it greying out
+   * the moment they die. The block is held at full size for the whole wait;
+   * what stops a dead player watching the square that killed them is the
+   * blackout the view draws over the lot, not the block shrinking underneath
+   * it. A tank that has really gone has no block at all, which is what
+   * releases it and lets the farewell stamp below run. */
   tankLive = haveTank;
   useMX = tankMX;
   useMY = tankMY;
@@ -494,12 +468,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     om->lastTankMY = tankMY;
     om->haveLastTank = TRUE;
   } else if (tankDeathWait > 0 && om->haveLastTank == TRUE) {
-    tankHalf = overviewMapDeathTankHalf(tankDeathWait, tankLastDeath);
-    if (tankHalf >= 0) {
-      tankLive = TRUE;
-      useMX = om->lastTankMX;
-      useMY = om->lastTankMY;
-    }
+    tankLive = TRUE;
+    useMX = om->lastTankMX;
+    useMY = om->lastTankMY;
   }
 
   memcpy(om->prevLive, om->live, sizeof(om->prevLive));

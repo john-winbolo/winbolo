@@ -7,13 +7,10 @@
  * pins the shape of that set — a 29x29 block on the tank and a 15x15 block on
  * each viewable pill, trimmed at the map edges, the tank rect always first and
  * pills after it in index order, and never more rects than the caller asked
- * for. overviewMapDeathTankHalf is the schedule the tank's own block shrinks
- * on while it is dead: whole until the tick the classic view cuts to static,
- * closing from there and gone by the end of the close, never widening on the
- * way down, and a drowning on a later clock than a shell.
- * overviewMapDeathStatic is where the overview's own static sits in that same
- * wait — the last stretch of it, ending with the respawn, and starting only
- * after the block has closed, so the map goes dark before the snow comes up.
+ * for. overviewMapDeathBlackout is where the overview goes black inside a
+ * death wait: from the tick the classic view cuts to static through to the
+ * respawn, never dropping once it is up, and a drowning given longer to watch
+ * than a shell.
  *
  * The rest drive a real ClientSim through clientSimDisplayTick and check what
  * the memory ends up holding: a map install seeds every square dimmed on the
@@ -22,10 +19,9 @@
  * up a later terrain change the client already knows about, a region that
  * stops being live is stamped once more on the way out so a pill freezes dead
  * or in the captor's colours rather than a tick stale, a tank waiting to
- * respawn holds its block on the square it died on and then closes it over the
- * wreck rather than either dropping it at once or holding it to the respawn,
- * and a round reset clears the lot while a mid-game map resync leaves it
- * alone and a fresh install re-seeds it.
+ * respawn holds its block whole on the square it died on rather than dropping
+ * it where its position now reads, and a round reset clears the lot while a
+ * mid-game map resync leaves it alone and a fresh install re-seeds it.
  *
  * One case steps outside the memory to the accessor that feeds it,
  * clientSimGetMyTankMapPos, and pins what it reports for a tank that is dead
@@ -127,17 +123,18 @@ int run_overview_regions(void) {
     UT_ASSERT_MSG(n == 1, "corner tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 0, 236, 17, 255);
 
-    /* A closing block is the same rect at a smaller half-width, centred where
-     * it was; at nothing left it is the single square the wreck is on, and
-     * past that the tank contributes no rect at all. */
+    /* A narrower half-width is the same rect drawn smaller, centred where it
+     * was; at nothing left it is the single square the tank is on, and a
+     * negative one means no rect at all. */
     n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 4, out,
                                 OVERVIEW_MAX_REGIONS);
-    UT_ASSERT_MSG(n == 1, "a closing block gave %d regions, expected 1", n);
+    UT_ASSERT_MSG(n == 1, "a narrowed block gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 96, 96, 104, 104);
 
     n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 0, out,
                                 OVERVIEW_MAX_REGIONS);
-    UT_ASSERT_MSG(n == 1, "a closed block gave %d regions, expected 1", n);
+    UT_ASSERT_MSG(n == 1, "a single-square block gave %d regions, expected 1",
+                  n);
     ASSERT_RECT(out[0], 100, 100, 100, 100);
 
     n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, -1, out,
@@ -228,105 +225,49 @@ int run_overview_regions(void) {
         ASSERT_RECT(out[maxOut], -1, -1, -1, -1);
     }
 
-    /* The schedule those half-widths come off while the tank is dead. The
-     * block is whole until the tick the classic view cuts to static, closes
-     * from there, and is gone by the end of the close — a shell death and a
-     * drowning on their own clocks, the drowning being given longer to watch
-     * exactly as the static is. */
+    /* Where the blackout sits in the death wait: the player watches their own
+     * explosion, then the view goes black from the tick the classic view cuts
+     * to static through to the respawn. A shell death and a drowning run on
+     * their own clocks, the drowning being given longer to watch exactly as
+     * the static is. */
     {
-        int half; /* The width under test */
-        int prev; /* The one before it, for the walk down */
         int wait; /* Ticks left on the death wait */
 
-        half = overviewMapDeathTankHalf(TANK_DEATH_WAIT, LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(half == OVERVIEW_TANK_HALF,
-                      "a tank that has just died has half %d, expected %d",
-                      half, OVERVIEW_TANK_HALF);
-
-        half = overviewMapDeathTankHalf(STATIC_ON_TICKS, LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(half == OVERVIEW_TANK_HALF,
-                      "the tick the static starts has half %d, expected %d",
-                      half, OVERVIEW_TANK_HALF);
-
-        half = overviewMapDeathTankHalf(STATIC_ON_TICKS - 1,
-                                        LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(half >= 0 && half < OVERVIEW_TANK_HALF,
-                      "the first closing tick has half %d, expected inside "
-                      "0..%d", half, OVERVIEW_TANK_HALF - 1);
-
-        half = overviewMapDeathTankHalf(
-            STATIC_ON_TICKS - OVERVIEW_DEATH_CLOSE_TICKS + 1,
-            LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(half == 0,
-                      "the last closing tick has half %d, expected the wreck's "
-                      "own square", half);
-
-        half = overviewMapDeathTankHalf(
-            STATIC_ON_TICKS - OVERVIEW_DEATH_CLOSE_TICKS, LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(half < 0, "a closed block has half %d, expected none",
-                      half);
-
-        /* A wait that has not been written yet is still the watching phase:
-         * closing on it would drop the block for a tick and put it back. */
-        half = overviewMapDeathTankHalf(0, LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(half == OVERVIEW_TANK_HALF,
-                      "an unwritten wait has half %d, expected %d", half,
-                      OVERVIEW_TANK_HALF);
-
-        /* Drowning cuts earlier in the wait, so there is a tick where it is
-         * closing and a shell death is not. */
         UT_ASSERT_MSG(
-            overviewMapDeathTankHalf(STATIC_ON_TICKS_DEEPSEA - 1,
-                                     LAST_DEATH_BY_DEEPSEA) <
-                    OVERVIEW_TANK_HALF &&
-                overviewMapDeathTankHalf(STATIC_ON_TICKS_DEEPSEA - 1,
-                                         LAST_DEATH_BY_SHELL) ==
-                    OVERVIEW_TANK_HALF,
-            "a drowning and a shell death close on the same tick");
+            !overviewMapDeathBlackout(TANK_DEATH_WAIT, LAST_DEATH_BY_SHELL),
+            "a tank that has just died is already blacked out");
+        UT_ASSERT_MSG(
+            !overviewMapDeathBlackout(STATIC_ON_TICKS + 1, LAST_DEATH_BY_SHELL),
+            "the blackout started a tick early");
+        UT_ASSERT_MSG(
+            overviewMapDeathBlackout(STATIC_ON_TICKS, LAST_DEATH_BY_SHELL),
+            "the blackout did not start where the static does");
+        UT_ASSERT_MSG(overviewMapDeathBlackout(1, LAST_DEATH_BY_SHELL),
+                      "the blackout stopped before the respawn");
+        UT_ASSERT_MSG(!overviewMapDeathBlackout(0, LAST_DEATH_BY_SHELL),
+                      "a tank that is not dead is blacked out");
 
-        /* Never wider than it was a tick ago, the whole way down. */
-        prev = OVERVIEW_TANK_HALF;
-        for (wait = TANK_DEATH_WAIT; wait >= 1; wait--) {
-            half = overviewMapDeathTankHalf(wait, LAST_DEATH_BY_SHELL);
-            UT_ASSERT_MSG(half <= prev,
-                          "the block grew from %d to %d at %d ticks left",
-                          prev, half, wait);
-            prev = half;
-        }
-        UT_ASSERT_MSG(prev < 0, "the block had not gone by the end of the wait");
-    }
+        /* A drowning is given longer, so there is a stretch where it is black
+         * and a shell death is not. */
+        UT_ASSERT_MSG(
+            overviewMapDeathBlackout(STATIC_ON_TICKS_DEEPSEA,
+                                     LAST_DEATH_BY_DEEPSEA) &&
+                !overviewMapDeathBlackout(STATIC_ON_TICKS_DEEPSEA,
+                                          LAST_DEATH_BY_SHELL),
+            "a drowning and a shell death black out on the same tick");
 
-    /* And where the static sits in that wait: the last stretch of it, ending
-     * with the respawn. */
-    {
-        int wait; /* Ticks left on the death wait */
+        /* A cause the schedule does not know takes the shell figure — a death
+         * with no answer must still black out rather than stay watchable. */
+        UT_ASSERT_MSG(overviewMapDeathBlackout(STATIC_ON_TICKS, 0xFF),
+                      "an unrecognised death cause never blacks out");
 
-        UT_ASSERT_MSG(!overviewMapDeathStatic(TANK_DEATH_WAIT),
-                      "a tank that has just died is already in static");
-        UT_ASSERT_MSG(!overviewMapDeathStatic(OVERVIEW_DEATH_STATIC_TICKS + 1),
-                      "the static started a tick early");
-        UT_ASSERT_MSG(overviewMapDeathStatic(OVERVIEW_DEATH_STATIC_TICKS),
-                      "the static did not start where it should");
-        UT_ASSERT_MSG(overviewMapDeathStatic(1),
-                      "the static stopped before the respawn");
-        UT_ASSERT_MSG(!overviewMapDeathStatic(0),
-                      "a tank that is not dead is in static");
-
-        /* The order the death plays in: the block has closed before the static
-         * comes up, so there is a stretch of dark map in between. Both causes,
-         * because they close on different clocks. */
-        for (wait = OVERVIEW_DEATH_STATIC_TICKS; wait >= 1; wait--) {
+        /* Once up it stays up: no tick between the start and the respawn puts
+         * the picture back. */
+        for (wait = STATIC_ON_TICKS; wait >= 1; wait--) {
             UT_ASSERT_MSG(
-                overviewMapDeathTankHalf(wait, LAST_DEATH_BY_SHELL) < 0 &&
-                    overviewMapDeathTankHalf(wait, LAST_DEATH_BY_DEEPSEA) < 0,
-                "the static is up at %d ticks left while the block is still "
-                "open — the map never goes dark", wait);
+                overviewMapDeathBlackout(wait, LAST_DEATH_BY_SHELL),
+                "the blackout dropped at %d ticks left", wait);
         }
-        UT_ASSERT_MSG(
-            overviewMapDeathTankHalf(OVERVIEW_DEATH_STATIC_TICKS + 1,
-                                     LAST_DEATH_BY_SHELL) < 0,
-            "the block closes only as the static comes up — no dark in "
-            "between");
     }
 
     serverSimDestroy(sim);
@@ -1032,60 +973,37 @@ int run_overview_dead_tank(void) {
                   (unsigned)liveY, (unsigned)om->tile[liveX][liveY],
                   (unsigned)wantTile);
 
-    /* The wait run down to the tick after the classic view cuts to static: the
-     * block is closing, so the squares it has given up are out of the live set
-     * and the ones it still holds are in it. */
-    {
-        int closingHalf = overviewMapDeathTankHalf(STATIC_ON_TICKS - 1,
-                                                   LAST_DEATH_BY_SHELL);
-        UT_ASSERT_MSG(closingHalf >= 0 && closingHalf < OVERVIEW_TANK_HALF,
-                      "the first closing tick left half %d, expected inside "
-                      "0..%d", closingHalf, OVERVIEW_TANK_HALF - 1);
-        OverviewRect closingRect =
-            overviewTestBlock(f.tankMX, f.tankMY, closingHalf);
-
-        tankSetDeathWait(&f.gs->tanks[f.me], STATIC_ON_TICKS - 1);
-        clientSimDisplayTick(f.cs, false);
-
-        ASSERT_RECT_LIVE(om, closingRect, TRUE, "a closing block");
-        UT_ASSERT_MSG(om->liveCount == 1,
-                      "liveCount %d with a closing block", om->liveCount);
-        for (x = tankRect.left; x <= tankRect.right; x++) {
-            for (y = tankRect.top; y <= tankRect.bottom; y++) {
-                if (x >= closingRect.left && x <= closingRect.right &&
-                    y >= closingRect.top && y <= closingRect.bottom) {
-                    continue;
-                }
-                UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_LIVE) == 0,
-                              "square %d,%d is still live after the block "
-                              "closed past it", x, y);
-            }
-        }
-    }
-
-    /* And closed: the tank has no block left at all, so the ground it died on
-     * is remembered like any other square the player has walked away from. A
-     * terrain change inside it no longer reaches the memory, which is what
-     * stops a dead player watching the square that killed them. */
-    tankSetDeathWait(&f.gs->tanks[f.me],
-                     STATIC_ON_TICKS - OVERVIEW_DEATH_CLOSE_TICKS);
+    /* The wait run down past the tick the classic view cuts to static, which is
+     * where the view goes black. The block underneath is untouched by that —
+     * whole, live and still taking terrain — because what the player is denied
+     * is the picture, not the memory. */
+    tankSetDeathWait(&f.gs->tanks[f.me], STATIC_ON_TICKS - 1);
     clientSimDisplayTick(f.cs, false);
-    ASSERT_RECT_LIVE(om, tankRect, FALSE, "a block that has closed");
-    UT_ASSERT_MSG(om->liveCount == 0,
-                  "liveCount %d with a closed block and no pills",
-                  om->liveCount);
+    ASSERT_RECT_LIVE(om, tankRect, TRUE, "a blacked-out tank's block");
+    UT_ASSERT_MSG(om->liveCount == 1,
+                  "liveCount %d with a dead tank blacked out", om->liveCount);
+    UT_ASSERT_MSG(clientSimIsMyTankDeathBlackout(f.cs) == TRUE,
+                  "the view is not black a tick after the static would start");
     {
-        BYTE frozen = om->tile[liveX][liveY];
-        BYTE back = mapGetPos(&f.gs->mp, liveX, liveY);
+        BYTE was = mapGetPos(&f.gs->mp, liveX, liveY);
+        BYTE now = overviewFlipTerrain(was);
+        bool isMine = FALSE;
+        BYTE want;
 
-        mapSetPos(f.gs, &f.gs->mp, liveX, liveY, overviewFlipTerrain(back), TRUE,
-                  TRUE);
+        BYTE held = om->tile[liveX][liveY];
+
+        mapSetPos(f.gs, &f.gs->mp, liveX, liveY, now, TRUE, TRUE);
+        want = viewportCalcSquarePure(f.gs, f.me, liveX, liveY, &isMine);
+        UT_ASSERT_MSG(want != held,
+                      "terrain %u and %u render as the same tile at %u,%u — "
+                      "the live check would pass on its own", (unsigned)was,
+                      (unsigned)now, (unsigned)liveX, (unsigned)liveY);
         clientSimDisplayTick(f.cs, false);
-        UT_ASSERT_MSG(om->tile[liveX][liveY] == frozen,
-                      "square %u,%u took a terrain change through a closed "
-                      "block: tile %u, expected %u", (unsigned)liveX,
+        UT_ASSERT_MSG(om->tile[liveX][liveY] == want,
+                      "square %u,%u held tile %u through a terrain change "
+                      "while the view was black, expected %u", (unsigned)liveX,
                       (unsigned)liveY, (unsigned)om->tile[liveX][liveY],
-                      (unsigned)frozen);
+                      (unsigned)want);
     }
 
     /* Respawned sixty squares off: the block follows the tank there and the

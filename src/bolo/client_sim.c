@@ -1001,14 +1001,13 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
  * there would reveal map the player has never reached. The overview is told
  * how far through its death wait it is rather than simply that it is gone: it
  * holds the block on the square it remembers so the player watches the
- * explosion where it happened, then closes it over the wreck. */
+ * explosion where it happened. */
 static void overviewMapTick(ClientSim *cs) {
   BYTE mx = 0, my = 0;
   bool haveTank = clientSimIsMyTankAlive(cs) &&
                   clientSimGetMyTankMapPos(cs, &mx, &my);
   bool inSlot = !haveTank && MY_TANK(cs) != NULL;
   int deathWait = inSlot ? tankGetDeathWait(&MY_TANK(cs)) : 0;
-  int lastDeath = inSlot ? tankGetLastTankDeath(&MY_TANK(cs)) : 0;
   OverviewViewInputs in;
 
   /* Armour goes over full the tick the tank takes the hit; the wait is written
@@ -1026,7 +1025,7 @@ static void overviewMapTick(ClientSim *cs) {
   }
   clientSimFillOverviewViewInputs(cs, &in);
   overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, &in, haveTank,
-                    deathWait, lastDeath, mx, my);
+                    deathWait, mx, my);
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
@@ -1649,11 +1648,12 @@ int clientSimGetMyTankLastDeath(ClientSim *cs) {
   return tankGetLastTankDeath(&MY_TANK(cs));
 }
 
-bool clientSimIsMyTankDeathStatic(ClientSim *cs) {
+bool clientSimIsMyTankDeathBlackout(ClientSim *cs) {
   if (cs == NULL || MY_TANK(cs) == NULL || clientSimIsMyTankAlive(cs)) {
     return false;
   }
-  return overviewMapDeathStatic(clientSimGetMyTankDeathWait(cs));
+  return overviewMapDeathBlackout(clientSimGetMyTankDeathWait(cs),
+                                  clientSimGetMyTankLastDeath(cs));
 }
 
 /* Game info (per-instance) */
