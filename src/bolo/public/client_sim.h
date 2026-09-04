@@ -92,6 +92,20 @@ typedef struct {
     uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
 } ClientSpectatorSlot;
 
+/* Live per-slot scoreboard counters, accumulated on the client from the
+ * reliable game-event stream (clientSimApplyGameEvents). Field names
+ * mirror RoundPlayerSummary so the end-of-round recap and the live board
+ * read the same way; dmgDealt and builds are absent because no client
+ * event carries them. */
+typedef struct {
+    uint16_t kills;
+    uint16_t deaths;
+    uint16_t baseCaptures;
+    uint16_t pillCaptures;
+    uint16_t lgmKills;
+    uint16_t lgmDeaths;
+} ClientPlayerStats;
+
 /* Callback typedefs for new transport message sending.
  *
  * NetChatSendFunc receives the owning ClientSim so the callback body
@@ -576,6 +590,11 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
+
+/* Live scoreboard counters for one player slot; out-of-range slot
+ * returns NULL. Zeroed at the start of each game. */
+const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
+                                                 BYTE playerNum);
 
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);

@@ -1575,6 +1575,12 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   return &cs->lobbySlots[n];
 }
 
+const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
+                                                 BYTE playerNum) {
+  if (cs == NULL || playerNum >= MAX_TANKS) return NULL;
+  return &cs->liveStats[playerNum];
+}
+
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx) {
   if (idx >= MAX_SPECTATORS) return NULL;
   return &cs->spectatorSlots[idx];

@@ -729,6 +729,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * flawless / no-LGM-loss achievements for the rest of the session. */
         cs->myDeathsThisGame = 0;
         cs->myLgmLossesThisGame = 0;
+        /* Live per-slot scoreboard — counted from the game-event stream,
+         * so it would otherwise carry the previous round's totals. */
+        memset(cs->liveStats, 0, sizeof(cs->liveStats));
         cs->hasAnyBaseCaptured = false;
         cs->hasAnyPillCaptured = false;
         cs->maxPlayersSeenThisGame = 0;

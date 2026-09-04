@@ -244,6 +244,15 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
     csPtr->pendingBuildY = 0;
   }
 }
+
+/* Bounds-checked live-scoreboard row. Slot bytes arrive off the wire and
+ * an owner field can legitimately hold NEUTRAL, so nothing indexes
+ * liveStats without passing through here. */
+static ClientPlayerStats *liveStatsSlot(ClientSim *csPtr, BYTE slot) {
+  if (slot >= MAX_TANKS) return NULL;
+  return &csPtr->liveStats[slot];
+}
+
 /*********************************************************
 *NAME:          clientSimApplyGameEvents
 *PURPOSE:
@@ -363,6 +372,11 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
       }
       case EVENT_BASE_CAPTURED:
         /* data: [newOwner, previousOwner] */
+        /* Live scoreboard: counted for every slot. */
+        {
+          ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
+          if (ownerRow != NULL) ownerRow->baseCaptures++;
+        }
         if (isHuman) {
           basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
                                      events[i].data[0], events[i].data[1]);
@@ -391,6 +405,11 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         break;
       case EVENT_PILL_CAPTURED:
         /* data: [newOwner, previousOwner] */
+        /* Live scoreboard: counted for every slot. */
+        {
+          ClientPlayerStats *ownerRow = liveStatsSlot(csPtr, events[i].data[0]);
+          if (ownerRow != NULL) ownerRow->pillCaptures++;
+        }
         if (isHuman) {
           BYTE newOwner = events[i].data[0];
           BYTE prevOwner = events[i].data[1];
@@ -511,6 +530,16 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         break;
       case EVENT_LGM_LOST:
         /* data: [victim, killer] — builder killed, broadcast newswire */
+        /* Live scoreboard: counted for every slot. Killing your own LGM
+         * credits no lgmKills, matching the Steam branch below. */
+        {
+          ClientPlayerStats *victimRow = liveStatsSlot(csPtr, events[i].data[0]);
+          if (victimRow != NULL) victimRow->lgmDeaths++;
+          if (events[i].data[1] != events[i].data[0]) {
+            ClientPlayerStats *killerRow = liveStatsSlot(csPtr, events[i].data[1]);
+            if (killerRow != NULL) killerRow->lgmKills++;
+          }
+        }
         if (isHuman) {
           MessageArgs args;
           memset(&args, 0, sizeof(args));
@@ -556,6 +585,16 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         break;
       case EVENT_TANK_KILLED:
         /* data: [killer, killed, deathCause, carriedPills] */
+        /* Live scoreboard: counted for every slot. A self-kill is a death
+         * with no kill credited, matching the server's PlayerRoundStats. */
+        {
+          ClientPlayerStats *killedRow = liveStatsSlot(csPtr, events[i].data[1]);
+          if (killedRow != NULL) killedRow->deaths++;
+          if (events[i].data[0] != events[i].data[1]) {
+            ClientPlayerStats *killerRow = liveStatsSlot(csPtr, events[i].data[0]);
+            if (killerRow != NULL) killerRow->kills++;
+          }
+        }
         if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
           tankAddKill(&csPtr->sim, &MY_TANK(csPtr));
           /* Steam stat: human only — bots run this same path. */

@@ -3046,6 +3046,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_live_player_stats.c
     tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
@@ -3572,6 +3573,12 @@ set(_unit_test_names
     command_rejected_parks_name_codes
     command_rejected_ignores_other_slot
     command_rejected_clear_resets_both_fields
+    live_stats_kill_credits_killer_and_victim
+    live_stats_suicide_counts_death_only
+    live_stats_lgm_loss_splits_victim_and_killer
+    live_stats_captures_credit_new_owner
+    live_stats_out_of_range_slot_ignored
+    live_stats_cleared_on_running_phase
     shell_death_codec_roundtrip
     shell_death_culls_matching_predicted_shell
     shell_death_rejected_culls_without_impact

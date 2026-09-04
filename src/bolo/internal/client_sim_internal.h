@@ -533,6 +533,10 @@ struct ClientSim {
     uint16_t myDeathsThisGame;
     uint16_t myLgmLossesThisGame;
 
+    /* Live per-slot scoreboard, counted from the reliable game-event
+     * stream for every slot (not just ours). Zeroed at CTRL_GAME_PHASE_RUNNING. */
+    ClientPlayerStats liveStats[MAX_TANKS];
+
     /* Steam achievement: player count tracking (ACH_PLAYERS_6/8/16) */
     uint8_t  maxPlayersSeenThisGame;
 
