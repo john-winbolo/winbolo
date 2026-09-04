@@ -1988,6 +1988,3 @@ STR_WEB_JOIN_NO_RESPONSE=Could not join the game (the server did not respond, or
 # Players menu — open the players panel
 STR_MENU_PLAYERS_PANEL=Players Panel
 
-# Players panel — live scoreboard section
-STR_PLAYERS_PANEL_SCOREBOARD=Scoreboard
-

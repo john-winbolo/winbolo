@@ -2104,9 +2104,6 @@
 /* Players menu — open the players panel */
 #define STR_MENU_PLAYERS_PANEL                  2015
 
-/* Players panel — live scoreboard section */
-#define STR_PLAYERS_PANEL_SCOREBOARD            2017
-
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
