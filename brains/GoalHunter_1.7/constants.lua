@@ -777,6 +777,27 @@ M.STEAL_GRANT_TTL      = 250 -- ticks a received accept stays valid in goal sele
 M.STEAL_REPLY_DEADLINE = 20  -- holder answers with its cached score at latest after this many ticks
 M.STEAL_REEVAL_MAX_AGE = 40  -- cached pool-6 score older than this defers the reply (waits for a fresh re-eval)
 M.STEAL_YIELD_BLOCK    = 300 -- after yielding, don't re-pick that pill for this long (covers the gap until the winner's claim broadcast lands)
+-- COMMITMENT-AWARE steal pricing (20260903_193428_1 bot3, t=1266-1270). p4 sent
+-- bot3 two steal requests back to back -- `stq 4 3 188` and `stq 0 3 379` -- while
+-- p4's own goal was attack_pill #5 and stayed #5 the whole time (it was the
+-- commander of the pill-5 blitz). Bot3 yielded both, and its pool 6 then showed
+-- pills #0 and #4 ally_claimed by p4 for the full STEAL_YIELD_BLOCK (still up at
+-- t=1487) for takes p4 never went near. Two separate causes:
+--   * the handshake compared RAW cost_cache costs on both sides. Bot3's own goal
+--     selection had priced pill #0 at 223.6 (`total=223.6 base=315.9 pen=-92.3
+--     hyst=type` -- the same-type commitment/hysteresis discount it had earned by
+--     already being on the take), but it advertised and replied with the RAW 423,
+--     so p4's raw 379 cleared the 10% band by 1.7 points (379 < 380.7). Both sides
+--     now trade the COMPETED total -- the number each bot's own goal selection
+--     used -- so a holder's commitment counts for what it is worth.
+--   * the challenger fired stq for every ally-claimed row that looked cheap on
+--     paper. A request now goes out only for the row goal selection would
+--     actually pick if the claim were lifted, at most one per replan.
+-- ALLY_CLAIMED_STEAL_FRAC stays 0.10: with the commitment discount in the
+-- comparison the thin margin is moot.
+M.STEAL_COMPETED_FRESH_AGE  = 60  -- a competed total this new counts as FRESH for a reply: one GOAL_REPLAN_INTERVAL (50) plus slack, so a usable number always exists between replans. Older than this defers the reply exactly the way a stale raw cost does (until STEAL_REPLY_DEADLINE forces one)
+M.STEAL_COMPETED_MAX_AGE    = 150 -- beyond this the competed total is discarded outright and the handshake falls back to the RAW cost_cache cost, tagged `(raw)` on the DECISION line. Three replan intervals: the row has not competed since (rejected every replan), or the capacity controller skipped the replan
+M.STEAL_YIELD_RELEASE_GRACE = 60  -- ticks after a yield before a stealer's advert may release it (same incident: the yield block outlived the steal by 200+ ticks). One replan interval plus slack, so the stealer gets a full replan to pick the pill up -- its /info state is event-driven and only re-sends on a goal CHANGE, so its pre-yield goal would otherwise read as "went elsewhere" the very next tick
 -- DEPRECATED / unused: the refuel ally-claim FCFS reject (and its
 -- far-claimer override) was replaced by the SOFT per-ally cost penalty
 -- (ALLY_CLAIMED_REFUEL_PENALTY). Refuel is no longer in _REJECT_POOLS, so

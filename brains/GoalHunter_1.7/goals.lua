@@ -9837,10 +9837,20 @@ local function get_formula_inner(e)
     end
     local their_str = their and string.format("%.0f", their) or "?"
     local diff_str  = (their and string.format(" (we_more_by=%.0f)", our - their)) or ""
+    -- Pool 6 quotes the COMPETED total when it has one (see the steal handshake
+    -- in sync_ally_claimed_rejects); say which price this row was judged on and
+    -- what the last outgoing-request decision was, so the row is reproducible.
+    local steal_str = ""
+    if e._steal_units then
+      steal_str = string.format(" — priced on OUR %s cost %.1f (raw cost_cache %.1f)",
+        e._steal_units, e._steal_cost or our, our)
+    end
+    if e._steal_reason then steal_str = steal_str .. " — " .. tostring(e._steal_reason) end
+    if e._steal_note then steal_str = steal_str .. " || request: " .. tostring(e._steal_note) end
     return reject_with_breakdown(e,
       string.format("REJECT ally_claimed %dt @(%d,%d)", rem, e._mx or 0, e._my or 0),
-      string.format("reject:ally_claimed %dt — p%s bid %s < ours %.0f%s",
-        rem, tostring(by or "?"), their_str, our, diff_str))
+      string.format("reject:ally_claimed %dt — p%s bid %s < ours %.0f%s%s",
+        rem, tostring(by or "?"), their_str, our, diff_str, steal_str))
   end
   if e._reject == "armour_too_low" then
     return reject_with_breakdown(e,
@@ -10593,6 +10603,22 @@ local function get_formula(e)
     term_disp = ""  -- no cost contribution
     term_map  = string.format("|ally_claimed:p%s bid %.0f, ours %.0f — %s",
                               tostring(e._ally_by or "?"), their, our, rel)
+    if e._steal_units then
+      term_map = term_map .. string.format(" (ours priced on our %s cost %.1f)",
+                                           e._steal_units, e._steal_cost or our)
+    end
+  elseif e._steal_released then
+    -- The steal-yield block on this row ENDED EARLY: we had yielded the pill,
+    -- and the stealer's own advert then showed it going somewhere else, so the
+    -- pill is priceable again well inside STEAL_YIELD_BLOCK. Say so on the row —
+    -- otherwise a pill that was ally_claimed for 300 ticks a moment ago just
+    -- silently reappears as a candidate.
+    local sr = e._steal_released
+    term_disp = ""
+    term_map  = string.format(
+      "|steal_yield:RELEASED — yielded to p%s, released after %dt of STEAL_YIELD_BLOCK(%d) because %s; re-priced at our own cost %.0f",
+      tostring(sr.by or "?"), sr.after or 0, C.STEAL_YIELD_BLOCK or 300,
+      tostring(sr.reason or "?"), e.cost or 0)
   else
     -- No penalty, no ally claim — suppress the term entirely.
     return f
@@ -12176,6 +12202,140 @@ local WSIM_SIM_KINDS = { capture_base=true, capture_pill=true,
 -- SYNC_P6 lines never reached the log; they only moved the edge trigger's
 -- "last printed" state and made the think path drop or repeat a line. The
 -- panel pass does the same sync work, silently.
+-- =========================================================================
+-- STEAL HANDSHAKE: commitment-aware pricing + one targeted request per replan
+-- (20260903_193428_1 bot3 t=1266-1270 -- see the STEAL_COMPETED_* block in
+-- constants.lua for the incident.)
+-- =========================================================================
+
+-- steal_competed_cost -- the COMPETED total goal selection last used for
+-- (pool_idx, id): the raw pool cost after phase weight, influence, hysteresis,
+-- commitment and history. This is the number the handshake trades, because it
+-- is the number each bot's own goal selection acts on. Returns
+--   cost, age_in_ticks, raw_cost
+-- or nil, in which case the caller falls back to the raw cost_cache cost and
+-- SAYS so, tagged `(raw)`. Three ways to get nil:
+--   * the row has never competed (the normal CHALLENGER case: an ally-claimed
+--     row is REJECTed out of every pool, so it has no competed total at all);
+--   * it last competed more than STEAL_COMPETED_MAX_AGE ago;
+--   * `hold` is given and the record was taken under the OTHER hold status.
+-- That last one matters as much as the age: a row that competed while it was
+-- our goal carries the commitment/hysteresis discount, one that competed while
+-- it was not carries the switch penalty, and using one for the other is worse
+-- than using the raw cost. Pass `hold` (true when we hold this goal NOW) at
+-- every handshake site; omit it only where the answer is a plain lookup.
+local function steal_competed_cost(state, pool_idx, id, hold)
+  if id == nil then return nil end
+  local rec = state._competed and state._competed[pool_idx .. ":" .. tostring(id)]
+  if not rec or type(rec.cost) ~= "number" or rec.cost >= 1e29 then return nil end
+  local age = (state.tick or 0) - (rec.tick or 0)
+  if age > (C.STEAL_COMPETED_MAX_AGE or 150) then return nil end
+  if hold ~= nil and (rec.held and true or false) ~= (hold and true or false) then
+    return nil
+  end
+  return rec.cost, age, rec.raw
+end
+M.steal_competed_cost = steal_competed_cost
+
+-- steal_drain_requests -- decide which (if any) of this tick's candidate steal
+-- requests actually goes on the wire. Called from goal_selection, right after
+-- the competed ledger is rebuilt and the pool is sorted, NOT from the sync
+-- pass: the gate is "would goal selection pick this pill if the ally claim
+-- were lifted?", and only here is the answer available (the sorted pool plus
+-- this replan's winner). sync_ally_claimed_rejects merely QUEUES candidates on
+-- state._steal_req_pending (it still owns the cheaper-than-the-holder test and
+-- the STEAL_REQ_COOLDOWN), and this drains them.
+--
+-- The claimed row is REJECTed, so it never enters the pool and never has a
+-- competed total of its own. Its total is ESTIMATED from the shaping this
+-- replan applied to pool 6's actual representative:
+--   shape = competed(pool 6) / raw(pool 6),  est = raw(claimed row) * shape
+-- and it must clear BOTH gates:
+--   1. it would win pool 6 at all      -- raw(claimed) < raw(pool-6 rep)
+--   2. it would win the replan         -- est < competed(this replan's winner)
+-- Gate 1 makes the estimate honest: below the rep's raw cost, this row IS the
+-- rep, so it gets the rep's shaping. Where the rep is our current goal the
+-- shaping carries a hysteresis DISCOUNT the claimed row would not get, which
+-- makes `est` optimistic -- gate 1 still holds it to being genuinely cheaper,
+-- and the log line names the shape so the call can be reproduced.
+-- At most ONE request leaves per replan: the surviving row with the lowest est.
+-- Vetoed rows burn no cooldown (nothing was sent), so they retry next replan.
+function M.steal_drain_requests(state)
+  local pend = state._steal_req_pending
+  state._steal_req_pending = nil
+  state._steal_req_verdict = state._steal_req_verdict or {}
+  if not pend or #pend == 0 then return end
+  -- sync walks cost_cache with pairs(), so the queue order is a per-process
+  -- hash order. Sort by pill id: which row wins a tie (and which veto text a
+  -- row gets) must be identical on two same-seed runs.
+  table.sort(pend, function(a, b) return a.pid < b.pid end)
+  local now = state.tick or 0
+  local win      = state._competed_winner
+  local rep_raw  = state._pool_competed_raw and state._pool_competed_raw[6]
+  local rep_comp = state._pool_competed and state._pool_competed[6]
+  -- No pool-6 representative means every attack_pill row was rejected -- which
+  -- is what an ally claim on the only pill looks like. There is then no shaping
+  -- to copy, so the raw pool cost goes up against the winner unscaled.
+  local shape, shape_txt = 1.0, "x1.000 (no pool-6 row competed this replan; comparing the RAW pool cost against the winner)"
+  if rep_raw and rep_comp and rep_raw > 0 and rep_comp < 1e29 then
+    shape = rep_comp / rep_raw
+    if shape < 0.1 then shape = 0.1 elseif shape > 10 then shape = 10 end
+    shape_txt = string.format("x%.3f (pool-6 rep competed %.1f / raw %.1f)",
+                              shape, rep_comp, rep_raw)
+  end
+  local best, best_est
+  for _, r in ipairs(pend) do
+    r.est = (r.raw or 0) * shape
+    if rep_raw and (r.raw or math.huge) >= rep_raw then
+      r.veto = string.format("would not even win pool 6 (our raw %.1f >= pool-6 pick's raw %.1f)",
+                             r.raw or -1, rep_raw)
+    elseif win and r.est >= (win.cost or math.huge) then
+      r.veto = string.format("would not win the replan (est competed %.1f >= winner %s%s %.1f)",
+                             r.est, win.kind or "?",
+                             win.id and ("#" .. tostring(win.id)) or "", win.cost or -1)
+    elseif not best or r.est < best_est then
+      if best then
+        best.veto = string.format("not the best claimed row this replan (est %.1f > #%d's %.1f)",
+                                  best.est, r.pid, r.est)
+      end
+      best, best_est = r, r.est
+    else
+      r.veto = string.format("not the best claimed row this replan (est %.1f > #%d's %.1f)",
+                             r.est, best.pid, best_est)
+    end
+  end
+  for _, r in ipairs(pend) do
+    if r == best then
+      state._steal_req_sent = state._steal_req_sent or {}
+      state._steal_req_sent[r.pid] = { to = r.to, tick = now, cost = r.our_cost }
+      state._steal_outbox = state._steal_outbox or {}
+      state._steal_outbox[#state._steal_outbox + 1] =
+        string.format("/info stq %d %d %d", r.pid, r.to,
+                      math.floor(math.min(r.our_cost, 9999999) + 0.5))
+      state._steal_req_verdict[r.pid] = string.format(
+        "SENT t=%d: our %.1f(%s) vs p%d's %.1f, est competed %.1f vs winner %.1f, shape %s",
+        now, r.our_cost, r.units, r.to, r.match_cost or -1, r.est,
+        win and win.cost or -1, shape_txt)
+      print2(string.format(
+        "STEAL_REQ t=%d SEND pill=#%d to=p%d our_cost=%.1f(%s) raw=%.1f ally_cost=%s est_competed=%.1f shape=%s winner=%s (%d candidate(s) this replan)",
+        now, r.pid, r.to, r.our_cost, r.units, r.raw or -1,
+        tostring(r.match_cost), r.est, shape_txt,
+        win and string.format("%s%s %.1f", win.kind or "?",
+                              win.id and ("#" .. tostring(win.id)) or "", win.cost or -1)
+            -- Nothing won this replan: every pool row was rejected or excluded,
+            -- this one included (by the ally claim). Lift the claim and it is
+            -- the only candidate there is, so there is nothing to lose to.
+            or "none (no goal won this replan; with the claim lifted this row is the only candidate)",
+        #pend))
+    else
+      state._steal_req_verdict[r.pid] = string.format("HELD t=%d: %s", now, r.veto or "?")
+      print2(string.format(
+        "STEAL_REQ t=%d HOLD pill=#%d to=p%d our_cost=%.1f(%s) raw=%.1f est_competed=%.1f -- %s",
+        now, r.pid, r.to, r.our_cost, r.units, r.raw or -1, r.est, r.veto or "?"))
+    end
+  end
+end
+
 local function sync_ally_claimed_rejects(state, info, panel_refresh)
   local cache = state.cost_cache
   if not cache then return end
@@ -12195,6 +12355,13 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
   local _hshells = (info and info.shells)
                    or (state._last_info and state._last_info.shells) or 0
   local ammoless_helper = state.ammo_deprived or _hshells == 0
+
+  -- Candidate steal requests for THIS pass. Rebuilt every sync so a row that
+  -- stopped qualifying can't leave a stale request queued; drained (at most one
+  -- sent) by steal_drain_requests at the end of goal_selection, which is the
+  -- only place that knows what this replan actually picked. The panel refresh
+  -- re-runs this whole sweep outside think and must not touch the queue.
+  if not panel_refresh then state._steal_req_pending = nil end
 
   local priority_ticks = C.ALLY_PILL_TAKE_PRIORITY_TICKS or 100
   -- Per-pill snapshot keyed by pill_id: { until_t, by }.  Set ONCE the
@@ -12494,6 +12661,11 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       -- co-attacker exemption).  You can't steal a kill mid-take.
       local force_engaging_reject = false
       local match_sub = nil
+      -- Units of the ally's advertised `cost=`: 1.7 tags a COMPETED total with
+      -- cq=c (see the /info extra builder in init.lua); anything without the tag
+      -- -- an older brain, or a goal whose competed total went stale -- is a RAW
+      -- pool cost. Carried into the DECISION line so the comparison is readable.
+      local match_units = "raw"
       local tank_dead_at = state.tank_dead_at
       local _diag_p6 = BRAIN_DEBUG_MODE and pool_idx == 6 and e._id
                        and not panel_refresh
@@ -12534,6 +12706,7 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
                 end
               end
               match_cost      = tonumber(h.cost)
+              match_units     = (h.cq == "c") and "competed" or "raw"
               match_pn        = ally_pn
               match_heartbeat = 1750 - (now - slot.last_tick)
               if match_heartbeat < 0 then match_heartbeat = 0 end
@@ -12558,6 +12731,26 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
 
       if match_pn then
         local our_cost = e.cost
+        -- Pool 6 prices the handshake on the COMPETED total, not the raw
+        -- cost_cache cost: that is the number our own goal selection acted on,
+        -- so it carries the commitment/hysteresis discount a holder has earned.
+        -- 20260903_193428_1 bot3 pill #0: raw 423, competed 223.6 -- quoting the
+        -- raw number handed the pill to a challenger at 379. Falls back to raw
+        -- (and says so) when the row has never competed, which is the normal
+        -- CHALLENGER case: an ally_claimed row is REJECTed out of every pool, so
+        -- it has no competed total until the claim lifts.
+        local our_units = "raw"
+        if pool_idx == 6 and e._id then
+          -- we_hold is computed a few lines down from the same state.goal; do
+          -- it here too so the hold status the lookup is matched against is the
+          -- CURRENT one, not the one at the time of the record.
+          local _g6 = state.goal
+          local _hold6 = (_g6 and _g6.kind == "attack_pill"
+            and ((_g6.target_id and _g6.target_id == e._id)
+                 or (_g6.mx == e._mx and _g6.my == e._my))) and true or false
+          local _cc = steal_competed_cost(state, 6, e._id, _hold6)
+          if _cc then our_cost = _cc; our_units = "competed" end
+        end
         -- Per-pool steal threshold: capture_pill grabs are cheap to re-route
         -- (drive-over, no shells invested), so essentially ANY cost edge wins
         -- the pickup (1%); other pools keep the conservative 25% band.
@@ -12653,13 +12846,24 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
                 local cd   = C.STEAL_REQ_COOLDOWN or 150
                 if (not sent or (now - sent.tick) >= cd)
                    and (not rej or (now - rej.tick) >= cd) then
-                  state._steal_req_sent = state._steal_req_sent or {}
-                  state._steal_req_sent[e._id] = { to = match_pn, tick = now, cost = our_cost }
-                  state._steal_outbox = state._steal_outbox or {}
-                  state._steal_outbox[#state._steal_outbox + 1] =
-                    string.format("/info stq %d %d %d", e._id, match_pn,
-                                  math.floor(math.min(our_cost, 9999999) + 0.5))
-                  _reason = "steal_requested (we_cheaper, asking p" .. match_pn .. ")"
+                  -- QUEUE, don't send. Being cheaper than the holder is not a
+                  -- reason to ask for a pill we would not then go and take:
+                  -- 20260903_193428_1 p4 asked bot3 for pills #4 and #0 while its
+                  -- own goal was (and stayed) attack_pill #5, and bot3's pool 6
+                  -- carried both as ally_claimed for 300 ticks for nothing. The
+                  -- "would we actually pick it?" test needs this replan's sorted
+                  -- pool, so steal_drain_requests makes the call at the end of
+                  -- goal_selection and sends at most one.
+                  if not panel_refresh then
+                    state._steal_req_pending = state._steal_req_pending or {}
+                    state._steal_req_pending[#state._steal_req_pending + 1] = {
+                      pid = e._id, to = match_pn,
+                      our_cost = our_cost, units = our_units,
+                      raw = e.cost, match_cost = match_cost, tick = now,
+                    }
+                  end
+                  _reason = "steal_candidate (we_cheaper than p" .. match_pn
+                            .. ", pending the would-we-pick-it check)"
                 else
                   _reason = "steal_cooldown (we_cheaper, ask later)"
                 end
@@ -12686,11 +12890,31 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
           -- wins above; pn only settles ties.
           we_keep = (self_pn < match_pn)
         end
+        -- Steal chips for the pool-grid row: which price we quoted, and what
+        -- steal_drain_requests did with the request last replan.
+        if pool_idx == 6 and e._id then
+          local _note = state._steal_req_verdict and state._steal_req_verdict[e._id]
+          if e._steal_reason ~= _reason or e._steal_units ~= our_units
+             or e._steal_note ~= _note or e._steal_cost ~= our_cost then
+            e._steal_reason = _reason
+            e._steal_units  = our_units
+            e._steal_cost   = our_cost
+            e._steal_note   = _note
+            e.formula = nil
+          end
+        end
         if BRAIN_DEBUG_MODE and pool_idx == 6 and e._id and not panel_refresh then
+          -- ally_cost/our_cost carry their UNITS: `(competed)` is the total that
+          -- side's goal selection actually used (raw pool cost after phase
+          -- weight, influence, hysteresis, commitment, history), `(raw)` is the
+          -- bare cost_cache cost. They are not interchangeable -- comparing a
+          -- holder's raw price against a challenger's raw price is what lost
+          -- pill #0 in 20260903_193428_1 (raw 423 vs competed 223.6).
           sync_p6_log(state, "D" .. tostring(e._id), string.format(
-            "SYNC_P6 pid=%d DECISION ally=p%d ally_cost=%s our_cost=%.0f frac=%.2f " ..
+            "SYNC_P6 pid=%d DECISION ally=p%d ally_cost=%s(%s) our_cost=%.1f(%s) raw=%.1f frac=%.2f " ..
             "we_hold=%s force_engaging=%s -> %s [%s]",
-            e._id, match_pn, tostring(match_cost), e.cost or 0, pool_steal_frac,
+            e._id, match_pn, tostring(match_cost), match_units,
+            our_cost or 0, our_units, e.cost or 0, pool_steal_frac,
             tostring(we_hold or false), tostring(force_engaging_reject),
             we_keep and "KEEP" or "REJECT(ally_claimed)", _reason or "?"))
         end
@@ -12736,6 +12960,65 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         -- re-picks the pill we just gave away and the yield ping-pongs.
         local y = (pool_idx == 6) and e._id
                   and state._steal_yielded and state._steal_yielded[e._id]
+        -- ── YIELD RELEASE ────────────────────────────────────────────────
+        -- The block exists to cover the GAP between our yield and the winner's
+        -- own claim broadcast landing. Once the stealer has spoken again and is
+        -- plainly NOT on this pill, the gap is over and the block is just a
+        -- self-inflicted lockout: 20260903_193428_1 bot3 held pills #0 and #4
+        -- ally_claimed by p4 for the full 300 ticks (still up at t=1487) while
+        -- p4 sat on attack_pill #5 the whole time. STEAL_YIELD_BLOCK stays the
+        -- ceiling; this just ends it early when the facts say so.
+        --
+        -- "Has spoken again" is slot.last_tick (any /info from them -- the 1 Hz
+        -- /info extra cost refresh keeps it moving), NOT state_tick: /info state
+        -- is event-driven and a stealer that never changed goal would never
+        -- re-send it, which is exactly the case this has to catch. The price is
+        -- that their goal/target can be a PRE-yield reading, so we give them
+        -- STEAL_YIELD_RELEASE_GRACE (one replan interval + slack) to pick the
+        -- pill up before their advert is allowed to release the block.
+        if y and (now - y.tick) >= (C.STEAL_YIELD_RELEASE_GRACE or 60) then
+          local slot = ally_state.get(y.to)
+          local h = slot and slot.active and slot.info
+          if h and (slot.last_tick or 0) > y.tick then
+            local ag  = h.goal
+            local at  = tonumber(h.target)
+            local on_this = (ag == "attack_pill" or ag == "capture_pill")
+              and ((at and e._id and at == e._id)
+                   or (at == nil and tonumber(h.mx) == e._mx
+                       and tonumber(h.my) == e._my))
+            if not on_this then
+              -- Name what they ARE on, not just that it isn't us: a target id
+              -- when they advertised one (with the goal kind alongside, since
+              -- object ids are per-kind and "#1" alone is ambiguous), the bare
+              -- goal kind when they didn't (explore/take_cover carry no id).
+              local reason
+              if ag == nil or ag == "" then
+                reason = "stealer_goal=none"
+              elseif at then
+                reason = string.format("stealer_target=%d kind=%s", at, tostring(ag))
+              else
+                reason = "stealer_goal=" .. tostring(ag)
+              end
+              local after = now - y.tick
+              if BRAIN_DEBUG_MODE and not panel_refresh then
+                print2(string.format(
+                  "STEAL_YIELD_RELEASED t=%d pill=#%d to=p%d reason=%s after %dt (block was %d)",
+                  now, e._id, y.to, reason, after, C.STEAL_YIELD_BLOCK or 300))
+              end
+              state._steal_yielded[e._id] = nil
+              e._steal_released = { by = y.to, reason = reason,
+                                    tick = now, after = after }
+              y = nil
+              e.formula = nil
+            end
+          end
+        end
+        -- Age the release note out so it can't sit on the row forever.
+        if e._steal_released
+           and (now - (e._steal_released.tick or 0)) > (C.STEAL_YIELD_BLOCK or 300) then
+          e._steal_released = nil
+          e.formula = nil
+        end
         if y and (now - y.tick) <= (C.STEAL_YIELD_BLOCK or 300) then
           if e._reject ~= "ally_claimed" then
             e._reject = "ally_claimed"
@@ -12743,6 +13026,15 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
           end
           e._reject_remaining = (C.STEAL_YIELD_BLOCK or 300) - (now - y.tick)
           e._ally_by = y.to
+          local _yr = string.format(
+            "yield block: we yielded this pill to p%d at t=%d; holding %dt more of STEAL_YIELD_BLOCK(%d) until their claim broadcast lands, or until their advert shows them on something else",
+            y.to, y.tick, e._reject_remaining, C.STEAL_YIELD_BLOCK or 300)
+          if e._steal_reason ~= _yr then
+            e._steal_reason = _yr
+            e._steal_units  = nil   -- no price was compared: nobody is claiming it
+            e._steal_cost   = nil
+            e.formula = nil
+          end
         else
           if y then state._steal_yielded[e._id] = nil end
           -- Clear any prior reject.
@@ -14984,6 +15276,13 @@ local function goal_selection(state, world, info, quiet)
           cands = entry.cands, _pill = entry._pill, _pill_id = entry._pill_id,
           phase_weight = pw,
           _pool_idx = idx,   -- so the pool_cache dump can print the COMPETED total
+          -- The pool cost BEFORE any of the shaping below (phase weight,
+          -- influence, hysteresis, commitment, history, wsim). The steal
+          -- handshake needs both ends of that chain: the competed total is
+          -- what it trades, and competed/raw is the only handle it has on how
+          -- much the shaping moved this pool THIS replan (see the ledger at
+          -- the end of goal_selection).
+          _raw_cost = entry.cost,
           _engage_break_lock = entry._engage_break_lock,
         }
         ::continue_pool::
@@ -15855,9 +16154,63 @@ local function goal_selection(state, world, info, quiet)
     -- (they differ by the phase weight, the influence multiplier, the refuel
     -- shape and the hysteresis).
     state._pool_competed = {}
+    -- Parallel raw (pre-shaping) cost per pool index. Only reader today is the
+    -- steal handshake's shaping estimate; see steal_drain_requests.
+    state._pool_competed_raw = {}
+    -- ── COMPETED-cost ledger, keyed "pool:id" ─────────────────────────────
+    -- The stq/sta/str handshake used to trade RAW cost_cache costs, so a holder
+    -- that had already earned goal selection's commitment/hysteresis discount
+    -- still quoted the undiscounted number and lost a pill it was winning by 92
+    -- points (20260903_193428_1 bot3 t=1266-1270: pill #0 raw 423 vs competed
+    -- 223.6, challenger's raw 379). This is the number goal selection actually
+    -- used, so the handshake can trade it instead.
+    -- NOT wiped between replans: a row that lost a later competition (or is
+    -- REJECTed out of it, which is exactly the challenger's case) keeps the
+    -- total it last competed at, and every reader gates on the age.
+    state._competed = state._competed or {}
+    local _comp_now = state.tick or 0
+    local _cg = state.goal
     for _, c in ipairs(pool) do
-      if c._pool_idx then state._pool_competed[c._pool_idx] = c.cost end
+      if c._pool_idx then
+        state._pool_competed[c._pool_idx] = c.cost
+        state._pool_competed_raw[c._pool_idx] = c._raw_cost
+        local _cid = c._pill_id or (c.goal and c.goal.target_id)
+        if _cid and (c.cost or 0) < 1e29 then
+          -- `held` = was this row OUR CURRENT GOAL when it competed?  The
+          -- shaping is completely different either way -- a held row gets the
+          -- commitment/hysteresis DISCOUNT, an unheld one gets the switch
+          -- PENALTY -- so the two numbers are not interchangeable and a reader
+          -- must never use one where it means the other.  (Seen on the test
+          -- arena: bot1's pill #0 competed at 128 from a replan where it was on
+          -- something else, against a raw of 14; quoting the 128 as its holder
+          -- price gave the pill away.)  state.goal is still the PREVIOUS goal
+          -- here -- pick_goal runs after -- which is exactly the goal the
+          -- hysteresis was computed against.
+          local _held = _cg and c.goal and _cg.kind == c.goal.kind
+            and ((_cg.target_id and c.goal.target_id and _cg.target_id == c.goal.target_id)
+                 or (_cg.mx == c.goal.mx and _cg.my == c.goal.my)) or false
+          state._competed[c._pool_idx .. ":" .. tostring(_cid)] =
+            { cost = c.cost, raw = c._raw_cost, tick = _comp_now, held = _held }
+        end
+      end
     end
+    -- The goal that actually won this replan's competition (pool is sorted,
+    -- COST_INF sentinels already dropped). The outgoing-steal gate asks
+    -- "would we pick this pill if the claim were lifted?", and that question
+    -- is answered against this number.
+    if pool[1] then
+      state._competed_winner = {
+        cost     = pool[1].cost,
+        tick     = _comp_now,
+        pool_idx = pool[1]._pool_idx,
+        kind     = pool[1].goal and pool[1].goal.kind or "?",
+        id       = pool[1]._pill_id or (pool[1].goal and pool[1].goal.target_id),
+      }
+    else
+      state._competed_winner = nil
+    end
+    -- One outgoing stq per replan, for the row we would actually pick.
+    M.steal_drain_requests(state)
 
     if #pool > 0 then
       -- Dump the FINAL post-everything scores for every candidate so a
