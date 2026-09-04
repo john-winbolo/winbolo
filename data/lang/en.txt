@@ -741,6 +741,18 @@ STR_DLGSKIN_TEXFILTER_LINEAR=Linear
 STR_DLGSKIN_TEXFILTER_PIXELART=Pixel art
 STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP=This skin supplies its art at one size only, so all three settings build the same tiles.
 STR_DLGSKIN_TEXFILTER_TIP=Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change.
+STR_DLGSKIN_PUBLISH_HEADING=Publish this skin to the Steam Workshop
+STR_DLGSKIN_PUBLISH_NAME=Title
+STR_DLGSKIN_PUBLISH_DESC=Description
+STR_DLGSKIN_PUBLISH_UPDATE=Update the item this skin came from
+STR_DLGSKIN_PUBLISH_NEW=Publish as a new item
+STR_DLGSKIN_PUBLISH_GO=Publish
+STR_DLGSKIN_PUBLISH_WORKING=Uploading...
+STR_DLGSKIN_PUBLISH_DONE=Published to the Workshop.
+STR_DLGSKIN_PUBLISH_FAILED=The publish failed. Check that Steam is running, then try again.
+STR_DLGSKIN_PUBLISH_LEGAL=Accept the Workshop legal agreement on the item's page, or nobody else can see the item.
+STR_DLGSKIN_PUBLISH_OPENITEM=Open item page
+STR_DLGSKIN_PUBLISH_NEEDUSER=Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be.
 
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config

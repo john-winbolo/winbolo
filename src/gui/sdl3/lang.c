@@ -1862,6 +1862,18 @@ static const LangEntry langTable[] = {
     {1969, "Pixel art"},
     {1970, "This skin supplies its art at one size only, so all three settings build the same tiles."},
     {1971, "Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change."},
+    {1972, "Publish this skin to the Steam Workshop"},
+    {1973, "Title"},
+    {1974, "Description"},
+    {1975, "Update the item this skin came from"},
+    {1976, "Publish as a new item"},
+    {1977, "Publish"},
+    {1978, "Uploading..."},
+    {1979, "Published to the Workshop."},
+    {1980, "The publish failed. Check that Steam is running, then try again."},
+    {1981, "Accept the Workshop legal agreement on the item's page, or nobody else can see the item."},
+    {1982, "Open item page"},
+    {1983, "Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

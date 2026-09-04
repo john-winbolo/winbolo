@@ -47,6 +47,7 @@ extern "C" {
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
+#include "../skin_preview.h"
 #include "../gfx_settings.h"
 #include "../tileloader.h"
 #include "../../lang.h"
@@ -501,6 +502,155 @@ static bool s_skinLoadFailed = false;
 static std::vector<SkinEntry> s_skinRows;
 static bool s_skinPopupWasOpen = false;
 
+/* The whole publish path is desktop-only.  skin_preview.c is a client source;
+   the Android, iOS and browser builds compile this file against their own
+   source lists, which carry the PNG reader but not the writer, so a call to
+   skinWritePreviewPng would not link there.  BOLO_MOBILE covers Android and
+   iOS but not Emscripten, hence both halves. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+
+/* Publish-to-Workshop state.  A publish runs across frames — the Steam calls
+   behind it finish asynchronously — so the modal keeps what it needs between
+   them.  File scope because both settings shells share the tab renderer. */
+static char     s_pubPath[SKIN_PATH_MAX];  /* the skin on disk being sent */
+static char     s_pubTitle[129];           /* the SDK's title limit */
+static char     s_pubDesc[8000];           /* the SDK's description limit */
+static uint64_t s_pubExistingId = 0;       /* WorkshopId out of the skin.ini */
+static uint64_t s_pubAuthor     = 0;       /* WorkshopAuthor out of the same */
+static bool     s_pubAsNew      = true;    /* make an item vs update that id */
+static bool     s_pubStarted    = false;   /* a begin said yes: poll it */
+static uint64_t s_pubDoneId     = 0;       /* the item Steam published */
+static bool     s_pubNeedsLegal = false;   /* the author still has to accept
+                                              the Workshop agreement */
+static bool     s_pubFailed     = false;   /* the begin or the poll said no */
+static bool     s_pubInFlight   = false;   /* the last poll said in progress:
+                                              Steam is still reading the
+                                              upload folder */
+static bool     s_pubPopupOpen  = false;   /* the modal drew last frame, so a
+                                              frame without it is an exit */
+
+/* <prefpath>workshop_upload is the folder handed to Steam as the item's
+   content; the preview PNG goes beside it, not in it, or it would be uploaded
+   as part of the skin.  SDL_GetPrefPath already ends in a separator. */
+static bool skinPublishPaths(char *folder, size_t folderLen,
+                             char *preview, size_t previewLen) {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir == nullptr) return false;
+    SDL_snprintf(folder, folderLen, "%sworkshop_upload", prefDir);
+    SDL_snprintf(preview, previewLen, "%sworkshop_preview.png", prefDir);
+    SDL_free((void *)prefDir);
+    return true;
+}
+
+/* Empties the upload folder and removes it.  Steam uploads everything the
+   folder holds, so anything an earlier publish left there would go up with
+   this one. */
+static void skinPublishClearFolder(const char *folder) {
+    int    count = 0;
+    char **list = SDL_GlobDirectory(folder, "*", 0, &count);
+    if (list != nullptr) {
+        for (int i = 0; i < count; i++) {
+            char full[SKIN_PATH_MAX * 2];
+            if (list[i] == nullptr || list[i][0] == '\0') continue;
+            SDL_snprintf(full, sizeof(full), "%s/%s", folder, list[i]);
+            SDL_RemovePath(full);
+        }
+        SDL_free(list);
+    }
+    SDL_RemovePath(folder);
+}
+
+/* Copies a skin archive into the upload folder through memory: the pinned SDL
+   has no file-copy call, and a skin is small enough to hold. */
+static bool skinPublishCopyFile(const char *from, const char *to) {
+    size_t        len = 0;
+    void         *data = SDL_LoadFile(from, &len);
+    SDL_IOStream *io;
+    bool          ok;
+
+    if (data == nullptr) return false;
+    io = SDL_IOFromFile(to, "wb");
+    if (io == nullptr) {
+        SDL_free(data);
+        return false;
+    }
+    ok = (len == 0 || SDL_WriteIO(io, data, len) == len);
+    if (!SDL_CloseIO(io)) ok = false;
+    SDL_free(data);
+    if (!ok) SDL_RemovePath(to);
+    return ok;
+}
+
+/* The scratch the upload was built from, once the modal is done with it. */
+static void skinPublishCleanup(void) {
+    char folder[SKIN_PATH_MAX];
+    char preview[SKIN_PATH_MAX];
+
+    if (!skinPublishPaths(folder, sizeof(folder), preview, sizeof(preview))) {
+        return;
+    }
+    skinPublishClearFolder(folder);
+    SDL_RemovePath(preview);
+}
+
+/* Builds the item's content — one .wsf, whichever shape the skin has on disk
+   — writes a preview beside it and starts the upload.  Returns what
+   steam_workshop_publish_begin said, so the caller knows whether polling
+   means anything. */
+static bool skinPublishStart(void) {
+    char         folder[SKIN_PATH_MAX];
+    char         preview[SKIN_PATH_MAX];
+    char         archive[SKIN_PATH_MAX * 2];
+    char         name[SKIN_ID_MAX];
+    const char  *previewArg = nullptr;
+    SDL_PathInfo info;
+
+    if (!skinPublishPaths(folder, sizeof(folder), preview, sizeof(preview))) {
+        return false;
+    }
+    skinPublishClearFolder(folder);
+    if (!SDL_CreateDirectory(folder)) return false;
+
+    /* The archive is named after the skin, which is the id's text after the
+       ':' — the same name the scan would give it. */
+    {
+        const char *id = skinGetRequested();
+        const char *colon = (id != nullptr) ? strchr(id, ':') : nullptr;
+        if (colon != nullptr) {
+            SDL_strlcpy(name, colon + 1, sizeof(name));
+        } else {
+            SDL_strlcpy(name, (id != nullptr && id[0] != '\0') ? id : "skin",
+                        sizeof(name));
+        }
+    }
+    SDL_snprintf(archive, sizeof(archive), "%s/%s.wsf", folder, name);
+
+    if (!SDL_GetPathInfo(s_pubPath, &info)) return false;
+    if (info.type == SDL_PATHTYPE_DIRECTORY) {
+        /* A folder holding one archive is read as that archive, so the item
+           gets the archive itself rather than a zip wrapping it. */
+        char inner[SKIN_PATH_MAX];
+        if (skinSourceResolveArchive(s_pubPath, inner, sizeof(inner))) {
+            if (!skinPublishCopyFile(inner, archive)) return false;
+        } else if (!skinSourceZipDirectory(s_pubPath, archive, nullptr)) {
+            return false;
+        }
+    } else if (!skinPublishCopyFile(s_pubPath, archive)) {
+        return false;
+    }
+
+    /* A preview that will not render is not a reason to stop: the item
+       publishes without one and Steam shows its own placeholder. */
+    if (skinWritePreviewPng(skinGetActiveSource(), preview)) {
+        previewArg = preview;
+    }
+
+    return steam_workshop_publish_begin(folder, s_pubTitle, s_pubDesc,
+                                        previewArg,
+                                        s_pubAsNew ? 0 : s_pubExistingId);
+}
+#endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
+
 /* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
  * the pre-game dialog and the in-game overlay.  Frame rate,
@@ -809,6 +959,216 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 steam_workshop_open_browse_page();
             }
             imguiHandOnHover();
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* Publishing is for a skin the player put in their own folder and
+               that actually loaded: the built-in art has no files to send, a
+               Workshop skin belongs to whoever published it, and a skin that
+               failed to load has no source to draw a preview from. */
+            const char *reqId = skinGetRequested();
+            const bool  canPublish =
+                reqId != nullptr && reqId[0] != '\0' &&
+                skinKindFromId(reqId) == SKIN_KIND_USER &&
+                skinGetActiveSource() != nullptr;
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!canPublish);
+            if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH))) {
+                /* The picker's rows only live while its combo is open, so the
+                   skin's path on disk comes from a scan made here. */
+                char path[SKIN_PATH_MAX];
+                path[0] = '\0';
+                int found = skinScanCount();
+                if (found > 0) {
+                    std::vector<SkinEntry> rows((size_t)found);
+                    found = skinScan(rows.data(), found);
+                    for (int i = 0; i < found; i++) {
+                        if (strcmp(rows[(size_t)i].id, reqId) == 0) {
+                            SDL_strlcpy(path, rows[(size_t)i].path,
+                                        sizeof(path));
+                            break;
+                        }
+                    }
+                }
+                /* No path is a skin that went away since it was picked; there
+                   is nothing to publish, so the modal does not open. */
+                if (path[0] != '\0') {
+                    /* Reopening on the skin whose publish is still running
+                       picks the live state back up rather than restarting it;
+                       any other skin starts from its own ini. */
+                    const bool resume =
+                        s_pubStarted && strcmp(s_pubPath, path) == 0;
+                    SDL_strlcpy(s_pubPath, path, sizeof(s_pubPath));
+                    if (!resume) {
+                        SkinInfo info;
+                        skinSourceReadIni(skinGetActiveSource(), &info);
+                        const char *name = info.name;
+                        if (name[0] == '\0') {
+                            const char *colon = strchr(reqId, ':');
+                            name = (colon != nullptr) ? colon + 1 : reqId;
+                        }
+                        SDL_strlcpy(s_pubTitle, name, sizeof(s_pubTitle));
+                        SDL_strlcpy(s_pubDesc, info.notes, sizeof(s_pubDesc));
+                        s_pubExistingId = info.workshopId;
+                        s_pubAuthor     = info.workshopAuthor;
+                        /* An update is offered only when the recorded
+                           publisher is this account.  Steam refuses an update
+                           to somebody else's item, and an unknown publisher is
+                           no proof the item is ours — publishing a second item
+                           by mistake is the recoverable error. */
+                        s_pubAsNew = !(s_pubExistingId != 0 &&
+                                       s_pubAuthor != 0 &&
+                                       s_pubAuthor == steam_get_steam_id());
+                        s_pubStarted    = false;
+                        s_pubDoneId     = 0;
+                        s_pubNeedsLegal = false;
+                        s_pubFailed     = false;
+                    }
+                    ImGui::OpenPopup("##SkinPublish");
+                }
+            }
+            ImGui::EndDisabled();
+            imguiHandOnHover();
+            /* A disabled item is not hovered as far as ImGui is concerned
+               unless it is asked for, and the reason it is disabled is exactly
+               what the player needs to read. */
+            if (!canPublish &&
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled |
+                                     ImGuiHoveredFlags_ForTooltip)) {
+                ImGui::SetTooltip("%s",
+                                  langGetText(STR_DLGSKIN_PUBLISH_NEEDUSER));
+            }
+
+            if (ImGui::BeginPopupModal("##SkinPublish", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                const float fieldW = ImGui::GetFontSize() * 20.0f;
+                s_pubPopupOpen = true;
+
+                ImGui::TextUnformatted(
+                    langGetText(STR_DLGSKIN_PUBLISH_HEADING));
+                ImGui::Separator();
+
+                ImGui::TextUnformatted(langGetText(STR_DLGSKIN_PUBLISH_NAME));
+                ImGui::SetNextItemWidth(fieldW);
+                ImGui::InputText("##pubtitle", s_pubTitle, sizeof(s_pubTitle));
+                ImGui::TextUnformatted(langGetText(STR_DLGSKIN_PUBLISH_DESC));
+                ImGui::InputTextMultiline("##pubdesc", s_pubDesc,
+                                          sizeof(s_pubDesc),
+                                          ImVec2(fieldW,
+                                                 ImGui::GetFontSize() * 6.0f));
+
+                /* Only a skin that already carries an id has an item to
+                   update, so the choice is not offered otherwise. */
+                if (s_pubExistingId != 0) {
+                    if (ImGui::RadioButton(
+                            langGetText(STR_DLGSKIN_PUBLISH_UPDATE),
+                            !s_pubAsNew)) {
+                        s_pubAsNew = false;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("#%llu",
+                                        (unsigned long long)s_pubExistingId);
+                    if (ImGui::RadioButton(
+                            langGetText(STR_DLGSKIN_PUBLISH_NEW), s_pubAsNew)) {
+                        s_pubAsNew = true;
+                    }
+                }
+
+                /* The poll answers -1 with nothing in flight, so it is only
+                   asked after a begin that said yes. */
+                int state = 0;
+                if (s_pubStarted) {
+                    uint64_t doneId = 0;
+                    bool     needsLegal = false;
+                    state = steam_workshop_publish_poll(&doneId, &needsLegal);
+                    if (state == 1 && doneId != 0 && s_pubDoneId == 0) {
+                        s_pubDoneId     = doneId;
+                        s_pubNeedsLegal = needsLegal;
+                        /* Written back once, so the next publish of this skin
+                           updates this item instead of making another, and
+                           knows the item is this account's. */
+                        skinSetWorkshopId(s_pubPath, doneId,
+                                          steam_get_steam_id());
+                        /* The source's ini is cached from when the skin was
+                           loaded, so the modal takes the new pair from here
+                           rather than reading a copy that predates the
+                           write. */
+                        s_pubExistingId = doneId;
+                        s_pubAuthor     = steam_get_steam_id();
+                        s_pubAsNew      = false;
+                    } else if (state == -1) {
+                        s_pubFailed = true;
+                    }
+                }
+                s_pubInFlight = (s_pubStarted && state == 0);
+
+                ImGui::Spacing();
+                if (s_pubStarted && state == 0) {
+                    ImGui::TextUnformatted(
+                        langGetText(STR_DLGSKIN_PUBLISH_WORKING));
+                    uint64_t bytesDone = 0, bytesTotal = 0;
+                    if (steam_workshop_publish_progress(&bytesDone,
+                                                        &bytesTotal) != 0 &&
+                        bytesTotal > 0) {
+                        ImGui::ProgressBar((float)((double)bytesDone /
+                                                   (double)bytesTotal),
+                                           ImVec2(fieldW, 0.0f));
+                    }
+                } else if (s_pubStarted && state == 1) {
+                    ImGui::TextUnformatted(
+                        langGetText(STR_DLGSKIN_PUBLISH_DONE));
+                    if (s_pubDoneId != 0) {
+                        if (ImGui::Button(
+                                langGetText(STR_DLGSKIN_PUBLISH_OPENITEM))) {
+                            steam_workshop_open_item_page(s_pubDoneId);
+                        }
+                        imguiHandOnHover();
+                    }
+                    if (s_pubNeedsLegal) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
+                                           langGetText(
+                                               STR_DLGSKIN_PUBLISH_LEGAL));
+                    }
+                } else if (s_pubFailed) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
+                                       langGetText(STR_DLGSKIN_PUBLISH_FAILED));
+                }
+
+                ImGui::Separator();
+                ImGui::BeginDisabled(s_pubStarted && state == 0);
+                if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH_GO))) {
+                    s_pubDoneId     = 0;
+                    s_pubNeedsLegal = false;
+                    s_pubFailed     = false;
+                    s_pubStarted    = skinPublishStart();
+                    if (!s_pubStarted) s_pubFailed = true;
+                }
+                ImGui::EndDisabled();
+                imguiHandOnHover();
+                ImGui::SameLine();
+                if (ImGui::Button(langGetText(STR_CLOSE))) {
+                    /* Closing does not stop an upload Steam has already been
+                       given — the UGC API has no cancel — so reopening shows
+                       it still running.  Steam reads the content folder after
+                       the update is submitted, so the scratch only goes once
+                       the upload is over; one abandoned mid-upload is cleared
+                       by the next publish, which empties the folder before it
+                       builds. */
+                    if (!s_pubInFlight) skinPublishCleanup();
+                    ImGui::CloseCurrentPopup();
+                }
+                imguiHandOnHover();
+                ImGui::EndPopup();
+            } else if (s_pubPopupOpen) {
+                /* The modal is gone.  Usually the frame after the Close button
+                   ran, where the scratch is already dealt with, but the
+                   settings window can also be closed out from under an open
+                   modal — same rule, so no exit deletes files Steam is still
+                   reading. */
+                s_pubPopupOpen = false;
+                if (!s_pubInFlight) skinPublishCleanup();
+            }
+#endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
         }
 
         /* Tile detail.  A pick only shows once the sheet is rebuilt, so it

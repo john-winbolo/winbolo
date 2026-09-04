@@ -148,6 +148,18 @@ bool        skinSourceZipDirectory(const char *dir, const char *outZip,
 bool        skinSourceExtractTo(SkinSource *src, const char *dir);
 
 /*********************************************************
+ * NAME:          skinSourceResolveArchive
+ * PURPOSE:
+ *   Writes into out the path of the one .wsf/.zip dir
+ *   holds, when dir holds exactly one archive and nothing
+ *   else skin-like — the shape skinSourceOpen descends
+ *   into, reading the archive rather than the folder.
+ *   False for any other directory, leaving out untouched.
+ *********************************************************/
+bool        skinSourceResolveArchive(const char *dir, char *out,
+                                     size_t outLen);
+
+/*********************************************************
  * NAME:          skinSetWorkshopId
  * PURPOSE:
  *   Records the Workshop id, and the SteamID64 that

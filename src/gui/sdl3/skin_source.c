@@ -972,7 +972,7 @@ static void removeSkinTree(const char *dir) {
 /* The archive skinSourceOpen reads this directory as, when it holds one
  * .wsf/.zip and nothing else skin-like. The id has to go into that archive's
  * skin.ini: one written beside it in the folder is never read. */
-static bool directoryLoneArchive(const char *dir, char *out, size_t outLen) {
+bool skinSourceResolveArchive(const char *dir, char *out, size_t outLen) {
     char **list;
     int    count = 0;
     int    archives = 0;
@@ -1051,7 +1051,7 @@ bool skinSetWorkshopId(const char *skinPath, uint64_t id,
     if (!SDL_GetPathInfo(skinPath, &info)) return false;
 
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
-        if (directoryLoneArchive(skinPath, nested, sizeof(nested))) {
+        if (skinSourceResolveArchive(skinPath, nested, sizeof(nested))) {
             return rewriteArchiveSkinIni(nested, id, authorSteamId);
         }
         return rewriteSkinIni(skinPath, id, authorSteamId);
