@@ -5482,11 +5482,32 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->xferBegun) {
                     dl->readySeen = TRUE;
                 } else {
+                    /* Restart from this slot's own copy of the terrain rather
+                     * than from whatever the shared staging buffer happens to
+                     * hold: serverInitMapDownload copies staging, and staging
+                     * carries the blob of whichever slot joined or resynced
+                     * last. So recompress this slot's copy into staging, then
+                     * re-send JOIN_ACCEPT so the size the client expects
+                     * matches the blob it is about to be sent — the client
+                     * drops a stream whose header size disagrees with the size
+                     * its accept carried, so a restart off another slot's blob
+                     * leaves it stuck on "Downloading map" instead of
+                     * recovering it. Staging, then accept, then re-arm, the
+                     * same order transportUdpServerOnLobbyMapChange uses. A
+                     * compress that will not fit the wire size leaves staging's
+                     * size alone and restarts exactly as before. */
+                    int mapLen = serverSimGetCompressedMapFor(
+                        sim, (BYTE)clientIdx, udpServer.compressedMap);
                     WB_LOG_INFO(WB_LOG_CAT_NET,
                         "MAP_DL_READY re-ask slot=%d (kind=%d begun=%d "
                         "complete=%d) -> restarting download",
                         clientIdx, (int)dl->xferKind, (int)dl->xferBegun,
                         (int)dl->downloadComplete);
+                    if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
+                        udpServer.compressedMapSize = (uint32_t)mapLen;
+                        serverSendJoinAccept(clientIdx, sim,
+                                             &udpServer.clients[clientIdx].addr);
+                    }
                     serverRebaseBulkAndRearmDownload(clientIdx);
                     dl->readySeen = TRUE;
                 }
