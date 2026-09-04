@@ -82,6 +82,7 @@ STR_DLGKEYSETUP_TANKVIEW=Tank View
 STR_DLGKEYSETUP_PILLVIEW=Pill View
 STR_DLGKEYSETUP_BASEVIEW=Base View
 STR_DLGKEYSETUP_ALLYVIEW=Allied Tank View
+STR_DLGKEYSETUP_OVERVIEWZOOM=Map Zoom (hold)
 STR_DLGKEYSETUP_SCROLLUP=Up
 STR_DLGKEYSETUP_SCROLLDOWN=Down
 STR_DLGKEYSETUP_SCROLLLEFT=Left
@@ -1438,6 +1439,17 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 # Connectivity badge
 STR_DLGLOBBY_CONN_TEST_TIP=Test in progress
 
+# Visibility block (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibility
+STR_DLGLOBBY_VIEW_PILL=Pill View
+STR_DLGLOBBY_VIEW_BASE=Base View
+STR_DLGLOBBY_VIEW_ALLY=Allied Tank View
+STR_DLGLOBBY_VIEW_ALWAYS=Always
+STR_DLGLOBBY_VIEW_KEY=Key
+STR_DLGLOBBY_VIEW_DECAY=Decay
+STR_DLGLOBBY_VIEW_OFF=Off
+STR_DLGLOBBY_VIEW_DECAY_SECS=secs
+
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller
 STR_GP_REBIND_PROMPT=Press a button or pull a trigger...
@@ -1917,14 +1929,3 @@ STR_WEB_JOIN_CODE_UNREACHABLE=Could not reach the server to get a join code.
 STR_WEB_CONNECT_FAILED=Could not connect to the server.
 STR_WEB_JOIN_NO_RESPONSE=Could not join the game (the server did not respond, or your invite link has already been used or expired).
 
-
-# Lobby visibility (pill / base / allied tank view rules)
-STR_DLGLOBBY_VISIBILITY_LBL=Visibility
-STR_DLGLOBBY_VIEW_PILL=Pill View
-STR_DLGLOBBY_VIEW_BASE=Base View
-STR_DLGLOBBY_VIEW_ALLY=Allied Tank View
-STR_DLGLOBBY_VIEW_ALWAYS=Always
-STR_DLGLOBBY_VIEW_KEY=Key
-STR_DLGLOBBY_VIEW_DECAY=Decay
-STR_DLGLOBBY_VIEW_OFF=Off
-STR_DLGLOBBY_VIEW_DECAY_SECS=secs
