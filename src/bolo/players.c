@@ -26,6 +26,7 @@
 *********************************************************/
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "allience.h"
@@ -533,23 +534,29 @@ void playersGameTickUpdate(players *plrs) {
 * Gets a player name.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer names
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest, bool isServer) {
+void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest,
+                          size_t destSize, bool isServer) {
+  if (destSize == 0) {
+    return;
+  }
   if (plrs != NULL) {
     if (playerNum >= MAX_TANKS) {
-      strcpy(dest, NO_TANK);
+      snprintf(dest, destSize, "%s", NO_TANK);
       return;
     }
     if ((*plrs)->item[playerNum].inUse == TRUE) {
-      strcpy(dest, (*plrs)->item[playerNum].playerName);
+      snprintf(dest, destSize, "%s", (*plrs)->item[playerNum].playerName);
     } else {
-      strcpy(dest, NO_TANK);
+      snprintf(dest, destSize, "%s", NO_TANK);
     }
   } else {
-    strcpy(dest, NO_TANK);
+    snprintf(dest, destSize, "%s", NO_TANK);
   }
 }
 
@@ -562,18 +569,24 @@ void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest, bool isServ
 * Gets a player location.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer locations
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest) {
+void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest,
+                              size_t destSize) {
+  if (destSize == 0) {
+    return;
+  }
   if (plrs != NULL) {
     if ((*plrs)->item[playerNum].inUse == TRUE) {
-      strcpy(dest, (*plrs)->item[playerNum].location);
+      snprintf(dest, destSize, "%s", (*plrs)->item[playerNum].location);
     } else {
-      strcpy(dest, NO_TANK);
+      snprintf(dest, destSize, "%s", NO_TANK);
     }
-  } 
+  }
 }
 
 void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
@@ -903,7 +916,12 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
           } else {
             frame += TANK_EVIL_ADD;
           }
-          screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, count, playerName); 
+          /* The wire carries a 4 bit pixel offset and a 16 step facing,
+             so the sub-square offsets and the angle are those values
+             scaled back up to world units and to 0-255. */
+          screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, count, playerName,
+                             (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
+                             (BYTE) ((*plrs)->item[count].frame << 4)); 
         }
       }
     }
@@ -955,7 +973,7 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
         }
 
         if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
-          screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame);
+          screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame, (BYTE) wx, (BYTE) wy);
         }
       }
     }

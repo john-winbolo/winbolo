@@ -18,9 +18,13 @@
  *       flag here exactly like desktop SP does — regression net for the
  *       predicate once being clientSimIsSinglePlayer, which wrongly
  *       dropped desktop SP's keys-half pump.
- *   tick_core_lobby_flips_cadence — lobby steps run no game/keys tick but
- *       keep the half-step flag alternating, so the first running step
- *       after an odd number of lobby steps is the keys half.
+ *   tick_core_lobby_preserves_parity — lobby steps run no game/keys tick
+ *       and must not disturb the cadence: whatever number of lobby steps
+ *       ran, the first running step is the game half on an even tick
+ *       number. The cadence is derived from the input-tick counter whose
+ *       parity is the wire contract (even = game, odd = keys); a separate
+ *       flag once drifted out of phase in the wasm in-canvas lobby, putting
+ *       every fire action on an odd tick the server silently ignored.
  *   transport_ticks_server_lifecycle — the accessor: true only for the
  *       active local connect, false for passive/UDP/none, preserved across
  *       clientSimCreate's field save/restore, cleared by disconnect.
@@ -161,7 +165,7 @@ int run_tick_core_passive_local_pumps_keys_half(void) {
     return 0;
 }
 
-int run_tick_core_lobby_flips_cadence(void) {
+int run_tick_core_lobby_preserves_parity(void) {
     ServerSim *sim = ut_make_running_sim("Lobbyist");
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed returned NULL");
 
@@ -170,18 +174,25 @@ int run_tick_core_lobby_flips_cadence(void) {
     clientSimCreate(cs);
     UT_ASSERT(clientSimConnectLocal(cs, sim, "Lobbyist", "", 0, 0));
 
-    clientFrontTickReset();
-
-    /* One lobby step: returns false (no game tick ran) and consumes the
-     * game half, so the first running step lands on the keys half. */
-    clientSimSetNetStatus(cs, netLobby);
-    UT_ASSERT(!clientFrontRunTickStep(cs));
-
-    clientSimSetNetStatus(cs, netRunning);
-    UT_ASSERT_MSG(!clientFrontRunTickStep(cs),
-                  "first running step after one lobby step must be keys");
-    UT_ASSERT_MSG(clientFrontRunTickStep(cs),
-                  "second running step must be the game half");
+    /* Try both an odd and an even number of lobby steps: the count must not
+     * matter. Under the old separately-tracked half-step flag an odd count
+     * inverted the cadence, so every game-intent input went out on an odd
+     * tick and the server dropped its fire action (keys arm). */
+    for (int lobbySteps = 1; lobbySteps <= 2; lobbySteps++) {
+        clientFrontTickReset();
+        clientSimSetNetStatus(cs, netLobby);
+        for (int i = 0; i < lobbySteps; i++) {
+            UT_ASSERT(!clientFrontRunTickStep(cs));
+        }
+        clientSimSetNetStatus(cs, netRunning);
+        UT_ASSERT_MSG(clientFrontRunTickStep(cs),
+                      "first running step after %d lobby step(s) must be the "
+                      "game half (even input tick)", lobbySteps);
+        UT_ASSERT_MSG(!clientFrontRunTickStep(cs),
+                      "second running step must be the keys half");
+        UT_ASSERT_MSG(clientFrontRunTickStep(cs),
+                      "third running step must be the game half again");
+    }
 
     clientSimDisconnect(cs);
     clientSimDestroy(cs);

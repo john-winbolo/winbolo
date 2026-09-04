@@ -74,7 +74,7 @@ void screenLgmPrepare(ClientSim *cs, screenLgm *value, BYTE leftPos, BYTE rightP
 
   if (lgmOnScreen(&MY_LGM(cs), leftPos, rightPos, top, bottom) == TRUE) {
     lgmGetScreenCoords(&MY_LGM(cs), leftPos, top, &mx, &my, &px, &py, &frame);
-    screenLgmAddItem(value, mx, my, px ,py, frame);
+    screenLgmAddItem(value, mx, my, px ,py, frame, (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2));
   }
   playersMakeScreenLgm(cs, &clientSimGetGameSim(cs)->plyrs, value, leftPos, rightPos, top, bottom);
 }
@@ -139,8 +139,10 @@ void screenLgmDestroy(screenLgm *value) {
 *  px         - X pixel offset
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the tank
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
 *********************************************************/
-void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) {
+void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy) {
   screenLgm q;
 
   New(q);
@@ -148,6 +150,8 @@ void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE
   q->my = my;
   q->px = px;
   q->py = py;
+  q->wx = wx;
+  q->wy = wy;
   q->frame = frame;
   q->next = (*value);
   (*value) = q;
@@ -189,6 +193,38 @@ void screenLgmGetItem(const screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, 
     *frame = q->frame;
   } else {
     // FIXME
+  }
+}
+
+/*********************************************************
+*NAME:          screenLgmGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 19/2/98
+*LAST MODIFIED: 19/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square for a
+*  specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenLgm data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*********************************************************/
+void screenLgmGetSubPixel(const screenLgm *value, BYTE itemNum, BYTE *wx, BYTE *wy) {
+  BYTE count;  /* Looping variable */
+  screenLgm q;
+
+  count = 1;
+  q = *value;
+
+  while (count < itemNum && NonEmpty(q)) {
+    count++;
+    q = ScreenLgmsTail(q);
+  }
+  if (q != NULL) {
+    *wx = q->wx;
+    *wy = q->wy;
   }
 }
 

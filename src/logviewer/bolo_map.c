@@ -275,17 +275,22 @@ bool lv_mapProcessRun(map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE end
 *  Returns if the operation was successful or not
 *
 *ARGUMENTS:
-*  value - Pointer to the map data structure
+*  value   - Pointer to the map data structure
+*  numRuns - Out: how many non-terminator runs the block held. A lobby-mode
+*            snapshot body holds none, a running-round one always holds at
+*            least one. May be NULL.
 *********************************************************/
-bool lv_mapReadRuns(map *value) {
+bool lv_mapReadRuns(map *value, int *numRuns) {
   bmapRunHeader runHead; /* The header of each run */
   size_t bytesRead;         /* The number of bytes read from the header */
   bool returnValue;      /* Value to return */
   bool done;             /* Is all the runs read */
   bool ret;              /* Function return Value */
+  int runs;              /* Non-terminator runs consumed */
 
   returnValue = TRUE;
   done = FALSE;
+  runs = 0;
 
 
   bytesRead = logReadBytes((BYTE *) &runHead, SIZEOFBMAP_RUN_HEADER);
@@ -305,12 +310,17 @@ bool lv_mapReadRuns(map *value) {
         /* Function return failed */
         done = TRUE;
         returnValue = FALSE;
+      } else {
+        runs++;
       }
       bytesRead = logReadBytes((BYTE *) &runHead, SIZEOFBMAP_RUN_HEADER);
 
     }
   }
 
+  if (numRuns != NULL) {
+    *numRuns = runs;
+  }
   return returnValue;
 }
 

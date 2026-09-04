@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Transport pause control for the recap reel. Two flat bars, no strokes and
+     no gradients, so it survives being rasterised at 18px. The gap between
+     them is as wide as a bar: any narrower and the pair closes into one block
+     at small sizes. Sized to the same margins as the other data/ui glyphs
+     because imguiLoadSvgIconWhite scales by the declared page rather than the
+     drawn bounds. Rendered as a white alpha mask and tinted at draw time. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <rect x="5.2" y="2.8" width="4.8" height="18.4" rx="1.1"/>
+  <rect x="14" y="2.8" width="4.8" height="18.4" rx="1.1"/>
+</svg>

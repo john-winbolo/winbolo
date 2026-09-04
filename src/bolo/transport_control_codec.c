@@ -46,6 +46,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "../winbolonet/winbolonet_core.h" /* winbolonetKeyIsValid */
 #include "control_event.h"
 #include "netpacks.h"
 #include "player_flags.h"  /* CLIENT_TYPE_COUNT / CLIENT_TYPE_UNKNOWN */
@@ -773,6 +774,15 @@ BOLO_STATIC_ASSERT(
  *   repeat awardCount times (8 bytes each):
  *     [awardId 1][winnerSlot 1][subjectSlot 1][winnerIsBot 1][value 4]
  *   [keyLen 1] [wbnLogKey keyLen]
+ *   [highlightCount 1]
+ *   repeat highlightCount times (26 bytes each):
+ *     [startTick 4][durationTicks 4][startMs 4][durationMs 4]
+ *     [mapX 1][mapY 1][type 1][awardId 1][actorA 1][actorB 1][value 4]
+ * The ticks are the scorer's units and the ms are the server's conversion of
+ * them; both cross so a client can take the time without modelling the sim's
+ * cadence and the viewer's own calibration still has the ticks to work from.
+ * HighlightWindow.score is the scorer's internal ranking magnitude and does
+ * not cross; it decodes as 0.
  * Multi-byte fields are big-endian via packU16/packU32, matching every
  * other body encoder. */
 
@@ -788,9 +798,12 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     uint8_t ac = s->awardCount;
     if (ac > AWARD_COUNT) ac = AWARD_COUNT;
     uint8_t keyLen = (uint8_t)strnlen(s->wbnLogKey, ROUND_STATS_LOGKEY_LEN - 1);
+    uint8_t hc = s->highlightCount;
+    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
 
     /* Pre-compute total size; bail before any write if it can't fit. */
-    size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen;
+    size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen +
+                    1 + (size_t)hc * 26;
     if (bufCap < needed) return ENCODE_OVERFLOW;
 
     size_t pos = 0;
@@ -819,6 +832,21 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     }
     buf[pos++] = keyLen;
     if (keyLen > 0) { memcpy(buf + pos, s->wbnLogKey, keyLen); pos += keyLen; }
+    buf[pos++] = hc;
+    for (uint8_t i = 0; i < hc; i++) {
+        const HighlightWindow *h = &s->highlights[i];
+        packU32(buf + pos, h->startTick);     pos += 4;
+        packU32(buf + pos, h->durationTicks); pos += 4;
+        packU32(buf + pos, h->startMs);       pos += 4;
+        packU32(buf + pos, h->durationMs);    pos += 4;
+        buf[pos++] = h->mapX;
+        buf[pos++] = h->mapY;
+        buf[pos++] = h->type;
+        buf[pos++] = h->awardId;
+        buf[pos++] = h->actorA;
+        buf[pos++] = h->actorB;
+        packU32(buf + pos, h->value);         pos += 4;
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -924,20 +952,89 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
     if (keyLen > 0) memcpy(s->wbnLogKey, buf + pos, keyLen);
     s->wbnLogKey[keyLen] = '\0';
     pos += keyLen;
+    /* The key crosses from a server we do not trust and the recap hands it
+     * straight to WinBolo.net inside "logs/%s/download" and "logs/%s/comment"
+     * — authenticated, redirect-following requests. Anything that is not the
+     * 32-hex shape WBN issues is dropped here, at the only door it comes in
+     * by, rather than at each URL. Dropping it and not the packet is
+     * deliberate: the scoreboard, awards and highlights in the rest of the
+     * body are still worth showing, and an empty key is already the ordinary
+     * state of a LAN or single-player round, so every consumer handles it. */
+    if (keyLen > 0 && !winbolonetKeyIsValid(s->wbnLogKey)) {
+        s->wbnLogKey[0] = '\0';
+    }
+
+    if (pos + 1 > len) return false;
+    uint8_t hc = buf[pos++];
+    if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) return false;
+    if (pos + (size_t)hc * 26 > len) return false;
+    for (uint8_t i = 0; i < hc; i++) {
+        HighlightWindow *h = &s->highlights[i];
+        h->startTick     = unpackU32(buf + pos); pos += 4;
+        h->durationTicks = unpackU32(buf + pos); pos += 4;
+        h->startMs       = unpackU32(buf + pos); pos += 4;
+        h->durationMs    = unpackU32(buf + pos); pos += 4;
+        h->mapX    = buf[pos++];
+        h->mapY    = buf[pos++];
+        h->type    = buf[pos++];
+        h->awardId = buf[pos++];
+        h->actorA  = buf[pos++];
+        h->actorB  = buf[pos++];
+        h->value   = unpackU32(buf + pos); pos += 4;
+        /* score is not on the wire; the event-wide memset above leaves it 0. */
+    }
+    s->highlightCount = hc;
     return true;
 }
 
 /* Compile-time guarantee that the round-stats worst case (every slot
- * present, every award won, a full-length key) fits MAX_CONTROL_PACKET. */
+ * present, every award won, a full-length key, a full clip list) fits
+ * MAX_CONTROL_PACKET. 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820. */
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
-        (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1)
+        (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
+        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26
         <= MAX_CONTROL_PACKET,
     round_stats_worst_case_fits_MAX_CONTROL_PACKET);
 
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 4 + LOBBY_BOT_POOL_CHUNK_FRAG_MAX <= MAX_CONTROL_PACKET,
     bot_pool_chunk_worst_case_fits_MAX_CONTROL_PACKET);
+
+/* CTRL_ROUND_RATING_POSTED body wire format (fixed length):
+ *   [fromPlayer 1] [key RATING_POSTED_KEY_BODY_LEN]
+ * A short key is NUL-padded out to fill the field, so the body is the same
+ * size on every event and the decoder can reject anything else outright.
+ * Delivered body-only on CHANNEL_CONTROL; there is no full-packet wrapper or
+ * PACKET_* type for this event. */
+#define RATING_POSTED_KEY_BODY_LEN (ROUND_STATS_LOGKEY_LEN - 1)
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeRoundRatingPostedBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)recipient;
+    const size_t needed = 1 + RATING_POSTED_KEY_BODY_LEN;
+    size_t keyLen = strnlen(evt->u.ratingPosted.key, RATING_POSTED_KEY_BODY_LEN);
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.ratingPosted.fromPlayer;
+    memset(buf + 1, 0, RATING_POSTED_KEY_BODY_LEN);
+    memcpy(buf + 1, evt->u.ratingPosted.key, keyLen);
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeRoundRatingPostedBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    if (len != 1 + RATING_POSTED_KEY_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ROUND_RATING_POSTED;
+    outEvt->u.ratingPosted.fromPlayer = buf[0];
+    memcpy(outEvt->u.ratingPosted.key, buf + 1, RATING_POSTED_KEY_BODY_LEN);
+    outEvt->u.ratingPosted.key[RATING_POSTED_KEY_BODY_LEN] = '\0';
+    return true;
+}
 
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
@@ -2123,6 +2220,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SPECTATOR_SLOT]        = encodeSpectatorSlotBody,
     [CTRL_ROUND_STATS]           = encodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
+    [CTRL_ROUND_RATING_POSTED]   = encodeRoundRatingPostedBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2161,6 +2259,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SPECTATOR_SLOT]        = decodeSpectatorSlotBody,
     [CTRL_ROUND_STATS]           = decodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
+    [CTRL_ROUND_RATING_POSTED]   = decodeRoundRatingPostedBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

@@ -77,7 +77,7 @@ extern void  lv_playersGetTankDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
 extern void  lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                      BYTE *px, BYTE *py, BYTE *frame);
 extern void  lv_playersGetLgmStatus(BYTE playerNumber, bool *isOut, bool *isDead);
-extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest);
+extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize);
 extern bool         lv_playersIsBot(BYTE playerNumber);
 extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
 
@@ -138,7 +138,12 @@ static SDL_Texture *s_baseBarsTex   = NULL;
 static SDL_Texture *s_manStatusTex  = NULL;
 static bool         s_manStatusReady = false;
 static TTF_Font    *s_fonts[GV_NUM_FONTS] = { NULL };
+/* s_zoom is the magnification the frame is drawn at, in framebuffer pixels;
+   s_displayZoom is the 1..4 the user picked, in window points. They differ by
+   the window's pixel density — the window is sized in points, everything drawn
+   into it is sized in pixels. Same split sdl3DrawSetup makes for tablet. */
 static int          s_zoom          = 0;
+static int          s_displayZoom   = 0;
 static int          s_savedWindowW  = 0;
 static int          s_savedWindowH  = 0;
 static BYTE         s_savedScreenSizeX = 0;
@@ -147,8 +152,8 @@ static bool         s_didTtfInit    = false;
 
 /* Scrolling-marquee tick. The live game advances the marquee every
  * MESSAGE_SCROLL_TIME (4) display ticks. Display ticks run every OTHER
- * GAME_TICK_LENGTH iteration of the live client's main loop (the
- * justKeysFlag alternation in winbolo.c — only the "game tick" branch
+ * GAME_TICK_LENGTH iteration of the live client's main loop (the keys/game
+ * alternation in client_frontend_tick.c — only the "game tick" branch
  * calls clientSimDisplayTick), so they fire every 20ms wall, not 10ms.
  * That gives one column shift per 4 × 20ms = 80ms wall-clock at 1×
  * speed. Anchored to SDL_GetTicks (NOT timeRunning) so fast-forward /
@@ -480,8 +485,10 @@ static void gv_setManStatus(SDL_Renderer *renderer, bool isDead, TURNTYPE angle)
 
 /* --- Public API --------------------------------------------------- */
 
+/* The zoom the user picked, not the one the frame is drawn at — logviewer.c
+   compares this against the 1..4 number bound to the number keys. */
 int lv_drawGameViewGetZoom(void) {
-  return s_zoom;
+  return s_displayZoom;
 }
 
 void lv_drawGameViewSetup(int zoomFactor) {
@@ -489,11 +496,23 @@ void lv_drawGameViewSetup(int zoomFactor) {
   SDL_Renderer *renderer = lv_drawGetSDLRenderer();
   if (!window || !renderer) return;
 
-  s_zoom = zoomFactor;
+  /* Fold the pixel density into the magnification so the view keeps the
+     physical size the chosen zoom implies and gains pixels instead of being
+     upscaled by the compositor. Fonts and the status textures below are built
+     at this same number, so their glyphs rasterize crisply rather than being
+     magnified from a 1x render. */
+  float density = SDL_GetWindowPixelDensity(window);
+  int   dz      = (int)(density + 0.5f);
+  if (dz < 1) dz = 1;
+
+  s_displayZoom = zoomFactor;
+  s_zoom        = zoomFactor * dz;
+  zoomFactor    = s_zoom;   /* everything below this point is in pixels */
 
   SDL_GetWindowSize(window, &s_savedWindowW, &s_savedWindowH);
-  SDL_SetWindowSize(window, GV_SCREEN_W * zoomFactor,
-                            GV_SCREEN_H * zoomFactor);
+  /* The window is sized in points, so it takes the display zoom. */
+  SDL_SetWindowSize(window, GV_SCREEN_W * s_displayZoom,
+                            GV_SCREEN_H * s_displayZoom);
 
   /* Resize the logviewer's screen buffer to match mapView's read
    * pattern. Saved here and restored on teardown so the normal
@@ -588,6 +607,7 @@ void lv_drawGameViewTeardown(void) {
   s_savedWindowW = 0;
   s_savedWindowH = 0;
   s_zoom = 0;
+  s_displayZoom = 0;
 }
 
 /* --- Frame assembly (mirrors sdl3DrawMainScreen step-for-step) ---- */
@@ -812,7 +832,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
 
       char rawName[PLAYER_NAME_LEN];
       rawName[0] = '\0';
-      lv_playersGetPlayerName(slot, rawName);
+      lv_playersGetPlayerName(slot, rawName, sizeof(rawName));
       if (rawName[0] == '\0') continue;
 
       /* Brain-driven slots get an "[AI]" tag so a viewer scanning the

@@ -50,6 +50,7 @@ extern "C" {
 #include "../lang.h"
 #include "input_touch.h"
 #include "sdl3draw.h"
+#include "build_cursor.h"
 }
 
 #include "sdl3imgui.h"
@@ -1326,7 +1327,13 @@ static void handleTapToBuild(ClientSim *cs) {
        also set WantCaptureMouse and must not block building. */
     if (sdl3ImguiIsDialogOpen()) return;
     clientSimSetCursorPos(cs, tileX, tileY);
-    clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
+    /* Latch the tapped square on the shared build cursor before dispatching,
+       so the reticle (which draws from the latch) lands where the tap did and
+       stays pinned to that world tile as the view scrolls. */
+    BYTE mapX = (BYTE)((int)clientSimGetXOffset(cs) + (int)tileX);
+    BYTE mapY = (BYTE)((int)clientSimGetYOffset(cs) + (int)tileY);
+    buildCursorSetTile(mapX, mapY);
+    clientSimManMoveToMap(cs, mapX, mapY, clientSimGetCurrentBuildSelect(cs));
   }
 }
 

@@ -35,6 +35,7 @@
 #include "../winbolo.h"
 #include "../sound.h"
 #include "sdl3draw.h"
+#include "../sdl3/build_cursor.h"
 #include "../sdl3/sdl3imgui.h"
 #include "../sdl3/luabrainshandler.h"
 #include "../sdl3/dialog_backend.h"
@@ -763,6 +764,13 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     if (drawBusy == FALSE) {
         BYTE cursorX, cursorY;
         bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+        /* Resolve the reticle through the shared build cursor, as every other
+           frontend does — the tap-to-build handler latches the tapped square
+           there, so the reticle has to read it back from the same place. */
+        bool cursorFaint = false;
+        showCursor = buildCursorResolveReticle(cs, showCursor, cursorX, cursorY,
+                                               &cursorX, &cursorY, &cursorFaint);
+        sdl3DrawSetCursorFaint(cursorFaint);
         sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
         sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                            NULL, showPillLabels, showBaseLabels,

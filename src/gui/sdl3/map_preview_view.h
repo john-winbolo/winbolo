@@ -116,9 +116,15 @@ bool mapPreviewViewGetStart(const MapPreviewView *v, BYTE i,
 
 /* Drive interactions for the frame: pan via mouse drag, zoom via
  * wheel / pinch, arrow-key pan. Caller indicates whether the view's
- * Image is currently hovered. */
+ * Image is currently hovered.
+ *
+ * Call this immediately after submitting the pan InvisibleButton over the
+ * displayed Image (and its IsItemHovered): wheel zoom anchors the map point
+ * under the cursor, and it reads the current ImGui item rect to know where
+ * the Image is on screen. Submitting another item in between degrades wheel
+ * zoom to centre-anchored; it does not misbehave. */
 typedef struct {
-    bool dragPan;      /* allow left-drag to pan */
+    bool dragPan;      /* allow left-drag to pan (sub-unit exact) */
     bool wheelZoom;    /* allow wheel to zoom (cursor-anchored) */
     bool pinchZoom;    /* allow macOS pinch to zoom */
     bool arrowPan;     /* allow arrow keys to pan */
@@ -137,6 +143,24 @@ bool mapPreviewViewIsReady(const MapPreviewView *v);
  * Pass owners=NULL / count=0 to clear (everything renders as the default). */
 void mapPreviewViewSetStartOwners(MapPreviewView *v,
                                   const uint8_t *owners, int count);
+
+/* Put the camera on a map square, for "jump to here" navigation. minZoom
+ * (0 to leave zoom alone) raises the zoom to at least that level so the
+ * target is actually legible when the view was fitted to the whole map.
+ * Suppresses the pending auto-fit, so this survives being called right
+ * after a Load*. */
+void mapPreviewViewCenterOnMapSquare(MapPreviewView *v,
+                                     int mapSqX, int mapSqY, float minZoom);
+
+/* Whether the texture should be point-sampled where it is drawn. True in
+ * every mode that builds the offscreen at the display size (so the draw is
+ * ~1:1 and bilinear only smears crisp art across a sub-pixel offset);
+ * false on the sub-1x fallback that oversamples on purpose for the drawing
+ * side to downscale. Note that SDL_SetTextureScaleMode on the returned
+ * texture does nothing under the ImGui SDL_Renderer backend — it rewrites
+ * the mode per draw — so an ImGui caller has to act on this via the
+ * backend's sampler draw callbacks (imguiPush/PopNearestSampling). */
+bool mapPreviewViewWantsNearestSampling(const MapPreviewView *v);
 
 /* Current zoom level (1.0f = native tile size). */
 float mapPreviewViewGetZoom(const MapPreviewView *v);

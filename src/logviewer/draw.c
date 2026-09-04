@@ -89,6 +89,14 @@ static const float g_zoomSteps[] = {
 static int   g_zoomStepIndex = ZOOM_STEP_1X;
 static float g_zoomLevel     = 1.0f;
 
+/* Embed mode: a host that already owns an ImGui frame draws the world
+ * texture itself, so the two framebuffer blits must not run, the viewer's
+ * menu bar does not exist, and the tile grid sizes against the host's
+ * image rect instead of the window. */
+static int g_embedded   = 0;
+static int g_embedViewW = 0;
+static int g_embedViewH = 0;
+
 
 /* Last drawn map positions for dirty rect optimization.
  * Sized for the maximum map size (255 tiles in each direction). */
@@ -114,6 +122,100 @@ void lv_drawDirtyScreen(void) {
 
 float lv_drawGetZoomLevel(void) {
     return g_zoomLevel;
+}
+
+void lv_drawSetEmbedded(int enabled) {
+    g_embedded = enabled ? 1 : 0;
+}
+
+void lv_drawSetEmbedViewport(int w, int h) {
+    g_embedViewW = w;
+    g_embedViewH = h;
+}
+
+void lv_drawGetGameTargetSize(int *outW, int *outH) {
+    if (outW != NULL) *outW = targetWidth;
+    if (outH != NULL) *outH = targetHeight;
+}
+
+/* Vertical offset the game area starts at inside the viewer's own window.
+ * Embedded there is no viewer menu bar, and lv_imgui_get_menu_bar_height()
+ * would read — and permanently cache — the host's frame height instead.
+ *
+ * Floored to a whole pixel: ImGui derives the height from the font size and
+ * frame padding, so off macOS (where the native NSMenu makes it 0) it lands
+ * on fractions. The blit origin has to be an integer or every pixel of the
+ * world sits on a half-texel and gets resampled. Floor rather than round so
+ * this matches the (int) casts the window-sizing paths in logviewer.c and
+ * lv_drawApplyZoomStep already apply to the same number. */
+static float lvDrawMenuBarOffset(void) {
+    if (g_embedded) return 0.0f;
+    return SDL_floorf(lv_imgui_get_menu_bar_height());
+}
+
+/* Renderer pixels per window point.
+ *
+ * The window carries SDL_WINDOW_HIGH_PIXEL_DENSITY, so on a Retina display the
+ * framebuffer is larger than the window's point size. Everything that reasons
+ * in points stays in points — the tile-count fit against the window, the zoom
+ * anchor, the mouse-to-texture conversions — and only what is painted straight
+ * to the framebuffer scales by this. Embedded, the host owns the window and
+ * does its own blitting, so nothing here should scale. */
+static float lvDrawPixelScale(void) {
+    float d;
+    if (g_embedded || sdlWindow == NULL) return 1.0f;
+    d = SDL_GetWindowPixelDensity(sdlWindow);
+    return (d > 0.0f) ? d : 1.0f;
+}
+
+/* Paint the world render target into the viewer's own window.
+ *
+ * Sampling: at zoom >= 1 the blit is a whole-number magnification of pixel
+ * art, so NEAREST keeps the tile edges hard. The target is created without a
+ * scale mode and SDL3's renderer default is LINEAR, which is what smeared
+ * every zoom step. Below 1x the blit is a downscale at a non-integer ratio
+ * (0.75x is 1.33:1) where NEAREST drifts the per-tile sampling phase and
+ * makes identical grass tiles look different across the map, so LINEAR's 2x2
+ * average is the right filter there. map_preview_view.cpp splits the same way
+ * for the same reason.
+ *
+ * Set per blit, not once at creation: the target is recreated on resize
+ * (lv_drawResizeTarget) and the correct mode depends on the current zoom. */
+static void lvDrawBlitTargetToWindow(void) {
+    LogViewerState *lv = lv_screenGetState();
+    BYTE zoomFactor = lv_windowGetZoomFactor();
+    float pxScale = lvDrawPixelScale();
+    /* The magnification actually applied to the framebuffer. The user picks
+     * g_zoomLevel against a window measured in points; the density folds in on
+     * top so the world keeps its physical size and gains pixels instead of
+     * being stretched by the compositor. */
+    float blitZoom = g_zoomLevel * pxScale;
+    SDL_FRect srcRect, dstRect;
+
+    /* Sub-tile pan: the texture target is sized (sizeX+1, sizeY+1) tiles and
+     * gets painted with a 1-tile margin on every edge. The srcRect picks the
+     * visible (sizeX, sizeY)-tile slice starting at the sub-pixel offset, so
+     * the leading edge reveals the margin instead of empty pixels. */
+    srcRect.x = (float)lv->subPxX;
+    srcRect.y = (float)lv->subPxY;
+    srcRect.w = (float)(lv_screenGetSizeX() * TILE_SIZE_X);
+    srcRect.h = (float)(lv_screenGetSizeY() * TILE_SIZE_Y);
+
+    /* SDL expects client-area coordinates (0,0), not screen coordinates, and
+     * the menu bar offset leaves the top strip to ImGui — which renders its own
+     * geometry at the framebuffer scale, so that offset converts to pixels too.
+     * Floored after scaling: the origin has to be a whole pixel or every pixel
+     * of the world sits on a half-texel. The texture target stays at native
+     * (1x) tile resolution. */
+    dstRect.x = 0.0f;
+    dstRect.y = SDL_floorf(lvDrawMenuBarOffset() * pxScale);
+    dstRect.w = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * blitZoom;
+    dstRect.h = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * blitZoom;
+
+    SDL_SetTextureScaleMode(textureTarget,
+                            (blitZoom >= 1.0f) ? SDL_SCALEMODE_NEAREST
+                                               : SDL_SCALEMODE_LINEAR);
+    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
 }
 
 /* Apply a stepped zoom change with the map tile under (mouseScreenX,
@@ -144,10 +246,17 @@ static void lv_drawApplyZoomStep(int newStepIndex, int mouseScreenX, int mouseSc
     oldZoom = g_zoomLevel;
     newZoom = g_zoomSteps[newStepIndex];
 
-    if (sdlWindow != NULL) SDL_GetWindowSize(sdlWindow, &windowW, &windowH);
+    if (g_embedded) {
+        /* Size against the host's image rect — the window belongs to the
+         * host and is far larger than the area the reel occupies. */
+        windowW = g_embedViewW;
+        windowH = g_embedViewH;
+    } else if (sdlWindow != NULL) {
+        SDL_GetWindowSize(sdlWindow, &windowW, &windowH);
+    }
     if (windowW < 1) windowW = TILE_SIZE_X;
     if (windowH < 1) windowH = TILE_SIZE_Y;
-    menuH = (int)lv_imgui_get_menu_bar_height();
+    menuH = (int)lvDrawMenuBarOffset();
     gameH = windowH - menuH;
     if (gameH < 1) gameH = 1;
 
@@ -257,6 +366,20 @@ void lv_drawSetZoomStep(int stepIndex, int mouseScreenX, int mouseScreenY) {
     lv_drawApplyZoomStep(stepIndex, mouseScreenX, mouseScreenY);
 }
 
+/* Set the zoom step and nothing else: no viewport resize, no cursor anchoring,
+ * no screen-state writes. The step is a process-wide static, so the embedded
+ * reel saves what it found, forces its own, and puts the original back rather
+ * than leaving a later full-window session opening at the reel's zoom. The
+ * anchored path is the wrong tool for that: it would resize the tile grid to
+ * the reel's rect, and at restore time it would also be unsafe — it writes
+ * through decoder state the embed has already destroyed. */
+void lv_drawSetZoomStepIndexRaw(int index) {
+    if (index < 0) index = 0;
+    if (index >= ZOOM_STEP_COUNT) index = ZOOM_STEP_COUNT - 1;
+    g_zoomStepIndex = index;
+    g_zoomLevel = g_zoomSteps[index];
+}
+
 /* Build the unified tile atlas (SVG/PNG/BMP combined sheet) at scale 1.
  * Returns NULL on failure. The log viewer always uses scale 1 — the
  * blit-time scaling is in the texture target, not the source atlas. */
@@ -361,7 +484,13 @@ BYTE lv_drawSetup(void) {
     width  = lv_screenGetSizeX() * TILE_SIZE_X;
     height = lv_screenGetSizeY() * TILE_SIZE_Y + IMGUI_MENU_BAR_HEIGHT;
 
-    sdlWindow = SDL_CreateWindow("WinBolo Log Viewer", width, height, SDL_WINDOW_RESIZABLE);
+    /* HIGH_PIXEL_DENSITY: without it SDL pins the layer's contentsScale to 1
+     * (SDL_cocoametalview.m), so on a Retina display the whole window renders at
+     * point resolution and the compositor bilinear-upscales it — menu bar,
+     * dialogs and world alike. ImGui reads the density itself and rasterizes
+     * its text to match; the world blit scales by lvDrawPixelScale(). */
+    sdlWindow = SDL_CreateWindow("WinBolo Log Viewer", width, height,
+                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (sdlWindow == NULL) {
         TTF_Quit(); SDL_Quit();
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE, "Error creating SDL window", NULL);
@@ -538,10 +667,15 @@ void lv_drawSplashForImGui(void) {
     
     /* Ensure we're rendering to the screen, not to a texture target */
     SDL_SetRenderTarget(sdlRenderer, NULL);
-    
-    /* Get window size for centering */
-    SDL_GetWindowSize(sdlWindow, &windowWidth, &windowHeight);
-    
+
+    /* Centre in framebuffer pixels, and scale the image by the same density so
+     * it keeps its physical size rather than shrinking to a quarter of the
+     * window on a Retina display. */
+    float pxScale = lvDrawPixelScale();
+    SDL_GetRenderOutputSize(sdlRenderer, &windowWidth, &windowHeight);
+    int splashW = (int)(splashWidth * pxScale);
+    int splashH = (int)(splashHeight * pxScale);
+
     /* Clear the screen first */
     SDL_SetRenderDrawColor(sdlRenderer, 0, 0, 0, 255);
     SDL_RenderClear(sdlRenderer);
@@ -557,13 +691,13 @@ void lv_drawSplashForImGui(void) {
     
     if (textureSplash) {
         /* Center the splash image */
-        if (windowWidth > splashWidth) x = (windowWidth - splashWidth) / 2;
-        if (windowHeight > splashHeight) y = (windowHeight - splashHeight) / 2;
-        
+        if (windowWidth > splashW) x = (windowWidth - splashW) / 2;
+        if (windowHeight > splashH) y = (windowHeight - splashH) / 2;
+
         dstRect.x = (float)x;
         dstRect.y = (float)y;
-        dstRect.w = (float)splashWidth;
-        dstRect.h = (float)splashHeight;
+        dstRect.w = (float)splashW;
+        dstRect.h = (float)splashH;
         SDL_RenderTexture(sdlRenderer, textureSplash, NULL, &dstRect);
     }
     
@@ -597,7 +731,6 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     int x, y;
     BYTE pos, zoomFactor, itc, pillHealth;
     int outputX, outputY;
-    SDL_FRect dstRect;
     LogViewerState *lv = lv_screenGetState();
 
     (void)gs; (void)showPillLabels; (void)showBaseLabels; (void)srtDelay;
@@ -615,6 +748,10 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     }
 
     zoomFactor = lv_windowGetZoomFactor();
+    /* Save the caller's target rather than assuming the framebuffer: the
+     * embedded host calls this from inside its own frame, which may already
+     * be rendering to a target of its own. */
+    SDL_Texture *prevTarget = SDL_GetRenderTarget(sdlRenderer);
     SDL_SetRenderTarget(sdlRenderer, textureTarget);
 
     for (x = 0, y = 0, done = FALSE; !done; ) {
@@ -668,39 +805,17 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     lv_drawTanks(tks);
     lv_drawLGMs(lgms);
     
-    SDL_SetRenderTarget(sdlRenderer, NULL);
+    SDL_SetRenderTarget(sdlRenderer, prevTarget);
 
-    /* Get ImGui menu bar height to offset game rendering below it.
-     * This prevents the game from drawing over the menu bar. */
-    float menuBarHeight = 0.0f;
-    menuBarHeight = lv_imgui_get_menu_bar_height();
+    /* Embedded: the host blits the render target itself (as an ImGui image),
+     * so painting it to the framebuffer here would draw the world over the
+     * host's live frame. */
+    if (g_embedded) {
+        return;
+    }
 
-    /* SDL expects client-area coordinates (0,0), not screen coordinates.
-     * The rcWindow passed in contains screen coordinates which would offset
-     * the drawing by the window position + title bar + menu bar.
-     * We offset by menuBarHeight to leave space for ImGui's menu bar.
-     * Width/height are scaled by g_zoomLevel; texture target stays at
-     * native (1x) tile resolution.
-     *
-     * Sub-tile pan: the texture target is sized (sizeX+1, sizeY+1) tiles
-     * and gets painted with a 1-tile margin on every edge. The srcRect
-     * picks the visible (sizeX, sizeY)-tile slice starting at the
-     * sub-pixel offset, so the leading edge reveals the margin instead
-     * of empty pixels. */
-    float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
-    float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
-    SDL_FRect srcRect = {
-        (float)lv->subPxX,
-        (float)lv->subPxY,
-        (float)(lv_screenGetSizeX() * TILE_SIZE_X),
-        (float)(lv_screenGetSizeY() * TILE_SIZE_Y),
-    };
-    dstRect.x = 0.0f;
-    dstRect.y = menuBarHeight;
-    dstRect.w = gameW;
-    dstRect.h = gameH;
-    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
-    
+    lvDrawBlitTargetToWindow();
+
     /* NOTE: Don't call SDL_RenderPresent here - ImGui needs to render after the game
      * and present once at the end. Calling present here causes the game to overwrite
      * the ImGui menu bar each frame. ImGui's lv_imgui_context_render() handles the final present. */
@@ -760,9 +875,30 @@ void lv_drawShells(screenBullets *sBullets) {
     }
 }
 
+/* Rows of tanks.bmp / boats.bmp the ally colouring draws from. The sheets carry
+   17 rows of team colours; row 2 is the same green and row 11 the same red the
+   game's own good and evil tank sprites use, and row 0 is the uncoloured tank
+   an unloaded tc[] already lands every team on. */
+#define TANK_ROW_SELF 0
+#define TANK_ROW_GOOD 2
+#define TANK_ROW_EVIL 11
+
+/* lv_playersMakeScreenTanks adds TANK_GOOD_ADD / TANK_EVIL_ADD on top of the
+   direction and boat frames, so the alliance to whoever was "self" when the
+   screen was built is the top of the frame number. */
+static BYTE lv_drawTankAllyRow(BYTE frame) {
+    if (frame >= TANK_EVIL_ADD) {
+        return TANK_ROW_EVIL;
+    }
+    if (frame >= TANK_GOOD_ADD) {
+        return TANK_ROW_GOOD;
+    }
+    return TANK_ROW_SELF;
+}
+
 void lv_drawTanks(screenTanks *tks) {
     int x, y, srcX, srcY;
-    BYTE count, total, px, py, mx, my, team, zoomFactor, dir;
+    BYTE count, total, px, py, mx, my, team, zoomFactor, dir, frame;
     bool onBoat;
     char playerName[PLAYER_NAME_LEN];
     LogViewerState *lv = lv_screenGetState();
@@ -771,12 +907,16 @@ void lv_drawTanks(screenTanks *tks) {
     zoomFactor = lv_windowGetZoomFactor();
 
     for (count = 1; count <= total; count++) {
-        lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, NULL, &team, &dir, &onBoat, playerName);
+        lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
         px += 2; py += 2;
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
 
-        if (lv->useTeamColours) {
+        if (lv->allyColours) {
+            srcX = zoomFactor * TILE_SIZE_X * dir;
+            srcY = zoomFactor * TILE_SIZE_Y * lv_drawTankAllyRow(frame);
+            drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
+        } else if (lv->useTeamColours) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
@@ -861,34 +1001,11 @@ void lv_drawTankLabel(char *str, int mx, int my, BYTE px, BYTE py) {
 *  changed but we need to display the last frame.
 *********************************************************/
 void lv_drawBlitGameTexture(void) {
-    SDL_FRect dstRect;
-    float menuBarHeight = 0.0f;
-    BYTE zoomFactor = lv_windowGetZoomFactor();
-    LogViewerState *lv = lv_screenGetState();
-
     if (!textureTarget || !sdlRenderer) return;
+    /* Embedded: the host owns the blit (see lv_drawMainScreen). */
+    if (g_embedded) return;
 
-    /* Get ImGui menu bar height to offset game rendering below it */
-    menuBarHeight = lv_imgui_get_menu_bar_height();
-
-    /* Blit the game texture to the screen, scaled by the user zoom level.
-     * Sub-tile pan: srcRect picks the visible (sizeX, sizeY)-tile slice
-     * starting at the sub-pixel offset within the (sizeX+1, sizeY+1)
-     * texture target — the +1 margin is what fills the leading edge.
-     * See lv_drawMainScreen for the matching paint. */
-    float gameW = (float)(zoomFactor * lv_screenGetSizeX() * TILE_SIZE_X) * g_zoomLevel;
-    float gameH = (float)(zoomFactor * lv_screenGetSizeY() * TILE_SIZE_Y) * g_zoomLevel;
-    SDL_FRect srcRect = {
-        (float)lv->subPxX,
-        (float)lv->subPxY,
-        (float)(lv_screenGetSizeX() * TILE_SIZE_X),
-        (float)(lv_screenGetSizeY() * TILE_SIZE_Y),
-    };
-    dstRect.x = 0.0f;
-    dstRect.y = menuBarHeight;
-    dstRect.w = gameW;
-    dstRect.h = gameH;
-    SDL_RenderTexture(sdlRenderer, textureTarget, &srcRect, &dstRect);
+    lvDrawBlitTargetToWindow();
 }
 
 /*********************************************************

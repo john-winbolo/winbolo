@@ -22,8 +22,8 @@
 #                             The suffix does NOT affect these, so a "2.02a"
 #                             build connects to "2.02" peers.
 
-set(WINBOLO_VERSION "2.02" CACHE STRING "WinBolo numeric version number (drives network protocol bytes)")
-set(WINBOLO_VERSION_SUFFIX "c" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
+set(WINBOLO_VERSION "2.03" CACHE STRING "WinBolo numeric version number (drives network protocol bytes)")
+set(WINBOLO_VERSION_SUFFIX "" CACHE STRING "Display-only version suffix (UI text only, ignored by the network protocol)")
 
 # Human-facing version string. Only affects displayed text; the network
 # protocol bytes below are derived from WINBOLO_VERSION alone.

@@ -22,14 +22,25 @@
 
 /* External function from backend */
 extern "C" {
-    void lv_screenGetTime(char *buffer);
+    void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);
     uint32_t lv_screenGetTimeRunning(void);
+    uint32_t lv_screenWindowStartMs(void);
+    void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY);
 }
 
-/* Event with associated playback timestamp */
+/* Event with associated playback timestamp, held in absolute log ms so the
+ * displayed stamp can be rebuilt each frame against the presentation window.
+ * Highlight clips also carry a seek target and a map cell so a click can jump
+ * the scrubber and centre the view. */
 struct LogEvent {
     std::string text;
     uint32_t timeMs;
+    bool     showTime = false;  /* prefix the displayed line with its stamp */
+    bool     pinned   = false;  /* load-time summary: never hidden with the lobby */
+    bool     seekable = false;
+    uint32_t seekMs = 0;
+    int      mapX = 0;
+    int      mapY = 0;
 };
 
 /* Event list storage */
@@ -50,18 +61,45 @@ void lv_imgui_events_init(void) {
 }
 
 void lv_imgui_events_add(int eventType, const char *msg) {
-    char line[512] = {0};
-
-    if (eventType == 0) {
-        /* Add timestamp prefix */
-        lv_screenGetTime(line);
-        strncat(line, " - ", sizeof(line) - strlen(line) - 1);
-    }
-
-    strncat(line, msg, sizeof(line) - strlen(line) - 1);
-    s_events.push_back({std::string(line), lv_screenGetTimeRunning()});
+    LogEvent e;
+    e.text     = std::string(msg);
+    e.timeMs   = lv_screenGetTimeRunning();
+    e.showTime = (eventType == 0);
+    s_events.push_back(e);
 
     /* Mark for auto-scroll */
+    if (s_auto_scroll) {
+        s_scroll_to_bottom = true;
+    }
+}
+
+void lv_imgui_events_add_highlight(const char *msg, uint32_t seekMs, int mapX,
+                                   int mapY) {
+    LogEvent e;
+    e.text = std::string(msg);
+    e.timeMs = 0;   /* load-time summary line: never rewound away on a seek */
+    e.pinned = true;
+    e.seekable = true;
+    e.seekMs = seekMs;
+    e.mapX = mapX;
+    e.mapY = mapY;
+    s_events.push_back(e);
+
+    if (s_auto_scroll) {
+        s_scroll_to_bottom = true;
+    }
+}
+
+/* Load-time round-summary line (awards, section headers): pinned above the feed
+ * with no stamp of its own, so it is neither hidden with the lobby nor removed
+ * by a rewind. */
+void lv_imgui_events_add_summary(const char *msg) {
+    LogEvent e;
+    e.text   = std::string(msg);
+    e.timeMs = 0;
+    e.pinned = true;
+    s_events.push_back(e);
+
     if (s_auto_scroll) {
         s_scroll_to_bottom = true;
     }
@@ -101,6 +139,29 @@ uint32_t lv_imgui_events_get_time(int i) {
 /* Copy selected text to clipboard */
 static void copy_to_clipboard(const char* text) {
     ImGui::SetClipboardText(text);
+}
+
+/* Build the line as displayed. Highlight clips read their stamp from the seek
+ * target; ordinary timestamped lines from their own time. Both go through
+ * lv_screenFormatTime, so the whole panel follows the presentation window. */
+static std::string compose_line(const LogEvent &e) {
+    char stamp[16];
+    if (e.seekable) {
+        lv_screenFormatTime(e.seekMs, stamp, sizeof(stamp));
+        return std::string("Highlight ") + stamp + " \xe2\x80\x94 " + e.text;
+    }
+    if (e.showTime) {
+        lv_screenFormatTime(e.timeMs, stamp, sizeof(stamp));
+        return std::string(stamp) + " - " + e.text;
+    }
+    return e.text;
+}
+
+/* Lobby-period lines stay in the vector — un-ticking Hide Lobby brings them
+ * straight back — but out of the panel, where they would sit at 00:00. */
+static bool event_is_hidden(const LogEvent &e) {
+    if (e.pinned) return false;
+    return e.timeMs < lv_screenWindowStartMs();
 }
 
 void lv_imgui_events_window(void) {
@@ -151,8 +212,12 @@ void lv_imgui_events_window(void) {
         ImGui::BeginChild("EventsList", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
         
         for (int i = 0; i < (int)s_events.size(); i++) {
-            const char* event_text = s_events[i].text.c_str();
-            
+            if (event_is_hidden(s_events[i])) {
+                continue;
+            }
+            std::string composed = compose_line(s_events[i]);
+            const char* event_text = composed.c_str();
+
             /* Check if this item is selected */
             bool is_selected = (s_select_all) || (s_selected_index == i);
             
@@ -170,6 +235,15 @@ void lv_imgui_events_window(void) {
                 } else {
                     s_selected_index = i;
                     s_select_all = false;
+                    /* A plain click on a highlight clip jumps the scrubber to a
+                     * few seconds before the moment and centres the map on it. */
+                    if (s_events[i].seekable) {
+                        uint32_t target = s_events[i].seekMs > 5000u
+                                              ? s_events[i].seekMs - 5000u
+                                              : 0u;
+                        lv_windowSeekToHighlight(target, s_events[i].mapX,
+                                                 s_events[i].mapY);
+                    }
                 }
             }
             
@@ -179,10 +253,11 @@ void lv_imgui_events_window(void) {
                     copy_to_clipboard(event_text);
                 }
                 if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL))) {
-                    /* Build string of all events */
+                    /* Build string of all shown events */
                     std::string all_events;
                     for (const auto& e : s_events) {
-                        all_events += e.text + "\r\n";
+                        if (event_is_hidden(e)) continue;
+                        all_events += compose_line(e) + "\r\n";
                     }
                     copy_to_clipboard(all_events.c_str());
                 }
@@ -209,7 +284,8 @@ void lv_imgui_events_window(void) {
             if (ImGui::MenuItem(langGetText(STR_LV_COPY_ALL), NULL, false, !s_events.empty())) {
                 std::string all_events;
                 for (const auto& e : s_events) {
-                    all_events += e.text + "\r\n";
+                    if (event_is_hidden(e)) continue;
+                    all_events += compose_line(e) + "\r\n";
                 }
                 copy_to_clipboard(all_events.c_str());
             }

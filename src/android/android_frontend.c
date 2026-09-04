@@ -30,6 +30,7 @@
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
+#include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
@@ -248,6 +249,13 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 static ClientSim *s_activeUiCs = NULL;
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  if (cs != s_activeUiCs) {
+    /* Drop the previous game's latched build target: it is the square a tap
+       builds at, and it outlives the ClientSim that set it, so without this
+       the first tap of the next game is dispatched to a tile chosen in the
+       last one. */
+    buildCursorReset();
+  }
   s_activeUiCs = cs;
 }
 
@@ -260,6 +268,13 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   if (drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+    /* Resolve the reticle through the shared build cursor, as every other
+       frontend does — the tap-to-build handler latches the tapped square
+       there, so the reticle has to read it back from the same place. */
+    bool cursorFaint = false;
+    showCursor = buildCursorResolveReticle(cs, showCursor, cursorX, cursorY,
+                                           &cursorX, &cursorY, &cursorFaint);
+    sdl3DrawSetCursorFaint(cursorFaint);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,

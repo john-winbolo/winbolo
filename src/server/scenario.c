@@ -302,7 +302,7 @@ static int l_tank(lua_State *L) {
         tankGetStats(t, &shells, &mines, &armour, &trees);
         dead = (tankGetDeathWait(t) > 0) || (armour > TANK_FULL_ARMOUR);
         name[0] = '\0';
-        playersGetPlayerName(&gs->plyrs, (BYTE)p, name, FALSE);
+        playersGetPlayerName(&gs->plyrs, (BYTE)p, name, sizeof(name), FALSE);
         lua_createtable(L, 0, 13);
         lua_pushinteger(L, wx >> TANK_SHIFT_MAPSIZE); lua_setfield(L, -2, "mx");
         lua_pushinteger(L, wy >> TANK_SHIFT_MAPSIZE); lua_setfield(L, -2, "my");
@@ -580,7 +580,7 @@ static int l_lobby_slot(lua_State *L) {
         char name[64];
         name[0] = '\0';
         playersGetPlayerName(&serverSimGetGameSim(sim)->plyrs, (BYTE)p,
-                             name, FALSE);
+                             name, sizeof(name), FALSE);
         int teamOut = sim->lobbyPlayers[p].teamNumber;
         if (st->spawnTeamHint[p] != 0) {
             teamOut = st->spawnTeamHint[p] - 1;   /* mid-spawn intent */

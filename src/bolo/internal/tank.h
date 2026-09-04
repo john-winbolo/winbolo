@@ -193,6 +193,11 @@ based on my testing.
 /* Tank slows down a speed unit if it hits a wall */
 #define TANK_WALL_SLOW_DOWN 1
 
+/* Wall tangent slip factor when a wall blocks movement:
+   0 = Bolo 1.17 projection (oblique hits keep only the along-wall component),
+   1 = frictionless glide at full speed along the wall */
+#define TANK_WALL_GLIDE 0.0f
+
 /* Amount to move for checking */
 #define TANK_MOVE_BOAT_SUB 64
 #define TANK_MOVE_LAND_SUB 128 /* 96 */

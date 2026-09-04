@@ -50,6 +50,16 @@ void mapPreviewPopupOpenFile(const char *mapPath,
                              int boundsMinX, int boundsMinY,
                              int boundsMaxX, int boundsMaxY);
 
+/* Open (or, if already open, just re-aim) the popup centred on one map
+ * square, zoomed in far enough for it to be legible. Used by the lobby's
+ * "click a player's name to see where they are" jump: the inline preview is
+ * a fixed whole-map fit with no camera of its own, so the zoomed popup is
+ * what can actually travel to a position. */
+void mapPreviewPopupFocusMapSquare(const BYTE *compressedData, int compressedLen,
+                                   int boundsMinX, int boundsMinY,
+                                   int boundsMaxX, int boundsMaxY,
+                                   int mapSqX, int mapSqY);
+
 /* Call once per frame BEFORE ImGui NewFrame — renders tiles to offscreen texture. */
 void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH);
 

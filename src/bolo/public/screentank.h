@@ -50,6 +50,9 @@ typedef struct {
   BYTE my;  /* The map y co-ordinate it is on */
   BYTE px;  /* The pixel offset from the left it is on */
   BYTE py;  /* The pixel offset from the top it is on */
+  BYTE wx;  /* X world offset inside the map square, 0-255. wx >> 4 == px */
+  BYTE wy;  /* Y world offset inside the map square, 0-255. wy >> 4 == py */
+  BYTE angle; /* The full 0-255 facing angle. frame is the 16 step version */
   BYTE frame; /* The direction it is facing */
   BYTE playerNum; /* The player Number */
   char playerName[PLAYER_NAME_LEN];
@@ -152,8 +155,11 @@ void screenTanksDestroy(screenTanks *value);
 *  frame      - Frame identifer of the tank
 *  playerNum  - Player Number of this tank
 *  playerName - String to hold the player name
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
+*  angle      - The full 0-255 facing angle
 *********************************************************/
-void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName);
+void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName, BYTE wx, BYTE wy, BYTE angle);
 
 /*********************************************************
 *NAME:          screenTanksGetItem
@@ -175,6 +181,24 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 *  playerName - String to hold the player name
 *********************************************************/
 void screenTanksGetItem(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *playerNum, char *playerName);
+
+/*********************************************************
+*NAME:          screenTanksGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 15/2/98
+*LAST MODIFIED: 15/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square and the
+*  full facing angle for a specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*  angle      - The full 0-255 facing angle
+*********************************************************/
+void screenTanksGetSubPixel(const screenTanks *value, BYTE itemNum, BYTE *wx, BYTE *wy, BYTE *angle);
 
 #endif /* SCREENTANKS_H */
 

@@ -15,9 +15,10 @@
 /* Bus subscriber that maintains the dedicated-server replay log in
  * response to CTRL_GAME_PHASE_* events. Registered from servermain.c
  * when the --log argument is present. The subscriber's sync-replay
- * delivers the current phase at registration time, so the log file is
- * opened immediately for both lobby (CTRL_GAME_PHASE_LOBBY) and
- * no-lobby (CTRL_GAME_PHASE_RUNNING) startup paths. */
+ * delivers the current phase at registration time: the no-lobby startup
+ * path (CTRL_GAME_PHASE_RUNNING) opens the log file there and then, while
+ * the lobby path (CTRL_GAME_PHASE_LOBBY) only arms the drain, so that log
+ * opens on the first log tick instead. */
 
 #include <string.h>
 #include <stdio.h>
@@ -69,6 +70,54 @@ static char s_pendingUploadFile[512];
  * Empty when the log was named from an explicit -log <file> path. */
 static char s_logStamp[16];
 
+/* Publish target for a finished round, for callers that record to a reused
+ * filename. Single player records to one fixed path and would otherwise lose
+ * the round to the next lobby entry's logStart, which truncates that same
+ * path three seconds after game over. "" disables the move, which is what
+ * hosting uses — its rounds already resolve unique timestamped names. */
+static char s_completedPath[512];
+
+/* Where the last completed round's log ended up, for callers that want to
+ * offer it back. "" until a round has finished. */
+static char s_lastRoundFile[512];
+
+/* Whether this server hands the last completed round back to a client that
+ * asks for it. Reset to auto by serverDedicatedLogInstall; see
+ * ROUND_LOG_SERVE_* in server_dedicated_log.h for what auto resolves to and
+ * when. */
+static int s_serveMode = ROUND_LOG_SERVE_AUTO;
+
+/* TRUE once the open log has seen a game start, i.e. it holds a round and
+ * not just a lobby. Gates the publish: without it, closing the lobby log
+ * that a finished round returns to would move that lobby log over the
+ * round it just published. */
+static bool s_roundRan = FALSE;
+
+/* Control-event work handed to the recording thread. CTRL_GAME_PHASE_RUNNING
+ * and CTRL_LOBBY_MAP_CHANGE are published from whichever thread drove the
+ * transition — for in-process single player the main thread, not the timer
+ * thread logWriteTick pinned as the log's owner — so logAddEvent would drop
+ * everything they emit. The deliver path records what to emit and
+ * serverDedicatedLogDrain, registered as log.c's pre-tick hook, emits it from
+ * the owning thread. The map message keeps the pascal-string shape logAddEvent
+ * takes; two map changes before a drain leave the later one.
+ *
+ * CTRL_GAME_PHASE_LOBBY goes through the same drain for a different reason:
+ * ordering against the WinBolo.net session rotation, not thread ownership.
+ * serverSimReturnToLobby publishes it from inside serverSimTick, while the
+ * finished round's server_key is still installed; only afterwards does
+ * serverInstanceTick run winbolonetEndSession -> round-log upload ->
+ * winbolonetBeginSession, which mints the next round's key. logStart stamps
+ * the header with winboloNetGetServerKey, so opening the log from the deliver
+ * path wrote the outgoing round's key into the incoming round's file — one
+ * rotation stale for every round after the first, which is the key the
+ * standalone viewer then fetches comments against. Opening from the drain puts
+ * logStart on the next log tick, after the new key exists. */
+static bool s_lobbyEnterPending = FALSE;
+static bool s_gameStartPending = FALSE;
+static bool s_mapMsgPending = FALSE;
+static char s_pendingMapMsg[256];
+
 static void serverDedicatedLogRenameForMap(ServerSim *sim);
 
 /* Generate a log file name from the current time and map name into
@@ -110,6 +159,55 @@ void serverDedicatedLogStashCurrentRound(void) {
     } else {
         s_pendingUploadFile[0] = '\0';
     }
+    /* Publish the finished round clear of the recording path so the next
+     * lobby entry's logStart can truncate that path without destroying the
+     * round. Only for a log that actually holds a round: a lobby log closed
+     * on the way out of the game must not overwrite the round it followed,
+     * nor repoint s_lastRoundFile at itself. */
+    if (s_roundRan) {
+        /* True unless a move was wanted and did not happen. A caller that
+         * records to a path it reuses is asking for the round to be taken off
+         * that path, so a move it did not get is the round not surviving. */
+        bool published = TRUE;
+
+        if (s_completedPath[0] != '\0' &&
+            strcmp(s_completedPath, s_logFileName) != 0) {
+            if (SDL_RenamePath(s_logFileName, s_completedPath)) {
+                strncpy(s_logFileName, s_completedPath, sizeof(s_logFileName) - 1);
+                s_logFileName[sizeof(s_logFileName) - 1] = '\0';
+                /* An upload stashed above named the pre-move path. No caller
+                 * both publishes and uploads today (hosting sets no completed
+                 * path, single player never uploads), but a stale name here
+                 * would be a quiet failure for whoever combines them. */
+                if (s_pendingUploadFile[0] != '\0') {
+                    strncpy(s_pendingUploadFile, s_logFileName,
+                            sizeof(s_pendingUploadFile) - 1);
+                    s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+                }
+            } else {
+                published = FALSE;
+            }
+        }
+
+        if (published) {
+            /* s_logFileName names a file that will still be there when someone
+             * comes for it: the published copy after a move, or the original
+             * when no move was wanted — a host's rounds already resolve unique
+             * timestamped names and nothing goes back over them. */
+            strncpy(s_lastRoundFile, s_logFileName, sizeof(s_lastRoundFile) - 1);
+            s_lastRoundFile[sizeof(s_lastRoundFile) - 1] = '\0';
+        } else {
+            /* The move is the whole reason a completed path exists, so a
+             * failed one leaves the round sitting on the path it was recorded
+             * to — which the next lobby entry's logStart truncates a few
+             * seconds later. Naming it would hand the recap a file about to be
+             * emptied under an open zip reader, and leaving the previous value
+             * would offer the round before this one as if it were this one.
+             * No replay for this round is the only honest answer. */
+            s_lastRoundFile[0] = '\0';
+        }
+    }
+    s_roundRan = FALSE;
 }
 
 void serverDedicatedLogFlushPendingUpload(void) {
@@ -213,6 +311,10 @@ static void handleLobbyEnter(ServerSim *sim) {
     logSetLobbyMode(TRUE);
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
+    /* A freshly opened lobby log holds no round yet. Redundant with the
+     * reset at the end of the stash, deliberately: the invariant then holds
+     * whichever path opened this log. */
+    s_roundRan = FALSE;
     if (s_isLogging) {
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
         for (i = 0; i < MAX_TANKS; i++) {
@@ -225,7 +327,18 @@ static void handleLobbyEnter(ServerSim *sim) {
                     if (nameLen > 255) nameLen = 255;
                     pstr[0] = (char)nameLen;
                     memcpy(pstr + 1, name, nameLen);
-                    logAddEvent(log_PlayerJoined, i, '?', '?', accountFlags, 0, pstr);
+                    /* The country comes from the client table, not the sim:
+                     * this loop re-announces players who joined in an earlier
+                     * round, whose original join event is in a previous log
+                     * file. XX stands in when the table has nothing (the
+                     * non-UDP build, or a slot the sim thinks is connected
+                     * and the transport does not). */
+                    const char *cc = transportUdpServerGetClientCountryCode(i);
+                    bool haveCC = (cc != NULL && cc[0] != '\0' && cc[1] != '\0');
+                    logAddEvent(log_PlayerJoined, i,
+                                haveCC ? (BYTE)cc[0] : (BYTE)'X',
+                                haveCC ? (BYTE)cc[1] : (BYTE)'X',
+                                accountFlags, 0, pstr);
                 }
             }
         }
@@ -255,7 +368,8 @@ static void handleLobbyMapChange(ServerSim *sim) {
     if (nameLen < 0) return;
     if (nameLen > 255) nameLen = 255;
     pstr[0] = (char)nameLen;
-    logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+    memcpy(s_pendingMapMsg, pstr, (size_t)nameLen + 1);
+    s_mapMsgPending = TRUE;
 }
 
 static void handleGameStart(ServerSim *sim) {
@@ -269,6 +383,9 @@ static void handleGameStart(ServerSim *sim) {
          * alliance audit events, and the rewriting snapshot all land
          * in the running segment under normal writer semantics. */
         logSetLobbyMode(FALSE);
+        /* The open log stops being a lobby log here and becomes a round,
+         * which is what makes it worth publishing when it closes. */
+        s_roundRan = TRUE;
         logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
         /* Team-derived alliances from serverSimReapplyTeamAlliances are
          * applied silently — playersAcceptAlliance writes the bitmap but
@@ -298,8 +415,47 @@ static void handleGameStart(ServerSim *sim) {
     s_isLogging = logStart(s_logFileName, sim,
                            0, MAX_TANKS, sim->hasPassword);
     if (s_isLogging) {
+        /* A no-lobby log is a round from the moment it opens — recording
+         * starts at the running transition, with no lobby segment in front
+         * of it — so the publish gate has to be armed here too. */
+        s_roundRan = TRUE;
         fprintf(stderr, "Logging to %s\n", s_logFileName);
     }
+}
+
+/* log.c's pre-tick hook: open the round's log and emit what the control-event
+ * handlers queued. Runs on the thread logWriteTick pinned, so these writes pass
+ * the writer's owner check, and runs before the tick's accounting, so they are
+ * framed as this tick's events. Inert when nothing is pending. */
+static void serverDedicatedLogDrain(void) {
+    ServerSim *sim = s_logSim;
+
+    if (sim == NULL) {
+        return;
+    }
+    if (s_lobbyEnterPending == FALSE && s_gameStartPending == FALSE &&
+        s_mapMsgPending == FALSE) {
+        return;
+    }
+    /* Lobby enter first: it is the arm that opens the log, and the two below
+     * only write into an open one — handleGameStart's recording branch and the
+     * map message both need logIsRecording() to already be true. */
+    if (s_lobbyEnterPending == TRUE) {
+        handleLobbyEnter(sim);
+    }
+    /* Game start before the map message: logWriteSnapshot flushes the queued
+     * log_LobbyExit and log_AllyAccept events before it writes the snapshot
+     * marker, which is what puts the LOG_EVENT frame ahead of the LOG_SNAPSHOT
+     * in the byte stream. */
+    if (s_gameStartPending == TRUE) {
+        handleGameStart(sim);
+    }
+    if (s_mapMsgPending == TRUE) {
+        logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, s_pendingMapMsg);
+    }
+    s_lobbyEnterPending = FALSE;
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
 }
 
 static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
@@ -310,10 +466,26 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
     }
     switch (evt->type) {
         case CTRL_GAME_PHASE_LOBBY:
-            handleLobbyEnter(sim);
+            /* Queued, not opened here — the header's WinBolo.net key has to be
+             * read after this tick's session rotation, not before it. The
+             * lobby state calls logWriteTick() directly (server_sim.c's
+             * serverStateLobby arm) rather than going through
+             * serverSimLogTick's logIsRecording() early return, so the drain
+             * still fires on the very next tick with no log open. */
+            s_lobbyEnterPending = TRUE;
             break;
         case CTRL_GAME_PHASE_RUNNING:
-            handleGameStart(sim);
+            /* The recording branch emits the round's marker, the alliance
+             * audit events and the world rewrite, so it has to run on the
+             * recording thread. The no-lobby branch only opens the file —
+             * logStart re-pins the owner itself — and has to stay here: with
+             * no lobby and no spectator ring, serverSimLogTick returns before
+             * logWriteTick, so there would be no drain until a log exists. */
+            if (sim->wantLogging && logIsRecording()) {
+                s_gameStartPending = TRUE;
+            } else {
+                handleGameStart(sim);
+            }
             break;
         case CTRL_GAME_PHASE_GAME_OVER:
             handleGameOver(sim);
@@ -326,17 +498,173 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
     }
 }
 
+int serverDedicatedLogServeMode(void) {
+    return s_serveMode;
+}
+
+void serverDedicatedLogSetServeMode(int mode) {
+    if (mode != ROUND_LOG_SERVE_OFF && mode != ROUND_LOG_SERVE_ON &&
+        mode != ROUND_LOG_SERVE_AUTO) {
+        return;
+    }
+    s_serveMode = mode;
+}
+
+/* RoundLogSource::serveEnabled. Auto resolves here rather than at install
+ * because winbolonetIsRunning() can flip after the recorder is installed. */
+static bool serverDedicatedLogServeAllowed(void) {
+    switch (s_serveMode) {
+        case ROUND_LOG_SERVE_OFF: return FALSE;
+        case ROUND_LOG_SERVE_ON:  return TRUE;
+        default:                  return !winbolonetIsRunning();
+    }
+}
+
+/* RoundLogSource::read. Owns the size cap: the file is measured first and one
+ * over ROUND_LOG_MAX_BYTES is refused unopened, because a .wbv cut down to
+ * fit is unopenable rather than merely shorter — minizip writes the zip's
+ * central directory only at zipClose(). The buffer is plain malloc so the
+ * transport can free it with free() after the bulk sender takes its own copy.
+ * The name handed back is the basename: the server's directory layout is not
+ * the client's business. */
+static RoundLogReadResult serverDedicatedLogReadLastRound(uint8_t **outBuf,
+                                                          uint32_t *outLen,
+                                                          char *outName,
+                                                          size_t outNameSize) {
+    SDL_PathInfo info;
+    const char *base;
+    const char *p;
+    FILE *fp;
+    uint8_t *buf;
+    size_t size;
+    size_t got;
+
+    if (outBuf == NULL || outLen == NULL || outName == NULL ||
+        outNameSize == 0) {
+        return ROUND_LOG_READ_ERROR;
+    }
+    if (s_lastRoundFile[0] == '\0') {
+        return ROUND_LOG_READ_NONE;
+    }
+    /* A named-but-missing file reads as "no round" rather than an error: the
+     * round is gone (moved, deleted between rounds), which is the same thing
+     * to the asking client. */
+    if (!SDL_GetPathInfo(s_lastRoundFile, &info) ||
+        info.type != SDL_PATHTYPE_FILE || info.size == 0) {
+        return ROUND_LOG_READ_NONE;
+    }
+    if (info.size > (Uint64)ROUND_LOG_MAX_BYTES) {
+        return ROUND_LOG_READ_TOO_LARGE;
+    }
+    size = (size_t)info.size;
+
+    fp = fopen(s_lastRoundFile, "rb");
+    if (fp == NULL) {
+        return ROUND_LOG_READ_ERROR;
+    }
+    buf = (uint8_t *)malloc(size);
+    if (buf == NULL) {
+        fclose(fp);
+        return ROUND_LOG_READ_ERROR;
+    }
+    got = fread(buf, 1, size, fp);
+    fclose(fp);
+    if (got != size) {
+        free(buf);
+        return ROUND_LOG_READ_ERROR;
+    }
+
+    base = s_lastRoundFile;
+    for (p = s_lastRoundFile; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') {
+            base = p + 1;
+        }
+    }
+    snprintf(outName, outNameSize, "%s", base);
+
+    *outBuf = buf;
+    *outLen = (uint32_t)size;
+    return ROUND_LOG_READ_OK;
+}
+
+static const RoundLogSource s_roundLogSource = {
+    serverDedicatedLogServeAllowed,
+    serverDedicatedLogReadLastRound
+};
+
 void serverDedicatedLogInstall(ServerSim *sim, bool dontSendLog) {
     if (sim == NULL) {
         return;
     }
+    /* Install is where per-sim publish policy resets. The completed path and
+     * the serve mode are module state that outlives the sim that asked for
+     * them, so without this a single-player game would leave its path set and
+     * the next server in the same process — a hosted game, whose rounds must
+     * stay where the host configured them — would move its round log there,
+     * and would inherit whatever serve mode that game chose. */
+    s_completedPath[0] = '\0';
+    s_lastRoundFile[0] = '\0';
+    s_roundRan = FALSE;
+    s_lobbyEnterPending = FALSE;
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
+    s_serveMode = ROUND_LOG_SERVE_AUTO;
     s_dontSendLog = dontSendLog;
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
+    /* Emit point for the handlers that run off the recording thread. Like the
+     * two registrations around it, install-only — nothing unregisters it. */
+    logSetPreTickHook(serverDedicatedLogDrain);
     /* Hand the lifecycle our stash/flush so its lobby/empty-reset
      * cleanup can drive the per-round upload. */
     serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
                                     serverDedicatedLogFlushPendingUpload);
+    /* Tell the transport where a PACKET_ROUND_LOG_REQ gets its bytes. Pushed
+     * outward like the two registrations above so the transport never names a
+     * symbol in this file — it must stay linkable without the WinBolo.net
+     * upload path this module depends on. */
+    transportUdpServerSetRoundLogSource(&s_roundLogSource);
+}
+
+void serverDedicatedLogUninstall(void) {
+    /* The same state install resets, cleared at the other end of the sim's
+     * life. Install alone is not enough: it runs only for a server that logs,
+     * so a host that turned logging off never resets anything and inherits
+     * whatever the last server in this process left behind — its completed
+     * round as the last round, and its serve mode with it.
+     *
+     * The transport's source goes first. Passing NULL is what makes it answer
+     * PACKET_ROUND_LOG_REQ with "nothing here" rather than reading through
+     * this module's now-cleared path, and it is the half that closes the leak
+     * on its own: the recap can only name a file, but this hands the bytes to
+     * anyone who joins. Nothing here is undone by the sim being freed
+     * afterwards — it is all module state that outlives it. */
+    transportUdpServerSetRoundLogSource(NULL);
+    /* log.c calls the drain at the top of every logWriteTick, and the sims that
+     * tick are not only the one that installed us — the welcome screen's
+     * background game is a real ServerSim and ticks whenever the menu is up.
+     * The drain bails on a NULL sim, and clearing s_logSim below is what makes
+     * that guard mean anything, since until now it was reading a pointer to a
+     * sim serverSimDestroy had already freed. Dropping the hook as well leaves
+     * nothing at all pointing into this module between one server and the next.
+     * logCreate deliberately does not clear the hook — a background sim created
+     * after an install would disarm a live writer — so here is the only place
+     * it comes off. */
+    logSetPreTickHook(NULL);
+    s_logSim = NULL;
+    s_completedPath[0] = '\0';
+    s_lastRoundFile[0] = '\0';
+    s_roundRan = FALSE;
+    /* Work the deliver path queued for a drain that will now never come. These
+     * gate the drain's early-out alongside the sim pointer, so a session that
+     * ended with one still set is the case that reached the dereference. */
+    s_lobbyEnterPending = FALSE;
+    s_gameStartPending = FALSE;
+    s_mapMsgPending = FALSE;
+    s_serveMode = ROUND_LOG_SERVE_AUTO;
+    /* s_pendingUploadFile is deliberately left alone: a round stashed for
+     * WinBolo.net that could not go out yet (the session was down) is still
+     * owed, and the teardown paths flush it on their own schedule. */
 }
 
 bool serverDedicatedLogIsActive(void) {
@@ -345,4 +673,17 @@ bool serverDedicatedLogIsActive(void) {
 
 const char *serverDedicatedLogCurrentFile(void) {
     return s_logFileName;
+}
+
+void serverDedicatedLogSetCompletedPath(const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        s_completedPath[0] = '\0';
+        return;
+    }
+    strncpy(s_completedPath, path, sizeof(s_completedPath) - 1);
+    s_completedPath[sizeof(s_completedPath) - 1] = '\0';
+}
+
+const char *serverDedicatedLogLastRoundFile(void) {
+    return s_lastRoundFile;
 }

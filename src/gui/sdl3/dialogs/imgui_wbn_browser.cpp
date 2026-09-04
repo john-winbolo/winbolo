@@ -38,6 +38,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_star_rating.h"
 #include "imgui_nav_outline.h"
 #include "imgui_controller_prompt.h"
 #include "dialog_footer.h"
@@ -52,11 +53,13 @@ extern "C" {
 #include "../../lang.h"
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/winbolonet_client.h"
+#include "../../../bolo/public/wire_limits.h"  /* ROUND_LOG_MAX_BYTES */
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
 #include "imgui_keyboard.h"
 #include "imgui_winbolonet.h"
+#include "../input_gamepad.h"
 }
 
 static const int DIALOG_W = 1024;
@@ -122,71 +125,6 @@ struct TabState {
     bool fetched;
     const char *error;
 };
-
-/* ---- Star icon textures ---- */
-static SDL_Texture *s_starFull  = nullptr;
-static SDL_Texture *s_starHalf  = nullptr;
-static SDL_Texture *s_starEmpty = nullptr;
-static bool s_starsLoaded = false;
-
-static void loadStarIcons(SDL_Renderer *renderer) {
-    if (s_starsLoaded) return;
-    s_starsLoaded = true;
-
-    int iconSize = 16;
-    const char *paths[][2] = {
-        { "data/ui/star_full.svg",  nullptr },
-        { "data/ui/star_half.svg",  nullptr },
-        { "data/ui/star_empty.svg", nullptr },
-    };
-
-    char baseBuf[FILENAME_MAX];
-    const char *base = SDL_GetBasePath();
-    SDL_Texture **targets[] = { &s_starFull, &s_starHalf, &s_starEmpty };
-
-    for (int i = 0; i < 3; i++) {
-        *targets[i] = imguiLoadSvgIcon(renderer, paths[i][0], iconSize);
-        if (!*targets[i] && base) {
-            SDL_snprintf(baseBuf, sizeof(baseBuf), "%s%s", base, paths[i][0]);
-            *targets[i] = imguiLoadSvgIcon(renderer, baseBuf, iconSize);
-        }
-    }
-}
-
-static void destroyStarIcons() {
-    if (s_starFull)  { SDL_DestroyTexture(s_starFull);  s_starFull = nullptr; }
-    if (s_starHalf)  { SDL_DestroyTexture(s_starHalf);  s_starHalf = nullptr; }
-    if (s_starEmpty) { SDL_DestroyTexture(s_starEmpty); s_starEmpty = nullptr; }
-    s_starsLoaded = false;
-}
-
-/* ---- Render star rating inline ---- */
-static void renderStarRating(float rating10) {
-    /* Convert 0-10 scale to 0-5 stars */
-    float stars5 = rating10 / 2.0f;
-    int full = (int)stars5;
-    bool half = (stars5 - (float)full) >= 0.25f;
-    int empty = 5 - full - (half ? 1 : 0);
-
-    ImVec2 sz(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight());
-
-    for (int i = 0; i < full; i++) {
-        if (s_starFull) {
-            ImGui::Image((ImTextureID)s_starFull, sz);
-            if (i < full - 1 || half || empty > 0) ImGui::SameLine(0, 0);
-        }
-    }
-    if (half && s_starHalf) {
-        ImGui::Image((ImTextureID)s_starHalf, sz);
-        if (empty > 0) ImGui::SameLine(0, 0);
-    }
-    for (int i = 0; i < empty; i++) {
-        if (s_starEmpty) {
-            ImGui::Image((ImTextureID)s_starEmpty, sz);
-            if (i < empty - 1) ImGui::SameLine(0, 0);
-        }
-    }
-}
 
 /* ---- JSON parsing ---- */
 
@@ -383,7 +321,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     dialogApplyScaling(s);
 
     /* Load star icons */
-    loadStarIcons(renderer);
+    imguiStarRatingLoadIcons(renderer);
 
     /* Initialise HTTP for WBN API */
     bool httpOk = httpCreate();
@@ -670,6 +608,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             uint8_t *data = nullptr;
             size_t dataSize = 0;
             int status = wbn_api_download_to_memory_progress(apiPath, &data, &dataSize,
+                                                             ROUND_LOG_MAX_BYTES,
                                                              downloadProgressFn, nullptr,
                                                              &downloadCancel);
             if (status == 200 && data && dataSize > 0) {
@@ -903,9 +842,21 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         ImGui::Separator();
 
         /* ---- Tab bar ---- */
+        /* L/R shoulder buttons cycle tabs. Native gamepads deliver the L1/R1
+         * keys through ImGui IO; under Steam Input the pad is hidden from SDL
+         * and the shift arrives via the menu tab-shift action instead. */
+        int tabShift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0) -
+                       (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (tabShift == 0) tabShift = imguiSteamNavConsumeMenuTabShift();
+        int forceTab = -1;
+        if (tabShift != 0)
+            forceTab = ((int)currentTab + tabShift + TAB_COUNT) % TAB_COUNT;
+
         if (ImGui::BeginTabBar("##WbnTabs")) {
             for (int i = 0; i < TAB_COUNT; i++) {
-                if (ImGui::BeginTabItem(langGetText(s_tabNameIds[i]))) {
+                ImGuiTabItemFlags tabFlags =
+                    (forceTab == i) ? ImGuiTabItemFlags_SetSelected : 0;
+                if (ImGui::BeginTabItem(langGetText(s_tabNameIds[i]), nullptr, tabFlags)) {
                     if (currentTab != (BrowserTab)i) {
                         currentTab = (BrowserTab)i;
                         selectedItem = -1;
@@ -1013,99 +964,156 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_MYGAMES_NONE));
         }
 
-        /* ---- Results table ---- */
-        float tableH = panelH * 0.40f;
-        if (selectedItem < 0) tableH = panelH * 0.70f; /* more room when no detail */
+        /* ---- Body: results list (left) + persistent detail pane (right) ----
+         * Fixed side-by-side split. The detail pane is always present, so
+         * selecting a row updates it in place and never reflows the list.
+         * Both columns are nav-flattened into the host plane: the list rows
+         * and the single View Log button share one nav graph, so a controller
+         * moves down the list and on into the button with no focus hop. */
+        if (!myGamesSignedOut) {
+            /* Leave a row at the bottom for the Open/Close footer buttons. */
+            float footerH = ImGui::GetFrameHeightWithSpacing() +
+                            ImGui::GetStyle().ItemSpacing.y;
+            float bodyH = ImGui::GetContentRegionAvail().y - footerH;
+            if (bodyH < 120.0f) bodyH = 120.0f;
 
-        if (!tab.logs.empty()) {
-            ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-                                         ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
-                                         ImGuiTableFlags_BordersOuter;
-            if (ImGui::BeginTable("##LogsTable", 6, tableFlags, ImVec2(0, tableH))) {
-                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_MAP),     0, 3.0f);
-                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_TYPE),    0, 1.0f);
-                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_PLAYERS), 0, 1.0f);
-                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_RATING),  0, 1.5f);
-                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_SIZE),    0, 1.0f);
-                ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_DATE),    0, 2.0f);
-                ImGui::TableHeadersRow();
+            float bodyW   = ImGui::GetContentRegionAvail().x;
+            float spacing = ImGui::GetStyle().ItemSpacing.x;
+            float leftW   = (bodyW - spacing) * 0.55f;
 
-                for (int i = 0; i < (int)tab.logs.size(); i++) {
-                    LogEntry &e = tab.logs[i];
+            /* ===== Left column: results list + pagination ===== */
+            ImGui::BeginChild("##ListCol", ImVec2(leftW, bodyH),
+                              ImGuiChildFlags_NavFlattened);
+            {
+                float pagH   = (tab.totalPages > 1) ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
+                float tableH = ImGui::GetContentRegionAvail().y - pagH;
 
-                    /* Apply display filters */
-                    if (e.num_players < filterMinPlayers) continue;
+                if (!tab.logs.empty()) {
+                    ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                                                 ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
+                                                 ImGuiTableFlags_BordersOuter;
+                    if (ImGui::BeginTable("##LogsTable", 6, tableFlags, ImVec2(0, tableH))) {
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_MAP),     0, 3.0f);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_TYPE),    0, 1.0f);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_PLAYERS), 0, 1.0f);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_RATING),  0, 1.5f);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_SIZE),    0, 1.0f);
+                        ImGui::TableSetupColumn(langGetText(STR_DLGWBN_COL_DATE),    0, 2.0f);
+                        ImGui::TableHeadersRow();
 
-                    ImGui::TableNextRow();
+                        for (int i = 0; i < (int)tab.logs.size(); i++) {
+                            LogEntry &e = tab.logs[i];
 
-                    bool isSelected = (selectedItem == i);
-                    bool wasSelected = isSelected;
-                    ImGui::TableNextColumn();
-                    char selectId[128];
-                    SDL_snprintf(selectId, sizeof(selectId), "%s##log%d", e.map, i);
-                    if (ImGui::Selectable(selectId, isSelected,
-                                          ImGuiSelectableFlags_SpanAllColumns |
-                                          ImGuiSelectableFlags_AllowDoubleClick)) {
-                        selectedItem = i;
-                        commentError = nullptr;
-                        commentSuccess = nullptr;
-                        /* Fetch detail if not loaded */
-                        if (!e.detailLoaded) {
-                            triggerDetailFetch(e.key);
+                            /* Apply display filters */
+                            if (e.num_players < filterMinPlayers) continue;
+
+                            ImGui::TableNextRow();
+
+                            bool isSelected = (selectedItem == i);
+                            ImGui::TableNextColumn();
+                            char selectId[128];
+                            SDL_snprintf(selectId, sizeof(selectId), "%s##log%d", e.map, i);
+                            /* Selection only — live-updates the detail pane. The
+                               primary action lives on the View Log button, which
+                               A reaches by nav; there is no activate-to-download. */
+                            if (ImGui::Selectable(selectId, isSelected,
+                                                  ImGuiSelectableFlags_SpanAllColumns)) {
+                                selectedItem = i;
+                                commentError = nullptr;
+                                commentSuccess = nullptr;
+                                if (!e.detailLoaded) {
+                                    triggerDetailFetch(e.key);
+                                }
+                            }
+                            imguiHandOnHover();
+
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(e.game_type);
+
+                            ImGui::TableNextColumn();
+                            ImGui::Text("%d", e.num_players);
+
+                            ImGui::TableNextColumn();
+                            if (e.num_ratings > 0) {
+                                imguiStarRating(e.rating);
+                                ImGui::SameLine();
+                                ImGui::TextDisabled("(%d)", e.num_ratings);
+                            } else {
+                                ImGui::TextDisabled("--");
+                            }
+
+                            ImGui::TableNextColumn();
+                            ImGui::TextUnformatted(e.log_size_formatted);
+
+                            ImGui::TableNextColumn();
+                            char dateBuf[32];
+                            formatTimestamp(e.start_time, dateBuf, sizeof(dateBuf));
+                            ImGui::TextUnformatted(dateBuf);
                         }
-                        /* Trigger View Log on:
-                           - mouse double-click
-                           - gamepad A / keyboard Enter on an already-
-                             selected row (saves the user navigating
-                             past stats + comments to find the button) */
-                        bool mouseDbl     = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-                        bool mouseSingle  = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-                        bool nonMouseActivate = !mouseSingle && !mouseDbl;
-                        if (e.log_available &&
-                            (mouseDbl || (nonMouseActivate && wasSelected))) {
-                            triggerDownload(e.key, (long long)e.log_size);
-                        }
+
+                        ImGui::EndTable();
                     }
-                    imguiHandOnHover();
-
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(e.game_type);
-
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%d", e.num_players);
-
-                    ImGui::TableNextColumn();
-                    if (e.num_ratings > 0) {
-                        renderStarRating(e.rating);
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("(%d)", e.num_ratings);
-                    } else {
-                        ImGui::TextDisabled("--");
-                    }
-
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(e.log_size_formatted);
-
-                    ImGui::TableNextColumn();
-                    char dateBuf[32];
-                    formatTimestamp(e.start_time, dateBuf, sizeof(dateBuf));
-                    ImGui::TextUnformatted(dateBuf);
                 }
 
-                ImGui::EndTable();
+                /* Pagination under the list */
+                if (tab.totalPages > 1) {
+                    bool isFirst = (tab.page <= 1);
+                    bool isLast  = (tab.page >= tab.totalPages);
+
+                    if (isFirst) ImGui::BeginDisabled();
+                    if (ImGui::Button(langGetText(STR_DLGWBN_PREV))) {
+                        triggerFetch(currentTab, tab.page - 1);
+                    }
+                    imguiHandOnHover();
+                    if (isFirst) ImGui::EndDisabled();
+
+                    ImGui::SameLine();
+                    {
+                        MessageArgs args = {};
+                        args.number = tab.page;
+                        args.number2 = tab.totalPages;
+                        args.number3 = tab.total;
+                        ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_PAGE, &args));
+                    }
+                    ImGui::SameLine();
+
+                    if (isLast) ImGui::BeginDisabled();
+                    if (ImGui::Button(langGetText(STR_DLGWBN_NEXT))) {
+                        triggerFetch(currentTab, tab.page + 1);
+                    }
+                    imguiHandOnHover();
+                    if (isLast) ImGui::EndDisabled();
+                }
             }
-        }
+            ImGui::EndChild();
 
-        /* ---- Detail panel ---- */
-        if (selectedItem >= 0 && selectedItem < (int)tab.logs.size()) {
-            LogEntry &e = tab.logs[selectedItem];
+            ImGui::SameLine();
 
-            ImGui::Separator();
+            /* ===== Right column: persistent detail pane ===== */
+            ImGui::BeginChild("##DetailCol", ImVec2(0, bodyH),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+            if (selectedItem >= 0 && selectedItem < (int)tab.logs.size()) {
+                LogEntry &e = tab.logs[selectedItem];
 
-            /* Flattened into the parent nav plane so a controller reaches the
-             * detail content in one step. */
-            if (ImGui::BeginChild("##DetailPanel", ImVec2(0, 0),
-                                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened)) {
+                /* Reserve the bottom row for the full-width action control. */
+                float btnReserve = ImGui::GetFrameHeightWithSpacing() +
+                                   ImGui::GetStyle().ItemSpacing.y;
+
+                /* Scrolling content sits above the pinned action button. It holds
+                   only read-only text plus the opt-in comment header, so casual
+                   browsing never lands focus on a text field or summons the OSK. */
+                ImGui::BeginChild("##DetailScroll",
+                                  ImVec2(0, ImGui::GetContentRegionAvail().y - btnReserve),
+                                  ImGuiChildFlags_NavFlattened);
+
+                /* Right stick scrolls the detail content. The list keeps the
+                   primary nav, so this pane is not a stick focus target — the
+                   stick just pans the text. Works on native and Steam Input. */
+                float sdx, sdy;
+                if (inputGamepadGetScrollDirection(&sdx, &sdy)) {
+                    ImGui::SetScrollY(ImGui::GetScrollY() + sdy * ImGui::GetTextLineHeight());
+                }
+
                 /* Header info */
                 ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.3f, 1.0f), "%s", e.map);
                 ImGui::SameLine();
@@ -1126,7 +1134,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_NUMPLAYERS_FMT, &args));
                 }
 
-                /* Stats row */
+                /* Stats */
                 {
                     char durBuf[32];
                     formatDuration(e.game_length_seconds, durBuf, sizeof(durBuf));
@@ -1135,15 +1143,21 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_DURATION, &args));
                 }
                 ImGui::SameLine(0, 20);
-                {
+                if (e.num_ratings > 0) {
+                    imguiStarRating(e.rating);
+                    ImGui::SameLine();
                     char ratingBuf[16];
                     SDL_snprintf(ratingBuf, sizeof(ratingBuf), "%.1f", e.rating);
                     MessageArgs args = {};
                     SDL_strlcpy(args.string1, ratingBuf, sizeof(args.string1));
                     args.number = e.num_ratings;
                     ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RATING, &args));
+                } else {
+                    /* Nobody has rated the round, so an average of 0.0 out of 0
+                     * is a score nobody gave it. Said the way the list column
+                     * above says it. */
+                    ImGui::TextDisabled("%s: --", langGetText(STR_DLGWBN_COL_RATING));
                 }
-                ImGui::SameLine(0, 20);
                 {
                     MessageArgs args = {};
                     args.number = e.num_downloads;
@@ -1169,7 +1183,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                             ImGui::PopStyleColor();
                             ImGui::SameLine();
                             if (c.rating > 0) {
-                                renderStarRating((float)c.rating);
+                                imguiStarRating((float)c.rating);
                                 ImGui::SameLine();
                             }
 
@@ -1181,120 +1195,101 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                         ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOCOMMENTS));
                     }
 
-                    /* Comment form */
-                    ImGui::Separator();
-                    ImGui::TextUnformatted(langGetText(STR_DLGWBN_ADDCOMMENT));
+                    /* Comment form — gated behind a collapsed header so its text
+                       input and rating combo stay out of the nav graph until the
+                       user opts in (the OSK never appears during plain browsing). */
+                    if (ImGui::CollapsingHeader(langGetText(STR_DLGWBN_ADDCOMMENT))) {
+                        char wbnToken[256], wbnExpiry[256];
+                        gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
+                        bool wbnLoggedIn = (wbnToken[0] != '\0');
 
-                    /* Check if signed in to WBN */
-                    char wbnToken[256], wbnExpiry[256];
-                    gameFrontGetWinbolonetToken(wbnToken, wbnExpiry);
-                    bool wbnLoggedIn = (wbnToken[0] != '\0');
+                        if (!wbnLoggedIn) {
+                            imguiWinbolonetDrawSection(false);
+                        } else {
+                            float cw = ImGui::GetContentRegionAvail().x;
+                            ImGui::SetNextItemWidth(80 * s);
+                            ImGui::Combo("Rating##cmtRating", &commentRating,
+                                         "None\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
+                            ImGui::SetNextItemWidth(cw);
+                            ImGui::InputTextWithHint("##cmtText", langGetText(STR_DLGWBN_HINT_COMMENT), commentText, sizeof(commentText));
 
-                    if (!wbnLoggedIn) {
-                        imguiWinbolonetDrawSection(false);
-                    } else {
-                    ImGui::SetNextItemWidth(60 * s);
-                    ImGui::Combo("Rating##cmtRating", &commentRating,
-                                 "None\0 1\0 2\0 3\0 4\0 5\0 6\0 7\0 8\0 9\0 10\0");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(panelW * 0.5f);
-                    ImGui::InputTextWithHint("##cmtText", langGetText(STR_DLGWBN_HINT_COMMENT), commentText, sizeof(commentText));
-                    ImGui::SameLine();
+                            bool canPost = commentText[0] != '\0' && commentPost == nullptr;
+                            if (!canPost) ImGui::BeginDisabled();
+                            if (ImGui::Button(langGetText(STR_DLGWBN_POST), ImVec2(cw, 0))) {
+                                commentError = nullptr;
+                                commentSuccess = nullptr;
+                                commentPost = wbn_comments_post_start(e.key, wbnToken,
+                                                                      commentText, commentRating);
+                            }
+                            imguiHandOnHover();
+                            if (!canPost) ImGui::EndDisabled();
 
-                    bool canPost = commentText[0] != '\0' && commentPost == nullptr;
-                    if (!canPost) ImGui::BeginDisabled();
-                    if (ImGui::Button(langGetText(STR_DLGWBN_POST))) {
-                        commentError = nullptr;
-                        commentSuccess = nullptr;
-                        commentPost = wbn_comments_post_start(e.key, wbnToken,
-                                                              commentText, commentRating);
+                            if (commentError)
+                                ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", commentError);
+                            if (commentSuccess)
+                                ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%s", commentSuccess);
+                        }
                     }
-                    imguiHandOnHover();
-                    if (!canPost) ImGui::EndDisabled();
-
-                    if (commentError) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "%s", commentError);
-                    }
-                    if (commentSuccess) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(0.3f, 1, 0.3f, 1), "%s", commentSuccess);
-                    }
-                    } /* end wbnLoggedIn else */
                 } else if (detailFetching) {
                     ImGui::Separator();
                     ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_LOADINGDETAIL));
                 }
 
-                /* Download button */
-                ImGui::Separator();
+                ImGui::EndChild(); /* ##DetailScroll */
+
+                /* ---- Full-width action: View Log button becomes its own
+                   progress bar in place while downloading (one control, two
+                   states — no separate stub bar to hunt for). ---- */
                 if (e.log_available) {
-                    /* A download is exclusive (triggerDownload no-ops while one
-                       runs), so disable the button for any in-flight download,
-                       but only show "Downloading"/progress on the row that is
-                       actually transferring. */
                     bool anyDownloading  = downloading;
                     bool thisDownloading = anyDownloading && (strcmp(e.key, downloadingKey) == 0);
-                    if (anyDownloading) ImGui::BeginDisabled();
-                    if (ImGui::Button(thisDownloading ? langGetText(STR_DLGWBN_DOWNLOADING) : langGetText(STR_DLGWBN_VIEWLOG))) {
-                        triggerDownload(e.key, (long long)e.log_size);
-                    }
-                    imguiHandOnHover();
-                    if (anyDownloading) ImGui::EndDisabled();
+                    float fullW = ImGui::GetContentRegionAvail().x;
                     if (thisDownloading) {
-                        ImGui::SameLine();
                         long long now   = downloadBytesNow.load();
                         long long total = downloadBytesTotal.load();
                         if (total > 0) {
                             float progress = (float)((double)now / (double)total);
                             if (progress < 0.0f) progress = 0.0f;
                             if (progress > 1.0f) progress = 1.0f;
-                            char overlay[32];
-                            SDL_snprintf(overlay, sizeof(overlay), "%.0f%%", progress * 100.0f);
-                            ImGui::ProgressBar(progress, ImVec2(150, 0), overlay);
+                            char overlay[64];
+                            SDL_snprintf(overlay, sizeof(overlay), "%s %.0f%%",
+                                         langGetText(STR_DLGWBN_DOWNLOADING), progress * 100.0f);
+                            ImGui::ProgressBar(progress, ImVec2(fullW, 0), overlay);
                         } else {
-                            /* No Content-Length yet — indeterminate animation
-                               (a scrolling block, not a fill that loops). */
-                            ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(150, 0),
+                            /* No Content-Length yet — indeterminate animation. */
+                            ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(fullW, 0),
                                                langGetText(STR_DLGWBN_DOWNLOADING));
                         }
+                    } else {
+                        if (anyDownloading) ImGui::BeginDisabled();
+                        if (ImGui::Button(langGetText(STR_DLGWBN_VIEWLOG), ImVec2(fullW, 0))) {
+                            triggerDownload(e.key, (long long)e.log_size);
+                        }
+                        imguiHandOnHover();
+                        if (anyDownloading) ImGui::EndDisabled();
                     }
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", langGetText(STR_DLGWBN_NOLOG));
                 }
+            } else {
+                /* Empty state — nothing selected yet. */
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_SELECTPROMPT));
             }
-            ImGui::EndChild();
-        }
+            ImGui::EndChild(); /* ##DetailCol */
 
-        /* ---- Pagination ---- */
-        if (tab.totalPages > 1) {
-            ImGui::Separator();
-            bool isFirst = (tab.page <= 1);
-            bool isLast  = (tab.page >= tab.totalPages);
-
-            if (isFirst) ImGui::BeginDisabled();
-            if (ImGui::Button(langGetText(STR_DLGWBN_PREV))) {
-                triggerFetch(currentTab, tab.page - 1);
+            /* D-pad Left/Right paginate. Native gamepads deliver these keys; the
+               list is a single column so horizontal nav is otherwise unused here.
+               (Under Steam Input the d-pad drives nav and these keys don't arrive
+               — pagination is still reachable via the Prev/Next buttons.) */
+            if (tab.totalPages > 1 && !downloading) {
+                if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft, false) && tab.page > 1) {
+                    triggerFetch(currentTab, tab.page - 1);
+                } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight, false) &&
+                           tab.page < tab.totalPages) {
+                    triggerFetch(currentTab, tab.page + 1);
+                }
             }
-            imguiHandOnHover();
-            if (isFirst) ImGui::EndDisabled();
-
-            ImGui::SameLine();
-            {
-                MessageArgs args = {};
-                args.number = tab.page;
-                args.number2 = tab.totalPages;
-                args.number3 = tab.total;
-                ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_PAGE, &args));
-            }
-            ImGui::SameLine();
-
-            if (isLast) ImGui::BeginDisabled();
-            if (ImGui::Button(langGetText(STR_DLGWBN_NEXT))) {
-                triggerFetch(currentTab, tab.page + 1);
-            }
-            imguiHandOnHover();
-            if (isLast) ImGui::EndDisabled();
         }
 
         /* ---- Bottom buttons ---- */
@@ -1366,7 +1361,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     }
 
     /* Cleanup */
-    destroyStarIcons();
+    imguiStarRatingDestroyIcons();
 
     /* Stop and reap all workers before tearing down curl global state:
      * httpDestroy() -> curl_global_cleanup() is unsafe while any thread is

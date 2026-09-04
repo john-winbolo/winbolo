@@ -121,6 +121,12 @@ typedef enum {
     /* CTRL_ROUND_STATS — end-of-round scoreboard + awards, broadcast to all
      * connected clients at game over. Carries a RoundStatsSummary by value. */
     CTRL_ROUND_STATS,
+    /* CTRL_ROUND_RATING_POSTED — fromPlayer has just had a rating or comment
+     * accepted on the WinBolo.net page for round `key`. Broadcast to all
+     * connected clients; each one re-reads that page if its own recap is on
+     * the same round. Carries no rating or comment text — the round's page
+     * on WinBolo.net stays the only source. */
+    CTRL_ROUND_RATING_POSTED,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -436,6 +442,13 @@ typedef struct ControlEvent {
 
         /* CTRL_ROUND_STATS — end-of-round scoreboard + awards, broadcast to all. */
         RoundStatsSummary roundStats;
+
+        /* CTRL_ROUND_RATING_POSTED — who posted, and the round they posted
+         * against. The server copies the key through without inspecting it. */
+        struct {
+            BYTE fromPlayer;
+            char key[ROUND_STATS_LOGKEY_LEN];
+        } ratingPosted;
     } u;
 } ControlEvent;
 

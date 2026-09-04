@@ -302,6 +302,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
     case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
     case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
+    case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
     default:                         return NULL;
   }
 }
@@ -566,9 +567,18 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_ROUND_STATS:
-      fprintf(f, ",\"playerCount\":%u,\"awardCount\":%u",
+      fprintf(f, ",\"playerCount\":%u,\"awardCount\":%u,\"highlightCount\":%u",
               (unsigned)evt->u.roundStats.playerCount,
-              (unsigned)evt->u.roundStats.awardCount);
+              (unsigned)evt->u.roundStats.awardCount,
+              (unsigned)evt->u.roundStats.highlightCount);
+      break;
+
+    case CTRL_ROUND_RATING_POSTED:
+      /* Key prefix only: enough to tell two rounds apart in a trace without
+       * putting the whole WinBolo.net key in the log. */
+      fprintf(f, ",\"fromPlayer\":%u,\"keyPrefix\":",
+              (unsigned)evt->u.ratingPosted.fromPlayer);
+      logEventsJsonStr(f, evt->u.ratingPosted.key, 6);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

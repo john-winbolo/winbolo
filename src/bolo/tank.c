@@ -1643,7 +1643,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
     int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
     if ((pushX || pushY) && (xAmount || yAmount)) {
-      const float SLIP = 1.0f;          /* 0 = plain slide, 1 = frictionless */
+      const float SLIP = TANK_WALL_GLIDE; /* 0 = plain slide, 1 = frictionless */
       float nlen = sqrtf((float)(pushX * pushX + pushY * pushY));
       float nx = pushX / nlen, ny = pushY / nlen;            /* outward normal  */
       float mdotn = (float)xAmount * nx + (float)yAmount * ny;

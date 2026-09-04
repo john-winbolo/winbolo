@@ -265,6 +265,21 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         return CMD_OK;
     }
+    case CMD_RATING_POSTED: {
+        const CmdRatingPosted *p = &cmd->u.ratingPosted;
+        if (p->key[0] == '\0') return CMD_REJECT_INVALID;
+        /* The server has no view of WinBolo.net, so the key is passed
+         * through unchecked; each receiving client compares it against the
+         * round its own recap is showing. */
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_ROUND_RATING_POSTED;
+        evt.u.ratingPosted.fromPlayer = (BYTE)senderSlot;
+        memcpy(evt.u.ratingPosted.key, p->key, sizeof(evt.u.ratingPosted.key));
+        evt.u.ratingPosted.key[sizeof(evt.u.ratingPosted.key) - 1] = '\0';
+        serverSimPublishControl(sim, &evt);
+        return CMD_OK;
+    }
     case CMD_ALLIANCE_REQUEST: {
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;

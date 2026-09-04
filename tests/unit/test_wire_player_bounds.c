@@ -47,7 +47,7 @@ int run_players_oob_index_safe(void) {
     playersMakeMessageName(cs, plrs, 0, 200, nm);
     UT_ASSERT(strcmp(nm, NO_TANK) == 0);
 
-    playersGetPlayerName(plrs, 200, nm, FALSE);
+    playersGetPlayerName(plrs, 200, nm, sizeof(nm), FALSE);
     UT_ASSERT(strcmp(nm, NO_TANK) == 0);
 
     clientSimDestroy(cs);

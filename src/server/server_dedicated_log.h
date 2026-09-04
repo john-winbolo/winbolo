@@ -26,6 +26,25 @@ struct ServerSim;
  * servermain global. */
 void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog);
 
+/* Drop the sim and forget the round it recorded. Install is the other half of
+ * this and resets the same state, but only the callers that install reach it:
+ * a host with logging turned off never calls install at all, so without this
+ * the previous server in the process — a single-player game, say — leaves its
+ * completed round standing as the last round, and the AUTO serve gate standing
+ * with it. That round is then handed to a client that asks for it and named in
+ * the host's own recap: the wrong round, and one the host never chose to share.
+ *
+ * It also drops the registrations that outlive the sim: the transport's round
+ * log source and log.c's pre-tick hook. That hook is the one with teeth — the
+ * sims that reach logWriteTick are not only the one that installed us, the
+ * welcome screen's background game among them, and the drain it calls held a
+ * pointer to a sim that had already been freed.
+ *
+ * Call it wherever a server is torn down, after any final stash and upload,
+ * whether or not that server installed. Idempotent, and safe with nothing
+ * installed. */
+void serverDedicatedLogUninstall(void);
+
 /* Teardown query API for servermain's final-round upload. Since the
  * module owns the log state privately, servermain's shutdown reads it
  * back through these instead of the former shared globals. IsActive
@@ -34,6 +53,25 @@ void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLog);
  * CurrentFile returns the on-disk .wbv path to upload. */
 bool serverDedicatedLogIsActive(void);
 const char *serverDedicatedLogCurrentFile(void);
+
+/* Where a finished round should be published. Set by a caller that records
+ * to a reused filename (single player), so the completed log is moved clear
+ * before the next lobby entry truncates the recording path. Pass NULL or ""
+ * to disable — the default, used by hosting, whose rounds already resolve
+ * unique timestamped names. Cleared by serverDedicatedLogInstall, so set it
+ * after installing, not before. */
+void serverDedicatedLogSetCompletedPath(const char *path);
+
+/* Absolute path of the most recently completed round's log, or "" when there
+ * is no round to offer. For hosting that is the round's own timestamped file;
+ * with a completed path set it is that path.
+ *
+ * "" covers three cases, and a caller need not tell them apart: no round has
+ * finished since the writer was installed, the writer has since been
+ * uninstalled, or the round finished but could not be moved to its completed
+ * path — which leaves it on a recording path the next lobby entry truncates,
+ * so there is nothing there worth naming. */
+const char *serverDedicatedLogLastRoundFile(void);
 
 /* Finalize the current round's log (logStop, isLogging=false) and
  * stash its filename for a later upload. Called from handleGameOver
@@ -59,6 +97,21 @@ void serverDedicatedLogFlushPendingUpload(void);
  * for the upload at all — false for non-logging hosts and for hosts that
  * opted out of uploads (dontSendLog), so those stay untouched. */
 bool serverDedicatedLogHasPendingUpload(void);
+
+/* Round-log serve policy — whether this server answers a joined client's
+ * PACKET_ROUND_LOG_REQ with the last completed round's .wbv. AUTO resolves
+ * at serve time to "on unless WinBolo.net is running", because a WBN
+ * server's round log is uploaded there anyway; the resolution is deliberately
+ * not latched at install, since WBN can start after the recorder does.
+ * serverDedicatedLogInstall resets the mode to AUTO along with the rest of
+ * this module's per-sim policy, so set it after installing, not before.
+ * A value outside 0..2 is ignored. */
+#define ROUND_LOG_SERVE_OFF  0
+#define ROUND_LOG_SERVE_ON   1
+#define ROUND_LOG_SERVE_AUTO 2
+
+int  serverDedicatedLogServeMode(void);
+void serverDedicatedLogSetServeMode(int mode);
 
 /* Compose the final .wbv replay path from the -log argument value.
  * Pure (no globals / time / RNG) and cross-platform (SDL_GetPathInfo) so

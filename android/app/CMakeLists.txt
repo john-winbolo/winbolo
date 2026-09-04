@@ -24,7 +24,7 @@ include(FetchContent)
 
 FetchContent_Declare(
     sdl3
-    URL      https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.2.tar.gz
+    URL      https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.14.tar.gz
     SYSTEM
 )
 FetchContent_Declare(
@@ -197,10 +197,20 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_setname.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_skins.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keycap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_status.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_deck_pause.cpp
@@ -225,8 +235,9 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw_status.c
     ${PROJ_ROOT}/src/gui/sdl3/tileloader.c
+    ${PROJ_ROOT}/src/gui/sdl3/skin_source.c
+    ${PROJ_ROOT}/src/gui/sdl3/gfx_settings.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl_bmp.c
-    ${PROJ_ROOT}/src/gui/skins.c
     ${PROJ_ROOT}/src/gui/sdl3/input.c
     ${PROJ_ROOT}/src/gui/sdl3/input_touch.c
     ${PROJ_ROOT}/src/gui/sdl3/input_joystick.c
@@ -299,5 +310,6 @@ target_compile_options(main PRIVATE
     -Wno-implicit-fallthrough
     -Wno-implicit-function-declaration
     -Wno-nonportable-include-path
+    -Werror=undef
     -fcommon
 )

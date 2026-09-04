@@ -439,7 +439,7 @@ void tkExplosionCalcScreenBullets(tkExplosion *tke, screenBullets *sBullets, BYT
       conv >>= TANK_SHIFT_PIXELSIZE;
       py = (BYTE) conv;
 
-      screenBulletsAddItem(sBullets, (BYTE) (mx-leftPos), (BYTE) (my-topPos), px, py, TANK_EXPLOSION_FRAME);
+      screenBulletsAddItem(sBullets, (BYTE) (mx-leftPos), (BYTE) (my-topPos), px, py, TANK_EXPLOSION_FRAME, (BYTE) q->x, (BYTE) q->y);
     }
     q = TkExplosionTail(q);
   }

@@ -31,14 +31,16 @@ extern "C" {
 #include "global.h"
 }
 
-/* Match openingStates enum from gamefront.h */
+/* The return value is cast straight back to openingStates by the caller, so
+   each code is the openingStates enumerator itself rather than its position.
+   That lets gamefront.h reorder or drop members without shifting these. */
 enum {
-    RESULT_TUTORIAL = 4,   /* openTutorial */
-    RESULT_PRACTICE = 5,   /* openSetup */
-    RESULT_TCP      = 6,   /* openUdp */
-    RESULT_LAN      = 10,  /* openLan */
-    RESULT_INTERNET = 14,  /* openInternet */
-    RESULT_QUIT     = -1
+    RESULT_TUTORIAL = openTutorial,
+    RESULT_PRACTICE = openSetup,
+    RESULT_TCP      = openUdp,
+    RESULT_LAN      = openLan,
+    RESULT_INTERNET = openInternet,
+    RESULT_QUIT     = -1   /* Quit sentinel, not a dialog state */
 };
 
 /* Try to load a BMP from next to the exe, then from data/ */
