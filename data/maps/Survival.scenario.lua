@@ -38,10 +38,14 @@
 --     shore bases flip back to their bots (humans may capture them
 --     between waves — engine ownership rules apply mid-wave, including
 --     the auto-neutralize when a wave bot dies).
+--   * A wave's attackers arrive ONE AT A TIME, one second apart, and
+--     leave the same way (see SPAWN_SPACING_TICKS) — spawning ten bots
+--     in one tick froze the server long enough to knock remote players
+--     off their own tanks.
 --   * Wave bots RESPAWN like normal Bolo play (at their own outer
 --     start, fully armed) — each wave is 5 minutes of constant
 --     pressure, ended only by the clock: when it runs out every
---     attacker vanishes on the spot. Survive all 5 waves and the
+--     attacker vanishes (over a few seconds). Survive all 5 waves and the
 --     defenders win — that is the ONLY win (allow_base_win below turns
 --     the engine's all-bases sweep off, so clearing the horde's eight
 --     mid-wave doesn't cut the game short). The only loss is the
@@ -122,6 +126,28 @@ local BREATHER     = 1500   -- 30 s preparation between waves
 local ANNOUNCE_GAP = 250    -- final "incoming" warning this many ticks early
 local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 
+-- Wave bots arrive and leave ONE AT A TIME, this many ticks apart, instead
+-- of all ten inside a single tick.
+--
+-- Why: game.spawn_bot loads that bot's brain right there and then, and one
+-- brain load takes about 75 ms (measured). Ten of them in one tick stops the
+-- whole server for about three quarters of a second. The server then runs its
+-- catch-up loop to make up the ticks it missed, which goes out to clients as
+-- one burst of packets; while that happens the stall-advance path invents
+-- inputs for any player whose real ones haven't arrived, and when his real
+-- inputs do turn up they are too old to use and get dropped. A player on a
+-- slow link (a quarter of a second round trip) therefore sees his tank freeze
+-- and drive itself for several seconds at every wave. Clearing a wave is just
+-- as bad or worse: each removal tears down a brain and a client sim, and the
+-- round then has to push a full resync.
+--
+-- Spreading the work fixes it: at most one brain load (or one teardown) lands
+-- in any one tick, so no tick costs more than a single bot's worth of work.
+-- One second apart means a full wave of ten files onto the field over about
+-- nine seconds, and files off it the same way.
+local SPAWN_SPACING_TICKS  = 50   -- 1 s between one wave arrival and the next
+local VANISH_SPACING_TICKS = 50   -- 1 s between one wave removal and the next
+
 -- Map-file layout contracts (see tests/generate_survival_map.py):
 local HORDE_BASES  = 8      -- bases 1..8: the horde's shore ring (r=25)
 local CENTER_FIRST = 9      -- bases 9..14 form the human center, owners 0..5
@@ -136,6 +162,21 @@ local ended = false
 local wave_ends_at = nil    -- tick the live wave's time runs out
 local last_min_mark = nil   -- minutes-left value last announced
 local half_min_said = false -- the one 30-seconds-left warning
+
+-- The staggered ARRIVAL queue (see SPAWN_SPACING_TICKS).
+local spawn_left    = 0     -- attackers still to spawn this wave
+local spawn_next_at = nil   -- tick the next one spawns (nil = spawn now)
+local spawn_index   = 0     -- next WAVE_NAMES entry to use
+local spawned       = {}    -- slots this wave's spawns actually landed in
+local spawn_fail_said = false  -- the one "no free slot" report per wave
+local base_owner_slot = {}  -- horde base k -> the slot that should own it
+local pill_owner_slot = {}  -- wave pill n -> the slot that should own it
+local restocked     = 0     -- horde bases topped up so far this wave
+
+-- The staggered DEPARTURE queue (see VANISH_SPACING_TICKS).
+local vanishing     = false -- a wave is filing off the field right now
+local vanish_queue  = {}    -- slots still to be removed, in order
+local vanish_next_at = nil  -- tick the next removal fires (nil = remove now)
 
 -- Which wave slot owns each shore base. Not arithmetic any more: the
 -- eight bases sit on eight of the map's ten 36-degree spokes, and each one
@@ -165,19 +206,27 @@ end
 -- without this file having to track the engine's constant.
 local BASE_FULL = 255
 
-local function restock(game, first, last, what)
+local function restock_quiet(game, first, last)
   local n = 0
   for b = first, last do
     if game.set_base_stock(b, BASE_FULL, BASE_FULL, BASE_FULL) then
       n = n + 1
     end
   end
-  -- Read one back rather than quoting BASE_FULL: the log then shows the
-  -- engine's real ceiling (90/90/90) instead of what we asked for.
-  local bi = game.base(first)
+  return n
+end
+
+-- Read one base back rather than quoting BASE_FULL: the log then shows the
+-- engine's real ceiling (90/90/90) instead of what we asked for.
+local function restock_report(game, probe, n, what)
+  local bi = game.base(probe)
   game.message(string.format("[bases] %s restocked %d bases to %d/%d/%d",
     what, n, bi and bi.armour or 0, bi and bi.shells or 0,
     bi and bi.mines or 0))
+end
+
+local function restock(game, first, last, what)
+  restock_report(game, first, restock_quiet(game, first, last), what)
 end
 
 -- Wave bots respawn like normal Bolo play — a dead one is merely
@@ -198,15 +247,51 @@ local function living(game)
   return n
 end
 
--- Remove every wave bot on the spot (single tick — no drive-away).
+-- Line every wave bot up to be removed, one per VANISH_SPACING_TICKS (see
+-- the constant for why they can't all go in one tick). Returns how many
+-- are queued — the message that quotes this still goes out at once, so a
+-- player reads "the wave is over" the moment the clock runs out even
+-- though the tanks take a few seconds to actually clear off.
+--
+-- A wave that is still ARRIVING must not race its own departure, so the
+-- arrival queue is dropped here first: nothing new comes ashore after the
+-- horde has been told to leave. (On the shipped numbers this can't
+-- happen — a wave lasts 15000 ticks and arrives in 450 — but the loss
+-- check and any future early clear can end a wave whenever they like.)
 local function vanish_wave(game)
-  local n = 0
+  spawn_left = 0
+  spawn_next_at = nil
+  base_owner_slot = {}
+  pill_owner_slot = {}
+
+  vanish_queue = {}
   for p in pairs(wave_bots) do
+    vanish_queue[#vanish_queue + 1] = p
+  end
+  -- pairs() order is not defined; sort so the same seed removes the same
+  -- bot first on every run.
+  table.sort(vanish_queue)
+  vanishing = true
+  vanish_next_at = nil          -- the first removal rides this same tick
+  return #vanish_queue
+end
+
+-- Pop at most one queued removal. Returns true on the tick the LAST wave
+-- bot leaves the field (an empty queue counts as drained straight away),
+-- which is what the between-wave clock keys on.
+local function pump_vanish_queue(game, tick)
+  if not vanishing then return false end
+  if #vanish_queue > 0 then
+    if vanish_next_at ~= nil and tick < vanish_next_at then return false end
+    local p = table.remove(vanish_queue, 1)
     game.remove_bot(p)
     wave_bots[p] = nil
-    n = n + 1
+    vanish_next_at = tick + VANISH_SPACING_TICKS
   end
-  return n
+  if #vanish_queue > 0 then return false end
+  vanishing = false
+  vanish_next_at = nil
+  return true
 end
 
 -- A wave pill this script is still allowed to move around: one of
@@ -239,10 +324,14 @@ end
 -- With more attackers than pills the claim pass simply runs dry and
 -- there is nothing to distribute.
 --
--- Timing: this runs in the SAME tick as the spawn, right after the
--- spawn loop. game.spawn_bot creates the tank synchronously (the engine
--- fires on_choose_start during the call), so game.tank(p).mx/my is
--- already the tank's real start tile here — no deferred pass needed.
+-- Timing: this needs every attacker's start position, so it runs ONCE,
+-- in the same tick as the LAST of the wave's staggered spawns, on the
+-- list of slots those spawns landed in. game.spawn_bot still creates each
+-- tank synchronously (the engine fires on_choose_start during the call),
+-- so game.tank(p).mx/my is the tank's real start tile for every one of
+-- them by the time this runs — the tanks that came ashore earlier have
+-- moved a few seconds' worth, which only shifts which nearby pill they
+-- claim, never whether they get one.
 local function deal_wave_pills(game, spawned)
   if #spawned == 0 then return end
 
@@ -284,77 +373,178 @@ local function deal_wave_pills(game, spawned)
     wave, claimed, loaded))
 end
 
+-- Hand slot `s` everything the wave means it to own: the horde bases on
+-- its spoke and the outer pills stamped to it. Called the moment that
+-- slot's bot actually exists, never before (see spawn_wave).
+--
+-- Order matters per base: game.set_base_owner DRAINS a base every time it
+-- moves between two real owners, so the top-up has to follow that base's
+-- own stamp. Doing it quietly here and reporting the total once at the end
+-- keeps the newswire to the single "[bases] horde restocked ..." line it
+-- always had, while never leaving a base empty for an attacker that has
+-- already landed on it.
+local function stamp_owner_slot(game, s)
+  local n = 0
+  for k = 1, HORDE_BASES do
+    if base_owner_slot[k] == s then
+      base_owner_slot[k] = nil
+      game.set_base_owner(k, s)
+      n = n + restock_quiet(game, k, k)
+    end
+  end
+  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+    if pill_owner_slot[pn] == s then
+      pill_owner_slot[pn] = nil
+      -- Same test the one-shot pass used to make, just made now instead
+      -- of at wave start: a pill the DEFENDERS took during the break (or
+      -- since this wave started arriving) stays theirs, and a carried one
+      -- is wherever its tank is.
+      local pi = game.pill(pn)
+      if pi and not pi.in_tank then
+        local o = pi.owner
+        if o == nil or o > 5 then
+          game.set_pill_owner(pn, s)
+        end
+      end
+    end
+  end
+  return n
+end
+
+-- The wave has finished arriving: hand out anything still unowned, report
+-- the restock, and deal the pills.
+local function finish_wave_spawn(game)
+  spawn_next_at = nil
+
+  -- Anything whose natural owner slot never got a bot (short roster, or a
+  -- spawn that found no free slot) goes to the lowest slot that DID fill.
+  -- A base or pill owned by a player who does not exist reads hostile to
+  -- both sides, so nothing may be left pointing at an empty slot.
+  local low = nil
+  for _, p in ipairs(spawned) do
+    if low == nil or p < low then low = p end
+  end
+  if low ~= nil then
+    for k = 1, HORDE_BASES do
+      if base_owner_slot[k] ~= nil then base_owner_slot[k] = low end
+    end
+    for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+      if pill_owner_slot[pn] ~= nil then pill_owner_slot[pn] = low end
+    end
+    restocked = restocked + stamp_owner_slot(game, low)
+  end
+  base_owner_slot = {}
+  pill_owner_slot = {}
+
+  restock_report(game, 1, restocked, "horde")
+
+  -- The 10 outer pills (7..16) start DEAD ON THE GROUND, parked at
+  -- their map spots out on the old ring (r=26) the horde's bases used
+  -- to sit on — the attackers' first stop ashore. The stamping above put
+  -- them in the wave's slots, so the attackers' brains treat them as
+  -- their own dead pills — scoop, carry, place, repair, at the AI's
+  -- discretion. One per tank is deliberately left lying there for exactly
+  -- that reason; the SURPLUS (a short roster can't cover 10) is loaded
+  -- into tanks instead of being left as defender loot. Ownership is fresh
+  -- above, so the free/defender test inside reads this wave's state.
+  deal_wave_pills(game, spawned)
+end
+
+-- Bring at most ONE attacker ashore, no more often than every
+-- SPAWN_SPACING_TICKS. Called from on_tick; the first call for a wave
+-- happens on the wave's own tick, so wave 1 still starts on time.
+local function pump_spawn_queue(game, tick)
+  if spawn_left <= 0 then return end
+  if spawn_next_at ~= nil and tick < spawn_next_at then return end
+
+  spawn_index = spawn_index + 1
+  spawn_left = spawn_left - 1
+  local name = WAVE_NAMES[spawn_index]
+    or string.format("Wave %d-%d", wave, spawn_index)
+  local p = game.spawn_bot(name, nil, WAVE_TEAM, "open")
+  if p then
+    wave_bots[p] = true
+    spawned[#spawned + 1] = p
+    -- The bases and pills this slot owns are stamped HERE, now that the
+    -- bot exists, rather than up front for the whole wave: with the
+    -- arrivals spread over seconds, stamping ahead of time would leave
+    -- each base owned by an empty slot — hostile to both sides — for
+    -- seconds instead of the single tick the old all-at-once spawn took.
+    restocked = restocked + stamp_owner_slot(game, p)
+  elseif not spawn_fail_said then
+    -- Every slot is taken. Skip this attacker and carry on with the rest;
+    -- say so once per wave rather than once per failed spawn.
+    spawn_fail_said = true
+    game.message(string.format(
+      "[wave] wave %d: no free player slot — the wave lands short-handed.",
+      wave))
+  end
+
+  if spawn_left > 0 then
+    spawn_next_at = tick + SPAWN_SPACING_TICKS
+  else
+    finish_wave_spawn(game)
+  end
+end
+
+-- Open a wave: do the bookkeeping and QUEUE the arrivals. No bot is
+-- created here — pump_spawn_queue brings them in one at a time from
+-- on_tick (see SPAWN_SPACING_TICKS).
 local function spawn_wave(game)
   wave = wave + 1
 
   -- Every wave opens with the horde's eight back in bot hands — whatever
-  -- the humans captured since the last one. Clamp into the slots this
-  -- wave actually fields (same rule as the pill pass below): with a
-  -- shrunken roster the natural owner slot may be EMPTY, and a base
-  -- owned by a nonexistent player reads hostile to BOTH sides — all
-  -- eight must stay horde no matter how few attackers spawn. Several
-  -- can land on the same slot once the roster is short enough; a slot
-  -- owning two bases is fine, a base owned by nobody is not.
+  -- the humans captured since the last one. Work out WHO each one belongs
+  -- to now, and let pump_spawn_queue do the actual stamping as the owners
+  -- turn up. Clamp into the slots this wave actually fields (same rule as
+  -- the pill pass below): with a shrunken roster the natural owner slot
+  -- may be EMPTY, and a base owned by a nonexistent player reads hostile
+  -- to BOTH sides — all eight must stay horde no matter how few attackers
+  -- spawn. Several can land on the same slot once the roster is short
+  -- enough; a slot owning two bases is fine, a base owned by nobody is
+  -- not.
   local lowest_slot = 16 - WAVE_SIZE
+  base_owner_slot = {}
   for k = 1, HORDE_BASES do
     local s = horde_base_slot(k)
     if s < lowest_slot then s = lowest_slot end
-    game.set_base_owner(k, s)
+    base_owner_slot[k] = s
   end
-  -- ...and undo the drain that re-deal just caused. A wave arriving to
-  -- empty bases had nothing to rearm from, which is not the fight this
-  -- map is supposed to be.
-  restock(game, 1, HORDE_BASES, "horde")
 
   -- Same for the wave's pills: any of pills 7..16 the DEFENDERS didn't
   -- claim (still built somewhere from a previous wave, or dropped
   -- neutral by a vanished attacker) goes back to this wave's
   -- ownership — a built one flips allegiance and mans up against the
   -- humans again. Defender-owned pills (captured during the break)
-  -- stay theirs; carried pills are wherever their tank is.
+  -- stay theirs; carried pills are wherever their tank is. The
+  -- defender/carried test is made at stamp time, in stamp_owner_slot.
+  pill_owner_slot = {}
   for n = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-    local pi = game.pill(n)
-    if pi and not pi.in_tank then
-      local o = pi.owner
-      if o == nil or o > 5 then
-        -- pill 7 -> slot 15 ... 16 -> 6, clamped into the slots this
-        -- wave actually fields when the host shrank the enemy roster.
-        local s = 22 - n
-        local lowest = 16 - WAVE_SIZE
-        if s < lowest then s = lowest end
-        game.set_pill_owner(n, s)
-      end
-    end
+    -- pill 7 -> slot 15 ... 16 -> 6, clamped into the slots this wave
+    -- actually fields when the host shrank the enemy roster.
+    local s = 22 - n
+    if s < lowest_slot then s = lowest_slot end
+    pill_owner_slot[n] = s
   end
 
-  local spawned = {}
-  for i = 1, WAVE_SIZE do
-    local name = WAVE_NAMES[i] or string.format("Wave %d-%d", wave, i)
-    local p = game.spawn_bot(name, nil, WAVE_TEAM, "open")
-    if p then
-      wave_bots[p] = true
-      spawned[#spawned + 1] = p
-    end
-  end
-
-  -- The 10 outer pills (7..16) start DEAD ON THE GROUND, parked at
-  -- their map spots out on the old ring (r=26) the horde's bases used
-  -- to sit on — the attackers' first stop ashore. The wave-start
-  -- ownership pass above stamps them to the wave's slots, so the
-  -- attackers' brains treat them as their own dead pills — scoop, carry,
-  -- place, repair, at the AI's discretion. One per tank is deliberately
-  -- left lying there for exactly that reason; the SURPLUS (a short roster
-  -- can't cover 10) is loaded into tanks instead of being left as
-  -- defender loot. Ownership is fresh above, so the free/defender test
-  -- inside reads this wave's state.
-  deal_wave_pills(game, spawned)
+  spawned = {}
+  spawn_index = 0
+  spawn_left = WAVE_SIZE
+  spawn_next_at = nil          -- the first attacker rides the wave's own tick
+  spawn_fail_said = false
+  restocked = 0
 
   wave_ends_at = game.tick() + WAVE_LIMIT
   last_min_mark = nil
   half_min_said = false
 
+  -- Announced up front, on the wave's own tick, off the roster size: the
+  -- warning is what the players act on, and it would be useless arriving
+  -- nine seconds after the first tank came ashore. (The old code quoted
+  -- the number that had just spawned; a spawn that finds no free slot now
+  -- reports itself separately, from pump_spawn_queue.)
   game.message(string.format("*** Wave %d/%d: %d attackers inbound! ***",
-                             wave, WAVES, #spawned))
+                             wave, WAVES, WAVE_SIZE))
 end
 
 -- Deterministic spawn pinning (fires for EVERY placement — initial
@@ -715,24 +905,27 @@ function on_tick(game, tick)
       next_wave_at = nil
       announced = false
       spawn_wave(game)
+      pump_spawn_queue(game, tick)   -- first attacker lands on the wave tick
     end
     return
   end
 
-  -- A wave is live: narrate the clock, keep the roster pruned, and
-  -- vanish every attacker the instant WAVE_LIMIT runs out. Deaths
-  -- don't end a wave any more — the attackers respawn at their outer
-  -- starts (fully armed) and press until the clock says otherwise.
+  -- A wave is live: bring in whatever of it is still arriving, narrate the
+  -- clock, keep the roster pruned, and vanish every attacker once
+  -- WAVE_LIMIT runs out. Deaths don't end a wave any more — the attackers
+  -- respawn at their outer starts (fully armed) and press until the clock
+  -- says otherwise.
+  pump_spawn_queue(game, tick)
+
   living(game)
-  local wave_over = false
 
   if wave_ends_at ~= nil then
     local remaining = wave_ends_at - tick
     if remaining <= 0 then
+      wave_ends_at = nil
       local n = vanish_wave(game)
       game.message(string.format(
         "*** Wave %d is over — %d attacker(s) vanish! ***", wave, n))
-      wave_over = true
     elseif remaining <= 1500 and not half_min_said then
       half_min_said = true
       game.message(string.format(
@@ -750,8 +943,17 @@ function on_tick(game, tick)
     end
   end
 
+  -- One attacker leaves per VANISH_SPACING_TICKS; the wave only counts as
+  -- OVER on the tick the last one is actually gone. The between-wave clock
+  -- is started from there rather than from the "wave is over" message, so
+  -- the breather is a full BREATHER of empty field instead of one that
+  -- starts while ten tanks are still driving around. (With BREATHER at
+  -- 1500 ticks and the drain at 450 the difference is small, but it also
+  -- guarantees the next wave can never begin arriving while the last one
+  -- is still leaving.)
+  local wave_over = pump_vanish_queue(game, tick)
+
   if wave_over then
-    wave_ends_at = nil
     if wave >= WAVES then
       ended = true
       game.end_round(string.format(
