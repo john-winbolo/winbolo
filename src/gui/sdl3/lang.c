@@ -1874,6 +1874,7 @@ static const LangEntry langTable[] = {
     {1981, "Accept the Workshop legal agreement on the item's page, or nobody else can see the item."},
     {1982, "Open item page"},
     {1983, "Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be."},
+    {1984, "This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

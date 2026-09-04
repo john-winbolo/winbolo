@@ -1185,25 +1185,49 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             };
             int tdIdx = (int)gfxGetTileDetail();
             if (tdIdx < 0 || tdIdx > 2) tdIdx = 0;
-            bool oneSizeOnly =
-                tileLoaderGetDensityInfo(skinGetActiveSource())->highestAny <= 1;
+            /* Each mode reads a different field of the scan: Match to zoom
+               takes one density for the whole sheet (highestAll), High detail
+               takes each sprite's own (so it is worth having as soon as any
+               sprite is finer, which is what highestAny says).  A skin whose
+               finer art covers only some sprites therefore has something to
+               choose between, but not Match to zoom — that builds Classic's
+               tiles. */
+            const SkinDensityInfo *di =
+                tileLoaderGetDensityInfo(skinGetActiveSource());
+            bool allOneSize    = di->highestAny <= 1;
+            bool zoomIsClassic = di->highestAll <= 1;
 
-            ImGui::BeginDisabled(oneSizeOnly);
+            ImGui::BeginDisabled(allOneSize);
             ImGui::TextUnformatted(langGetText(STR_DLGSKIN_TILEDETAIL));
             ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
             if (ImGui::BeginCombo("##tiledetail", detailLabels[tdIdx])) {
                 for (int i = 0; i < 3; i++) {
                     bool sel = (tdIdx == i);
+                    bool sameAsClassic = (!allOneSize && zoomIsClassic &&
+                                          i == TILE_DETAIL_MATCH_ZOOM);
+                    ImGui::BeginDisabled(sameAsClassic);
                     if (ImGui::Selectable(detailLabels[i], sel) && i != tdIdx) {
                         gfxSetTileDetail((GfxTileDetail)i);
                         gameFrontSaveCurrentPrefs();
                         ctx->wantSkinReload = true;
                     }
+                    ImGui::EndDisabled();
+                    /* A disabled item is not hovered as far as ImGui is
+                       concerned unless it is asked for, and the reason it is
+                       disabled is exactly what the player needs to read. */
+                    if (sameAsClassic &&
+                        ImGui::IsItemHovered(
+                            ImGuiHoveredFlags_AllowWhenDisabled |
+                            ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip(
+                            "%s",
+                            langGetText(STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP));
+                    }
                 }
                 ImGui::EndCombo();
             }
             ImGui::EndDisabled();
-            if (oneSizeOnly) {
+            if (allOneSize) {
                 imguiHelpTooltip(langGetText(STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP));
             }
         }
