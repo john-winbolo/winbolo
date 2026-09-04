@@ -575,8 +575,31 @@ function M.update(state, info, now, world)
   -- are the opposite of what a suicider wants.
   local _designated = M.is_harasser(pns, self_pn, state)
   state._pill_suicider_map = M.is_pill_suicider_map(info)
-  state.is_pill_suicider = _designated and state._pill_suicider_map or false
-  state.is_harasser = _designated and not state._pill_suicider_map
+  -- A PER-BOT FORCE beats the slate entirely (state.force_pill_suicider,
+  -- set from the BRAIN_INIT_ARG "suicider"/"nosuicider" tokens — see
+  -- init.lua — which a scenario stages through game.spawn_bot's init
+  -- argument). Forced ON makes this bot a suicider whatever the slate said
+  -- and whatever map this is: the whole point is a scenario fielding one
+  -- wave of nothing but suiciders, which the fractional slate can't
+  -- express, so it must not depend on C.PILL_SUICIDER_MAPS either. Forced
+  -- OFF only bars the suicider role; the bot still takes the ordinary
+  -- harasser slate if it was designated (that is what lets a scenario run
+  -- a plain wave on a suicider map).
+  if state.force_pill_suicider ~= nil then
+    state.is_pill_suicider = state.force_pill_suicider
+    -- The two flags stay mutually exclusive — a suicider must NOT also
+    -- carry the harasser cost biases (×5 pill / ×0.2 travel), which are the
+    -- opposite of what a suicider wants.
+    state.is_harasser = (not state.force_pill_suicider) and _designated or false
+  else
+    state.is_pill_suicider = _designated and state._pill_suicider_map or false
+    state.is_harasser = _designated and not state._pill_suicider_map
+  end
+  -- One line per bot the first time the designation resolves, and again on
+  -- any change: the [harass] line below only fires while the dynamic ramp
+  -- has pushed the fraction above its floor, so it is no use for reading
+  -- back what a given bot actually IS. Debug-only, so it costs production
+  -- nothing (lua_strip drops it from opt/).
   -- R0 (dynamic commanders, flag-gated): commander status is EMERGENT — you are a
   -- commander only while leading a HARD pill take (your attack_pill target has HP
   -- >= HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when

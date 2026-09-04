@@ -148,6 +148,13 @@ local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 local SPAWN_SPACING_TICKS  = 50   -- 1 s between one wave arrival and the next
 local VANISH_SPACING_TICKS = 50   -- 1 s between one wave removal and the next
 
+-- Waves fielded entirely as PILL SUICIDERS: every bot in a listed wave is
+-- spawned with the brain init argument "suicider", which forces GoalHunter's
+-- pill_suicider role on for that one bot — it charges pillboxes and refuels
+-- and pays a heavy cost surcharge on everything else. Unlisted waves spawn
+-- plain and keep the brain's own fractional designation.
+local SUICIDER_WAVES = { [2] = true }
+
 -- Map-file layout contracts (see tests/generate_survival_map.py):
 local HORDE_BASES  = 8      -- bases 1..8: the horde's shore ring (r=25)
 local CENTER_FIRST = 9      -- bases 9..14 form the human center, owners 0..5
@@ -461,7 +468,11 @@ local function pump_spawn_queue(game, tick)
   spawn_left = spawn_left - 1
   local name = WAVE_NAMES[spawn_index]
     or string.format("Wave %d-%d", wave, spawn_index)
-  local p = game.spawn_bot(name, nil, WAVE_TEAM, "open")
+  -- 5th argument = the brain's BRAIN_INIT_ARG, per bot. On a suicider wave
+  -- every attacker gets "suicider"; on any other wave nothing is passed and
+  -- the brain designates its own harassers as usual.
+  local p = game.spawn_bot(name, nil, WAVE_TEAM, "open",
+                           SUICIDER_WAVES[wave] and "suicider" or nil)
   if p then
     wave_bots[p] = true
     spawned[#spawned + 1] = p
@@ -543,8 +554,10 @@ local function spawn_wave(game)
   -- nine seconds after the first tank came ashore. (The old code quoted
   -- the number that had just spawned; a spawn that finds no free slot now
   -- reports itself separately, from pump_spawn_queue.)
-  game.message(string.format("*** Wave %d/%d: %d attackers inbound! ***",
-                             wave, WAVES, WAVE_SIZE))
+  game.message(string.format("*** Wave %d/%d: %d attackers inbound!%s ***",
+                             wave, WAVES, WAVE_SIZE,
+                             SUICIDER_WAVES[wave] and " PILL SUICIDERS —"
+                               .. " they are coming for your pillboxes!" or ""))
 end
 
 -- Deterministic spawn pinning (fires for EVERY placement — initial

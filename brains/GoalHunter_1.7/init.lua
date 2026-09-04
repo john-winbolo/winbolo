@@ -1086,13 +1086,25 @@ function Brain.think(info)
   end
   -- ── end killed-tick decision rollback ────────────────────────────────────
 
-  -- TEST AID: per-bot config from -bot-init [arg] (the BRAIN_INIT_ARG Lua
-  -- global), parsed once. Comma-separated tokens:
+  -- Per-bot config from the BRAIN_INIT_ARG Lua global, parsed once. Two
+  -- things stage it: the -bot-init [arg] CLI suffix (a test aid) and a
+  -- scenario script's game.spawn_bot(..., init) 5th argument (live play —
+  -- that is how Survival fields a whole wave of pill suiciders).
+  -- Tokens:
   --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
   --   "normal"            -> force never-refuel OFF (a plain captain)
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
+  --   "suicider"          -> FORCE the pill_suicider role on for this bot,
+  --                          whatever the harasser slate picked and whatever
+  --                          map this is (it does NOT need to be listed in
+  --                          C.PILL_SUICIDER_MAPS)
+  --   "nosuicider"        -> force it OFF, so a scenario can also field plain
+  --                          waves on a map that IS listed there
+  -- This block runs early in Brain.think and squad.update (which reads
+  -- state.force_pill_suicider) runs much later in the same function, so the
+  -- flag is already set on the bot's very first tick.
   if state._test_arg_parsed == nil then
     state._test_arg_parsed = true
     local a = rawget(_G, "BRAIN_INIT_ARG")
@@ -1105,6 +1117,10 @@ function Brain.think(info)
           state.test_never_refuel = true
         elseif tok == "normal" then
           state.test_never_refuel = false
+        elseif tok == "suicider" then
+          state.force_pill_suicider = true
+        elseif tok == "nosuicider" then
+          state.force_pill_suicider = false
         else
           local n = tok:match("^deprive=(%d+)$")
           if n then state.test_deprive_ticks = tonumber(n) end
@@ -8464,7 +8480,7 @@ function Brain.think(info)
     attack.blitz_negotiate(state, world, info, now)
     if state.squad_role then bsi.role = state.squad_role end
     if state.is_harasser then bsi.har = "1" end   -- harasser flag (decoupled from role)
-    if state.is_pill_suicider then bsi.psu = "1" end  -- pill_suicider flag (same slate as har, map-selected; mutually exclusive with it)
+    if state.is_pill_suicider then bsi.psu = "1" end  -- pill_suicider flag (same slate as har, map-selected or forced per-bot via BRAIN_INIT_ARG; mutually exclusive with it)
     if state.squad_cmdr then bsi.cmdr = tostring(state.squad_cmdr) end
     if state.squad_status and state.squad_status ~= "-" then bsi.sqst = state.squad_status end
     -- Blitz engage standoff claim (`be`): a soldier broadcasts its claimed

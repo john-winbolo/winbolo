@@ -60,11 +60,20 @@
  *                                         value clamped to the engine
  *                                         max (90), so pass anything
  *                                         big for "full"
- *    game.spawn_bot([name][, brain][, team][, mode])
+ *    game.spawn_bot([name][, brain][, team][, mode][, init])
  *                                      -> playerNum | nil, err; mode
  *                                         "open"/"tournament"/"strict"
  *                                         sets the STARTING LOADOUT
- *                                         (default: the sim's rules)
+ *                                         (default: the sim's rules).
+ *                                         init is a per-bot config
+ *                                         string handed to that ONE
+ *                                         brain as the Lua global
+ *                                         BRAIN_INIT_ARG (the same
+ *                                         tokens -bot-init's [..]
+ *                                         suffix takes), so a scenario
+ *                                         can field one wave in a role
+ *                                         the rest of the round has not
+ *                                         got
  *    game.remove_bot(p)                -- free a bot slot (wave cleanup)
  *    game.give_pill(p, n)              -- load pill n into p's tank
  *    game.set_team(p, team)            -- alliance by team id
@@ -92,6 +101,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam(Batch) — roster edits */
 #include "../common/wb_log.h"
+#include "../gui/sdl3/luabrainshandler.h"  /* luaBrainsSetNextInitArg */
 #include "scenario.h"
 
 /* Give up calling into a script after this many consecutive errors —
@@ -425,6 +435,8 @@ static int l_spawn_bot(lua_State *L) {
     int team = hasTeam ? (int)luaL_checkinteger(L, 3) : 0;
     gameType spawnGame = scGameTypeArg(L, 4,
         gameTypeGet(&serverSimGetGameSim(sim)->game));
+    /* Per-bot brain config, handed to this one brain as BRAIN_INIT_ARG. */
+    const char *initArg = luaL_optstring(L, 5, NULL);
     char botName[32];
     BYTE slot;
     int s;
@@ -478,9 +490,17 @@ static int l_spawn_bot(lua_State *L) {
         st->spawnTeamHint[slot] = (BYTE)(team + 1);
     }
 
+    /* Stage the brain's BRAIN_INIT_ARG immediately before the create that
+     * consumes it — luaBrainInstanceCreate reads the staged value, sets the
+     * global, and clears it, so it lands on THIS bot and no other. Always
+     * called, with NULL when the script passed nothing, so a leftover stage
+     * from some earlier path can never bleed into a wave bot. */
+    luaBrainsSetNextInitArg(initArg);
+
     if (!serverSimCreateBot(sim, slot, brain, botName,
                             (aiType)serverSimGetBotAiType(sim),
                             spawnGame, st->hiddenMines)) {
+        luaBrainsSetNextInitArg(NULL);   /* nothing consumed it — unstage */
         serverSimGetGameSim(sim)->spawnLoadout[slot] = 0;
         st->spawnTeamHint[slot] = 0;
         lua_pushnil(L);
