@@ -1713,6 +1713,19 @@ static int cachedCompressedMapLen = 0;
 /* Flag: first verbose log call after setup needs first=TRUE to fill brain map */
 static bool verboseNeedMapInit = TRUE;
 
+/* Visibility rules from the CLI, applied to the created sim rather than
+ * through ServerInstanceConfig. With no switches given it writes back the
+ * defaults serverSimInit set. Call before serverInstanceStartup: startup
+ * snapshots the lobby settings at the end of its body and the lobby restores
+ * that snapshot when the last human leaves, so values applied afterwards are
+ * dropped on the first reset. */
+static void applyViewPolicyOptions(ServerSim *sim) {
+  for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+    serverSimSetViewPolicy(sim, (ViewCategory)vc, optViewPolicy[vc],
+                           (uint16_t)optViewDecaySecs[vc]);
+  }
+}
+
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
@@ -1731,17 +1744,10 @@ static bool fastModeSetupGame(void) {
     } else {
       cfg.skipLobby    = true;
     }
+    applyViewPolicyOptions(fastServerSim);
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
-  /* Visibility rules from the CLI, applied to the created sim rather
-   * than through ServerInstanceConfig. Runs on every reset; with no
-   * switches given it writes back the defaults serverSimInit set. */
-  for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
-    serverSimSetViewPolicy(fastServerSim, (ViewCategory)vc,
-                           optViewPolicy[vc],
-                           (uint16_t)optViewDecaySecs[vc]);
-  }
 
   transportActive = TRUE;
   playerNum = 0;
@@ -1844,6 +1850,7 @@ static int runFastMode(void) {
     } else {
       cfg.skipLobby    = true;
     }
+    applyViewPolicyOptions(fastServerSim);
     serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
