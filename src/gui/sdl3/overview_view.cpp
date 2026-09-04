@@ -366,16 +366,19 @@ static void overviewViewDrawDeathBlackout(OverviewView *v, SDL_Renderer *r,
 /* Copies the entries the player is allowed to see into a second set of lists.
  * The builders work over the whole map — wider than anything the server culls
  * to — so this is where sight is enforced: an entity is kept only when the
- * square it stands on is live, with the local player's own tank the one
- * exception. Copying into fresh lists rather than editing the built ones
- * leaves the sim's per-frame views untouched, as the renderer is meant to. */
+ * square it stands on is live, the local player's own tank included. Whether
+ * that tank survived the test is reported back through outSelfDrawn, so the
+ * reticle can follow it. Copying into fresh lists rather than editing the
+ * built ones leaves the sim's per-frame views untouched, as the renderer is
+ * meant to. */
 static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
                                        bool selfAlive,
                                        const screenTanks *allTks,
                                        const screenLgm *allLgms,
                                        const screenBullets *allSb,
                                        screenTanks *outTks, screenLgm *outLgms,
-                                       screenBullets *outSb) {
+                                       screenBullets *outSb,
+                                       bool *outSelfDrawn) {
     BYTE mx, my, px, py, frame, playerNum;
     char name[PLAYER_NAME_LEN];
     BYTE count;
@@ -383,23 +386,27 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
     int bulletTotal;
     int bullet;
 
+    *outSelfDrawn = false;
+
     total = screenTanksGetNumEntries(allTks);
     for (count = 1; count <= total; count++) {
         screenTanksGetItem(allTks, count, &mx, &my, &px, &py, &frame,
                            &playerNum, name);
         bool isSelf = (playerNum == me);
         /* A tank waiting to respawn reads as sitting on the map origin, which
-         * is nowhere it is — the exception is for a tank that is actually on
-         * the field. */
+         * is nowhere it is, so it goes before the square it claims is tested
+         * at all. This is also what takes the reticle off for the death wait:
+         * outSelfDrawn stays false. */
         if (isSelf && !selfAlive) continue;
-        if (!overviewEntityIsVisible(om, mx, my, isSelf)) continue;
+        if (!overviewEntityIsVisible(om, mx, my)) continue;
         screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name);
+        if (isSelf) *outSelfDrawn = true;
     }
 
     total = screenLgmGetNumEntries(allLgms);
     for (count = 1; count <= total; count++) {
         screenLgmGetItem(allLgms, count, &mx, &my, &px, &py, &frame);
-        if (!overviewEntityIsVisible(om, mx, my, false)) continue;
+        if (!overviewEntityIsVisible(om, mx, my)) continue;
         screenLgmAddItem(outLgms, mx, my, px, py, frame);
     }
 
@@ -409,7 +416,7 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
     bulletTotal = screenBulletsGetNumEntries(allSb);
     for (bullet = 1; bullet <= bulletTotal; bullet++) {
         screenBulletsGetItem(allSb, bullet, &mx, &my, &px, &py, &frame);
-        if (!overviewEntityIsVisible(om, mx, my, false)) continue;
+        if (!overviewEntityIsVisible(om, mx, my)) continue;
         screenBulletsAddItem(outSb, mx, my, px, py, frame);
     }
 }
@@ -471,6 +478,7 @@ static void overviewViewDrawEntities(OverviewView *v,
     screenBullets allSb;
     screenBullets sb;
     MapViewCtx    ctx;
+    bool          selfDrawn = false;
 
     screenTanksCreate(&allTks);
     screenTanksCreate(&tks);
@@ -482,7 +490,7 @@ static void overviewViewDrawEntities(OverviewView *v,
     clientSimPrepareOverviewEntities(cs, &allTks, &allLgms, &allSb);
     overviewViewFilterEntities(om, clientSimGetMyPlayerNum(cs),
                                clientSimIsMyTankAlive(cs), &allTks, &allLgms,
-                               &allSb, &tks, &lgms, &sb);
+                               &allSb, &tks, &lgms, &sb, &selfDrawn);
 
     /* mapview.c positions a sprite at originX - tileW + bbx * zoomFactor -
      * edgeX, where bbx is the entity's game-pixel offset from the rect's
@@ -545,9 +553,15 @@ static void overviewViewDrawEntities(OverviewView *v,
      * sprite would — mapViewDrawTanks' formula with bbx built from the
      * gunsight's square and pixel offset — which is what puts the sprite's
      * centre pixel on the aim point. Inside the render scale, so its 17 game
-     * pixels track the map at every zoom exactly as a tank's 16 do. */
+     * pixels track the map at every zoom exactly as a tank's 16 do.
+     *
+     * Drawn only when the tank sprite was: the reticle sits a gunsight's
+     * length from the tank, so putting it on the picture while the tank is
+     * hidden would mark where the tank is just as surely as the sprite did.
+     * It takes its answer from the same filter the sprite went through, so
+     * the two cannot disagree. */
     BYTE gsMX, gsMY, gsPX, gsPY;
-    if (crosshair != NULL &&
+    if (crosshair != NULL && selfDrawn &&
         clientSimGetGunsightPos(cs, &gsMX, &gsMY, &gsPX, &gsPY)) {
         /* The ImGui SDL3 backend sets the sampler per draw, so the mode the
          * host set at load time does not survive to here. */

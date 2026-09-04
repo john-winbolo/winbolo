@@ -159,11 +159,11 @@ bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,
  * shells appear only on squares the player can see this instant, so an enemy
  * the client has been told about in a corner it has walked away from stays
  * off the picture — the memory behind a frozen square is terrain, and nothing
- * that moves belongs on it. isSelf is the one exception: the local player's
- * own tank is drawn wherever it is. Off-map squares are never drawn, and a
- * NULL memory shows nothing but the player's own tank. */
-bool overviewEntityIsVisible(const OverviewMap *om, int mapX, int mapY,
-                             bool isSelf);
+ * that moves belongs on it. The local player's own tank is no different:
+ * under a key view policy the block round the tank closes while an item view
+ * is on, and the tank goes dark with the ground it is standing on. Off-map
+ * squares are never drawn, and a NULL memory shows nothing. */
+bool overviewEntityIsVisible(const OverviewMap *om, int mapX, int mapY);
 
 #ifdef __cplusplus
 }

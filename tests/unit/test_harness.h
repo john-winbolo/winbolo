@@ -945,7 +945,9 @@ int run_overview_dead_tank(void);
  * clientSimPrepareOverviewEntities builds cover the whole map, and
  * overviewEntityIsVisible is what keeps an enemy tank the client still knows
  * about off the picture once it leaves the block the player can see. The
- * local player's own tank passes wherever it stands. */
+ * local player's own tank obeys the same test: watching a pill under
+ * viewPolicyKey closes the block round the tank, and the tank goes off the
+ * picture with it until the view is left. */
 int run_overview_entities(void);
 
 /* Overview gunsight accessor (test_overview_map.c): clientSimGetGunsightPos

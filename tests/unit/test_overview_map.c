@@ -30,8 +30,9 @@
  * Another steps forward to what the memory is for: the per-frame entity lists
  * the overview draws from cover the whole map, so an enemy tank the client
  * still knows about has to be dropped by the live-square filter once it
- * leaves the block the player can see, while the player's own tank is drawn
- * wherever it is.
+ * leaves the block the player can see. The player's own tank goes by the same
+ * test — watching a pill under viewPolicyKey closes the block round the tank,
+ * and the tank is filtered out on its own square until the view is left.
  *
  * Two more drive the client's own decay clocks: a display tick stamps the
  * items the tank is beside and only for the categories on viewPolicyDecay, it
@@ -1176,22 +1177,22 @@ int run_overview_entities(void) {
                   "%u,%u — the full-map rect is not reporting absolute "
                   "squares", (unsigned)gotX, (unsigned)gotY, (unsigned)nearX,
                   (unsigned)atY);
-    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, false) == true,
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY) == true,
                   "square %u,%u is inside the tank's block and the filter "
                   "still hides an enemy on it", (unsigned)gotX,
                   (unsigned)gotY);
 
-    /* Our own tank comes back too, and passes wherever it stands. */
+    /* Our own tank comes back too, and passes on the square at the centre of
+     * its own block. */
     UT_ASSERT_MSG(overviewFindTank(&tks, f.me, &gotX, &gotY) == TRUE,
                   "the local tank is missing from the prepared list");
-    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, true) == true,
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY) == true,
                   "the local tank is filtered out of its own square %u,%u",
                   (unsigned)gotX, (unsigned)gotY);
     screenTanksDestroy(&tks);
 
     /* Twenty squares off: still in the list — the client has lost none of
-     * what it knew — and the filter is what takes it off the picture. The
-     * same square passes for the local tank, which is the one exception. */
+     * what it knew — and the filter is what takes it off the picture. */
     bogey->mapX = farX;
     clientSimDisplayTick(f.cs, false);
     overviewEntitiesPrepare(f.cs, &tks);
@@ -1206,13 +1207,60 @@ int run_overview_entities(void) {
     UT_ASSERT_MSG((om->flags[farX][atY] & OVERVIEW_F_LIVE) == 0,
                   "square %u,%u is live — it was meant to be outside the "
                   "tank's block", (unsigned)farX, (unsigned)atY);
-    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, false) == false,
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY) == false,
                   "an enemy tank on unseen square %u,%u would be drawn",
                   (unsigned)gotX, (unsigned)gotY);
-    UT_ASSERT_MSG(overviewEntityIsVisible(om, gotX, gotY, true) == true,
-                  "the local tank would be hidden on square %u,%u",
-                  (unsigned)gotX, (unsigned)gotY);
     screenTanksDestroy(&tks);
+
+    /* The case the exception used to hide: an item view under viewPolicyKey
+     * takes the block round the tank away, and the tank has to go dark with
+     * the ground it was standing on. Driven through the client's own view
+     * entry rather than by writing the memory, so what is pinned here is the
+     * path the player takes.
+     *
+     * One pill of the client's own, forty squares off, so its 15x15 block is
+     * nowhere near the tank's square. */
+    BYTE pillX = (BYTE)((int)f.tankMX + dir * 40);
+    f.gs->pb->numPills = 1;
+    f.gs->pb->item[0].owner = f.me;
+    f.gs->pb->item[0].armour = PILLBOX_15;
+    f.gs->pb->item[0].inTank = FALSE;
+    f.gs->pb->item[0].x = pillX;
+    f.gs->pb->item[0].y = f.tankMY;
+
+    /* The item view is held or dropped by the per-tick UI pass, which is
+     * skipped while the game is starting, over or off the network. Say plainly
+     * that it is running so the view stays where the case put it. */
+    clientSimSetRunning(f.cs, TRUE);
+    clientSimSetNetStatus(f.cs, netRunning);
+    clientSimSetGmeStartDelay(f.cs, 0);
+    clientSimSetGmeLength(f.cs, -1);
+
+    f.cs->viewPolicy[viewCategoryPill] = viewPolicyKey;
+    clientSimPillView(f.cs, 0, 0);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL,
+                  "the pill view did not take (kind %u)",
+                  (unsigned)clientSimGetViewKind(f.cs));
+
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG((om->flags[f.tankMX][f.tankMY] & OVERVIEW_F_LIVE) == 0,
+                  "the tank's own square %u,%u is still live inside a key pill "
+                  "view — the block round the tank was meant to close",
+                  (unsigned)f.tankMX, (unsigned)f.tankMY);
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, f.tankMX, f.tankMY) == false,
+                  "the local tank would still be drawn on square %u,%u with "
+                  "the ground round it gone", (unsigned)f.tankMX,
+                  (unsigned)f.tankMY);
+
+    /* Out of the view: the block is built again and the tank is back. */
+    clientSimTankView(f.cs);
+    clientSimDisplayTick(f.cs, false);
+    UT_ASSERT_MSG((om->flags[f.tankMX][f.tankMY] & OVERVIEW_F_LIVE) != 0,
+                  "the tank's own square %u,%u did not go live again on "
+                  "leaving the view", (unsigned)f.tankMX, (unsigned)f.tankMY);
+    UT_ASSERT_MSG(overviewEntityIsVisible(om, f.tankMX, f.tankMY) == true,
+                  "the local tank is still hidden on square %u,%u after "
+                  "leaving the view", (unsigned)f.tankMX, (unsigned)f.tankMY);
 
     overviewFixtureStop(&f);
     return 0;
