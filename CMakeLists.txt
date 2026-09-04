@@ -3800,6 +3800,9 @@ set(_unit_test_names
     view_state_bad_claims_degrade
     view_state_invalidation
     view_state_lifecycle
+    view_cycle_pick_order
+    view_cycle_pick_policy
+    view_cycle_pick_direction
     view_target_codec
     view_cycle_bases
     view_cycle_base_direction

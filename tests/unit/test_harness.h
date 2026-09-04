@@ -826,6 +826,19 @@ int run_view_state_bad_claims_degrade(void);
 int run_view_state_invalidation(void);
 int run_view_state_lifecycle(void);
 
+/* Server-side ally picking (test_view_state.c): CMD_VIEW_CYCLE asks the server
+ * which ally to watch, serverSimPickAlly answers from live state — next and
+ * previous step in slot order and wrap, a dead ally, an un-allied player and
+ * the sender itself are never offered, and viewPolicyOff / an expired
+ * viewPolicyDecay clock leave nothing to watch. Every ally request is answered
+ * with a CTRL_VIEW_TARGET carrying the request's `from` back; a non-ally kind
+ * is answered with nothing. The four scroll directions each compare one
+ * coordinate, and compare it strictly, with the nearest match winning and a
+ * press with no origin stepping from the start instead. */
+int run_view_cycle_pick_order(void);
+int run_view_cycle_pick_policy(void);
+int run_view_cycle_pick_direction(void);
+
 /* CTRL_VIEW_TARGET body-codec round-trip (test_view_target_codec.c): the
  * server's answer to a view-cycle request encodes/decodes through the body
  * tables, with the nothing-to-watch case and the fixed body length. */

@@ -407,6 +407,134 @@ static bool viewItemInWindow(const ServerSim *sim, ViewCategory cat,
            (uint32_t)sim->viewDecaySecs[cat] * GAME_NUMTOTALTICKS_SEC;
 }
 
+/* The single rule for "this recipient may watch that ally right now": the
+ * ally category is not switched off, the ally qualifies, and — under
+ * viewPolicyDecay — the recipient's proximity clock for it is still inside
+ * the window. serverSimPickAlly and the ALLY arm of
+ * serverSimValidateViewTargets both ask this one function, so a pick cannot
+ * be dropped by the keep-this-view pass the tick after it is made. */
+static bool viewAllyWatchable(ServerSim *sim, BYTE clientIdx, BYTE t) {
+    return sim->viewPolicy[viewCategoryAlly] != viewPolicyOff &&
+           viewAllyQualifies(sim, clientIdx, t) &&
+           viewItemInWindow(sim, viewCategoryAlly,
+                            sim->allyNearTick[clientIdx][t]);
+}
+
+/* An ally's current map square, taken from its tank. The server holds real
+ * positions, so the players table's last-known copy is not needed here. */
+static void viewAllySquare(ServerSim *sim, BYTE t, BYTE *mx, BYTE *my) {
+    WORLD wx = 0, wy = 0;
+    tankGetWorld(&sim->sim.tanks[t], &wx, &wy);
+    *mx = (BYTE)(wx >> 8);
+    *my = (BYTE)(wy >> 8);
+}
+
+/* Step through the watchable allies in slot order, `step` +1 for next and -1
+ * for previous. From an origin the scan starts at the neighbouring slot and
+ * covers MAX_TANKS candidates, ending back on the origin, so a lone watchable
+ * ally is offered again rather than reported missing. With no origin it starts
+ * at whichever end the direction comes from. Returns MAX_TANKS when nothing is
+ * watchable. */
+static BYTE viewStepAlly(ServerSim *sim, BYTE clientIdx, bool haveOrigin,
+                         BYTE origin, int step) {
+    int i;
+
+    if (!haveOrigin) {
+        for (i = 0; i < MAX_TANKS; i++) {
+            BYTE t = (BYTE)((step > 0) ? i : (MAX_TANKS - 1 - i));
+            if (viewAllyWatchable(sim, clientIdx, t)) return t;
+        }
+        return MAX_TANKS;
+    }
+    for (i = 1; i <= MAX_TANKS; i++) {
+        int idx = ((int)origin + step * i) % MAX_TANKS;
+        if (idx < 0) idx += MAX_TANKS;
+        if (viewAllyWatchable(sim, clientIdx, (BYTE)idx)) return (BYTE)idx;
+    }
+    return MAX_TANKS;
+}
+
+/* Nearest watchable ally in one of the four scroll directions, measured from
+ * the origin ally's square. One axis at a time — a horizontal press only
+ * considers allies strictly left or strictly right, a vertical one only
+ * strictly above or below — and the shortest straight-line distance wins.
+ * That is what playersMoveAllyView does for the client's own stepping, so the
+ * server picks what the client would have picked. The inequalities are strict,
+ * so an ally sharing the origin's square never matches. Returns MAX_TANKS when
+ * nothing lies that way. */
+static BYTE viewNearestAllyInDirection(ServerSim *sim, BYTE clientIdx,
+                                       BYTE origin, uint8_t direction) {
+    BYTE originX = 0, originY = 0;
+    BYTE found = MAX_TANKS;
+    double nearest = 65000;
+    BYTE t;
+
+    viewAllySquare(sim, origin, &originX, &originY);
+
+    for (t = 0; t < MAX_TANKS; t++) {
+        BYTE itemX = 0, itemY = 0;
+        bool matches = false;
+        double dist;
+
+        if (t == origin) continue;
+        if (!viewAllyWatchable(sim, clientIdx, t)) continue;
+        viewAllySquare(sim, t, &itemX, &itemY);
+
+        switch (direction) {
+        case VIEW_CYCLE_LEFT:  matches = (itemX < originX); break;
+        case VIEW_CYCLE_RIGHT: matches = (itemX > originX); break;
+        case VIEW_CYCLE_UP:    matches = (itemY < originY); break;
+        case VIEW_CYCLE_DOWN:  matches = (itemY > originY); break;
+        default: break;
+        }
+        if (!matches) continue;
+
+        if (utilIsItemInRange(originX, originY, itemX, itemY,
+                              (WORLD)nearest, &dist)) {
+            nearest = dist;
+            found = t;
+        }
+    }
+    return found;
+}
+
+bool serverSimPickAlly(ServerSim *sim, BYTE clientIdx, uint8_t direction,
+                       uint8_t from, BYTE *outTarget, BYTE *outMapX,
+                       BYTE *outMapY) {
+    bool haveOrigin;
+    BYTE origin = 0;
+    BYTE found;
+
+    if (clientIdx >= MAX_TANKS) return false;
+    if (sim->sim.plyrs == NULL) return false;
+
+    /* `from` is a starting point only while it is still something this
+     * recipient may watch; otherwise the request starts from the beginning. */
+    haveOrigin = (from < MAX_TANKS && viewAllyWatchable(sim, clientIdx, from));
+    if (haveOrigin) {
+        origin = from;
+    }
+
+    if (haveOrigin && (direction == VIEW_CYCLE_LEFT ||
+                       direction == VIEW_CYCLE_RIGHT ||
+                       direction == VIEW_CYCLE_UP ||
+                       direction == VIEW_CYCLE_DOWN)) {
+        found = viewNearestAllyInDirection(sim, clientIdx, origin, direction);
+    } else if (direction == VIEW_CYCLE_PREV) {
+        found = viewStepAlly(sim, clientIdx, haveOrigin, origin, -1);
+    } else {
+        /* VIEW_CYCLE_NEXT, a scroll direction with no origin to measure from,
+         * and any direction byte off the wire this server does not know. */
+        found = viewStepAlly(sim, clientIdx, haveOrigin, origin, 1);
+    }
+
+    if (found >= MAX_TANKS) return false;
+
+    *outTarget = found;
+    viewAllySquare(sim, found, outMapX, outMapY);
+    return true;
+}
+
 /* Whether a viewPolicyKey category is granting this recipient a rect right
  * now: it has reported watching an item of that kind (CMD_VIEW_STATE) and the
  * item still qualifies. Under key the player watches one thing at a time, so
@@ -648,10 +776,7 @@ void serverSimValidateViewTargets(ServerSim *sim) {
                                     sim->baseNearTick[c][target]);
             break;
         case VIEW_KIND_ALLY:
-            keep = sim->viewPolicy[viewCategoryAlly] != viewPolicyOff &&
-                   viewAllyQualifies(sim, c, target) &&
-                   viewItemInWindow(sim, viewCategoryAlly,
-                                    sim->allyNearTick[c][target]);
+            keep = viewAllyWatchable(sim, c, target);
             break;
         default:
             break;  /* a kind this server does not know */

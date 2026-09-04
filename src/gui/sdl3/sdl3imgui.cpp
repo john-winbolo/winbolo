@@ -555,8 +555,11 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
         return nullptr;
     }
 
+    /* Blend mode sticks; the sampler does not. The ImGui SDL3 backend sets the
+       scale mode per draw, so anything set here is gone by the time the sheet
+       is drawn — overviewViewRenderOffscreen re-asserts the player's Texture
+       Filter setting on it every frame instead. */
     SDL_SetTextureBlendMode(s_overviewTiles, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(s_overviewTiles, SDL_SCALEMODE_NEAREST);
     return s_overviewTiles;
 }
 

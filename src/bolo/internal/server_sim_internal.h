@@ -600,6 +600,22 @@ void serverSimUpdateViewDecay(ServerSim *sim);
  * serverSimUpdateViewDecay. */
 void serverSimValidateViewTargets(ServerSim *sim);
 
+/* Pick the ally `clientIdx` should watch, stepping away from `from` (the ally
+ * it is watching now, or VIEW_CYCLE_FROM_NONE) in `direction`, a
+ * ViewCycleDirection. Only allies that recipient may watch right now are
+ * offered — the same rule serverSimValidateViewTargets keeps a view on — so an
+ * ally that is dead, not allied, absent, in a switched-off category or, under
+ * viewPolicyDecay, past its proximity window can never be chosen. On success
+ * writes the ally's player number to *outTarget and its current map square to
+ * *outMapX / *outMapY and returns true. Returns false, writing nothing, when
+ * there is nothing to watch; that is a normal answer, not an error. Takes
+ * clientIdx explicitly because the players.c ally helpers read the watcher
+ * from sim->viewPlayer, a single per-GameSim field: driving them per
+ * recipient would mean overwriting that field for each one. */
+bool serverSimPickAlly(ServerSim *sim, BYTE clientIdx, uint8_t direction,
+                       uint8_t from, BYTE *outTarget, BYTE *outMapX,
+                       BYTE *outMapY);
+
 /* Fill `out` with base `baseIdx0`'s (0-based) current shells/mines/armour as an
  * EVENT_BASE_STOCK (data[0]=baseIdx0, data[1]=armour, data[2]=shells,
  * data[3]=mines). */

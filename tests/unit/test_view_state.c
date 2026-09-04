@@ -21,6 +21,7 @@
 
 #include "global.h"
 #include "client_command.h"
+#include "control_event.h"          /* ControlEvent / CTRL_VIEW_TARGET */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* serverSimBuildViewports / ViewportRect / view state */
 #include "game_sim.h"
@@ -85,6 +86,39 @@ static CmdResult vs_send_view(ServerSim *sim, int senderSlot,
     r = serverSimApplyCommand(sim, senderSlot, &cmd);
     threadsReleaseMutex();
     return r;
+}
+
+/* Send one CMD_VIEW_CYCLE as `senderSlot`, holding the threads mutex the
+ * dispatcher asserts on. */
+static CmdResult vs_send_cycle(ServerSim *sim, int senderSlot, uint8_t kind,
+                               uint8_t direction, uint8_t from) {
+    ClientCommand cmd;
+    CmdResult r;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type   = CMD_VIEW_CYCLE;
+    cmd.cmdSeq = 1;
+    cmd.u.viewCycle.kind      = kind;
+    cmd.u.viewCycle.direction = direction;
+    cmd.u.viewCycle.from      = from;
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, senderSlot, &cmd);
+    threadsReleaseMutex();
+    return r;
+}
+
+/* Keeps the CTRL_VIEW_TARGET answers a case drives, and only those. */
+typedef struct {
+    int count;
+    ControlEvent last;
+} VsViewTargetCapture;
+
+static void vs_capture_view_target(void *ctx, const ControlEvent *evt) {
+    VsViewTargetCapture *c = (VsViewTargetCapture *)ctx;
+    if (evt->type == CTRL_VIEW_TARGET) {
+        c->count++;
+        c->last = *evt;
+    }
 }
 
 /* Send a claim the server must not honour and require the three things that
@@ -356,6 +390,369 @@ int run_view_state_lifecycle(void) {
     UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_TANK && sim->viewTarget[0] == 0,
                   "round reset must clear the reported views (kind %u target %u)",
                   (unsigned)sim->viewKind[0], (unsigned)sim->viewTarget[0]);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 5. The picker walks the allies the recipient may watch, in slot order: next
+ *    steps up, previous steps down, both wrap, and a dead ally, an un-allied
+ *    player and the sender itself are never offered. */
+int run_view_cycle_pick_order(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimAddPlayer(sim, 2, "P2", false);
+    serverSimAddPlayer(sim, 3, "P3", false);
+    serverSimAddPlayer(sim, 4, "P4", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    for (int s = 0; s < 5; s++) {
+        UT_ASSERT_MSG(gs->tanks[s] != NULL, "slot %d needs a tank", s);
+    }
+
+    vs_clear_owners(gs);
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyAlways, VIEW_DECAY_DEFAULT_SECS);
+
+    /* Slots 1, 2 and 4 are allied with the sender; slot 3 is not. */
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 2, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 4, TRUE);
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) == TRUE &&
+                  playersIsAllie(&gs->plyrs, 0, 2) == TRUE &&
+                  playersIsAllie(&gs->plyrs, 0, 4) == TRUE,
+                  "slots 1, 2 and 4 should be allied with the sender");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 3) != TRUE,
+                  "slot 3 must stay un-allied for the skip case");
+
+    vs_place_tank(gs, 0, 50, 50);
+    vs_place_tank(gs, 1, 60, 50);
+    vs_place_tank(gs, 2, 70, 50);
+    vs_place_tank(gs, 3, 80, 50);
+    vs_place_tank(gs, 4, 90, 50);
+
+    BYTE t = 0xEE, mx = 0xEE, my = 0xEE;
+
+    /* No `from`: the lowest watchable slot, with its current square. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT,
+                                    VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "next from nowhere should find an ally");
+    UT_ASSERT_MSG(t == 1, "next from nowhere should pick slot 1, got %u",
+                  (unsigned)t);
+    UT_ASSERT_MSG(mx == 60 && my == 50,
+                  "the pick's square should be (60,50), got (%u,%u)",
+                  (unsigned)mx, (unsigned)my);
+
+    /* Next steps up in slot order. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT, 1, &t, &mx, &my),
+                  "next from slot 1 should find an ally");
+    UT_ASSERT_MSG(t == 2, "next from slot 1 should pick slot 2, got %u",
+                  (unsigned)t);
+
+    /* The un-allied slot 3 is stepped over. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT, 2, &t, &mx, &my),
+                  "next from slot 2 should find an ally");
+    UT_ASSERT_MSG(t == 4, "the un-allied slot 3 should be skipped, got %u",
+                  (unsigned)t);
+
+    /* The cycle wraps at the top. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT, 4, &t, &mx, &my),
+                  "next from the highest ally should find an ally");
+    UT_ASSERT_MSG(t == 1, "next from slot 4 should wrap to slot 1, got %u",
+                  (unsigned)t);
+
+    /* Previous steps down. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_PREV, 4, &t, &mx, &my),
+                  "previous from slot 4 should find an ally");
+    UT_ASSERT_MSG(t == 2, "previous from slot 4 should pick slot 2, got %u",
+                  (unsigned)t);
+
+    /* Previous from the lowest ally wraps past the sender's own slot rather
+     * than offering it. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_PREV, 1, &t, &mx, &my),
+                  "previous from slot 1 should find an ally");
+    UT_ASSERT_MSG(t == 4, "previous from slot 1 should wrap to slot 4, got %u",
+                  (unsigned)t);
+
+    /* Previous with no `from` starts at the top end. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_PREV,
+                                    VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "previous from nowhere should find an ally");
+    UT_ASSERT_MSG(t == 4, "previous from nowhere should pick slot 4, got %u",
+                  (unsigned)t);
+
+    /* An ally waiting out a death is not offered. */
+    gs->tanks[2]->deathWait = 10;
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT, 1, &t, &mx, &my),
+                  "next from slot 1 should still find an ally");
+    UT_ASSERT_MSG(t == 4, "the dead slot 2 should be skipped, got %u",
+                  (unsigned)t);
+
+    /* With one watchable ally left, next from it comes back to it instead of
+     * reporting nothing to watch. */
+    gs->tanks[4]->deathWait = 10;
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT, 1, &t, &mx, &my),
+                  "the lone ally should still be found");
+    UT_ASSERT_MSG(t == 1, "the lone ally should be offered again, got %u",
+                  (unsigned)t);
+
+    /* Nothing watchable at all. */
+    gs->tanks[1]->deathWait = 10;
+    t = 0xEE; mx = 0xEE; my = 0xEE;
+    UT_ASSERT_MSG(!serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT,
+                                     VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "no watchable ally should report nothing to watch");
+    UT_ASSERT_MSG(t == 0xEE && mx == 0xEE && my == 0xEE,
+                  "a not-found pick must not write its outputs (%u,%u,%u)",
+                  (unsigned)t, (unsigned)mx, (unsigned)my);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 6. The view policies decide what the picker may offer, and the dispatcher
+ *    answers every ally request — including the one with nothing to watch —
+ *    with a CTRL_VIEW_TARGET that carries the request's `from` back. */
+int run_view_cycle_pick_policy(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(gs->tanks[0] != NULL && gs->tanks[1] != NULL,
+                  "slots 0/1 need tanks for positioning");
+
+    vs_clear_owners(gs);
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) == TRUE,
+                  "players 0 and 1 should be allied for this test");
+
+    vs_place_tank(gs, 0, 50, 50);
+    vs_place_tank(gs, 1, 200, 50);
+
+    BYTE t = 0xEE, mx = 0xEE, my = 0xEE;
+
+    /* Off: a live allied tank is still nothing to watch. */
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    UT_ASSERT_MSG(!serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT,
+                                     VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "viewPolicyOff should offer no ally");
+
+    /* Decay: an ally the recipient has never been near has a proximity clock
+     * of 0 and is outside the window, so it is not offered; one stamped
+     * inside the window is. This is the pair the picker exists to get right —
+     * a pick outside the window would be dropped on the next validate pass. */
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyDecay, VIEW_DECAY_DEFAULT_SECS);
+    sim->tick = 100000;
+    sim->allyNearTick[0][1] = 0;
+    UT_ASSERT_MSG(!serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT,
+                                     VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "an ally with no proximity clock should not be offered");
+    sim->allyNearTick[0][1] =
+        sim->tick - ((uint32_t)VIEW_DECAY_DEFAULT_SECS * GAME_NUMTOTALTICKS_SEC) / 2;
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_NEXT,
+                                    VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "an ally stamped inside the decay window should be offered");
+    UT_ASSERT_MSG(t == 1, "the only ally is slot 1, got %u", (unsigned)t);
+
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyAlways, VIEW_DECAY_DEFAULT_SECS);
+
+    /* Subscribe after the joins and the alliance so the sync replay does not
+     * land in the capture. */
+    VsViewTargetCapture cap;
+    memset(&cap, 0, sizeof(cap));
+    SubscriberHandle h =
+        serverSimRegisterSubscriber(sim, vs_capture_view_target, &cap);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    UT_ASSERT_MSG(cap.count == 0,
+                  "nothing should have answered yet, got %d", cap.count);
+
+    UT_ASSERT_MSG(vs_send_cycle(sim, 0, VIEW_KIND_ALLY, VIEW_CYCLE_NEXT,
+                                VIEW_CYCLE_FROM_NONE) == CMD_OK,
+                  "a view-cycle request should be accepted");
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_ALLY && sim->viewTarget[0] == 1,
+                  "the pick should be stored (kind %u target %u)",
+                  (unsigned)sim->viewKind[0], (unsigned)sim->viewTarget[0]);
+    UT_ASSERT_MSG(cap.count == 1,
+                  "one CTRL_VIEW_TARGET expected, got %d", cap.count);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.origSlot == 0,
+                  "the answer should be addressed to slot 0, got %u",
+                  (unsigned)cap.last.u.viewTarget.origSlot);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.found == 1,
+                  "the answer should report a find, got found %u",
+                  (unsigned)cap.last.u.viewTarget.found);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.kind == VIEW_KIND_ALLY &&
+                  cap.last.u.viewTarget.target == 1,
+                  "the answer should name ally 1 (kind %u target %u)",
+                  (unsigned)cap.last.u.viewTarget.kind,
+                  (unsigned)cap.last.u.viewTarget.target);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.mapX == 200 &&
+                  cap.last.u.viewTarget.mapY == 50,
+                  "the answer should carry the ally's square (200,50), got (%u,%u)",
+                  (unsigned)cap.last.u.viewTarget.mapX,
+                  (unsigned)cap.last.u.viewTarget.mapY);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.fromEcho == VIEW_CYCLE_FROM_NONE,
+                  "the request's `from` should come back, got %u",
+                  (unsigned)cap.last.u.viewTarget.fromEcho);
+
+    /* Nothing to watch is answered, not rejected, and leaves the stored view
+     * alone. */
+    gs->tanks[1]->deathWait = 10;
+    UT_ASSERT_MSG(vs_send_cycle(sim, 0, VIEW_KIND_ALLY, VIEW_CYCLE_NEXT, 1) == CMD_OK,
+                  "a request with nothing to watch should still be accepted");
+    UT_ASSERT_MSG(cap.count == 2,
+                  "a second CTRL_VIEW_TARGET expected, got %d", cap.count);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.found == 0,
+                  "the answer should report nothing found, got found %u",
+                  (unsigned)cap.last.u.viewTarget.found);
+    UT_ASSERT_MSG(cap.last.u.viewTarget.fromEcho == 1,
+                  "the request's `from` should come back, got %u",
+                  (unsigned)cap.last.u.viewTarget.fromEcho);
+    UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_ALLY && sim->viewTarget[0] == 1,
+                  "a not-found answer must leave the stored view alone "
+                  "(kind %u target %u)",
+                  (unsigned)sim->viewKind[0], (unsigned)sim->viewTarget[0]);
+
+    /* Pill and base selection stays client-side: the request is accepted and
+     * answered with nothing. */
+    UT_ASSERT_MSG(vs_send_cycle(sim, 0, VIEW_KIND_PILL, VIEW_CYCLE_NEXT,
+                                VIEW_CYCLE_FROM_NONE) == CMD_OK,
+                  "a non-ally view-cycle request should be accepted");
+    UT_ASSERT_MSG(cap.count == 2,
+                  "a non-ally kind must publish nothing, got %d answers",
+                  cap.count);
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 7. The four scroll directions. Each press compares one coordinate only and
+ *    compares it strictly, and the nearest match in that direction wins.
+ *
+ *    The allies stand in a cross round the origin (slot 1), so a press on
+ *    either axis has one unambiguous answer and a comparison that read the
+ *    other coordinate would name a different slot. Slot 7 shares the origin's
+ *    own square: were any comparison not strict it would be the nearest match
+ *    in every direction, so all four checks below also pin the strictness. */
+int run_view_cycle_pick_direction(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimAddPlayer(sim, 2, "P2", false);
+    serverSimAddPlayer(sim, 3, "P3", false);
+    serverSimAddPlayer(sim, 4, "P4", false);
+    serverSimAddPlayer(sim, 5, "P5", false);
+    serverSimAddPlayer(sim, 6, "P6", false);
+    serverSimAddPlayer(sim, 7, "P7", false);
+    serverSimAddPlayer(sim, 8, "P8", false);
+    serverSimAddPlayer(sim, 9, "P9", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    for (int s = 0; s < 10; s++) {
+        UT_ASSERT_MSG(gs->tanks[s] != NULL, "slot %d needs a tank", s);
+    }
+
+    vs_clear_owners(gs);
+    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff, VIEW_DECAY_DEFAULT_SECS);
+    serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyAlways, VIEW_DECAY_DEFAULT_SECS);
+
+    /* Everyone but slot 8 is allied with the sender. */
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 2, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 3, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 4, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 5, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 6, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 7, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 9, TRUE);
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 8) != TRUE,
+                  "slot 8 must stay un-allied for the skip case");
+
+    /* The cross round the origin at (100,100): slot 2 to its left, slot 3
+     * further left again, slot 4 right, slot 5 above, slot 6 below. Slot 7
+     * stands on the origin's own square. Slot 8 is a closer right-hand
+     * neighbour the sender is not allied with, and slot 9 a closer neighbour
+     * below that is waiting out a death. The sender's own tank sits on the
+     * origin's row well to the left, where only the rule that never offers
+     * the sender keeps it out of a left press. */
+    vs_place_tank(gs, 0,  10, 100);
+    vs_place_tank(gs, 1, 100, 100);
+    vs_place_tank(gs, 2,  90, 100);
+    vs_place_tank(gs, 3,  80, 100);
+    vs_place_tank(gs, 4, 110, 100);
+    vs_place_tank(gs, 5, 100,  90);
+    vs_place_tank(gs, 6, 100, 110);
+    vs_place_tank(gs, 7, 100, 100);
+    vs_place_tank(gs, 8, 105, 100);
+    vs_place_tank(gs, 9, 100, 105);
+    gs->tanks[9]->deathWait = 10;
+
+    BYTE t = 0xEE, mx = 0xEE, my = 0xEE;
+
+    /* Left: the nearer of the two allies on the origin's row, not the further
+     * one and not a neighbour above or below. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_LEFT, 1, &t, &mx, &my),
+                  "left from the origin should find an ally");
+    UT_ASSERT_MSG(t == 2, "left should pick the nearer slot 2, got %u",
+                  (unsigned)t);
+    UT_ASSERT_MSG(mx == 90 && my == 100,
+                  "left's square should be (90,100), got (%u,%u)",
+                  (unsigned)mx, (unsigned)my);
+
+    /* Right: the ally with the larger X. Slot 8 lies that way and is closer,
+     * but the sender is not allied with it, so it is passed over. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_RIGHT, 1, &t, &mx, &my),
+                  "right from the origin should find an ally");
+    UT_ASSERT_MSG(t == 4, "right should pick slot 4, got %u", (unsigned)t);
+    UT_ASSERT_MSG(mx == 110 && my == 100,
+                  "right's square should be (110,100), got (%u,%u)",
+                  (unsigned)mx, (unsigned)my);
+
+    /* Up: the ally with the smaller Y, not either of the neighbours sharing
+     * the origin's row. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_UP, 1, &t, &mx, &my),
+                  "up from the origin should find an ally");
+    UT_ASSERT_MSG(t == 5, "up should pick slot 5, got %u", (unsigned)t);
+    UT_ASSERT_MSG(mx == 100 && my == 90,
+                  "up's square should be (100,90), got (%u,%u)",
+                  (unsigned)mx, (unsigned)my);
+
+    /* Down: the ally with the larger Y. Slot 9 lies that way and is closer,
+     * but it is waiting out a death, so it is passed over. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_DOWN, 1, &t, &mx, &my),
+                  "down from the origin should find an ally");
+    UT_ASSERT_MSG(t == 6, "down should pick slot 6, got %u", (unsigned)t);
+    UT_ASSERT_MSG(mx == 100 && my == 110,
+                  "down's square should be (100,110), got (%u,%u)",
+                  (unsigned)mx, (unsigned)my);
+
+    /* A direction with no origin has nothing to measure from, so it steps
+     * from the start instead and answers with the lowest watchable slot. */
+    UT_ASSERT_MSG(serverSimPickAlly(sim, 0, VIEW_CYCLE_LEFT,
+                                    VIEW_CYCLE_FROM_NONE, &t, &mx, &my),
+                  "left with no origin should still find an ally");
+    UT_ASSERT_MSG(t == 1, "left with no origin should pick slot 1, got %u",
+                  (unsigned)t);
+
+    /* Nothing to the left once both row neighbours are waiting out a death.
+     * The sender's own tank is over there and is still not offered. */
+    gs->tanks[2]->deathWait = 10;
+    gs->tanks[3]->deathWait = 10;
+    t = 0xEE; mx = 0xEE; my = 0xEE;
+    UT_ASSERT_MSG(!serverSimPickAlly(sim, 0, VIEW_CYCLE_LEFT, 1, &t, &mx, &my),
+                  "nothing to the left should report nothing to watch");
+    UT_ASSERT_MSG(t == 0xEE && mx == 0xEE && my == 0xEE,
+                  "a not-found pick must not write its outputs (%u,%u,%u)",
+                  (unsigned)t, (unsigned)mx, (unsigned)my);
 
     serverSimDestroy(sim);
     return 0;

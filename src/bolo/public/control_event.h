@@ -132,9 +132,10 @@ typedef enum {
      * the item the sender should watch, picked from live state. Unicast to
      * origSlot via udpClientDeliverControl. kind is the ViewStateKind of the
      * chosen item and target its player number; mapX/mapY are where it is.
-     * found == 0 means there was nothing to watch, and the client stays where
-     * it is. fromEcho carries the request's `from` back so a late answer to an
-     * earlier press can be told apart from the answer to the current one. */
+     * found == 0 means there was nothing to watch, and the client returns to
+     * the tank view. fromEcho carries the request's `from` back so a late
+     * answer to an earlier press can be told apart from the answer to the
+     * current one. */
     CTRL_VIEW_TARGET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;

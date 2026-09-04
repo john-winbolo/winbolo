@@ -312,6 +312,50 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         sim->viewTarget[senderSlot] = target;
         return CMD_OK;
     }
+    case CMD_VIEW_CYCLE: {
+        /* The server picks rather than the client because the client only
+         * knows who is watchable from the snapshots it has been sent, and
+         * under viewPolicyKey that is exactly the state the policy withholds:
+         * left to itself the client would only ever reach allies it had
+         * already seen. Pill and base selection stays client-side, so any
+         * kind other than ally is accepted and answered with nothing — the
+         * field is there so they could move here later. */
+        BYTE target = 0, mapX = 0, mapY = 0;
+        bool found;
+        ControlEvent evt;
+
+        if (cmd->u.viewCycle.kind != VIEW_KIND_ALLY) {
+            return CMD_OK;
+        }
+
+        found = serverSimPickAlly(sim, (BYTE)senderSlot,
+                                  cmd->u.viewCycle.direction,
+                                  cmd->u.viewCycle.from,
+                                  &target, &mapX, &mapY);
+        if (found) {
+            sim->viewKind[senderSlot]   = VIEW_KIND_ALLY;
+            sim->viewTarget[senderSlot] = target;
+        }
+        /* Nothing found leaves the stored view alone: the client decides what
+         * to do with the answer, and serverSimValidateViewTargets already
+         * clears a target that has stopped qualifying. */
+
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_VIEW_TARGET;
+        evt.u.viewTarget.origSlot = (BYTE)senderSlot;
+        evt.u.viewTarget.kind     = VIEW_KIND_ALLY;
+        evt.u.viewTarget.fromEcho = cmd->u.viewCycle.from;
+        evt.u.viewTarget.found    = found ? 1 : 0;
+        if (found) {
+            evt.u.viewTarget.target = target;
+            evt.u.viewTarget.mapX   = mapX;
+            evt.u.viewTarget.mapY   = mapY;
+        }
+        serverSimPublishControl(sim, &evt);
+        /* Nothing to watch is an answer, not a rejection — a reject would
+         * reach the player as an error. */
+        return CMD_OK;
+    }
     case CMD_ALLIANCE_REQUEST: {
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;
