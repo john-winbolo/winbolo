@@ -1109,16 +1109,26 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                         s_pubNeedsLegal = needsLegal;
                         /* Written back once, so the next publish of this skin
                            updates this item instead of making another, and
-                           knows the item is this account's. */
-                        skinSetWorkshopId(s_pubPath, doneId,
-                                          steam_get_steam_id());
-                        /* The source's ini is cached from when the skin was
-                           loaded, so the modal takes the new pair from here
-                           rather than reading a copy that predates the
-                           write. */
-                        s_pubExistingId = doneId;
-                        s_pubAuthor     = steam_get_steam_id();
-                        s_pubAsNew      = false;
+                           knows the item is this account's. The modal takes
+                           the new pair from here rather than from the
+                           source's cached ini, which predates the write.
+                           When the write fails the skin still carries no id,
+                           so the modal keeps offering publish-as-new, which
+                           is what the file on disk will do next time too. */
+                        if (skinSetWorkshopId(s_pubPath, doneId,
+                                              steam_get_steam_id())) {
+                            s_pubExistingId = doneId;
+                            s_pubAuthor     = steam_get_steam_id();
+                            s_pubAsNew      = false;
+                        } else {
+                            WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                                        "imgui_settings: published %s as "
+                                        "Workshop item %llu but could not "
+                                        "record the id in its skin.ini; the "
+                                        "next publish will make a new item",
+                                        s_pubPath,
+                                        (unsigned long long)doneId);
+                        }
                     } else if (state == -1) {
                         s_pubFailed = true;
                     }

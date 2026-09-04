@@ -93,6 +93,49 @@ static void normaliseName(const char *in, char *out, size_t outLen) {
     out[o] = '\0';
 }
 
+/* Ceilings on what one archive may ask for. An entry's size comes from the
+ * central directory, which the archive's author wrote, so it is checked
+ * before a byte of it is allocated: the largest legitimate asset is an 8x
+ * sheet BMP at under 23 MB. The entry count bounds the index walk and the
+ * per-name allocations for the same reason. */
+#define SKIN_ENTRY_MAX_BYTES  (64u * 1024u * 1024u)
+#define SKIN_ENTRY_MAX_COUNT  4096
+
+/* True when a normalised key can be joined onto a directory without leaving
+ * it: no "." or ".." segment, no empty segment, no leading slash, and no
+ * ':', which names a drive or an NTFS stream on Windows. Lookups are only
+ * ever hash hits, so a bad key does no harm there; this guards the two
+ * places a key becomes a path, the index and the extractor. */
+static bool isSafeKey(const char *key) {
+    const char *seg = key;
+    if (!key || key[0] == '\0' || key[0] == '/') return false;
+    for (;;) {
+        const char *end = seg;
+        while (*end != '\0' && *end != '/') {
+            if (*end == ':' || (unsigned char)*end < 0x20) return false;
+            end++;
+        }
+        if (end == seg) return false;                          /* "a//b" */
+        if (end - seg == 1 && seg[0] == '.') return false;     /* "a/./b" */
+        if (end - seg == 2 && seg[0] == '.' && seg[1] == '.') return false;
+        if (*end == '\0') return true;
+        seg = end + 1;
+    }
+}
+
+/* True for the housekeeping files desktop archivers add: Finder's Compress
+ * puts a __MACOSX/ tree beside the skin's folder, which would otherwise
+ * count as a second top-level folder and stop that folder being stripped. */
+static bool isJunkKey(const char *key) {
+    const char *base = SDL_strrchr(key, '/');
+    base = base ? base + 1 : key;
+    if (SDL_strncmp(key, "__macosx/", 9) == 0) return true;
+    if (SDL_strcmp(base, ".ds_store") == 0) return true;
+    if (SDL_strcmp(base, "thumbs.db") == 0) return true;
+    if (base[0] == '.' && base[1] == '_') return true;
+    return false;
+}
+
 static unsigned int hashName(const char *s) {
     unsigned int h = 2166136261u;
     while (*s != '\0') {
@@ -333,8 +376,28 @@ static SkinSource *openZip(const char *path) {
             if (unzGetFilePos(zf, &pos) == UNZ_OK) {
                 char key[SKIN_PATH_MAX];
                 normaliseName(name, key, sizeof(key));
-                if (key[0] != '\0') {
-                    indexAdd(src, key, NULL, &pos, fi.uncompressed_size);
+                if (key[0] == '\0' || isJunkKey(key)) {
+                    /* Nothing a skin reads; dropped so it cannot block the
+                     * single-folder strip below. */
+                } else if (!isSafeKey(key)) {
+                    WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                                "skin %s: ignoring entry '%s', its name "
+                                "would escape the skin", path, name);
+                } else if (fi.uncompressed_size > SKIN_ENTRY_MAX_BYTES) {
+                    WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                                "skin %s: ignoring entry '%s', %lu bytes is "
+                                "over the %u byte limit", path, name,
+                                (unsigned long)fi.uncompressed_size,
+                                SKIN_ENTRY_MAX_BYTES);
+                } else if (src->count >= SKIN_ENTRY_MAX_COUNT) {
+                    WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                                "skin %s: more than %d entries; the rest "
+                                "are ignored", path, SKIN_ENTRY_MAX_COUNT);
+                    break;
+                } else if (!indexAdd(src, key, NULL, &pos,
+                                     fi.uncompressed_size)) {
+                    skinSourceClose(src);
+                    return NULL;
                 }
             }
         }
@@ -479,6 +542,10 @@ bool skinSourceRead(SkinSource *src, const char *relName,
         size_t sz = (size_t)e->size;
         size_t got = 0;
         unsigned char *data;
+        /* The index already refused anything over the limit; this keeps the
+         * sz + 1 below from wrapping on a 32-bit size_t whatever put the
+         * entry there. */
+        if (e->size > SKIN_ENTRY_MAX_BYTES) return false;
         if (unzGoToFilePos(src->zip, &pos) != UNZ_OK) return false;
         if (unzOpenCurrentFile(src->zip) != UNZ_OK) return false;
         data = (unsigned char *)SDL_malloc(sz + 1);
@@ -775,6 +842,28 @@ bool skinSourceExtractTo(SkinSource *src, const char *dir) {
             }
         }
 
+        /* The key is about to become a path under dir. The index refused
+         * anything that could climb out of it, and this refuses it again so
+         * the extractor does not depend on that. Only the top level and
+         * sounds/ exist to write into: a file anywhere deeper is one no
+         * reader would have found, so it is left out rather than failing
+         * the whole rebuild. */
+        {
+            const char *key   = src->entries[i].key;
+            const char *slash = SDL_strchr(key, '/');
+            if (!isSafeKey(key)) {
+                ok = false;
+                break;
+            }
+            if (slash && (SDL_strncmp(key, "sounds/", 7) != 0 ||
+                          SDL_strchr(slash + 1, '/') != NULL)) {
+                WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                            "skinSourceExtractTo: leaving out '%s', nothing "
+                            "reads files below sounds/", key);
+                continue;
+            }
+        }
+
         /* Reading by the indexed key goes back through the same index the
          * name came from, so a zip entry and a file on disk come out the
          * same way. */
@@ -947,6 +1036,14 @@ static bool rewriteSkinIni(const char *dir, uint64_t id,
 
     SDL_snprintf(iniPath, sizeof(iniPath), "%s/skin.ini", dir);
     old = SDL_LoadFile(iniPath, &oldLen);
+    if (!old) {
+        /* Absent is fine and gets a fresh ini. Present but unreadable is
+         * not: writing a stub over it would lose the author's Name, Author
+         * and Notes, and the promise is that a failure leaves the skin as
+         * it was. */
+        SDL_PathInfo pi;
+        if (SDL_GetPathInfo(iniPath, &pi)) return false;
+    }
     text = iniWithWorkshopId((const char *)old, old ? oldLen : 0, id,
                              authorSteamId);
     SDL_free(old);
@@ -1065,6 +1162,36 @@ static bool rewriteArchiveSkinIni(const char *archive, uint64_t id,
     return ok;
 }
 
+/* Rewrites an archive that may be the one the active source is reading.
+ * The rebuild ends by renaming the new archive over the old one, and on
+ * Windows that rename fails while any handle is open on the old file: the
+ * active source's unzFile is exactly such a handle, held for as long as the
+ * skin is in use, which is always the case when the player publishes it.
+ * So the active source is closed for the swap and opened again after,
+ * which also refreshes its cached skin.ini with the id just written. */
+static bool rewriteArchiveKeepingActive(const char *archive, uint64_t id,
+                                        uint64_t authorSteamId) {
+    bool wasActive = s_activeSource != NULL && s_activeSource->isZip &&
+                     SDL_strcmp(s_activeSource->path, archive) == 0;
+    bool ok;
+
+    if (wasActive) {
+        skinSourceClose(s_activeSource);
+        s_activeSource = NULL;
+    }
+    ok = rewriteArchiveSkinIni(archive, id, authorSteamId);
+    if (wasActive) {
+        s_activeSource = skinSourceOpen(archive);
+        if (!s_activeSource) {
+            WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                        "skinSetWorkshopId: could not reopen %s after the "
+                        "rewrite; the built-in assets stand in", archive);
+            s_activeId[0] = '\0';
+        }
+    }
+    return ok;
+}
+
 bool skinSetWorkshopId(const char *skinPath, uint64_t id,
                        uint64_t authorSteamId) {
     SDL_PathInfo info;
@@ -1075,12 +1202,12 @@ bool skinSetWorkshopId(const char *skinPath, uint64_t id,
 
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
         if (skinSourceResolveArchive(skinPath, nested, sizeof(nested))) {
-            return rewriteArchiveSkinIni(nested, id, authorSteamId);
+            return rewriteArchiveKeepingActive(nested, id, authorSteamId);
         }
         return rewriteSkinIni(skinPath, id, authorSteamId);
     }
     if (info.type == SDL_PATHTYPE_FILE && hasArchiveExt(skinPath)) {
-        return rewriteArchiveSkinIni(skinPath, id, authorSteamId);
+        return rewriteArchiveKeepingActive(skinPath, id, authorSteamId);
     }
     return false;
 }

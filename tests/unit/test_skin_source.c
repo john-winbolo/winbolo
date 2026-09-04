@@ -26,6 +26,10 @@
 #include "skin_source.h"
 #include "test_harness.h"
 
+/* The hostile-archive check writes entry names skinSourceZipDirectory never
+ * would, so it drives minizip's writer itself. */
+#include "zip.h"
+
 #ifndef WB_SKINS_FIXTURE_DIR
 #define WB_SKINS_FIXTURE_DIR "tests/fixtures/skins"
 #endif
@@ -53,6 +57,19 @@
 /* Scratch skin the absent-key check writes and then removes: a skin.ini that
  * names no RecommendedFilter, which the committed fixture does. */
 #define NOKEY_DIR   "skin_nokey_test_dir"
+
+/* The hostile archive, the directory it is extracted into, and the file its
+ * escaping entries try to write one level above that directory. The scratch
+ * directory sits inside a parent of its own so "../<name>" from inside it
+ * lands somewhere this test owns and can check, not in the working
+ * directory itself. */
+#define HOSTILE_ZIP          "skin_hostile_test.wsf"
+#define HOSTILE_PARENT       "skin_hostile_test_parent"
+#define HOSTILE_DIR          HOSTILE_PARENT "/scratch"
+#define HOSTILE_ESCAPE_NAME  "skin_hostile_escaped.txt"
+#define HOSTILE_ESCAPE       HOSTILE_PARENT "/" HOSTILE_ESCAPE_NAME
+
+static void removeSkinDir(const char *dir);
 
 /* Every source must agree with the directory fixture's skin.ini. */
 static int checkIni(const SkinInfo *info, const char *label) {
@@ -300,6 +317,115 @@ static int checkNoRecommendedFilter(void) {
     return 0;
 }
 
+/* Writes one stored entry with the exact name given, which is how a hostile
+ * or archiver-made zip gets names skinSourceZipDirectory would never write. */
+static int zipPutRaw(zipFile zf, const char *name, const char *body) {
+    zip_fileinfo zi;
+    memset(&zi, 0, sizeof(zi));
+    if (zipOpenNewFileInZip(zf, name, &zi, NULL, 0, NULL, 0, NULL,
+                            Z_DEFLATED, Z_DEFAULT_COMPRESSION) != ZIP_OK) {
+        return -1;
+    }
+    if (zipWriteInFileInZip(zf, body, (unsigned int)strlen(body)) != ZIP_OK) {
+        zipCloseFileInZip(zf);
+        return -1;
+    }
+    return zipCloseFileInZip(zf) == ZIP_OK ? 0 : -1;
+}
+
+/* A .wsf is handed around, and Publish unpacks whatever it holds, so an
+ * entry name that climbs out of the skin must never become a path. This
+ * archive carries one such entry, plus the __MACOSX/ tree Finder's Compress
+ * adds beside a skin folder; the skin's own files sit under one folder the
+ * way that archiver leaves them. The reader has to drop both kinds, still
+ * strip the folder, and extract nothing outside the scratch directory. */
+static int checkHostileArchive(void) {
+    SkinSource *src;
+    SkinInfo    info;
+    zipFile     zf;
+    void       *buf = NULL;
+    size_t      len = 0;
+    SDL_PathInfo pi;
+    int         rc = -1;
+
+    remove(HOSTILE_ZIP);
+    remove(HOSTILE_ESCAPE);
+    removeSkinDir(HOSTILE_DIR);
+    SDL_CreateDirectory(HOSTILE_PARENT);
+
+    zf = zipOpen(HOSTILE_ZIP, APPEND_STATUS_CREATE);
+    if (zf == NULL) {
+        UT_FAIL("could not create %s", HOSTILE_ZIP);
+    }
+    if (zipPutRaw(zf, "mytheme/skin.ini",
+                  "[Skin]\nName=Hostile\n") != 0 ||
+        zipPutRaw(zf, "mytheme/grass.png", "not really a png") != 0 ||
+        zipPutRaw(zf, "mytheme/sounds/bubbles.wav", "not a wav") != 0 ||
+        zipPutRaw(zf, "__MACOSX/mytheme/._grass.png", "resource fork") != 0 ||
+        zipPutRaw(zf, "mytheme/.DS_Store", "finder") != 0 ||
+        zipPutRaw(zf, "../" HOSTILE_ESCAPE_NAME, "escaped") != 0 ||
+        zipPutRaw(zf, "mytheme/../../" HOSTILE_ESCAPE_NAME, "escaped") != 0) {
+        zipClose(zf, NULL);
+        UT_FAIL("could not write the hostile entries");
+    }
+    zipClose(zf, NULL);
+
+    src = skinSourceOpen(HOSTILE_ZIP);
+    UT_ASSERT_MSG(src != NULL, "hostile archive did not open at all");
+
+    /* The junk was dropped before the common folder was worked out, so the
+     * skin's own names resolve at the top level. */
+    skinSourceReadIni(src, &info);
+    if (strcmp(info.name, "Hostile") != 0) {
+        skinSourceClose(src);
+        UT_FAIL("skin.ini under the wrapping folder was not found; Name is "
+                "'%s'", info.name);
+    }
+    if (!skinSourceExists(src, "grass.png") ||
+        !skinSourceExists(src, "sounds/bubbles.wav")) {
+        skinSourceClose(src);
+        UT_FAIL("the skin's own files did not resolve once the junk was "
+                "dropped");
+    }
+    if (skinSourceExists(src, "../" HOSTILE_ESCAPE_NAME) ||
+        skinSourceExists(src, "../../" HOSTILE_ESCAPE_NAME) ||
+        skinSourceExists(src, HOSTILE_ESCAPE_NAME)) {
+        skinSourceClose(src);
+        UT_FAIL("an entry that climbs out of the skin was indexed");
+    }
+    if (skinSourceExists(src, "__macosx/mytheme/._grass.png") ||
+        skinSourceExists(src, "._grass.png") ||
+        skinSourceExists(src, ".ds_store")) {
+        skinSourceClose(src);
+        UT_FAIL("an archiver housekeeping entry was indexed");
+    }
+
+    /* Extraction writes the real files under the scratch directory and
+     * nothing beside it. */
+    if (!skinSourceExtractTo(src, HOSTILE_DIR)) {
+        skinSourceClose(src);
+        UT_FAIL("extraction of the hostile archive failed outright");
+    }
+    skinSourceClose(src);
+
+    if (SDL_GetPathInfo(HOSTILE_ESCAPE, &pi)) {
+        UT_FAIL("extraction wrote %s outside the scratch directory",
+                HOSTILE_ESCAPE);
+    }
+    if (!SDL_LoadFile(HOSTILE_DIR "/grass.png", &len)) {
+        UT_FAIL("extraction did not write grass.png into the scratch "
+                "directory");
+    }
+    buf = SDL_LoadFile(HOSTILE_DIR "/sounds/bubbles.wav", &len);
+    if (buf == NULL || len != strlen("not a wav")) {
+        SDL_free(buf);
+        UT_FAIL("extraction did not write sounds/bubbles.wav");
+    }
+    SDL_free(buf);
+    rc = 0;
+    return rc;
+}
+
 int run_skin_source_dir_and_zip(void) {
     const char *dir = getenv("WB_SKINS_FIXTURE_DIR");
     char fixture[512];
@@ -310,9 +436,14 @@ int run_skin_source_dir_and_zip(void) {
 
     rc = checkSkinSources(fixture);
     if (rc == 0) rc = checkNoRecommendedFilter();
+    if (rc == 0) rc = checkHostileArchive();
 
     remove(FLAT_ZIP);
     remove(WRAPPED_ZIP);
+    remove(HOSTILE_ZIP);
+    remove(HOSTILE_ESCAPE);
+    removeSkinDir(HOSTILE_DIR);
+    SDL_RemovePath(HOSTILE_PARENT);
     /* One file went in, so the directory empties without a walk. */
     remove(NOKEY_DIR "/skin.ini");
     SDL_RemovePath(NOKEY_DIR);

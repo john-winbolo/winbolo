@@ -84,6 +84,14 @@ typedef struct SkinSource SkinSource;   /* opaque */
  *   else skin-like (that archive is opened instead).
  *   Builds the whole name index up front so every later
  *   lookup is a hash hit. Returns NULL on failure.
+ *
+ *   An archive's names and sizes are its author's, so the
+ *   index leaves out what it will not trust: an entry whose
+ *   name would climb out of the skin, one declaring more
+ *   than 64 MB, everything past the 4096th, and the
+ *   __MACOSX/ and .DS_Store housekeeping Finder's Compress
+ *   adds (which would otherwise stop the single top-level
+ *   folder being stripped).
  *********************************************************/
 SkinSource *skinSourceOpen(const char *path);
 
@@ -150,10 +158,13 @@ bool        skinSourceZipDirectory(const char *dir, const char *outZip,
 /*********************************************************
  * NAME:          skinSourceExtractTo
  * PURPOSE:
- *   Writes every file the skin holds into dir, creating dir
- *   and dir/sounds. Names come from the index, so they
- *   arrive lowercased and forward-slashed — harmless,
- *   because every lookup is case-insensitive. False on any
+ *   Writes every file the skin holds at its top level and
+ *   under sounds/ into dir, creating dir and dir/sounds.
+ *   Files anywhere deeper are left out, since no reader
+ *   finds them. Names come from the index, so they arrive
+ *   lowercased and forward-slashed — harmless, because
+ *   every lookup is case-insensitive — and a name that
+ *   would land outside dir fails the call. False on any
  *   failure.
  *********************************************************/
 bool        skinSourceExtractTo(SkinSource *src, const char *dir);
@@ -179,7 +190,11 @@ bool        skinSourceResolveArchive(const char *dir, char *out,
  *   can tell the publisher's own item from one that came
  *   with someone else's skin. skinPath is a directory or a
  *   .wsf/.zip; an archive is unpacked, edited and rebuilt in
- *   place. Every other key, and every other file, survives.
+ *   place, and if it is the active source it is closed for
+ *   the swap and reopened after, so the rename over it can
+ *   go through on Windows. Every other key survives, and so
+ *   does every file a reader could find (see
+ *   skinSourceExtractTo for what is left out).
  *   authorSteamId 0 means unknown: any WorkshopAuthor line
  *   already there is left exactly as it was, neither
  *   replaced nor removed, because overwriting a known author
