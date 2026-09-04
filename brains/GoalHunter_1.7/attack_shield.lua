@@ -1441,7 +1441,14 @@ function M.load_stamp_bin(path)
     print("[shield] gh_shield C module not available")
     return false
   end
-  local dirs = { _G.BRAIN_DIR, _G.DEBUG_SESSION_DIR, "." }
+  -- The committed cache lives in the SOURCE brain directory. A production
+  -- run has BRAIN_DIR = <brain>/opt, which holds only the stripped .lua
+  -- files, so try the /opt-stripped parent too (same normalisation the LOS
+  -- cache uses in attack.lua) -- otherwise opt/ silently misses the cache
+  -- and rebuilds the stamps at every Brain.open, differently from the root
+  -- brain the tests run.
+  local _src_dir = _G.BRAIN_DIR and _G.BRAIN_DIR:gsub("[/\\]opt$", "") or nil
+  local dirs = { _G.BRAIN_DIR, _src_dir, _G.DEBUG_SESSION_DIR, "." }
   local tried = {}
   local paths = path and { path } or (function()
     local seen, out = {}, {}

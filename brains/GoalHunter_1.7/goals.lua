@@ -10848,50 +10848,12 @@ function M.step_eval_queue(state, world, info)
   local partial = state.pool_partial
   if not partial then partial = {}; state.pool_partial = partial end
 
-  -- Chunked pill-eval pre-probe (BRAIN_DEBUG_MODE only — the C fast path
-  -- is plenty fast outside debug). Peek the next GOAL_CANDS_PER_TICK
-  -- pool-6 candidates and advance one chunk on each whose diff_cache
-  -- entry is stale.  If any is still in_progress, bail without draining
-  -- the queue this tick so the bar can fill across ticks and the work
-  -- is actually spread over time at lower capacity tiers.
-  if BRAIN_DEBUG_MODE then
-    local _probe_pos = pos
-    local _probe_count = 0
-    local _any_in_progress = false
-    while _probe_pos <= #queue and _probe_count < C.GOAL_CANDS_PER_TICK do
-      local _it = queue[_probe_pos]
-      _probe_pos = _probe_pos + 1
-      _probe_count = _probe_count + 1
-      if _it.pool == 6 and not _it.reject then
-        local _pid = _it.id
-        local _pill = _it.obj
-        if _pill and _pid and _pid >= 0 then
-          local _dck = _pill.mx .. ":" .. _pill.my .. ":" .. (state.phase or "")
-          local _dc = (state._pill_diff_cache or {})[_dck]
-          local _dx_t = _pill.mx - tmx
-          local _dy_t = _pill.my - tmy
-          local _sqdist = _dx_t * _dx_t + _dy_t * _dy_t
-          local _ttl
-          if     _sqdist < 100 then _ttl = 50
-          elseif _sqdist < 900 then _ttl = 150
-          else                       _ttl = 500
-          end
-          local _ttl_mult = (state._capacity and state._capacity.ttl_mult) or 1.0
-          if _ttl_mult ~= 1.0 then _ttl = math.floor(_ttl * _ttl_mult) end
-          local _needs = (not _dc)
-              or (_dc.hp ~= (_pill.health or 0))
-              or (not _dc.spots)
-              or ((now - _dc.tick) >= _ttl)
-          if _needs then
-            local _status = attack.advance_pill_eval_chunk(
-              state, world, info, tmx, tmy, _pid, _pill)
-            if _status == "in_progress" then _any_in_progress = true end
-          end
-        end
-      end
-    end
-    if _any_in_progress then return end
-  end
+  -- (The debug-only "chunked pill-eval pre-probe" that used to sit here is
+  -- gone: it advanced the pool-6 evaluations in chunks and BAILED the whole
+  -- queue drain while any was in flight, so a -brain-debug game evaluated
+  -- candidates on different ticks than production and made different
+  -- decisions from tick ~53 of seed 4242. Recorded games must be the
+  -- production game; the C fast path evaluates inline in both modes now.)
 
   local count = 0
   while pos <= #queue and count < C.GOAL_CANDS_PER_TICK do
@@ -11433,16 +11395,24 @@ function M.step_eval_queue(state, world, info)
           -- before we ever get here (the probe bails the whole tick when
           -- any in-flight sweep is still running). Read from the cache
           -- instead of re-doing the 72-angle sweep inline.
-          local _pe = state._pill_eval_cache and state._pill_eval_cache[id]
-          if BRAIN_DEBUG_MODE and _pe and (now - _pe.tick) <= 250 then
-            diff_score = _pe.best_score
-            _spots     = _pe.spots
-            best_spot  = _pe.best_spot
-          else
-            diff_score, _spots, best_spot =
-              attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                              _scan_step, state.phase, state, tmx, tmy)
-          end
+          -- Evaluate inline in EVERY mode. Two things used to sit here and both
+          -- made the recorded (-brain-debug) brain play a different game from
+          -- production:
+          --   * `if BRAIN_DEBUG_MODE and <cache fresh> then <use cache> else
+          --      <evaluate> end` -- lua_strip removes an `if BRAIN_DEBUG_MODE`
+          --      block WHOLE, else branch included, so from the 1.7 baseline
+          --      (7a390beb) the production opt/ brain never called
+          --      evaluate_pill_difficulty on this path: diff_score stayed nil
+          --      and `diff_cost = diff_score or 999` priced every attack_pill
+          --      candidate here at maximum difficulty with no firing spot.
+          --   * the debug-only chunked pre-probe (removed, see build_eval_queue)
+          --      that filled that cache on a different tick schedule.
+          -- Found 2026-09-03 by byte-comparing production vs recorded games of
+          -- one seed (first divergence tick 46, then 53). Keep this a plain
+          -- call: no `if BRAIN_DEBUG_MODE` with an else around decision code.
+          diff_score, _spots, best_spot =
+            attack.evaluate_pill_difficulty(obj, world, force_detailed,
+                                            _scan_step, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
