@@ -73,6 +73,13 @@ typedef struct OverviewCamera {
     float cx, cy;    /* view centre, in map-square units (see above) */
     int   zoomIndex; /* index into the zoom ladder */
     bool  follow;    /* centre tracks the tank each frame */
+
+    /* A scroll in flight. cx/cy are the live animated centre; the camera is
+       otherwise unaware it is moving. */
+    bool  scrolling;
+    float scrollFromX, scrollFromY;   /* centre when the scroll was started */
+    float scrollToX, scrollToY;       /* centre that brings the point on screen */
+    float scrollElapsedMs;
 } OverviewCamera;
 
 /* 1x zoom, follow on, centred on the map. */
@@ -127,19 +134,58 @@ void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
                               float tankMapX, float tankMapY);
 
-/* Squares of map kept between the tank and the edge of the view by the nudge
- * below. Two: half of one is the tank's own square, and the rest is the tile
+/* Squares of map kept between the point and the edge of the view by the nudge
+ * below. Two: half of one is the point's own square, and the rest is the tile
  * of ground behind it that stops it riding the edge it was pulled in over. */
-#define OVERVIEW_TANK_EDGE_MARGIN 2.0f
+#define OVERVIEW_EDGE_MARGIN 2.0f
 
-/* Move the centre the least it takes to bring the tank back inside the view,
- * with OVERVIEW_TANK_EDGE_MARGIN squares to spare on the edge it came in
- * over. A tank already that far inside moves nothing, and neither edge pulls
- * the view further than it has to — a tank off to the left slides the view
+/* How long an animated scroll takes, whatever distance it covers. A short hop
+ * and a jump across the map both read as one deliberate move. */
+#define OVERVIEW_SCROLL_MS 180.0f
+
+/* Move the centre the least it takes to bring (pointX,pointY) back inside the
+ * view, with OVERVIEW_EDGE_MARGIN squares to spare on the edge it came in
+ * over. A point already that far inside moves nothing, and neither edge pulls
+ * the view further than it has to — a point off to the left slides the view
  * left until it is on, rather than the view jumping to centre on it. Leaves
  * the follow flag alone: it corrects a free camera without claiming it. */
-void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
-                                    float tankMapX, float tankMapY);
+void overviewCameraKeepOnScreen(OverviewCamera *cam, int viewW, int viewH,
+                                float pointX, float pointY);
+
+/* The centre overviewCameraKeepOnScreen would move to, worked out without
+ * touching the camera. Writes it to *outCx/*outCy, already through the same
+ * map clamp every camera move ends in, so a caller gets a centre the camera
+ * would accept. Returns true when that centre differs from the one the camera
+ * is on — when there is a move to make — and false when the point is already
+ * far enough inside, or the camera is NULL or the view degenerate. */
+bool overviewCameraCentreToShow(const OverviewCamera *cam, int viewW, int viewH,
+                                float pointX, float pointY,
+                                float *outCx, float *outCy);
+
+/* Start an eased scroll to that centre, taking OVERVIEW_SCROLL_MS to get
+ * there. Returns true when a scroll was started, false when the point is
+ * already on screen — in which case any scroll in flight is cancelled, since
+ * it was aimed somewhere else. Called again while a scroll is running it
+ * re-aims from wherever the animated centre has reached, so stepping to the
+ * next item scrolls on rather than snapping back. Moves nothing by itself:
+ * the first tick is where the centre starts to change. */
+bool overviewCameraScrollToShow(OverviewCamera *cam, int viewW, int viewH,
+                                float pointX, float pointY);
+
+/* Advance a running scroll by dtMs milliseconds and put the centre where it
+ * has reached. Returns true whenever a scroll was running on entry, the tick
+ * that finishes it included, so a caller can leave the camera to it for that
+ * frame. A delta of zero or less advances nothing and still reports the scroll
+ * as running. There is no clock here — the elapsed time comes from the
+ * caller. */
+bool overviewCameraScrollTick(OverviewCamera *cam, float dtMs);
+
+/* Whether a scroll is in flight. */
+bool overviewCameraIsScrolling(const OverviewCamera *cam);
+
+/* Stop a scroll where it has reached. The centre stays put: a cancel ends the
+ * move, it does not undo it. */
+void overviewCameraScrollCancel(OverviewCamera *cam);
 
 /* Inclusive square range intersecting the view, clamped to
  * 0..MAP_ARRAY_SIZE-1. Returns false when no square is visible. */

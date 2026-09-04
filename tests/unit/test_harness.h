@@ -918,6 +918,18 @@ int run_overview_loopback(void);
  * range matches hand-worked spans at the map edges. */
 int run_overview_camera(void);
 
+/* Overview camera scroll (test_overview_camera.cpp): the animated form of the
+ * keep-on-screen nudge. A point already inside the view starts nothing, an
+ * off-screen one starts a scroll that moves nothing until the first tick, and
+ * ticks summing to OVERVIEW_SCROLL_MS land the centre exactly where the
+ * instant nudge would have put it — the least move, not the point. In between
+ * the eased centre only ever goes towards the target and never past it, a tick
+ * longer than the whole duration stops on it, a re-aim part way runs from the
+ * centre it had reached with the clock back at zero, and a pan, a zoom step or
+ * a centre-on-tank ends the scroll where the follow tick does not. The follow
+ * flag comes through all of it untouched. */
+int run_overview_scroll(void);
+
 /* Overview fog mask (test_overview_fog.cpp): a live square comes out clear and
  * ground past the ramp fully fogged, the fade rises square by square out of
  * every edge and is darker diagonally off a corner than the same way out of an

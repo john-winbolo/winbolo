@@ -3797,6 +3797,7 @@ set(_unit_test_names
     overview_policy_decay
     overview_loopback
     overview_camera
+    overview_scroll
     overview_fog
     overview_hud_layout
     overview_dead_tank

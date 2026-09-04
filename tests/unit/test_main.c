@@ -468,6 +468,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_policy_decay",                   run_overview_policy_decay                   },
     { "overview_loopback",                       run_overview_loopback                       },
     { "overview_camera",                         run_overview_camera                         },
+    { "overview_scroll",                         run_overview_scroll                         },
     { "overview_fog",                            run_overview_fog                            },
     { "overview_hud_layout",                     run_overview_hud_layout                     },
     { "overview_dead_tank",                      run_overview_dead_tank                      },

@@ -93,6 +93,12 @@ void overviewCameraInit(OverviewCamera *cam) {
     cam->cy = (float)MAP_ARRAY_SIZE * 0.5f;
     cam->zoomIndex = OVERVIEW_ZOOM_2X;
     cam->follow = true;
+    cam->scrolling = false;
+    cam->scrollFromX = cam->cx;
+    cam->scrollFromY = cam->cy;
+    cam->scrollToX = cam->cx;
+    cam->scrollToY = cam->cy;
+    cam->scrollElapsedMs = 0.0f;
     overviewCameraClamp(cam);
 }
 
@@ -155,6 +161,10 @@ void overviewCameraZoomAt(OverviewCamera *cam, int viewW, int viewH,
                           float cursorX, float cursorY, int steps) {
     if (!cam) return;
 
+    /* A scroll's target centre was worked out for the old rung and means
+     * something else after a rung change, so the rezoom takes the camera. */
+    overviewCameraScrollCancel(cam);
+
     /* Both sides of the add are brought into range first: a ladder this short
      * saturates on any step of 7 or more either way, and clamping afterwards
      * would leave the sum itself free to overflow. */
@@ -199,6 +209,8 @@ void overviewCameraZoomAt(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraPan(OverviewCamera *cam, int viewW, int viewH,
                        float dxPixels, float dyPixels) {
     if (!cam) return;
+    /* A hand on the camera takes it over, the same way a pan clears follow. */
+    overviewCameraScrollCancel(cam);
     /* The window size does not enter a relative move — the pixels-to-squares
      * factor is the zoom alone. Taken for symmetry with the rest of the
      * camera calls, which do need it. */
@@ -214,6 +226,9 @@ void overviewCameraPan(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
                                 float tankMapX, float tankMapY) {
     if (!cam) return;
+    /* This jumps and claims follow; a scroll still running would pull the
+     * centre straight back off the tank. */
+    overviewCameraScrollCancel(cam);
     (void)viewW;
     (void)viewH;
     cam->cx = tankMapX;
@@ -225,6 +240,9 @@ void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
                               float tankMapX, float tankMapY) {
     if (!cam || !cam->follow) return;
+    /* No scroll cancel here, unlike the calls a player drives: follow and a
+     * scroll are meant to run together, with the caller holding this tick off
+     * while the scroll finishes. */
     (void)viewW;
     (void)viewH;
     cam->cx = tankMapX;
@@ -232,9 +250,20 @@ void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
     overviewCameraClamp(cam);
 }
 
-void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
-                                    float tankMapX, float tankMapY) {
-    if (!cam || viewW <= 0 || viewH <= 0) return;
+bool overviewCameraCentreToShow(const OverviewCamera *cam, int viewW, int viewH,
+                                float pointX, float pointY,
+                                float *outCx, float *outCy) {
+    if (!cam) return false;
+
+    /* A view with no pixels has no inside to bring anything into, so the
+     * answer is the centre the camera is already on and no move to make. */
+    float wantX = cam->cx;
+    float wantY = cam->cy;
+    if (viewW <= 0 || viewH <= 0) {
+        if (outCx) *outCx = wantX;
+        if (outCy) *outCy = wantY;
+        return false;
+    }
 
     float tilePx = overviewTilePx(cam);
     float halfW  = (float)viewW / (2.0f * tilePx);
@@ -243,29 +272,126 @@ void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
     /* The two edges of an axis ask for opposite things, and the window they
      * leave between them is the view minus both margins. A window narrower
      * than the margins it is being asked to keep has no centre that satisfies
-     * either edge, so the tank goes in the middle — the nearest thing to what
+     * either edge, so the point goes in the middle — the nearest thing to what
      * was asked, and the only answer that does not favour one edge. */
-    if (halfW <= OVERVIEW_TANK_EDGE_MARGIN) {
-        cam->cx = tankMapX;
+    if (halfW <= OVERVIEW_EDGE_MARGIN) {
+        wantX = pointX;
     } else {
-        float lowest  = tankMapX - halfW + OVERVIEW_TANK_EDGE_MARGIN;
-        float highest = tankMapX + halfW - OVERVIEW_TANK_EDGE_MARGIN;
-        if (cam->cx < lowest)  cam->cx = lowest;
-        if (cam->cx > highest) cam->cx = highest;
+        float lowest  = pointX - halfW + OVERVIEW_EDGE_MARGIN;
+        float highest = pointX + halfW - OVERVIEW_EDGE_MARGIN;
+        if (wantX < lowest)  wantX = lowest;
+        if (wantX > highest) wantX = highest;
     }
 
-    if (halfH <= OVERVIEW_TANK_EDGE_MARGIN) {
-        cam->cy = tankMapY;
+    if (halfH <= OVERVIEW_EDGE_MARGIN) {
+        wantY = pointY;
     } else {
-        float lowest  = tankMapY - halfH + OVERVIEW_TANK_EDGE_MARGIN;
-        float highest = tankMapY + halfH - OVERVIEW_TANK_EDGE_MARGIN;
-        if (cam->cy < lowest)  cam->cy = lowest;
-        if (cam->cy > highest) cam->cy = highest;
+        float lowest  = pointY - halfH + OVERVIEW_EDGE_MARGIN;
+        float highest = pointY + halfH - OVERVIEW_EDGE_MARGIN;
+        if (wantY < lowest)  wantY = lowest;
+        if (wantY > highest) wantY = highest;
     }
 
-    /* The map clamp can only pull the centre back towards the map, and the
-     * tank is on the map, so it cannot undo what was just done here. */
+    /* Put the answer through the clamp on a copy, so the caller is handed a
+     * centre the camera would accept and the camera itself is untouched. The
+     * clamp can only pull the centre back towards the map, and the point is on
+     * the map, so it cannot undo what was just worked out. */
+    OverviewCamera probe = *cam;
+    probe.cx = wantX;
+    probe.cy = wantY;
+    overviewCameraClamp(&probe);
+
+    if (outCx) *outCx = probe.cx;
+    if (outCy) *outCy = probe.cy;
+    return probe.cx != cam->cx || probe.cy != cam->cy;
+}
+
+void overviewCameraKeepOnScreen(OverviewCamera *cam, int viewW, int viewH,
+                                float pointX, float pointY) {
+    if (!cam || viewW <= 0 || viewH <= 0) return;
+
+    float wantX = cam->cx;
+    float wantY = cam->cy;
+    overviewCameraCentreToShow(cam, viewW, viewH, pointX, pointY,
+                               &wantX, &wantY);
+    cam->cx = wantX;
+    cam->cy = wantY;
     overviewCameraClamp(cam);
+}
+
+bool overviewCameraScrollToShow(OverviewCamera *cam, int viewW, int viewH,
+                                float pointX, float pointY) {
+    if (!cam || viewW <= 0 || viewH <= 0) return false;
+
+    float toX = cam->cx;
+    float toY = cam->cy;
+    if (!overviewCameraCentreToShow(cam, viewW, viewH, pointX, pointY,
+                                    &toX, &toY)) {
+        /* Already on screen with room to spare. Anything in flight was aimed
+         * elsewhere, so it stops here rather than carrying on to a centre
+         * nobody is asking for any more. */
+        overviewCameraScrollCancel(cam);
+        return false;
+    }
+
+    /* The start is wherever the centre is now, which mid-scroll is the
+     * animated position rather than where the last scroll began. That is what
+     * makes a re-aim carry on instead of jumping back. */
+    cam->scrollFromX = cam->cx;
+    cam->scrollFromY = cam->cy;
+    cam->scrollToX = toX;
+    cam->scrollToY = toY;
+    cam->scrollElapsedMs = 0.0f;
+    cam->scrolling = true;
+    return true;
+}
+
+bool overviewCameraScrollTick(OverviewCamera *cam, float dtMs) {
+    if (!cam || !cam->scrolling) return false;
+
+    /* A frame that took no time still belongs to the scroll; it just does not
+     * move it on. */
+    if (dtMs > 0.0f) cam->scrollElapsedMs += dtMs;
+    if (cam->scrollElapsedMs > OVERVIEW_SCROLL_MS) {
+        cam->scrollElapsedMs = OVERVIEW_SCROLL_MS;
+    }
+
+    if (cam->scrollElapsedMs >= OVERVIEW_SCROLL_MS) {
+        /* The end is assigned rather than interpolated: smoothstep at t = 1 is
+         * 1 exactly on paper, but the multiplies need not land there, and the
+         * camera has to finish on the centre it was aimed at. */
+        cam->cx = cam->scrollToX;
+        cam->cy = cam->scrollToY;
+        cam->scrolling = false;
+    } else {
+        /* Smoothstep: starts and ends at rest, and never leaves 0..1, so the
+         * centre cannot run past the target and come back. */
+        float t = cam->scrollElapsedMs / OVERVIEW_SCROLL_MS;
+        float f = t * t * (3.0f - 2.0f * t);
+        cam->cx = cam->scrollFromX + (cam->scrollToX - cam->scrollFromX) * f;
+        cam->cy = cam->scrollFromY + (cam->scrollToY - cam->scrollFromY) * f;
+    }
+
+    /* Both ends are clamped centres and the path between them is a weighted
+     * average of the two, so this has nothing to do on a scroll started from a
+     * camera in range. It is here to keep every centre move ending in the same
+     * place. */
+    overviewCameraClamp(cam);
+
+    /* True for the tick that finished it as well, so the frame that lands the
+     * camera is still the scroll's and not the caller's. */
+    return true;
+}
+
+bool overviewCameraIsScrolling(const OverviewCamera *cam) {
+    if (!cam) return false;
+    return cam->scrolling;
+}
+
+void overviewCameraScrollCancel(OverviewCamera *cam) {
+    if (!cam) return;
+    /* The centre is left where the animation reached. */
+    cam->scrolling = false;
 }
 
 bool overviewCameraVisibleRange(const OverviewCamera *cam, int viewW, int viewH,
