@@ -184,9 +184,9 @@ int run_overview_policy_baseline(void) {
     in.allyViewable = (PlayerBitMap)((1u << 1) | (1u << 2) | (1u << 3));
     n = vpBuild(gs, &in, out);
     UT_ASSERT_MSG(n == 5, "two live allies gave %d regions, expected 5", n);
-    ASSERT_BLOCK(out[3], 150, 150, OVERVIEW_TANK_HALF, 255,
+    ASSERT_BLOCK(out[3], 150, 150, OVERVIEW_PILL_HALF, 255,
                  "the first ally's block");
-    ASSERT_BLOCK(out[4], 160, 160, OVERVIEW_TANK_HALF, 255,
+    ASSERT_BLOCK(out[4], 160, 160, OVERVIEW_PILL_HALF, 255,
                  "the second ally's block");
 
     serverSimDestroy(sim);
@@ -222,8 +222,8 @@ int run_overview_policy_categories(void) {
     ASSERT_BLOCK(out[2], 210, 60, OVERVIEW_PILL_HALF, 255, "pill 1's block");
     ASSERT_BLOCK(out[3], 40, 40, OVERVIEW_PILL_HALF, 255, "base 0's block");
     ASSERT_BLOCK(out[4], 80, 40, OVERVIEW_PILL_HALF, 255, "base 2's block");
-    ASSERT_BLOCK(out[5], 150, 150, OVERVIEW_TANK_HALF, 255, "ally 1's block");
-    ASSERT_BLOCK(out[6], 160, 160, OVERVIEW_TANK_HALF, 255, "ally 3's block");
+    ASSERT_BLOCK(out[5], 150, 150, OVERVIEW_PILL_HALF, 255, "ally 1's block");
+    ASSERT_BLOCK(out[6], 160, 160, OVERVIEW_PILL_HALF, 255, "ally 3's block");
 
     /* Everything off: the player's own screen and nothing else. */
     in.policy[viewCategoryPill] = viewPolicyOff;
@@ -270,7 +270,7 @@ int run_overview_policy_categories(void) {
     n = vpBuild(gs, &in, out);
     UT_ASSERT_MSG(n == 1, "key on ally 3 gave %d regions, expected the watched "
                   "ally's block on its own", n);
-    ASSERT_BLOCK(out[0], 160, 160, OVERVIEW_TANK_HALF, 255,
+    ASSERT_BLOCK(out[0], 160, 160, OVERVIEW_PILL_HALF, 255,
                  "the watched ally's block");
 
     /* A claim on something that is not the player's to watch grants nothing —
@@ -414,8 +414,8 @@ int run_overview_policy_decay(void) {
                   "expected 3", n);
     ASSERT_BLOCK(out[1], 80, 40, OVERVIEW_PILL_HALF, 255,
                  "the base the player drove past");
-    ASSERT_RECT(out[2], 160 - OVERVIEW_TANK_HALF, 160 - OVERVIEW_TANK_HALF,
-                160 + OVERVIEW_TANK_HALF, 160 + OVERVIEW_TANK_HALF);
+    ASSERT_RECT(out[2], 160 - OVERVIEW_PILL_HALF, 160 - OVERVIEW_PILL_HALF,
+                160 + OVERVIEW_PILL_HALF, 160 + OVERVIEW_PILL_HALF);
     UT_ASSERT_MSG(out[2].alpha > 0 && out[2].alpha < 255,
                   "the ally is half way through its fade at alpha %u",
                   (unsigned)out[2].alpha);

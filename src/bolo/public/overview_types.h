@@ -40,9 +40,9 @@
 #define OVERVIEW_F_MINE      0x01   /* mine was visible on the square when last seen */
 #define OVERVIEW_F_LIVE      0x02   /* inside a live region on the latest update */
 
-/* The tank region is the full scroll envelope of the main view; a base or an
- * allied tank is watched through the same block its own kind of view reaches,
- * so a base takes the pill block and an ally the tank one. */
+/* The tank region is the full scroll envelope of the main view. An item view
+ * cannot be scrolled, so it shows one fixed block round what it watches: a
+ * pillbox, a base and an allied tank all take the pill block. */
 #define OVERVIEW_TANK_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
 #define OVERVIEW_PILL_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
 #define OVERVIEW_MAX_REGIONS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)

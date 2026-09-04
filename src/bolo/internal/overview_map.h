@@ -113,9 +113,9 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
  * ramping to 0 over the last VIEW_DECAY_FADE_SECS of a decay window.
  *
  * tankHalf is the half-width of the tank's block, OVERVIEW_TANK_HALF for a
- * living tank and for a dead one still in its slot. A pill and a base block
- * are always OVERVIEW_PILL_HALF and an allied tank's always
- * OVERVIEW_TANK_HALF. */
+ * living tank and for a dead one still in its slot. Every watched item's block
+ * — a pill, a base, an allied tank — is always OVERVIEW_PILL_HALF, the size
+ * its own view shows; the wider block is the player's own tank's alone. */
 int  overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
                              const OverviewViewInputs *in,
                              bool haveTank, BYTE tankMX, BYTE tankMY,

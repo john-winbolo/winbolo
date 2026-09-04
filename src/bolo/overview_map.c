@@ -449,12 +449,18 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
 
   /* An allied tank is watched at the square it was last seen on, which is the
    * one the ally view centres on — the client holds no tank object for anybody
-   * but itself, so the players struct is the only position there is. */
+   * but itself, so the players struct is the only position there is.
+   *
+   * The block is the watched-item size, not the tank one. An item view cannot
+   * be scrolled — the pan keys step to the next item rather than moving the
+   * picture — so watching an ally shows exactly the 15x15 around them, the
+   * same as a pillbox or a base. The wider block is the player's own tank's,
+   * because that is the one view the classic screen can be scrolled around. */
   for (i = 0; i < MAX_TANKS && count < maxOut; i++) {
     if (overviewAllyLive(sim, myPlayerNum, in, i, &alpha) == TRUE) {
       out[count] = overviewRectAround((int)sim->plyrs->item[i].mapX,
                                       (int)sim->plyrs->item[i].mapY,
-                                      OVERVIEW_TANK_HALF);
+                                      OVERVIEW_PILL_HALF);
       out[count].alpha = alpha;
       count++;
     }
