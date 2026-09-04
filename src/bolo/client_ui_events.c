@@ -138,14 +138,26 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
    * upkeep call comes first and always runs — it is what follows a moving
    * ally, not just a test. */
   if (clientSimIsInItemView(csPtr) == TRUE) {
-    bool stillWatchable =
-        viewportUpdateItemView(clientSimViewportMut(csPtr),
-                               clientSimGetGameSim(csPtr),
-                               clientSimGetScroll(csPtr),
-                               clientSimAllyViewMask(csPtr));
+    ViewCycleInputs cycleIn;
+    bool stillWatchable;
+
+    clientSimFillViewCycleInputs(csPtr, &cycleIn);
+    stillWatchable = viewportUpdateItemView(clientSimViewportMut(csPtr),
+                                            clientSimGetGameSim(csPtr),
+                                            clientSimGetScroll(csPtr),
+                                            &cycleIn);
     if (stillWatchable == FALSE || clientSimViewDecayExpired(csPtr) == TRUE) {
       clientSimTankView(csPtr);
     }
+  }
+
+  /* An ally view has a third way to end: the tank has arrived as a hidden
+   * stub for longer than the grace, which means the server has stopped
+   * granting its rect and there is nothing left to follow. The timer runs
+   * whatever the camera is doing and clears itself outside an ally view, so
+   * a later entry starts a fresh grace. */
+  if (clientSimAllyViewStubExpired(csPtr) == TRUE) {
+    clientSimTankView(csPtr);
   }
 
   /* Tell the server which view we are in, if it has changed. */

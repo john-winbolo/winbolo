@@ -830,12 +830,20 @@ int run_view_state_lifecycle(void);
  * playersMoveAllyView take the nearest item in the pressed direction on both
  * axes and never one that is only nearer the other way; and
  * viewportUpdateItemView drops the view once a base is captured or an ally
- * dies or leaves, while following an ally that is still driving. */
+ * dies or leaves, while following an ally that is still driving. Under a
+ * decay policy the cycling also steps over the items whose clocks have run
+ * out, clientSimViewEligibleMask being where that question is asked and
+ * answering "every item" for the other three policies, and an ally the server
+ * has stopped sending centres on the square it was last seen at until the
+ * stub run outlasts the grace. */
 int run_view_cycle_bases(void);
 int run_view_cycle_base_direction(void);
 int run_view_cycle_allies(void);
 int run_view_cycle_ally_direction(void);
 int run_view_cycle_exits(void);
+int run_view_cycle_decay_skip(void);
+int run_view_cycle_eligible_mask(void);
+int run_view_cycle_ally_stub(void);
 
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,

@@ -993,6 +993,17 @@ void clientApplySnapshot(ClientSim *csPtr,
       snap.lgmFrame = tanks[i].lgmFrame > 0 ? tanks[i].lgmFrame - 1 : 0;
       interpUpdate(&csPtr->interpCtx, pn, &snap, hdr->serverTick, arrivalMs);
 
+      /* Remember the square this tank was really on, and when. The hidden
+       * stub above zeroes the players entry, so once a slot goes out of view
+       * this is the only position left for an ally view to centre on, and
+       * how long ago it was stamped is what tells that view the server has
+       * stopped granting the slot's rect. */
+      if (pn < MAX_TANKS) {
+        csPtr->allyLastMapX[pn] = (BYTE)(tanks[i].worldX >> TANK_SHIFT_MAPSIZE);
+        csPtr->allyLastMapY[pn] = (BYTE)(tanks[i].worldY >> TANK_SHIFT_MAPSIZE);
+        csPtr->allySeenTick[pn] = csPtr->viewDecayTick;
+      }
+
       /* Auto-register player if not yet known */
       if (csPtr->sim.plyrs != NULL && playersIsInUse(&csPtr->sim.plyrs, pn) == FALSE) {
         char name[FILENAME_MAX];

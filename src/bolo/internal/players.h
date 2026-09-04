@@ -453,13 +453,14 @@ bool playersCanAllyView(struct GameSim *sim, PlayerBitMap viewable, BYTE playerN
 *ARGUMENTS:
 *  sim       - Pointer to the game sim
 *  viewable  - Bit per player slot: that tank is alive
+*  eligible  - Bit per player slot: that ally may be selected
 *  playerNum - Pointer to hold the ally's player number (and prev)
 *  mx        - Pointer to hold X Map position (and prev)
 *  my        - Pointer to hold Y Map position (and prev)
 *  xMove     - -1 for moving left, 1 for right, 0 for neither
 *  yMove     - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool playersMoveAllyView(struct GameSim *sim, PlayerBitMap viewable, BYTE *playerNum, BYTE *mx, BYTE *my, int xMove, int yMove);
+bool playersMoveAllyView(struct GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligible, BYTE *playerNum, BYTE *mx, BYTE *my, int xMove, int yMove);
 
 /*********************************************************
 *NAME:          playersGetNextAllyView
@@ -475,12 +476,13 @@ bool playersMoveAllyView(struct GameSim *sim, PlayerBitMap viewable, BYTE *playe
 *ARGUMENTS:
 *  sim       - Pointer to the game sim
 *  viewable  - Bit per player slot: that tank is alive
+*  eligible  - Bit per player slot: that ally may be selected
 *  playerNum - Pointer to hold the ally's player number (and prev)
 *  mx        - Pointer to hold X Map position
 *  my        - Pointer to hold Y Map position
 *  prev      - Whether a previous ally is being passed
 *********************************************************/
-bool playersGetNextAllyView(struct GameSim *sim, PlayerBitMap viewable, BYTE *playerNum, BYTE *mx, BYTE *my, bool prev);
+bool playersGetNextAllyView(struct GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligible, BYTE *playerNum, BYTE *mx, BYTE *my, bool prev);
 
 /*********************************************************
 *NAME:          playersGetNumAllie

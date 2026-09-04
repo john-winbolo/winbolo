@@ -487,12 +487,13 @@ BYTE pillsGetArmourPos(pillboxes *value, BYTE mx, BYTE my);
 * pills location
 *
 *ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  mx    - Pointer to hold X Map position (and prev)
-*  my    - Pointer to hold Y Map position (and prev)
-*  prev  - Whether a previos pill is being passed
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  prev     - Whether a previos pill is being passed
 *********************************************************/
-bool pillsGetNextView(struct GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool prev);
+bool pillsGetNextView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev);
 
 /* Whether viewPlayer may look through pillbox pillIdx: the pill is allied to
  * them (own pills are allied to themselves), it still has armour, and it is
@@ -766,13 +767,14 @@ bool pillsIsInView(struct GameSim *sim, pillboxes *value, BYTE playerNum, BYTE m
 * whether a pill was found in that direction. 
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  xMove  - -1 for moving left, 1 for right, 0 for neither
-*  yMove  - -1 for moving up, 1 for down, 0 for neither
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  xMove    - -1 for moving left, 1 for right, 0 for neither
+*  yMove    - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool pillsMoveView(struct GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove, int yMove);
+bool pillsMoveView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, int xMove, int yMove);
 
 /*********************************************************
 *NAME:          pillsGetNumberOwnedByPlayer

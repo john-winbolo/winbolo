@@ -338,6 +338,21 @@ struct ClientSim {
     uint32_t         pillNearTick[MAX_PILLS];
     uint32_t         baseNearTick[MAX_BASES];
     uint32_t         allyNearTick[MAX_TANKS];
+    /* The last map square each remote tank was seen on, and the display tick
+     * that sighting landed. A tank outside our viewport arrives as a hidden
+     * stub, which zeroes its players entry so the renderer stops drawing a
+     * ghost — this is the separate record the ally view centres on instead of
+     * the map origin, and the tick is how long the slot has been out of
+     * sight. Both are 0 for a slot never seen this round, and both are
+     * cleared with the rest of the per-round view state. */
+    BYTE             allyLastMapX[MAX_TANKS];
+    BYTE             allyLastMapY[MAX_TANKS];
+    uint32_t         allySeenTick[MAX_TANKS];
+    /* The ally the stale-view timer belongs to, and the display tick the
+     * current run of watching it started. A tick of 0 means no run is being
+     * timed. */
+    BYTE             allyViewStubTarget;
+    uint32_t         allyViewStubTick;
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
     bool             lobbyAvailable;    /* Server runs a lobby (CTRL_LOBBY_SETTINGS
                                          * inLobby). False on -nolobby/-maprotate;
@@ -694,14 +709,45 @@ PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
  * Runs once per display tick, before the overview reads the clocks. */
 void                    clientSimViewDecayTick(ClientSim *cs);
 
-/* Clears the clocks back to "never been near anything". Called wherever the
- * round's view state is reset. */
+/* Clears the clocks back to "never been near anything", along with the
+ * last-seen record the ally view leans on. Called wherever the round's view
+ * state is reset. */
 void                    clientSimResetViewDecay(ClientSim *cs);
 
 /* TRUE when the camera is parked on an item whose category is on
  * viewPolicyDecay and whose clock has run out. The server has already stopped
  * sending that item's squares, so the view has nothing left to show. */
 bool                    clientSimViewDecayExpired(const ClientSim *cs);
+
+/* One bit per item of a category: that item may be picked while cycling. All
+ * of them under viewPolicyAlways, viewPolicyKey and viewPolicyOff, so those
+ * three cycle exactly as they always have; under viewPolicyDecay the items
+ * whose clocks have run out drop out, because the server has stopped sending
+ * their squares and parking on one would show nothing. This is the one place
+ * the per-item decay question is asked for cycling. */
+PlayerBitMap            clientSimViewEligibleMask(const ClientSim *cs,
+                                                  ViewCategory cat);
+
+/* Fills the masks and remembered squares the item-view cycling takes. The
+ * split is the same one OverviewViewInputs uses: ClientSim knows the rules
+ * and the clocks, viewport.c knows what to do with them, and neither has to
+ * know the other's layout. */
+void                    clientSimFillViewCycleInputs(const ClientSim *cs,
+                                                     ViewCycleInputs *in);
+
+/* How long the ally view sits on a target it has stopped receiving before it
+ * gives up on it. Under viewPolicyKey the server only starts sending an
+ * ally's rect once the claim arrives, so entering the view always costs about
+ * a round trip of stale ground; two seconds is well clear of that and short
+ * enough that an ally who died while out of sight does not strand the camera.
+ * The client is never told that directly — while a claim is valid the server
+ * grants the rect, so a run of stubs this long means the rect is gone. */
+#define CLIENT_VIEW_ALLY_STUB_GRACE_TICKS (2 * CLIENT_VIEW_DECAY_TICKS_SEC)
+
+/* TRUE when the ally view has gone that long without a real update for the
+ * tank it is watching. Advances the timer, so it belongs on the per-tick
+ * upkeep path and nowhere else. */
+bool                    clientSimAllyViewStubExpired(ClientSim *cs);
 
 /* Fills the view rules, clocks and camera state the overview's region build
  * takes. Declared here rather than reached through overview_map.h so this

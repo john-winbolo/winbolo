@@ -1207,13 +1207,14 @@ BYTE pillsGetArmourPos(pillboxes *value, BYTE mx, BYTE my) {
 * whether a pill was found in that direction. 
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  xMove  - -1 for moving left, 1 for right, 0 for neither
-*  yMove  - -1 for moving up, 1 for down, 0 for neither
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  xMove    - -1 for moving left, 1 for right, 0 for neither
+*  yMove    - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove, int yMove) {
+bool pillsMoveView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, int xMove, int yMove) {
   bool returnValue; /* Value to return */
   double nearest;   /* Nearest */
   BYTE count;       /* Looping variable */
@@ -1230,7 +1231,7 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove
   oldPill--;
   myPlayerNum = sim->viewPlayer;
   while (count < (*value)->numPills) {
-    if (count != oldPill && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if (count != oldPill && (eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, myPlayerNum, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
       if (((yMove == 0 && (xMove < 0 && (*value)->item[count].x < *mx)) || (xMove > 0 && (*value)->item[count].x > *mx)) || ((xMove == 0 && (yMove < 0 && (*value)->item[count].y < *my)) || (yMove > 0 && (*value)->item[count].y > *my))) {
         if (utilIsItemInRange(*mx, *my, (*value)->item[count].x, (*value)->item[count].y, (WORLD) nearest, &dist) == TRUE) {
           nearest = dist;
@@ -1263,12 +1264,13 @@ bool pillsMoveView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove
 * pills location
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  prev   - Whether a previous pill is being passed
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  prev     - Whether a previous pill is being passed
 *********************************************************/
-bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool prev) {
+bool pillsGetNextView(GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev) {
   bool returnValue; /* Value to return */
   bool done;        /* Finished */
   bool okLoop;      /* Ok to loop */
@@ -1299,7 +1301,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
 
   /* Find the next item */
   while (done == FALSE && count < ((*value)->numPills)) {
-    if ((playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+    if ((eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
       done = TRUE;
       *mx = (*value)->item[count].x;
       *my = (*value)->item[count].y;
@@ -1311,7 +1313,7 @@ bool pillsGetNextView(GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool p
   if (done == FALSE && okLoop == TRUE) {
     count = 0;
     while (done == FALSE && count < ((*value)->numPills)) {
-      if ((playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
+      if ((eligible & ((PlayerBitMap)1 << count)) != 0 && (playersIsAllie(&sim->plyrs, playNumber, (*value)->item[count].owner) == TRUE) && ((*value)->item[count].armour) > 0 && ((*value)->item[count].inTank) == FALSE) {
         done = TRUE;
         *mx = (*value)->item[count].x;
         *my = (*value)->item[count].y;

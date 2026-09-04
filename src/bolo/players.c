@@ -774,13 +774,14 @@ bool playersCanAllyView(GameSim *sim, PlayerBitMap viewable, BYTE playerNum) {
 *ARGUMENTS:
 *  sim       - Pointer to the game sim
 *  viewable  - Bit per player slot: that tank is alive
+*  eligible  - Bit per player slot: that ally may be selected
 *  playerNum - Pointer to hold the ally's player number (and prev)
 *  mx        - Pointer to hold X Map position (and prev)
 *  my        - Pointer to hold Y Map position (and prev)
 *  xMove     - -1 for moving left, 1 for right, 0 for neither
 *  yMove     - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool playersMoveAllyView(GameSim *sim, PlayerBitMap viewable, BYTE *playerNum, BYTE *mx, BYTE *my, int xMove, int yMove) {
+bool playersMoveAllyView(GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligible, BYTE *playerNum, BYTE *mx, BYTE *my, int xMove, int yMove) {
   players *plrs = &sim->plyrs;
   bool returnValue; /* Value to return */
   double nearest;   /* Nearest */
@@ -796,7 +797,7 @@ bool playersMoveAllyView(GameSim *sim, PlayerBitMap viewable, BYTE *playerNum, B
   found = 0;
   count = 0;
   while (count < MAX_TANKS) {
-    if (count != *playerNum && playersCanAllyView(sim, viewable, count) == TRUE) {
+    if (count != *playerNum && (eligible & ((PlayerBitMap)1 << count)) != 0 && playersCanAllyView(sim, viewable, count) == TRUE) {
       itemX = (*plrs)->item[count].mapX;
       itemY = (*plrs)->item[count].mapY;
       /* One axis at a time: a horizontal press only considers allies to the
@@ -845,12 +846,13 @@ bool playersMoveAllyView(GameSim *sim, PlayerBitMap viewable, BYTE *playerNum, B
 *ARGUMENTS:
 *  sim       - Pointer to the game sim
 *  viewable  - Bit per player slot: that tank is alive
+*  eligible  - Bit per player slot: that ally may be selected
 *  playerNum - Pointer to hold the ally's player number (and prev)
 *  mx        - Pointer to hold X Map position
 *  my        - Pointer to hold Y Map position
 *  prev      - Whether a previous ally is being passed
 *********************************************************/
-bool playersGetNextAllyView(GameSim *sim, PlayerBitMap viewable, BYTE *playerNum, BYTE *mx, BYTE *my, bool prev) {
+bool playersGetNextAllyView(GameSim *sim, PlayerBitMap viewable, PlayerBitMap eligible, BYTE *playerNum, BYTE *mx, BYTE *my, bool prev) {
   players *plrs = &sim->plyrs;
   bool returnValue; /* Value to return */
   bool done;        /* Finished */
@@ -872,7 +874,7 @@ bool playersGetNextAllyView(GameSim *sim, PlayerBitMap viewable, BYTE *playerNum
 
   /* Find the next item */
   while (done == FALSE && count < MAX_TANKS) {
-    if (playersCanAllyView(sim, viewable, count) == TRUE) {
+    if ((eligible & ((PlayerBitMap)1 << count)) != 0 && playersCanAllyView(sim, viewable, count) == TRUE) {
       done = TRUE;
       *playerNum = count;
     }
@@ -883,7 +885,7 @@ bool playersGetNextAllyView(GameSim *sim, PlayerBitMap viewable, BYTE *playerNum
   if (done == FALSE && okLoop == TRUE) {
     count = 0;
     while (done == FALSE && count < MAX_TANKS) {
-      if (playersCanAllyView(sim, viewable, count) == TRUE) {
+      if ((eligible & ((PlayerBitMap)1 << count)) != 0 && playersCanAllyView(sim, viewable, count) == TRUE) {
         done = TRUE;
         *playerNum = count;
       }

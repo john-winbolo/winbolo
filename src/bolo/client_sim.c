@@ -734,6 +734,13 @@ void clientSimResetViewDecay(ClientSim *cs) {
   memset(cs->pillNearTick, 0, sizeof(cs->pillNearTick));
   memset(cs->baseNearTick, 0, sizeof(cs->baseNearTick));
   memset(cs->allyNearTick, 0, sizeof(cs->allyNearTick));
+  /* Where the other tanks were last round says nothing about this one, and
+   * the timer that reads those stamps runs on the same clock. */
+  memset(cs->allyLastMapX, 0, sizeof(cs->allyLastMapX));
+  memset(cs->allyLastMapY, 0, sizeof(cs->allyLastMapY));
+  memset(cs->allySeenTick, 0, sizeof(cs->allySeenTick));
+  cs->allyViewStubTarget = 0;
+  cs->allyViewStubTick = 0;
 }
 
 void clientSimViewDecayTick(ClientSim *cs) {
@@ -861,6 +868,92 @@ bool clientSimViewDecayExpired(const ClientSim *cs) {
 
   clientSimFillOverviewViewInputs(cs, &in);
   return overviewViewDecayLive(&in, cat, clocks[target], NULL) == FALSE;
+}
+
+/* That category's clocks, or NULL for a category this client does not know. */
+static const uint32_t *clientSimViewDecayClocks(const ClientSim *cs,
+                                                ViewCategory cat) {
+  switch (cat) {
+  case viewCategoryPill: return cs->pillNearTick;
+  case viewCategoryBase: return cs->baseNearTick;
+  case viewCategoryAlly: return cs->allyNearTick;
+  default:               return NULL;
+  }
+}
+
+PlayerBitMap clientSimViewEligibleMask(const ClientSim *cs, ViewCategory cat) {
+  OverviewViewInputs in;  /* The rules and clocks the window test reads */
+  const uint32_t *clocks; /* That category's clocks */
+  PlayerBitMap mask;      /* Bits to return */
+  BYTE count;             /* Items the category keeps a clock for */
+  BYTE i;                 /* Looping variable */
+
+  count = viewDecayCategoryCount(cat);
+  mask = (PlayerBitMap)((((PlayerBitMap)1) << count) - 1);
+  clocks = (cs == NULL) ? NULL : clientSimViewDecayClocks(cs, cat);
+  if (cs == NULL || clocks == NULL || cs->viewPolicy[cat] != viewPolicyDecay) {
+    /* Every item, which is what leaves the other three policies cycling
+     * exactly as they did before there were any policies at all. */
+    return mask;
+  }
+
+  clientSimFillOverviewViewInputs(cs, &in);
+  for (i = 0; i < count; i++) {
+    if (overviewViewDecayLive(&in, cat, clocks[i], NULL) == FALSE) {
+      mask &= ~((PlayerBitMap)1 << i);
+    }
+  }
+  return mask;
+}
+
+void clientSimFillViewCycleInputs(const ClientSim *cs, ViewCycleInputs *in) {
+  int cat; /* Looping variable */
+
+  if (in == NULL) {
+    return;
+  }
+  viewCycleInputsDefaults(in);
+  if (cs == NULL) {
+    return;
+  }
+
+  in->allyViewable = clientSimAllyViewMask(cs);
+  for (cat = 0; cat < VIEW_CATEGORY_COUNT; cat++) {
+    in->eligible[cat] = clientSimViewEligibleMask(cs, (ViewCategory)cat);
+  }
+  in->allyLastMapX = cs->allyLastMapX;
+  in->allyLastMapY = cs->allyLastMapY;
+}
+
+bool clientSimAllyViewStubExpired(ClientSim *cs) {
+  BYTE target;     /* The ally being watched */
+  uint32_t since;  /* Tick the current stale run started */
+
+  if (cs == NULL) {
+    return FALSE;
+  }
+  if (cs->viewport.viewKind != VIEW_KIND_ALLY ||
+      cs->viewport.viewTarget >= MAX_TANKS) {
+    cs->allyViewStubTick = 0;
+    return FALSE;
+  }
+
+  target = cs->viewport.viewTarget;
+  if (cs->allyViewStubTick == 0 || cs->allyViewStubTarget != target) {
+    /* The view has just been entered, or moved to another ally: the grace
+     * starts over, because under viewPolicyKey the server has only now been
+     * told to send this one. */
+    cs->allyViewStubTarget = target;
+    cs->allyViewStubTick = cs->viewDecayTick;
+  }
+
+  /* The later of "we started watching" and "we last saw it" — a real update
+   * for the ally resets the grace wherever in the run it lands. */
+  since = cs->allyViewStubTick;
+  if (cs->allySeenTick[target] > since) {
+    since = cs->allySeenTick[target];
+  }
+  return (cs->viewDecayTick - since) > CLIENT_VIEW_ALLY_STUB_GRACE_TICKS;
 }
 
 void clientSimFillOverviewViewInputs(const ClientSim *cs,
@@ -2896,9 +2989,11 @@ PlayerBitMap clientSimAllyViewMask(const ClientSim *cs) {
 /* The one body behind clientSimPillView / clientSimBaseView /
  * clientSimAllyView. */
 static void clientSimItemView(ClientSim *cs, uint8_t kind, int horz, int vert) {
+  ViewCycleInputs in; /* What the cycling takes from this client */
+
+  clientSimFillViewCycleInputs(cs, &in);
   viewportPanInView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
-                    clientSimGetScroll(cs), MY_TANK(cs), kind,
-                    clientSimAllyViewMask(cs), horz, vert);
+                    clientSimGetScroll(cs), MY_TANK(cs), kind, &in, horz, vert);
 }
 
 void clientSimPillView(ClientSim *cs, int horz, int vert) {

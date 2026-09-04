@@ -34,6 +34,7 @@
 #include "viewport_types.h"
 #include "client_enums.h"
 #include "types.h"
+#include "view_policy.h"   /* ViewCategory / VIEW_CATEGORY_COUNT */
 
 struct GameSim;
 #ifndef SCROLLSTATE_TYPEDEF
@@ -63,25 +64,52 @@ void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank);
  * that recentre themselves (or deliberately don't), where viewportFollowTank
  * would centre too early. */
 void viewportSetTankView(ViewPort *vp);
+/* What the item-view cycling needs from the client beyond the sim itself.
+ * The client fills this from its own state and passes it in, so the cycling
+ * here stays logic a test can drive on its own.
+ *
+ * allyViewable is the alive-tank bit per slot playersCanAllyView takes, and
+ * is ignored by the pill and base kinds. eligible is a separate bit per item
+ * of each category: a clear bit means the server has stopped sending that
+ * item's squares under a decay policy, so the cycle steps over it exactly as
+ * it steps over an item that does not qualify. The two masks stay apart
+ * because the aliveness mask is also what the overview's region build takes,
+ * and that applies decay on its own path.
+ *
+ * allyLastMapX/allyLastMapY are MAX_TANKS entries holding the last map square
+ * each remote tank was actually seen on. A tank outside our viewport arrives
+ * as a hidden stub, which zeroes its players entry, so this is the square an
+ * ally view centres on while its target is out of sight. Either may be NULL
+ * for a caller that keeps no such record. */
+typedef struct ViewCycleInputs {
+    PlayerBitMap allyViewable;
+    PlayerBitMap eligible[VIEW_CATEGORY_COUNT];
+    const BYTE  *allyLastMapX;
+    const BYTE  *allyLastMapY;
+} ViewCycleInputs;
+
+/* No viewable allies, every item eligible, no remembered squares — which
+ * leaves the cycling doing what it does with no policy in play. */
+void viewCycleInputsDefaults(ViewCycleInputs *in);
+
 /* Enter, cycle or step an item view. kind is a ViewStateKind
  * (client_command.h): VIEW_KIND_PILL, _BASE or _ALLY. horz/vert both 0 means
  * "enter this kind of view, or cycle to the next item if already in it";
  * either non-zero steps to the nearest item that way. Cycling wraps around
  * the items, and drops back to the tank only when there is nothing of that
- * kind left to watch. allyViewable is the alive-tank mask playersCanAllyView
- * takes and is ignored by the pill and base kinds. */
+ * kind left to watch. in may be NULL, which reads as the defaults above. */
 void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
-                       tank myTank, uint8_t kind, PlayerBitMap allyViewable,
+                       tank myTank, uint8_t kind, const ViewCycleInputs *in,
                        int horz, int vert);
 void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                            tank myTank, int horz, int vert);
 /* Per-display-tick upkeep for an item view: returns FALSE once the watched
  * item stops qualifying (pill dead or carried, base captured or gone neutral,
- * ally dead, un-allied or gone), leaving the caller to drop to the tank view.
- * An ally view also re-centres on its target as it drives. Always TRUE in the
- * tank view. */
+ * ally dead, un-allied or gone, or its decay clock run out), leaving the
+ * caller to drop to the tank view. An ally view also re-centres on its target
+ * as it drives. Always TRUE in the tank view. */
 bool viewportUpdateItemView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
-                            PlayerBitMap allyViewable);
+                            const ViewCycleInputs *in);
 void viewportSetCursor(ViewPort *vp, BYTE posX, BYTE posY);
 bool viewportGetCursor(const ViewPort *vp, BYTE *posX, BYTE *posY);
 void viewportCenterOnTank(ViewPort *vp, ScrollState *scroll, tank myTank);

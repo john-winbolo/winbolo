@@ -350,12 +350,68 @@ static BYTE viewportBaseIndexAt(struct GameSim *sim, BYTE mx, BYTE my) {
   return (BYTE)(baseNum == BASE_NOT_FOUND ? 0 : baseNum - 1);
 }
 
+void viewCycleInputsDefaults(ViewCycleInputs *in) {
+  int cat; /* Looping variable */
+
+  if (in == NULL) {
+    return;
+  }
+  memset(in, 0, sizeof(*in));
+  for (cat = 0; cat < VIEW_CATEGORY_COUNT; cat++) {
+    in->eligible[cat] = ~(PlayerBitMap)0;
+  }
+}
+
+/* The eligibility mask for the category this kind of view cycles through. */
+static PlayerBitMap viewportEligibleMask(const ViewCycleInputs *in,
+                                         uint8_t kind) {
+  switch (kind) {
+  case VIEW_KIND_PILL:
+    return in->eligible[viewCategoryPill];
+  case VIEW_KIND_BASE:
+    return in->eligible[viewCategoryBase];
+  case VIEW_KIND_ALLY:
+    return in->eligible[viewCategoryAlly];
+  default:
+    return 0;
+  }
+}
+
+/* Whether one item of this kind may be selected right now. */
+static bool viewportItemEligible(const ViewCycleInputs *in, uint8_t kind,
+                                 BYTE index) {
+  PlayerBitMap mask = viewportEligibleMask(in, kind);
+
+  return (mask & ((PlayerBitMap)1 << index)) != 0;
+}
+
+/* Where an ally is, as the view should centre on it. A tank outside our
+ * viewport arrives as a hidden stub, which zeroes its players entry so the
+ * renderer stops drawing the last in-view position as a ghost; the square the
+ * client last actually saw it on is kept separately, and that is what the
+ * view falls back to rather than the map origin. */
+static void viewportAllySquare(struct GameSim *sim, const ViewCycleInputs *in,
+                               BYTE target, BYTE *x, BYTE *y) {
+  BYTE mx = (*sim->plyrs).item[target].mapX;
+  BYTE my = (*sim->plyrs).item[target].mapY;
+
+  if (mx == 0 && my == 0 && in->allyLastMapX != NULL &&
+      in->allyLastMapY != NULL) {
+    mx = in->allyLastMapX[target];
+    my = in->allyLastMapY[target];
+  }
+  *x = mx;
+  *y = my;
+}
+
 /* Is the item the view is parked on still watchable? A pill or base is
  * identified by its square, so the index is re-derived from it; an ally is
  * identified by its player number, and its x/y are refreshed to where it is
- * now so the view does not centre on a square it has driven away from. */
+ * now so the view does not centre on a square it has driven away from. An
+ * item whose decay clock has run out is no longer watchable either: the
+ * server has stopped sending its squares. */
 static bool viewportItemCheck(struct GameSim *sim, uint8_t kind,
-                              PlayerBitMap allyViewable,
+                              const ViewCycleInputs *in,
                               BYTE *target, BYTE *x, BYTE *y) {
   switch (kind) {
   case VIEW_KIND_PILL:
@@ -363,19 +419,19 @@ static bool viewportItemCheck(struct GameSim *sim, uint8_t kind,
       return FALSE;
     }
     *target = viewportPillIndexAt(sim, *x, *y);
-    return TRUE;
+    return viewportItemEligible(in, kind, *target);
   case VIEW_KIND_BASE:
     if (basesCheckView(sim, &sim->bs, *x, *y) == FALSE) {
       return FALSE;
     }
     *target = viewportBaseIndexAt(sim, *x, *y);
-    return TRUE;
+    return viewportItemEligible(in, kind, *target);
   case VIEW_KIND_ALLY:
-    if (playersCanAllyView(sim, allyViewable, *target) == FALSE) {
+    if (playersCanAllyView(sim, in->allyViewable, *target) == FALSE ||
+        viewportItemEligible(in, kind, *target) == FALSE) {
       return FALSE;
     }
-    *x = (*sim->plyrs).item[*target].mapX;
-    *y = (*sim->plyrs).item[*target].mapY;
+    viewportAllySquare(sim, in, *target, x, y);
     return TRUE;
   default:
     return FALSE;
@@ -384,25 +440,33 @@ static bool viewportItemCheck(struct GameSim *sim, uint8_t kind,
 
 /* Step to the next watchable item of this kind, wrapping when prev is set. */
 static bool viewportItemNext(struct GameSim *sim, uint8_t kind,
-                             PlayerBitMap allyViewable,
+                             const ViewCycleInputs *in,
                              BYTE *target, BYTE *x, BYTE *y, bool prev) {
   bool result;
 
   switch (kind) {
   case VIEW_KIND_PILL:
-    result = pillsGetNextView(sim, &sim->pb, x, y, prev);
+    result = pillsGetNextView(sim, &sim->pb, viewportEligibleMask(in, kind),
+                              x, y, prev);
     if (result == TRUE) {
       *target = viewportPillIndexAt(sim, *x, *y);
     }
     return result;
   case VIEW_KIND_BASE:
-    result = basesGetNextView(sim, &sim->bs, x, y, prev);
+    result = basesGetNextView(sim, &sim->bs, viewportEligibleMask(in, kind),
+                              x, y, prev);
     if (result == TRUE) {
       *target = viewportBaseIndexAt(sim, *x, *y);
     }
     return result;
   case VIEW_KIND_ALLY:
-    return playersGetNextAllyView(sim, allyViewable, target, x, y, prev);
+    result = playersGetNextAllyView(sim, in->allyViewable,
+                                    viewportEligibleMask(in, kind), target,
+                                    x, y, prev);
+    if (result == TRUE) {
+      viewportAllySquare(sim, in, *target, x, y);
+    }
+    return result;
   default:
     return FALSE;
   }
@@ -410,25 +474,33 @@ static bool viewportItemNext(struct GameSim *sim, uint8_t kind,
 
 /* Step to the nearest watchable item of this kind in the pressed direction. */
 static bool viewportItemMove(struct GameSim *sim, uint8_t kind,
-                             PlayerBitMap allyViewable,
+                             const ViewCycleInputs *in,
                              BYTE *target, BYTE *x, BYTE *y, int horz, int vert) {
   bool result;
 
   switch (kind) {
   case VIEW_KIND_PILL:
-    result = pillsMoveView(sim, &sim->pb, x, y, horz, vert);
+    result = pillsMoveView(sim, &sim->pb, viewportEligibleMask(in, kind),
+                           x, y, horz, vert);
     if (result == TRUE) {
       *target = viewportPillIndexAt(sim, *x, *y);
     }
     return result;
   case VIEW_KIND_BASE:
-    result = basesMoveView(sim, &sim->bs, x, y, horz, vert);
+    result = basesMoveView(sim, &sim->bs, viewportEligibleMask(in, kind),
+                           x, y, horz, vert);
     if (result == TRUE) {
       *target = viewportBaseIndexAt(sim, *x, *y);
     }
     return result;
   case VIEW_KIND_ALLY:
-    return playersMoveAllyView(sim, allyViewable, target, x, y, horz, vert);
+    result = playersMoveAllyView(sim, in->allyViewable,
+                                 viewportEligibleMask(in, kind), target, x, y,
+                                 horz, vert);
+    if (result == TRUE) {
+      viewportAllySquare(sim, in, *target, x, y);
+    }
+    return result;
   default:
     return FALSE;
   }
@@ -446,12 +518,18 @@ static void viewportEnterItemView(ViewPort *vp, ScrollState *scroll, uint8_t kin
 }
 
 void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
-                       tank myTank, uint8_t kind, PlayerBitMap allyViewable,
+                       tank myTank, uint8_t kind, const ViewCycleInputs *in,
                        int horz, int vert) {
+  ViewCycleInputs fallback; /* Stands in for a caller with no inputs */
   bool result;
   BYTE target;
   BYTE x;
   BYTE y;
+
+  if (in == NULL) {
+    viewCycleInputsDefaults(&fallback);
+    in = &fallback;
+  }
 
   target = vp->viewTarget;
   x = vp->viewX;
@@ -464,10 +542,10 @@ void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
      * starts that kind's cycle at its first item — the remembered square and
      * target belong to the kind being left, not this one. */
     if (vp->viewKind == VIEW_KIND_TANK &&
-        viewportItemCheck(sim, kind, allyViewable, &target, &x, &y) == TRUE) {
+        viewportItemCheck(sim, kind, in, &target, &x, &y) == TRUE) {
       viewportEnterItemView(vp, scroll, kind, target, x, y);
     } else {
-      result = viewportItemNext(sim, kind, allyViewable, &target, &x, &y, FALSE);
+      result = viewportItemNext(sim, kind, in, &target, &x, &y, FALSE);
       if (result == TRUE) {
         /* Center on the object */
         viewportEnterItemView(vp, scroll, kind, target, x, y);
@@ -479,7 +557,7 @@ void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
     }
   } else {
     if (horz == 0 && vert == 0) {
-      result = viewportItemNext(sim, kind, allyViewable, &target, &x, &y, TRUE);
+      result = viewportItemNext(sim, kind, in, &target, &x, &y, TRUE);
       if (result == FALSE) {
         viewportFollowTank(vp, scroll, myTank);
       } else {
@@ -487,7 +565,7 @@ void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
         viewportEnterItemView(vp, scroll, kind, target, x, y);
       }
     } else {
-      if (viewportItemMove(sim, kind, allyViewable, &target, &x, &y, horz, vert) == TRUE) {
+      if (viewportItemMove(sim, kind, in, &target, &x, &y, horz, vert) == TRUE) {
         viewportEnterItemView(vp, scroll, kind, target, x, y);
       }
     }
@@ -496,11 +574,15 @@ void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
 
 void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                            tank myTank, int horz, int vert) {
-  viewportPanInView(vp, sim, scroll, myTank, VIEW_KIND_PILL, 0, horz, vert);
+  ViewCycleInputs in; /* No policy in play: every pill eligible */
+
+  viewCycleInputsDefaults(&in);
+  viewportPanInView(vp, sim, scroll, myTank, VIEW_KIND_PILL, &in, horz, vert);
 }
 
 bool viewportUpdateItemView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
-                            PlayerBitMap allyViewable) {
+                            const ViewCycleInputs *in) {
+  ViewCycleInputs fallback; /* Stands in for a caller with no inputs */
   BYTE target;
   BYTE x;
   BYTE y;
@@ -509,10 +591,15 @@ bool viewportUpdateItemView(ViewPort *vp, struct GameSim *sim, ScrollState *scro
     return TRUE;
   }
 
+  if (in == NULL) {
+    viewCycleInputsDefaults(&fallback);
+    in = &fallback;
+  }
+
   target = vp->viewTarget;
   x = vp->viewX;
   y = vp->viewY;
-  if (viewportItemCheck(sim, vp->viewKind, allyViewable, &target, &x, &y) == FALSE) {
+  if (viewportItemCheck(sim, vp->viewKind, in, &target, &x, &y) == FALSE) {
     return FALSE;
   }
 

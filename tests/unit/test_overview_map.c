@@ -42,8 +42,9 @@
  * item's block appears while its clock is inside the window, fades over the
  * end of it and freezes what it was showing once it runs out, and the clocks
  * start over with the round. The view exit reads the same window, so an item
- * view whose clock has run out drops back to the tank. The region build those
- * two lean on is pinned in test_overview_view_policy.c.
+ * view whose clock has run out drops back to the tank and cannot be entered
+ * again until the player has been near the item. The region build those two
+ * lean on is pinned in test_overview_view_policy.c.
  *
  * One more covers the accessor the overview draws its own crosshair from,
  * clientSimGetGunsightPos: it declines for a hidden sight and for a tank that
@@ -1725,11 +1726,19 @@ int run_overview_decay_view_exit(void) {
                   "an unstamped pill left the client in view kind %u",
                   (unsigned)clientSimGetViewKind(f.cs));
 
-    /* Freshly driven past, the same view holds. */
+    /* The cycling reads the same window, so the view cannot be re-entered on
+     * a pill whose clock has run out either — an expired category is an empty
+     * cycle, and an empty cycle stays in the tank view. */
+    clientSimPillView(f.cs, 0, 0);
+    UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_TANK,
+                  "an unstamped pill was still enterable, view kind %u",
+                  (unsigned)clientSimGetViewKind(f.cs));
+
+    /* Freshly driven past, the pill is back in the cycle and the view holds. */
+    f.cs->pillNearTick[0] = f.cs->viewDecayTick;
     clientSimPillView(f.cs, 0, 0);
     UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL,
                   "the pill view did not take a second time");
-    f.cs->pillNearTick[0] = f.cs->viewDecayTick;
     clientSimDisplayTick(f.cs, false);
     UT_ASSERT_MSG(clientSimGetViewKind(f.cs) == VIEW_KIND_PILL,
                   "a pill inside its window lost the view");

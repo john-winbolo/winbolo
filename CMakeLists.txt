@@ -3781,6 +3781,9 @@ set(_unit_test_names
     view_cycle_allies
     view_cycle_ally_direction
     view_cycle_exits
+    view_cycle_decay_skip
+    view_cycle_eligible_mask
+    view_cycle_ally_stub
     viewport_calc_square_pure
     overview_regions
     overview_reveal

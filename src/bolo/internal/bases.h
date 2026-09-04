@@ -406,14 +406,15 @@ bool basesCheckView(struct GameSim *sim, bases *value, BYTE mx, BYTE my);
 * equivalent of pillsMoveView.
 *
 *ARGUMENTS:
-*  sim    - Pointer to the game sim
-*  value  - Pointer to the bases structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  xMove  - -1 for moving left, 1 for right, 0 for neither
-*  yMove  - -1 for moving up, 1 for down, 0 for neither
+*  sim      - Pointer to the game sim
+*  value    - Pointer to the bases structure
+*  eligible - Bit per base index: that base may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  xMove    - -1 for moving left, 1 for right, 0 for neither
+*  yMove    - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool basesMoveView(struct GameSim *sim, bases *value, BYTE *mx, BYTE *my, int xMove, int yMove);
+bool basesMoveView(struct GameSim *sim, bases *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, int xMove, int yMove);
 
 /*********************************************************
 *NAME:          basesGetNextView
@@ -426,13 +427,14 @@ bool basesMoveView(struct GameSim *sim, bases *value, BYTE *mx, BYTE *my, int xM
 * base equivalent of pillsGetNextView.
 *
 *ARGUMENTS:
-*  sim    - Pointer to the game sim
-*  value  - Pointer to the bases structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  prev   - Whether a previous base is being passed
+*  sim      - Pointer to the game sim
+*  value    - Pointer to the bases structure
+*  eligible - Bit per base index: that base may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  prev     - Whether a previous base is being passed
 *********************************************************/
-bool basesGetNextView(struct GameSim *sim, bases *value, BYTE *mx, BYTE *my, bool prev);
+bool basesGetNextView(struct GameSim *sim, bases *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev);
 
 /*********************************************************
 *NAME:          basesRefueling
