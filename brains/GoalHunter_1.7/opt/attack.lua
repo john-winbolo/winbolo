@@ -1749,9 +1749,35 @@ do
   end
 end
 
--- Copy precomputed stamps into the C evaluate_pill_difficulty module.
+-- Copy precomputed stamps into the C evaluate_pill_difficulty module, plus
+-- every constant its sweep needs.  Nothing the C port scores is hardcoded in
+-- C any more: the terrain ids, the passability rule, the score weights and
+-- the five aim points all come from here, so a tuning change in
+-- constants.lua reaches both implementations at once.  (The C file shipped a
+-- terrain numbering that never matched the engine's -- it read GRASS and
+-- FOREST as impassable and rejected nearly every standoff spot.)
 if gh_attack then
-  gh_attack.init_stamps(LOS_STAMPS_5DEG, ELLIPSE_STAMPS_5DEG)
+  local _passable = {}
+  for tt = 0, 15 do
+    _passable[tt] = (((C.TERRAIN_COST_LAND[tt] or 9999) < 9999)
+                     and not U.is_water(tt)) or false
+  end
+  gh_attack.init_stamps(LOS_STAMPS_5DEG, ELLIPSE_STAMPS_5DEG, {
+    standoff       = C.ATTACK_PILL_STANDOFF,
+    danger_hotspot = C.ATTACK_DANGER_HOTSPOT,
+    inf_threshold  = C.PILL_TAKE_HOSTILE_INF_THRESHOLD,
+    inf_mult       = C.PILL_TAKE_HOSTILE_INF_MULT,
+    tree_penalty   = C.STANDOFF_SHOT_TREE_PENALTY or 8,
+    t_building     = C.T_BUILDING,
+    t_halfbuild    = C.T_HALFBUILD,
+    t_forest       = C.T_FOREST,
+    t_deepsea      = C.T_DEEPSEA,
+    t_swamp        = C.T_SWAMP,
+    t_river        = C.T_RIVER,
+    t_pillbox      = C.T_PILLBOX,
+    passable       = _passable,
+    aim_offsets    = shield.AIM_OFFSETS_TILE_FIRE,
+  })
   print("[attack] gh_attack C module initialized")
 end
 
@@ -2411,6 +2437,21 @@ local function blocked_line_replan(state, goal, pmx, pmy, now)
   return false, bucket, tries
 end
 
+-- ── C / Lua parity self-check ────────────────────────────────────────────
+-- Set _G.GH_ATTACK_PARITY_CHECK (or pass the "attackparity" token in
+-- -bot-init's [arg]) and every C evaluation is repeated through the Lua
+-- sweep, the two answers logged as one ATTACK_PARITY line.  Purely
+-- diagnostic: the decision returned is always the C one, whatever this
+-- prints.  The re-entry is what _parity_lua_only guards -- without it the
+-- second call would take the C fast path again and compare C with itself.
+--
+-- The whole harness lives inside `if BRAIN_DEBUG_MODE`, so lua_strip removes
+-- it from opt/ and production never sees the flag, the second sweep, or the
+-- string formatting.  _parity_lua_only stays OUTSIDE that block: the sweep
+-- reads it, and in opt/ it must still resolve to a plain `false` upvalue.
+local _parity_lua_only = false
+
+
 function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy,
                                      start_deg, end_deg, acc)
   -- Per-section diagnostic accumulators. Sub-µs to update; enables
@@ -2429,10 +2470,19 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 
   -- C fast path: skip the per-tile Lua overhead entirely.
   -- Only activates for the non-detailed hot path (step=5, no banned angles).
-  if not detailed and gh_attack and step_deg == 5
+  -- _parity_lua_only is set only by the parity self-check below, which
+  -- re-enters this function to run the Lua sweep it is comparing against.
+  if not detailed and gh_attack and step_deg == 5 and not _parity_lua_only
       and not (state and state.banned_pill_angles
                and state.banned_pill_angles[pmy * 256 + pmx]) then
-    gh_attack.sync_pill_at(world.pill_at, pmx, pmy)
+    -- The WHOLE world, not just world.pill_at: the C sweep needs base_at and
+    -- the live world.pills table too (hostile bases penalise the maneuver
+    -- area, and the clear-aim gate rejects a spot whose only shot lines are
+    -- crossed by a base or a live pill).  Passing the world table is also
+    -- what selects the C parity evaluator -- GoalHunter 1.5 / 1.6 link the
+    -- same C object and still pass a bare pill_at, which keeps them on the
+    -- frozen legacy evaluator.
+    gh_attack.sync_pill_at(world, pmx, pmy)
     local phase_not_opening = (phase and phase ~= "opening") and true or false
     local self_contrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx] or nil
     local c_score, c_mx, c_my, c_deg = gh_attack.evaluate_pill_difficulty(
