@@ -1927,6 +1927,9 @@ static const LangEntry langTable[] = {
 
     /* Key setup — self-mute binding */
     {2016, "Mute microphone"},
+
+    /* Players panel — live scoreboard section */
+    {2017, "Scoreboard"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

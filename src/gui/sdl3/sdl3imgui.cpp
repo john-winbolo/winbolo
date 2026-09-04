@@ -318,6 +318,10 @@ static SDL_Texture *s_iconBrain = nullptr;
  * same SVG at a height that covers the realistic zoom range so the
  * label-side blit is a (sharp) downscale rather than an upscale. */
 static SDL_Texture *s_iconBrainLg = nullptr;
+/* Skull for the players panel's scoreboard death columns. Its own copy of
+ * data/ui/skull.svg rather than the lobby's — that one lives in the lobby's
+ * icon cache behind lobbyIcons(), which is lobby-internal. */
+static SDL_Texture *s_iconSkull = nullptr;
 #if defined(WINBOLO_VOICE)
 /* Microphone state icons for the players panel. Three assets cover four
  * states — "talking" and "idle" are the same microphone under different
@@ -350,6 +354,9 @@ static void ensureWbnIconsLoaded(void) {
     s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
     s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
                                           WBN_ICON_TANK_LABEL_SIZE);
+    /* Outside the voice guard below: the scoreboard that draws this is not
+     * a voice feature and ships in -DWINBOLO_VOICE=OFF builds too. */
+    s_iconSkull   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
 #if defined(WINBOLO_VOICE)
     s_iconMic      = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",       WBN_ICON_SIZE);
     s_iconMicMuted = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg", WBN_ICON_SIZE);
@@ -361,6 +368,20 @@ static void ensureWbnIconsLoaded(void) {
             (void *)s_iconSteam,
             (void *)s_iconBrain, (void *)s_iconBrainLg,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+}
+
+/* Skull for the players panel scoreboard's death columns, drawn square at
+ * text height and tinted to the text colour so it sits with the other header
+ * art rather than shouting. Returns false when the asset is missing, which is
+ * the caller's cue to fall back to the column's written label. */
+static bool playersPanelDrawSkull(void) {
+    if (!s_iconSkull) return false;
+    float sz = ImGui::GetTextLineHeight();
+    ImGui::ImageWithBg((ImTextureID)s_iconSkull, ImVec2(sz, sz),
+                       ImVec2(0, 0), ImVec2(1, 1),
+                       ImVec4(0, 0, 0, 0),
+                       ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    return true;
 }
 
 /* Platform icon textures, indexed by ClientType. UNKNOWN slot stays NULL. */
@@ -1490,12 +1511,15 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
+    /* Outside the voice guard below: the scoreboard's skull comes from here
+     * too, and it is drawn in every build. Idempotent. */
+    ensureWbnIconsLoaded();
+
 #if defined(WINBOLO_VOICE)
     /* Who is producing voice right now. Derived locally from frames
      * arriving, so it only ever names players this client can actually
      * hear; read once for the whole panel rather than per row. */
     PlayerBitMap talkingMap = voiceGetTalkingMap();
-    ensureWbnIconsLoaded();
 #endif
 
     /* Collect enabled player indices */
@@ -1612,6 +1636,236 @@ static void renderPlayersPanel(ClientSim *cs) {
     } else {
         for (int idx = 0; idx < enabledCount; idx++)
             renderPlayerRow(enabledPlayers[idx]);
+    }
+
+    /* ── Live scoreboard ─────────────────────────────────────────────
+     * The end-of-round recap's table, counted live: same columns, same
+     * header art, same sizing, minus damage dealt and builds, which no
+     * client-side event carries. Folded away behind a header so the panel
+     * stays a mute-and-alliance tool first — open by default on desktop,
+     * closed on touch, where the rows above are already two columns wide
+     * and seven more will not fit a phone until it is asked for. */
+    if (ImGui::CollapsingHeader(langGetText(STR_PLAYERS_PANEL_SCOREBOARD),
+                                uiModeIsTablet()
+                                    ? 0
+                                    : ImGuiTreeNodeFlags_DefaultOpen)) {
+        /* One read of the live counters per row, so the sort below compares
+         * a stable snapshot instead of going back through the accessor on
+         * every comparison. A slot the sim has no stats for reads as zeroes
+         * rather than dropping out of a list the rows above still show. */
+        ClientPlayerStats rowStats[MAX_PLAYERS] = {};
+        for (int idx = 0; idx < enabledCount; idx++) {
+            const ClientPlayerStats *ps =
+                clientSimGetPlayerStats(cs, (BYTE)enabledPlayers[idx]);
+            if (ps) rowStats[idx] = *ps;
+        }
+
+        /* Same name the rows above print, numeric fallback included, so a
+         * slot whose name has not arrived reads the same in both places. */
+        auto rowName = [&](int r, char *buf, size_t len) -> const char * {
+            int slot = enabledPlayers[r];
+            if (s_playerName[slot][0]) return s_playerName[slot];
+            snprintf(buf, len, "%d", slot + 1);
+            return buf;
+        };
+
+        /* Widest count each column will actually print. A fixed-width column
+         * clips, so it has to cover its own numbers — but only the ones that
+         * are there, not a worst case this round never reached. */
+        unsigned colMax[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        for (int idx = 0; idx < enabledCount; idx++) {
+            const ClientPlayerStats *p = &rowStats[idx];
+            if ((unsigned)p->kills        > colMax[1]) colMax[1] = p->kills;
+            if ((unsigned)p->deaths       > colMax[2]) colMax[2] = p->deaths;
+            if ((unsigned)p->baseCaptures > colMax[3]) colMax[3] = p->baseCaptures;
+            if ((unsigned)p->pillCaptures > colMax[4]) colMax[4] = p->pillCaptures;
+            if ((unsigned)p->lgmKills     > colMax[5]) colMax[5] = p->lgmKills;
+            if ((unsigned)p->lgmDeaths    > colMax[6]) colMax[6] = p->lgmDeaths;
+        }
+
+        /* Icons are text-height tall and keep their source aspect, so these
+         * widths follow the UI scale without a hard-coded pixel anywhere. */
+        const ImGuiStyle &sty = ImGui::GetStyle();
+        const float iconH = ImGui::GetTextLineHeight();
+        const float lgmW  = iconH * (float)LGM_WIDTH / (float)LGM_HEIGHT;
+        /* What the header spends on the sort arrow — the same width
+         * TableHeader reserves for it. */
+        const float arrowW =
+            SDL_truncf(ImGui::GetFontSize() * 0.65f + sty.FramePadding.x);
+
+        auto statColWidth = [&](int col, float iconExtent) {
+            char buf[16];
+            SDL_snprintf(buf, sizeof(buf), "%u", colMax[col]);
+            float w = ImGui::CalcTextSize(buf).x;
+            if (iconExtent > w) w = iconExtent;
+            /* Charged to EVERY stat column, not just the sorted one. ImGui
+             * draws the arrow hard against the right edge of the sorted
+             * cell, so paying for it only there makes the sorted column
+             * wider than its neighbours: moving the sort would grow one
+             * column, shrink another, and slide every column between them
+             * sideways. Reserving it everywhere costs one arrow's width per
+             * column and holds the layout still. */
+            w += arrowW;
+            /* One pixel of slop: an icon sized to exactly fill the cell
+             * would otherwise be at the mercy of rounding at the clip
+             * edge. */
+            w += sty.CellPadding.x * 2.0f + 1.0f;
+            return w;
+        };
+
+        /* A click sorts on that column, a second click reverses it. The
+         * counting columns lead with their biggest, which is the answer
+         * anyone clicking them is after; names lead A→Z. Kills is where the
+         * table starts. */
+        const ImGuiTableColumnFlags statCol =
+            ImGuiTableColumnFlags_WidthFixed |
+            ImGuiTableColumnFlags_PreferSortDescending;
+        if (enabledCount > 0 &&
+            ImGui::BeginTable("##panelScore", 7,
+                              ImGuiTableFlags_RowBg |
+                                  ImGuiTableFlags_BordersInnerH |
+                                  ImGuiTableFlags_NoHostExtendX |
+                                  ImGuiTableFlags_Sortable)) {
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_NAME),
+                                    ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_KILLS),
+                                    statCol | ImGuiTableColumnFlags_DefaultSort,
+                                    statColWidth(1, iconH));
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DEATHS),
+                                    statCol, statColWidth(2, iconH));
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BASE),
+                                    statCol, statColWidth(3, iconH));
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_PILL),
+                                    statCol, statColWidth(4, iconH));
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMK),
+                                    statCol, statColWidth(5, lgmW));
+            ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMD),
+                                    statCol,
+                                    statColWidth(6, lgmW + sty.ItemInnerSpacing.x +
+                                                    iconH));
+
+            /* Header row drawn by hand: every column that counts something
+             * the map draws is headed by that sprite instead of a word, with
+             * the written name on the tooltip. Only Name keeps its text.
+             * TableHeader is still submitted for every column, with an empty
+             * label where the icon speaks, so the cell keeps its header
+             * background, hover, sort click and id path; the id comes from
+             * the column index the way TableHeadersRow does it. */
+            ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+            for (int c = 0; c < 7; c++) {
+                ImGui::TableSetColumnIndex(c);
+                const char *label = ImGui::TableGetColumnName(c);
+                bool drewIcon = false;
+                switch (c) {
+                    case 1:
+                        imguiDrawTileIcon(TANK_SELF_0_X, TANK_SELF_0_Y);
+                        drewIcon = true;
+                        break;
+                    case 2:
+                        drewIcon = playersPanelDrawSkull();
+                        break;
+                    case 3:
+                        imguiDrawTileIcon(BASE_GOOD_X, BASE_GOOD_Y);
+                        drewIcon = true;
+                        break;
+                    case 4:
+                        imguiDrawTileIcon(PILL_EVIL15_X, PILL_EVIL15_Y);
+                        drewIcon = true;
+                        break;
+                    case 5:
+                        imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                        drewIcon = true;
+                        break;
+                    case 6:
+                        /* Man then skull — the pair reads as "little men
+                         * lost", against column 5's bare man for the ones
+                         * you killed. Without the skull the pair is
+                         * ambiguous, so that case falls back to the written
+                         * label. */
+                        imguiDrawAtlasIcon(LGM0_X, LGM0_Y, LGM_WIDTH, LGM_HEIGHT);
+                        ImGui::SameLine(0.0f, sty.ItemInnerSpacing.x);
+                        drewIcon = playersPanelDrawSkull();
+                        break;
+                    default:
+                        break;
+                }
+                if (drewIcon) ImGui::SameLine(0.0f, 0.0f);
+                ImGui::PushID(c);
+                ImGui::TableHeader(drewIcon ? "" : label);
+                ImGui::PopID();
+                if (drewIcon) imguiHelpTooltip(label);
+            }
+
+            /* Rows in the order the header row just asked for. Reading the
+             * specs after the headers rather than before them is what makes
+             * a click land on the frame it happened rather than the one
+             * after. */
+            int sortCol = 1;
+            bool sortAsc = false;
+            if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs()) {
+                if (specs->SpecsCount > 0) {
+                    sortCol = specs->Specs[0].ColumnIndex;
+                    sortAsc = specs->Specs[0].SortDirection ==
+                              ImGuiSortDirection_Ascending;
+                }
+                specs->SpecsDirty = false;
+            }
+
+            /* Every column but the name counts something, so one unsigned
+             * reads them all. Column 0 sorts by name and never reaches
+             * this. */
+            auto colValue = [&](int r, int col) -> unsigned {
+                const ClientPlayerStats *p = &rowStats[r];
+                switch (col) {
+                    case 1:  return p->kills;
+                    case 2:  return p->deaths;
+                    case 3:  return p->baseCaptures;
+                    case 4:  return p->pillCaptures;
+                    case 5:  return p->lgmKills;
+                    case 6:  return p->lgmDeaths;
+                    default: return 0;
+                }
+            };
+            auto rowBefore = [&](int a, int b) -> bool {
+                if (sortCol == 0) {
+                    char na[16], nb[16];
+                    int c = SDL_strcasecmp(rowName(a, na, sizeof(na)),
+                                           rowName(b, nb, sizeof(nb)));
+                    if (c != 0) return sortAsc ? (c < 0) : (c > 0);
+                } else {
+                    unsigned va = colValue(a, sortCol), vb = colValue(b, sortCol);
+                    if (va != vb) return sortAsc ? (va < vb) : (va > vb);
+                }
+                /* A tie falls back to slot order, so equal counts hold
+                 * still instead of shuffling. */
+                return enabledPlayers[a] < enabledPlayers[b];
+            };
+            int order[MAX_PLAYERS];
+            for (int r = 0; r < enabledCount; r++) order[r] = r;
+            for (int r = 1; r < enabledCount; r++) {
+                int j = r;
+                while (j > 0 && rowBefore(order[j], order[j - 1])) {
+                    int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
+                    j--;
+                }
+            }
+
+            for (int r = 0; r < enabledCount; r++) {
+                int row = order[r];
+                const ClientPlayerStats *p = &rowStats[row];
+                char nameBuf[16];
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(rowName(row, nameBuf, sizeof(nameBuf)));
+                ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
+                ImGui::TableSetColumnIndex(2); ImGui::Text("%u", (unsigned)p->deaths);
+                ImGui::TableSetColumnIndex(3); ImGui::Text("%u", (unsigned)p->baseCaptures);
+                ImGui::TableSetColumnIndex(4); ImGui::Text("%u", (unsigned)p->pillCaptures);
+                ImGui::TableSetColumnIndex(5); ImGui::Text("%u", (unsigned)p->lgmKills);
+                ImGui::TableSetColumnIndex(6); ImGui::Text("%u", (unsigned)p->lgmDeaths);
+            }
+            ImGui::EndTable();
+        }
     }
 
     /* Alliance actions */
