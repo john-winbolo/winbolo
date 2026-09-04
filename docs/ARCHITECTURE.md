@@ -87,12 +87,17 @@ T2 access via dedicated CMake profiles.
    than the client's own idea of what it may watch: the tank's own
    block, plus a block on each viewable pillbox, allied base and
    allied tank whose category the server allows. A category set to
-   `off` contributes none. Under `decay` a region also carries a
-   brightness — full while its proximity clock is inside the window,
-   ramping down over the last `VIEW_DECAY_FADE_SECS` seconds of it,
-   and gone once the clock runs out, at which point the squares under
-   it freeze the way any region leaving view does. So the fog never
-   shows as live a square the server is not feeding.
+   `off` contributes none. Under `key`, watching an item takes the
+   tank's own block away for as long as it lasts — one view at a
+   time, the way the classic screen leaves the tank behind while the
+   player is in an item view — and the server drops the matching rect,
+   so nothing round the tank is arriving either. Under `decay` a
+   region also carries a brightness — full while its proximity clock
+   is inside the window, ramping down over the last
+   `VIEW_DECAY_FADE_SECS` seconds of it, and gone once the clock runs
+   out, at which point the squares under it freeze the way any region
+   leaving view does. So the fog never shows as live a square the
+   server is not feeding.
 
    `clientSimGetBrainMap` returns the terrain array brains reason
    over, and it is not a record of anything the player saw. It holds
@@ -793,17 +798,19 @@ the live map.
 goes) has each map event tested against that client's viewport set — the same
 rects `serverSimBuildViewports` produces for entity culling: the tank's own
 screen plus a screen for each pillbox, base and allied tank its view policies
-allow. An event inside the rects is queued on `CHANNEL_MAP` as before *and* its
-new terrain byte written into that slot's copy. An event outside them is
-skipped and the copy keeps the old byte — that staleness is the record of what
-the client is owed. The write is tied to the enqueue, not to the test, so a
-queue-full drop also leaves the copy stale and heals the same way. In-process
-clients — the local host player and bots — are never marked culled: they take
-every change, and their copy tracks the live map. The one gap is a tick that
-produces more than `MAX_MAP_EVENTS` terrain changes: the overflow never reaches
-any copy, and since each client's checksum is taken over its own copy, the two
-ends still agree and nothing asks for a resync. It takes a pathological tick to
-reach, and no normal round comes near it.
+allow, or, while a `key` category is granting the item the client reports
+watching, that item's screen on its own. An event inside the rects is queued on
+`CHANNEL_MAP` as before *and* its new terrain byte written into that slot's
+copy. An event outside them is skipped and the copy keeps the old byte — that
+staleness is the record of what the client is owed. The write is tied to the
+enqueue, not to the test, so a queue-full drop also leaves the copy stale and
+heals the same way. In-process clients — the local host player and bots — are
+never marked culled: they take every change, and their copy tracks the live
+map. The one gap is a tick that produces more than `MAX_MAP_EVENTS` terrain
+changes: the overflow never reaches any copy, and since each client's checksum
+is taken over its own copy, the two ends still agree and nothing asks for a
+resync. It takes a pathological tick to reach, and no normal round comes near
+it.
 
 **How ground fills in as a client drives into it.** There is no "this client
 entered an area" event; the disagreement itself is the trigger.

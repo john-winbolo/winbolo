@@ -29,12 +29,15 @@
  *  policy, and the client is told what they are. A category
  *  set to always gives every item of its kind the player
  *  could watch a block; key gives one block, on whatever the
- *  player is watching this moment; decay gives a block to
- *  the items the player has driven near recently, fading out
- *  as each clock runs down; and off gives none. The server
- *  culls the data itself on the same rules - these blocks
- *  only say what the client is allowed to draw with what it
- *  has been sent.
+ *  player is watching this moment, and takes the block round
+ *  their own tank away while they watch it - one view at a
+ *  time, the way the classic screen leaves the tank behind
+ *  for as long as the player is in an item view; decay gives
+ *  a block to the items the player has driven near recently,
+ *  fading out as each clock runs down; and off gives none.
+ *  The server culls the data itself on the same rules - these
+ *  blocks only say what the client is allowed to draw with
+ *  what it has been sent.
  *
  *  Two kinds of square are held current wherever they are,
  *  because the status panels report both live and a frozen
@@ -370,6 +373,37 @@ static bool overviewAllyLive(struct GameSim *sim, BYTE myPlayerNum,
                           in->allyNearTick, outAlpha);
 }
 
+/* Whether the player is watching an item through a category on viewPolicyKey
+ * and that item still earns its block. Key is one view at a time: while this
+ * holds, the block round the player's own tank is not built either, so the map
+ * shows the one thing being watched and nothing else — the same single screen
+ * the classic view gives them while they are in an item view. The server culls
+ * to the same rule, so the ground round the tank is not arriving either. The
+ * three predicates each turn an out-of-range target away, so the watched index
+ * needs no checking here. */
+static bool overviewKeyViewLive(struct GameSim *sim, BYTE myPlayerNum,
+                                const OverviewViewInputs *in) {
+  BYTE alpha; /* Where the predicates report brightness; unwanted here */
+
+  if (in == NULL) {
+    return FALSE;
+  }
+
+  switch (in->viewKind) {
+  case VIEW_KIND_PILL:
+    return in->policy[viewCategoryPill] == viewPolicyKey &&
+           overviewPillLive(sim, myPlayerNum, in, in->viewTarget, &alpha);
+  case VIEW_KIND_BASE:
+    return in->policy[viewCategoryBase] == viewPolicyKey &&
+           overviewBaseLive(sim, myPlayerNum, in, in->viewTarget, &alpha);
+  case VIEW_KIND_ALLY:
+    return in->policy[viewCategoryAlly] == viewPolicyKey &&
+           overviewAllyLive(sim, myPlayerNum, in, in->viewTarget, &alpha);
+  default:
+    return FALSE; /* the tank view, and a kind this client does not know */
+  }
+}
+
 int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
                             const OverviewViewInputs *in, bool haveTank,
                             BYTE tankMX, BYTE tankMY, int tankHalf,
@@ -385,7 +419,8 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
     return 0;
   }
 
-  if (haveTank == TRUE && tankHalf >= 0 && count < maxOut) {
+  if (haveTank == TRUE && tankHalf >= 0 && count < maxOut &&
+      overviewKeyViewLive(sim, myPlayerNum, in) == FALSE) {
     out[count] = overviewRectAround((int)tankMX, (int)tankMY, tankHalf);
     count++;
   }
@@ -471,6 +506,14 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     tankLive = TRUE;
     useMX = om->lastTankMX;
     useMY = om->lastTankMY;
+  }
+
+  /* Watching an item under viewPolicyKey closes the block round the tank,
+   * which is what the builder does with it too. Asked here as well so
+   * tankWasLive records what was actually built and the farewell replay below
+   * stays paired with the regions that produced its rects. */
+  if (overviewKeyViewLive(sim, myPlayerNum, in) == TRUE) {
+    tankLive = FALSE;
   }
 
   memcpy(om->prevLive, om->live, sizeof(om->prevLive));

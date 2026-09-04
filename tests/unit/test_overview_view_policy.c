@@ -6,8 +6,9 @@
  * of map squares the overview treats as live. Each of pillboxes, bases and
  * allied tanks is on its own policy, and these cases pin what each one
  * produces: always gives every item of that kind the player could watch a
- * block, key gives one block on whatever the player is watching this moment,
- * decay gives a block to the items whose proximity clock is still running, and
+ * block, key gives one block on whatever the player is watching this moment
+ * and closes the block round the player's own tank while it lasts, decay gives
+ * a block to the items whose proximity clock is still running, and
  * off gives none. The blocks are the ones the matching view reaches — a base
  * takes the pill's 15x15 and an ally the tank's 29x29 — and they come out in a
  * fixed order the farewell stamp in overviewMapUpdate depends on: the tank,
@@ -235,7 +236,9 @@ int run_overview_policy_categories(void) {
                  "the tank block");
 
     /* Everything on key. Until the player is watching something there is
-     * nothing to grant; then it is the one item, whichever kind it is. */
+     * nothing to grant; then it is the one item, whichever kind it is, and the
+     * tank block goes for as long as they watch it — key is one view at a
+     * time, so the item's block replaces the tank's rather than joining it. */
     in.policy[viewCategoryPill] = viewPolicyKey;
     in.policy[viewCategoryBase] = viewPolicyKey;
     in.policy[viewCategoryAlly] = viewPolicyKey;
@@ -243,41 +246,62 @@ int run_overview_policy_categories(void) {
     n = vpBuild(gs, &in, out);
     UT_ASSERT_MSG(n == 1, "key with the player on the tank view gave %d "
                   "regions, expected the tank block on its own", n);
+    ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
+                 "the tank block");
 
     in.viewKind = VIEW_KIND_PILL;
     in.viewTarget = 1;
     n = vpBuild(gs, &in, out);
-    UT_ASSERT_MSG(n == 2, "key on pill 1 gave %d regions, expected 2", n);
-    ASSERT_BLOCK(out[1], 210, 60, OVERVIEW_PILL_HALF, 255,
+    UT_ASSERT_MSG(n == 1, "key on pill 1 gave %d regions, expected the watched "
+                  "pill's block on its own", n);
+    ASSERT_BLOCK(out[0], 210, 60, OVERVIEW_PILL_HALF, 255,
                  "the watched pill's block");
 
     in.viewKind = VIEW_KIND_BASE;
     in.viewTarget = 2;
     n = vpBuild(gs, &in, out);
-    UT_ASSERT_MSG(n == 2, "key on base 2 gave %d regions, expected 2", n);
-    ASSERT_BLOCK(out[1], 80, 40, OVERVIEW_PILL_HALF, 255,
+    UT_ASSERT_MSG(n == 1, "key on base 2 gave %d regions, expected the watched "
+                  "base's block on its own", n);
+    ASSERT_BLOCK(out[0], 80, 40, OVERVIEW_PILL_HALF, 255,
                  "the watched base's block");
 
     in.viewKind = VIEW_KIND_ALLY;
     in.viewTarget = 3;
     n = vpBuild(gs, &in, out);
-    UT_ASSERT_MSG(n == 2, "key on ally 3 gave %d regions, expected 2", n);
-    ASSERT_BLOCK(out[1], 160, 160, OVERVIEW_TANK_HALF, 255,
+    UT_ASSERT_MSG(n == 1, "key on ally 3 gave %d regions, expected the watched "
+                  "ally's block on its own", n);
+    ASSERT_BLOCK(out[0], 160, 160, OVERVIEW_TANK_HALF, 255,
                  "the watched ally's block");
 
-    /* A claim on something that is not the player's to watch grants nothing:
-     * the enemy's base, and the enemy's tank. */
+    /* A claim on something that is not the player's to watch grants nothing —
+     * the enemy's base, and the enemy's tank — and the tank block is still
+     * there, because nothing took its place. */
     in.viewKind = VIEW_KIND_BASE;
     in.viewTarget = 1;
     n = vpBuild(gs, &in, out);
     UT_ASSERT_MSG(n == 1, "key on an enemy base gave %d regions, expected the "
                   "tank block on its own", n);
+    ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
+                 "the tank block");
 
     in.viewKind = VIEW_KIND_ALLY;
     in.viewTarget = 2;
     n = vpBuild(gs, &in, out);
     UT_ASSERT_MSG(n == 1, "key on an enemy tank gave %d regions, expected the "
                   "tank block on its own", n);
+    ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
+                 "the tank block");
+
+    /* Only key does this. The same claim with the category on always leaves
+     * the tank block where it is and lights every pill besides. */
+    in.policy[viewCategoryPill] = viewPolicyAlways;
+    in.viewKind = VIEW_KIND_PILL;
+    in.viewTarget = 1;
+    n = vpBuild(gs, &in, out);
+    UT_ASSERT_MSG(n == 3, "always while watching pill 1 gave %d regions, "
+                  "expected the tank block and both viewable pills", n);
+    ASSERT_BLOCK(out[0], VP_TANK_MX, VP_TANK_MY, OVERVIEW_TANK_HALF, 255,
+                 "the tank block");
 
     serverSimDestroy(sim);
     return 0;

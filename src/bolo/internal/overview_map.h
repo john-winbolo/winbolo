@@ -103,7 +103,10 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
  * Which items of a category earn a rect is the policy in `in`: every one that
  * qualifies under viewPolicyAlways, only the one the player is watching under
  * viewPolicyKey, the ones whose proximity clock has not run out under
- * viewPolicyDecay, and none at all under viewPolicyOff. Qualifying is the same
+ * viewPolicyDecay, and none at all under viewPolicyOff. While a viewPolicyKey
+ * category is granting the watched item its rect there is no tank rect at all,
+ * whatever haveTank says: key is one view at a time, and the item's block
+ * replaces the tank's rather than joining it. Qualifying is the same
  * test the item views make — pillsCanView, basesCanView, playersCanAllyView —
  * so an enemy, dead, carried, neutral or un-allied item never appears whatever
  * the policy says. Each rect carries the alpha the fade wants: 255 outright,

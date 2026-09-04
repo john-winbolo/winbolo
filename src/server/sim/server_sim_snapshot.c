@@ -407,6 +407,29 @@ static bool viewItemInWindow(const ServerSim *sim, ViewCategory cat,
            (uint32_t)sim->viewDecaySecs[cat] * GAME_NUMTOTALTICKS_SEC;
 }
 
+/* Whether a viewPolicyKey category is granting this recipient a rect right
+ * now: it has reported watching an item of that kind (CMD_VIEW_STATE) and the
+ * item still qualifies. Under key the player watches one thing at a time, so
+ * this is both what earns the item its rect and what takes their own tank
+ * screen away for as long as it lasts. */
+static bool viewKeyRectGranted(ServerSim *sim, BYTE clientIdx) {
+    BYTE target = sim->viewTarget[clientIdx];
+
+    switch (sim->viewKind[clientIdx]) {
+    case VIEW_KIND_PILL:
+        return sim->viewPolicy[viewCategoryPill] == viewPolicyKey &&
+               viewPillQualifies(sim, clientIdx, target);
+    case VIEW_KIND_BASE:
+        return sim->viewPolicy[viewCategoryBase] == viewPolicyKey &&
+               viewBaseQualifies(sim, clientIdx, target);
+    case VIEW_KIND_ALLY:
+        return sim->viewPolicy[viewCategoryAlly] == viewPolicyKey &&
+               viewAllyQualifies(sim, clientIdx, target);
+    default:
+        return false;  /* tank view, and a kind this server does not know */
+    }
+}
+
 /* The single rect a viewPolicyKey category grants: the item this recipient
  * last reported viewing through (CMD_VIEW_STATE), while it is still in range
  * and still qualifies. Adds nothing for a tank-view claim, for a category that
@@ -417,29 +440,25 @@ static void addKeyViewRect(ServerSim *sim, BYTE clientIdx, ViewportRect *out,
     BYTE target = sim->viewTarget[clientIdx];
 
     if (*n >= maxOut) return;
+    if (!viewKeyRectGranted(sim, clientIdx)) return;
+
     switch (sim->viewKind[clientIdx]) {
     case VIEW_KIND_PILL:
-        if (sim->viewPolicy[viewCategoryPill] != viewPolicyKey) return;
-        if (!viewPillQualifies(sim, clientIdx, target)) return;
         addViewRect(out, n, (*sim->sim.pb).item[target].x,
                     (*sim->sim.pb).item[target].y, halfView);
         return;
     case VIEW_KIND_BASE:
-        if (sim->viewPolicy[viewCategoryBase] != viewPolicyKey) return;
-        if (!viewBaseQualifies(sim, clientIdx, target)) return;
         addViewRect(out, n, (*sim->sim.bs).item[target].x,
                     (*sim->sim.bs).item[target].y, halfView);
         return;
     case VIEW_KIND_ALLY: {
         WORLD wx = 0, wy = 0;
-        if (sim->viewPolicy[viewCategoryAlly] != viewPolicyKey) return;
-        if (!viewAllyQualifies(sim, clientIdx, target)) return;
         tankGetWorld(&sim->sim.tanks[target], &wx, &wy);
         addViewRect(out, n, wx >> 8, wy >> 8, halfView);
         return;
     }
     default:
-        return;  /* tank view — the recipient's own screen is already in */
+        return;
     }
 }
 
@@ -447,6 +466,7 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
     int n = 0;
     int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
     WORLD clientWX = 0, clientWY = 0;
+    bool keyView;
     bool hasTankRect = false;
 
     /* The per-recipient view state below is indexed by slot. */
@@ -454,14 +474,26 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
         return 0;
     }
 
+    /* Watching an item under viewPolicyKey replaces the recipient's own tank
+     * screen rather than adding to it: the ground round the tank stops being
+     * sent for as long as they are looking elsewhere, the way the classic
+     * screen leaves the tank behind while the player is in an item view. Their
+     * own tank is still sent in full — serverSimBuildSnapshot exempts it from
+     * the rects — so it is only what is around it that stops arriving. */
+    keyView = viewKeyRectGranted(sim, clientIdx);
+
     if (n < maxOut && serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
         int centerMX = clientWX >> 8;
         int centerMY = clientWY >> 8;
-        addViewRect(out, &n, centerMX, centerMY, halfView);
+        /* Recorded whether or not the rect is built — it is the square the
+         * frozen rect below falls back on once the tank has gone. */
         sim->lastTankMX[clientIdx] = (uint8_t)centerMX;
         sim->lastTankMY[clientIdx] = (uint8_t)centerMY;
         sim->lastTankValid[clientIdx] = true;
-        hasTankRect = true;
+        if (!keyView) {
+            addViewRect(out, &n, centerMX, centerMY, halfView);
+            hasTankRect = true;
+        }
     }
 
     /* Allied pillboxes. */
@@ -508,9 +540,10 @@ int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, i
     addKeyViewRect(sim, clientIdx, out, &n, maxOut, halfView);
 
     /* No tank this build: hold the view at the square the tank was last seen
-     * at. A slot that never had one gets whatever the policies produced,
-     * which can be nothing. */
-    if (!hasTankRect && n < maxOut && sim->lastTankValid[clientIdx]) {
+     * at, unless a key view is what took the tank rect away — that one is
+     * meant to be gone. A slot that never had a tank gets whatever the
+     * policies produced, which can be nothing. */
+    if (!hasTankRect && !keyView && n < maxOut && sim->lastTankValid[clientIdx]) {
         addViewRect(out, &n, sim->lastTankMX[clientIdx],
                     sim->lastTankMY[clientIdx], halfView);
     }

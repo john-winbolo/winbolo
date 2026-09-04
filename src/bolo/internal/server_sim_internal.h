@@ -514,8 +514,11 @@ typedef struct {
 /* Fill `out` (capacity maxOut) with clientIdx's tank screen plus one screen
  * per allied pillbox, base and tank that its category's ViewPolicy allows.
  * A client with no tank gets a screen at its last known position instead.
- * Returns the count, which can be 0 (a slot that never had a tank, with every
- * category off). */
+ * While a viewPolicyKey category is granting the item the client reports
+ * watching, that item's screen is the only one it gets: key is one view at a
+ * time, so the tank screen (and the last-known one behind it) is left out for
+ * as long as it lasts. Returns the count, which can be 0 (a slot that never
+ * had a tank, with every category off). */
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 
