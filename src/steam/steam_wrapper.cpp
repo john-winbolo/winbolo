@@ -311,6 +311,13 @@ extern "C" bool steam_get_persona_name(char *out, size_t outSize) {
   return true;
 }
 
+extern "C" uint64_t steam_get_steam_id(void) {
+  if (!s_initialized) return 0;
+  ISteamUser *u = SteamUser();
+  if (!u) return 0;
+  return u->GetSteamID().ConvertToUint64();
+}
+
 extern "C" void steam_cancel_auth_ticket(void) {
   if (!s_initialized || s_authTicket == k_HAuthTicketInvalid) return;
   SteamUser()->CancelAuthTicket(s_authTicket);

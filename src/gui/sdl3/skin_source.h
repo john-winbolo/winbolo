@@ -48,6 +48,7 @@ typedef struct SkinInfo {
     char     author[SKIN_NAME_MAX];
     char     notes[SKIN_NOTES_MAX];
     uint64_t workshopId;      /* 0 = none */
+    uint64_t workshopAuthor;  /* SteamID64 that published it, 0 = unknown */
     int      maxPixelDensity; /* 0 = unlimited */
     int      inGameRotate;    /* 0 or 1 */
 } SkinInfo;
@@ -149,14 +150,21 @@ bool        skinSourceExtractTo(SkinSource *src, const char *dir);
 /*********************************************************
  * NAME:          skinSetWorkshopId
  * PURPOSE:
- *   Records the Workshop id in the skin's skin.ini so a
- *   later publish updates that item instead of making a
- *   duplicate. skinPath is a directory or a .wsf/.zip; an
- *   archive is unpacked, edited and rebuilt in place. Every
- *   other key, and every other file, survives. False on any
- *   failure, leaving the original untouched.
+ *   Records the Workshop id, and the SteamID64 that
+ *   published it, in the skin's skin.ini so a later publish
+ *   updates that item instead of making a duplicate, and
+ *   can tell the publisher's own item from one that came
+ *   with someone else's skin. skinPath is a directory or a
+ *   .wsf/.zip; an archive is unpacked, edited and rebuilt in
+ *   place. Every other key, and every other file, survives.
+ *   authorSteamId 0 means unknown: any WorkshopAuthor line
+ *   already there is left exactly as it was, neither
+ *   replaced nor removed, because overwriting a known author
+ *   with nothing loses information. False on any failure,
+ *   leaving the original untouched.
  *********************************************************/
-bool        skinSetWorkshopId(const char *skinPath, uint64_t id);
+bool        skinSetWorkshopId(const char *skinPath, uint64_t id,
+                              uint64_t authorSteamId);
 
 /*********************************************************
  * NAME:          skinSetActive

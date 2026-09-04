@@ -35,6 +35,12 @@ bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_le
  * this both to pre-fill a signup name and to detect "running under Steam". */
 bool     steam_get_persona_name(char *out, size_t outSize);
 
+/* The local user's SteamID64, 0 when Steam is not initialized. This is a
+ * public identifier — it is the number in every Steam profile URL — and not a
+ * credential: it is written into a published skin so a later publish can tell
+ * the author's own item from someone else's. */
+uint64_t steam_get_steam_id(void);
+
 /* Cancel the auth-session ticket acquired by the most recent
  * steam_get_auth_ticket call, releasing its HAuthTicket handle.
  * No-op if no ticket is outstanding or Steam is not initialized. */

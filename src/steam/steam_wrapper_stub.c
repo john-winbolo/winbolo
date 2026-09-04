@@ -32,6 +32,8 @@ bool steam_get_persona_name(char *out, size_t outSize) {
   return false;
 }
 
+uint64_t steam_get_steam_id(void) { return 0; }
+
 void steam_cancel_auth_ticket(void) {}
 
 void steam_increment_stat(const char *name, int amount) {

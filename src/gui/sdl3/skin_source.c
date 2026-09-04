@@ -603,6 +603,8 @@ static void parseSkinIni(char *text, SkinInfo *out) {
             SDL_strlcpy(out->notes, v, sizeof(out->notes));
         } else if (SDL_strcasecmp(k, "WorkshopId") == 0) {
             out->workshopId = (uint64_t)SDL_strtoull(v, NULL, 10);
+        } else if (SDL_strcasecmp(k, "WorkshopAuthor") == 0) {
+            out->workshopAuthor = (uint64_t)SDL_strtoull(v, NULL, 10);
         } else if (SDL_strcasecmp(k, "MaxPixelDensity") == 0) {
             out->maxPixelDensity = SDL_atoi(v);
         } else if (SDL_strcasecmp(k, "InGameRotate") == 0) {
@@ -776,30 +778,37 @@ bool skinSourceExtractTo(SkinSource *src, const char *dir) {
 /* ------------------------------------------------------------------ */
 
 /* True when the line between b and e, already trimmed at both ends, is a
- * key=value pair whose key is WorkshopId. Whitespace either side of the key
- * and of the '=' is tolerated, the way parseSkinIni reads the same line. */
-static bool isWorkshopIdLine(const char *b, const char *e) {
+ * key=value pair whose key is key. Whitespace either side of the key and of
+ * the '=' is tolerated, the way parseSkinIni reads the same line. */
+static bool isKeyLine(const char *b, const char *e, const char *key) {
     const char *eq = b;
     const char *kend;
+    size_t      keyLen = SDL_strlen(key);
     while (eq < e && *eq != '=') eq++;
     if (eq == e) return false;
     kend = eq;
     while (kend > b && (kend[-1] == ' ' || kend[-1] == '\t')) kend--;
-    if (kend - b != 10) return false;   /* strlen("WorkshopId") */
-    return SDL_strncasecmp(b, "WorkshopId", 10) == 0;
+    if ((size_t)(kend - b) != keyLen) return false;
+    return SDL_strncasecmp(b, key, keyLen) == 0;
 }
 
-/* The text of a skin.ini carrying WorkshopId=id, built out of the text it
- * already has — NUL-terminated at [len], as SDL_LoadFile leaves it, and NULL
- * with len 0 when there is no ini at all. Lines are copied through in order,
- * so comments, blank lines and other sections survive; a WorkshopId already
- * in [Skin] is dropped and the new one goes in right after the [Skin]
- * header. Text with no [Skin] section gets one appended. Returns an
- * SDL_malloc'ed NUL-terminated string the caller frees, NULL on failure. */
-static char *iniWithWorkshopId(const char *text, size_t len, uint64_t id) {
+/* The text of a skin.ini carrying WorkshopId=id, and WorkshopAuthor=
+ * authorSteamId when that is not 0, built out of the text it already has —
+ * NUL-terminated at [len], as SDL_LoadFile leaves it, and NULL with len 0
+ * when there is no ini at all. Lines are copied through in order, so
+ * comments, blank lines and other sections survive; a WorkshopId already in
+ * [Skin] is dropped and the new one goes in right after the [Skin] header.
+ * An author of 0 is unknown, so a WorkshopAuthor line already there is left
+ * where it is rather than dropped for a line that would say nothing. Text
+ * with no [Skin] section gets one appended. Returns an SDL_malloc'ed
+ * NUL-terminated string the caller frees, NULL on failure. */
+static char *iniWithWorkshopId(const char *text, size_t len, uint64_t id,
+                               uint64_t authorSteamId) {
     char        idLine[64];
+    char        authorLine[64];
     char       *out;
     size_t      idLen;
+    size_t      authorLen = 0;
     size_t      o = 0;
     bool        inSkin = false;
     bool        inserted = false;
@@ -809,10 +818,15 @@ static char *iniWithWorkshopId(const char *text, size_t len, uint64_t id) {
     SDL_snprintf(idLine, sizeof(idLine), "WorkshopId=%llu\n",
                  (unsigned long long)id);
     idLen = SDL_strlen(idLine);
+    if (authorSteamId != 0) {
+        SDL_snprintf(authorLine, sizeof(authorLine), "WorkshopAuthor=%llu\n",
+                     (unsigned long long)authorSteamId);
+        authorLen = SDL_strlen(authorLine);
+    }
 
-    /* Lines are only ever dropped; all that is ever added is one id line,
-     * one section header and at most two newlines. */
-    out = (char *)SDL_malloc(len + idLen + 32);
+    /* Lines are only ever dropped; all that is ever added is one id line, at
+     * most one author line, one section header and at most two newlines. */
+    out = (char *)SDL_malloc(len + idLen + authorLen + 32);
     if (!out) return NULL;
 
     while (p != NULL && p < end) {
@@ -843,14 +857,19 @@ static char *iniWithWorkshopId(const char *text, size_t len, uint64_t id) {
                 if (o > 0 && out[o - 1] != '\n') out[o++] = '\n';
                 SDL_memcpy(out + o, idLine, idLen);
                 o += idLen;
+                if (authorLen > 0) {
+                    SDL_memcpy(out + o, authorLine, authorLen);
+                    o += authorLen;
+                }
                 inserted = true;
             }
             p = lineEnd;
             continue;
         }
 
-        if (inSkin && isWorkshopIdLine(b, e)) {
-            p = lineEnd;                       /* the id being replaced */
+        if (inSkin && (isKeyLine(b, e, "WorkshopId") ||
+                       (authorLen > 0 && isKeyLine(b, e, "WorkshopAuthor")))) {
+            p = lineEnd;                       /* the lines being replaced */
             continue;
         }
 
@@ -865,6 +884,10 @@ static char *iniWithWorkshopId(const char *text, size_t len, uint64_t id) {
         o += 7;
         SDL_memcpy(out + o, idLine, idLen);
         o += idLen;
+        if (authorLen > 0) {
+            SDL_memcpy(out + o, authorLine, authorLen);
+            o += authorLen;
+        }
     }
     out[o] = '\0';
     return out;
@@ -888,9 +911,11 @@ static bool writeFileReplacing(const char *path, const char *text,
     return ok;
 }
 
-/* Reads <dir>/skin.ini when it is there, puts the id in it and writes it
- * back. A skin with no ini gets one holding just the [Skin] section. */
-static bool rewriteSkinIni(const char *dir, uint64_t id) {
+/* Reads <dir>/skin.ini when it is there, puts the id and the publisher in it
+ * and writes it back. A skin with no ini gets one holding just the [Skin]
+ * section. */
+static bool rewriteSkinIni(const char *dir, uint64_t id,
+                           uint64_t authorSteamId) {
     char   iniPath[SKIN_PATH_MAX * 2];
     void  *old;
     size_t oldLen = 0;
@@ -899,7 +924,8 @@ static bool rewriteSkinIni(const char *dir, uint64_t id) {
 
     SDL_snprintf(iniPath, sizeof(iniPath), "%s/skin.ini", dir);
     old = SDL_LoadFile(iniPath, &oldLen);
-    text = iniWithWorkshopId((const char *)old, old ? oldLen : 0, id);
+    text = iniWithWorkshopId((const char *)old, old ? oldLen : 0, id,
+                             authorSteamId);
     SDL_free(old);
     if (!text) return false;
     ok = writeFileReplacing(iniPath, text, SDL_strlen(text));
@@ -972,12 +998,14 @@ static bool directoryLoneArchive(const char *dir, char *out, size_t outLen) {
     return found;
 }
 
-/* Unpacks the archive into a scratch folder, puts the id in the skin.ini
- * there, zips it back up and swaps it in. skinSourceZipDirectory writes the
- * top level plus sounds/, which is exactly the skin layout, so the round
- * trip is lossless for a valid skin; an archive whose files sat under a
- * wrapping top-level folder comes back flat, which reads the same. */
-static bool rewriteArchiveSkinIni(const char *archive, uint64_t id) {
+/* Unpacks the archive into a scratch folder, puts the id and the publisher in
+ * the skin.ini there, zips it back up and swaps it in.
+ * skinSourceZipDirectory writes the top level plus sounds/, which is exactly
+ * the skin layout, so the round trip is lossless for a valid skin; an archive
+ * whose files sat under a wrapping top-level folder comes back flat, which
+ * reads the same. */
+static bool rewriteArchiveSkinIni(const char *archive, uint64_t id,
+                                  uint64_t authorSteamId) {
     char        scratch[SKIN_PATH_MAX];
     char        tmpZip[SKIN_PATH_MAX * 2];
     char       *prefPath;
@@ -999,7 +1027,7 @@ static bool rewriteArchiveSkinIni(const char *archive, uint64_t id) {
     /* Closed before the file it was read from is replaced. */
     skinSourceClose(src);
 
-    if (ok) ok = rewriteSkinIni(scratch, id);
+    if (ok) ok = rewriteSkinIni(scratch, id, authorSteamId);
     if (ok) {
         /* Built beside the original, so swapping it in is a rename within
          * one filesystem rather than a copy across two. */
@@ -1014,7 +1042,8 @@ static bool rewriteArchiveSkinIni(const char *archive, uint64_t id) {
     return ok;
 }
 
-bool skinSetWorkshopId(const char *skinPath, uint64_t id) {
+bool skinSetWorkshopId(const char *skinPath, uint64_t id,
+                       uint64_t authorSteamId) {
     SDL_PathInfo info;
     char         nested[SKIN_PATH_MAX];
 
@@ -1023,12 +1052,12 @@ bool skinSetWorkshopId(const char *skinPath, uint64_t id) {
 
     if (info.type == SDL_PATHTYPE_DIRECTORY) {
         if (directoryLoneArchive(skinPath, nested, sizeof(nested))) {
-            return rewriteArchiveSkinIni(nested, id);
+            return rewriteArchiveSkinIni(nested, id, authorSteamId);
         }
-        return rewriteSkinIni(skinPath, id);
+        return rewriteSkinIni(skinPath, id, authorSteamId);
     }
     if (info.type == SDL_PATHTYPE_FILE && hasArchiveExt(skinPath)) {
-        return rewriteArchiveSkinIni(skinPath, id);
+        return rewriteArchiveSkinIni(skinPath, id, authorSteamId);
     }
     return false;
 }

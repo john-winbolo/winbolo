@@ -31,11 +31,16 @@
 
 /* Scratch skin the WorkshopId round trip builds and then removes, as a
  * directory and as the archive made from it. The two ids differ so the
- * second write cannot pass on the first one's value. */
-#define WORKSHOP_DIR     "skin_workshop_test_dir"
-#define WORKSHOP_ZIP     "skin_workshop_test.wsf"
-#define WORKSHOP_ID_DIR  1234567890ULL
-#define WORKSHOP_ID_ZIP  9876543210ULL
+ * second write cannot pass on the first one's value, and so do the two
+ * publisher ids written beside them. The third id is written with no
+ * publisher, which has to leave the publisher already recorded alone. */
+#define WORKSHOP_DIR         "skin_workshop_test_dir"
+#define WORKSHOP_ZIP         "skin_workshop_test.wsf"
+#define WORKSHOP_ID_DIR      1234567890ULL
+#define WORKSHOP_ID_ZIP      9876543210ULL
+#define WORKSHOP_ID_REPUB    1357924680ULL
+#define WORKSHOP_AUTHOR_DIR  76561197960287930ULL
+#define WORKSHOP_AUTHOR_ZIP  76561198012345678ULL
 
 /* An id no skin on disk can carry: skinSetActive scans the machine's real
  * prefpath and base-path skins folders, which are not assumed to be empty. */
@@ -330,7 +335,9 @@ int run_skin_active_vs_requested(void) {
 }
 
 /* Publishing to the Workshop writes the item's id back into the skin, so a
- * later publish updates that item instead of making a second one. The skin on
+ * later publish updates that item instead of making a second one, and the
+ * publisher's SteamID beside it, so a later publish can tell that author's
+ * own item from one that arrived inside somebody else's skin. The skin on
  * disk is a directory or an archive, and either way every other key in
  * skin.ini and every other file in the skin has to come through untouched —
  * an archive is unpacked, edited and zipped up again to get there.
@@ -368,7 +375,8 @@ static int checkWorkshopIdRoundtrip(const char *fixture) {
     skinSourceClose(src);
 
     /* Directory skin: skin.ini is rewritten where it sits. */
-    if (!skinSetWorkshopId(WORKSHOP_DIR, WORKSHOP_ID_DIR)) {
+    if (!skinSetWorkshopId(WORKSHOP_DIR, WORKSHOP_ID_DIR,
+                           WORKSHOP_AUTHOR_DIR)) {
         UT_FAIL("skinSetWorkshopId('%s', %llu) failed", WORKSHOP_DIR,
                 (unsigned long long)WORKSHOP_ID_DIR);
     }
@@ -383,6 +391,11 @@ static int checkWorkshopIdRoundtrip(const char *fixture) {
                 (unsigned long long)info.workshopId,
                 (unsigned long long)WORKSHOP_ID_DIR);
     }
+    if (info.workshopAuthor != WORKSHOP_AUTHOR_DIR) {
+        UT_FAIL("directory: WorkshopAuthor is %llu, want %llu",
+                (unsigned long long)info.workshopAuthor,
+                (unsigned long long)WORKSHOP_AUTHOR_DIR);
+    }
     rc = checkOtherIniKeys(&info, "directory");
     if (rc != 0) return rc;
 
@@ -394,7 +407,8 @@ static int checkWorkshopIdRoundtrip(const char *fixture) {
         UT_FAIL("skinSourceZipDirectory('%s', '%s', NULL) failed",
                 WORKSHOP_DIR, WORKSHOP_ZIP);
     }
-    if (!skinSetWorkshopId(WORKSHOP_ZIP, WORKSHOP_ID_ZIP)) {
+    if (!skinSetWorkshopId(WORKSHOP_ZIP, WORKSHOP_ID_ZIP,
+                           WORKSHOP_AUTHOR_ZIP)) {
         UT_FAIL("skinSetWorkshopId('%s', %llu) failed", WORKSHOP_ZIP,
                 (unsigned long long)WORKSHOP_ID_ZIP);
     }
@@ -414,7 +428,38 @@ static int checkWorkshopIdRoundtrip(const char *fixture) {
                 (unsigned long long)info.workshopId,
                 (unsigned long long)WORKSHOP_ID_ZIP);
     }
-    return checkOtherIniKeys(&info, "archive");
+    if (info.workshopAuthor != WORKSHOP_AUTHOR_ZIP) {
+        UT_FAIL("archive: WorkshopAuthor is %llu, want %llu",
+                (unsigned long long)info.workshopAuthor,
+                (unsigned long long)WORKSHOP_AUTHOR_ZIP);
+    }
+    rc = checkOtherIniKeys(&info, "archive");
+    if (rc != 0) return rc;
+
+    /* A write with no publisher: the id changes and the publisher already in
+     * the ini stays, rather than being replaced by a line saying nobody
+     * published it. The directory still carries the first write's pair. */
+    if (!skinSetWorkshopId(WORKSHOP_DIR, WORKSHOP_ID_REPUB, 0)) {
+        UT_FAIL("skinSetWorkshopId('%s', %llu, 0) failed", WORKSHOP_DIR,
+                (unsigned long long)WORKSHOP_ID_REPUB);
+    }
+    src = skinSourceOpen(WORKSHOP_DIR);
+    if (src == NULL) {
+        UT_FAIL("reopening the directory '%s' failed", WORKSHOP_DIR);
+    }
+    skinSourceReadIni(src, &info);
+    skinSourceClose(src);
+    if (info.workshopId != WORKSHOP_ID_REPUB) {
+        UT_FAIL("unknown publisher: WorkshopId is %llu, want %llu",
+                (unsigned long long)info.workshopId,
+                (unsigned long long)WORKSHOP_ID_REPUB);
+    }
+    if (info.workshopAuthor != WORKSHOP_AUTHOR_DIR) {
+        UT_FAIL("unknown publisher: WorkshopAuthor is %llu, want the %llu the "
+                "earlier write left", (unsigned long long)info.workshopAuthor,
+                (unsigned long long)WORKSHOP_AUTHOR_DIR);
+    }
+    return checkOtherIniKeys(&info, "unknown publisher");
 }
 
 /* SDL_RemovePath will not delete a directory with anything left in it, so

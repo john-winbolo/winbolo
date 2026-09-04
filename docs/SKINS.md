@@ -74,6 +74,7 @@ Notes=Free text, shown under the picker
 MaxPixelDensity=0
 InGameRotate=0
 WorkshopId=
+WorkshopAuthor=
 ```
 
 - **`MaxPixelDensity`** — the finest multiple your SVG art is meant to be drawn
@@ -82,8 +83,12 @@ WorkshopId=
   It only caps SVGs; `@Nx` PNG files are never capped, because shipping the file
   is the statement.
 - **`InGameRotate`** — see [Rotating skins](#rotating-skins).
-- **`WorkshopId`** — written by the game when you publish to Steam Workshop. Do
-  not set it by hand.
+- **`WorkshopId`** — the Workshop item this skin was published as. Written by
+  the game when you publish to Steam Workshop. Do not set it by hand.
+- **`WorkshopAuthor`** — the SteamID of whoever published that item. Written by
+  the game alongside `WorkshopId`. When a skin is passed on, it lets the game
+  see that a later publish is from a different account and has to make its own
+  item. Do not set it by hand.
 
 ## What you can replace
 
