@@ -2950,6 +2950,10 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
+        /* Show-and-raise, never a toggle — no check mark, matching the
+           native item in mac_menubar.mm. */
+        if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P"))
+            sdl3ImguiShowPlayersPanel(true);
         ImGui::Separator();
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, true);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
@@ -3824,7 +3828,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowSetTankLabelLen(cs, lblLong);
                 continue;
             case SDL_SCANCODE_P:
-                windowShowPillLabels_toggle(cs);
+                /* This switch gates on KMOD_PRIMARY only, so the shift-modified
+                   form has to be separated here rather than by its own case. */
+                if (ev.key.mod & SDL_KMOD_SHIFT) sdl3ImguiShowPlayersPanel(true);
+                else                             windowShowPillLabels_toggle(cs);
                 continue;
             case SDL_SCANCODE_B:
                 windowShowBaseLabels_toggle(cs);

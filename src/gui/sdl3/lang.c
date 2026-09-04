@@ -1921,6 +1921,9 @@ static const LangEntry langTable[] = {
 
     /* Voice settings — the platform cancels echo itself, so Speex does not */
     {2014, "Handled by the system"},
+
+    /* Players menu — open the players panel */
+    {2015, "Players Panel"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

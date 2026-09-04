@@ -2098,6 +2098,9 @@
 #define STR_WEB_CONNECT_FAILED              1872
 #define STR_WEB_JOIN_NO_RESPONSE            1873
 
+/* Players menu — open the players panel */
+#define STR_MENU_PLAYERS_PANEL                  2015
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

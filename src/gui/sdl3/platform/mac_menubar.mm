@@ -65,6 +65,7 @@ extern "C" void sdl3ImguiShowKeySetup(void);
 extern "C" void sdl3ImguiShowChangeName(void);
 
 extern "C" void sdl3ImguiShowSendMsg(bool open);
+extern "C" void sdl3ImguiShowPlayersPanel(bool open);
 extern "C" void clientSimCheckAllNonePlayers(struct ClientSim *cs, bool check);
 extern "C" void clientSimCheckAlliedPlayers(struct ClientSim *cs);
 extern "C" void clientSimCheckNearbyPlayers(struct ClientSim *cs);
@@ -250,6 +251,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onVoteReturnToLobby:(id)sender;
 - (void)onVoteSurrender:(id)sender;
 - (void)onShowSendMsg:(id)sender;
+- (void)onShowPlayersPanel:(id)sender;
 - (void)onSelectAllPlayers:(id)sender;
 - (void)onSelectNonePlayers:(id)sender;
 - (void)onSelectAllies:(id)sender;
@@ -424,6 +426,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
        sitting behind the game window, and hiding it is never what the player
        meant. See sendMsgPopOutShow in sdl3imgui.cpp. */
     sdl3ImguiShowSendMsg(true);
+}
+- (void)onShowPlayersPanel:(id)sender {
+    (void)sender;
+    sdl3ImguiShowPlayersPanel(true);
 }
 - (void)onSelectAllPlayers:(id)sender {
     (void)sender;
@@ -1188,6 +1194,16 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [sendMsgItem setTarget:g_bridge];
     [playersMenu addItem:sendMsgItem];
     s_sendMsgItem = sendMsgItem;
+
+    /* Players Panel — ⇧⌘P. Show-and-raise with no check state, so no
+     * stored item pointer and nothing in the menu-state sync. */
+    NSMenuItem *playersPanelItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_PLAYERS_PANEL)
+        action:@selector(onShowPlayersPanel:)
+        keyEquivalent:@"p"];
+    [playersPanelItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
+    [playersPanelItem setTarget:g_bridge];
+    [playersMenu addItem:playersPanelItem];
 
     [playersMenu addItem:[NSMenuItem separatorItem]];
 
