@@ -516,6 +516,7 @@ static PopOutWindow s_popSysInfo  = {};
 static PopOutWindow s_popNetInfo  = {};
 static PopOutWindow s_popGameInfo = {};
 static PopOutWindow s_popSendMsg  = {};
+static PopOutWindow s_popPlayers  = {};
 static ImGuiContext *s_mainImguiCtx = nullptr;
 
 static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
@@ -1451,40 +1452,7 @@ static bool localCanAnswerGameVote(ClientSim *cs,
  * Players panel (standalone window for tablet mode)
  * ------------------------------------------------------- */
 
-static void renderPlayersPanel(ClientSim *cs) {
-    if (!s_showPlayersPanel) return;
-
-    if (uiModeIsTablet()) {
-        ImGuiIO &io = ImGui::GetIO();
-        float w = io.DisplaySize.x * 0.8f;
-        float h = io.DisplaySize.y * 0.8f;
-        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    } else {
-        /* Cap the panel to the viewport work area so a large font (or a
-         * small game window) can't push it taller than the screen and clip
-         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
-         * The default size is also clamped so it never opens oversized. */
-        const ImGuiViewport *vp = ImGui::GetMainViewport();
-        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
-        /* Wide enough for a name plus the six counter columns and the ping;
-         * the old 340/280 pair was sized for a name and a ping alone. */
-        ImGui::SetNextWindowSize(ImVec2(SDL_min(520 * s_uiScale, maxW),
-                                        SDL_min(420 * s_uiScale, maxH)),
-                                 ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSizeConstraints(ImVec2(420 * s_uiScale, 200 * s_uiScale),
-                                            ImVec2(maxW, maxH));
-    }
-    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
-    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
-    char title[128];
-    snprintf(title, sizeof(title), "%s###playerspanel", langGetText(STR_DLGPLAYERS_TITLE));
-    if (!ImGui::Begin(title, pOpen, flags)) {
-        ImGui::End();
-        return;
-    }
-
+static void renderPlayersContent(ClientSim *cs) {
     /* Selection helpers */
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
     imguiHandOnHover();
@@ -1997,7 +1965,42 @@ static void renderPlayersPanel(ClientSim *cs) {
         if (ImGui::Checkbox(langGetText(STR_ALLOW_NEW_PLAYERS), &anp))
             windowMenuAllowNewPlayers_toggle(cs);
     }
+}
 
+static void renderPlayersPanel(ClientSim *cs) {
+    if (!s_showPlayersPanel || s_popPlayers.open) return;
+
+    if (uiModeIsTablet()) {
+        ImGuiIO &io = ImGui::GetIO();
+        float w = io.DisplaySize.x * 0.8f;
+        float h = io.DisplaySize.y * 0.8f;
+        ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    } else {
+        /* Cap the panel to the viewport work area so a large font (or a
+         * small game window) can't push it taller than the screen and clip
+         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
+         * The default size is also clamped so it never opens oversized. */
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
+        /* Wide enough for a name plus the six counter columns and the ping;
+         * the old 340/280 pair was sized for a name and a ping alone. */
+        ImGui::SetNextWindowSize(ImVec2(SDL_min(520 * s_uiScale, maxW),
+                                        SDL_min(420 * s_uiScale, maxH)),
+                                 ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(420 * s_uiScale, 200 * s_uiScale),
+                                            ImVec2(maxW, maxH));
+    }
+    bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
+    ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
+    char title[128];
+    snprintf(title, sizeof(title), "%s###playerspanel", langGetText(STR_DLGPLAYERS_TITLE));
+    if (!ImGui::Begin(title, pOpen, flags)) {
+        ImGui::End();
+        return;
+    }
+    renderPlayersContent(cs);
     ImGui::End();
 }
 
@@ -3184,10 +3187,20 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
-        /* Show-and-raise, never a toggle — no check mark, matching the
-           native item in mac_menubar.mm. */
-        if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P"))
-            sdl3ImguiShowPlayersPanel(true);
+        /* Show-and-raise, never a toggle, matching the native item in
+           mac_menubar.mm; checked while the desktop pop-out is up. */
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+        if (!uiModeIsTablet()) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P",
+                                s_popPlayers.open))
+                sdl3ImguiShowPlayersPanel(true);
+        } else {
+#endif
+            if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P"))
+                sdl3ImguiShowPlayersPanel(true);
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+        }
+#endif
         ImGui::Separator();
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, true);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
@@ -3861,9 +3874,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            pop-out, forward it there and skip the rest of the main loop
            so it doesn't reach the game input. */
         {
-            PopOutWindow *popOuts[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg };
+            PopOutWindow *popOuts[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo,
+                                        &s_popSendMsg, &s_popPlayers };
             bool consumedByPopOut = false;
-            for (int i = 0; i < 4; i++) {
+            for (size_t i = 0; i < SDL_arraysize(popOuts); i++) {
                 PopOutWindow *pw = popOuts[i];
                 if (!pw->open || !pw->window) continue;
 
@@ -3962,8 +3976,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 SDL_Window *focused = SDL_GetKeyboardFocus();
                 bool focusedIsOurs = (focused == s_window);
                 if (!focusedIsOurs) {
-                    PopOutWindow *pws[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg };
-                    for (int i = 0; i < 4; i++) {
+                    PopOutWindow *pws[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo,
+                                            &s_popSendMsg, &s_popPlayers };
+                    for (size_t i = 0; i < SDL_arraysize(pws); i++) {
                         if (pws[i]->window && pws[i]->window == focused) { focusedIsOurs = true; break; }
                     }
                 }
@@ -5061,6 +5076,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             popOutEndContent(&s_popSendMsg);
             popOutEndFrame(&s_popSendMsg);
         }
+        if (popOutBeginFrame(&s_popPlayers)) {
+            popOutBeginContent();
+            renderPlayersContent(cs);
+            popOutEndContent(&s_popPlayers);
+            popOutEndFrame(&s_popPlayers);
+        }
 
         ImGui::SetCurrentContext(mainCtx);
     }
@@ -5289,6 +5310,22 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
 }
 
 void sdl3ImguiShowPlayersPanel(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    /* Mouse/keyboard desktop: the draggable pop-out window.  Controller mode
+       stays on the in-window panel — the pop-out has its own ImGui context and
+       receives neither gamepad events nor Steam-nav B/Escape, so a pad user
+       could open it and never close it (see sdl3ImguiShowSendMsg). */
+    if (!uiModeIsTablet() && !uiShouldUseControllerMode()) {
+        if (open) {
+            /* popOutCreate re-shows and raises a window it made earlier, so
+               opening an already-open pop-out raises it. */
+            popOutCreate(&s_popPlayers, langGetText(STR_DLGPLAYERS_TITLE), 520, 420);
+        } else {
+            if (s_popPlayers.open) popOutHide(&s_popPlayers);
+        }
+        return;
+    }
+#endif
     s_showPlayersPanel = open;
     if (open) s_closeMenuPopups = true;
 #if BOLO_MOBILE
@@ -5300,6 +5337,12 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 }
 
 void sdl3ImguiTogglePlayersPanel(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet() && !uiShouldUseControllerMode()) {
+        sdl3ImguiShowPlayersPanel(!s_popPlayers.open);
+        return;
+    }
+#endif
     sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
 }
 
@@ -5656,6 +5699,7 @@ void sdl3ImguiCleanup(void) {
     popOutDestroy(&s_popNetInfo);
     popOutDestroy(&s_popGameInfo);
     popOutDestroy(&s_popSendMsg);
+    popOutDestroy(&s_popPlayers);
     flagsDestroy();
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
