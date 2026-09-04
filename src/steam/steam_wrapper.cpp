@@ -36,6 +36,9 @@ static const int k_iGameOverlayActivated_id = k_iSteamFriendsCallbacks + 31;
 static const int k_iSteamInputDeviceConnected_id     = k_iSteamControllerCallbacks + 1;
 static const int k_iSteamInputDeviceDisconnected_id  = k_iSteamControllerCallbacks + 2;
 static const int k_iSteamInputConfigurationLoaded_id = k_iSteamControllerCallbacks + 3;
+/* Workshop (UGC) callback IDs (k_iSteamUGCCallbacks = 3400). */
+static const int k_iItemInstalled_id      = k_iSteamUGCCallbacks + 5;
+static const int k_iDownloadItemResult_id = k_iSteamUGCCallbacks + 6;
 
 static bool s_initialized = false;
 static SteamJoinCallback s_join_callback = nullptr;
@@ -64,6 +67,9 @@ static InputHandle_t s_real_controller_handle = 0;
    re-activation never fires, leaving the action set bound to the phantom and
    the pad's input dead in the menus.  Force a re-activation to re-bind it. */
 static bool s_force_actionset_reactivate = false;
+/* Set when a Workshop item finishes installing or downloading; consumed by
+   steam_workshop_consume_installed_event() so the skin picker can rescan. */
+static bool s_workshop_installed_event = false;
 
 extern "C" bool steam_init(void) {
   if (s_initialized) return true;
@@ -87,6 +93,7 @@ extern "C" void steam_shutdown(void) {
   s_join_callback = nullptr;
   s_authTicket = k_HAuthTicketInvalid;
   s_overlay_active = false;
+  s_workshop_installed_event = false;
 }
 
 extern "C" void steam_run_callbacks(void) {
@@ -131,6 +138,17 @@ extern "C" void steam_run_callbacks(void) {
          steam_input_run_frame.  (Fires when a pad takes over the virtual
          controller's handle, where the handle alone doesn't change.) */
       s_force_actionset_reactivate = true;
+    } else if (msg.m_iCallback == k_iItemInstalled_id) {
+      auto *d = reinterpret_cast<ItemInstalled_t *>(msg.m_pubParam);
+      s_workshop_installed_event = true;
+      WB_LOG_INFO(WB_LOG_CAT_GUI, "steam_workshop: item installed id=%llu",
+                  (unsigned long long)d->m_nPublishedFileId);
+    } else if (msg.m_iCallback == k_iDownloadItemResult_id) {
+      auto *d = reinterpret_cast<DownloadItemResult_t *>(msg.m_pubParam);
+      s_workshop_installed_event = true;
+      WB_LOG_INFO(WB_LOG_CAT_GUI,
+                  "steam_workshop: item download finished id=%llu result=%d",
+                  (unsigned long long)d->m_nPublishedFileId, (int)d->m_eResult);
     }
     SteamAPI_ManualDispatch_FreeLastCallback(pipe);
   }
@@ -543,4 +561,90 @@ extern "C" void steam_input_trigger_vibration(uint16_t left_speed,
   if (!input) return;
   SteamAPI_ISteamInput_TriggerVibration(input, s_active_controller,
                                         left_speed, right_speed);
+}
+
+/* -------- Steam Workshop (UGC) --------
+ * Read side only: enumerate what the local user is subscribed to and hand
+ * the install folders to the skin scan. */
+
+extern "C" bool steam_workshop_available(void) {
+  return s_initialized && SteamUGC() != nullptr;
+}
+
+extern "C" int steam_workshop_subscribed_count(void) {
+  if (!steam_workshop_available()) return 0;
+  return (int)SteamUGC()->GetNumSubscribedItems();
+}
+
+extern "C" bool steam_workshop_item(int idx, uint64_t *id, char *folder,
+                                    size_t folderSize) {
+  if (id) *id = 0;
+  if (folder && folderSize) folder[0] = '\0';
+  if (!steam_workshop_available() || idx < 0) return false;
+
+  ISteamUGC *ugc = SteamUGC();
+  uint32 n = ugc->GetNumSubscribedItems();
+  if ((uint32)idx >= n) return false;
+
+  /* The subscribed list is re-fetched on every call rather than cached.
+     n is a handful of items, and a cache would only pay off if callers
+     walked idx in ascending order — a contract nothing in the signature
+     states and nothing would enforce. */
+  PublishedFileId_t *ids = new PublishedFileId_t[n];
+  uint32 got = ugc->GetSubscribedItems(ids, n);
+  if ((uint32)idx >= got) {
+    delete[] ids;
+    return false;
+  }
+
+  PublishedFileId_t fid = ids[idx];
+  delete[] ids;
+  if (id) *id = (uint64_t)fid;
+
+  /* Installed but locally disabled is the user hiding the item, so treat it
+     as not usable even though the files are on disk. */
+  uint32 state = ugc->GetItemState(fid);
+  if (!(state & k_EItemStateInstalled) ||
+      (state & k_EItemStateDisabledLocally)) {
+    return false;
+  }
+
+  if (!folder || folderSize == 0) return false;
+
+  uint64 sizeOnDisk = 0;
+  uint32 timeStamp = 0;
+  char buf[1024];
+  buf[0] = '\0';
+  if (!ugc->GetItemInstallInfo(fid, &sizeOnDisk, buf, (uint32)sizeof(buf),
+                               &timeStamp)) {
+    return false;
+  }
+  if (buf[0] == '\0') return false;
+  strncpy(folder, buf, folderSize - 1);
+  folder[folderSize - 1] = '\0';
+  return true;
+}
+
+extern "C" void steam_workshop_request_download(uint64_t id) {
+  if (!steam_workshop_available() || id == 0) return;
+  SteamUGC()->DownloadItem((PublishedFileId_t)id, true);
+}
+
+extern "C" bool steam_workshop_consume_installed_event(void) {
+  bool v = s_workshop_installed_event;
+  s_workshop_installed_event = false;
+  return v;
+}
+
+extern "C" void steam_workshop_open_browse_page(void) {
+  if (!steam_workshop_available()) return;
+  ISteamUtils *utils = SteamUtils();
+  ISteamFriends *friends = SteamFriends();
+  if (!utils || !friends) return;
+  /* App id read at runtime: a dev build can be running against a different
+     one than ships. */
+  char url[128];
+  snprintf(url, sizeof(url), "https://steamcommunity.com/app/%u/workshop/",
+           (unsigned)utils->GetAppID());
+  friends->ActivateGameOverlayToWebPage(url);
 }

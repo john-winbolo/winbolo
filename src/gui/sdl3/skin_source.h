@@ -39,7 +39,7 @@ extern "C" {
 typedef enum SkinKind {
     SKIN_KIND_BUILTIN = 0,   /* shipped under <base>/data/skins/ */
     SKIN_KIND_USER,          /* <prefpath>/skins/ or <base>/skins/ */
-    SKIN_KIND_WORKSHOP       /* Steam Workshop install folder (populated later) */
+    SKIN_KIND_WORKSHOP       /* Steam Workshop install folder */
 } SkinKind;
 
 /* [Skin] section of skin.ini. Absent keys leave empty strings / zeros. */
@@ -58,6 +58,9 @@ typedef struct SkinEntry {
     char     displayName[SKIN_NAME_MAX];
     char     path[SKIN_PATH_MAX];      /* absolute path to the dir or archive */
     SkinKind kind;
+    bool     pending;                  /* Workshop item subscribed but not
+                                          installed yet: path is empty and it
+                                          cannot be made active */
 } SkinEntry;
 
 typedef struct SkinSource SkinSource;   /* opaque */

@@ -25,6 +25,7 @@
 #include <SDL3/SDL.h>
 
 #include "../../common/wb_log.h"
+#include "../../steam/steam_wrapper.h"
 
 #include "unzip.h"
 #include "zip.h"
@@ -771,6 +772,24 @@ static void scanRecord(ScanState *st, const char *id, const char *base,
                 sizeof(e->displayName));
 }
 
+/* A Workshop item the user is subscribed to whose files Steam has not
+ * delivered yet. There is no folder to open, so there is no skin.ini to take
+ * a name from and the published file id stands in for one. */
+static void scanRecordPending(ScanState *st, const char *id,
+                              const char *base) {
+    SkinEntry *e;
+
+    st->total++;
+    if (!st->out || st->written >= st->max) return;
+
+    e = &st->out[st->written++];
+    SDL_memset(e, 0, sizeof(*e));
+    SDL_strlcpy(e->id, id, sizeof(e->id));
+    SDL_strlcpy(e->displayName, base, sizeof(e->displayName));
+    e->kind = SKIN_KIND_WORKSHOP;
+    e->pending = true;
+}
+
 /* Every subdirectory and every .wsf / .zip in dir is a skin candidate. The
  * id drops an archive's extension, so foo.wsf and a foo/ directory collide
  * and the location walked first keeps the id. */
@@ -832,7 +851,39 @@ static int scanLocations(SkinEntry *out, int max, int *written) {
     }
 
     /* 2. Steam Workshop install folders — SKIN_KIND_WORKSHOP, ids of the form
-     *    "workshop:<publishedfileid>". Nothing enumerates them yet. */
+     *    "workshop:<publishedfileid>". An item the user is subscribed to but
+     *    Steam has not finished delivering has no folder yet, so it is listed
+     *    as pending rather than left out of the picker entirely. */
+    {
+        int wsCount = steam_workshop_subscribed_count();
+        int i;
+
+        for (i = 0; i < wsCount; i++) {
+            uint64_t wid = 0;
+            bool installed;
+            char folder[SKIN_PATH_MAX];
+            char base[SKIN_NAME_MAX];
+            char id[SKIN_ID_MAX];
+
+            installed = steam_workshop_item(i, &wid, folder, sizeof(folder));
+            if (wid == 0) continue;
+
+            SDL_snprintf(base, sizeof(base), "%llu", (unsigned long long)wid);
+            SDL_snprintf(id, sizeof(id), "workshop:%s", base);
+            if (scanSeen(&st, id)) continue;
+
+            if (installed) {
+                scanRecord(&st, id, base, folder, SKIN_KIND_WORKSHOP);
+            } else {
+                scanRecordPending(&st, id, base);
+                /* Nudge Steam to fetch the files. Only on the pass that
+                 * writes rows: skinScanCount() walks these same locations
+                 * with out == NULL purely to size the caller's buffer, and
+                 * must not do anything observable. */
+                if (st.out != NULL) steam_workshop_request_download(wid);
+            }
+        }
+    }
 
     basePath = SDL_GetBasePath();
     if (basePath) {

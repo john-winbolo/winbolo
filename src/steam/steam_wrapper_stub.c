@@ -61,6 +61,27 @@ bool steam_show_floating_keyboard(int x, int y, int w, int h) {
 
 void steam_dismiss_floating_keyboard(void) {}
 
+/* -------- Steam Workshop (UGC) stubs -------- */
+
+bool steam_workshop_available(void)        { return false; }
+int  steam_workshop_subscribed_count(void) { return 0; }
+
+bool steam_workshop_item(int idx, uint64_t *id, char *folder,
+                         size_t folderSize) {
+  (void)idx;
+  if (id) *id = 0;
+  if (folder && folderSize) folder[0] = '\0';
+  return false;
+}
+
+void steam_workshop_request_download(uint64_t id) {
+  (void)id;
+}
+
+bool steam_workshop_consume_installed_event(void) { return false; }
+
+void steam_workshop_open_browse_page(void) {}
+
 /* -------- Steam Input stubs -------- */
 
 bool steam_input_init(void)             { return false; }

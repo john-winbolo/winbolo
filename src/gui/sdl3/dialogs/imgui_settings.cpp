@@ -50,6 +50,7 @@ extern "C" {
 #include "../gfx_settings.h"
 #include "../tileloader.h"
 #include "../../lang.h"
+#include "../../../steam/steam_wrapper.h"
 #include "imgui_settings.h"
 #include "imgui_keyboard.h"
 #include "imgui_keysetup.h"
@@ -634,9 +635,13 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                          skinKindLabel(skinKindFromId(activeId)));
         }
 
+        /* A Workshop download finishing while the picker is open leaves the
+           rows stale.  Drained every frame so the flag doesn't sit set. */
+        const bool workshopChanged = steam_workshop_consume_installed_event();
+
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
         if (ImGui::BeginCombo("##skin", preview)) {
-            if (!s_skinPopupWasOpen) {
+            if (!s_skinPopupWasOpen || workshopChanged) {
                 s_skinPopupWasOpen = true;
                 s_skinRows.clear();
                 int found = skinScanCount();
@@ -671,7 +676,11 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 const SkinEntry &e = s_skinRows[(size_t)i];
                 bool sel = (cur == i);
                 char tag[64];
-                SDL_snprintf(tag, sizeof(tag), "(%s)", skinKindLabel(e.kind));
+                /* A pending row says what it is waiting on instead of naming
+                   its source — it has no folder to be a source yet. */
+                SDL_snprintf(tag, sizeof(tag), "(%s)",
+                             e.pending ? langGetText(STR_DLGSKIN_DOWNLOADING)
+                                       : skinKindLabel(e.kind));
                 /* Leave the dim source tag room at the right rather than let
                    a full-width row push it outside the popup and clip it.
                    The row still takes the click everywhere but under the tag. */
@@ -681,6 +690,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                               ImGui::GetStyle().ItemSpacing.x;
                 if (rowW < nameW) rowW = nameW;
                 ImGui::PushID(i);
+                ImGui::BeginDisabled(e.pending);
                 if (ImGui::Selectable(e.displayName, sel,
                                       ImGuiSelectableFlags_None,
                                       ImVec2(rowW, 0.0f)) &&
@@ -699,6 +709,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                 }
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", tag);
+                ImGui::EndDisabled();
                 ImGui::PopID();
             }
             ImGui::EndCombo();
@@ -778,6 +789,16 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             }
         }
         imguiHandOnHover();
+
+        /* Runtime check, not an #ifdef: the stub build answers false, so the
+           button simply isn't there when Steam isn't running. */
+        if (steam_workshop_available()) {
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
+                steam_workshop_open_browse_page();
+            }
+            imguiHandOnHover();
+        }
 
         /* Tile detail.  A pick only shows once the sheet is rebuilt, so it
            asks for a skin reload the same way picking a skin does.  Nothing

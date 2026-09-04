@@ -71,6 +71,43 @@ bool     steam_show_floating_keyboard(int x, int y, int w, int h);
  * be called when the text field loses focus — Steam does not auto-dismiss it. */
 void     steam_dismiss_floating_keyboard(void);
 
+/* -------- Steam Workshop (UGC) --------
+ * Read side of the Workshop: what the local user is subscribed to, where
+ * Steam unpacked it, and a way into the overlay's Workshop page.  Everything
+ * here reports "no Workshop" in stub builds and when Steam is not
+ * initialized, so callers need no #ifdef. */
+
+/* True iff Steam is initialized and the UGC interface is live. */
+bool     steam_workshop_available(void);
+
+/* How many Workshop items the local user is subscribed to for this app.
+ * 0 when the Workshop is unavailable. */
+int      steam_workshop_subscribed_count(void);
+
+/* Details of the idx'th subscribed item.  Writes the item's published file
+ * id to *id whether or not the item is installed, and returns true only when
+ * the item IS installed and *folder holds its install path.  A false return
+ * with a non-zero *id therefore reads as "subscribed, still downloading" —
+ * the caller can list it as pending and ask for it with
+ * steam_workshop_request_download.  Both outs are cleared on entry, so a
+ * false return with a zero *id is "no such item". */
+bool     steam_workshop_item(int idx, uint64_t *id, char *folder,
+                             size_t folderSize);
+
+/* Ask Steam to download (or update) a subscribed item.  Completion shows up
+ * as the install event below, not as a return value.  No-op when the
+ * Workshop is unavailable or id is 0. */
+void     steam_workshop_request_download(uint64_t id);
+
+/* Consume the "a Workshop item finished installing" edge.  Returns true once
+ * if ItemInstalled_t or DownloadItemResult_t has fired since the previous
+ * call, and clears the flag.  Callers rescan when it fires. */
+bool     steam_workshop_consume_installed_event(void);
+
+/* Open the Steam overlay on this app's Workshop page.  No-op when the
+ * Workshop is unavailable. */
+void     steam_workshop_open_browse_page(void);
+
 /* Stats & achievements */
 void     steam_increment_stat(const char *name, int amount);
 void     steam_set_achievement(const char *id);
