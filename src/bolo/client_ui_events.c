@@ -140,13 +140,24 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
   if (clientSimIsInItemView(csPtr) == TRUE) {
     ViewCycleInputs cycleIn;
     bool stillWatchable;
+    bool awaitingAlly;
 
+    awaitingAlly = clientSimAllyViewAwaitingFirstData(csPtr);
     clientSimFillViewCycleInputs(csPtr, &cycleIn);
     stillWatchable = viewportUpdateItemView(clientSimViewportMut(csPtr),
                                             clientSimGetGameSim(csPtr),
                                             clientSimGetScroll(csPtr),
                                             &cycleIn);
-    if (stillWatchable == FALSE || clientSimViewDecayExpired(csPtr) == TRUE) {
+    /* An ally the server has just picked has not been streamed yet, so
+     * playersCanAllyView cannot pass for it and the view would close on the
+     * tick after it opened. Hold the drop off until the first real record for
+     * that ally arrives; if none ever does, the stub grace below is what ends
+     * the view. Once a record has arrived the ordinary rule applies again, so
+     * an ally who dies, leaves or breaks the alliance returns the camera to
+     * the tank at once. Pill and base views drop the moment their item stops
+     * qualifying, and a run-out decay clock still ends any of the three. */
+    if ((stillWatchable == FALSE && awaitingAlly == FALSE) ||
+        clientSimViewDecayExpired(csPtr) == TRUE) {
       clientSimTankView(csPtr);
     }
   }

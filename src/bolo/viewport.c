@@ -517,6 +517,11 @@ static void viewportEnterItemView(ViewPort *vp, ScrollState *scroll, uint8_t kin
   viewportRecalc(vp);
 }
 
+void viewportEnterAllyView(ViewPort *vp, ScrollState *scroll, BYTE target,
+                           BYTE x, BYTE y) {
+  viewportEnterItemView(vp, scroll, VIEW_KIND_ALLY, target, x, y);
+}
+
 void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                        tank myTank, uint8_t kind, const ViewCycleInputs *in,
                        int horz, int vert) {

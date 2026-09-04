@@ -3094,6 +3094,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_rects.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
+    tests/unit/test_view_target_apply.c
     tests/unit/test_view_cycling.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
@@ -3804,6 +3805,7 @@ set(_unit_test_names
     view_cycle_pick_policy
     view_cycle_pick_direction
     view_target_codec
+    view_target_apply
     view_cycle_bases
     view_cycle_base_direction
     view_cycle_allies

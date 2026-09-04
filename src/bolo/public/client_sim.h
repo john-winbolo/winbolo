@@ -1006,7 +1006,11 @@ bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
  * Cycling wraps around the items; it drops back to the tank view only when
  * there is nothing of that kind left to watch.
  * clientSimStepView steps within whichever item view is current and does
- * nothing in the tank view. */
+ * nothing in the tank view.
+ * Pill and base selection is made here on the client, which holds every pill
+ * and base position from the map. Which ally to watch is the server's answer
+ * to a request, so clientSimAllyView — and clientSimStepView while in an ally
+ * view — sends one, and the view changes when the answer arrives. */
 void         clientSimPillView(ClientSim *cs, int horz, int vert);
 void         clientSimBaseView(ClientSim *cs, int horz, int vert);
 void         clientSimAllyView(ClientSim *cs, int horz, int vert);

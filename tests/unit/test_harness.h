@@ -844,6 +844,13 @@ int run_view_cycle_pick_direction(void);
  * tables, with the nothing-to-watch case and the fixed body length. */
 int run_view_target_codec(void);
 
+/* Applying the server's answer (test_view_target_apply.c): a CTRL_VIEW_TARGET
+ * for our own slot whose fromEcho matches the ally we are stepping from parks
+ * the camera on the ally it names; an answer for another slot or echoing an
+ * earlier press is dropped, and a not-found answer leaves the tank view in
+ * place. */
+int run_view_target_apply(void);
+
 /* Item-view cycling helpers (test_view_cycling.c): basesGetNextView and
  * playersGetNextAllyView walk the allied bases and the allied live tanks in
  * order and wrap, skipping enemy, neutral, dead and un-allied items and

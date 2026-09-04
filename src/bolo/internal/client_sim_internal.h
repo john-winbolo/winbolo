@@ -755,6 +755,21 @@ void                    clientSimFillViewCycleInputs(const ClientSim *cs,
  * upkeep path and nowhere else. */
 bool                    clientSimAllyViewStubExpired(ClientSim *cs);
 
+/* TRUE while an ally view is still waiting on the first real record for the
+ * ally it is watching. Between applying the server's CTRL_VIEW_TARGET answer
+ * and that ally's first snapshot the client holds no data for them at all, so
+ * the ordinary "is this still watchable" test cannot pass yet and the per-tick
+ * upkeep has to leave the view alone. FALSE once anything has arrived for that
+ * slot this round, and in every view but the ally one. */
+bool                    clientSimAllyViewAwaitingFirstData(const ClientSim *cs);
+
+/* Park the camera on the ally the server named in its CTRL_VIEW_TARGET
+ * answer. The entry point in viewport.c that does the work is private to that
+ * file, so the control dispatcher comes through here rather than reaching
+ * into the viewport itself. */
+void                    clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target,
+                                                     BYTE mapX, BYTE mapY);
+
 /* Fills the view rules, clocks and camera state the overview's region build
  * takes. Declared here rather than reached through overview_map.h so this
  * header stays clear of the overview module. */

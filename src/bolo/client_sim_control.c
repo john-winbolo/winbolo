@@ -34,6 +34,7 @@
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "client_command.h"  /* VIEW_KIND_ALLY, VIEW_CYCLE_FROM_NONE */
 #include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
@@ -980,6 +981,43 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
         }
         break;
+
+    case CTRL_VIEW_TARGET: {
+        /* The server's answer to one of our CMD_VIEW_CYCLE requests: the ally
+         * it picked from live state. Only apply an answer addressed to our own
+         * slot — in-process subscribers (SP-host, bots) receive every publish,
+         * and the wire path is already filtered by udpClientDeliverControl.
+         * Same shape as CTRL_COMMAND_REJECTED and CTRL_SHELL_DEATH above. */
+        BYTE steppingFrom;
+
+        if (evt->u.viewTarget.origSlot != clientSimGetMyPlayerNum(cs)) {
+            break;
+        }
+
+        /* Throw away an answer to an earlier press. The ally key auto-repeats
+         * every 165ms, so at any real ping several requests are in flight at
+         * once; taking the last answer to arrive would make the view oscillate
+         * and step backwards under a held key. fromEcho is the `from` we sent,
+         * so it matches only the request we are still waiting on, and the view
+         * settles one round trip after the key is released. */
+        steppingFrom = (cs->viewport.viewKind == VIEW_KIND_ALLY)
+                           ? cs->viewport.viewTarget
+                           : (BYTE)VIEW_CYCLE_FROM_NONE;
+        if (evt->u.viewTarget.fromEcho != steppingFrom) {
+            break;
+        }
+
+        if (evt->u.viewTarget.found != 0) {
+            clientSimApplyAllyViewTarget(cs, evt->u.viewTarget.target,
+                                         evt->u.viewTarget.mapX,
+                                         evt->u.viewTarget.mapY);
+        } else {
+            /* Nothing left to watch — every ally is dead, un-allied or gone,
+             * or the policy allows no ally views at all. */
+            clientSimTankView(cs);
+        }
+        break;
+    }
 
     case CTRL_SHELL_DEATH: {
         /* Server closure for one of our predicted shells: cull the ghost so

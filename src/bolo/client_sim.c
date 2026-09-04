@@ -968,6 +968,20 @@ bool clientSimAllyViewStubExpired(ClientSim *cs) {
   return (cs->viewDecayTick - since) > CLIENT_VIEW_ALLY_STUB_GRACE_TICKS;
 }
 
+bool clientSimAllyViewAwaitingFirstData(const ClientSim *cs) {
+  if (cs == NULL) {
+    return FALSE;
+  }
+  if (cs->viewport.viewKind != VIEW_KIND_ALLY ||
+      cs->viewport.viewTarget >= MAX_TANKS) {
+    return FALSE;
+  }
+  /* allySeenTick is stamped by every real tank record and cleared by
+   * clientSimResetViewDecay, so a zero stamp means nothing has arrived for
+   * that slot this round. */
+  return cs->allySeenTick[cs->viewport.viewTarget] == 0;
+}
+
 void clientSimFillOverviewViewInputs(const ClientSim *cs,
                                      OverviewViewInputs *in) {
   int cat; /* Looping variable */
@@ -3017,8 +3031,48 @@ void clientSimBaseView(ClientSim *cs, int horz, int vert) {
   clientSimItemView(cs, VIEW_KIND_BASE, horz, vert);
 }
 
+/* The direction byte a cycle request carries. Both zero is the plain "next"
+ * the ally key sends; the scroll keys set exactly one of the four. */
+static uint8_t clientSimViewCycleDirection(int horz, int vert) {
+  if (horz < 0) {
+    return VIEW_CYCLE_LEFT;
+  }
+  if (horz > 0) {
+    return VIEW_CYCLE_RIGHT;
+  }
+  if (vert < 0) {
+    return VIEW_CYCLE_UP;
+  }
+  if (vert > 0) {
+    return VIEW_CYCLE_DOWN;
+  }
+  return VIEW_CYCLE_NEXT;
+}
+
 void clientSimAllyView(ClientSim *cs, int horz, int vert) {
-  clientSimItemView(cs, VIEW_KIND_ALLY, horz, vert);
+  uint8_t from; /* The ally we are stepping away from */
+
+  if (cs == NULL) {
+    return;
+  }
+  if (!cs->hasTransport) {
+    /* No server to ask, so pick here. Every real game has a transport, the
+     * in-process host included, which leaves the tools and tests on this
+     * path. */
+    clientSimItemView(cs, VIEW_KIND_ALLY, horz, vert);
+    return;
+  }
+
+  /* Which ally to watch is the server's answer. Our own idea of who is
+   * watchable is just the players we have happened to be sent this round,
+   * which under viewPolicyKey is exactly the allies the policy is holding
+   * back — so choosing here can only ever reach the ones already on screen.
+   * The answer arrives as CTRL_VIEW_TARGET. */
+  from = (cs->viewport.viewKind == VIEW_KIND_ALLY)
+             ? (uint8_t)cs->viewport.viewTarget
+             : (uint8_t)VIEW_CYCLE_FROM_NONE;
+  clientSimNetSendViewCycle(cs, VIEW_KIND_ALLY,
+                            clientSimViewCycleDirection(horz, vert), from);
 }
 
 void clientSimStepView(ClientSim *cs, int horz, int vert) {
@@ -3027,7 +3081,24 @@ void clientSimStepView(ClientSim *cs, int horz, int vert) {
   if (kind == VIEW_KIND_TANK) {
     return;
   }
+  if (kind == VIEW_KIND_ALLY) {
+    /* The scroll keys step between allies for the same reason the ally key
+     * enters the view: the server is the one that knows who is watchable.
+     * Pill and base stepping stays here — the client holds every pill and
+     * base position from the map. */
+    clientSimAllyView(cs, horz, vert);
+    return;
+  }
   clientSimItemView(cs, kind, horz, vert);
+}
+
+void clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target, BYTE mapX,
+                                  BYTE mapY) {
+  if (cs == NULL) {
+    return;
+  }
+  viewportEnterAllyView(clientSimViewportMut(cs), clientSimGetScroll(cs),
+                        target, mapX, mapY);
 }
 
 void clientSimSyncViewState(ClientSim *cs) {

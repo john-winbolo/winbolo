@@ -858,6 +858,17 @@ void clientSimNetSendViewState(ClientSim *cs, uint8_t kind, uint8_t target) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendViewCycle(ClientSim *cs, uint8_t kind, uint8_t direction,
+                               uint8_t from) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  ClientCommand cmd = { .type = CMD_VIEW_CYCLE };
+  cmd.u.viewCycle.kind      = kind;
+  cmd.u.viewCycle.direction = direction;
+  cmd.u.viewCycle.from      = from;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 /* === Net stats === */
 
 uint16_t clientSimGetNetPing(const ClientSim *cs) {

@@ -452,6 +452,7 @@ static const UnitTestEntry s_tests[] = {
     { "view_cycle_pick_policy",                  run_view_cycle_pick_policy                  },
     { "view_cycle_pick_direction",               run_view_cycle_pick_direction               },
     { "view_target_codec",                       run_view_target_codec                       },
+    { "view_target_apply",                       run_view_target_apply                       },
     { "view_cycle_bases",                        run_view_cycle_bases                        },
     { "view_cycle_base_direction",               run_view_cycle_base_direction               },
     { "view_cycle_allies",                       run_view_cycle_allies                       },

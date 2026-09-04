@@ -101,6 +101,11 @@ void viewCycleInputsDefaults(ViewCycleInputs *in);
 void viewportPanInView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                        tank myTank, uint8_t kind, const ViewCycleInputs *in,
                        int horz, int vert);
+/* Park the camera on an ally the server has chosen, where the pan entry point
+ * above chooses for itself. target is the ally's player number and x/y the map
+ * square to centre on. */
+void viewportEnterAllyView(ViewPort *vp, ScrollState *scroll, BYTE target,
+                           BYTE x, BYTE y);
 void viewportPanInPillView(ViewPort *vp, struct GameSim *sim, ScrollState *scroll,
                            tank myTank, int horz, int vert);
 /* Per-display-tick upkeep for an item view: returns FALSE once the watched
