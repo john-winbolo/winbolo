@@ -61,9 +61,10 @@ void          overviewViewDestroy(OverviewView *v);
    crosshair undrawn.
 
    `ownsWindow` means the same thing it does in overviewViewHandleInput: this
-   view has replaced the classic one rather than sitting beside it. Then the
-   camera keeps the tank on screen the way the classic view's scroll always
-   has — see overviewCameraKeepTankOnScreen. */
+   view has replaced the classic one rather than sitting beside it. Here it
+   decides whether the picture gets a border while an item view is on: the
+   pop-out does not, because the classic view is still on screen beside it with
+   its own corner label. */
 void          overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                           SDL_Texture *tiles, int sheetScale,
                                           SDL_Texture *crosshair,

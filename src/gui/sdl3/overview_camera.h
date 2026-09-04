@@ -136,21 +136,8 @@ void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
  * with OVERVIEW_TANK_EDGE_MARGIN squares to spare on the edge it came in
  * over. A tank already that far inside moves nothing, and neither edge pulls
  * the view further than it has to — a tank off to the left slides the view
- * left until it is on, rather than the view jumping to centre on it.
- *
- * For the mode where this view has replaced the classic one: there the
- * overview is the player's only picture, and the same rule the classic view
- * has always had (scroll.c's hard clamp — the tank never leaves the screen)
- * has to hold here. Beside the classic view, which is still showing the tank,
- * the pop-out is left free to roam.
- *
- * The caller drops the nudge while an item view is on, even in that mode: the
- * classic view does not show the tank in an item view either, so there is
- * nothing to keep on screen, and holding the tank in frame would fight
- * whatever put the camera on the watched item.
- *
- * Follow mode centres the camera anyway, so this is a no-op there. Leaves the
- * follow flag alone: it corrects a free camera without claiming it. */
+ * left until it is on, rather than the view jumping to centre on it. Leaves
+ * the follow flag alone: it corrects a free camera without claiming it. */
 void overviewCameraKeepTankOnScreen(OverviewCamera *cam, int viewW, int viewH,
                                     float tankMapX, float tankMapY);
 

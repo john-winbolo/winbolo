@@ -712,20 +712,6 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                 tankY = SDL_floorf(tankY) + 0.5f;
             }
             overviewCameraFollowTick(&v->cam, w, h, tankX, tankY);
-            /* With follow off the camera stays where it was put, and the tank
-             * can drive out of the view — or respawn outside it. In the mode
-             * where this is the only picture the player has, it gets nudged
-             * back on rather than lost. A no-op under follow, which has just
-             * centred on it.
-             *
-             * Not while an item view is on: there the player is watching
-             * something other than the tank, and the classic view does not
-             * show the tank in an item view either, so there is nothing to
-             * keep on screen. Pulling the picture back would only drag it off
-             * the thing being watched. */
-            if (ownsWindow && !clientSimIsInItemView(cs)) {
-                overviewCameraKeepTankOnScreen(&v->cam, w, h, tankX, tankY);
-            }
         }
 
         int left = 0, top = 0, right = 0, bottom = 0;
