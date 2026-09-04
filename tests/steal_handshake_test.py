@@ -62,7 +62,7 @@ CHECKS (two arenas, see tests/generate_steal_handshake_map.py)
          a pill while the bot's own winner that replan was a different one.
 
 Usage: python steal_handshake_test.py [duel|busy] [--ticks N] [--build DIR]
-                                      [--no-asap]
+                                      [--seed N] [--no-asap]
 Exit 0 on pass.
 """
 import os
@@ -89,6 +89,17 @@ from generate_steal_handshake_map import (   # noqa: E402
     STEAL_YIELD_BLOCK, STEAL_YIELD_RELEASE_GRACE, GOAL_REPLAN_INTERVAL, mdist)
 
 PORTS = {"duel": 50186, "busy": 50187}
+# Per-arena world seed.  DUEL sits on the original 42.  BUSY moved to 43 when
+# the handshake was merged onto the KEEL baseline: KEEL's pill-difficulty
+# evaluator prices PILL_A a few points higher, which pushed bot1's
+# cheaper-than-the-holder crossing from t<=161 to t=163 -- two ticks past the
+# t=161 replan -- and p0 went "past plan" at t=205, before the next one at
+# t=211.  With GOAL_REPLAN_INTERVAL=50 and a candidate window only ~40 ticks
+# wide, seed 42 leaves no replan inside it and the gate is never reached at
+# all (0 sends, 0 holds -- nothing under test).  Seed 43 puts three replans in
+# the window (3 HOLDs, 2 SENDs), so the check has margin instead of landing on
+# a two-tick coincidence.  Override with --seed.
+SEEDS = {"duel": 42, "busy": 43}
 DEFAULT_TICKS = 4000
 ALLIES = (0, 1)                 # the two GoalHunter 1.7 bots; 2 is the opponent
 
@@ -144,7 +155,7 @@ def newest_session(build_dir, label):
     return max(cands, key=lambda d: d.stat().st_mtime) if cands else None
 
 
-def play(variant, ticks, build_dir):
+def play(variant, ticks, build_dir, seed):
     """Run one arena; return {bot: print2 text} for the two allies, or None."""
     mapfile = HERE / f"steal_handshake_{variant}.map"
     final = HERE / f"steal_handshake_{variant}_final.json"
@@ -183,7 +194,7 @@ def play(variant, ticks, build_dir):
            # how the contested pill is NEGOTIATED, not about finding it.
            "-ai", "yesfull",
            "-limit", "20",
-           "-brain-debug", "-seed", "42", "-ticks", str(ticks),
+           "-brain-debug", "-seed", str(seed), "-ticks", str(ticks),
            "-brain-no-budget-kill", "-brain-lua-seed", "42",
            "-finaljson", str(final),
            "-nowinbolonet", "-quiet", "-threads", "1"] + asap_args()
@@ -501,13 +512,13 @@ def check_busy(logs):
     return 0
 
 
-def run_one(variant, ticks, build_dir):
-    print(f"=== steal handshake / {variant} ({ticks} ticks; contested pill "
+def run_one(variant, ticks, build_dir, seed):
+    print(f"=== steal handshake / {variant} (seed {seed}, {ticks} ticks; contested pill "
           f"{PILL_A} hp={ALIVE_HP}, {mdist(BOT0_SPAWN, PILL_A)} tiles from each "
           f"bot" + (f"; bot1 also has {PILL_B} at "
                     f"{mdist(BOT1_SPAWN, PILL_B)} tiles"
                     if variant == "busy" else "") + ")")
-    logs = play(variant, ticks, build_dir)
+    logs = play(variant, ticks, build_dir, seed)
     if logs is None:
         return 1
     if not sanity(logs):
@@ -532,18 +543,21 @@ def main():
         variants = [args.pop(0).lower()]
     ticks = DEFAULT_TICKS
     build_dir = DEFAULT_BUILD
+    seed = None
     i = 0
     while i < len(args):
         if args[i] == "--ticks" and i + 1 < len(args):
             ticks = int(args[i + 1]); i += 2
         elif args[i] == "--build" and i + 1 < len(args):
             build_dir = Path(args[i + 1]); i += 2
+        elif args[i] == "--seed" and i + 1 < len(args):
+            seed = int(args[i + 1]); i += 2
         else:
             i += 1
     print(pacing_line())
     rc = 0
     for v in variants:
-        rc |= run_one(v, ticks, build_dir)
+        rc |= run_one(v, ticks, build_dir, seed if seed is not None else SEEDS[v])
     return rc
 
 
