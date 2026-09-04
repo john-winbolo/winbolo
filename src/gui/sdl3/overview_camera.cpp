@@ -319,8 +319,42 @@ void overviewCameraKeepOnScreen(OverviewCamera *cam, int viewW, int viewH,
     overviewCameraClamp(cam);
 }
 
+bool overviewCameraScrollTo(OverviewCamera *cam, int viewW, int viewH,
+                            float targetCx, float targetCy) {
+    if (!cam || viewW <= 0 || viewH <= 0) return false;
+
+    /* Through the clamp on a copy, the way overviewCameraCentreToShow does it,
+     * so the scroll is aimed at a centre the camera would accept rather than
+     * at one the landing tick would pull back off. */
+    OverviewCamera probe = *cam;
+    probe.cx = targetCx;
+    probe.cy = targetCy;
+    overviewCameraClamp(&probe);
+
+    if (probe.cx == cam->cx && probe.cy == cam->cy) {
+        /* Already on the centre being asked for. Anything in flight was aimed
+         * elsewhere, so it stops here rather than carrying on to a centre
+         * nobody is asking for any more. */
+        overviewCameraScrollCancel(cam);
+        return false;
+    }
+
+    /* The start is wherever the centre is now, which mid-scroll is the
+     * animated position rather than where the last scroll began. That is what
+     * makes a re-aim carry on instead of jumping back. */
+    cam->scrollFromX = cam->cx;
+    cam->scrollFromY = cam->cy;
+    cam->scrollToX = probe.cx;
+    cam->scrollToY = probe.cy;
+    cam->scrollElapsedMs = 0.0f;
+    cam->scrolling = true;
+    return true;
+}
+
 bool overviewCameraScrollToShow(OverviewCamera *cam, int viewW, int viewH,
                                 float pointX, float pointY) {
+    /* Ahead of the centre work, so a degenerate view is turned away without
+     * touching a scroll in flight. */
     if (!cam || viewW <= 0 || viewH <= 0) return false;
 
     float toX = cam->cx;
@@ -334,16 +368,10 @@ bool overviewCameraScrollToShow(OverviewCamera *cam, int viewW, int viewH,
         return false;
     }
 
-    /* The start is wherever the centre is now, which mid-scroll is the
-     * animated position rather than where the last scroll began. That is what
-     * makes a re-aim carry on instead of jumping back. */
-    cam->scrollFromX = cam->cx;
-    cam->scrollFromY = cam->cy;
-    cam->scrollToX = toX;
-    cam->scrollToY = toY;
-    cam->scrollElapsedMs = 0.0f;
-    cam->scrolling = true;
-    return true;
+    /* The least move, handed to the same scroll a centring uses. That centre
+     * is already clamped and already differs from the one the camera is on,
+     * so the call below cannot answer false here. */
+    return overviewCameraScrollTo(cam, viewW, viewH, toX, toY);
 }
 
 bool overviewCameraScrollTick(OverviewCamera *cam, float dtMs) {

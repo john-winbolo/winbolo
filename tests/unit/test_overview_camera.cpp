@@ -920,6 +920,247 @@ static int camera_scroll_ignores_degenerate_input(void) {
     return 0;
 }
 
+/* The scroll that is told where to put the centre. It lands on the centre it
+ * was given rather than on the least move that would have brought that point
+ * into view, takes the clamp's answer when the map will not allow the one
+ * asked for, and is otherwise the same animation as the nudge's. */
+static int camera_scroll_to_lands_on_the_centre_asked_for(void) {
+    const int viewW = 800;
+    const int viewH = 600;
+    /* Sixteenths of the duration, as the least-move checks above cut it. */
+    const float slice = OVERVIEW_SCROLL_MS * 0.0625f;
+
+    for (int z = 0; z < overviewCameraZoomCount(); z++) {
+        OverviewCamera cam;
+        scrollStartCamera(&cam, z, false);
+        float startX = cam.cx;
+        float startY = cam.cy;
+
+        /* Where the least move would have stopped, so the landing below can be
+         * told apart from it. */
+        float leastX = 0.0f;
+        float leastY = 0.0f;
+        UT_ASSERT_MSG(overviewCameraCentreToShow(&cam, viewW, viewH,
+                                                 kScrollPointX, kScrollPointY,
+                                                 &leastX, &leastY),
+                      "zoom index %d: the start centre (%.4f,%.4f) already "
+                      "shows (%.1f,%.1f), so there is no scroll to check",
+                      z, (double)startX, (double)startY,
+                      (double)kScrollPointX, (double)kScrollPointY);
+        UT_ASSERT_MSG(leastX != kScrollPointX || leastY != kScrollPointY,
+                      "zoom index %d: the least move already ends on the point, "
+                      "so this case cannot tell a centring from it", z);
+
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH,
+                                             kScrollPointX, kScrollPointY),
+                      "zoom index %d: a centre away from the camera's own "
+                      "started no scroll", z);
+        UT_ASSERT_MSG(overviewCameraIsScrolling(&cam),
+                      "zoom index %d: the scroll started but does not report "
+                      "itself running", z);
+        UT_ASSERT_MSG(cam.cx == startX && cam.cy == startY,
+                      "zoom index %d: starting the scroll moved the centre from "
+                      "(%.4f,%.4f) to (%.4f,%.4f) before the first tick",
+                      z, (double)startX, (double)startY,
+                      (double)cam.cx, (double)cam.cy);
+
+        for (int tick = 1; tick <= 16; tick++) {
+            UT_ASSERT_MSG(overviewCameraScrollTick(&cam, slice),
+                          "zoom index %d: tick %d of 16 reported no scroll "
+                          "running", z, tick);
+        }
+        UT_ASSERT_MSG(!overviewCameraIsScrolling(&cam),
+                      "zoom index %d: the scroll is still running after the "
+                      "whole %.4f ms", z, (double)OVERVIEW_SCROLL_MS);
+        UT_ASSERT_MSG(cam.cx == kScrollPointX && cam.cy == kScrollPointY,
+                      "zoom index %d: the scroll landed on (%.4f,%.4f), "
+                      "expected the centre it was given, (%.4f,%.4f); the least "
+                      "move would have stopped at (%.4f,%.4f)",
+                      z, (double)cam.cx, (double)cam.cy,
+                      (double)kScrollPointX, (double)kScrollPointY,
+                      (double)leastX, (double)leastY);
+    }
+
+    /* The centre the camera is already on: nothing to animate, and a scroll in
+     * flight was aimed somewhere nobody is asking for any more. */
+    {
+        OverviewCamera cam;
+        scrollStartCamera(&cam, 2, false);
+        float wasX = cam.cx;
+        float wasY = cam.cy;
+
+        UT_ASSERT_MSG(!overviewCameraScrollTo(&cam, viewW, viewH, wasX, wasY),
+                      "the centre the camera is on started a scroll");
+        UT_ASSERT_MSG(!overviewCameraIsScrolling(&cam),
+                      "the centre the camera is on left a scroll running");
+        UT_ASSERT_MSG(cam.cx == wasX && cam.cy == wasY,
+                      "the centre the camera is on moved it from (%.4f,%.4f) to "
+                      "(%.4f,%.4f)", (double)wasX, (double)wasY,
+                      (double)cam.cx, (double)cam.cy);
+
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH,
+                                             kScrollPointX, kScrollPointY),
+                      "the scroll to cancel did not start");
+        overviewCameraScrollTick(&cam, OVERVIEW_SCROLL_MS * 0.5f);
+        float heldX = cam.cx;
+        float heldY = cam.cy;
+
+        UT_ASSERT_MSG(!overviewCameraScrollTo(&cam, viewW, viewH, heldX, heldY),
+                      "aiming at the centre it had reached started a scroll");
+        UT_ASSERT_MSG(!overviewCameraIsScrolling(&cam),
+                      "aiming at the centre it had reached left the scroll in "
+                      "flight running");
+        UT_ASSERT_MSG(cam.cx == heldX && cam.cy == heldY,
+                      "that cancel moved the centre from (%.4f,%.4f) to "
+                      "(%.4f,%.4f)", (double)heldX, (double)heldY,
+                      (double)cam.cx, (double)cam.cy);
+    }
+
+    /* A centre off the map: the camera lands on what the clamp allows, not on
+     * the raw request. overviewCameraCenterOnTank ends in that same clamp, so
+     * it is how the answer is asked for here rather than written out. */
+    {
+        const float rawX = -50.0f;
+        const float rawY = (float)MAP_ARRAY_SIZE + 50.0f;
+
+        OverviewCamera clamped;
+        scrollStartCamera(&clamped, 2, false);
+        overviewCameraCenterOnTank(&clamped, viewW, viewH, rawX, rawY);
+        UT_ASSERT_MSG(clamped.cx != rawX || clamped.cy != rawY,
+                      "(%.1f,%.1f) is a centre the clamp allows as it stands, "
+                      "so this case checks nothing",
+                      (double)rawX, (double)rawY);
+
+        OverviewCamera cam;
+        scrollStartCamera(&cam, 2, false);
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH, rawX, rawY),
+                      "a centre off the map started no scroll");
+        UT_ASSERT_MSG(cam.scrollToX == clamped.cx && cam.scrollToY == clamped.cy,
+                      "the scroll is aimed at (%.4f,%.4f), expected the clamped "
+                      "(%.4f,%.4f)", (double)cam.scrollToX,
+                      (double)cam.scrollToY, (double)clamped.cx,
+                      (double)clamped.cy);
+
+        overviewCameraScrollTick(&cam, OVERVIEW_SCROLL_MS);
+        UT_ASSERT_MSG(!overviewCameraIsScrolling(&cam),
+                      "the scroll off the map is still running after the whole "
+                      "duration");
+        UT_ASSERT_MSG(cam.cx == clamped.cx && cam.cy == clamped.cy,
+                      "the scroll landed on (%.4f,%.4f), expected the clamped "
+                      "(%.4f,%.4f) rather than the raw (%.1f,%.1f)",
+                      (double)cam.cx, (double)cam.cy, (double)clamped.cx,
+                      (double)clamped.cy, (double)rawX, (double)rawY);
+    }
+
+    /* Re-aimed half way: the new run starts from the centre it had reached,
+     * with the clock back at zero, and lands on the new centre. */
+    {
+        const float otherX = 20.5f;
+        const float otherY = 20.5f;
+
+        OverviewCamera cam;
+        scrollStartCamera(&cam, 2, false);
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH,
+                                             kScrollPointX, kScrollPointY),
+                      "the first scroll did not start");
+        overviewCameraScrollTick(&cam, OVERVIEW_SCROLL_MS * 0.5f);
+        float midX = cam.cx;
+        float midY = cam.cy;
+
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH,
+                                             otherX, otherY),
+                      "re-aiming at (%.1f,%.1f) started no scroll",
+                      (double)otherX, (double)otherY);
+        UT_ASSERT_MSG(cam.scrollFromX == midX && cam.scrollFromY == midY,
+                      "the re-aimed scroll runs from (%.4f,%.4f), expected the "
+                      "centre it had reached, (%.4f,%.4f)",
+                      (double)cam.scrollFromX, (double)cam.scrollFromY,
+                      (double)midX, (double)midY);
+        UT_ASSERT_MSG(cam.scrollElapsedMs == 0.0f,
+                      "the re-aimed scroll starts %.4f ms in, expected 0",
+                      (double)cam.scrollElapsedMs);
+        UT_ASSERT_MSG(cam.cx == midX && cam.cy == midY,
+                      "re-aiming moved the centre from (%.4f,%.4f) to "
+                      "(%.4f,%.4f)", (double)midX, (double)midY,
+                      (double)cam.cx, (double)cam.cy);
+
+        overviewCameraScrollTick(&cam, OVERVIEW_SCROLL_MS);
+        UT_ASSERT_MSG(!overviewCameraIsScrolling(&cam),
+                      "the re-aimed scroll is still running after the whole "
+                      "duration");
+        UT_ASSERT_MSG(cam.cx == otherX && cam.cy == otherY,
+                      "the re-aimed scroll landed on (%.4f,%.4f), expected the "
+                      "centre it was given, (%.1f,%.1f)",
+                      (double)cam.cx, (double)cam.cy,
+                      (double)otherX, (double)otherY);
+    }
+
+    /* The follow flag comes through both answers untouched. */
+    for (int f = 0; f <= 1; f++) {
+        bool want = (f != 0);
+        const char *state = want ? "on" : "off";
+
+        OverviewCamera cam;
+        scrollStartCamera(&cam, 2, want);
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH,
+                                             kScrollPointX, kScrollPointY),
+                      "follow %s: no scroll started", state);
+        UT_ASSERT_MSG(cam.follow == want,
+                      "follow %s: starting the scroll turned it %s",
+                      state, cam.follow ? "on" : "off");
+
+        overviewCameraScrollTick(&cam, OVERVIEW_SCROLL_MS * 0.5f);
+        UT_ASSERT_MSG(cam.follow == want,
+                      "follow %s: a tick part way through turned it %s",
+                      state, cam.follow ? "on" : "off");
+
+        overviewCameraScrollTick(&cam, OVERVIEW_SCROLL_MS);
+        UT_ASSERT_MSG(cam.follow == want,
+                      "follow %s: finishing the scroll turned it %s",
+                      state, cam.follow ? "on" : "off");
+
+        UT_ASSERT_MSG(!overviewCameraScrollTo(&cam, viewW, viewH,
+                                              cam.cx, cam.cy),
+                      "follow %s: the centre it is on started a scroll", state);
+        UT_ASSERT_MSG(cam.follow == want,
+                      "follow %s: the cancel turned it %s",
+                      state, cam.follow ? "on" : "off");
+    }
+
+    /* A view with no pixels, and no camera at all: nothing started, and a
+     * scroll in flight is left to run. */
+    {
+        OverviewCamera cam;
+        scrollStartCamera(&cam, 2, false);
+        UT_ASSERT_MSG(overviewCameraScrollTo(&cam, viewW, viewH,
+                                             kScrollPointX, kScrollPointY),
+                      "the scroll the degenerate views must leave alone did not "
+                      "start");
+
+        static const struct { int w, h; const char *what; } kViews[] = {
+            {    0,  600, "0x600"    },
+            {  800,    0, "800x0"    },
+            {    0,    0, "0x0"      },
+            { -800,  600, "-800x600" },
+            {  800, -600, "800x-600" }
+        };
+        for (int i = 0; i < ARRAY_LEN(kViews); i++) {
+            UT_ASSERT_MSG(!overviewCameraScrollTo(&cam, kViews[i].w,
+                                                  kViews[i].h, kScrollPointX,
+                                                  kScrollPointY),
+                          "a %s view started a scroll", kViews[i].what);
+            UT_ASSERT_MSG(overviewCameraIsScrolling(&cam),
+                          "a %s view ended the scroll already in flight",
+                          kViews[i].what);
+        }
+
+        UT_ASSERT_MSG(!overviewCameraScrollTo(NULL, viewW, viewH,
+                                              kScrollPointX, kScrollPointY),
+                      "a NULL camera started a scroll");
+    }
+    return 0;
+}
+
 /* Zoom steps stop at the ladder's ends and pans stop at the map's. */
 static int camera_clamps_zoom_and_centre(void) {
     const int viewW = 800;
@@ -1150,5 +1391,7 @@ extern "C" int run_overview_scroll(void) {
     rc = camera_scroll_retargets_and_cancels();      if (rc) return rc;
     rc = camera_scroll_leaves_follow_alone();        if (rc) return rc;
     rc = camera_scroll_ignores_degenerate_input();   if (rc) return rc;
+    rc = camera_scroll_to_lands_on_the_centre_asked_for();
+    if (rc) return rc;
     return 0;
 }

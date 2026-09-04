@@ -78,7 +78,7 @@ typedef struct OverviewCamera {
        otherwise unaware it is moving. */
     bool  scrolling;
     float scrollFromX, scrollFromY;   /* centre when the scroll was started */
-    float scrollToX, scrollToY;       /* centre that brings the point on screen */
+    float scrollToX, scrollToY;       /* centre the scroll is aimed at */
     float scrollElapsedMs;
 } OverviewCamera;
 
@@ -162,13 +162,30 @@ bool overviewCameraCentreToShow(const OverviewCamera *cam, int viewW, int viewH,
                                 float pointX, float pointY,
                                 float *outCx, float *outCy);
 
-/* Start an eased scroll to that centre, taking OVERVIEW_SCROLL_MS to get
- * there. Returns true when a scroll was started, false when the point is
- * already on screen — in which case any scroll in flight is cancelled, since
+/* Start an eased scroll to the centre given, taking OVERVIEW_SCROLL_MS to get
+ * there. This one is told where to put the centre; overviewCameraScrollToShow
+ * below works out the least move that brings a point into the view and scrolls
+ * to that instead. Hand it an item's square centre and the camera ends up with
+ * the item in the middle of the picture, wherever it came in from.
+ *
+ * The target goes through the same map clamp every camera move ends in, so a
+ * centre the camera would not accept becomes the one it would. Returns true
+ * when a scroll was started, false when that clamped centre is the one the
+ * camera is already on — in which case any scroll in flight is cancelled, since
  * it was aimed somewhere else. Called again while a scroll is running it
- * re-aims from wherever the animated centre has reached, so stepping to the
- * next item scrolls on rather than snapping back. Moves nothing by itself:
- * the first tick is where the centre starts to change. */
+ * re-aims from wherever the animated centre has reached. Moves nothing by
+ * itself: the first tick is where the centre starts to change. Leaves the
+ * follow flag alone, like every other scroll call. */
+bool overviewCameraScrollTo(OverviewCamera *cam, int viewW, int viewH,
+                            float targetCx, float targetCy);
+
+/* Start an eased scroll to the centre the nudge above works out — the least
+ * move — taking OVERVIEW_SCROLL_MS to get there. Returns true when a scroll
+ * was started, false when the point is already on screen — in which case any
+ * scroll in flight is cancelled, since it was aimed somewhere else. Called
+ * again while a scroll is running it re-aims from wherever the animated centre
+ * has reached, so a fresh aim carries on rather than snapping back. Moves
+ * nothing by itself: the first tick is where the centre starts to change. */
 bool overviewCameraScrollToShow(OverviewCamera *cam, int viewW, int viewH,
                                 float pointX, float pointY);
 

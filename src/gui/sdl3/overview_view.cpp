@@ -742,12 +742,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                  * a player who had panned off the tank gets that camera back. */
                 v->followBeforeItemView = v->cam.follow;
                 v->cam.follow = true;
-                overviewCameraScrollToShow(&v->cam, w, h, itemX, itemY);
+                overviewCameraScrollTo(&v->cam, w, h, itemX, itemY);
             } else if (viewKind != v->wasViewKind ||
                        viewTarget != v->wasViewTarget) {
                 /* A step to another item, of this kind or another. Follow is
                  * left alone — only the way in and the way out own it. */
-                overviewCameraScrollToShow(&v->cam, w, h, itemX, itemY);
+                overviewCameraScrollTo(&v->cam, w, h, itemX, itemY);
             }
         } else if (v->wasInItemView) {
             /* The way out, by whatever route: the player leaving the view, the
@@ -804,12 +804,11 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          *
          * A scroll in flight is the player being taken somewhere, so it has
          * the frame to itself — anything else moving the centre would leave
-         * nothing to animate. Under it, an item view follows the item: the
-         * least move that keeps the watched square on screen rather than a
-         * centring, so an item comfortably in view moves nothing and an ally
-         * driving for the edge is nudged instead of pinned to the middle.
-         * With follow off — the player has panned away — nothing moves.
-         * Under that, the tank view follows the tank.
+         * nothing to animate. Under it, an item view centres on what it is
+         * watching, the same way the tank view centres on the tank, so an ally
+         * stays in the middle of the picture instead of riding the edge they
+         * were scrolled in over. With follow off — the player has panned away
+         * — nothing moves. Under that, the tank view follows the tank.
          *
          * A tank waiting to respawn has a position but is not anywhere the
          * player is, so follow mode holds the centre it already had. The
@@ -821,11 +820,9 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         if (overviewCameraScrollTick(&v->cam, dtMs)) {
             /* The scroll has the centre this frame. */
         } else if (inItemView) {
-            if (v->cam.follow) {
-                overviewCameraKeepOnScreen(&v->cam, w, h,
-                                           (float)clientSimGetPillViewX(cs) + 0.5f,
-                                           (float)clientSimGetPillViewY(cs) + 0.5f);
-            }
+            overviewCameraFollowTick(&v->cam, w, h,
+                                     (float)clientSimGetPillViewX(cs) + 0.5f,
+                                     (float)clientSimGetPillViewY(cs) + 0.5f);
         } else if (clientSimIsMyTankAlive(cs) &&
                    clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
             if (!smoothScrollingEnabled) {
