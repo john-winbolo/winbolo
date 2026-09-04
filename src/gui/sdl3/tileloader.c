@@ -557,15 +557,102 @@ static const char *tileDetailName(int mode) {
     }
 }
 
-/* Blit a rectangle from the BMP fallback surface (with color key applied)
- * into the RGBA sheet. The BMP surface has a green color key so green
- * pixels become transparent in the output. */
+/* Blit a rectangle from the BMP fallback surface into the RGBA sheet.  That
+ * surface is RGBA32 with the key colour already turned into transparency by
+ * applySheetKey, and the blit carries its alpha through. */
 static void blitFromBMP(SDL_Surface *sheet, SDL_Surface *bmp,
                         int dstX, int dstY, int srcX, int srcY,
                         int w, int h) {
     SDL_Rect srcRect = { srcX, srcY, w, h };
     SDL_Rect dstRect = { dstX, dstY, w, h };
     SDL_BlitSurface(bmp, &srcRect, sheet, &dstRect);
+}
+
+/* Reduce one sprite from a source sheet drawn at a finer multiple than the
+ * slot it lands in.  Each destination pixel is the average of the block of
+ * source pixels it covers, so nothing is thrown away the way taking one
+ * pixel per block would.
+ *
+ * The average is premultiplied: a transparent pixel still carries the key
+ * colour in its RGB, so weighting each pixel's colour by its own alpha is
+ * what keeps that colour out of a block straddling the edge of a sprite.
+ *
+ * False when the source is not the RGBA32 a sheet is converted to, which is
+ * the caller's cue to fall back rather than read bytes it cannot trust. */
+static bool reduceSheetSprite(SDL_Surface *sheet, const SDL_Surface *src,
+                              const TileMapEntry *e, int scale, int D) {
+    if (!src->pixels || src->format != SDL_PIXELFORMAT_RGBA32) return false;
+
+    int w = e->width  * scale;
+    int h = e->height * scale;
+    int dstX = e->sheetX * scale;
+    int dstY = e->sheetY * scale;
+    int srcX = e->sheetX * D;
+    int srcY = e->sheetY * D;
+    int srcW = e->width  * D;
+    int srcH = e->height * D;
+
+    if (w < 1 || h < 1 || srcW < 1 || srcH < 1) return false;
+
+    for (int j = 0; j < h; j++) {
+        int dy = dstY + j;
+        if (dy < 0 || dy >= sheet->h) continue;
+
+        /* The source rows this output row spans.  The clamp keeps a block
+           from coming out empty when the two sizes divide awkwardly. */
+        int y0 = j * srcH / h;
+        int y1 = (j + 1) * srcH / h;
+        if (y1 <= y0) y1 = y0 + 1;
+
+        unsigned char *dstRow = (unsigned char *)sheet->pixels +
+                                (size_t)dy * (size_t)sheet->pitch;
+
+        for (int i = 0; i < w; i++) {
+            int dx = dstX + i;
+            if (dx < 0 || dx >= sheet->w) continue;
+
+            int x0 = i * srcW / w;
+            int x1 = (i + 1) * srcW / w;
+            if (x1 <= x0) x1 = x0 + 1;
+
+            unsigned long sumR = 0, sumG = 0, sumB = 0, sumA = 0, n = 0;
+
+            for (int sy = y0; sy < y1; sy++) {
+                int py = srcY + sy;
+                if (py < 0 || py >= src->h) continue;
+
+                const unsigned char *srcRow =
+                    (const unsigned char *)src->pixels +
+                    (size_t)py * (size_t)src->pitch;
+
+                for (int sx = x0; sx < x1; sx++) {
+                    int px = srcX + sx;
+                    if (px < 0 || px >= src->w) continue;
+
+                    const unsigned char *p = srcRow + (size_t)px * 4;
+                    unsigned long a = p[3];
+                    sumR += (unsigned long)p[0] * a;
+                    sumG += (unsigned long)p[1] * a;
+                    sumB += (unsigned long)p[2] * a;
+                    sumA += a;
+                    n++;
+                }
+            }
+
+            unsigned char *d = dstRow + (size_t)dx * 4;
+            if (n == 0 || sumA == 0) {
+                /* Every pixel of the block was fully transparent, so there
+                   is no colour to carry and nothing to divide by. */
+                d[0] = d[1] = d[2] = d[3] = 0;
+            } else {
+                d[0] = (unsigned char)(sumR / sumA);
+                d[1] = (unsigned char)(sumG / sumA);
+                d[2] = (unsigned char)(sumB / sumA);
+                d[3] = (unsigned char)(sumA / n);
+            }
+        }
+    }
+    return true;
 }
 
 /* Cut one sprite out of a whole-sheet BMP (either the skin's own or
@@ -610,31 +697,113 @@ static bool blitSheetSprite(SDL_Surface *sheet, SDL_Surface *src,
             SDL_DestroySurface(tmpSurf);
         }
     } else {
-        /* A sheet drawn at a different multiple than the slot it lands in.
-           Point sampling either way: the sheet is color-keyed pixel art, so
-           its transparent pixels still hold the key green, and interpolating
-           across a key boundary invents green fringing and part-transparent
-           pixels the art never had.  Point sampling is also what 1.x did.
-           A sheet finer than the slot loses detail here; the alternative is
-           building the output sheet at the skin's density rather than
-           scaling into a coarser one. */
-        SDL_Rect srcRect = { e->sheetX * D, e->sheetY * D,
-                             e->width * D, e->height * D };
-        SDL_Rect dstRect = { dstX, dstY, w, h };
-        SDL_BlitSurfaceScaled(src, &srcRect, sheet, &dstRect,
-                              SDL_SCALEMODE_NEAREST);
+        /* A sheet drawn at a different multiple than the slot it lands in,
+           and the two directions want different sampling.
+
+           Enlarging point-samples.  The sheet is pixel art, so every source
+           pixel is meant to come out as a hard block, and that is what 1.x
+           did too.
+
+           Reducing averages.  Point sampling a reduction keeps one source
+           pixel out of every block and throws the rest away, so a dithered
+           sprite comes out as whichever parity the sampling happened to
+           land on rather than as the tone the dither was drawn to make.
+           The average is premultiplied, because a transparent pixel still
+           holds the key colour in its RGB and a plain colour average would
+           pull that into the edge of every sprite.  A source that is not
+           RGBA32 cannot be read that way and falls through to the blit
+           below.
+
+           A sheet finer than the slot still loses detail here; the
+           alternative is building the output sheet at the skin's density
+           rather than scaling into a coarser one. */
+        if (D <= scale || !reduceSheetSprite(sheet, src, e, scale, D)) {
+            SDL_Rect srcRect = { e->sheetX * D, e->sheetY * D,
+                                 e->width * D, e->height * D };
+            SDL_Rect dstRect = { dstX, dstY, w, h };
+            SDL_BlitSurfaceScaled(src, &srcRect, sheet, &dstRect,
+                                  SDL_SCALEMODE_NEAREST);
+        }
     }
     return true;
 }
 
-/* Apply the green color key to a freshly loaded sheet BMP and convert it to
- * RGBA32 so the key becomes real transparency.  Consumes `raw`; NULL in
- * gives NULL out. */
-static SDL_Surface *loadKeyedSheetFromSurface(SDL_Surface *raw) {
+/* How far a pixel may drift from (0, 255, 0) on each channel and still count
+ * as the key colour.  The one place the tolerance is written. */
+#define SHEET_KEY_TOLERANCE 8
+
+bool tileLoaderIsSheetKeyColor(Uint8 r, Uint8 g, Uint8 b) {
+    return r <= SHEET_KEY_TOLERANCE &&
+           g >= 255 - SHEET_KEY_TOLERANCE &&
+           b <= SHEET_KEY_TOLERANCE;
+}
+
+/* The status pane's icon slots.  They are the one part of a sheet the key is
+ * never applied to, so they need telling apart from the rest of the HUD
+ * art. */
+static bool isStatusSprite(const char *name) {
+    static const char prefix[] = "status_";
+    return strncmp(name, prefix, sizeof(prefix) - 1) == 0;
+}
+
+/* Turn the key colour into transparency on a converted RGBA32 sheet.
+ * `density` is the multiple the sheet is drawn at, which is what turns a
+ * gTileMap[] slot into a rect on these pixels.
+ *
+ * The status pane's icon slots come out fully opaque.  A whole-sheet BMP
+ * draws those icons in green on black — the built-in sheet and the 1.x
+ * skins both do — so keying them would erase the icons themselves and
+ * leave the player an empty status bar.  The black they sit on costs
+ * nothing: sdl3DrawSetBasesStatusClear fills the whole bases panel with
+ * opaque black before any icon is drawn over it. */
+static void applySheetKey(SDL_Surface *rgba, int density) {
+    if (!rgba || !rgba->pixels) return;
+    if (density < 1) density = 1;
+
+    /* Alpha only.  The RGB of a keyed pixel is left where it is, so putting
+       a status slot's alpha back below restores its art exactly. */
+    for (int y = 0; y < rgba->h; y++) {
+        unsigned char *row = (unsigned char *)rgba->pixels +
+                             (size_t)y * (size_t)rgba->pitch;
+        for (int x = 0; x < rgba->w; x++) {
+            unsigned char *p = row + (size_t)x * 4;
+            if (tileLoaderIsSheetKeyColor(p[0], p[1], p[2])) p[3] = 0;
+        }
+    }
+
+    for (int i = 0; gTileMap[i].name != NULL; i++) {
+        if (!isStatusSprite(gTileMap[i].name)) continue;
+
+        /* Clipped to the surface: a sheet that is not a whole multiple is
+           used as 1x while its pixels are a different size, so a slot rect
+           can fall partly or wholly off it. */
+        const TileMapEntry *e = &gTileMap[i];
+        int x0 = e->sheetX * density;
+        int y0 = e->sheetY * density;
+        int x1 = x0 + e->width  * density;
+        int y1 = y0 + e->height * density;
+
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > rgba->w) x1 = rgba->w;
+        if (y1 > rgba->h) y1 = rgba->h;
+
+        for (int y = y0; y < y1; y++) {
+            unsigned char *row = (unsigned char *)rgba->pixels +
+                                 (size_t)y * (size_t)rgba->pitch;
+            for (int x = x0; x < x1; x++) {
+                row[(size_t)x * 4 + 3] = 255;
+            }
+        }
+    }
+}
+
+/* Convert a freshly loaded sheet BMP to RGBA32.  Nothing is made
+ * transparent here: applySheetKey does that once the caller knows the
+ * multiple the sheet is drawn at.  Consumes `raw`; NULL in gives NULL
+ * out. */
+static SDL_Surface *loadSheetSurface(SDL_Surface *raw) {
     if (!raw) return NULL;
-    Uint32 key = SDL_MapRGB(SDL_GetPixelFormatDetails(raw->format),
-                            NULL, 0, 255, 0);
-    SDL_SetSurfaceColorKey(raw, true, key);
     SDL_Surface *out = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_RGBA32);
     SDL_DestroySurface(raw);
     return out;
@@ -653,29 +822,33 @@ static SDL_Surface *loadSkinSheet(struct SkinSource *skin, int *outDensity) {
         void *buf = NULL;
         size_t len = 0;
         if (!skinSourceRead(skin, names[i], &buf, &len)) continue;
-        SDL_Surface *keyed = NULL;
+        SDL_Surface *sheet = NULL;
         SDL_IOStream *io = len > 0 ? SDL_IOFromMem(buf, len) : NULL;
         if (io) {
             /* true closes the stream for us; the buffer stays ours to free. */
-            keyed = loadKeyedSheetFromSurface(SDL_LoadBMP_IO(io, true));
+            sheet = loadSheetSurface(SDL_LoadBMP_IO(io, true));
         }
         SDL_free(buf);
-        if (keyed) {
+        if (sheet) {
             /* The multiple comes from the pixels, never from the name: the
                32 in skin32.bmp is its tile size, which is 2x here, but
                nothing holds an author to that.  A sheet that is not a whole
                multiple on both axes is used as 1x, which is what happened to
                every sheet before, so it earns a warning and no more. */
-            int d = keyed->w / TILE_FILE_X;
+            int d = sheet->w / TILE_FILE_X;
             if (d >= 1 && d <= SKIN_DENSITY_MAX &&
-                keyed->w == TILE_FILE_X * d && keyed->h == TILE_FILE_Y * d) {
+                sheet->w == TILE_FILE_X * d && sheet->h == TILE_FILE_Y * d) {
                 if (outDensity) *outDensity = d;
             } else {
+                /* Keyed at the multiple it is used at, so the slot rects the
+                   key works on are the ones the crops come from. */
+                d = 1;
                 WB_LOG_WARN(WB_LOG_CAT_ASSET,
                         "tileLoaderBuildSheet: skin %s is %dx%d, not a whole multiple of %dx%d; using it as 1x",
-                        names[i], keyed->w, keyed->h, TILE_FILE_X, TILE_FILE_Y);
+                        names[i], sheet->w, sheet->h, TILE_FILE_X, TILE_FILE_Y);
             }
-            return keyed;
+            applySheetKey(sheet, d);
+            return sheet;
         }
         WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: skin %s is not a usable BMP",
                 names[i]);
@@ -725,13 +898,16 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
     /* Clear to fully transparent. */
     SDL_memset(sheet->pixels, 0, (size_t)(sheet->pitch * sheet->h));
 
-    /* Load the BMP fallback surface and apply green color key.
-       If scale > 1 we scale the BMP up so it lands at the right position. */
+    /* Load the BMP fallback surface and turn its green into transparency.
+       It is always drawn at 1x; if scale > 1 the per-sprite crop scales it
+       up so it lands at the right position. */
     char bmpPathBuf[512];
     SDL_snprintf(bmpPathBuf, sizeof(bmpPathBuf), "%sdata/skin.bmp", basePath);
-    SDL_Surface *bmp = loadKeyedSheetFromSurface(SDL_LoadBMP(bmpPathBuf));
+    SDL_Surface *bmp = loadSheetSurface(SDL_LoadBMP(bmpPathBuf));
     if (!bmp) {
         WB_LOG_WARN(WB_LOG_CAT_ASSET, "tileLoaderBuildSheet: could not load %s fallback", bmpPathBuf);
+    } else {
+        applySheetKey(bmp, 1);
     }
 
     /* The skin's whole sheet is read once and cropped per sprite, so a

@@ -17,6 +17,16 @@
  * 2x whole sheet - written into the working directory and deleted again - has
  * to scan as covering density 2 for every sprite, including the ones it
  * carries no file for.
+ *
+ * That same sheet-only skin is then built into an output sheet, which is
+ * what puts a 2x source into a 1x slot and exercises the reducing arm of
+ * blitSheetSprite. Its pixels are a checkerboard so that averaging the
+ * block each output pixel covers and taking one pixel out of it give
+ * different answers.
+ *
+ * The sheet key's tolerance band is pinned here too. It is the other thing a
+ * whole-sheet BMP is read for, and it is a pure function of three channel
+ * values, so it needs no fixture at all.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -120,10 +130,46 @@ static int checkSheetDensity(void) {
     return 0;
 }
 
-/* Write a 992x352 1-bit-per-pixel BMP - two palette entries, 124 bytes a row
-   and every pixel index 0, about 44KB. The scan reads the header and stops,
-   but there is no reason to leave a malformed file behind for whatever opens
-   it next. Returns 0 on any write failure. */
+/* Both edges of the sheet key's tolerance band. Wide enough to swallow the
+   near-greens an anti-aliased sheet carries beside the pure one, narrow
+   enough to leave art drawn in green alone. */
+static int checkSheetKeyColor(void) {
+    UT_ASSERT_MSG(tileLoaderIsSheetKeyColor(0, 255, 0),
+                  "pure green is not read as the key colour");
+    UT_ASSERT_MSG(tileLoaderIsSheetKeyColor(0, 254, 0),
+                  "(0,254,0) is not read as the key colour; it is one step of "
+                  "encoding noise off pure green");
+    UT_ASSERT_MSG(tileLoaderIsSheetKeyColor(1, 255, 1),
+                  "(1,255,1) is not read as the key colour");
+    UT_ASSERT_MSG(tileLoaderIsSheetKeyColor(8, 247, 8),
+                  "(8,247,8) is not read as the key colour; it is the far "
+                  "corner of the band and still inside it");
+
+    UT_ASSERT_MSG(!tileLoaderIsSheetKeyColor(9, 247, 0),
+                  "(9,247,0) is read as the key colour; red is one past the "
+                  "band");
+    UT_ASSERT_MSG(!tileLoaderIsSheetKeyColor(0, 246, 0),
+                  "(0,246,0) is read as the key colour; green is one past the "
+                  "band");
+    UT_ASSERT_MSG(!tileLoaderIsSheetKeyColor(0, 255, 9),
+                  "(0,255,9) is read as the key colour; blue is one past the "
+                  "band");
+    UT_ASSERT_MSG(!tileLoaderIsSheetKeyColor(28, 255, 28),
+                  "(28,255,28) is read as the key colour; that is art-class "
+                  "green and would be erased from every sheet");
+    UT_ASSERT_MSG(!tileLoaderIsSheetKeyColor(0, 128, 0),
+                  "mid green is read as the key colour");
+    UT_ASSERT_MSG(!tileLoaderIsSheetKeyColor(255, 255, 255),
+                  "white is read as the key colour");
+    return 0;
+}
+
+/* Write a 992x352 1-bit-per-pixel BMP - two palette entries, 124 bytes a row,
+   about 44KB. The scan reads the header and stops, but the pixels are a
+   black and white checkerboard rather than a flat fill: that is what the
+   reduction check below reads back, and a flat sheet would pass a 2:1
+   reduction whether it averaged or point-sampled. Returns 0 on any write
+   failure. */
 static int writeSheetBmp(const char *path) {
     const long w = 992;
     const long h = 352;
@@ -160,8 +206,12 @@ static int writeSheetBmp(const char *path) {
         fclose(f);
         return 0;
     }
-    memset(row, 0, sizeof(row));
+    /* 0xAA is 10101010 and 0x55 its opposite, MSB first being the leftmost
+       pixel, so alternating them row by row lays down a checkerboard one
+       pixel on a side. 992 is a whole number of bytes, so no row runs a
+       partial byte out of phase. */
     for (y = 0; y < h; y++) {
+        memset(row, (y & 1) ? 0x55 : 0xAA, sizeof(row));
         if (fwrite(row, 1, (size_t)rowBytes, f) != (size_t)rowBytes) {
             fclose(f);
             return 0;
@@ -223,6 +273,54 @@ static int checkSheetOnlyScan(SkinSource *src, int iBare) {
     return 0;
 }
 
+/* Cutting a 2x sheet into a 1x slot is a reduction, and a checkerboard is
+   what tells the two ways of doing it apart. Averaging each output pixel
+   over the 2x2 block it covers gives a mid-tone everywhere, because every
+   2x2 window of a checkerboard holds two black pixels and two white.
+   Point sampling takes one pixel of the four and comes out solid black or
+   solid white. */
+static int checkSheetReduction(SkinSource *skin, int iBare) {
+    const TileMapEntry *e = &gTileMap[iBare];
+    SDL_Surface *sheet;
+    int lo = 255, hi = 0, alphaLo = 255;
+    int x, y;
+
+    /* Classic keeps every sprite at density 1, and a tile size of
+       TILE_SIZE_X builds the sheet at scale 1, so the whole 2x skin sheet
+       is reduced into it. */
+    sheet = tileLoaderBuildSheetFor(skin, TILE_SIZE_X, TILE_DETAIL_CLASSIC);
+    if (sheet == NULL) {
+        UT_FAIL("tileLoaderBuildSheetFor returned NULL for the sheet-only skin");
+    }
+    if (sheet->format != SDL_PIXELFORMAT_RGBA32) {
+        SDL_DestroySurface(sheet);
+        UT_FAIL("the built sheet is not RGBA32, so its bytes cannot be read here");
+    }
+
+    for (y = 0; y < e->height; y++) {
+        const unsigned char *row = (const unsigned char *)sheet->pixels +
+                                   (size_t)(e->sheetY + y) * (size_t)sheet->pitch;
+        for (x = 0; x < e->width; x++) {
+            const unsigned char *p = row + (size_t)(e->sheetX + x) * 4;
+            if (p[0] < lo) lo = p[0];
+            if (p[0] > hi) hi = p[0];
+            if (p[3] < alphaLo) alphaLo = p[3];
+        }
+    }
+    SDL_DestroySurface(sheet);
+
+    UT_ASSERT_MSG(lo >= 64 && hi <= 191,
+                  "deep_sea's slot spans red %d..%d after the 2x sheet was "
+                  "reduced into it; a checkerboard averages to a mid-tone, "
+                  "and 0 or 255 means one parity was taken and the other "
+                  "thrown away", lo, hi);
+    UT_ASSERT_MSG(alphaLo == 255,
+                  "the reduced slot's lowest alpha is %d; a black and white "
+                  "sheet holds no key colour, so every pixel stays opaque",
+                  alphaLo);
+    return 0;
+}
+
 /* Build that skin in the working directory, scan it, and take it away again
    whether the scan passed or not. */
 static int checkSheetOnlySkin(int iBare) {
@@ -254,6 +352,7 @@ static int checkSheetOnlySkin(int iBare) {
     }
 
     rc = checkSheetOnlyScan(src, iBare);
+    if (rc == 0) rc = checkSheetReduction(src, iBare);
 
     skinSourceClose(src);
     remove(bmpPath);
@@ -386,6 +485,8 @@ int run_skin_density_scan(void) {
                   "a NULL skin reported highestAny %d", info.highestAny);
 
     rc = checkSheetDensity();
+    if (rc != 0) return rc;
+    rc = checkSheetKeyColor();
     if (rc != 0) return rc;
     return checkSheetOnlySkin(iBare);
 }

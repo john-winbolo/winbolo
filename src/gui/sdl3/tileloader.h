@@ -112,6 +112,13 @@ typedef struct SkinDensityInfo {
    or its size is not a whole multiple of the sheet layout on both axes. */
 int tileLoaderSheetDensityFromBmp(const void *buf, size_t len);
 
+/* True when a sheet pixel is the transparent green a whole-sheet BMP uses.
+   Not an exact match: an anti-aliased sheet carries near-greens beside the
+   pure one, and leaving those opaque puts a green fringe on every sprite.
+   The band is narrow on purpose - wide enough for encoding noise, not wide
+   enough to reach green art. */
+bool tileLoaderIsSheetKeyColor(Uint8 r, Uint8 g, Uint8 b);
+
 /*********************************************************
  * NAME:          tileLoaderScanDensity
  * PURPOSE:
