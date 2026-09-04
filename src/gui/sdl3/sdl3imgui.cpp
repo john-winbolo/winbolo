@@ -1282,6 +1282,44 @@ static void renderGameInfoContent(ClientSim *cs) {
         args.number = (int)mins;
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
+
+    /* Server visibility rules, one row per category. Read-only mirror of
+     * the lobby's pill / base / ally rows, shown so a player can check
+     * them without opening the lobby. The row labels come from the lobby
+     * form and carry no punctuation, so the colon is supplied here. */
+    {
+        static const struct {
+            langid       label;
+            ViewCategory cat;
+        } viewRows[] = {
+            { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill },
+            { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase },
+            { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly },
+        };
+        const char *modes[] = {
+            langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+            langGetText(STR_DLGLOBBY_VIEW_KEY),
+            langGetText(STR_DLGLOBBY_VIEW_DECAY),
+            langGetText(STR_DLGLOBBY_VIEW_OFF),
+        };
+        for (int r = 0; r < 3; r++) {
+            /* The lobby-settings decoder mirrors the policy byte as it
+             * arrives, so a value outside the enum can reach here. Fall
+             * back to the wire default rather than index past modes[]. */
+            int policy = (int)clientSimGetViewPolicy(cs, viewRows[r].cat);
+            if (policy < (int)viewPolicyAlways || policy > (int)viewPolicyOff) {
+                policy = (int)viewPolicyAlways;
+            }
+            const char *label = langGetText(viewRows[r].label);
+            if (policy == (int)viewPolicyDecay) {
+                int secs = (int)clientSimGetViewDecaySecs(cs, viewRows[r].cat);
+                ImGui::Text("%s: %s %d %s", label, modes[policy], secs,
+                            langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+            } else {
+                ImGui::Text("%s: %s", label, modes[policy]);
+            }
+        }
+    }
 }
 
 static void renderGameInfoPanel(ClientSim *cs) {
