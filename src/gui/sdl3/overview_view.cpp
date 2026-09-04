@@ -158,6 +158,21 @@ struct OverviewView {
      * view draws in it. */
     Uint64         blackoutTick;
 
+    /* The item view as it stood last frame, and what the camera did about it.
+     * Entering one saves the follow flag and turns following on, aimed at the
+     * watched item; stepping to another item starts a fresh scroll; leaving
+     * puts the flag back and brings the tank on screen. Which of those it is
+     * comes from comparing this frame's kind and target against these, and a
+     * fresh view has never been in one.
+     *
+     * scrollTick is the SDL_GetTicks() the last scroll advance was measured
+     * from, and 0 before there has been one. */
+    bool           wasInItemView;
+    uint8_t        wasViewKind;
+    BYTE           wasViewTarget;
+    bool           followBeforeItemView;
+    Uint64         scrollTick;
+
     /* This view's tank-label cache — the shared drawer in tank_label.c
      * builds its textures on whichever renderer hosts the view (the classic
      * pass's cache is the main window's and cannot be shared). It flushes
@@ -691,6 +706,67 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
     SDL_RenderClear(r);
 
+    /* Going into an item view, stepping to the next item and coming back out
+     * of one. Only where this view has replaced the classic one: beside the
+     * pop-out the 15x15 is already showing the item, and taking a deliberately
+     * parked pop-out camera off where the player put it would be a worse
+     * trade than leaving it on the tank.
+     *
+     * Ahead of the camera work below, so a scroll started here is advanced on
+     * the same frame it starts and the per-frame follow stands down for it.
+     * The other way round, follow would put the item on screen before the
+     * scroll had moved anything and there would be nothing left to animate. */
+    if (ownsWindow && cs != NULL) {
+        bool    inItemView = clientSimIsInItemView(cs);
+        uint8_t viewKind   = clientSimGetViewKind(cs);
+        BYTE    viewTarget = clientSimGetViewTarget(cs);
+
+        if (inItemView) {
+            /* The watched square, whatever kind of item is on it. */
+            float itemX = (float)clientSimGetPillViewX(cs) + 0.5f;
+            float itemY = (float)clientSimGetPillViewY(cs) + 0.5f;
+
+            if (!v->wasInItemView) {
+                /* The way in. The flag goes back as it was on the way out, so
+                 * a player who had panned off the tank gets that camera back. */
+                v->followBeforeItemView = v->cam.follow;
+                v->cam.follow = true;
+                overviewCameraScrollToShow(&v->cam, w, h, itemX, itemY);
+            } else if (viewKind != v->wasViewKind ||
+                       viewTarget != v->wasViewTarget) {
+                /* A step to another item, of this kind or another. Follow is
+                 * left alone — only the way in and the way out own it. */
+                overviewCameraScrollToShow(&v->cam, w, h, itemX, itemY);
+            }
+        } else if (v->wasInItemView) {
+            /* The way out, by whatever route: the player leaving the view, the
+             * watched item going, the decay clock running out, a death, a
+             * respawn or the round resetting. They all read as the view kind
+             * going back to the tank, so there is one exit to answer.
+             *
+             * The scroll back is for the free camera, which is the one that
+             * would otherwise be left looking at empty ground. With follow on
+             * the tank cannot stay off screen — following re-centres it — so a
+             * scroll there would only be a delay in front of a centring that
+             * jumps the rest of the way, since the scroll stops at the margin.
+             *
+             * Nothing to scroll to while the tank is dead — the flag is still
+             * restored, and the follow below picks the tank up on the respawn. */
+            v->cam.follow = v->followBeforeItemView;
+            if (!v->cam.follow) {
+                float tankX = 0.0f, tankY = 0.0f;
+                if (clientSimIsMyTankAlive(cs) &&
+                    clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+                    overviewCameraScrollToShow(&v->cam, w, h, tankX, tankY);
+                }
+            }
+        }
+
+        v->wasInItemView = inItemView;
+        v->wasViewKind   = viewKind;
+        v->wasViewTarget = viewTarget;
+    }
+
     const OverviewMap *om = clientSimGetOverviewMap(cs);
     if (om != NULL && tiles != NULL) {
         if (sheetScale < 1) sheetScale = 1;
@@ -698,15 +774,45 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * one-off NEAREST at build time does not survive to here. */
         SDL_SetTextureScaleMode(tiles, SDL_SCALEMODE_NEAREST);
 
-        /* A tank waiting to respawn has a position but is not anywhere the
+        /* How long since the last frame, taken whether or not a scroll is
+         * running: a scroll started after the view sat idle would otherwise
+         * be handed the whole gap as its first step and finish instantly. */
+        Uint64 nowTick = SDL_GetTicks();
+        float  dtMs    = (v->scrollTick == 0)
+                             ? 0.0f
+                             : (float)(nowTick - v->scrollTick);
+        v->scrollTick = nowTick;
+
+        bool inItemView = ownsWindow && cs != NULL && clientSimIsInItemView(cs);
+
+        /* Three claims on the centre, in the order they win.
+         *
+         * A scroll in flight is the player being taken somewhere, so it has
+         * the frame to itself — anything else moving the centre would leave
+         * nothing to animate. Under it, an item view follows the item: the
+         * least move that keeps the watched square on screen rather than a
+         * centring, so an item comfortably in view moves nothing and an ally
+         * driving for the edge is nudged instead of pinned to the middle.
+         * With follow off — the player has panned away — nothing moves.
+         * Under that, the tank view follows the tank.
+         *
+         * A tank waiting to respawn has a position but is not anywhere the
          * player is, so follow mode holds the centre it already had. The
          * sub-square read is what lets follow glide with the tank rather
          * than stepping a whole square at a time; with Smooth Scrolling off
          * the position is snapped back to its square's centre, so follow
          * steps the way the classic view's scroll does. */
         float tankX = 0.0f, tankY = 0.0f;
-        if (clientSimIsMyTankAlive(cs) &&
-            clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+        if (overviewCameraScrollTick(&v->cam, dtMs)) {
+            /* The scroll has the centre this frame. */
+        } else if (inItemView) {
+            if (v->cam.follow) {
+                overviewCameraKeepOnScreen(&v->cam, w, h,
+                                           (float)clientSimGetPillViewX(cs) + 0.5f,
+                                           (float)clientSimGetPillViewY(cs) + 0.5f);
+            }
+        } else if (clientSimIsMyTankAlive(cs) &&
+                   clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
             if (!smoothScrollingEnabled) {
                 tankX = SDL_floorf(tankX) + 0.5f;
                 tankY = SDL_floorf(tankY) + 0.5f;
