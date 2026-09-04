@@ -334,6 +334,13 @@ int voiceBackendCaptureRead(int16_t *pcm) {
 bool voiceBackendSpeakerOpen(int player) {
     SDL_AudioSpec spec;
 
+    /* player is a wire byte, unpacked by voiceSegmentUnpackDown, and the
+     * only check that it fits speakerStreams lives in voice_client.c.  The
+     * four speaker entry points hold the bound here as well, so the array
+     * does not depend on a caller two layers up remembering to. */
+    if (player < 0 || player >= MAX_TANKS) {
+        return false;
+    }
     if (speakerStreams[player] != NULL) {
         return true;
     }
@@ -371,6 +378,9 @@ bool voiceBackendSpeakerOpen(int player) {
 *  player - the player number to release
 *********************************************************/
 void voiceBackendSpeakerClose(int player) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return;
+    }
     if (speakerStreams[player]) {
         SDL_DestroyAudioStream(speakerStreams[player]);
         speakerStreams[player] = NULL;
@@ -395,6 +405,9 @@ void voiceBackendSpeakerClose(int player) {
 *  player - the player number to ask about
 *********************************************************/
 int voiceBackendSpeakerQueuedFrames(int player) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return 0;
+    }
     if (speakerStreams[player] == NULL) {
         return 0;
     }
@@ -415,6 +428,9 @@ int voiceBackendSpeakerQueuedFrames(int player) {
 *  pcm    - VOICE_FRAME_SAMPLES mono S16 samples
 *********************************************************/
 void voiceBackendSpeakerPlay(int player, const int16_t *pcm) {
+    if (player < 0 || player >= MAX_TANKS) {
+        return;
+    }
     if (speakerStreams[player]) {
         SDL_PutAudioStreamData(speakerStreams[player], pcm, VOICE_FRAME_BYTES);
     }

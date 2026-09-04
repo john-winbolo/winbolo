@@ -519,11 +519,17 @@ static struct {
      * host that never touches the setter keeps the default. */
     bool     voiceDisabled;
 
-    /* Cumulative voice segments this server forwarded, and segments a client
-     * sent past VOICE_SEGMENTS_PER_TICK that were drained and dropped.  Both
-     * count every slot together: they exist to measure the cap and to give an
-     * operator diagnosing a flooding client a number to look at, not to carry
-     * per-slot state. */
+    /* Cumulative voice segments this server forwarded, meaning unpacked and
+     * re-packed downstream, and segments pass 1 of serverPumpVoice drained
+     * and did not forward.  A segment is dropped when voice is switched off
+     * for the server, when the sender is past VOICE_SEGMENTS_PER_TICK for
+     * the tick, when the sender's map download is not yet complete, when
+     * voiceSegmentUnpackUp rejects it, or when voiceSegmentPackDown fails.
+     * The pre-download drop is expected: a client with voice on while still
+     * taking the map produces a steady drop rate that indicates nothing
+     * wrong.  Both count every slot together: they exist to give an operator
+     * diagnosing a flooding or misbehaving client a number to look at, not
+     * to carry per-slot state. */
     uint32_t voiceSegsAccepted;
     uint32_t voiceSegsDropped;
     /* Forwards withheld from a recipient by the concurrent-talker cap,
@@ -6870,16 +6876,27 @@ static void serverPumpVoice(ServerSim *sim) {
             }
             /* Not in the game yet: a client still taking the map is not a
              * talker, and the same rule keeps it off the receiving end. */
-            if (!udpServer.mapDownload[from].downloadComplete) continue;
+            if (!udpServer.mapDownload[from].downloadComplete) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
             if (!voiceSegmentUnpackUp(segBuf, (int)segLen, &seq, &flags,
-                                      &opus, &opusLen)) continue;
+                                      &opus, &opusLen)) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+            /* Counts towards the per-sender flood cap from here, whatever
+             * the pack below does with it. */
             accepted++;
-            udpServer.voiceSegsAccepted++;
 
             downLen = voiceSegmentPackDown(downBuf, (int)sizeof(downBuf),
                                            (uint8_t)from, seq, flags,
                                            opus, opusLen);
-            if (downLen <= 0) continue;
+            if (downLen <= 0) {
+                udpServer.voiceSegsDropped++;
+                continue;
+            }
+            udpServer.voiceSegsAccepted++;
 
             if (stagedCount < (int)(sizeof(staged) / sizeof(staged[0]))) {
                 VoiceStagedFrame *st = &staged[stagedCount];

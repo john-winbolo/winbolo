@@ -225,6 +225,14 @@ static void stopCaptureIfIdle(void) {
     inputLevel = 0.0f;
     gateOpen = false;
     gateHangover = 0;
+#if defined(WINBOLO_VOICE_AEC)
+    /* Remote playback keeps summing into the reference ring while the
+     * microphone is shut, but the ring only advances on the capture path,
+     * so the same few slots pile up and nothing else clears them.  Dropped
+     * here, or the first frames after capture resumes would be cancelled
+     * against that pile rather than against what the speakers played. */
+    voiceAecReset();
+#endif
 }
 
 /*********************************************************

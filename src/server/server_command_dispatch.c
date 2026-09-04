@@ -294,7 +294,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
     case CMD_VOICE_STATE: {
         const CmdVoiceState *p = &cmd->u.voiceState;
         GameSim *gs = serverSimGetGameSim(sim);
-        uint8_t flags = playersGetClientFlags(&gs->plyrs, (BYTE)senderSlot);
+        uint8_t oldFlags = playersGetClientFlags(&gs->plyrs, (BYTE)senderSlot);
+        uint8_t flags = oldFlags;
         flags &= (uint8_t)~PLAYER_VOICE_FLAG_MASK;
         if (p->hasMic) {
             flags |= PLAYER_FLAG_HAS_MIC;
@@ -303,6 +304,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
              * mic, muted, live — rather than four with a nonsense one. */
             if (p->selfMuted) flags |= PLAYER_FLAG_VOICE_MUTED;
         }
+        /* A client packs many commands into one PACKET_COMMAND_TICK, and
+         * a re-send of the state the slot already holds is not a change.
+         * Publishing it anyway would fan one reliable lobby-slot control
+         * event per command to every client. */
+        if (flags == oldFlags) return CMD_OK;
         playersSetClientFlags(&gs->plyrs, (BYTE)senderSlot, flags);
         /* During a running game the snapshot carries clientFlags every
          * tick, so the new bits reach every client on their own. The lobby
