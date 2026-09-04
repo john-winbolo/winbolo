@@ -164,7 +164,6 @@ set(WBN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/winbolonet_wasm.c)
 # GUI sources (SDL3) — excluding files we replace (winbolo.c, gamefront.c, sound.c, netclient.c, clientmutex.c, dns_lookups.c)
 set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
-    ${SRC_ROOT}/gui/skins.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
@@ -178,7 +177,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_setname.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_skins.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_trackersetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
@@ -213,6 +211,8 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
+    ${SRC_ROOT}/gui/sdl3/skin_source.c
+    ${SRC_ROOT}/gui/sdl3/gfx_settings.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw_status.c
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c

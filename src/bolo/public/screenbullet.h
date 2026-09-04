@@ -49,6 +49,8 @@ struct screenBulletsObj {
   BYTE my;    /* Y Map co-ord of the bullet (Mapped to screen) */
   BYTE px;    /* X Pixel offset of the bullet */
   BYTE py;    /* Y Pixel offset of the bullet */
+  BYTE wx;    /* X world offset inside the map square, 0-255. wx >> 4 == px */
+  BYTE wy;    /* Y world offset inside the map square, 0-255. wy >> 4 == py */
   BYTE frame; /* Frame identifier type */
 };
 
@@ -82,8 +84,10 @@ screenBullets screenBulletsCreate(void);
 *  px    - X pixel offset
 *  py    - Y pixel offset
 *  frame - Frame identifer of the bullet
+*  wx    - X world offset inside the map square (wx >> 4 == px)
+*  wy    - Y world offset inside the map square (wy >> 4 == py)
 *********************************************************/
-void screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame);
+void screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy);
 
 /*********************************************************
 *NAME:          screenBulletsGetNumEntries
@@ -129,6 +133,23 @@ void screenBulletsDestroy(screenBullets *value);
 *  frame - Frame identifer of the bullet
 *********************************************************/
 void screenBulletsGetItem(const screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame);
+
+/*********************************************************
+*NAME:          screenBulletsGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 26/12/98
+*LAST MODIFIED: 26/12/98
+*PURPOSE:
+*  Gets the world offsets inside the map square for a
+*  specific item
+*
+*ARGUMENTS:
+*  value   - Pointer to the screenBullets data structure
+*  itemNum - The item number to get
+*  wx      - X world offset inside the map square
+*  wy      - Y world offset inside the map square
+*********************************************************/
+void screenBulletsGetSubPixel(const screenBullets *value, int itemNum, BYTE *wx, BYTE *wy);
 
 #endif /* SCREENBULLETS_H */
 

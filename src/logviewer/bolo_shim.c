@@ -77,8 +77,10 @@
 /* ====================================================================
  * Part 1 — accessor wrappers (called from mapview.c Draw* path).
  *
- * Seven thin delegates plus one adapter (screenTanksGetItem) that
+ * Ten thin delegates plus one adapter (screenTanksGetItem) that
  * bridges a 9-arg bolo signature to the logviewer's 11-arg variant.
+ * The three GetSubPixel delegates need no adapter — unlike GetItem,
+ * those signatures agree on the two sides.
  * ==================================================================== */
 
 BYTE screenGetPos(screen *value, BYTE xValue, BYTE yValue) {
@@ -97,6 +99,11 @@ void screenBulletsGetItem(screenBullets *value, int itemNum,
                           BYTE *mx, BYTE *my, BYTE *px, BYTE *py,
                           BYTE *frame) {
   lv_screenBulletsGetItem(value, itemNum, mx, my, px, py, frame);
+}
+
+void screenBulletsGetSubPixel(screenBullets *value, int itemNum,
+                              BYTE *wx, BYTE *wy) {
+  lv_screenBulletsGetSubPixel(value, itemNum, wx, wy);
 }
 
 BYTE screenTanksGetNumEntries(screenTanks *value) {
@@ -130,6 +137,11 @@ void screenTanksGetItem(screenTanks *value, BYTE itemNum,
   if (playerNum) *playerNum = 0;
 }
 
+void screenTanksGetSubPixel(screenTanks *value, BYTE itemNum,
+                            BYTE *wx, BYTE *wy, BYTE *angle) {
+  lv_screenTanksGetSubPixel(value, itemNum, wx, wy, angle);
+}
+
 BYTE screenLgmGetNumEntries(screenLgm *value) {
   return lv_screenLgmGetNumEntries(value);
 }
@@ -138,6 +150,11 @@ void screenLgmGetItem(screenLgm *value, BYTE itemNum,
                       BYTE *mx, BYTE *my, BYTE *px, BYTE *py,
                       BYTE *frame) {
   lv_screenLgmGetItem(value, itemNum, mx, my, px, py, frame);
+}
+
+void screenLgmGetSubPixel(screenLgm *value, BYTE itemNum,
+                          BYTE *wx, BYTE *wy) {
+  lv_screenLgmGetSubPixel(value, itemNum, wx, wy);
 }
 
 /* mapview.c (shared with main game) calls the main-game

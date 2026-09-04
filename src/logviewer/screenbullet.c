@@ -79,8 +79,10 @@ void lv_screenBulletsDestroy(screenBullets *value) {
 *  px    - X pixel offset
 *  py    - Y pixel offset
 *  frame - Frame identifer of the bullet
+*  wx    - X world offset inside the map square (wx >> 4 == px)
+*  wy    - Y world offset inside the map square (wy >> 4 == py)
 *********************************************************/
-void lv_screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) {
+void lv_screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy) {
   screenBullets q;
   
   New (q);
@@ -88,6 +90,8 @@ void lv_screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BY
   q->my = my;
   q->px = px;
   q->py = py;
+  q->wx = wx;
+  q->wy = wy;
   q->frame = frame;
   q->next = *value;
   *value = q;
@@ -156,5 +160,38 @@ void lv_screenBulletsGetItem(screenBullets *value, int itemNum, BYTE *mx, BYTE *
     *frame = q->frame;
   } else {
     //FIXME
+  }
+}
+
+/*********************************************************
+*NAME:          lv_screenBulletsGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 26/12/98
+*LAST MODIFIED: 26/12/98
+*PURPOSE:
+*  Gets the world offsets inside the map square for a
+*  specific item
+*
+*ARGUMENTS:
+*  value   - Pointer to the screenBullets data structure
+*  itemNum - The item number to get
+*  wx      - X world offset inside the map square
+*  wy      - Y world offset inside the map square
+*********************************************************/
+void lv_screenBulletsGetSubPixel(screenBullets *value, int itemNum, BYTE *wx, BYTE *wy) {
+  int count; /* Looping variable */
+  screenBullets q;
+
+  count = 1;
+  q = *value;
+
+  while (NonEmpty(q) && count < itemNum) {
+    count++;
+    q = ScreenBulletTail(q);
+  }
+
+  if (q != NULL) {
+    *wx = q->wx;
+    *wy = q->wy;
   }
 }

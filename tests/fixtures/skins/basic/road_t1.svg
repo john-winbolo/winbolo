@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture art for test_skin_density: an SVG the density scan can find at
+     every N up to the skin's MaxPixelDensity. Never rasterized by the test. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <rect x="0" y="0" width="16" height="16" fill="#4a4a4a"/>
+  <rect x="6" y="0" width="4" height="16" fill="#8c8c8c"/>
+</svg>

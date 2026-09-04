@@ -587,7 +587,7 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
       conv <<= TANK_SHIFT_MAPSIZE;
       conv >>= TANK_SHIFT_PIXELSIZE;
       py = (BYTE) conv;
-      screenBulletsAddItem(sBullets, x, y, px, py, (BYTE) (frame + SHELL_START_EXPLODE+1)); 
+      screenBulletsAddItem(sBullets, x, y, px, py, (BYTE) (frame + SHELL_START_EXPLODE+1), (BYTE) q->x, (BYTE) q->y); 
     }
     q = ShellsTail(q);
   }

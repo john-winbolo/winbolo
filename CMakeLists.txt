@@ -443,16 +443,17 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_compile_options(cjson PRIVATE -Wno-error)
     endif()
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE2}" CACHE BOOL "" FORCE)
-
-    # minizip library from zlib's contrib/minizip
-    add_library(minizip STATIC
-        ${zlib_SOURCE_DIR}/contrib/minizip/zip.c
-        ${zlib_SOURCE_DIR}/contrib/minizip/unzip.c
-        ${zlib_SOURCE_DIR}/contrib/minizip/ioapi.c
-    )
-    target_include_directories(minizip PUBLIC ${zlib_SOURCE_DIR}/contrib/minizip)
-    target_link_libraries(minizip PUBLIC zlibstatic)
 endif()
+
+# minizip library from zlib's contrib/minizip.  Outside the guard above: zlib
+# is fetched on iOS too, and the iOS client reads skin archives through it.
+add_library(minizip STATIC
+    ${zlib_SOURCE_DIR}/contrib/minizip/zip.c
+    ${zlib_SOURCE_DIR}/contrib/minizip/unzip.c
+    ${zlib_SOURCE_DIR}/contrib/minizip/ioapi.c
+)
+target_include_directories(minizip PUBLIC ${zlib_SOURCE_DIR}/contrib/minizip)
+target_link_libraries(minizip PUBLIC zlibstatic)
 
 # nanosvg — header-only SVG parser/rasterizer (vendored)
 add_library(nanosvg STATIC src/third_party/nanosvg/nanosvg_impl.c)
@@ -728,6 +729,8 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/lang.c
@@ -751,7 +754,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_udpsetup.cpp
     src/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     src/gui/sdl3/dialogs/imgui_setname.cpp
-    src/gui/sdl3/dialogs/imgui_skins.cpp
     src/gui/sdl3/dialogs/imgui_trackersetup.cpp
     src/gui/sdl3/dialogs/imgui_winbolonet.cpp
     src/gui/sdl3/dialogs/imgui_messagebox.cpp
@@ -910,7 +912,7 @@ bolo_grant_internal_source_access(WinBoloIOS
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc zlibstatic cjson
+    nanosvg stb_image utf8proc zlibstatic minizip cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -1331,7 +1333,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1341,7 +1343,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -1514,7 +1516,6 @@ bolo_grant_internal_source_access(WinBolo
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
-        src/gui/skins.c
         src/res/winbolo.rc
     )
     set_target_properties(WinBolo PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -1530,9 +1531,6 @@ if(WIN32)
             PROPERTIES COMPILE_FLAGS "/wd4505")
     endif()
 else()
-    target_sources(WinBolo PRIVATE
-        src/gui/skins.c
-    )
     target_link_libraries(WinBolo PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBolo PRIVATE -fcommon)
 endif()
@@ -1615,11 +1613,15 @@ endif()
 #     mapViewCalcSquare/mapViewRenderCentered are renamed lvg_* so the island
 #     copies don't clash with the client's live-game mapview.o; game_view.c's
 #     calls are renamed to match.
-#   * The eight screen* accessors mapView* references rebind to the existing
+#   * The eleven screen* accessors mapView* references rebind to the existing
 #     lv_* bodies (already linked via LOGVIEWER_LIB_SOURCES — no new symbols).
 #     screenTanksGetItem has a different parameter list on the two sides, so it
 #     maps to lvg_screenTanksGetItem (render_island_screentank_adapter.c)
-#     rather than a plain macro.
+#     rather than a plain macro. The three GetSubPixel accessors take the same
+#     parameters on both sides, so they map straight to their lv_ bodies.
+#     Every accessor the Draw* path calls must appear below: an unmapped one
+#     still links, against bolo's body, and reads an lv-layout struct through
+#     the wrong offsets.
 #
 # game-view stays gated off by ownsWindow (draw.c), so this renderer is
 # linked-but-dormant.
@@ -1655,10 +1657,13 @@ target_compile_definitions(winbolo_render_island PRIVATE
     screenIsMine=lv_screenIsMine
     screenBulletsGetNumEntries=lv_screenBulletsGetNumEntries
     screenBulletsGetItem=lv_screenBulletsGetItem
+    screenBulletsGetSubPixel=lv_screenBulletsGetSubPixel
     screenTanksGetNumEntries=lv_screenTanksGetNumEntries
     screenLgmGetNumEntries=lv_screenLgmGetNumEntries
     screenLgmGetItem=lv_screenLgmGetItem
+    screenLgmGetSubPixel=lv_screenLgmGetSubPixel
     screenTanksGetItem=lvg_screenTanksGetItem
+    screenTanksGetSubPixel=lv_screenTanksGetSubPixel
 )
 target_link_libraries(WinBolo PRIVATE winbolo_render_island)
 
@@ -2111,6 +2116,8 @@ add_executable(LogViewer
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
+    src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )
@@ -2446,7 +2453,7 @@ set(BRAINTEST_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/braintest/braintest_lifecycle_stub.c
@@ -2591,7 +2598,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
-    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
+    src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -3235,6 +3242,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_tkexp_lgm_pairing.c
     tests/unit/test_input_gate.c
     tests/unit/test_server_address_parse.c
+    # Skin asset reads: a directory, a flat zip and a zip wrapped in one
+    # top-level folder must resolve the same relative names to the same
+    # bytes.
+    tests/unit/test_skin_source.c
+    src/gui/sdl3/skin_source.c
+    src/gui/sdl3/gfx_settings.c
+    # Which densities a skin serves and what each Tile Detail mode picks.
+    # Needs the tile loader itself, which no other unit test pulls in.
+    tests/unit/test_skin_density.c
+    src/gui/sdl3/tileloader.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -3393,6 +3410,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
+    # Committed skin fixture directory: the parity test opens
+    # <dir>/basic and zips it into the working directory at run time.
+    WB_SKINS_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/skins"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -3417,6 +3437,8 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static ${SERVER_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc
+    # tileloader.c reads SVG through nanosvg and PNG through stb_image.
+    nanosvg stb_image
     # mdns is header-only; linked for its include dir so test_mdns_discovery.c
     # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
     # so the include dir doesn't propagate transitively).
@@ -3896,6 +3918,10 @@ set(_unit_test_names
     bot_pool_wire_chunk_transport
     active_sim_armed_on_lobby_tick
     active_sim_cleared_on_cross_thread_destroy
+    skin_source_dir_and_zip
+    skin_active_vs_requested
+    skin_workshop_id_roundtrip
+    skin_density_scan
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

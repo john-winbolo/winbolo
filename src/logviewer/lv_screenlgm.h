@@ -49,6 +49,8 @@ struct screenLgmObj {
   BYTE my;        /* The map y co-ordinate it is on */
   BYTE px;        /* The pixel offset from the left it is on */
   BYTE py;        /* The pixel offset from the top it is on */
+  BYTE wx;        /* X world offset inside the map square, 0-255. wx >> 4 == px */
+  BYTE wy;        /* Y world offset inside the map square, 0-255. wy >> 4 == py */
   BYTE frame;     /* The direction it is facing */
 };
 
@@ -127,8 +129,10 @@ void lv_screenLgmDestroy(screenLgm *value);
 *  px         - X pixel offset
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the tank
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
 *********************************************************/
-void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame);
+void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE wx, BYTE wy);
 
 /*********************************************************
 *NAME:          lv_screenLgmGetItem
@@ -148,6 +152,23 @@ void lv_screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, B
 *  frame      - Frame identifer of the LGM
 *********************************************************/
 void lv_screenLgmGetItem(screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame);
+
+/*********************************************************
+*NAME:          lv_screenLgmGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 19/2/98
+*LAST MODIFIED: 19/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square for a
+*  specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenLgm data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*********************************************************/
+void lv_screenLgmGetSubPixel(screenLgm *value, BYTE itemNum, BYTE *wx, BYTE *wy);
 
 #endif /* SCREENLGMS_H */
 

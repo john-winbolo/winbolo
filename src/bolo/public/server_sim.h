@@ -1703,6 +1703,13 @@ typedef struct TankRenderInfo {
     WORLD world_x;
     WORLD world_y;
     BYTE  dir;       /* 0-15, already converted from TURNTYPE */
+    /* The full 0-255 facing dir was quantised from. No reader yet: it is
+       here so the menu background's tank draw (mapViewRenderCentered) can
+       take the same draw-time rotation path the live game has behind
+       WB_SKIN_DRAWTIME_ROTATION, which reads its angle off the screen tank
+       list via screenTanksGetSubPixel. Filled by serverSimGetTankRender
+       either way. */
+    TURNTYPE angle;
     bool  on_boat;
     bool  alive;     /* false when slot is empty or tank is in death-wait */
 } TankRenderInfo;

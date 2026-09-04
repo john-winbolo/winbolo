@@ -218,13 +218,6 @@ void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
 
 void winbolonetSendLobbyUpdate(void) { }
 
-/* ---- skins stubs (requires minizip/zlib) ---- */
-
-bool skinsLoadSkin(char *fileName) { (void)fileName; return false; }
-bool skinsIsLoaded(void) { return false; }
-void skinsGetSkinDirectory(char *value) { value[0] = '\0'; }
-void skinsGetFileName(char *value) { value[0] = '\0'; }
-
 /* ---- log stubs (log.c requires minizip/zlib) ---- */
 
 #include "log.h"
