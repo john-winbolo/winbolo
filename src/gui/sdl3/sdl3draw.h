@@ -320,6 +320,17 @@ void sdl3DrawNetFailed(void);
 *********************************************************/
 void sdl3DrawItemInView(ClientSim *cs);
 
+/*********************************************************
+*NAME:          sdl3DrawGetItemViewLabel
+*PURPOSE:
+*  Fills out with the name of the current item view and
+*  returns true.  Returns false, writing nothing, in the
+*  tank view and for a NULL cs.  The one place the three
+*  view names are spelled: the classic corner label and the
+*  full screen map's caption both take their text from here.
+*********************************************************/
+bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen);
+
 /* sdl3DrawResetCachedText / sdl3DrawMessages / sdl3DrawKillsDeaths /
  * sdl3DrawTankLabel declared via sdl3draw_status.h (#included above). */
 

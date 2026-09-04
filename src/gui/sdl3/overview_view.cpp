@@ -105,6 +105,16 @@ extern "C" bool smoothScrollingEnabled;
  * being taken away is the picture, not the block. */
 #define OVERVIEW_DEATH_BLACK_FADE_MS 700    /* to reach full black */
 
+/* The frame drawn round the picture while an item view is on. The weight is
+ * taken from the view's height so it holds up on a small screen as well as a
+ * desktop one, and capped so inset + weight never passes HUD_MARGIN (8): that
+ * is what keeps the runs clear of the status column on the right and the build
+ * strip on the left rather than under them. */
+#define OVERVIEW_ITEM_BORDER_INSET 2      /* px from the picture's edge */
+#define OVERVIEW_ITEM_BORDER_DIV   240    /* view height per px of weight */
+#define OVERVIEW_ITEM_BORDER_MIN   2
+#define OVERVIEW_ITEM_BORDER_MAX   6      /* inset + weight stays inside HUD_MARGIN (8) */
+
 struct OverviewView {
     OverviewCamera cam;
 
@@ -361,6 +371,47 @@ static void overviewViewDrawDeathBlackout(OverviewView *v, SDL_Renderer *r,
     SDL_SetRenderDrawColor(r, 0, 0, 0, alpha);
     SDL_RenderFillRect(r, &dst);
     SDL_SetRenderDrawBlendMode(r, was);
+}
+
+/* The frame that says an item view is on. In the classic view the item view
+ * replaces the 15x15, so it is obvious; here the map goes on being drawn, and
+ * with the key view rule the block round the tank closes while the view is up,
+ * so without this the picture can go dark with nothing to say why.
+ *
+ * One yellow whatever the kind of view: the caption along the bottom names it,
+ * so the border only has to say that one is on. Not the HUD greys, which read
+ * as chrome. Rectangle fills only — no texture and no font — so it is valid on
+ * either host's renderer. The alpha is 255, so whatever blend mode the entity
+ * pass left behind gives the same result and there is nothing to save or put
+ * back. */
+static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH) {
+    int weight = (int)SDL_roundf((float)viewH / (float)OVERVIEW_ITEM_BORDER_DIV);
+    if (weight < OVERVIEW_ITEM_BORDER_MIN) weight = OVERVIEW_ITEM_BORDER_MIN;
+    if (weight > OVERVIEW_ITEM_BORDER_MAX) weight = OVERVIEW_ITEM_BORDER_MAX;
+
+    float inset = (float)OVERVIEW_ITEM_BORDER_INSET;
+    float x = inset;
+    float y = inset;
+    float bw = (float)viewW - 2.0f * inset;
+    float bh = (float)viewH - 2.0f * inset;
+    if (bw <= 0.0f || bh <= 0.0f) return;
+
+    /* A view small enough for the opposite runs to meet is filled solid
+     * instead, rather than asking SDL to draw sides of negative height. */
+    float wt   = (float)weight;
+    float half = (bw < bh ? bw : bh) * 0.5f;
+    if (wt > half) wt = half;
+
+    /* The top and bottom runs span the full width and the sides fit between
+     * them, so the corners are covered and the rectangle closes. */
+    SDL_FRect runs[4] = {
+        { x,           y,           bw, wt },
+        { x,           y + bh - wt, bw, wt },
+        { x,           y + wt,      wt, bh - 2.0f * wt },
+        { x + bw - wt, y + wt,      wt, bh - 2.0f * wt },
+    };
+    SDL_SetRenderDrawColor(r, 255, 205, 40, 255);
+    SDL_RenderFillRects(r, runs, 4);
 }
 
 /* Copies the entries the player is allowed to see into a second set of lists.
@@ -684,6 +735,14 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * neither wants dimming. */
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
                                  w, h, om, cs);
+    }
+
+    /* Only where this view has replaced the classic one: beside the pop-out
+     * the 15x15 is still on screen with its own corner label, and the pop-out
+     * is too small to give a border to. Before the blackout, so a death takes
+     * it down with the rest of the picture. */
+    if (ownsWindow && cs != NULL && clientSimIsInItemView(cs)) {
+        overviewViewDrawItemViewBorder(r, w, h);
     }
 
     /* Over the lot, and outside the test above: a death is worth answering

@@ -188,6 +188,12 @@ static Uint64 gOverviewNewsSlideTick = 0;
    that the map is still the thing on screen. */
 #define OVERVIEW_LOBBY_DIM_ALPHA 150
 
+/* The item view caption along the bottom of the full screen map: how far its
+   bottom sits above the newswire strip, and the padding round the text on its
+   backing. */
+#define OVERVIEW_ITEM_LABEL_GAP 4.0f
+#define OVERVIEW_ITEM_LABEL_PAD 3.0f
+
 /* A whole classic frame at gZoomFactor, drawn offscreen so the HUD column can
    be cut out of it as source rects. gGameRenderTarget cannot be borrowed for
    this: sdl3DrawReconfigureZoom never creates it on the Steam Deck or in
@@ -1797,6 +1803,44 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     }
   }
 
+  /* Name the item view across the bottom. The yellow border round the picture
+     (overview_view.cpp) says one is on; this says which. Drawn by the host
+     rather than into the offscreen for two reasons: the font's textures belong
+     to the renderer that made them, and only here is it known where the
+     newswire has slid to this frame. */
+  {
+    char label[128];
+    int textW = 0;
+    int textH = 0;
+    if (gFontMsg && sdl3DrawGetItemViewLabel(cs, label, sizeof(label)) &&
+        TTF_GetStringSize(gFontMsg, label, 0, &textW, &textH)) {
+      /* The text rides on the newswire strip's top edge, so chat never covers
+         it; hud.newswireY already carries the slide offset. Once the strip has
+         slid fully away its recorded top is below the window, so the bottom of
+         the map rect is what the text comes to rest against. */
+      float bottom = menuBarHeight + (float)h;
+      if (drawHud && menuBarHeight + hud.newswireY < bottom) {
+        bottom = menuBarHeight + hud.newswireY;
+      }
+      float ty = bottom - OVERVIEW_ITEM_LABEL_GAP - (float)textH;
+      float tx = ((float)w - (float)textW) * 0.5f;  /* the map rect starts at 0 */
+
+      /* The text sits over terrain of any colour, so it gets the same
+         translucent backing as the HUD panels and the zoom readout. */
+      SDL_FRect back = { tx - OVERVIEW_ITEM_LABEL_PAD,
+                         ty - OVERVIEW_ITEM_LABEL_PAD,
+                         (float)textW + 2.0f * OVERVIEW_ITEM_LABEL_PAD,
+                         (float)textH + 2.0f * OVERVIEW_ITEM_LABEL_PAD };
+      SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+      SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 160);
+      SDL_RenderFillRect(gRenderer, &back);
+      SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+
+      SDL_Color white = {200, 200, 200, 255};
+      sdl3RenderText(gFontMsg, label, white, tx, ty);
+    }
+  }
+
   sdl3DrawCountFrame();
 }
 
@@ -2964,31 +3008,37 @@ void sdl3DrawNetFailed(void) {
   sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
 }
 
-void sdl3DrawItemInView(ClientSim *cs) {
-  if (!gRenderer || cs == NULL) return;
-  char allyLabel[128];
-  const char *label;
+/* The one place the three view names are spelled. The classic corner label
+   below and the full screen map's caption both come through here, so they
+   cannot end up calling the same view different things. */
+bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen) {
+  if (cs == NULL || out == NULL || outLen == 0) return false;
   switch (clientSimGetViewKind(cs)) {
     case VIEW_KIND_PILL:
-      label = "Pillbox View";
-      break;
+      snprintf(out, outLen, "Pillbox View");
+      return true;
     case VIEW_KIND_BASE:
-      label = "Base View";
-      break;
+      snprintf(out, outLen, "Base View");
+      return true;
     case VIEW_KIND_ALLY: {
       /* Name the ally we are riding along with. The player mirror is empty
          for a slot we have no name for yet; then just say what the view is. */
       const char *name = sdl3ImguiGetPlayerName(clientSimGetViewTarget(cs));
-      label = "Allied Tank View";
       if (name[0] != '\0') {
-        snprintf(allyLabel, sizeof(allyLabel), "Allied Tank View \xE2\x80\x94 %s", name);
-        label = allyLabel;
+        snprintf(out, outLen, "Allied Tank View \xE2\x80\x94 %s", name);
+      } else {
+        snprintf(out, outLen, "Allied Tank View");
       }
-      break;
+      return true;
     }
     default:
-      return;
+      return false;
   }
+}
+
+void sdl3DrawItemInView(ClientSim *cs) {
+  char label[128];
+  if (!gRenderer || !sdl3DrawGetItemViewLabel(cs, label, sizeof(label))) return;
   SDL_Color white = {200, 200, 200, 255};
   int originX = MAIN_OFFSET_X * gZoomFactor;
   int originY = MAIN_OFFSET_Y * gZoomFactor;
