@@ -3093,6 +3093,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_view_state.c
+    tests/unit/test_view_target_codec.c
     tests/unit/test_view_cycling.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
@@ -3525,6 +3526,7 @@ set(_unit_test_names
     command_codec_lobby_claim_start
     command_codec_rating_posted
     command_codec_view_state
+    command_codec_view_cycle
     lobby_claim_start_host_swaps_occupied
     lobby_claim_start_host_swap_into_none
     lobby_claim_start_non_host_occupied_rejected
@@ -3798,6 +3800,7 @@ set(_unit_test_names
     view_state_bad_claims_degrade
     view_state_invalidation
     view_state_lifecycle
+    view_target_codec
     view_cycle_bases
     view_cycle_base_direction
     view_cycle_allies

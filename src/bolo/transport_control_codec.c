@@ -1028,6 +1028,47 @@ static bool decodeRoundRatingPostedBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_VIEW_TARGET body wire format (fixed length):
+ *   [origSlot 1] [kind 1] [target 1] [mapX 1] [mapY 1] [found 1] [fromEcho 1]
+ * Every field is a single byte, so the body is the same size on every event
+ * and the decoder can reject anything else outright. Delivered body-only on
+ * CHANNEL_CONTROL; there is no full-packet wrapper or PACKET_* type for this
+ * event. */
+#define VIEW_TARGET_BODY_LEN 7
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeViewTargetBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < VIEW_TARGET_BODY_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.viewTarget.origSlot;
+    buf[1] = evt->u.viewTarget.kind;
+    buf[2] = evt->u.viewTarget.target;
+    buf[3] = evt->u.viewTarget.mapX;
+    buf[4] = evt->u.viewTarget.mapY;
+    buf[5] = evt->u.viewTarget.found;
+    buf[6] = evt->u.viewTarget.fromEcho;
+    *outLen = VIEW_TARGET_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeViewTargetBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (len != VIEW_TARGET_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_VIEW_TARGET;
+    outEvt->u.viewTarget.origSlot = buf[0];
+    outEvt->u.viewTarget.kind     = buf[1];
+    outEvt->u.viewTarget.target   = buf[2];
+    outEvt->u.viewTarget.mapX     = buf[3];
+    outEvt->u.viewTarget.mapY     = buf[4];
+    outEvt->u.viewTarget.found    = buf[5];
+    outEvt->u.viewTarget.fromEcho = buf[6];
+    return true;
+}
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -2201,6 +2242,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_STATS]           = encodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
     [CTRL_ROUND_RATING_POSTED]   = encodeRoundRatingPostedBody,
+    [CTRL_VIEW_TARGET]           = encodeViewTargetBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2240,6 +2282,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_STATS]           = decodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
     [CTRL_ROUND_RATING_POSTED]   = decodeRoundRatingPostedBody,
+    [CTRL_VIEW_TARGET]           = decodeViewTargetBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

@@ -79,6 +79,9 @@ int run_command_codec_roundtrip_variants(void);
 int run_command_codec_lobby_claim_start(void);
 int run_command_codec_rating_posted(void);
 int run_command_codec_view_state(void);
+/* CMD_VIEW_CYCLE codec round-trip: kind + direction + from survive the wire,
+ * including from == 0xFF, and the fixed body length is enforced. */
+int run_command_codec_view_cycle(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
@@ -822,6 +825,11 @@ int run_view_state_key_grants_rect(void);
 int run_view_state_bad_claims_degrade(void);
 int run_view_state_invalidation(void);
 int run_view_state_lifecycle(void);
+
+/* CTRL_VIEW_TARGET body-codec round-trip (test_view_target_codec.c): the
+ * server's answer to a view-cycle request encodes/decodes through the body
+ * tables, with the nothing-to-watch case and the fixed body length. */
+int run_view_target_codec(void);
 
 /* Item-view cycling helpers (test_view_cycling.c): basesGetNextView and
  * playersGetNextAllyView walk the allied bases and the allied live tanks in

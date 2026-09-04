@@ -128,6 +128,14 @@ typedef enum {
      * the same round. Carries no rating or comment text — the round's page
      * on WinBolo.net stays the only source. */
     CTRL_ROUND_RATING_POSTED,
+    /* CTRL_VIEW_TARGET — the server's answer to a CMD_VIEW_CYCLE request:
+     * the item the sender should watch, picked from live state. Unicast to
+     * origSlot via udpClientDeliverControl. kind is the ViewStateKind of the
+     * chosen item and target its player number; mapX/mapY are where it is.
+     * found == 0 means there was nothing to watch, and the client stays where
+     * it is. fromEcho carries the request's `from` back so a late answer to an
+     * earlier press can be told apart from the answer to the current one. */
+    CTRL_VIEW_TARGET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -439,6 +447,18 @@ typedef struct ControlEvent {
             BYTE fromPlayer;
             char key[ROUND_STATS_LOGKEY_LEN];
         } ratingPosted;
+
+        /* CTRL_VIEW_TARGET — the item the server picked for the requesting
+         * client to watch, and the request's `from` copied back. */
+        struct {
+            BYTE origSlot;   /* slot the answer is for */
+            BYTE kind;       /* ViewStateKind of the chosen item */
+            BYTE target;     /* player number of the chosen ally */
+            BYTE mapX;
+            BYTE mapY;
+            BYTE found;      /* 0 when there was nothing to watch */
+            BYTE fromEcho;   /* the request's `from`, copied back */
+        } viewTarget;
     } u;
 } ControlEvent;
 

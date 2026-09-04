@@ -73,7 +73,8 @@ typedef enum {
     CMD_WBN_REAUTH,
     CMD_LOBBY_CLAIM_START,
     CMD_RATING_POSTED,
-    CMD_VIEW_STATE
+    CMD_VIEW_STATE,
+    CMD_VIEW_CYCLE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -345,6 +346,20 @@ typedef enum {
     VIEW_KIND_ALLY = 3
 } ViewStateKind;
 
+/* CMD_VIEW_CYCLE.direction — which way the request steps through the
+ * watchable items. Values are on the wire, so they are fixed. */
+typedef enum {
+    VIEW_CYCLE_NEXT  = 0,
+    VIEW_CYCLE_PREV  = 1,
+    VIEW_CYCLE_LEFT  = 2,
+    VIEW_CYCLE_RIGHT = 3,
+    VIEW_CYCLE_UP    = 4,
+    VIEW_CYCLE_DOWN  = 5
+} ViewCycleDirection;
+
+/* CmdViewCycle.from when the sender is not watching anything yet. */
+#define VIEW_CYCLE_FROM_NONE 0xFF
+
 /* CMD_VIEW_STATE — which view the sender's client is in. kind:
  * 0=tank, 1=pill, 2=base, 3=ally; target is the item index (pill/
  * base) or player number (ally), ignored for tank. The server
@@ -354,6 +369,18 @@ typedef struct {
     uint8_t kind;
     uint8_t target;
 } CmdViewState;
+
+/* CMD_VIEW_CYCLE — ask the server for the next thing to watch. kind
+ * says which sort of item the sender wants (VIEW_KIND_*); direction is
+ * a ViewCycleDirection. from is what the sender is stepping away from
+ * (VIEW_CYCLE_FROM_NONE when it is watching nothing yet); the server
+ * copies it back in its answer, so a late reply to an earlier press can
+ * be told apart from the reply to the current one. */
+typedef struct {
+    uint8_t kind;
+    uint8_t direction;
+    uint8_t from;
+} CmdViewCycle;
 
 /* ClientCommand — variant tag + payload that travels client→server.
  *
@@ -396,6 +423,7 @@ typedef struct ClientCommand {
         CmdLobbyClaimStart     lobbyClaimStart;
         CmdRatingPosted        ratingPosted;
         CmdViewState           viewState;
+        CmdViewCycle           viewCycle;
     } u;
 } ClientCommand;
 

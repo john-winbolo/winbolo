@@ -602,6 +602,20 @@ static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               and grants at most what the view
                                               policies allow. */
 
+#define PACKET_VIEW_CYCLE              215  /* client → server
+                                              { kind 1, direction 1, from 1 } —
+                                              "give me the next thing to watch".
+                                              kind is the sort of item wanted
+                                              (0=tank, 1=pill, 2=base, 3=ally),
+                                              direction is a ViewCycleDirection
+                                              (next/previous plus the four
+                                              scroll directions), and from is
+                                              what the sender is watching now
+                                              (0xFF when it is watching
+                                              nothing). The server picks from
+                                              live state and answers with
+                                              CTRL_VIEW_TARGET. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

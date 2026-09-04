@@ -1095,6 +1095,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
+    case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
     default:                    return "<unknown>";
     }
 }
@@ -1227,6 +1228,16 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         mpDiagLog("[srv] deliver FILTER slot=%d type=COMMAND_REJECTED "
                   "origSlot=%d clientPlayerNum=%d",
                   idx, (int)evt->u.commandRejected.origSlot,
+                  (int)client->playerNum);
+        return;
+    }
+    if (evt->type == CTRL_VIEW_TARGET &&
+        evt->u.viewTarget.origSlot != client->playerNum) {
+        /* The answer belongs to the slot that asked; drop it for everyone
+         * else so no other client learns where that ally is. */
+        mpDiagLog("[srv] deliver FILTER slot=%d type=VIEW_TARGET "
+                  "origSlot=%d clientPlayerNum=%d",
+                  idx, (int)evt->u.viewTarget.origSlot,
                   (int)client->playerNum);
         return;
     }

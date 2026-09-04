@@ -917,6 +917,32 @@ static bool commandDecodeViewState(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_VIEW_CYCLE — PACKET_VIEW_CYCLE
+ * Wire: [header 8] [kind 1] [direction 1] [from 1] — fixed length. */
+static bool commandEncodeViewCycle(const ClientCommand *cmd,
+                                   uint8_t *buf, size_t bufCap,
+                                   size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 3;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_VIEW_CYCLE, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.viewCycle.kind;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.viewCycle.direction;
+    buf[CMD_PACKET_BODY_OFFSET + 2] = cmd->u.viewCycle.from;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodeViewCycle(const uint8_t *buf, size_t len,
+                                   ClientCommand *cmd) {
+    /* Fixed-length body: anything shorter or longer is not this command. */
+    if (len != CMD_PACKET_BODY_OFFSET + 3) return false;
+    cmd->type = CMD_VIEW_CYCLE;
+    cmd->u.viewCycle.kind      = buf[CMD_PACKET_BODY_OFFSET];
+    cmd->u.viewCycle.direction = buf[CMD_PACKET_BODY_OFFSET + 1];
+    cmd->u.viewCycle.from      = buf[CMD_PACKET_BODY_OFFSET + 2];
+    return true;
+}
+
 /* ================================================================
  * Public API — switch dispatch keyed off cmd->type for encode and
  * buf[2] (packet type) for decode. Mirrors transport_control_codec.c
@@ -961,6 +987,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_WBN_REAUTH:            ok = commandEncodeWbnReauth(cmd, buf, bufCap, outLen); break;
         case CMD_RATING_POSTED:         ok = commandEncodeRatingPosted(cmd, buf, bufCap, outLen); break;
         case CMD_VIEW_STATE:            ok = commandEncodeViewState(cmd, buf, bufCap, outLen); break;
+        case CMD_VIEW_CYCLE:            ok = commandEncodeViewCycle(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
         default:                        return false;
     }
@@ -1008,6 +1035,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_WBN_REAUTH:            return commandDecodeWbnReauth(buf, len, cmd);
         case PACKET_RATING_POSTED:         return commandDecodeRatingPosted(buf, len, cmd);
         case PACKET_VIEW_STATE:            return commandDecodeViewState(buf, len, cmd);
+        case PACKET_VIEW_CYCLE:            return commandDecodeViewCycle(buf, len, cmd);
         default:                           return false;
     }
 }
