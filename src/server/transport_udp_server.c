@@ -5561,15 +5561,23 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         dl->xferEndSeq = 0;
 
                         /* Self-check: the blob the client will install must
-                         * round-trip back to this server's live terrain. If it
-                         * doesn't, the client can never match the live checksum
-                         * and loops resync requests until it self-kicks — so
-                         * decode the blob into scratch structures and compare
-                         * tile-for-tile against the live map. Resyncs are
-                         * infrequent; the cost is acceptable for the diagnosis. */
+                         * round-trip back to this slot's copy of the terrain —
+                         * the same copy the snapshot header's checksum is
+                         * stamped from. If it doesn't, the client can never
+                         * match that checksum and loops resync requests until
+                         * it self-kicks, so decode the blob into scratch
+                         * structures and compare tile-for-tile against that
+                         * copy. Comparing against the live map instead would
+                         * report a difference on every resync from a culled
+                         * slot, whose copy lags the live map by design. The
+                         * live map is used only for a slot with no copy bound.
+                         * Resyncs are infrequent; the cost is acceptable for
+                         * the diagnosis. */
                         {
-                            map *live = &serverSimGetGameSim(sim)->mp;
-                            uint16_t liveSum = mapCalcChecksum(live,
+                            map *known = sim->clientKnownMap[clientIdx] != NULL
+                                             ? &sim->clientKnownMap[clientIdx]
+                                             : &serverSimGetGameSim(sim)->mp;
+                            uint16_t knownSum = mapCalcChecksum(known,
                                                    &serverSimGetGameSim(sim)->bs,
                                                    &serverSimGetGameSim(sim)->pb);
                             map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
@@ -5580,20 +5588,20 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             if (mapLoadCompressedMap(&rtMap, &rtPb, &rtBs, &rtSs,
                                                      udpServer.compressedMap, mapLen)) {
                                 uint16_t rtSum = mapCalcChecksum(&rtMap, &rtBs, &rtPb);
-                                if (rtSum != liveSum) {
+                                if (rtSum != knownSum) {
                                     /* Dedupe: an unconverged divergence repeats on every
                                      * resync request and floods the log. Dump full per-tile
-                                     * detail only when the (live,blob) checksum pair changes;
+                                     * detail only when the (copy,blob) checksum pair changes;
                                      * identical repeats get one concise line. The state is
                                      * process-wide and this runs on the single drain thread. */
                                     static uint32_t s_lastResyncDiffSig = 0xFFFFFFFFu;
-                                    uint32_t sig = ((uint32_t)liveSum << 16) | (uint32_t)rtSum;
+                                    uint32_t sig = ((uint32_t)knownSum << 16) | (uint32_t)rtSum;
                                     const char *mapName = serverSimGetMapName(sim);
                                     if (sig == s_lastResyncDiffSig) {
                                         WB_LOG_WARN(WB_LOG_CAT_NET,
                                             "map resync still not converging on '%s' "
-                                            "(live sum=%u blob sum=%u, client %d gen=%u) - detail suppressed",
-                                            mapName, (unsigned)liveSum, (unsigned)rtSum,
+                                            "(client copy sum=%u blob sum=%u, client %d gen=%u) - detail suppressed",
+                                            mapName, (unsigned)knownSum, (unsigned)rtSum,
                                             clientIdx, (unsigned)reqGen);
                                     } else {
                                         bases *liveBs = &serverSimGetGameSim(sim)->bs;
@@ -5602,9 +5610,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                         s_lastResyncDiffSig = sig;
                                         for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
                                             for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
-                                                BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
+                                                BYTE kv = mapGetPos(known, (BYTE)xx, (BYTE)yy);
                                                 BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
-                                                if (lv != rv) {
+                                                if (kv != rv) {
                                                     /* Terrain under a base/pill is folded to ROAD
                                                      * by the checksum (it is not authoritative), so
                                                      * such a tile can never be the real cause of
@@ -5618,9 +5626,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                                     if (shown < 8) {
                                                         WB_LOG_WARN(WB_LOG_CAT_NET,
                                                             "map resync blob diff @(%d,%d) "
-                                                            "live=%s(%u) roundtrip=%s(%u) [%s] map='%s'",
+                                                            "clientcopy=%s(%u) roundtrip=%s(%u) [%s] map='%s'",
                                                             xx, yy,
-                                                            resyncTerrainName(lv), (unsigned)lv,
+                                                            resyncTerrainName(kv), (unsigned)kv,
                                                             resyncTerrainName(rv), (unsigned)rv,
                                                             onBase ? "base" : (onPill ? "pill" : "REAL"),
                                                             mapName);
@@ -5632,9 +5640,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                         WB_LOG_WARN(WB_LOG_CAT_NET,
                                             "map resync blob does NOT round-trip on '%s': "
                                             "%d differing tile(s) (%d genuine, %d under base/pill fixup) "
-                                            "(live sum=%u blob sum=%u) - %s",
+                                            "(client copy sum=%u blob sum=%u) - %s",
                                             mapName, diffs, realDiffs, diffs - realDiffs,
-                                            (unsigned)liveSum, (unsigned)rtSum,
+                                            (unsigned)knownSum, (unsigned)rtSum,
                                             realDiffs ? "client cannot converge"
                                                       : "benign structure fixup only");
                                     }
@@ -5649,8 +5657,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             basesDestroy(&rtBs);
                             startsDestroy(&rtSs);
                             fprintf(stderr,
-                                    "[UDP SERVER] Client %d map resync gen=%u (%d bytes) livesum=%u\n",
-                                    clientIdx, reqGen, mapLen, (unsigned)liveSum);
+                                    "[UDP SERVER] Client %d map resync gen=%u (%d bytes) clientcopysum=%u\n",
+                                    clientIdx, reqGen, mapLen, (unsigned)knownSum);
                         }
                     } else {
                         fprintf(stderr,
