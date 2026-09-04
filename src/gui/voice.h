@@ -187,6 +187,33 @@ VoiceMode voiceGetMode(void);
 void voiceSetPushToTalkHeld(bool held);
 
 /*********************************************************
+*NAME:          voiceSetSelfMuted
+*PURPOSE:
+*  Sets the player's own transmit gate. Nothing goes out
+*  while it is on, whatever the mode or the push-to-talk
+*  key, and the state reported to the server follows on the
+*  next tick. The recording device stays open so the echo
+*  canceller keeps tracking the room.
+*
+*ARGUMENTS:
+*  muted - true to stop transmitting
+*********************************************************/
+void voiceSetSelfMuted(bool muted);
+
+/*********************************************************
+*NAME:          voiceIsSelfMuted
+*PURPOSE:
+*  Returns whether the player has muted themselves. The
+*  toggle alone - the settings that can also stop audio
+*  reaching the wire are not folded in, so whatever drives
+*  the toggle reads back what it set.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceIsSelfMuted(void);
+
+/*********************************************************
 *NAME:          voiceIsTransmitting
 *PURPOSE:
 *  Returns whether captured audio is going out right now -

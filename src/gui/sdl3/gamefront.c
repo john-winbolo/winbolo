@@ -2964,6 +2964,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Push To Talk", "0", buff, FILENAME_MAX);
   keys->kiPushToTalk = atoi(buff);
 
+  /* Mute microphone — unbound by default, for the same reason. */
+  prefsGetString("KEYS", "Mute Mic", "0", buff, FILENAME_MAX);
+  keys->kiMuteMic = atoi(buff);
+
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
   prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
   {
@@ -3435,6 +3439,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Push to talk — 0 is unbound, and round-trips as such. */
   intToStr(keys->kiPushToTalk, buff, sizeof(buff));
   prefsSetString("KEYS", "Push To Talk", buff);
+
+  /* Mute microphone — 0 is unbound, and round-trips as such. */
+  intToStr(keys->kiMuteMic, buff, sizeof(buff));
+  prefsSetString("KEYS", "Mute Mic", buff);
 
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);

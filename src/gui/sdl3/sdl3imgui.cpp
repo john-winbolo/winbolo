@@ -5318,6 +5318,12 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     bool selfMuted = (clientFlags & PLAYER_FLAG_VOICE_MUTED) != 0;
     bool talking   = (talkingMap & ((PlayerBitMap)1u << playerNum)) != 0;
 
+    /* The own row renders from local truth: s_playerFlags[] is only ever
+       written from server-published state, so a click would not move the icon
+       until it round-tripped, and never at all on a connection that carries no
+       voice. */
+    if (isSelf) selfMuted = voiceIsSelfMuted();
+
     SDL_Texture *micTex;
     ImVec4       micTint;
     langid       micTip;
@@ -5354,9 +5360,10 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         /* An SVG that would not load must still hold the column, or
          * the name and ping shift between rows. */
         ImGui::Dummy(ImVec2(size, size));
-    } else if (isSelf) {
-        /* Never clickable on your own row: self-mute is not a thing
-         * here and the server rejects it. */
+    } else if (isSelf && !hasMic) {
+        /* Not clickable without a microphone: there is nothing to gate.
+         * The clickable branch below toggles a local transmit gate, not
+         * the mute the server rejects against yourself. */
         ImGui::ImageWithBg((ImTextureID)micTex, ImVec2(size, size),
                            ImVec2(0, 0), ImVec2(1, 1),
                            ImVec4(0, 0, 0, 0), micTint);
@@ -5380,11 +5387,19 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
         imguiHelpTooltip(langGetText(micTip));
         imguiHandOnHover();
         if (micClicked) {
-            /* Both legs, always: the local one covers the round trip
-             * while the server is being told, and the server is the
-             * authority — it also stops that player's chat. */
-            voiceSetPlayerMuted(playerNum, !voiceIsPlayerMuted(playerNum));
-            clientSimNetSendPlayerMute(cs, (BYTE)playerNum, voiceIsPlayerMuted(playerNum));
+            if (isSelf) {
+                /* A local transmit gate — no server round trip, and the
+                 * server would reject a mute against yourself anyway.
+                 * The state reaches the other players on the next tick,
+                 * from the report voice already publishes on change. */
+                voiceSetSelfMuted(!voiceIsSelfMuted());
+            } else {
+                /* Both legs, always: the local one covers the round trip
+                 * while the server is being told, and the server is the
+                 * authority — it also stops that player's chat. */
+                voiceSetPlayerMuted(playerNum, !voiceIsPlayerMuted(playerNum));
+                clientSimNetSendPlayerMute(cs, (BYTE)playerNum, voiceIsPlayerMuted(playerNum));
+            }
         }
     }
 }

@@ -110,6 +110,13 @@ static float micGain = 1.0f;
 static float outputVolume = 1.0f;
 static float inputLevel = 0.0f;
 
+/* The player's own transmit gate, from the mic icon on their row or the mute
+ * key.  Never cleared: this is a standing intent, like a hardware mute switch,
+ * so a disconnect, a reconnect, a device change or any per-speaker reset all
+ * leave it alone.  voiceInit runs once per process, so zero-initialisation is
+ * the only clearing it gets. */
+static bool selfMuteRequested = false;
+
 /* Open-mic gate state.  gateOpen is what voiceIsTransmitting reports; the
  * hangover counts the frames it is held open for after the level drops. */
 static bool gateOpen = false;
@@ -682,6 +689,43 @@ void voiceSetPushToTalkHeld(bool held) {
 }
 
 /*********************************************************
+*NAME:          voiceSetSelfMuted
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Sets the player's own transmit gate.  Nothing goes on the
+*  wire while it is on, and the state reported to the server
+*  follows on the next tick.  The recording device is left
+*  open: the echo canceller keeps tracking the room, so
+*  unmuting is not the start of a new conversation for it.
+*
+*ARGUMENTS:
+*  muted - true to stop transmitting
+*********************************************************/
+void voiceSetSelfMuted(bool muted) {
+    selfMuteRequested = muted;
+}
+
+/*********************************************************
+*NAME:          voiceIsSelfMuted
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Returns whether the player has muted themselves.  This is
+*  the toggle alone - the settings that can also stop audio
+*  reaching the wire are not folded in, so the icon that
+*  drives the toggle reads back what it set.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceIsSelfMuted(void) {
+    return selfMuteRequested;
+}
+
+/*********************************************************
 *NAME:          voiceIsTransmitting
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -691,12 +735,15 @@ void voiceSetPushToTalkHeld(bool held) {
 *  The settings dialog lights its indicator from this, and
 *  voiceTick uses it to decide whether to send the frame it
 *  just encoded, so the light and the wire cannot disagree.
+*  The player's own mute is tested here for that reason: the
+*  light and the wire both follow from the one gate.
 *
 *ARGUMENTS:
 *  (none)
 *********************************************************/
 bool voiceIsTransmitting(void) {
-    if (!isInitialised || !voiceEnabled || !connectionCarriesVoice) {
+    if (!isInitialised || !voiceEnabled || !connectionCarriesVoice ||
+        selfMuteRequested) {
         return false;
     }
     switch (voiceMode) {
@@ -1053,10 +1100,13 @@ void voiceReportState(struct ClientSim *cs) {
     }
 
     hasMic = isInitialised && voiceBackendCaptureIsOpen();
-    /* Self muted is having a microphone that cannot reach the wire: voice
-     * switched off, or the mode set to Off.  A push-to-talk player between
-     * presses is not muted - they can talk whenever they choose to. */
-    selfMuted = hasMic && !(voiceEnabled && voiceMode != VOICE_MODE_OFF);
+    /* Self muted is having a microphone that cannot reach the wire: the
+     * player's own mute, voice switched off, or the mode set to Off.  A
+     * push-to-talk player between presses is not muted - they can talk
+     * whenever they choose to.  The or is inside the hasMic gate, or a
+     * player with no microphone would start reporting itself muted. */
+    selfMuted = hasMic && (selfMuteRequested ||
+                           !(voiceEnabled && voiceMode != VOICE_MODE_OFF));
 
     if (reportedState && hasMic == reportedHasMic &&
         selfMuted == reportedSelfMuted) {

@@ -1645,6 +1645,9 @@
 /* Key setup — push to talk binding */
 #define STR_DLGKEYSETUP_PUSHTOTALK              2000
 
+/* Key setup — self-mute binding */
+#define STR_DLGKEYSETUP_MUTEMIC                 2016
+
 /* Players panel — microphone state icon */
 #define STR_PLAYER_TIP_VOICE_TALKING            2001
 #define STR_PLAYER_TIP_VOICE_IDLE               2002

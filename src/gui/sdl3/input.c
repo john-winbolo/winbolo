@@ -149,6 +149,38 @@ static void pushToTalkPoll(keyItems *setKeys, bool active) {
 }
 
 /*********************************************************
+*NAME:          muteMicPoll
+*PURPOSE:
+*  Toggles the player's own microphone on the press, once
+*  per poll of the keyboard.  Unlike push to talk this is a
+*  toggle, so it fires on the rising edge only — wired
+*  level-triggered it would flip on every poll the key was
+*  held down for.
+*
+*  Called from the same places as pushToTalkPoll, with the
+*  same inactive polls, so a key held while a dialog owns
+*  the keyboard or the window has no focus does not toggle
+*  anything, and is not still down when focus returns.
+*
+*ARGUMENTS:
+*  setKeys - Structure that holds the key settings
+*  active  - FALSE when this poll is not reading input
+*********************************************************/
+static void muteMicPoll(keyItems *setKeys, bool active) {
+#if defined(WINBOLO_VOICE)
+  static bool prevDown = false;
+  bool down = active && KEY_DOWN(setKeys->kiMuteMic);
+  if (down && !prevDown) {
+    voiceSetSelfMuted(!voiceIsSelfMuted());
+  }
+  prevDown = down;
+#else
+  (void)setKeys;
+  (void)active;
+#endif
+}
+
+/*********************************************************
 *NAME:          inputSetup
 *PURPOSE:
 *  Sets up input systems.
@@ -488,9 +520,11 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
     pushToTalkPoll(setKeys, FALSE);
+    muteMicPoll(setKeys, FALSE);
     return TNONE;
   }
   pushToTalkPoll(setKeys, TRUE);
+  muteMicPoll(setKeys, TRUE);
 
   tb = TNONE;
 
@@ -777,11 +811,13 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
     pushToTalkPoll(setKeys, FALSE);
+    muteMicPoll(setKeys, FALSE);
     return;
   }
   /* This is the key-reading path while a brain drives the tank; without it
      push to talk would stop working the moment the player handed over. */
   pushToTalkPoll(setKeys, TRUE);
+  muteMicPoll(setKeys, TRUE);
 
   /* Pill view consumes the scroll keys (and the pill-view toggle key) to
    * step between pills; map scrolling is suppressed while it is active. */

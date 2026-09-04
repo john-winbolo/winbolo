@@ -58,6 +58,7 @@ typedef struct {
   int kiQuickPillbox;
   int kiQuickMine;
   int kiPushToTalk;  /* Hold to transmit voice */
+  int kiMuteMic;     /* Toggle your own microphone off and on */
 } keyItems;
 
 

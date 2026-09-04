@@ -1902,9 +1902,9 @@ static const LangEntry langTable[] = {
     {2003, "Their microphone is off — click to mute"},
     {2004, "No microphone — click to mute"},
     {2005, "Muted by you — click to unmute"},
-    {2006, "Your microphone"},
+    {2006, "Your microphone — click to mute"},
     {2007, "You have no microphone"},
-    {2008, "Your microphone is off"},
+    {2008, "Your microphone is off — click to unmute"},
 
     /* Voice settings — tank-label microphone icons */
     {2009, "Show microphone icons over tanks"},
@@ -1924,6 +1924,9 @@ static const LangEntry langTable[] = {
 
     /* Players menu — open the players panel */
     {2015, "Players Panel"},
+
+    /* Key setup — self-mute binding */
+    {2016, "Mute microphone"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

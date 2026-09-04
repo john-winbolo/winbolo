@@ -67,7 +67,7 @@ enum KeySetupField {
     ksTankView, ksPillView,
     ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
     ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
-    ksPushToTalk,
+    ksPushToTalk, ksMuteMic,
 };
 
 static keyItems      s_keys;
@@ -103,6 +103,7 @@ static int *fieldPtr(KeySetupField f, keyItems *ki) {
         case ksQuickPillbox:return &ki->kiQuickPillbox;
         case ksQuickMine:   return &ki->kiQuickMine;
         case ksPushToTalk:  return &ki->kiPushToTalk;
+        case ksMuteMic:     return &ki->kiMuteMic;
         default:            return nullptr;
     }
 }
@@ -441,6 +442,7 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
                one of the bindings above from players who never wanted voice. */
             section(langGetText(STR_DLGSETTINGS_VOICE));
             keyRow(langGetText(STR_DLGKEYSETUP_PUSHTOTALK), ksPushToTalk);
+            keyRow(langGetText(STR_DLGKEYSETUP_MUTEMIC),    ksMuteMic);
             endSection();
 #endif
             ImGui::EndTabItem();
