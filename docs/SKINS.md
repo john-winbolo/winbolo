@@ -116,6 +116,18 @@ The sheet must be an exact multiple of **496 × 176** on both axes: 496×176 for
 as if it were 1× and a warning goes in the log. Transparency in a sheet is the
 green colour key `#00FF00`, not alpha.
 
+The key carries a small tolerance: any pixel within 8 of `#00FF00` on every
+channel counts as transparent, so an anti-aliased sheet does not keep a green
+fringe around every sprite. Green you want to keep should sit further from pure
+green than that.
+
+The ten status icon slots under [Interface art](#interface-art) are the
+exception — the key is never applied to them. Both the built-in sheet and 1.x
+skins draw those icons *in* green on a black background, so green there is
+treated as artwork and drawn as you left it. You therefore cannot use green as
+a see-through background inside a status slot: draw those icons against the
+black they sit on.
+
 Individual files win over the sheet, so you can ship a sheet and override a few
 sprites with separate PNGs.
 
@@ -239,14 +251,24 @@ You do not have to supply every sprite at every density. Mixing is fine, and the
 - **High detail** — the best density each sprite individually has. Partial
   coverage means mixed crispness, which is what shipping partial art asks for.
 
-The setting is greyed out when the active skin has nothing above its base size,
-since all three would then build the same thing.
+All three are greyed out when the active skin has nothing above its base size,
+since they would then build the same thing. When only *some* of your sprites
+have finer art, **Match to zoom** alone is greyed out: it needs a density every
+sprite has, so it would build exactly Classic's tiles. Classic and High detail
+stay available, and High detail is the one that uses the art you did supply.
 
 For a chosen density the game looks for, in order: the exact `@Nx` file, the
 nearest larger `@Mx` scaled down, your SVG rasterised at that size, the nearest
-smaller `@Mx` scaled up, then the base-size chain. Everything is point-sampled —
-the artwork is colour-keyed pixel art, and averaging neighbouring pixels both
-softens edges and drags the key colour into them.
+smaller `@Mx` scaled up, then the base-size chain. All of that is point-sampled,
+as is a sheet coarser than the size being built — the artwork is pixel art and
+stays crisp that way, which is what 1.x did too.
+
+A whole sheet finer than the size being built is the one thing averaged rather
+than point-sampled, weighted by each pixel's own alpha so the key colour cannot
+bleed into an edge. That is the case when you ship a 2× sheet and the player is
+at zoom 1, and it is what lets dithered art average to the tone you drew it to
+make instead of collapsing to whichever pixels the sampling happened to land
+on.
 
 A whole sheet supplied at 2× or more counts as covering **every** sprite at that
 density, so a single `skin32.bmp` at 992 × 352 gives you a complete 2× skin.
