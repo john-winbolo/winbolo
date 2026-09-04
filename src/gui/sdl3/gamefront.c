@@ -2979,6 +2979,15 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_OVERVIEW_ZOOM, def, sizeof(def));
   prefsGetString("KEYS", "Overview Zoom", def, buff, FILENAME_MAX);
   keys->kiOverviewZoom = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_FOLLOW, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Follow", def, buff, FILENAME_MAX);
+  keys->kiOverviewFollow = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_ZOOMIN, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Zoom In", def, buff, FILENAME_MAX);
+  keys->kiOverviewZoomIn = atoi(buff);
+  intToStr(DEFAULT_OVERVIEW_ZOOMOUT, def, sizeof(def));
+  prefsGetString("KEYS", "Overview Zoom Out", def, buff, FILENAME_MAX);
+  keys->kiOverviewZoomOut = atoi(buff);
 
   /* Scrolling */
   intToStr(DEFAULT_SCROLLUP, def, sizeof(def));
@@ -3453,6 +3462,12 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "Base View", buff);
   intToStr(keys->kiOverviewZoom, buff, sizeof(buff));
   prefsSetString("KEYS", "Overview Zoom", buff);
+  intToStr(keys->kiOverviewFollow, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Follow", buff);
+  intToStr(keys->kiOverviewZoomIn, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Zoom In", buff);
+  intToStr(keys->kiOverviewZoomOut, buff, sizeof(buff));
+  prefsSetString("KEYS", "Overview Zoom Out", buff);
 
   /* Scrolling */
   intToStr(keys->kiScrollUp, buff, sizeof(buff));

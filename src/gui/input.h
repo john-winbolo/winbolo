@@ -55,6 +55,10 @@ typedef struct {
   int kiPillView;    /* Pill view */
   int kiOverviewZoom; /* Held, the wheel zooms the map overview instead of
                          moving the gunsight */
+  int kiOverviewFollow;  /* Toggles the map overview between following the
+                            tank and a free camera */
+  int kiOverviewZoomIn;  /* Map overview zoom in */
+  int kiOverviewZoomOut; /* Map overview zoom out */
   int kiScrollUp;    /* Scroll up */
   int kiScrollDown;  /* Scroll down */
   int kiScrollLeft;  /* Scroll left */

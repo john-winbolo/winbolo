@@ -88,6 +88,11 @@ OverviewCamera *overviewViewCamera(OverviewView *v);
    The wheel belongs to the gunsight, as it does over the main view, and zooms
    only while kiOverviewZoom is held — cleared, it zooms unconditionally.
 
+   Zooming from the keyboard and turning following on and off are bindings of
+   their own — kiOverviewZoomIn, kiOverviewZoomOut and kiOverviewFollow — read
+   off the keyboard rather than through the shadow test, since the test counts
+   them like any other binding. One rung, or one flip, per press.
+
    `ownsWindow` says this view has replaced the classic one rather than sitting
    beside it in a pop-out. The scroll keys then have no other map to scroll, so
    they pan this one; beside the classic view they are left to it. */

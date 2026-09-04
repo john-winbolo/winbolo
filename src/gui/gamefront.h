@@ -61,6 +61,12 @@
    than moving the gunsight. Cleared (0), the wheel always zooms there. */
 #define DEFAULT_OVERVIEW_ZOOM 224 /* SDL_SCANCODE_LCTRL */
 
+/* The map overview's own camera keys: the follow / free toggle and the two
+   ends of the zoom ladder. */
+#define DEFAULT_OVERVIEW_FOLLOW   6   /* SDL_SCANCODE_C */
+#define DEFAULT_OVERVIEW_ZOOMIN   46  /* SDL_SCANCODE_EQUALS */
+#define DEFAULT_OVERVIEW_ZOOMOUT  45  /* SDL_SCANCODE_MINUS */
+
 /* Quick-build keys — number row 1-5 */
 #define DEFAULT_QUICKTREE    30   /* SDL_SCANCODE_1 */
 #define DEFAULT_QUICKROAD    31   /* SDL_SCANCODE_2 */

@@ -283,6 +283,9 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiLGMView      = DEFAULT_LGMVIEW;
   keys->kiBaseView     = DEFAULT_BASEVIEW;
   keys->kiOverviewZoom = DEFAULT_OVERVIEW_ZOOM;
+  keys->kiOverviewFollow  = DEFAULT_OVERVIEW_FOLLOW;
+  keys->kiOverviewZoomIn  = DEFAULT_OVERVIEW_ZOOMIN;
+  keys->kiOverviewZoomOut = DEFAULT_OVERVIEW_ZOOMOUT;
   keys->kiScrollUp     = DEFAULT_SCROLLUP;
   keys->kiScrollDown   = DEFAULT_SCROLLDOWN;
   keys->kiScrollLeft   = DEFAULT_SCROLLLEFT;

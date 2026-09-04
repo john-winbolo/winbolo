@@ -147,6 +147,12 @@ struct OverviewView {
     bool           crosshairOn;
     bool           dragWasActive;
 
+    /* Last frame's state of the scancodes the view reads straight off the
+     * keyboard, so a binding can be answered on its edge — one action per
+     * press however long the key is held. Indexed by scancode; only the
+     * entries overviewBindingPressed is asked about mean anything. */
+    bool           bindingWasDown[SDL_SCANCODE_COUNT];
+
     /* True while the pointer sits over a map square. The hover keeps the
      * shared build cursor on that square, and the main view draws its mouse
      * square solid — so this view does too, keeping the faint rendering for
@@ -858,16 +864,11 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
  * read, which keyIsClaimedByGame never claims. */
 static int overviewScancodeForKey(ImGuiKey key) {
     switch (key) {
-        case ImGuiKey_Equal:          return SDL_SCANCODE_EQUALS;
-        case ImGuiKey_KeypadAdd:      return SDL_SCANCODE_KP_PLUS;
-        case ImGuiKey_Minus:          return SDL_SCANCODE_MINUS;
-        case ImGuiKey_KeypadSubtract: return SDL_SCANCODE_KP_MINUS;
         case ImGuiKey_LeftArrow:      return SDL_SCANCODE_LEFT;
         case ImGuiKey_RightArrow:     return SDL_SCANCODE_RIGHT;
         case ImGuiKey_UpArrow:        return SDL_SCANCODE_UP;
         case ImGuiKey_DownArrow:      return SDL_SCANCODE_DOWN;
         case ImGuiKey_Home:           return SDL_SCANCODE_HOME;
-        case ImGuiKey_C:              return SDL_SCANCODE_C;
         default:                      return 0;
     }
 }
@@ -936,6 +937,24 @@ static bool overviewBindingDown(int scancode) {
     if (scancode <= 0 || scancode >= SDL_SCANCODE_COUNT) return false;
     const bool *state = SDL_GetKeyboardState(NULL);
     return state && state[scancode];
+}
+
+/* The same read on the edge: true only on the frame the binding goes from up
+ * to down, so one press is one action and holding the key does nothing more.
+ * The keyboard array says what is down this instant and nothing about what was,
+ * so the previous state is kept in the view.
+ *
+ * Every call updates that memory, so a caller has to ask once a frame for each
+ * binding it reads — including on the frames it throws the answer away, or a
+ * press made while it was not looking would fire as soon as it looked again.
+ * Unbound is never pressed. */
+static bool overviewBindingPressed(OverviewView *v, int scancode) {
+    if (!v || scancode <= 0 || scancode >= SDL_SCANCODE_COUNT) return false;
+    const bool *state = SDL_GetKeyboardState(NULL);
+    bool down = (state != NULL) && state[scancode];
+    bool was  = v->bindingWasDown[scancode];
+    v->bindingWasDown[scancode] = down;
+    return down && !was;
 }
 
 /* The map square under the mouse pointer, taken against the item the caller
@@ -1063,16 +1082,32 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
         }
     }
 
+    /* The view's own camera bindings — zoom in, zoom out and the follow
+     * toggle. Read straight off the keyboard for the reason
+     * overviewBindingPressed gives, and read here whatever happens next so
+     * the edge behind them stays current while a text box has the keyboard;
+     * what a text box changes is whether they are acted on. */
+    bool zoomInPressed  = overviewBindingPressed(v, keys ? keys->kiOverviewZoomIn  : 0);
+    bool zoomOutPressed = overviewBindingPressed(v, keys ? keys->kiOverviewZoomOut : 0);
+    bool followPressed  = overviewBindingPressed(v, keys ? keys->kiOverviewFollow  : 0);
+
     /* Keyboard zoom has no cursor to hold onto, so it anchors the centre. */
     float midX = (float)viewW * 0.5f;
     float midY = (float)viewH * 0.5f;
-    if (overviewKeyPressed(keys, ImGuiKey_Equal) ||
-        overviewKeyPressed(keys, ImGuiKey_KeypadAdd)) {
-        overviewCameraZoomAt(cam, viewW, viewH, midX, midY, 1);
-    }
-    if (overviewKeyPressed(keys, ImGuiKey_Minus) ||
-        overviewKeyPressed(keys, ImGuiKey_KeypadSubtract)) {
-        overviewCameraZoomAt(cam, viewW, viewH, midX, midY, -1);
+    if (!io.WantTextInput) {
+        if (zoomInPressed) {
+            overviewCameraZoomAt(cam, viewW, viewH, midX, midY, 1);
+        }
+        if (zoomOutPressed) {
+            overviewCameraZoomAt(cam, viewW, viewH, midX, midY, -1);
+        }
+        /* Following on again wants no centring of its own: the follow tick
+         * brings the tank back on the next frame. Off leaves the camera
+         * exactly where the player has it, which is the one thing panning
+         * could not give them. */
+        if (followPressed) {
+            cam->follow = !cam->follow;
+        }
     }
 
     /* The keyboard's pan. The arrows are the view's own and are given up to
@@ -1091,7 +1126,7 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      *
      * Panning clears follow, the way a drag does, so a held key wins over the
      * tank exactly as manual scrolling wins over auto-scroll in the classic
-     * view. Home / C hands the map back to the tank. */
+     * view. Home hands the map back to the tank. */
     if (!io.WantTextInput) {
         bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs);
         float dx = 0.0f, dy = 0.0f;
@@ -1112,8 +1147,7 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
 
     /* Nothing to centre on while the tank is dead, so the key does nothing
      * rather than throwing the view at wherever the corpse reads. */
-    if (overviewKeyPressed(keys, ImGuiKey_Home) ||
-        overviewKeyPressed(keys, ImGuiKey_C)) {
+    if (overviewKeyPressed(keys, ImGuiKey_Home)) {
         float tankX = 0.0f, tankY = 0.0f;
         if (clientSimIsMyTankAlive(cs) &&
             clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {

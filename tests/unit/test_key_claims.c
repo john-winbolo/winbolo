@@ -7,12 +7,14 @@
 #include "key_claims.h"
 #include "test_harness.h"
 
-/* One distinct scancode per keyItems field, in the order the struct declares
- * them.  Every one must come back claimed: that is what catches a field added
- * to keyItems later and not added to the predicate, which would be a key the
- * game owns and the overview silently steals. */
+/* One distinct scancode per keyItems field.  Every one must come back claimed:
+ * that is what catches a field added to keyItems later and not added to the
+ * predicate, which would be a key the game owns and the overview silently
+ * steals.  The fields are listed in the order the struct declares them and a
+ * new field takes the next sentinel, so the two orders drift apart as fields
+ * are added — only distinctness matters. */
 #define KC_FIRST_SENTINEL 101
-#define KC_FIELD_COUNT    23
+#define KC_FIELD_COUNT    26
 
 /* An unbound scancode — outside the sentinel block above. */
 #define KC_UNBOUND_SCANCODE 200
@@ -34,6 +36,9 @@ int run_key_claims(void) {
         k.kiTankView     = KC_FIRST_SENTINEL + 8;
         k.kiPillView     = KC_FIRST_SENTINEL + 9;
         k.kiOverviewZoom = KC_FIRST_SENTINEL + 10;
+        k.kiOverviewFollow  = KC_FIRST_SENTINEL + 23;
+        k.kiOverviewZoomIn  = KC_FIRST_SENTINEL + 24;
+        k.kiOverviewZoomOut = KC_FIRST_SENTINEL + 25;
         k.kiScrollUp     = KC_FIRST_SENTINEL + 11;
         k.kiScrollDown   = KC_FIRST_SENTINEL + 12;
         k.kiScrollLeft   = KC_FIRST_SENTINEL + 13;
@@ -86,6 +91,9 @@ int run_key_claims(void) {
         k.kiTankView     = 23;   /* SDL_SCANCODE_T      */
         k.kiPillView     = 10;   /* SDL_SCANCODE_G      */
         k.kiOverviewZoom = 224;  /* SDL_SCANCODE_LCTRL  */
+        k.kiOverviewFollow  = 6;   /* SDL_SCANCODE_C      */
+        k.kiOverviewZoomIn  = 46;  /* SDL_SCANCODE_EQUALS */
+        k.kiOverviewZoomOut = 45;  /* SDL_SCANCODE_MINUS  */
         k.kiScrollUp     = 82;   /* SDL_SCANCODE_UP     */
         k.kiScrollDown   = 81;   /* SDL_SCANCODE_DOWN   */
         k.kiScrollLeft   = 80;   /* SDL_SCANCODE_LEFT   */
@@ -99,8 +107,9 @@ int run_key_claims(void) {
         k.kiQuickPillbox = 33;   /* SDL_SCANCODE_4      */
         k.kiQuickMine    = 34;   /* SDL_SCANCODE_5      */
 
-        /* The overview's pan and zoom-in keys are the game's scroll and
-         * increase-range bindings, so the overview does without them. */
+        /* The arrows the overview pans with are the game's scroll bindings, so
+         * the overview does without them; keypad plus is the game's, and no
+         * longer anything of the overview's. */
         UT_ASSERT_MSG(keyIsClaimedByGame(&k, 80),  /* SDL_SCANCODE_LEFT  */
                       "left arrow scrolls the main view by default");
         UT_ASSERT_MSG(keyIsClaimedByGame(&k, 79),  /* SDL_SCANCODE_RIGHT */
@@ -117,18 +126,23 @@ int run_key_claims(void) {
         UT_ASSERT_MSG(keyIsClaimedByGame(&k, 224), /* SDL_SCANCODE_LCTRL */
                       "left control holds the overview's wheel on zoom");
 
-        /* The rest of the overview's keys are unbound by default and stay
-         * the overview's. */
-        UT_ASSERT_MSG(!keyIsClaimedByGame(&k, 46),  /* SDL_SCANCODE_EQUALS   */
-                      "equals is unbound and still zooms the overview in");
-        UT_ASSERT_MSG(!keyIsClaimedByGame(&k, 45),  /* SDL_SCANCODE_MINUS    */
-                      "minus is unbound and still zooms the overview out");
-        UT_ASSERT_MSG(!keyIsClaimedByGame(&k, 86),  /* SDL_SCANCODE_KP_MINUS */
-                      "keypad minus is unbound and still zooms out");
+        /* The overview's camera keys are bindings of their own, so they are
+         * claimed like any other — which is what stops the keys the view
+         * borrows shadowing them. The view reads these three off the keyboard
+         * rather than through the borrowed-key path. */
+        UT_ASSERT_MSG(keyIsClaimedByGame(&k, 46),  /* SDL_SCANCODE_EQUALS */
+                      "equals zooms the overview in by default");
+        UT_ASSERT_MSG(keyIsClaimedByGame(&k, 45),  /* SDL_SCANCODE_MINUS  */
+                      "minus zooms the overview out by default");
+        UT_ASSERT_MSG(keyIsClaimedByGame(&k, 6),   /* SDL_SCANCODE_C      */
+                      "c toggles the overview's follow by default");
+
+        /* Home is unbound in the stock set, so the overview keeps it; keypad
+         * minus is unbound and belongs to nothing. */
         UT_ASSERT_MSG(!keyIsClaimedByGame(&k, 74),  /* SDL_SCANCODE_HOME     */
                       "home is unbound and still centres the overview");
-        UT_ASSERT_MSG(!keyIsClaimedByGame(&k, 6),   /* SDL_SCANCODE_C        */
-                      "c is unbound and still centres the overview");
+        UT_ASSERT_MSG(!keyIsClaimedByGame(&k, 86),  /* SDL_SCANCODE_KP_MINUS */
+                      "keypad minus is unbound by default");
     }
 
     return 0;

@@ -65,6 +65,7 @@ enum KeySetupField {
     ksForward, ksBackward, ksTurnLeft, ksTurnRight,
     ksShoot, ksLayMine, ksGunIncrease, ksGunDecrease,
     ksTankView, ksPillView, ksBaseView, ksAllyView, ksOverviewZoom,
+    ksOverviewFollow, ksOverviewZoomIn, ksOverviewZoomOut,
     ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
     ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
 };
@@ -95,6 +96,9 @@ static int *fieldPtr(KeySetupField f, keyItems *ki) {
         case ksBaseView:    return &ki->kiBaseView;
         case ksAllyView:    return &ki->kiAllyView;
         case ksOverviewZoom:return &ki->kiOverviewZoom;
+        case ksOverviewFollow:  return &ki->kiOverviewFollow;
+        case ksOverviewZoomIn:  return &ki->kiOverviewZoomIn;
+        case ksOverviewZoomOut: return &ki->kiOverviewZoomOut;
         case ksScrollUp:    return &ki->kiScrollUp;
         case ksScrollDown:  return &ki->kiScrollDown;
         case ksScrollLeft:  return &ki->kiScrollLeft;
@@ -423,6 +427,9 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             keyRow(langGetText(STR_DLGKEYSETUP_BASEVIEW), ksBaseView);
             keyRow(langGetText(STR_DLGKEYSETUP_ALLYVIEW), ksAllyView);
             keyRow(langGetText(STR_DLGKEYSETUP_OVERVIEWZOOM), ksOverviewZoom);
+            keyRow(langGetText(STR_DLGKEYSETUP_OVERVIEWZOOMIN),  ksOverviewZoomIn);
+            keyRow(langGetText(STR_DLGKEYSETUP_OVERVIEWZOOMOUT), ksOverviewZoomOut);
+            keyRow(langGetText(STR_DLGKEYSETUP_OVERVIEWFOLLOW),  ksOverviewFollow);
             endSection();
 
             section(langGetText(STR_DLGKEYSETUP_SCROLL));
