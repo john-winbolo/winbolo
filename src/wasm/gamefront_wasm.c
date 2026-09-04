@@ -181,6 +181,12 @@ openingStates dlgState = openStart;
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
 
+/* Lobby players/map divider offsets ([WINDOW] section on desktop). The wasm
+ * build never persists window settings, but the shared lobby dialog code
+ * (imgui_lobby.cpp) references the symbols. */
+float gameFrontLobbySplit = 0.0f;
+float gameFrontLobbySplitRecap = 0.0f;
+
 bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;
@@ -190,6 +196,22 @@ bool wantRejoin;
  * settings dialog references these globals. */
 bool gameFrontUseUpnp = FALSE;
 bool gameFrontUseNatTraversal = FALSE;
+
+/* Client-hosting settings ([HOSTING] section). A browser tab cannot listen
+ * for connections, so nothing here is ever applied to a server — the values
+ * exist because the shared settings and UDP-setup dialogs read them. The
+ * defaults mirror gamefront.c so anything that echoes one shows the number
+ * the desktop build would. */
+unsigned short gameFrontHostingPort             = 27500;
+bool           gameFrontHostingAllowSpec        = TRUE;
+int            gameFrontHostingMaxSpec          = 16;
+int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
+int            gameFrontHostingUploadMaxFiles   = 64;
+int            gameFrontHostingUploadMaxStorage = 8;
+char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
+bool           gameFrontHostingLogging          = TRUE;
+char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+bool           gameFrontHostingServeReplays     = TRUE;
 
 /* Server-authoritative state — the Transport handle itself now lives
  * inside humanSim; only high-level lifecycle gating is tracked here. */
@@ -819,6 +841,9 @@ void gameFrontReloadSkins(void)               { }
 void gameFrontShutdownServer(void)            { }
 bool gameFrontPreferencesExist(void)          { return FALSE; }
 bool gameFrontSetupServer(void)               { return FALSE; }
+/* The web build never owns a round log to offer back, so callers that gate
+ * on a locally recorded round see nothing. */
+bool gameFrontHasLocalServer(void)            { return FALSE; }
 
 /* Lobby/host helpers the in-game lobby pulls in now that it renders in the
  * web build (C6). Host-only / Steam / persistence features that are inert in
@@ -828,6 +853,62 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
 void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
 void gameFrontGetChosenBotBrain(char *out, size_t outLen) { if (out && outLen) out[0] = '\0'; }
 void gameFrontSetChosenBotBrain(const char *name)    { (void)name; }
+
+/* Client-hosting write-through setters. The desktop build persists each key
+ * into [HOSTING] as it changes; there is no prefs file in the browser, so
+ * these only hold the value for the session the dialogs read it back in. */
+void gameFrontSetHostingPort(unsigned short port)    { gameFrontHostingPort = port; }
+void gameFrontSetHostingAllowSpec(bool allow)        { gameFrontHostingAllowSpec = allow; }
+void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
+void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
+void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
+void gameFrontSetHostingLogging(bool logging)        { gameFrontHostingLogging = logging; }
+void gameFrontSetHostingServeReplays(bool serve)     { gameFrontHostingServeReplays = serve; }
+
+void gameFrontSetHostingUploadMaxStorage(int maxStorageMb) {
+  gameFrontHostingUploadMaxStorage = maxStorageMb;
+}
+
+void gameFrontSetHostingUploadDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingUploadDir, dir ? dir : "",
+              sizeof(gameFrontHostingUploadDir));
+}
+
+void gameFrontSetHostingLogDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
+              sizeof(gameFrontHostingLogDir));
+}
+
+/* Steam rich presence — there is no Steam client behind a browser tab. */
+void gameFrontSetSteamPresenceMenu(void)           { }
+void gameFrontSetSteamPresenceLobby(ClientSim *cs) { (void)cs; }
+
+/* Supporter shield. Desktop resolves this from Steam DLC ownership, and the
+ * WinBolo.net account flag isn't plumbed to the client yet, so the web build
+ * has nothing to check. */
+bool gameFrontIsSupporter(void) { return FALSE; }
+
+/* Auto-join is the Steam-invite hand-off into the UDP setup dialog; nothing
+ * requests one in the browser, so the dialog never auto-fires Join. */
+bool gameFrontConsumeUdpAutoJoinRequest(void) { return FALSE; }
+
+/* Cross-dialog transition request. Desktop feeds this from the host-OS menu
+ * bar; in the browser the WinBolo.net dialog uses it to hand off to the log
+ * viewer, so it carries a real value rather than stubbing out. */
+static openingStates wasmPendingTransition;
+static bool wasmPendingTransitionSet = FALSE;
+
+void gameFrontRequestTransition(openingStates s) {
+  wasmPendingTransition    = s;
+  wasmPendingTransitionSet = TRUE;
+}
+
+bool gameFrontConsumeRequestedTransition(openingStates *out) {
+  if (!wasmPendingTransitionSet) return FALSE;
+  if (out) *out = wasmPendingTransition;
+  wasmPendingTransitionSet = FALSE;
+  return TRUE;
+}
 
 
 ServerSim *gameFrontGetServerSim(void) {

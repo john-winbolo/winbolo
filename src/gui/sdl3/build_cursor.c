@@ -276,3 +276,45 @@ void buildCursorTick(struct ClientSim *cs, int dxPx, int dyPx) {
   follow_camera(cs);
   buildCursorClampToView(cs);
 }
+
+bool buildCursorResolveReticle(struct ClientSim *cs, bool pointerLive,
+                               BYTE pointerScreenX, BYTE pointerScreenY,
+                               BYTE *outScreenX, BYTE *outScreenY,
+                               bool *outFaint) {
+  if (outFaint) *outFaint = false;
+  if (!cs) return false;
+
+  /* Keep an active cursor inside the visible edge as the view scrolls with
+     the tank (no-op while cursor mode is off — an off-mode target stays
+     pinned to its absolute tile and may scroll away). */
+  buildCursorClampToView(cs);
+
+  BYTE mapX = 0, mapY = 0;
+  bool solid;
+  if (buildCursorGetTile(&mapX, &mapY)) {
+    /* Cursor mode ON — the player is steering it right now. */
+    solid = true;
+  } else if (buildCursorGetTargetTile(&mapX, &mapY)) {
+    /* A target is latched.  Solid while a pointer/touch selection is live
+       (the mouse put it there and can move it), faint otherwise — that's the
+       gamepad hint showing where Build Now will place. */
+    solid = pointerLive;
+  } else {
+    /* Nothing latched yet (no mouse move, no tap, no stick).  Fall back to
+       the frontend's raw pointer tile so the reticle still appears. */
+    if (!pointerLive) return false;
+    if (outScreenX) *outScreenX = pointerScreenX;
+    if (outScreenY) *outScreenY = pointerScreenY;
+    return true;
+  }
+
+  int sx = (int)mapX - (int)clientSimGetXOffset(cs);
+  int sy = (int)mapY - (int)clientSimGetYOffset(cs);
+  if (sx < 1 || sx > MAIN_SCREEN_SIZE_X || sy < 1 || sy > MAIN_SCREEN_SIZE_Y) {
+    return false;   /* scrolled off-screen — nothing to draw */
+  }
+  if (outScreenX) *outScreenX = (BYTE)sx;
+  if (outScreenY) *outScreenY = (BYTE)sy;
+  if (outFaint)   *outFaint   = !solid;
+  return true;
+}

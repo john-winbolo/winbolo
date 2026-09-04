@@ -406,6 +406,7 @@ STR_DLGGAMEINFO_AIFULL=Yes (Full)
 STR_DLGLOBBY_HIDDEN=Hidden
 STR_DLGLOBBY_VISIBLE=Visible
 STR_DLGLOBBY_DOWNLOADING=Downloading map...
+STR_DLGLOBBY_AWAITING_MAP=Waiting for server...
 STR_DLGLOBBY_MAP_UNAVAILABLE=Map preview unavailable
 STR_DLGLOBBY_PILLBOXES=Pillboxes:
 STR_DLGLOBBY_BASES=Bases:
@@ -631,6 +632,7 @@ STR_DLGWBN_NETERR=Network error
 STR_DLGWBN_LOADERR=Failed to load details
 STR_DLGWBN_DOWNLOAD_FAILED=Download failed
 STR_DLGWBN_NOSAVEPATH=Could not determine save path
+STR_DLGWBN_SELECTPROMPT=Select a game to view its details
 STR_DLGWBN_FETCHERR=Fetch failed
 STR_DLGWBN_UNKNOWN_ERR=Unknown error
 STR_DLGWBN_FILEFILTER=WinBolo Log Files
@@ -639,13 +641,13 @@ STR_DLGWBN_MYGAMES_SIGNIN=Login or create an account to view your recent games
 STR_DLGWBN_MYGAMES_NONE=You don't have any recorded games yet.
 STR_DLGLOBBY_LASTROUND_TITLE=Last round
 STR_DLGLOBBY_LASTROUND_COL_NAME=Name
-STR_DLGLOBBY_LASTROUND_COL_KILLS=K
-STR_DLGLOBBY_LASTROUND_COL_DEATHS=D
+STR_DLGLOBBY_LASTROUND_COL_KILLS=Kills
+STR_DLGLOBBY_LASTROUND_COL_DEATHS=Deaths
 STR_DLGLOBBY_LASTROUND_COL_BASE=Base
 STR_DLGLOBBY_LASTROUND_COL_PILL=Pill
-STR_DLGLOBBY_LASTROUND_COL_DMG=Dmg
+STR_DLGLOBBY_LASTROUND_COL_DMG=Damage
 STR_DLGLOBBY_LASTROUND_COL_BUILDS=Builds
-STR_DLGLOBBY_LASTROUND_MORE=More awards
+STR_DLGLOBBY_LASTROUND_AWARDS=Awards
 STR_DLGLOBBY_LASTROUND_NOPLAYER=(empty)
 STR_DLGLOBBY_LASTROUND_NEMESIS_FMT={string1} owned {string2}
 STR_DLGLOBBY_AWARD_MOST_KILLS=Most Kills
@@ -667,8 +669,34 @@ STR_DLGLOBBY_AWARD_LUMBERJACK=Lumberjack
 STR_DLGLOBBY_AWARD_WASTEFUL=Wasteful
 STR_DLGLOBBY_AWARD_BIGGEST_FUMBLE=Biggest Fumble
 STR_DLGLOBBY_LASTROUND_BTN=Last round
-STR_DLGLOBBY_LASTROUND_COL_LGMK=LGM K
-STR_DLGLOBBY_LASTROUND_COL_LGMD=LGM D
+STR_DLGLOBBY_LASTROUND_COL_LGMK=Builder Kills
+STR_DLGLOBBY_LASTROUND_COL_LGMD=Builder Deaths
+
+# Lobby "Last round" panel — the round's highlight clips.
+STR_DLGLOBBY_HL_HEADER=Highlights
+STR_DLGLOBBY_HL_NONE=No highlights this round
+STR_DLGLOBBY_HL_AWARD_FMT={string1} ({player})
+STR_DLGLOBBY_HL_AWARD_VS_FMT={string1} ({player} vs {other})
+STR_DLGLOBBY_HL_WIPE_FMT=Team wipe: {number} down ({player})
+STR_DLGLOBBY_HL_STEAL_FMT=Steal ({player} from {other})
+STR_DLGLOBBY_HL_LGM_FMT=LGM sweep: {number} down ({player})
+STR_DLGLOBBY_HL_FUMBLE_FMT=Fumble: {number} pills dropped ({player})
+STR_DLGLOBBY_HL_DROWN_PILLS_FMT=Drowned with {number} pills ({player})
+STR_DLGLOBBY_HL_DROWN_FMT=Drowned ({player})
+STR_DLGLOBBY_HL_COLLAPSE_FMT=Front collapse: {number} tiles taken ({player})
+STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT=Front collapse: {number} tiles taken
+STR_DLGLOBBY_HL_TURNING_FMT=Turning point: {number} tiles swung ({player})
+STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT=Turning point: {number} tiles swung
+STR_DLGLOBBY_HL_GENERIC=Highlight
+STR_DLGLOBBY_HL_PICKUP_FMT=Pill sweep: {number} grabbed ({player})
+STR_DLGLOBBY_HL_DENSITY_FMT=All-out action: {number} events
+
+# Lobby "Last round" panel — the reel's delivery state.
+STR_DLGLOBBY_REEL_WAITING=Asking the server for the replay...
+STR_DLGLOBBY_REEL_DOWNLOADING=Downloading replay... {number}%
+STR_DLGLOBBY_REEL_DISABLED=This server does not share replays
+STR_DLGLOBBY_REEL_NONE=No replay available for this round
+STR_DLGLOBBY_REEL_TOO_LARGE=The round was too long to send
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
@@ -687,6 +715,47 @@ STR_DLGSKIN_NAME_LBL=Name:
 STR_DLGSKIN_AUTHOR_LBL=Author:
 STR_DLGSKIN_NOTES_LBL=Notes:
 STR_DLGSKIN_LOADERR=Unable to load Skin File
+
+# Skin section of the Display & Sound settings tab
+STR_DLGSETTINGS_SKIN=Skin
+STR_DLGSKIN_DEFAULT=Default
+STR_DLGSKIN_SRC_BUILTIN=Built-in
+STR_DLGSKIN_SRC_USER=User
+STR_DLGSKIN_SRC_WORKSHOP=Workshop
+STR_DLGSKIN_DOWNLOADING=Downloading...
+STR_DLGSKIN_OPENFOLDER=Open skins folder
+STR_DLGSKIN_BROWSE_WORKSHOP=Browse Workshop
+STR_DLGSKIN_PUBLISH=Publish to Workshop...
+STR_DLGSKIN_TILEDETAIL=Tile detail
+STR_DLGSKIN_TILEDETAIL_CLASSIC=Classic
+STR_DLGSKIN_TILEDETAIL_MATCHZOOM=Match to zoom
+STR_DLGSKIN_TILEDETAIL_HIGH=High detail
+STR_DLGSKIN_ANIMSMOOTH=Animation smoothness
+STR_DLGSKIN_ANIMSMOOTH_CLASSIC=Classic
+STR_DLGSKIN_ANIMSMOOTH_PIXEL=Match pixelation
+STR_DLGSKIN_ANIMSMOOTH_SMOOTH=Smooth
+STR_DLGSKIN_SMOOTHSHELLS=Smooth shells
+STR_DLGSKIN_TEXFILTER=Texture filter
+STR_DLGSKIN_TEXFILTER_NEAREST=Nearest
+STR_DLGSKIN_TEXFILTER_LINEAR=Linear
+STR_DLGSKIN_TEXFILTER_PIXELART=Pixel art
+STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP=This skin supplies its art at one size only, so all three settings build the same tiles.
+STR_DLGSKIN_TEXFILTER_TIP=Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change.
+STR_DLGSKIN_PUBLISH_HEADING=Publish this skin to the Steam Workshop
+STR_DLGSKIN_PUBLISH_NAME=Title
+STR_DLGSKIN_PUBLISH_DESC=Description
+STR_DLGSKIN_PUBLISH_UPDATE=Update the item this skin came from
+STR_DLGSKIN_PUBLISH_NEW=Publish as a new item
+STR_DLGSKIN_PUBLISH_GO=Publish
+STR_DLGSKIN_PUBLISH_WORKING=Uploading...
+STR_DLGSKIN_PUBLISH_DONE=Published to the Workshop.
+STR_DLGSKIN_PUBLISH_FAILED=The publish failed. Check that Steam is running, then try again.
+STR_DLGSKIN_PUBLISH_LEGAL=Accept the Workshop legal agreement on the item's page, or nobody else can see the item.
+STR_DLGSKIN_PUBLISH_OPENITEM=Open item page
+STR_DLGSKIN_PUBLISH_NEEDUSER=Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be.
+STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it.
+STR_DLGSKIN_RECFILTER_LBL=Recommended filter:
+STR_DLGSKIN_RECOMMENDED_TAG=(recommended)
 
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config
@@ -707,6 +776,7 @@ STR_DLGWBN_PASSWORD=Password:
 STR_DLGWBN_SIGNINGIN=Signing in...
 STR_DLGWBN_SIGNIN_OK=Sign in
 STR_DLGWBN_NEEDCREDS=Please enter your username and password.
+STR_DLGWBN_ACCOUNT_LOCKED=WinBolo.net accounts can only be changed from the main menu, not during a game.
 
 # Welcome dialog
 STR_DLGWELCOME_WINTITLE=WinBolo - Game Selection
@@ -1467,7 +1537,11 @@ STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES=Max Files
 STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE=Max Storage (MB)
 STR_DLGSETTINGS_HOSTING_ENABLELOG=Enable Logging
 STR_DLGSETTINGS_HOSTING_LOGDIR=Log Directory
+STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Send Replays to Players
 STR_DLGSETTINGS_HOSTING_APPLYNOTE=Applies to the next hosted / New Internet game.
+
+# Log viewer Options menu
+STR_LV_HIDE_LOBBY=Hide Lobby
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

@@ -46,6 +46,8 @@ extern "C" {
 
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
+int run_active_sim_armed_on_lobby_tick(void);
+int run_active_sim_cleared_on_cross_thread_destroy(void);
 int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
 int run_prefs_document_roundtrip(void);
@@ -72,8 +74,10 @@ int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
+int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
 int run_command_codec_lobby_claim_start(void);
+int run_command_codec_rating_posted(void);
 int run_lobby_claim_start_host_swaps_occupied(void);
 int run_lobby_claim_start_host_swap_into_none(void);
 int run_lobby_claim_start_non_host_occupied_rejected(void);
@@ -158,12 +162,38 @@ int run_awards_tiebreak(void);
 int run_awards_omission(void);
 int run_awards_floors(void);
 int run_awards_include_bots(void);
+int run_awards_subset_basic(void);
+int run_awards_subset_deterministic(void);
 int run_round_stats_codec_roundtrip(void);
+int run_round_stats_codec_rejects_bad_key(void);
 int run_round_stats_codec_worstcase(void);
 int run_round_stats_build_summary(void);
+int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
 int run_round_stats_track_cap(void);
+int run_round_stats_derive_equivalence(void);
+int run_highlights_cluster_wipe(void);
+int run_highlights_wipe_team_bonus(void);
+int run_highlights_objective_steal(void);
+int run_highlights_award_anchor(void);
+int run_highlights_selection(void);
+int run_highlights_lead_in(void);
+int run_highlights_empty(void);
+int run_territory_shift_basic(void);
+int run_highlights_turning_point(void);
+int run_territory_shift_bounded(void);
+int run_territory_recent_damage(void);
+int run_highlights_front_collapse(void);
+int run_highlights_award_anchor_density(void);
+int run_highlights_time_spread(void);
+int run_highlights_multi_lgm(void);
+int run_highlights_fumble(void);
+int run_highlights_rare_death(void);
+int run_highlights_award_dedup(void);
+int run_highlights_pickup_spree(void);
+int run_highlights_action_density(void);
+int run_lv_stats_clip_time_format(void);
 int run_attribution_track_schema(void);
 int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);
@@ -239,7 +269,7 @@ int run_proxy_meta_parse_oversized_name(void);
 int run_proxy_meta_parse_prefs_clamps(void);
 int run_tick_core_active_local_no_double_step(void);
 int run_tick_core_passive_local_pumps_keys_half(void);
-int run_tick_core_lobby_flips_cadence(void);
+int run_tick_core_lobby_preserves_parity(void);
 int run_transport_ticks_server_lifecycle(void);
 int run_await_join_connected_immediate(void);
 int run_await_join_lobby_latch(void);
@@ -452,6 +482,19 @@ int run_loopback_spectator_lobby(void);
  * robustness, pipelining and the send-side serializer guard. */
 int run_bulk_transfer(void);
 
+/* Round-log transfer (test_round_log.c): the BULK_KIND_ROUND_LOG stream
+ * header round-trips at the extremes the transfer uses (kind 8, a reqSeq echo
+ * in gen, a totalSize at ROUND_LOG_MAX_BYTES, a path at BULK_PATH_MAX) and
+ * refuses a truncated one without over-reading; a rejected round-log stream
+ * leaves the byte run aligned, proved on the stream that follows it; and a
+ * client asking a loopback server with no RoundLogSource registered lands on
+ * CLIENT_ROUND_LOG_UNAVAILABLE_DISABLED over the real REQ/ERR packets. The
+ * success path needs a recorded round and a recorder in the server, so it is
+ * human-gated on two machines rather than covered here. */
+int run_round_log_header_roundtrip(void);
+int run_round_log_sink_rejection_realigns(void);
+int run_round_log_refused_when_unavailable(void);
+
 /* Send-side overflow guards (test_overflow_guards.c): channelStreamSend and
  * bulkSenderBegin reject a wrap-prone length via the existing false path with
  * no state change. */
@@ -583,6 +626,14 @@ int run_autolock_released_on_return_to_lobby(void);
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
 
+/* Pillbox repair load (test_pill_repair_load.c). The man carries a full
+ * load and spends it against the armour the pill has when he arrives, so a
+ * pill that took more fire on the way still ends up topped up, and the
+ * trees he didn't need come back to the tank. */
+int run_pill_repair_tops_up_from_arrival_armour(void);
+int run_pill_repair_short_load_spends_what_it_has(void);
+int run_pill_repair_full_load_covers_a_dead_pill(void);
+
 /* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
  * cluster / farthest-first selection that auto-assigns a lobby start on
  * join, shared with startsAssignBatch's distance + validity logic. */
@@ -631,8 +682,35 @@ int run_wbv_reader_v1(void);
 int run_wbv_reader_v2(void);
 int run_attribution_reader_roundtrip(void);
 int run_attribution_reader_rejects_bad(void);
+int run_attribution_reader_clamps_slotcount(void);
 int run_attribution_reader_old_wbv(void);
 int run_wbv_v2_capture(void);
+
+/* Highlight clip-time calibration anchors (test_lv_calibration.c): builds
+ * synthetic v2 .wbv logs and asserts lv_walkFindBaseOwnerTimes resolves
+ * base cells from the log's own snapshots — a lobby-started log's opening
+ * snapshot carries no bases, so the table must come from the first
+ * in-game snapshot (and from the loaded table on a no-lobby log). */
+int run_lv_walk_base_anchor_lobby_log(void);
+int run_lv_walk_base_anchor_opening_snapshot(void);
+int run_lv_walk_base_anchor_ordinal(void);
+
+/* Hide Lobby presentation window (test_lv_calibration.c): with the lobby
+ * hidden the viewer's progress, seeks and clock run against
+ * [gameStart, totalTime) while the decoder stays on absolute log ms. Game
+ * start is the world rewrite that ends the lobby, so a log whose lobby left no
+ * log_LobbyExit still opens on the round, and a log that never had a lobby —
+ * periodic in-game snapshots and all — falls back to the whole file. */
+int run_lv_hide_lobby_window_mapping(void);
+int run_lv_hide_lobby_no_lobby_fallback(void);
+int run_lv_hide_lobby_no_marker_anchor(void);
+int run_lv_hide_lobby_periodic_snapshot(void);
+
+/* Load-time slot-name walk (test_lv_calibration.c): a player who joins after
+ * the lobby marker is absent from the live roster at game start, where the
+ * round summary is built, so lv_screenGetLoggedPlayerName reads the name from
+ * the log's own join event instead. */
+int run_lv_logged_name_from_join_event(void);
 
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
@@ -815,6 +893,16 @@ int run_loopback_download_join(void);
 int run_loopback_download_midgame(void);
 int run_loopback_resync(void);
 
+/* Mid-lobby map change + join-download recovery (test_loopback_map_change.c):
+ * a clean map change re-downloads and reconverges; map changes and initial
+ * joins under loss+duplication (seed spreads) must always converge — the
+ * shapes that used to wedge the lobby in DOWNLOADING_MAP when the bulk map
+ * stream raced the JOIN_ACCEPT or a duplicate accept wiped the receiver. */
+int run_loopback_map_change_clean(void);
+int run_loopback_map_change_loss(void);
+int run_loopback_join_accept_loss(void);
+int run_loopback_join_accept_loss_midgame(void);
+
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the
  * listen-server host render-prepare no-op (own tank + recon unchanged). */
@@ -927,6 +1015,7 @@ int run_control_overflow_defers_disconnect(void);
  * of freeing the tank/lgm inline. */
 int run_shells_survive_cleared_lgm_slot(void);
 int run_ping_kick_defers_teardown(void);
+int run_ping_kick_clears_strikes_on_disconnect(void);
 
 /* tkExplosionUpdate pairs lgms[i] with tanks[i] over the COMPACTED per-player
  * arrays, and its small-explosion sweep must cover every index
@@ -949,6 +1038,20 @@ int run_addrparse_whitespace(void);
 int run_addrparse_port_bounds(void);
 int run_addrparse_bad_port(void);
 int run_addrparse_empty(void);
+
+/* Skin asset reads out of a directory vs a zip (test_skin_source.c). */
+int run_skin_source_dir_and_zip(void);
+
+/* The loaded skin vs the player's chosen one (test_skin_source.c). */
+int run_skin_active_vs_requested(void);
+
+/* Writing a Workshop id into a directory skin and into an archive
+ * (test_skin_source.c). */
+int run_skin_workshop_id_roundtrip(void);
+
+/* Which densities a skin serves, and what each Tile Detail mode picks
+ * out of that (test_skin_density.c). */
+int run_skin_density_scan(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

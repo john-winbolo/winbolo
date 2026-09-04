@@ -343,12 +343,17 @@ void lv_playersGetLgmStatus(BYTE playerNum, bool *isOut, bool *isDead) {
 *ARGUMENTS:
 *  playerNum  - The player number to set
 *  dest       - Destination string
+*  destSize   - Size of dest in bytes, including the NUL. Longer names
+*               are truncated rather than overrunning the caller.
 *********************************************************/
-void lv_playersGetPlayerName(BYTE playerNum, char *dest) {
+void lv_playersGetPlayerName(BYTE playerNum, char *dest, size_t destSize) {
+  if (destSize == 0) {
+    return;
+  }
   if (plrs.item[playerNum].inUse == TRUE) {
-    snprintf(dest, PLAYER_NAME_LEN, "%s", plrs.item[playerNum].playerName);
+    snprintf(dest, destSize, "%s", plrs.item[playerNum].playerName);
   } else {
-    snprintf(dest, PLAYER_NAME_LEN, "%s", NO_TANK);
+    snprintf(dest, destSize, "%s", NO_TANK);
   }
 }
 
@@ -576,7 +581,12 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
             }
         } */
         
-        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName); 
+        /* The log only carries a 4 bit pixel offset and a 16 step
+           facing, so the sub-square offsets and the angle are those
+           values scaled back up to world units and to 0-255. */
+        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName,
+                              (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
+                              (BYTE) (plrs.item[count].frame << 4)); 
       } else if (count == 0) {
 /*        sprintf(playerName, "NIF: mx=%d, my=%d, l=%d, r=%d, t=%d, b=%d", mx, my, leftPos, rightPos, top, bottom);
             if (strcmp(playerName, testP) != 0) {
@@ -623,7 +633,7 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
         wy = plrs.item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += plrs.item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
         
-        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame); 
+        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame, (BYTE) wx, (BYTE) wy); 
       }
     }
   }
@@ -975,6 +985,77 @@ BYTE lv_playersGetCentredY() {
       return ((plrs.item[myPlayerNum].mapY << 8) + (plrs.item[myPlayerNum].pixelY << 4)) >> 8;
   }
   return 0;
+}
+
+/* The centred tank in native pixels (map square * TILE_SIZE + the sub-tile
+ * pixel), or -1 when it has no usable position.
+ *
+ * The BYTE accessors above compute the same thing and then throw the sub-tile
+ * part away with their >> 8, which is why a follow camera driven off them can
+ * only move in whole 16-pixel steps. Callers that want smooth scrolling use
+ * these instead. */
+int lv_playersGetCentredPixelX(void) {
+    if (plrs.item[myPlayerNum].inUse == TRUE &&
+        plrs.item[myPlayerNum].mapX >= MAP_MINE_EDGE_LEFT) {
+        /* 16 px per map square, matching the << 4 the BYTE accessors use. */
+        return (int)plrs.item[myPlayerNum].mapX * 16 +
+               (int)plrs.item[myPlayerNum].pixelX;
+    }
+    return -1;
+}
+
+int lv_playersGetCentredPixelY(void) {
+    if (plrs.item[myPlayerNum].inUse == TRUE &&
+        plrs.item[myPlayerNum].mapY >= MAP_MINE_EDGE_TOP) {
+        return (int)plrs.item[myPlayerNum].mapY * 16 +
+               (int)plrs.item[myPlayerNum].pixelY;
+    }
+    return -1;
+}
+
+/* Point the follow camera at a named player. Name match is the only bridge
+ * available: the lobby's slot numbering and the log's player numbering are
+ * separate spaces, and the log carries names. Returns false when nobody
+ * matches or the match has no tank on the map right now (dead, or not yet
+ * joined at this point in the replay) — the caller then leaves the view
+ * alone rather than throwing it at (0,0). */
+bool lv_playersSetViewByName(const char *name) {
+    BYTE count;
+    if (name == NULL || name[0] == '\0') {
+        return FALSE;
+    }
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (plrs.item[count].inUse != TRUE) {
+            continue;
+        }
+        if (strcmp(plrs.item[count].playerName, name) != 0) {
+            continue;
+        }
+        if (plrs.item[count].mapX < MAP_MINE_EDGE_LEFT ||
+            plrs.item[count].mapY < MAP_MINE_EDGE_TOP) {
+            return FALSE;
+        }
+        myPlayerNum = count;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* Report the slot a named player holds without touching the view or self. The
+ * position test lv_playersSetViewByName makes is deliberately absent: a caller
+ * asking who someone is still wants an answer while they are dead. */
+BYTE lv_playersFindByName(const char *name) {
+    BYTE count;
+    if (name == NULL || name[0] == '\0') {
+        return NEUTRAL;
+    }
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (plrs.item[count].inUse == TRUE &&
+            strcmp(plrs.item[count].playerName, name) == 0) {
+            return count;
+        }
+    }
+    return NEUTRAL;
 }
 
 BYTE lv_playersGetTeamId(BYTE playerNum) {

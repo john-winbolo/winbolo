@@ -388,7 +388,9 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message);
 void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName);
-void clientSimGetPlayerName(ClientSim *cs, char *value);
+/* Reads the local player's name into value, which holds at most
+   valueSize bytes including the NUL; longer names are truncated. */
+void clientSimGetPlayerName(ClientSim *cs, char *value, size_t valueSize);
 bool clientSimSetPlayerName(ClientSim *cs, char *value);
 
 /* High-level send-message wrappers used by the players-panel UI. */
@@ -450,7 +452,10 @@ uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
 PingBand clientSimGetPlayerPingBand(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
 uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
-void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);
+/* destSize is the size of dest in bytes, including the NUL; a longer
+ * location is truncated rather than overrunning the caller. */
+void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest,
+                                    size_t destSize);
 uint8_t  clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum);
 void     clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest);
 bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);
@@ -458,7 +463,6 @@ bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans);
 void netGetServerAddressStr(ClientSim *cs, char *dest);
 void netGetOurAddressStr(ClientSim *cs, char *dest);
-BYTE netGetDownloadPos(void);
 void netSecond(void);
 int netGetNetTime(void);
 bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey);
@@ -835,6 +839,12 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs);
+
+/* Counter bumped each time another player reports having rated or commented
+ * on the round clientSimGetLastRoundStats describes. Only movement matters —
+ * a caller holding its own last-seen value re-reads that round's WinBolo.net
+ * page when the two differ. 0 for a NULL cs. */
+uint32_t clientSimGetRatingPostedSeq(const ClientSim *cs);
 
 /* Server-supplied map directory listing — populated asynchronously
  * by PACKET_LOBBY_MAP_LIST_RSP after the client sends a

@@ -99,7 +99,8 @@
     X(PACKET_COMMAND_TICK, "COMMAND_TICK") \
     X(PACKET_COMMAND_ACK, "COMMAND_ACK") \
     X(PACKET_COMMAND_REJECTED, "COMMAND_REJECTED") \
-    X(PACKET_BALANCE_FAILED, "BALANCE_FAILED")
+    X(PACKET_BALANCE_FAILED, "BALANCE_FAILED") \
+    X(PACKET_MAP_DL_READY, "MAP_DL_READY")
 
 int run_packet_type_names(void) {
     /* Every mapped type returns its exact name. */

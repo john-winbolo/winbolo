@@ -453,6 +453,10 @@
 #define STR_DLGLOBBY_HIDDEN                 603
 #define STR_DLGLOBBY_VISIBLE                604
 #define STR_DLGLOBBY_DOWNLOADING            605
+/* Shown in place of the download bar while the client is re-joining after
+   a map change: the server has not started sending the new map yet, so
+   there is no progress to report. */
+#define STR_DLGLOBBY_AWAITING_MAP           1946
 #define STR_DLGLOBBY_MAP_UNAVAILABLE        606
 #define STR_DLGLOBBY_PILLBOXES              607
 #define STR_DLGLOBBY_BASES                  608
@@ -671,6 +675,7 @@
 #define STR_DLGWBN_LOADERR                  750
 #define STR_DLGWBN_DOWNLOAD_FAILED          751
 #define STR_DLGWBN_NOSAVEPATH               752
+#define STR_DLGWBN_SELECTPROMPT             753
 #define STR_DLGWBN_FETCHERR                 754
 #define STR_DLGWBN_UNKNOWN_ERR              755
 #define STR_DLGWBN_FILEFILTER               756
@@ -688,7 +693,7 @@
 #define STR_DLGLOBBY_LASTROUND_COL_PILL     1904
 #define STR_DLGLOBBY_LASTROUND_COL_DMG      1905
 #define STR_DLGLOBBY_LASTROUND_COL_BUILDS   1874
-#define STR_DLGLOBBY_LASTROUND_MORE         1875
+#define STR_DLGLOBBY_LASTROUND_AWARDS       1947
 #define STR_DLGLOBBY_LASTROUND_NOPLAYER     1876
 #define STR_DLGLOBBY_LASTROUND_NEMESIS_FMT  1877
 #define STR_DLGLOBBY_AWARD_MOST_KILLS       1878
@@ -713,6 +718,32 @@
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
 
+/* Lobby "Last round" panel — the round's highlight clips. */
+#define STR_DLGLOBBY_HL_HEADER               1922
+#define STR_DLGLOBBY_HL_NONE                 1923
+#define STR_DLGLOBBY_HL_AWARD_FMT            1924
+#define STR_DLGLOBBY_HL_AWARD_VS_FMT         1925
+#define STR_DLGLOBBY_HL_WIPE_FMT             1926
+#define STR_DLGLOBBY_HL_STEAL_FMT            1927
+#define STR_DLGLOBBY_HL_LGM_FMT              1928
+#define STR_DLGLOBBY_HL_FUMBLE_FMT           1929
+#define STR_DLGLOBBY_HL_DROWN_PILLS_FMT      1930
+#define STR_DLGLOBBY_HL_DROWN_FMT            1931
+#define STR_DLGLOBBY_HL_COLLAPSE_FMT         1932
+#define STR_DLGLOBBY_HL_COLLAPSE_NOACTOR_FMT 1933
+#define STR_DLGLOBBY_HL_TURNING_FMT          1934
+#define STR_DLGLOBBY_HL_TURNING_NOACTOR_FMT  1935
+#define STR_DLGLOBBY_HL_GENERIC              1936
+#define STR_DLGLOBBY_HL_PICKUP_FMT           1944
+#define STR_DLGLOBBY_HL_DENSITY_FMT          1945
+
+/* Lobby "Last round" panel — the reel's delivery state. */
+#define STR_DLGLOBBY_REEL_WAITING            1938
+#define STR_DLGLOBBY_REEL_DOWNLOADING        1939
+#define STR_DLGLOBBY_REEL_DISABLED           1940
+#define STR_DLGLOBBY_REEL_NONE               1941
+#define STR_DLGLOBBY_REEL_TOO_LARGE          1942
+
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
 #define STR_DLGSETNAME_WBN_LOCKED           758
@@ -730,6 +761,47 @@
 #define STR_DLGSKIN_AUTHOR_LBL              768
 #define STR_DLGSKIN_NOTES_LBL               769
 #define STR_DLGSKIN_LOADERR                 770
+
+/* Skin section of the Display & Sound settings tab */
+#define STR_DLGSETTINGS_SKIN                1948
+#define STR_DLGSKIN_DEFAULT                 1949
+#define STR_DLGSKIN_SRC_BUILTIN             1950
+#define STR_DLGSKIN_SRC_USER                1951
+#define STR_DLGSKIN_SRC_WORKSHOP            1952
+#define STR_DLGSKIN_DOWNLOADING             1953
+#define STR_DLGSKIN_OPENFOLDER              1954
+#define STR_DLGSKIN_BROWSE_WORKSHOP         1955
+#define STR_DLGSKIN_PUBLISH                 1956
+#define STR_DLGSKIN_TILEDETAIL              1957
+#define STR_DLGSKIN_TILEDETAIL_CLASSIC      1958
+#define STR_DLGSKIN_TILEDETAIL_MATCHZOOM    1959
+#define STR_DLGSKIN_TILEDETAIL_HIGH         1960
+#define STR_DLGSKIN_ANIMSMOOTH              1961
+#define STR_DLGSKIN_ANIMSMOOTH_CLASSIC      1962
+#define STR_DLGSKIN_ANIMSMOOTH_PIXEL        1963
+#define STR_DLGSKIN_ANIMSMOOTH_SMOOTH       1964
+#define STR_DLGSKIN_SMOOTHSHELLS            1965
+#define STR_DLGSKIN_TEXFILTER               1966
+#define STR_DLGSKIN_TEXFILTER_NEAREST       1967
+#define STR_DLGSKIN_TEXFILTER_LINEAR        1968
+#define STR_DLGSKIN_TEXFILTER_PIXELART      1969
+#define STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP  1970
+#define STR_DLGSKIN_TEXFILTER_TIP           1971
+#define STR_DLGSKIN_PUBLISH_HEADING         1972
+#define STR_DLGSKIN_PUBLISH_NAME            1973
+#define STR_DLGSKIN_PUBLISH_DESC            1974
+#define STR_DLGSKIN_PUBLISH_UPDATE          1975
+#define STR_DLGSKIN_PUBLISH_NEW             1976
+#define STR_DLGSKIN_PUBLISH_GO              1977
+#define STR_DLGSKIN_PUBLISH_WORKING         1978
+#define STR_DLGSKIN_PUBLISH_DONE            1979
+#define STR_DLGSKIN_PUBLISH_FAILED          1980
+#define STR_DLGSKIN_PUBLISH_LEGAL           1981
+#define STR_DLGSKIN_PUBLISH_OPENITEM        1982
+#define STR_DLGSKIN_PUBLISH_NEEDUSER        1983
+#define STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP  1984
+#define STR_DLGSKIN_RECFILTER_LBL           1985
+#define STR_DLGSKIN_RECOMMENDED_TAG         1986
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
@@ -750,6 +822,10 @@
 #define STR_DLGWBN_SIGNINGIN                784
 #define STR_DLGWBN_SIGNIN_OK                785
 #define STR_DLGWBN_NEEDCREDS                786
+
+/* Stands in for the sign in / sign out button while a game is running, where
+ * the account is fixed for the session. */
+#define STR_DLGWBN_ACCOUNT_LOCKED           1943
 
 /* Welcome dialog */
 #define STR_DLGWELCOME_WINTITLE             787
@@ -1539,7 +1615,11 @@
 #define STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE 1916
 #define STR_DLGSETTINGS_HOSTING_ENABLELOG       1917
 #define STR_DLGSETTINGS_HOSTING_LOGDIR          1919
+#define STR_DLGSETTINGS_HOSTING_SERVEREPLAY     1937
 #define STR_DLGSETTINGS_HOSTING_APPLYNOTE       1920
+
+/* Log viewer Options menu */
+#define STR_LV_HIDE_LOBBY                   1921
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820

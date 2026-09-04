@@ -23,7 +23,8 @@
  * where playerNum sits in struct lgmObj. Reported from a live 2.02 dedicated
  * server right after a player was dropped for high ping.
  *
- * Two tests, one per layer of the fix:
+ * Three tests — two for the crash above, one for the slot state the kick
+ * leaves behind:
  *
  *  (a) shells_survive_cleared_lgm_slot — the proximate crash. Builds the same
  *      compacted arrays simRunHalfStep builds, clears one slot's lgm the way
@@ -36,6 +37,11 @@
  *      NOT free the player synchronously: the slot survives the enforce call
  *      and is torn down by transportUdpServerDrainPendingRemovals on the next
  *      tick, the same safe point the control-queue-overflow disconnect uses.
+ *
+ *  (c) ping_kick_clears_strikes_on_disconnect — the tally is per-slot, so a
+ *      teardown that leaves it set hands the departing player's strikes to
+ *      whoever takes the slot next. Drives the kick through the drain and
+ *      reads the freed slot back.
  */
 
 #include <stdint.h>
@@ -204,6 +210,99 @@ int run_ping_kick_defers_teardown(void) {
                   "(numPlayers stayed %d)", (int)serverSimGetNumPlayers(h.sim));
     UT_ASSERT_MSG(gs->tanks[slot] == NULL && gs->lgmen[slot] == NULL,
                   "drain left slot %d's tank/lgm allocated", (int)slot);
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ── (c) the freed slot carries no strikes to its next occupant ──────── */
+
+/*
+ * The strike counters live on the slot, not the connection, and a kick leaves
+ * pingKickStrikes sitting at PING_KICK_COUNT. serverDisconnectClient resets the
+ * rest of the slot's per-occupant state (name, claim, WBN status, channel mux);
+ * the ping tally used to be left behind, so the next player to take the slot
+ * inherited a full strike count and the first measurement over the threshold
+ * kicked them on the spot — the "rejoin and get booted straight away" report.
+ *
+ * Drives the real kick to completion, then reads the freed slot back. This is
+ * the invariant the reconnect depends on: a slot handed on must start at zero.
+ */
+int run_ping_kick_clears_strikes_on_disconnect(void) {
+    LoopbackHarness h;
+    int i;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Laggy", /*lobbyMode*/ false,
+                                       /*impairSpec*/ NULL, /*seed*/ 0xBAD91C7u),
+                  "harness start failed");
+
+    int connectedAt = loopbackHarnessPumpUntil(&h, JOIN_MAX, pred_connected, NULL);
+    if (connectedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", JOIN_MAX);
+    }
+
+    BYTE slot = clientSimGetMyPlayerNum(h.cs);
+    if (slot >= MAX_TANKS) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client was never assigned a slot (got %d)", (int)slot);
+    }
+
+    /* Same striking loop as (b): a distinct over-threshold value each pass so
+     * the lastEnforcedPingMs dedup counts every one. */
+    threadsWaitForMutex();
+    for (i = 0; i < PING_KICK_COUNT; i++) {
+        transportUdpServerSetClientPingForTest(
+            slot, (uint16_t)(PING_KICK_THRESHOLD_MS + 50 + i));
+        transportUdpServerEnforcePing(h.sim);
+    }
+    threadsReleaseMutex();
+
+    /* Not vacuous: the strikes must actually have accumulated before the drain
+     * clears them, or this test would pass against a kick that never armed. */
+    {
+        uint8_t kickStrikes = 0;
+        transportUdpServerGetPingStrikesForTest(slot, &kickStrikes, NULL, NULL,
+                                                NULL);
+        UT_ASSERT_MSG(kickStrikes >= PING_KICK_COUNT,
+                      "expected the slot to be struck out before the drain "
+                      "(kickStrikes=%d, need >= %d)",
+                      (int)kickStrikes, (int)PING_KICK_COUNT);
+    }
+
+    for (i = 0; i < DRAIN_PUMPS; i++) {
+        loopbackHarnessPump(&h);
+    }
+    UT_ASSERT_MSG(transportUdpServerGetClientCount() == 0,
+                  "high-ping client was never disconnected by the deferred "
+                  "drain — nothing to assert about the freed slot");
+
+    /* THE ASSERTION. Pre-fix all four of these survive the teardown, and the
+     * next occupant of this slot starts one bad sample from a kick. */
+    {
+        uint8_t  kickStrikes = 0xFF;
+        uint8_t  warnStrikes = 0xFF;
+        bool     warned = true;
+        uint16_t lastEnforced = 0xFFFF;
+        transportUdpServerGetPingStrikesForTest(slot, &kickStrikes,
+                                                &warnStrikes, &warned,
+                                                &lastEnforced);
+        UT_ASSERT_MSG(kickStrikes == 0,
+                      "freed slot %d kept %d kick strikes — the next occupant "
+                      "is kicked on its first high ping",
+                      (int)slot, (int)kickStrikes);
+        UT_ASSERT_MSG(warnStrikes == 0,
+                      "freed slot %d kept %d warn strikes",
+                      (int)slot, (int)warnStrikes);
+        UT_ASSERT_MSG(!warned,
+                      "freed slot %d stayed flagged as already-warned — the "
+                      "next occupant is kicked with no warning first",
+                      (int)slot);
+        UT_ASSERT_MSG(lastEnforced == 0,
+                      "freed slot %d kept lastEnforcedPingMs=%u — the next "
+                      "occupant's first matching sample is skipped",
+                      (int)slot, (unsigned)lastEnforced);
+    }
 
     loopbackHarnessStop(&h);
     return 0;

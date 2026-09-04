@@ -252,33 +252,6 @@ void cursorSetPos(RECT rcWindow, BYTE xValue, BYTE yValue) {
 }
 
 /*********************************************************
-*NAME:          cursorApplyScrollDelta
-*PURPOSE:
-*  Sub-pixel scroll-tracking warp. Called once per render
-*  frame with the pixel delta the view scrolled (sum of
-*  whole-tile xOffset bumps and sub-tile autoscroll ease,
-*  in main-view pixels). Shifts both the cached game-coord
-*  mouse position and the OS cursor by the same delta so
-*  the mouse stays over the same world tile while the map
-*  slides beneath it. Pairs with the subPos correction in
-*  cursorPos: warp keeps the OS cursor and gCachedMouseX
-*  in sync with the new world position; subPos correction
-*  then computes the same tile cell every frame.
-*********************************************************/
-void cursorApplyScrollDelta(int dpx, int dpy) {
-  if (!cursorInMainView) return;
-  if (dpx == 0 && dpy == 0) return;
-  gCachedMouseX -= (float)dpx;
-  gCachedMouseY -= (float)dpy;
-  float mx, my;
-  SDL_GetMouseState(&mx, &my);
-  mx -= (float)dpx;
-  my -= (float)dpy;
-  SDL_WarpMouseInWindow(sdl3DrawGetWindow(), mx, my);
-  inputSourceNoteCursorWarp();
-}
-
-/*********************************************************
 *NAME:          moveMousePointer
 *PURPOSE:
 *  Moves the mouse pointer to counteract map scrolling so

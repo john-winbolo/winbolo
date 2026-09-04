@@ -49,6 +49,10 @@ int imguiLobbyShow(struct ClientSim *cs);
  * should then disconnect/quit), otherwise LOBBY_FRAME_CONTINUE. Game
  * start is NOT signalled here: the host detects it from the sim leaving
  * the lobby state (clientSimIsInLobby flips false). */
+/* Two values, and adding a third is not free: they reach imguiLobbyShow's
+ * callers as a plain int, and every host there reads "0 = leave, anything
+ * else = game started". A new value would flip the net status to running with
+ * no game behind it on any host that had not been taught about it. */
 typedef enum {
     LOBBY_FRAME_CONTINUE = 0,
     LOBBY_FRAME_LEFT     = 1

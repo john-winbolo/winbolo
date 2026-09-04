@@ -38,7 +38,7 @@ set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 include(FetchContent)
 FetchContent_Declare(sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.2
+    GIT_TAG        release-3.4.14
 )
 FetchContent_Declare(sdl3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
@@ -164,7 +164,6 @@ set(WBN_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/winbolonet_wasm.c)
 # GUI sources (SDL3) — excluding files we replace (winbolo.c, gamefront.c, sound.c, netclient.c, clientmutex.c, dns_lookups.c)
 set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
-    ${SRC_ROOT}/gui/skins.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
@@ -178,7 +177,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamebrowser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_setname.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_skins.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_trackersetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
@@ -186,6 +184,17 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keycap.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_nav_outline.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_assets.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chat.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_settings.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_status.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_players.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_commands.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_recap.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
@@ -196,11 +205,14 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
+    ${SRC_ROOT}/gui/sdl3/wbn_map_source.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
+    ${SRC_ROOT}/gui/sdl3/skin_source.c
+    ${SRC_ROOT}/gui/sdl3/gfx_settings.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw_status.c
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
@@ -214,6 +226,74 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/lang.c
 )
 
+# Log viewer sources — the .wbv decoder, its block-grid renderer and the
+# embedded reel host (lv_embed.c). The modal viewer, the spectator host and
+# every ImGui panel of the viewer's own are left out; lv_stubs_wasm.c (in
+# WASM_SOURCES below) resolves what the decoder still calls back into.
+#
+# Never add here:
+#   logviewer.c, main.c   - the modal viewer / spectator host and the
+#                           standalone entry point. lv_embed.c is the half of
+#                           the host that every build needs; logviewer.c drags
+#                           in the viewer's menus, dialogs and comments panel.
+#   clientmutex.c, dns.c,
+#   platform/platform_config.c,
+#   platform/platform_dialogs.c
+#                         - desktop drivers, replaced by the wasm variants
+#                           under src/logviewer/wasm listed below.
+#   bolo_shim.c           - maps bolo names onto lv_* bodies for the
+#                           standalone viewer's copy of mapview.c; it would
+#                           collide with src/bolo's own definitions here.
+#   imgui_main_menu.cpp, imgui_dialogs.cpp, imgui_comments.cpp,
+#   imgui_logviewer_menu.cpp
+#                         - reach WinBolo.net through http.c, which carries a
+#                           hard #error under Emscripten because it embeds the
+#                           WBN signing key. Not ported, not stubbed into the
+#                           UI: the web build has no comments panel.
+#
+# src/logviewer/wasm/clientmutex_wasm.c and dns_wasm.c do not collide with
+# src/wasm/clientmutex_wasm.c and dns_wasm.c already in this target: the
+# logviewer pair defines lv_clientMutex* / lv_dns*, the client pair defines
+# clientMutex* / dnsLookups*. Nothing is shared between them.
+set(LOGVIEWER_SOURCES
+    # Host bring-up, replay driver and the embedded reel API
+    ${SRC_ROOT}/logviewer/lv_embed.c
+    # Log container: zip/zlib member access and the snapshot index
+    ${SRC_ROOT}/logviewer/blocks.c
+    ${SRC_ROOT}/logviewer/lv_attribution.c
+    ${SRC_ROOT}/logviewer/snapshot.c
+    # Decode + screen assembly
+    ${SRC_ROOT}/logviewer/screen.c
+    ${SRC_ROOT}/logviewer/screencalc.c
+    ${SRC_ROOT}/logviewer/screentank.c
+    ${SRC_ROOT}/logviewer/screenlgm.c
+    ${SRC_ROOT}/logviewer/screenbullet.c
+    ${SRC_ROOT}/logviewer/spec_seed_load.c
+    # Replayed world model
+    ${SRC_ROOT}/logviewer/players.c
+    ${SRC_ROOT}/logviewer/shells.c
+    ${SRC_ROOT}/logviewer/allience.c
+    ${SRC_ROOT}/logviewer/pillbox.c
+    ${SRC_ROOT}/logviewer/bases.c
+    ${SRC_ROOT}/logviewer/bolo_map.c
+    ${SRC_ROOT}/logviewer/starts.c
+    ${SRC_ROOT}/logviewer/labels.c
+    ${SRC_ROOT}/logviewer/messages.c
+    ${SRC_ROOT}/logviewer/sounddist.c
+    ${SRC_ROOT}/logviewer/global.c
+    ${SRC_ROOT}/logviewer/util.c
+    # Tile renderer. game_view_stubs.c covers the standalone-only game view
+    # that draw.c calls when LogViewerState::gameView is set — never in an
+    # embed, which leaves it FALSE.
+    ${SRC_ROOT}/logviewer/draw.c
+    ${SRC_ROOT}/logviewer/game_view_stubs.c
+    # Platform drivers, wasm variants
+    ${SRC_ROOT}/logviewer/wasm/clientmutex_wasm.c
+    ${SRC_ROOT}/logviewer/wasm/dns_wasm.c
+    ${SRC_ROOT}/logviewer/wasm/platform_config_wasm.c
+    ${SRC_ROOT}/logviewer/wasm/platform_dialogs_wasm.c
+)
+
 # WASM replacement sources
 set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main_wasm.c
@@ -222,8 +302,13 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gui_stubs_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lv_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/prefs_bridge_wasm.c
+    # The recap reel's WinBolo.net round-log source. http.c (libcurl + signing
+    # key) stays excluded here too; this drives the page's fetch() instead, and
+    # without suspending the C stack, since the reel polls it mid-frame.
+    ${CMAKE_CURRENT_SOURCE_DIR}/round_log_fetch_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
@@ -253,11 +338,13 @@ add_executable(winbolo
     ${WBN_SOURCES}
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}
+    ${LOGVIEWER_SOURCES}
     ${WASM_SOURCES}
 )
 
 target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui/sdl3
+    ${SRC_ROOT}/gui/sdl3/dialogs
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
@@ -265,6 +352,12 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/client_frontend
     ${cjson_SOURCE_DIR}
     ${SRC_ROOT}/third_party/imgui_markdown
+    # Listed after src/gui so a GUI translation unit's "tiles.h" / "positions.h"
+    # still resolves to its own; the log viewer's copies of those names reach
+    # its TUs through the including file's own directory.
+    ${SRC_ROOT}/logviewer
+    ${SRC_ROOT}/logviewer/imgui
+    ${SRC_ROOT}/logviewer/platform
 )
 bolo_apply_include_rules(winbolo gui)
 # bg_game.c reaches into a privatised setTeam setter for the dev-mode
@@ -289,7 +382,7 @@ target_compile_definitions(winbolo PRIVATE
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
-target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
+target_compile_options(winbolo PRIVATE -Werror=undef -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
 target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
@@ -400,7 +493,7 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.7@/Brains/GoalHunter_1.7"
     # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
     # EM_ASYNC_JS fetch transport to hand response bodies back to C.
-    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel']"
+    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_wbWasmWheel','_wbWasmResetHeldKeys']"
     "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','lengthBytesUTF8','stringToUTF8','UTF8ToString','setValue']"
     -sALLOW_MEMORY_GROWTH=1
     "-sINITIAL_MEMORY=67108864"
@@ -410,6 +503,16 @@ target_link_options(winbolo PRIVATE
     -sASYNCIFY=1
     -lwebsocket.js
 )
+
+# --shell-file above is just a flag string to CMake — it does not parse the
+# path out and register it as an input, so editing shell.html changes no
+# object file and no tracked dependency, and the link is skipped. The build
+# then succeeds while still emitting the previous winbolo.html, and the only
+# symptom is a page whose behaviour does not match the source. Same reason
+# the CJK subset stamp is a link dependency above; APPEND so it composes
+# with that one instead of replacing it.
+set_property(TARGET winbolo APPEND PROPERTY
+             LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shell.html")
 
 set_target_properties(winbolo PROPERTIES
     SUFFIX ".html"

@@ -159,6 +159,20 @@ bool logHasSpectatorRing(void) {
   return logSpectatorRing != NULL;
 }
 
+/* Run at the top of every logWriteTick, before this tick's accounting. Gives a
+ * caller that produced log events off the recording thread somewhere to emit
+ * them from: logAddEvent drops writes from any thread but the one logWriteTick
+ * pinned, so an event queued here lands in this tick's LOG_EVENT frame instead
+ * of being discarded. Deliberately not cleared by logCreate — that runs from
+ * serverSimCreate, so a background-menu sim created after the hook was
+ * installed would disarm it. The registered function lives in a module that is
+ * never unloaded, and it guards itself when there is nothing to do. */
+static void (*logPreTickHook)(void) = NULL;
+
+void logSetPreTickHook(void (*fn)(void)) {
+  logPreTickHook = fn;
+}
+
 /*********************************************************
 *NAME:          logCreate
 *AUTHOR:        John Morrison
@@ -229,19 +243,32 @@ void logWriteEmpty() {
 void logWriteTick() {
   BYTE savedKey = logOldKey;
 
-  /* First call pins the owner thread. logStart runs from main() at
-   * startup (sync-replay of CTRL_GAME_PHASE_LOBBY inside
-   * serverDedicatedLogInstall), but every tick afterwards runs from the
-   * SDL timer thread — capturing the owner at logStart would pin the
-   * wrong thread and drop every subsequent logAddEvent. logWriteTick is
-   * only ever called from the timer thread (serverSimLogTick /
-   * simRunHalfStep), so capturing here pins the correct one. The
-   * startup-thread window between logStart and the first logWriteTick
-   * has no concurrent writers (worker pool isn't running yet), so the
-   * log_LobbyEnter / log_PlayerJoined writes during sync-replay pass
-   * through with logOwnerThread still 0. */
+  /* First call pins the owner thread; logStart clears the pin so the next
+   * logWriteTick re-pins it per log. logWriteTick is only ever called from
+   * the SDL timer thread (serverSimLogTick / simRunHalfStep), so capturing
+   * here pins the thread that does the writing — capturing at logStart
+   * would pin whichever thread happened to open the log and drop every
+   * subsequent logAddEvent.
+   *
+   * The lobby log opens from the pre-tick hook below
+   * (serverDedicatedLogDrain -> handleLobbyEnter), i.e. from inside this
+   * call: logStart clears the pin, so the log_LobbyEnter /
+   * log_PlayerJoined writes that follow run with logOwnerThread back at 0
+   * for the remainder of this tick, on the very timer thread that pinned
+   * it a moment earlier and will re-pin it next tick. The no-lobby path is
+   * the one that still opens its log off the timer thread — logStart from
+   * main() during the sync-replay of CTRL_GAME_PHASE_RUNNING inside
+   * serverDedicatedLogInstall — but that call only writes the header, and
+   * the worker pool isn't running yet, so that window has no concurrent
+   * writers either. */
   if (logOwnerThread == 0) {
     logOwnerThread = SDL_GetCurrentThreadID();
+  }
+
+  /* Owner is pinned, nothing is written yet: the point where a deferred
+     emission can queue events that this tick's accounting will frame. */
+  if (logPreTickHook != NULL) {
+    logPreTickHook();
   }
 
   /* Spectator ring tap: record one ring tick for the registered sim, using the

@@ -293,6 +293,10 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
       scnTnk.pos[0].my = (BYTE)((cy >> TANK_SHIFT_MAPSIZE) - clientSimGetYOffset(csPtr));
       scnTnk.pos[0].px = (BYTE)((WORLD)(cx << TANK_SHIFT_MAPSIZE) >> TANK_SHIFT_PIXELSIZE);
       scnTnk.pos[0].py = (BYTE)((WORLD)(cy << TANK_SHIFT_MAPSIZE) >> TANK_SHIFT_PIXELSIZE);
+      /* Low byte of the same shifted co-ord, so wx >> 4 is px. */
+      scnTnk.pos[0].wx = (BYTE)cx;
+      scnTnk.pos[0].wy = (BYTE)cy;
+      scnTnk.pos[0].angle = (BYTE)rang;
       scnTnk.pos[0].frame = tankGetFrameAt(&MY_TANK(csPtr), rang);
     }
     screenLgmPrepare(csPtr, &lgms, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1 ), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
@@ -330,7 +334,9 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         if (smx >= clientSimGetXOffset(csPtr) && smx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
             smy >= clientSimGetYOffset(csPtr) && smy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
           WORLD conv;
-          BYTE spx, spy, sframe;
+          BYTE spx, spy, swx, swy, sframe;
+          swx = (BYTE)clientSimGetServerShellSnaps(csPtr)[si].worldX;
+          swy = (BYTE)clientSimGetServerShellSnaps(csPtr)[si].worldY;
           conv = clientSimGetServerShellSnaps(csPtr)[si].worldX;
           conv <<= TANK_SHIFT_MAPSIZE;
           conv >>= TANK_SHIFT_PIXELSIZE;
@@ -340,7 +346,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
           conv >>= TANK_SHIFT_PIXELSIZE;
           spy = (BYTE)conv;
           sframe = (BYTE)(utilGetDir((TURNTYPE)clientSimGetServerShellSnaps(csPtr)[si].angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe);
+          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe, swx, swy);
         }
       }
     } else {
@@ -368,7 +374,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
           conv >>= TANK_SHIFT_PIXELSIZE;
           spy = (BYTE)conv;
           sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe);
+          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe, (BYTE)sx, (BYTE)sy);
         }
       }
     }
@@ -394,7 +400,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
           conv >>= TANK_SHIFT_PIXELSIZE;
           ppy = (BYTE)conv;
           pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
-          screenBulletsAddItem(&sBullets, (BYTE)(pmx - clientSimGetXOffset(csPtr)), (BYTE)(pmy - clientSimGetYOffset(csPtr)), ppx, ppy, pframe);
+          screenBulletsAddItem(&sBullets, (BYTE)(pmx - clientSimGetXOffset(csPtr)), (BYTE)(pmy - clientSimGetYOffset(csPtr)), ppx, ppy, pframe, (BYTE)ps->x, (BYTE)ps->y);
         }
       }
     }

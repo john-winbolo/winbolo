@@ -72,6 +72,14 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/nothings/stb
 - Author: Sean Barrett
 
+### msf_gif
+- Location: src/third_party/msf_gif/
+- Version: 2.4
+- License: MIT / Public domain (dual-licensed)
+- https://github.com/notnullnotvoid/msf_gif
+- Author: Miles Fogle
+- Used to encode the post-game recap's highlight clips as animated GIFs
+
 ### utf8proc
 - Location: src/third_party/utf8proc/
 - Version: 2.10.0

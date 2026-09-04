@@ -104,19 +104,30 @@ struct PreviewEntry {
     int           cropMaxX = 0, cropMaxY = 0;
 };
 
+/* Emscripten links without -pthread (ASYNCIFY rules it out), so
+ * pthread_create there is the stub that returns ENOTSUP — and
+ * constructing a std::thread on top of that is fatal, not merely
+ * unsuccessful: libc++ calls the [[noreturn]] __throw_system_error and
+ * the whole module goes down. The browser build therefore carries no
+ * worker at all and generates previews inline (generateInline below);
+ * everything queue- and thread-shaped is compiled out. */
+#ifndef __EMSCRIPTEN__
 struct PreviewRequest {
     std::string         key;          /* entry->path (unadorned, for provider) */
     std::string         compositeKey; /* path|mtime (in-memory map key) */
     std::string         cacheFile;    /* full path under kCacheDir */
     MapFsProvider       provider;     /* captured by value — function ptrs + ctx */
 };
+#endif
 
 static std::mutex                       gCacheMutex;
 static std::map<std::string, PreviewEntry> gCache;          /* key → state/tex */
+#ifndef __EMSCRIPTEN__
 static std::deque<PreviewRequest>       gRequestQueue;
 static std::condition_variable          gQueueCv;
 static std::atomic<bool>                gWorkerRun{false};
 static std::thread                      gWorker;
+#endif
 
 /* djb2 of the path mixed with the entry's modTime and the provider's
  * cache-scope namespace. Mixing mtime invalidates the cache when a
@@ -228,6 +239,7 @@ static void writeCachePng(const std::string &cacheFile,
                    pix.pixels, pix.w * 4);
 }
 
+#ifndef __EMSCRIPTEN__
 static void workerThreadMain(void) {
     while (gWorkerRun.load()) {
         PreviewRequest req;
@@ -291,10 +303,53 @@ static void cacheStopWorker(void) {
 struct WorkerGuard { ~WorkerGuard() { cacheStopWorker(); } };
 static WorkerGuard gWorkerGuard;
 
+#else  /* __EMSCRIPTEN__ */
+
+/* Generate one preview on the calling thread and cache the result.
+ * Costs a map parse plus a PREVIEW_SIZE-square rasterise, and only on
+ * the first sighting of each map — the PNG cache absorbs every later
+ * hover, and a row is only ever asked for when the pointer is over it.
+ * Returns the finished texture, or nullptr when generation or decode
+ * failed (recorded as PrevFailed so it is not retried). */
+static SDL_Texture *generateInline(SDL_Renderer *renderer,
+                                    const std::string &compositeKey,
+                                    const char *key,
+                                    const std::string &cacheFile,
+                                    const MapFsProvider *provider) {
+    MapPreviewPixels buf = {0, 0, nullptr};
+    bool ok = provider->generatePreview(key, &buf, provider->ctx);
+    if (ok && buf.pixels && buf.w > 0 && buf.h > 0) {
+        writeCachePng(cacheFile, buf);
+    } else {
+        ok = false;
+    }
+    if (buf.pixels) {
+        SDL_free(buf.pixels);
+    }
+
+    /* Round-trip through the PNG the same way the threaded path does,
+     * so both hosts share one decode + crop-bbox routine. */
+    PreviewEntry e;
+    if (ok && loadCachedTexture(renderer, cacheFile, &e)) {
+        e.state     = PrevReady;
+        e.cacheFile = cacheFile;
+    } else {
+        e.state = PrevFailed;
+    }
+    SDL_Texture *tex = e.tex;
+    std::lock_guard<std::mutex> lk(gCacheMutex);
+    gCache[compositeKey] = std::move(e);
+    return tex;
+}
+
+#endif /* __EMSCRIPTEN__ */
+
 }  /* anonymous namespace */
 
 extern "C" void mapChooserStopPreviewWorker(void) {
+#ifndef __EMSCRIPTEN__
     cacheStopWorker();
+#endif
 }
 
 /* Public: look up (and lazily request) a thumbnail texture for
@@ -322,7 +377,9 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
                                         int64_t modTime,
                                         const MapFsProvider *provider) {
     if (!key || !*key || !provider) return nullptr;
+#ifndef __EMSCRIPTEN__
     cacheStartWorker();
+#endif
 
     std::string k = composeCacheKey(provider->cacheScope, key, modTime);
     {
@@ -344,9 +401,7 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
         return gCache[k].tex;
     }
 
-    /* Disk miss — enqueue a generation request. Worker fills the PNG
-     * on disk; the next mapPreviewCacheGet call for this key picks
-     * it up via the disk path above. */
+    /* Disk miss — hand it to whatever does the generating. */
     if (!provider->generatePreview) {
         std::lock_guard<std::mutex> lk(gCacheMutex);
         PreviewEntry e;
@@ -354,6 +409,14 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
         gCache[k] = std::move(e);
         return nullptr;
     }
+#ifdef __EMSCRIPTEN__
+    /* No worker to hand it to — generate now and return the texture
+     * from this same call. */
+    return generateInline(renderer, k, key, cacheFile, provider);
+#else
+    /* Enqueue a generation request. Worker fills the PNG on disk; the
+     * next mapPreviewCacheGet call for this key picks it up via the
+     * disk path above. */
     {
         std::lock_guard<std::mutex> lk(gCacheMutex);
         PreviewEntry e;
@@ -373,6 +436,7 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
     }
     gQueueCv.notify_one();
     return nullptr;
+#endif
 }
 
 /* Companion to mapPreviewCacheGet that also reports the opaque-pixel
@@ -467,7 +531,9 @@ static void mapPreviewCachePollDisk(SDL_Renderer *renderer) {
  * mapChooserDestroy on the last surviving state. Doesn't touch the
  * on-disk PNGs — those are intentionally persistent. */
 static void mapPreviewCacheShutdown(SDL_Renderer * /*renderer*/) {
+#ifndef __EMSCRIPTEN__
     cacheStopWorker();
+#endif
     std::lock_guard<std::mutex> lk(gCacheMutex);
     for (auto &kv : gCache) {
         if (kv.second.tex) {
@@ -2661,7 +2727,10 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * which is now movable, and end up dragging the chooser
              * window itself instead of panning the map. */
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
+            bool nearest = mapPreviewViewWantsNearestSampling(state->previewView);
+            if (nearest) imguiPushNearestSampling();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            if (nearest) imguiPopNearestSampling();
             ImGui::SetCursorScreenPos(imgPos);
             /* Mark the upcoming InvisibleButton as allow-overlap so the
              * maximize icon we draw afterwards (covering a small corner
@@ -2761,9 +2830,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
             } else if (strncmp(state->selectedPath, "wbn:", 4) == 0) {
                 /* WBN download in progress — selectedPath is the
-                 * synthetic "wbn:<id>" placeholder until spWbnPoll
-                 * lands the bytes on disk and flips selectedPath
-                 * to .wbn_preview.map.  Render a tiny rotating
+                 * synthetic "wbn:<id>" placeholder until the host
+                 * drains the wbn_map_source download and points the
+                 * chooser at the map bytes. Render a tiny rotating
                  * spinner glyph so the user sees activity rather
                  * than "no preview". */
                 double t = ImGui::GetTime() * 8.0;

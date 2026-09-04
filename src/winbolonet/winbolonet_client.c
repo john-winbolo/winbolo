@@ -31,6 +31,7 @@
 #include "winbolonet_client.h"
 #include "winbolonet_core.h"
 #include "http.h"
+#include "../bolo/public/util.h"  /* bolo_detect_client_type / bolo_client_type_name */
 
 /* Defined in winbolonet_core.c; consulted before httpDestroy() so the
  * one-shot auth calls below don't tear down a shared HTTP handle that
@@ -424,6 +425,8 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "token", apiToken);
   cJSON_AddStringToObject(body, "server_key", serverKey);
+  cJSON_AddStringToObject(body, "platform",
+                          bolo_client_type_name(bolo_detect_client_type()));
 
   status = wbn_api_call("client/join", body, &resp);
   cJSON_Delete(body);
@@ -487,6 +490,10 @@ bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serv
 
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", serverKey);
+  /* Outside the branch below: this names the build, not the viewer, so a
+   * signed-in and an anonymous spectator report it alike. */
+  cJSON_AddStringToObject(body, "platform",
+                          bolo_client_type_name(bolo_detect_client_type()));
   if (!loggedIn) {
     /* Anonymous viewer: no bearer; the backend mints an
      * unattributed spectator_key against the supplied name. */

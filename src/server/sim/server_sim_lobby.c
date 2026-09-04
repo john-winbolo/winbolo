@@ -1,0 +1,434 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ *Name:          Server Simulation Lobby Settings
+ *Filename:      server_sim_lobby.c
+ *Author:        John Morrison
+ *Purpose:
+ *  The lobby settings band — the operator's startup
+ *  config, team metadata, per-slot bot brain and config,
+ *  the shared LST_* apply path, and the publish helpers
+ *  that broadcast each of them.
+ *********************************************************/
+
+#include <stdio.h>
+#include <string.h>
+#include <SDL3/SDL.h>
+
+#include "server_sim_internal.h"
+#include "server_sim_lifecycle.h"   /* ServerInstanceConfig, the settings mutators, serverSimGetTeamMetaMut / serverSimGetBotConfigMut */
+#include "netpacks.h"               /* lobbyTimeMinutesIsValid — the LST_TIME_MINUTES range check */
+#include "wire_limits.h"            /* the LST_* selectors carried in PACKET_LOBBY_SET_SETTING */
+#include "lobby_bot_pools.h"        /* lobbyBotPoolCount — the per-team naming-pool uniqueness pass */
+
+void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
+  sim->sim.viewPlayer = cfg->viewPlayer;
+  sim->maxBots        = cfg->maxBots;
+  sim->maxSpectators  = cfg->maxSpectators;
+  sim->specDelayTicks = (uint32_t)cfg->specDelaySeconds * 50u;   /* 50 ticks/s */
+
+  serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
+  serverSimSetHasPassword(sim, cfg->hasPassword);
+  if (cfg->botBrainPath != NULL) {
+    serverSimSetBotBrainPath(sim, cfg->botBrainPath);
+  }
+  if ((aiType)cfg->botAiType != aiNone) {
+    serverSimSetBotAiType(sim, (aiType)cfg->botAiType);
+  }
+  /* ranked forces autolock-on-game-start (matches the server-side
+   * LST_RANKED handler at PACKET_LOBBY_SET_SETTING and the existing
+   * servermain.c -ranked CLI behaviour). */
+  serverSimSetAutoLockOnGameStart(sim,
+      cfg->autoLockOnGameStart || cfg->ranked);
+  serverSimSetRanked(sim, cfg->ranked);
+  serverSimSetOpenHost(sim, cfg->openHost);
+  serverSimSetServerLocks(sim, cfg->serverLocks);
+
+  /* lobbyEnabled and skipLobby drive state transitions. If neither is
+   * set, the sim stays in whatever state serverSimCreate* left it
+   * (today's dedicated-server-with-no-cfg-fields behaviour). */
+  if (cfg->skipLobby) {
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimStartGame(sim);
+    /* serverSimStartGame latches hadPlayersEver = TRUE, but a map-rotation
+     * server's first round boots up empty and waits for joiners. Left set, the
+     * lifecycle's empty-server check would fire on the very next tick and
+     * rotate before anyone joins. Re-arm it so the empty rotation only fires
+     * once a player has joined and then left — serverSimMapRotateRound does the
+     * same for every later round. */
+    if (sim->mapRotateEnabled) {
+      sim->hadPlayersEver = FALSE;
+    }
+  } else if (cfg->lobbyEnabled) {
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimEnterLobby(sim);
+  }
+
+  /* Snapshot the configured lobby settings now that every startup field
+   * is in place — serverSimResetLobbyToDefaults restores from this when
+   * the last human leaves the lobby. */
+  sim->originalLobbySettings.valid               = true;
+  sim->originalLobbySettings.gameType            = gameTypeGet(&sim->sim.game);
+  sim->originalLobbySettings.hiddenMines         = sim->sim.hiddenMines ? true : false;
+  sim->originalLobbySettings.botAiType           = sim->botAiType;
+  sim->originalLobbySettings.aiPolicy            = sim->aiPolicy;
+  sim->originalLobbySettings.timeLimit           = sim->timeLimit;
+  sim->originalLobbySettings.timeMinutes         = sim->timeMinutes;
+  sim->originalLobbySettings.gameLength          = sim->gameLength;
+  sim->originalLobbySettings.openHost            = sim->openHost;
+  sim->originalLobbySettings.autoLockOnGameStart = sim->autoLockOnGameStart;
+  sim->originalLobbySettings.ranked              = sim->ranked;
+  sim->originalLobbySettings.serverLocks         = sim->serverLocks;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Lobby Layout A accessors / mutators / publish helpers
+ * ──────────────────────────────────────────────────────────────── */
+
+void serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
+    if (!sim || slot >= MAX_TANKS) return;
+    /* 0xFF is the "use server default" sentinel; any other in-range
+     * value indexes into the catalogue. Out-of-range is a no-op,
+     * matching the existing "ignore malformed input" pattern. */
+    if (brainIdx != 0xFF && brainIdx >= sim->brainList.count) return;
+    sim->botBrainIdx[slot] = brainIdx;
+    serverSimPublishLobbyBotBrain(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) {
+    if (!sim) return NULL;
+    if (brainIdx == 0xFF) return sim->botBrainPath;
+    if (brainIdx >= sim->brainList.count) return NULL;
+    return sim->brainPaths[brainIdx];
+}
+
+void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                            uint8_t difficulty, uint8_t personality,
+                            const char *validatedName) {
+    if (!sim || slot >= MAX_TANKS) return;
+    {
+        LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
+        if (bc) {
+            bc->difficulty  = difficulty;
+            bc->personality = personality;
+        }
+    }
+    if (validatedName != NULL && validatedName[0] != '\0') {
+        serverSimRenameBotSlot(sim, slot, validatedName);
+    }
+    serverSimPublishLobbyBotConfig(sim, slot);
+    serverSimPublishLobbySlot(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
+    if (!sim || slot >= MAX_TANKS) return;
+    serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
+    botManagerSetBrainIdx(sim, slot, sim->botBrainIdx[slot]);
+}
+
+void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
+    if (!sim || slot >= MAX_TANKS || !name) return;
+    {
+        char nameBuf[32];
+        char loc[3] = "??";
+        SDL_strlcpy(nameBuf, name, sizeof(nameBuf));
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
+                         nameBuf, loc,
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+    }
+    /* Subscriber ClientSims track names in sim.plyrs (what the in-game
+     * players panel reads), not in lobbySlots. Publish so the rename
+     * propagates past the lobby UI into the game view. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_PLAYER_NAME;
+        evt.u.playerName.playerNum = slot;
+        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", name);
+        serverSimPublishControl(sim, &evt);
+    }
+}
+
+void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySlotEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotBrainEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotConfigEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyTeamMetaEvent(sim, teamId, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
+                           uint8_t color, uint8_t namingPool,
+                           const uint8_t *name, uint8_t nameLen) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t == NULL) return;
+    t->in_use = 1;
+    t->color = color;
+    /* Per-team uniqueness on namingPool: if another in_use team
+     * already owns this pool, pick the lowest pool index not
+     * used by any other team. Falls back to the requested value
+     * if every pool is taken. */
+    {
+        int poolCount = lobbyBotPoolCount();
+        bool poolTaken = false;
+        for (BYTE other = 1; other < MAX_TANKS; other++) {
+            if (other == teamId) continue;
+            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+            if (ot && ot->in_use && ot->namingPool == namingPool) {
+                poolTaken = true;
+                break;
+            }
+        }
+        if (poolTaken && poolCount > 0) {
+            for (int p = 0; p < poolCount; p++) {
+                bool used = false;
+                for (BYTE other = 1; other < MAX_TANKS; other++) {
+                    if (other == teamId) continue;
+                    const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+                    if (ot && ot->in_use && ot->namingPool == p) {
+                        used = true;
+                        break;
+                    }
+                }
+                if (!used) { namingPool = (uint8_t)p; break; }
+            }
+        }
+    }
+    t->namingPool = namingPool;
+    memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
+    if (nameLen > 0 && name != NULL) {
+        memcpy(t->name, name, nameLen);
+    }
+    serverSimPublishLobbyTeamMeta(sim, teamId);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t != NULL) {
+        memset(t, 0, sizeof(TeamMetadata));
+    }
+    serverSimPublishLobbyTeamMeta(sim, teamId);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+void serverSimPublishLobbySettings(ServerSim *sim) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Shared apply path for the LST_* setting cluster carried in
+ * PACKET_LOBBY_SET_SETTING and its SP-host local-transport
+ * equivalent. The caller is responsible for upstream lock-bit /
+ * authority gates; on success this helper publishes
+ * CTRL_LOBBY_SETTINGS and clears humans' ready state before
+ * returning true.
+ *
+ * Returns true if the setting was applied, false if the payload
+ * was malformed, out of range, or rejected by a cross-setting
+ * invariant (e.g. ranked forbids gameOpen / non-aiNone / autoLock
+ * off). */
+static bool serverSimApplyLobbySettingInner(ServerSim *sim,
+                                            uint8_t lst,
+                                            const uint8_t *value, size_t len) {
+    if (sim == NULL || value == NULL) return false;
+    switch (lst) {
+        case LST_GAME_TYPE:
+            if (len != 1 || value[0] < 1 || value[0] > 3) return false;
+            if (serverSimGetRanked(sim) &&
+                (gameType)value[0] == gameOpen) return false;
+            serverSimSetGameType(sim, (gameType)value[0]);
+            return true;
+        case LST_HIDDEN_MINES:
+            if (len != 1) return false;
+            serverSimSetHiddenMines(sim, value[0] != 0);
+            return true;
+        case LST_AI_POLICY:
+            if (len != 1 || value[0] > 3) return false;
+            if (serverSimGetRanked(sim) &&
+                (aiType)value[0] != aiNone) return false;
+            serverSimSetAiPolicy(sim, value[0]);
+            serverSimSetBotAiType(sim, (aiType)value[0]);
+            if ((aiType)value[0] == aiNone) {
+                for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                    if (botManagerIsBot(sim, bi)) {
+                        serverSimRemoveBot(sim, bi);
+                    }
+                }
+            }
+            return true;
+        case LST_TIME_LIMIT: {
+            if (len != 1) return false;
+            bool tl = value[0] != 0;
+            serverSimSetTimeLimit(sim, tl);
+            if (tl) {
+                uint16_t mins = serverSimGetTimeMinutes(sim) > 0
+                    ? serverSimGetTimeMinutes(sim) : 30;
+                serverSimSetGameLength(sim,
+                    (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+            } else {
+                serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+            }
+            return true;
+        }
+        case LST_TIME_MINUTES: {
+            if (len != 2) return false;
+            uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
+            if (!lobbyTimeMinutesIsValid(mins)) return false;
+            serverSimSetTimeMinutes(sim, mins);
+            if (serverSimGetTimeLimit(sim)) {
+                serverSimSetGameLength(sim,
+                    (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+            }
+            return true;
+        }
+        case LST_AUTO_LOCK_ON_GAME: {
+            if (len != 1) return false;
+            bool v = value[0] != 0;
+            if (serverSimGetRanked(sim) && !v) return false;
+            serverSimSetAutoLockOnGameStart(sim, v);
+            return true;
+        }
+        case LST_RANKED: {
+            if (len != 1) return false;
+            bool r = value[0] != 0;
+            serverSimSetRanked(sim, r);
+            if (r) {
+                serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+                serverSimSetBotAiType(sim, aiNone);
+                for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                    if (botManagerIsBot(sim, bi)) {
+                        serverSimRemoveBot(sim, bi);
+                    }
+                }
+                if (serverSimGetGameType(sim) == gameOpen) {
+                    serverSimSetGameType(sim, gameTournament);
+                }
+                if (!serverSimGetAutoLockOnGameStart(sim)) {
+                    serverSimSetAutoLockOnGameStart(sim, true);
+                }
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+bool serverSimApplyLobbySetting(ServerSim *sim,
+                                uint8_t lst,
+                                const uint8_t *value, size_t len) {
+    if (!serverSimApplyLobbySettingInner(sim, lst, value, len)) return false;
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
+    serverSimWbnLobbyUpdate(sim, FALSE);
+    return true;
+}
+
+/* Auto-unready: any meaningful lobby change clears every human's
+ * ready flag and aborts an in-flight countdown. The per-slot
+ * CTRL_LOBBY_SLOT publishes (plus the CTRL_GAME_PHASE_LOBBY publish
+ * if the countdown was aborted) fan out to both in-process subscribers and
+ * remote UDP clients via the codec — no wire-only blast needed. Bots
+ * stay permanently ready by design (set in botManagerAddBot) so the
+ * next all-ready check still triggers a countdown when the human
+ * re-confirms. */
+void lobbyAutoUnreadyOnChange(ServerSim *sim) {
+    BYTE i;
+    bool countdownWasRunning = (serverSimGetState(sim) == serverStateCountdown);
+    bool toggled[MAX_TANKS];
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        toggled[i] = false;
+        if (lp == NULL) continue;
+        if (lp->isBot) continue;
+        if (lp->ready) {
+            serverSimSetReady(sim, i, false);
+            toggled[i] = true;
+        }
+    }
+
+    if (countdownWasRunning) {
+        /* serverSimAbortCountdown publishes the CTRL_GAME_PHASE_LOBBY
+         * transition itself; no separate publish needed here. */
+        serverSimAbortCountdown(sim);
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (toggled[i]) {
+            serverSimPublishLobbySlot(sim, i);
+        }
+    }
+}
+
+const BrainList *serverSimGetBrainList(const ServerSim *sim) {
+    return sim ? &sim->brainList : NULL;
+}
+
+bool serverSimRankedShapeReady(const ServerSim *sim) {
+    if (sim == NULL) return false;
+    int teamSizes[17] = {0};
+    int teamsInUse = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsPlayerConnected(sim, i)) continue;
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        if (lp == NULL || lp->isBot) continue;
+        uint8_t t = lp->teamNumber;
+        if (t == 0 || t > 16) continue;
+        if (teamSizes[t] == 0) teamsInUse++;
+        teamSizes[t]++;
+    }
+    int firstSize = 0, secondSize = 0;
+    for (int t = 1; t <= 16; t++) {
+        if (teamSizes[t] == 0) continue;
+        if (firstSize == 0) firstSize = teamSizes[t];
+        else                secondSize = teamSizes[t];
+    }
+    return (teamsInUse == 2) &&
+           (firstSize == secondSize) &&
+           (firstSize >= 1 && firstSize <= 3);
+}

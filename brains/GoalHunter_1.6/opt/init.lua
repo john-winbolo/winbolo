@@ -2514,7 +2514,16 @@ function Brain.think(info)
      and not state.wall_clearing
      and not fired_this_tick then
     state.stuck_for = state.stuck_for + 1
-    if state.stuck_for > 150 then  -- ~3 s
+    -- In water the tank turns at 0.25 brad/tick (a 90-deg turn alone is
+    -- ~256 ticks) and drives 3-4 WU/tick, so the 150-tick same-tile test
+    -- misfires on a tank that's legitimately turning toward its escape
+    -- target — each misfire rotates the escape destination and restarts
+    -- the slow turn, thrashing forever. Give water 450 ticks: a 90-deg
+    -- turn plus 2-3 river tiles of driving fits inside it.
+    local cur_tt = U.ttype(cur_mx, cur_my)
+    local stuck_limit = (cur_tt == C.T_RIVER or cur_tt == C.T_DEEPSEA)
+                        and 450 or 150
+    if state.stuck_for > stuck_limit then
       if state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Couldn't reach the attack position: flee away from the pill.
         -- Radial projection can land on water/building — walk the ray back
@@ -2678,7 +2687,10 @@ function Brain.think(info)
 
     -- Only override goal with escape_water if A* isn't actively routing us through
     if not pf_routing then
-      local dry_x, dry_y = PF.find_dry_land(cur_mx, cur_my)
+      -- state/now let find_dry_land skip destinations the stuck handler
+      -- blocked, so a wall-pinned escape target rotates instead of being
+      -- re-picked every tick forever (5-8 min idles on river-maze maps).
+      local dry_x, dry_y = PF.find_dry_land(cur_mx, cur_my, state, now)
       if dry_x then
         if state.goal.kind ~= "escape_water"
            or state.goal.mx ~= dry_x or state.goal.my ~= dry_y then

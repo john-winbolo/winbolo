@@ -308,11 +308,14 @@ void playersGameTickUpdate(players *plrs);
 * Gets a player name.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer names
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest, bool isServer);
+void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest,
+                          size_t destSize, bool isServer);
 
 /*********************************************************
 *NAME:          playersGetPlayerName
@@ -326,8 +329,11 @@ void playersGetPlayerName(players *plrs, BYTE playerNum, char *dest, bool isServ
 * plrs - Pointer to the players object 
 * playerNum  - The player number to set
 * dest       - Destination string
+* destSize   - Size of dest in bytes, including the NUL. Longer locations
+*              are truncated rather than overrunning the caller.
 *********************************************************/
-void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest);
+void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest,
+                              size_t destSize);
 
 /*********************************************************
 *NAME:          playersGetCountryCode

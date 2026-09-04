@@ -125,7 +125,8 @@ void lv_shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE lef
   q = *value;
   while (NonEmpty(q)) {
     if (q->mx >= leftPos && q->mx < rightPos && q->my >= top && q->my < bottom) {
-      lv_screenBulletsAddItem(sBullets, (BYTE) (q->mx-leftPos), (BYTE) (q->my-top), q->px, q->py, q->frame); 
+      /* Logged shells only keep a pixel offset, so scale it back up. */
+      lv_screenBulletsAddItem(sBullets, (BYTE) (q->mx-leftPos), (BYTE) (q->my-top), q->px, q->py, q->frame, (BYTE) (q->px << TANK_SHIFT_RIGHT2), (BYTE) (q->py << TANK_SHIFT_RIGHT2)); 
     }
     q = ShellsTail(q);
   }

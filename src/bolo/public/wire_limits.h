@@ -48,6 +48,16 @@
  * upload_cap_enforced. */
 #define LOBBY_MAP_UPLOAD_MAX_BYTES (64u * 1024u)
 
+/* Maximum bytes the server will serve for the last completed round's
+ * replay log (PACKET_ROUND_LOG_REQ, carried as BULK_KIND_ROUND_LOG).
+ * A busy full lobby records about 2.3 KB/s, so 4 MiB is roughly half
+ * an hour of a round. Above the cap the server refuses rather than
+ * truncating: a .wbv is a zip whose central directory minizip writes
+ * only at zipClose(), so a truncated one is unopenable, not merely
+ * shorter. The size is checked before the file is read, so an
+ * over-cap log never enters memory. */
+#define ROUND_LOG_MAX_BYTES (4u * 1024u * 1024u)
+
 /* ServerLocks bitmask — sent in extended PACKET_LOBBY_STATE. Set by
  * bolod CLI flags (--lock-game-type etc); never changes after server
  * startup. Hosts cannot modify locks; clients render matching settings

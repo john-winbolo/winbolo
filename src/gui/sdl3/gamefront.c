@@ -75,6 +75,8 @@
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
+#include "skin_source.h"
+#include "gfx_settings.h"
 
 #include "everard_map.h"
 #include "lobby_bot_pools.h"
@@ -225,6 +227,7 @@ bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+bool           gameFrontHostingServeReplays   = TRUE;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -235,6 +238,11 @@ static bool gameFrontShowTutorialButton = TRUE;
  * string means the user has not picked one yet — Phase 5 startup runs
  * langAutoDetect() in that case. */
 static char gameFrontLanguageCode[32] = "";
+
+/* Persisted skin id ("user:foo", "builtin:bar"). Read by
+ * gameFrontGetPrefs and applied by gameFrontSetup before the first tile
+ * sheet is built. Empty string means the built-in assets. */
+static char gameFrontSkinId[SKIN_ID_MAX] = "";
 
 /* One-shot flag set by the Settings dialog's "Play Tutorial" button.
  * Consumed by the openSettings handler in gameFrontDialogs() so that
@@ -276,6 +284,23 @@ static WbnStats gameFrontWbnStats;
 /* Dialog window position (separate from game window) */
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
+
+/* Lobby window size and the lobby's players/map column split. The lobby
+ * runs in the shared dialog window, so its position rides on
+ * gameFrontDialogX/Y above and only the size needs its own keys; -1 means
+ * "never saved", so the lobby opens at its built-in default.
+ *
+ * The split offsets are stored in logical (UI-scale-independent) pixels —
+ * the lobby multiplies them by the scale it computes for the current
+ * window, so a scale change moves the divider with the rest of the
+ * layout instead of stranding it. There are two: the post-game view wants
+ * the right column wide for the replay, the map view wants it back for the
+ * teams table, and a player who shared one would re-drag the divider after
+ * every round. */
+int gameFrontLobbyW = -1;
+int gameFrontLobbyH = -1;
+float gameFrontLobbySplit = 0.0f;
+float gameFrontLobbySplitRecap = 0.0f;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -588,6 +613,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
+
+  /* Make the saved skin current before anything builds a tile sheet or
+   * loads the background. An id that no longer resolves leaves the
+   * built-in assets active. */
+  if (!skinSetActive(gameFrontSkinId) && gameFrontSkinId[0] != '\0') {
+    WB_LOG_DEBUG(WB_LOG_CAT_ASSET,
+                 "gameFrontStart: skin '%s' did not resolve — using the "
+                 "built-in assets; the choice is kept and applies once the "
+                 "files are there", gameFrontSkinId);
+  }
+
+  /* Push the saved texture filter to the draw layer. There is no sheet
+     yet; the mode is kept and applied when one is built. */
+  sdl3DrawSetTilesScaleMode(sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
 
   /* Apply persisted language, or auto-detect if this is a fresh
    * install (empty Language slot in the INI). Either way, this runs
@@ -952,10 +991,6 @@ static bool gameFrontDialogs(void) {
     }
     case openLang:
       /* Language dialog disabled on SDL3 */
-      dlgState = openWelcome;
-      break;
-    case openSkins:
-      /* Skins dialog not yet ported */
       dlgState = openWelcome;
       break;
     case openUdp:
@@ -1620,6 +1655,44 @@ bool gameFrontSetDlgState(openingStates newState) {
             spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
             returnValue = FALSE;
           } else {
+            /* Single-player rounds are recorded so the lobby recap can play
+             * the round back. Two paths in the prefs dir, and they have to
+             * stay distinct: singleplayer-recording.wbv is the live
+             * recording, which every lobby entry truncates and reopens, while
+             * singleplayer.wbv holds the last completed round. Three seconds
+             * after game over the sim returns to the lobby and the log module
+             * reopens the recording path — so folding these back into one
+             * name means the lobby the round returns to destroys the round
+             * itself. Both are explicit file paths rather than a directory,
+             * so the path composer uses them verbatim instead of auto-naming
+             * a fresh timestamped file per round. dontSendLog is
+             * unconditionally true; a single-player round is never uploaded
+             * to WinBolo.net. Tutorials are skipped — they set cfg.skipLobby,
+             * so they never reach the lobby that would offer the playback.
+             * Installed before the client-type resolution because the
+             * subscriber's sync replay opens the log immediately, and the
+             * completed path is set after the install, which clears it. */
+            if (!isTutorial) {
+              char spLogPath[FILENAME_MAX];
+              char spRoundPath[FILENAME_MAX];
+              const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+              if (prefDir != NULL) {
+                snprintf(spLogPath, sizeof(spLogPath),
+                         "%ssingleplayer-recording.wbv", prefDir);
+                snprintf(spRoundPath, sizeof(spRoundPath),
+                         "%ssingleplayer.wbv", prefDir);
+                SDL_free((void *)prefDir);
+              } else {
+                snprintf(spLogPath, sizeof(spLogPath),
+                         "singleplayer-recording.wbv");
+                snprintf(spRoundPath, sizeof(spRoundPath), "singleplayer.wbv");
+              }
+              serverSimSetWantLogging(spServerSim, true);
+              serverSimSetUserLogFileName(spServerSim, spLogPath);
+              serverDedicatedLogInstall(spServerSim, true);
+              serverDedicatedLogSetCompletedPath(spRoundPath);
+            }
+
             /* Resolve the self client type / flags. */
             uint8_t selfType  = bolo_detect_client_type();
             uint8_t selfFlags = 0;
@@ -1960,6 +2033,11 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
+void gameFrontSetHostingServeReplays(bool serve) {
+  gameFrontHostingServeReplays = serve;
+  prefsSetString("HOSTING", "Serve Replays", TRUEFALSE_TO_STR(serve));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -2358,9 +2436,13 @@ void gameFrontHandleUrlOpen(char *url) {
   }
 }
 
+/* Picks up a skin change: rebuilds the tile atlas, drops the cached
+ * background so the next frame reads it again, and reloads the sound set.
+ * The renderer, window, fonts and zoom are left alone. */
 void gameFrontReloadSkins(void) {
   sdl3DrawSetReconfigureGuard(true);
   sdl3DrawReloadTiles();
+  sdl3DrawReloadBackground();
   sdl3DrawSetReconfigureGuard(false);
   soundCleanup();
   if (soundSetup() == FALSE) {
@@ -2409,8 +2491,20 @@ void gameFrontShutdownServer(void) {
     httpSetLogUploadTimeout(0);
   }
 
+  /* And let go of the round, after the stash and upload above have had it.
+   * Unconditional, because the server being torn down may never have installed
+   * the writer: hosting installs only when the host has logging on, and a host
+   * that has it off would otherwise leave the previous server's round in place
+   * — a single-player game played earlier in this process — to be served to
+   * whoever joins and named in the host's recap as the last round. */
+  serverDedicatedLogUninstall();
+
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
+}
+
+bool gameFrontHasLocalServer(void) {
+  return spServerSimActive;
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -2628,6 +2722,14 @@ bool gameFrontSetupServer(void) {
     serverSimSetWantLogging(spServerSim, true);
     serverSimSetUserLogFileName(spServerSim, gameFrontHostingLogDir);
     serverDedicatedLogInstall(spServerSim, s_isLanOnly);
+    /* Whether a joined player can pull the finished round's log back for
+     * the recap. The install above resets the mode, so this runs after it.
+     * The host's Yes means AUTO, not ON: AUTO still declines to serve while
+     * WinBolo.net is running, because a WBN round's log is uploaded there
+     * instead. No is the hard off the host asked for. */
+    if (!gameFrontHostingServeReplays) {
+      serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_OFF);
+    }
   }
   return TRUE;
 }
@@ -2747,6 +2849,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("HOSTING", "Log Dir", def, gameFrontHostingLogDir,
                    FILENAME_MAX);
   }
+  prefsGetString("HOSTING", "Serve Replays", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingServeReplays = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
@@ -2868,6 +2972,38 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     int v = atoi(buff);
     if (v < 0 || v > 3) v = 0;
     uiUiScaleSet((UiScalePref)v);
+  }
+
+  /* Skin id.  Applied in gameFrontSetup before the tile sheet is built;
+     an empty value keeps the built-in assets. */
+  prefsGetString("SETTINGS", "Skin", "", buff, FILENAME_MAX);
+  strncpy(gameFrontSkinId, buff, sizeof(gameFrontSkinId) - 1);
+  gameFrontSkinId[sizeof(gameFrontSkinId) - 1] = '\0';
+
+  /* Graphics settings.  Tile detail is 0 Classic / 1 Match to Zoom /
+     2 High Detail, animation smoothness 0 Classic / 1 Match Pixelation /
+     2 Smooth, texture filter 0 Nearest / 1 Linear / 2 Pixel Art.  Only tile
+     detail has a reader so far; the rest are kept so all four settings load
+     and save in one place. */
+  prefsGetString("SETTINGS", "TileDetail", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_TILE_DETAIL_CLASSIC || v > (int)GFX_TILE_DETAIL_HIGH) v = 0;
+    gfxSetTileDetail((GfxTileDetail)v);
+  }
+  prefsGetString("SETTINGS", "AnimSmoothness", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_ANIM_CLASSIC || v > (int)GFX_ANIM_SMOOTH) v = 0;
+    gfxSetAnimSmoothness((GfxAnimSmoothness)v);
+  }
+  prefsGetString("SETTINGS", "SmoothShells", "No", buff, FILENAME_MAX);
+  gfxSetSmoothShells(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("SETTINGS", "TextureFilter", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
+    gfxSetTextureFilter((GfxTextureFilter)v);
   }
 
   /* Gamepad — Path B rebindable action table.  Start from defaults so
@@ -3085,6 +3221,23 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Dialog Y", "-1", buff, FILENAME_MAX);
   gameFrontDialogY = atoi(buff);
 
+  /* Lobby window size and column split */
+  prefsGetString("WINDOW", "Lobby Width", "-1", buff, FILENAME_MAX);
+  gameFrontLobbyW = atoi(buff);
+  prefsGetString("WINDOW", "Lobby Height", "-1", buff, FILENAME_MAX);
+  gameFrontLobbyH = atoi(buff);
+  prefsGetString("WINDOW", "Lobby Split", "0", buff, FILENAME_MAX);
+  gameFrontLobbySplit = (float)atof(buff);
+  {
+    /* The post-game split defaults to the map one, so a WinBolo.json written
+       before the two views had separate keys comes up on the width the player
+       already set and neither view jumps on the first launch. */
+    char splitDefault[FILENAME_MAX];
+    strcpy(splitDefault, buff);
+    prefsGetString("WINDOW", "Lobby Split Recap", splitDefault, buff, FILENAME_MAX);
+    gameFrontLobbySplitRecap = (float)atof(buff);
+  }
+
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
@@ -3110,7 +3263,7 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
-    clientSimGetPlayerName(humanSim, playerName);
+    clientSimGetPlayerName(humanSim, playerName, sizeof(playerName));
     strcpy(gameFrontName, playerName);
     prefsSetString("SETTINGS", "Player Name", playerName);
   } else {
@@ -3147,6 +3300,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+  prefsSetString("HOSTING", "Serve Replays",
+                            TRUEFALSE_TO_STR(gameFrontHostingServeReplays));
 
   /* Language — persist the BCP-47 code, not a file path. */
   prefsSetString("SETTINGS", "Language",
@@ -3226,6 +3381,19 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large). */
   intToStr((int)uiUiScaleGet(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "UI Scale", buff);
+
+  /* Skin id the player chose, "" for the built-in assets.  The choice, not
+     what loaded: a skin that cannot be read right now stays saved. */
+  prefsSetString("SETTINGS", "Skin", skinGetRequested());
+
+  /* Graphics settings.  Same four keys the loader reads. */
+  intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "TileDetail", buff);
+  intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "AnimSmoothness", buff);
+  prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
+  intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "TextureFilter", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
@@ -3360,6 +3528,18 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Dialog X", buff);
   intToStr(gameFrontDialogY, buff, sizeof(buff));
   prefsSetString("WINDOW", "Dialog Y", buff);
+
+  intToStr(gameFrontLobbyW, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Lobby Width", buff);
+  intToStr(gameFrontLobbyH, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Lobby Height", buff);
+  /* Two decimals: the lobby's change test uses a 0.02 logical-pixel
+     epsilon, so the stored value must round finer than that or every
+     launch would re-write it. */
+  SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplit);
+  prefsSetString("WINDOW", "Lobby Split", buff);
+  SDL_snprintf(buff, sizeof(buff), "%.2f", (double)gameFrontLobbySplitRecap);
+  prefsSetString("WINDOW", "Lobby Split Recap", buff);
 
   s_windowSettingsDirty = false;
 }

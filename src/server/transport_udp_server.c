@@ -222,10 +222,27 @@ typedef struct {
     bool     xferBegun;        /* bulkSenderBegin has been issued               */
     uint32_t xferStartSeq;     /* CHANNEL_BULK nextSeq captured at begin         */
     uint32_t xferEndSeq;       /* startSeq + segment count; done when ackedSeq>= */
+    bool     readySeen;        /* client's PACKET_MAP_DL_READY arrived — a join
+                                * download begins only after it, so the stream
+                                * can never race the JOIN_ACCEPT that sizes the
+                                * client's buffers. Resync transfers ignore it
+                                * (their request is the readiness signal). */
 } ClientMapDownload;
 
 #define UPLOAD_MAX_BYTES (64u * 1024u)
 #define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+
+/* Bounds on serving the last completed round's log (PACKET_ROUND_LOG_REQ).
+ * The BulkSender's busy guard is per peer, so it bounds one client's byte
+ * stream and nothing else: every client has its own sender holding its own
+ * malloc'd copy of the blob, and sixteen simultaneous requests would be
+ * sixteen simultaneous transfers. The concurrency cap is what supplies the
+ * fleet-wide bound the guard does not (worst case 2 x ROUND_LOG_MAX_BYTES
+ * resident); the interval and the per-round attempt ceiling bound how often
+ * one client can ask. */
+#define ROUND_LOG_MAX_CONCURRENT  2
+#define ROUND_LOG_MIN_REQ_TICKS   100  /* 2s at 50 Hz, between requests */
+#define ROUND_LOG_MAX_ATTEMPTS    3    /* transfers started per client, per round */
 
 /* Standalone PACKET_CHANNEL frames a downloading client gets per tick while
  * snapshots are gated (no snapshot trailer to carry the bulk stream). One
@@ -441,6 +458,16 @@ static struct {
     /* Per-client client->server bulk receiver. Reassembles a map upload
      * streamed on CHANNEL_BULK after the BEGIN/ACK handshake approves it. */
     BulkReceiver            bulkRecvUp[MAX_TANKS];
+    /* Per-client PACKET_ROUND_LOG_REQ bookkeeping. roundLogReqSeen +
+     * roundLogLastReqTick hold the minimum interval between requests whatever
+     * the answer was; roundLogServed counts transfers actually started and is
+     * what the attempt ceiling bounds, so a client refused with BUSY can come
+     * back without having spent one. All three clear at join, at disconnect,
+     * and at game start — the game-start clear is what makes the ceiling
+     * per-round. */
+    bool                    roundLogReqSeen[MAX_TANKS];
+    uint32_t                roundLogLastReqTick[MAX_TANKS];
+    uint8_t                 roundLogServed[MAX_TANKS];
     /* Suppress immediate-send-on-enqueue during the sync-replay burst
      * fired by serverSimRegisterSubscriber, so one carrier datagram
      * packs all replayed events instead of one per event.  Set/cleared
@@ -485,6 +512,34 @@ static struct {
      * memset(&udpServer, 0, …) is the only reset needed. */
     JoinRateEntry joinRate[JOIN_RL_MAX_SOURCES];
 } udpServer;
+
+/* The registered round-log source. Held outside udpServer so a transport
+ * create/destroy cycle does not drop the recorder's registration, and read
+ * only through here: the transport names no symbol in the recorder, which is
+ * what keeps the recorder (and the WinBolo.net upload it needs) out of every
+ * target that links this file. Unregistered means no recorder is installed,
+ * and the server answers ROUND_LOG_ERR_DISABLED without knowing one exists. */
+static RoundLogSource s_roundLogSource;
+static bool           s_roundLogSourceSet = false;
+
+void transportUdpServerSetRoundLogSource(const RoundLogSource *src) {
+    if (src == NULL || src->serveEnabled == NULL || src->read == NULL) {
+        memset(&s_roundLogSource, 0, sizeof(s_roundLogSource));
+        s_roundLogSourceSet = false;
+        return;
+    }
+    s_roundLogSource = *src;
+    s_roundLogSourceSet = true;
+}
+
+/* Clear one slot's round-log request limits. A disconnect mid-transfer runs
+ * this too, so a client that reconnects is not still spending the old
+ * occupant's attempts. */
+static void udpServerResetRoundLogLimits(int idx) {
+    udpServer.roundLogReqSeen[idx]     = false;
+    udpServer.roundLogLastReqTick[idx] = 0;
+    udpServer.roundLogServed[idx]      = 0;
+}
 
 /* Runtime network impairment (delay/jitter/loss/burst) on the server's
  * inbound (client->server) and outbound (server->client) datagram paths.
@@ -1969,9 +2024,10 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
  * correct endSeq needs the stream truly idle: no pending staging bytes and the
  * send window fully acked. startSeq is captured before any byte is staged, so
  * endSeq = startSeq + segment count is exact (channelStreamRefill only ever
- * forms a short final segment for a contiguous blob). No readiness round-trip
- * gates this: the join cookie already proved the address (serverHandleJoinRequest),
- * and a resync targets an already-established slot. */
+ * forms a short final segment for a contiguous blob). A join download is
+ * additionally gated on the client's PACKET_MAP_DL_READY (readySeen below);
+ * a resync targets an already-established slot and its request is the
+ * readiness signal. */
 static void serverBeginMapTransferIfReady(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
     ChannelMux *m = &udpServer.channelMux[slot];
@@ -1980,6 +2036,11 @@ static void serverBeginMapTransferIfReady(int slot) {
     uint32_t headerLen, totalBytes, segs;
 
     if (dl->xferKind == MAP_XFER_NONE || dl->xferBegun) return;
+    /* A join download waits for the client's PACKET_MAP_DL_READY — proof the
+     * accept landed and the receive buffers exist — so the stream head can
+     * never arrive at a client that has nowhere to put it. A resync needs no
+     * such gate: its own request is the readiness signal. */
+    if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->readySeen) return;
     if (bulkSenderBusy(&udpServer.bulkSend[slot])) return;  /* preview draining */
     if (m->streamCount != 0) return;                        /* staging not empty  */
     if (bulk->ackedSeq != bulk->nextSeq) return;            /* window not drained */
@@ -2423,6 +2484,48 @@ static void serverInitMapDownload(int slot) {
     dl->xferBegun = false;
     dl->xferStartSeq = 0;
     dl->xferEndSeq = 0;
+    dl->readySeen = false;
+}
+
+/* Drop any in-flight map transfer for `slot` and re-base CHANNEL_BULK so the
+ * next stream starts clean on both ends: bulkSenderReset drops the old staged
+ * blob, channelResetSend(CHANNEL_BULK) collapses the send window and clears
+ * the staging tail, and a CTRL_CHANNEL_RESET carries the new bulk baseline so
+ * the client lifts its receive baseline and abandons any old partial. Without
+ * this the old transfer's stragglers would segmentize into the new stream and
+ * the client's single BulkReceiver would misparse it. Then arm a fresh join
+ * download from the current blob (re-gates snapshots). The download begins
+ * once the client's PACKET_MAP_DL_READY arrives (serverBeginMapTransferIfReady). */
+static void serverRebaseBulkAndRearmDownload(int i) {
+    bulkSenderReset(&udpServer.bulkSend[i]);
+    {
+        uint32_t b3 = channelResetSend(&udpServer.channelMux[i], CHANNEL_BULK);
+        ControlEvent resetEvt;
+        ControlEncodeBodyFn enc =
+            transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+        memset(&resetEvt, 0, sizeof(resetEvt));
+        resetEvt.type = CTRL_CHANNEL_RESET;
+        resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
+        resetEvt.u.channelReset.ch3Baseline = b3;
+        if (enc != NULL &&
+            enc(&resetEvt, &udpServer.clients[i], msg + 3,
+                sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+            msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+            packU16(msg + 1, (uint16_t)bodyLen);
+            if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
+                             msg, (uint16_t)(3 + bodyLen))) {
+                if (!udpServer.pendingSimRemove[i]) {
+                    WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                 "control channel overflow sending bulk reset "
+                                 "for slot %d, deferring disconnect", i);
+                    udpServer.pendingSimRemove[i] = true;
+                }
+            }
+        }
+    }
+    serverInitMapDownload(i);
 }
 
 /* Clean up map download tracking for a client */
@@ -2435,6 +2538,7 @@ static void serverCleanupMapDownload(int slot) {
     dl->downloadComplete = FALSE;
     dl->xferKind = MAP_XFER_NONE;
     dl->xferBegun = false;
+    dl->readySeen = false;
 }
 
 static void serverSendServerMessage(ServerSim *sim, langid id, int argCount,
@@ -2611,7 +2715,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
          * a wbnServerKey until the next return-to-lobby rotation. */
         transportUdpServerSendWbnRekey(&udpServer.clients[slot]);
         /* No map re-poke needed: an incomplete download is still armed/in-flight
-         * on CHANNEL_BULK and the channel retransmits its own unacked segments. */
+         * on CHANNEL_BULK and the channel retransmits its own unacked segments.
+         * A download this client can no longer complete (it missed the stream's
+         * head, or the transfer already finished into a wiped receiver) is
+         * recovered by its PACKET_MAP_DL_READY re-ask, not here. */
         return;
     }
 
@@ -3078,6 +3185,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.channelFramesRx[slot] = 0;
     bulkSenderInit(&udpServer.bulkSend[slot]);
     bulkReceiverInit(&udpServer.bulkRecvUp[slot]);
+    udpServerResetRoundLogLimits(slot);
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -3099,9 +3207,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         udpServer.clients[slot].wbnWebUserId = -1;
         addPlayerInternal(sim, (BYTE)slot,
                           udpServer.clients[slot].playerName,
+                          udpServer.clients[slot].countryCode,
                           udpServer.clients[slot].wantRejoin);
-        setPlayerCountryInternal(sim, (BYTE)slot,
-                                 udpServer.clients[slot].countryCode);
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
     }
@@ -3776,6 +3883,21 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].wbnWebCountry[0] = '\0';
     udpServer.clients[idx].wbnWebUserId = -1;
 
+    /* Clear the high-ping enforcement tally. These count consecutive breaches
+     * by ONE occupant, so leaving them set hands the next occupant of this slot
+     * the departing player's strikes. A player kicked for high ping leaves with
+     * pingKickStrikes at PING_KICK_COUNT, so on their reconnect the first
+     * measurement over the threshold reaches PING_KICK_COUNT + 1 and kicks them
+     * again immediately, with none of the PING_KICK_COUNT samples of grace the
+     * enforcement is built around — and pingWarned still true, so they get no
+     * warning first either. lastEnforcedPingMs goes too: it is the dedup for
+     * "already counted this measurement", and a stale value silently skips the
+     * next occupant's first matching sample. */
+    udpServer.clients[idx].pingKickStrikes = 0;
+    udpServer.clients[idx].pingWarnStrikes = 0;
+    udpServer.clients[idx].pingWarned = false;
+    udpServer.clients[idx].lastEnforcedPingMs = 0;
+
     /* Reset control-sync state so a re-using slot starts fresh. */
     udpServer.controlSyncInProgress[idx] = false;
 
@@ -3785,6 +3907,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.mapGen[idx] = 0;
     bulkSenderReset(&udpServer.bulkSend[idx]);
     bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
+    udpServerResetRoundLogLimits(idx);
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -4464,6 +4587,49 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
                 }
             }
         }
+
+        /* New round, fresh round-log request budget for every slot. */
+        udpServerResetRoundLogLimits(i);
+
+        /* A round-log transfer is a lobby/game-over affair and must not bleed
+         * into the round starting now: CHANNEL_BULK is deliberately not
+         * re-based above, so an unfinished one would keep streaming into the
+         * new game's map downloads. Abort it with the same triple the map
+         * change uses — drop the staged blob, collapse the send window, and
+         * carry the new bulk baseline so the client abandons its partial.
+         * Gating on the sender's kind is what leaves every other in-flight
+         * transfer (a join download, a resync) undisturbed. */
+        if (udpServer.clients[i].connected &&
+            bulkSenderBusy(&udpServer.bulkSend[i]) &&
+            udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG) {
+            uint32_t b3;
+            ControlEvent resetEvt;
+            ControlEncodeBodyFn enc =
+                transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+            uint8_t msg[CHANNEL_CONTROL_SEG];
+            size_t bodyLen = 0;
+            bulkSenderReset(&udpServer.bulkSend[i]);
+            b3 = channelResetSend(&udpServer.channelMux[i], CHANNEL_BULK);
+            memset(&resetEvt, 0, sizeof(resetEvt));
+            resetEvt.type = CTRL_CHANNEL_RESET;
+            resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
+            resetEvt.u.channelReset.ch3Baseline = b3;
+            if (enc != NULL &&
+                enc(&resetEvt, &udpServer.clients[i], msg + 3,
+                    sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+                msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+                packU16(msg + 1, (uint16_t)bodyLen);
+                if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
+                                 msg, (uint16_t)(3 + bodyLen))) {
+                    if (!udpServer.pendingSimRemove[i]) {
+                        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                     "control channel overflow sending bulk reset "
+                                     "for slot %d, deferring disconnect", i);
+                        udpServer.pendingSimRemove[i] = true;
+                    }
+                }
+            }
+        }
     }
     WB_LOG_INFO(WB_LOG_CAT_NET, "ctrl queue reset all slots (game start)");
 
@@ -4526,44 +4692,12 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         /* Re-send JOIN_ACCEPT so the client picks up the new compressed
          * map size. */
         serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
-        /* Drop any in-flight map transfer and re-base CHANNEL_BULK so the new
-         * map's stream starts clean on both ends: bulkSenderReset drops the old
-         * staged blob, channelResetSend(CHANNEL_BULK) collapses the send window
-         * and clears the staging tail, and a CTRL_CHANNEL_RESET carries the new
-         * bulk baseline so the client lifts its receive baseline and abandons
-         * the old partial. Without this the old transfer's stragglers would
-         * segmentize into the new stream and the single BulkReceiver would
-         * misparse it. */
-        bulkSenderReset(&udpServer.bulkSend[i]);
-        {
-            uint32_t b3 = channelResetSend(&udpServer.channelMux[i], CHANNEL_BULK);
-            ControlEvent resetEvt;
-            ControlEncodeBodyFn enc =
-                transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
-            uint8_t msg[CHANNEL_CONTROL_SEG];
-            size_t bodyLen = 0;
-            memset(&resetEvt, 0, sizeof(resetEvt));
-            resetEvt.type = CTRL_CHANNEL_RESET;
-            resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
-            resetEvt.u.channelReset.ch3Baseline = b3;
-            if (enc != NULL &&
-                enc(&resetEvt, &udpServer.clients[i], msg + 3,
-                    sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
-                msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
-                packU16(msg + 1, (uint16_t)bodyLen);
-                if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
-                                 msg, (uint16_t)(3 + bodyLen))) {
-                    if (!udpServer.pendingSimRemove[i]) {
-                        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                     "control channel overflow sending bulk reset "
-                                     "for slot %d, deferring disconnect", i);
-                        udpServer.pendingSimRemove[i] = true;
-                    }
-                }
-            }
-        }
-        /* Arm a fresh join download from the new blob (re-gates snapshots). */
-        serverInitMapDownload(i);
+        /* Re-base CHANNEL_BULK and arm a fresh join download from the new
+         * blob (re-gates snapshots). It streams once the client's
+         * PACKET_MAP_DL_READY confirms its buffers were re-armed for the new
+         * size — the accept above (or the one re-sent for the client's forced
+         * re-JOIN) triggers that. */
+        serverRebaseBulkAndRearmDownload(i);
     }
 
     /* Live-lobby spectators: mirror the player loop — re-send the accept (new map
@@ -5121,6 +5255,19 @@ bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
     return true;
 }
 
+/* Turn away a PACKET_ROUND_LOG_REQ. Every gate that refuses one sends this,
+ * echoing the request's reqSeq: a silent refusal is indistinguishable from a
+ * lost request, and the client would sit waiting for bytes that never come.
+ * Wire: [header 8] [reqSeq 4 BE] [code 1]. */
+static void serverSendRoundLogErr(uint32_t reqSeq, uint8_t code,
+                                  const struct sockaddr_in *toAddr) {
+    uint8_t err[PACKET_HEADER_SIZE + 5];
+    packHeader(err, PACKET_ROUND_LOG_ERR, 0);
+    packU32(err + PACKET_HEADER_SIZE, reqSeq);
+    err[PACKET_HEADER_SIZE + 4] = code;
+    srvSendTo(err, (int)sizeof(err), toAddr);
+}
+
 /* Process a single received packet — extracted from the recv loop so both
  * the polled fallback and the recv-thread drain path can share it. */
 static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
@@ -5263,6 +5410,44 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (serverSimIsLobbyEnabled(sim) &&
                     (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
                     serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
+                }
+            }
+            break;
+        }
+        case PACKET_MAP_DL_READY: {
+            /* Client's join-download buffers are armed (its JOIN_ACCEPT
+             * landed). Body: [connId u64]. First ask for an armed-but-unbegun
+             * download simply releases it (serverBeginMapTransferIfReady).
+             * A re-ask while a stream is — or already was — in flight means
+             * the client cannot complete that stream (its head was consumed
+             * before the buffers existed, or the transfer finished into a
+             * receiver that had been reset mid-body): the channel has acked
+             * those bytes, so only a full restart behind a CHANNEL_BULK
+             * re-base can deliver the map again. connId must match the slot's
+             * so an address-spoofed READY can't reset a healthy client's
+             * transfer or re-gate its snapshots. A resync in flight is left
+             * alone — it owns the channel, and its own request/stall machinery
+             * recovers it. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 8) {
+                uint64_t reqConnId = unpackConnId(buf + PACKET_HEADER_SIZE);
+                UdpServerClient *cl = &udpServer.clients[clientIdx];
+                ClientMapDownload *dl = &udpServer.mapDownload[clientIdx];
+                if (cl->connId != 0 && reqConnId != cl->connId) break;
+                cl->lastReceivedTick = udpServer.tickCount;
+                if (dl->xferKind == MAP_XFER_RESYNC || dl->resyncInProgress) {
+                    break;
+                }
+                if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->xferBegun) {
+                    dl->readySeen = TRUE;
+                } else {
+                    WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "MAP_DL_READY re-ask slot=%d (kind=%d begun=%d "
+                        "complete=%d) -> restarting download",
+                        clientIdx, (int)dl->xferKind, (int)dl->xferBegun,
+                        (int)dl->downloadComplete);
+                    serverRebaseBulkAndRearmDownload(clientIdx);
+                    dl->readySeen = TRUE;
                 }
             }
             break;
@@ -5947,6 +6132,128 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             free(mapBytes);
             break;
         }
+        case PACKET_ROUND_LOG_REQ: {
+            /* [header 8] [reqSeq 4 BE]. Hands back the last completed round's
+             * .wbv over CHANNEL_BULK behind a BULK_KIND_ROUND_LOG stream
+             * header, so a client that joined after the round can replay what
+             * its lobby recap describes. Gates run cheapest-refusal first and
+             * every one of them answers with PACKET_ROUND_LOG_ERR. */
+            uint32_t reqSeq;
+            int clientIdx;
+            int j;
+            int concurrent = 0;
+            ServerState st;
+            uint8_t *blob = NULL;
+            uint32_t blobLen = 0;
+            char logName[BULK_PATH_MAX + 1];
+            size_t nameLen;
+            RoundLogReadResult rr;
+            BulkStreamHeader sh;
+
+            if (len < PACKET_HEADER_SIZE + 4) break;
+            reqSeq = unpackU32(buf + PACKET_HEADER_SIZE);
+
+            /* Players only. A spectator's bulk sender is saturated by the
+             * delayed feed it connected to receive, so serving one there
+             * would starve the thing it came for. An address that is neither
+             * gets nothing: there is no session to answer, and this file's
+             * other lobby handlers drop unknown senders the same way. */
+            clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0) {
+                if (serverFindSpectator(fromAddr) >= 0) {
+                    serverSendRoundLogErr(reqSeq, ROUND_LOG_ERR_DISABLED,
+                                          fromAddr);
+                }
+                break;
+            }
+
+            /* Lobby and game-over only. While a game runs CHANNEL_BULK
+             * belongs to joiner map downloads and desync resyncs, so the
+             * refusal is transient — the state will change. */
+            st = serverSimGetState(sim);
+            if (st != serverStateLobby && st != serverStateGameOver) {
+                serverSendRoundLogErr(reqSeq, ROUND_LOG_ERR_BUSY, fromAddr);
+                break;
+            }
+
+            /* No source registered means no recorder in this build, which the
+             * transport reports as "disabled" without knowing the recorder
+             * exists. Serve policy is asked per request, never latched. */
+            if (!s_roundLogSourceSet || !s_roundLogSource.serveEnabled()) {
+                serverSendRoundLogErr(reqSeq, ROUND_LOG_ERR_DISABLED, fromAddr);
+                break;
+            }
+
+            /* Per-client bounds. A busy sender means this client already has a
+             * transfer on its byte stream — its own round log, or a map
+             * preview draining — and the interval plus the per-round ceiling
+             * stop it re-asking in a loop. */
+            if (bulkSenderBusy(&udpServer.bulkSend[clientIdx]) ||
+                udpServer.roundLogServed[clientIdx] >= ROUND_LOG_MAX_ATTEMPTS ||
+                (udpServer.roundLogReqSeen[clientIdx] &&
+                 (uint32_t)(udpServer.tickCount -
+                            udpServer.roundLogLastReqTick[clientIdx]) <
+                     ROUND_LOG_MIN_REQ_TICKS)) {
+                serverSendRoundLogErr(reqSeq, ROUND_LOG_ERR_RATE_LIMITED,
+                                      fromAddr);
+                break;
+            }
+            /* Stamp the clock for every request the server considers, served
+             * or not, so the interval holds whatever the answer turns out to
+             * be. */
+            udpServer.roundLogReqSeen[clientIdx] = true;
+            udpServer.roundLogLastReqTick[clientIdx] = udpServer.tickCount;
+
+            /* Fleet-wide cap. Transient: the client retries and gets in when
+             * one of the transfers ahead of it finishes. */
+            for (j = 0; j < MAX_TANKS; j++) {
+                if (bulkSenderBusy(&udpServer.bulkSend[j]) &&
+                    udpServer.bulkSend[j].kind == BULK_KIND_ROUND_LOG) {
+                    concurrent++;
+                }
+            }
+            if (concurrent >= ROUND_LOG_MAX_CONCURRENT) {
+                serverSendRoundLogErr(reqSeq, ROUND_LOG_ERR_BUSY, fromAddr);
+                break;
+            }
+
+            /* The source owns the cap check, so an over-cap log is refused
+             * without ever being read. A read failure reports as "none": the
+             * round is not gettable and the client can do nothing different
+             * with the distinction. */
+            rr = s_roundLogSource.read(&blob, &blobLen, logName,
+                                       sizeof(logName));
+            if (rr != ROUND_LOG_READ_OK) {
+                serverSendRoundLogErr(reqSeq,
+                                      (rr == ROUND_LOG_READ_TOO_LARGE)
+                                          ? ROUND_LOG_ERR_TOO_LARGE
+                                          : ROUND_LOG_ERR_NONE,
+                                      fromAddr);
+                break;
+            }
+
+            /* gen echoes reqSeq so the client can match the blob to the
+             * request it issued and drop a superseded one; the path carries
+             * the basename only. */
+            memset(&sh, 0, sizeof(sh));
+            sh.kind = BULK_KIND_ROUND_LOG;
+            sh.gen = reqSeq;
+            sh.totalSize = blobLen;
+            nameLen = strlen(logName);
+            if (nameLen > BULK_PATH_MAX) nameLen = BULK_PATH_MAX;
+            sh.pathLen = (uint8_t)nameLen;
+            memcpy(sh.path, logName, nameLen);
+            sh.path[nameLen] = '\0';
+
+            if (bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh,
+                                blob, blobLen)) {
+                udpServer.roundLogServed[clientIdx]++;
+            } else {
+                serverSendRoundLogErr(reqSeq, ROUND_LOG_ERR_BUSY, fromAddr);
+            }
+            free(blob);   /* bulkSenderBegin copied it into its own buffer */
+            break;
+        }
         case PACKET_WBN_REAUTH: {
             /* Wire: [header 8] [wbnJoinKey 65]. */
             int clientIdx = serverFindClient(fromAddr);
@@ -6539,6 +6846,18 @@ void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs) {
     if (playerNum >= MAX_TANKS) return;
     if (!udpServer.clients[playerNum].connected) return;
     udpServer.clients[playerNum].pingMs = pingMs;
+}
+
+void transportUdpServerGetPingStrikesForTest(BYTE playerNum,
+                                             uint8_t *outKickStrikes,
+                                             uint8_t *outWarnStrikes,
+                                             bool *outWarned,
+                                             uint16_t *outLastEnforcedMs) {
+    if (playerNum >= MAX_TANKS) return;
+    if (outKickStrikes)    *outKickStrikes    = udpServer.clients[playerNum].pingKickStrikes;
+    if (outWarnStrikes)    *outWarnStrikes    = udpServer.clients[playerNum].pingWarnStrikes;
+    if (outWarned)         *outWarned         = udpServer.clients[playerNum].pingWarned;
+    if (outLastEnforcedMs) *outLastEnforcedMs = udpServer.clients[playerNum].lastEnforcedPingMs;
 }
 
 bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {

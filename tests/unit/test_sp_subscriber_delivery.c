@@ -97,7 +97,7 @@ int run_sp_subscriber_delivery(void) {
          * performed synchronously inside serverSimPublishControl. */
         char observed[PACKET_MAX_PLAYER_NAME];
         observed[0] = '\0';
-        playersGetPlayerName(&cgs->plyrs, 0, observed, FALSE);
+        playersGetPlayerName(&cgs->plyrs, 0, observed, sizeof(observed), FALSE);
         threadsReleaseMutex();
 
         UT_ASSERT_MSG(strcmp(observed, nameBuf) == 0,

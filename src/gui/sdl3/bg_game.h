@@ -26,6 +26,7 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include "server_sim.h"
+#include "gfx_settings.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,14 @@ typedef struct BgGame {
      * when they differ. NULL = uninitialised (no texture has been
      * built yet). */
     SDL_Renderer *texRenderer;
+    /* Tile-atlas generation tilesTex was built from. A skin change
+     * rebuilds the shared atlas without touching the renderer, so this
+     * is what tells this copy it is stale. */
+    unsigned int  tilesGeneration;
+    /* Texture filter tilesTex was last set to. A change to the setting
+     * only needs the scale mode re-applied, not a new sheet, so this is
+     * checked separately from the generation. */
+    GfxTextureFilter tilesFilter;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
     WORLD        viewCenterX;   /* Camera world position */
     WORLD        viewCenterY;

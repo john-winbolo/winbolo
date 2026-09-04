@@ -293,7 +293,7 @@ static bool s_closeMenuPopups = false;
  * one). A local define drifting past it would silently render every extra
  * slot grey rather than fail. */
 static_assert(MAX_PLAYERS <= MAX_TANKS, "player rows exceed ClientSim slots");
-static char     s_playerName[MAX_PLAYERS][33] = {};        /* PLAYER_NAME_LEN = 33 */
+static char     s_playerName[MAX_PLAYERS][PLAYER_NAME_LEN] = {};  /* display copy */
 static char     s_playerCountry[MAX_PLAYERS][3] = {};      /* 2-char ISO country code + NUL */
 static bool     s_playerEnabled[MAX_PLAYERS]  = {};
 static bool     s_playerChecked[MAX_PLAYERS]  = {};
@@ -359,16 +359,20 @@ static bool s_showSettings       = false;
    rebuilds the font atlas + style at a safe point (between Present and the
    next NewFrame) rather than mid-frame. */
 static bool s_pendingUiScaleRebuild = false;
+/* Set when the Settings Skin combo changes; the main render loop reloads the
+   tile sheet and sound set at the same safe point, since gameFrontReloadSkins
+   destroys and rebuilds the tile texture. */
+static bool s_pendingSkinReload = false;
 static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
 static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
-static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
+static char s_changeNameBuf[PLAYER_NAME_LEN] = "";
 
 static bool s_showAllianceOpen   = false;
-static char s_alliancePlayerName[33] = "";
+static char s_alliancePlayerName[PLAYER_NAME_LEN] = "";
 static BYTE s_alliancePlayerNum  = 0;
 static bool s_allianceVisible     = false;
 
@@ -844,7 +848,8 @@ static void renderNetInfoContent(ClientSim *cs) {
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr,
+                                   sizeof(addr));
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -1157,6 +1162,35 @@ static void renderBrainSettingsWindow(void) {
 
     ImGui::End();
 }
+
+/* Bring the desktop Send Message pop-out to the front and put the caret in
+ * its input box, with any draft text already there selected so typing
+ * replaces it.
+ *
+ * Deliberately not a toggle. Players open the pop-out, click back into the
+ * game window to keep playing, then press Ctrl+M again expecting the message
+ * box — but the key press lands on the main window, so a toggle hides the
+ * pop-out instead of raising it. Every desktop entry point (Ctrl+M, the
+ * Players menu item, windowShowSendMessages(wsrOpen), the mac menu bar)
+ * reaches this — directly, or via sdl3ImguiShowSendMsg where the caller must
+ * also honour controller mode — so the window comes forward however it was
+ * asked for.
+ * Closing is the pop-out's own close box or Escape.
+ *
+ * Deliberately does not touch s_sendMsgCooldownEnd. Opening is not a reason
+ * to hand back an early Send button: clearing it here would let a player
+ * send, close the pop-out and re-press Ctrl+M to skip the remainder of
+ * SEND_MSG_WAIT_MS. The cooldown is short and expires on its own. */
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+static void sendMsgPopOutShow(void) {
+    /* popOutCreate re-shows and raises a window it created earlier, so this
+     * one call covers both the first open and a raise from behind the game. */
+    if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200))
+        return;
+    s_sendMsgFocusInput = true;
+    s_closeMenuPopups   = true;
+}
+#endif
 
 /* -------------------------------------------------------
  * Send Message panel
@@ -1735,7 +1769,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showChangeName    = false;
         s_changeNameBuf[0] = '\0';
-        clientSimGetPlayerName(cs, s_changeNameBuf);
+        clientSimGetPlayerName(cs, s_changeNameBuf, sizeof(s_changeNameBuf));
     }
     static float s_fadeChangeName = 0.0f;
     bool changeNameOpen = true;
@@ -1760,7 +1794,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         bool doCancel = (f == WBUI::FOOTER_CANCEL);
 
         if (doOK) {
-            s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
+            s_changeNameBuf[PLAYER_NAME_LAST] = '\0'; /* final byte stays NUL */
             utilStripName(s_changeNameBuf);
             if (s_changeNameBuf[0] == '\0') {
                 /* blank — stay open */
@@ -2455,7 +2489,8 @@ static void renderSettingsPanel(ClientSim *cs) {
 
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
-       ends.  All five in-game tabs are always present. */
+       ends.  Every in-game tab is present except Hosting in the web build,
+       where a browser tab can't listen for connections. */
     enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_HOSTING, STAB_LAST, STAB_COUNT };
     static int s_igActiveTab = STAB_GENERAL;
     static int s_igForceTab  = -1;
@@ -2464,7 +2499,11 @@ static void renderSettingsPanel(ClientSim *cs) {
     present[STAB_DISPLAY]  = true;
     present[STAB_CONTROLS] = true;
     present[STAB_GAMEHUD]  = true;
+#if defined(__EMSCRIPTEN__)
+    present[STAB_HOSTING]  = false;
+#else
     present[STAB_HOSTING]  = true;
+#endif
     present[STAB_LAST]     = true;
     {
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
@@ -2540,6 +2579,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
+#if !defined(__EMSCRIPTEN__)
         if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_HOSTING), nullptr,
                 s_igForceTab == STAB_HOSTING ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_HOSTING;
@@ -2548,6 +2588,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
+#endif
         if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_SESSION), nullptr,
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
@@ -2655,6 +2696,7 @@ static void renderSettingsPanel(ClientSim *cs) {
        the existing end-of-frame consumers already act on. */
     if (ctx.pendingZoom != 255)  s_pendingZoom = ctx.pendingZoom;
     if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
+    if (ctx.wantSkinReload)      s_pendingSkinReload = true;
     if (ctx.wantKeySetup)        sdl3ImguiShowKeySetup();
 
     ImGui::End();
@@ -2841,8 +2883,10 @@ static void renderMenuBar(ClientSim *cs) {
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
+            /* Checked when the pop-out is open; picking it raises and focuses
+               that window rather than closing it, matching Ctrl+M. */
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M", s_popSendMsg.open))
-                togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+                sendMsgPopOutShow();
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
@@ -3571,6 +3615,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     popOutHide(pw);
                     consumedByPopOut = true;
                 }
+
+                /* Escape closes a focused pop-out, matching the Escape ladder
+                   the tablet panels use. Without it the close box is the only
+                   way out, and on macOS that leaves no keyboard path at all —
+                   there is no Cmd+W item in the native menu. The event was
+                   already forwarded above, so ImGui has deactivated any live
+                   InputText before the window goes away. */
+                if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                    ev.key.windowID == pwID &&
+                    ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                    popOutHide(pw);
+                    consumedByPopOut = true;
+                }
             }
             if (consumedByPopOut) continue;
         }
@@ -3633,6 +3690,21 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Meta/Cmd release — re-sync held keys. macOS does not deliver KEY_UP
+           for a non-modifier key that is released while Cmd is held (browsers
+           on macOS inherit this), so tapping Cmd mid-turn and letting go of a
+           movement key under it leaves that key reading as held in
+           SDL_GetKeyboardState, with no focus transition to clear it — the
+           tank turns forever with nothing pressed. Take the modifier's own
+           release as the cue that any key-ups issued under it were swallowed.
+           A player still physically holding a key re-presses it; that beats an
+           unbounded spin. */
+        if (ev.type == SDL_EVENT_KEY_UP &&
+            (ev.key.scancode == SDL_SCANCODE_LGUI ||
+             ev.key.scancode == SDL_SCANCODE_RGUI)) {
+            inputResetHeldKeys();
+        }
+
         /* Suspend / resume — Steam Deck Verified requirement.  Fires on
            sleep, home-button overlay, and other backgrounding.  In a
            network game, resume drops back to menu via the standard
@@ -3656,18 +3728,22 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
-                    togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
-                    s_closeMenuPopups = true;
+                    /* Via sdl3ImguiShowSendMsg rather than straight to
+                       sendMsgPopOutShow: it picks the pop-out or the
+                       controller modal. The pop-out is a separate OS window
+                       that receives no controller input, so on a Deck — where
+                       the virtual pad reports as keyboard and can reach this
+                       shortcut — opening it directly would leave a pad user
+                       with a window they cannot close. */
+                    sdl3ImguiShowSendMsg(true);
                 } else {
 #endif
-                    if (s_showSendMsg) {
-                        s_sendMsgFocusInput = true;
-                        s_closeMenuPopups = true;
-                    } else {
-                        s_showSendMsg = true;
-                        s_sendMsgFocusInput = true;
-                        s_closeMenuPopups = true;
-                    }
+                    /* Never a toggle — an already-open panel is raised to the
+                       front of the ImGui stack and refocused (SetWindowFocus
+                       in renderSendMsgContent) instead of being hidden. */
+                    s_showSendMsg       = true;
+                    s_sendMsgFocusInput = true;
+                    s_closeMenuPopups   = true;
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
 #endif
@@ -4128,6 +4204,11 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
      * unflushed local timing). Stale slot rows in the native menu are
      * cheap (one drawRect per refresh), so we fill all 16 unconditionally
      * and let mac_menubar_refresh() decide between view + numeric title. */
+    /* The copy below takes sizeof p->name bytes out of s_playerName[i].
+     * mac_menubar.h spells the field length as a literal to stay free of
+     * global.h, so a divergence would read past the source array. */
+    static_assert(sizeof(((struct MacPlayerSlot *)0)->name) == PLAYER_NAME_LEN,
+                  "MacPlayerSlot.name must match PLAYER_NAME_LEN");
     for (int i = 0; i < MAX_PLAYERS; i++) {
         struct MacPlayerSlot *p = &s->players[i];
         p->enabled = s_playerEnabled[i];
@@ -4178,7 +4259,7 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
 
 /* Drain any pending NAME_* reject (CTRL_COMMAND_REJECTED with a
  * CMD_REJECT_NAME_* reason) into the in-game message overlay when
- * we're not in the lobby. The lobby toast in renderLobbyRejectToast
+ * we're not in the lobby. The lobby toast in lobbyRenderRejectToast
  * handles the in-lobby case; this closes the gap for in-game name
  * changes (WinBolo > Change Name, Settings > Player Name), which
  * non-WBN servers accept at any phase. Clearing the reject after
@@ -4229,6 +4310,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (s_pendingUiScaleRebuild) {
         s_pendingUiScaleRebuild = false;
         applyMainContextUiScale();
+    }
+
+    /* Same window for a skin change — the previous frame's draw data, which
+       can reference the old tile texture, has already been presented. */
+    if (s_pendingSkinReload) {
+        s_pendingSkinReload = false;
+        gameFrontReloadSkins();
     }
 
     /* Build the ImGui frame */
@@ -4325,10 +4413,23 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
         if (nowInLobby) {
             if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
-                /* Confirmed Leave: drop the connection. The lobby stops
-                   rendering next frame (clientSimIsInLobby flips false),
-                   which also triggers imguiLobbyFrameReset above. */
+                /* Confirmed Leave: drop the connection, then go wherever
+                   this host goes when a game ends. The disconnect alone
+                   strands the player in a frozen lobby: it tears down the
+                   transport without touching netStat or inLobby, and
+                   inLobby is only
+                   cleared by the CTRL_GAME_PHASE_RUNNING control event,
+                   which cannot arrive once the transport is gone. */
                 clientSimDisconnect(cs);
+#ifdef __EMSCRIPTEN__
+                /* The browser has no welcome screen to fall back to the way
+                   winbolo.c does after imguiLobbyShow returns 0 — the menu is
+                   the hosting page, so navigate back to it. Ordered after the
+                   disconnect so transportUdpClientDestroy still gets its
+                   graceful PACKET_QUIT out over a live socket; the navigation
+                   itself only runs once this frame returns to the browser. */
+                windowLeaveGame();
+#endif
             }
             keyboardUpdate();
             dialogDrawNavOutline();
@@ -4794,22 +4895,15 @@ void sdl3ImguiShowSendMsg(bool open) {
                so a pad user could open it but never close it. */
             if (open) {
                 s_pendingCtrlSendMsg = true;
-                s_sendMsgCooldownEnd = 0;
             } else {
                 s_showCtrlSendMsg = false;
             }
         } else {
-            /* Mouse/keyboard desktop: the draggable pop-out window. */
+            /* Mouse/keyboard desktop: the draggable pop-out window.  Opening
+               an already-open pop-out raises and refocuses it — see
+               sendMsgPopOutShow. */
             if (open) {
-                if (!s_popSendMsg.open) {
-                    popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
-                }
-                /* Match the other paths' side effects so the user gets a
-                 * fresh cooldown and a focused input regardless of which
-                 * path opened Send Message. */
-                s_sendMsgCooldownEnd = 0;
-                s_sendMsgFocusInput  = true;
-                s_closeMenuPopups    = true;
+                sendMsgPopOutShow();
             } else {
                 if (s_popSendMsg.open) popOutHide(&s_popSendMsg);
             }
@@ -4819,8 +4913,9 @@ void sdl3ImguiShowSendMsg(bool open) {
 #endif
     s_showSendMsg = open;
     if (open) {
-        /* Reset cooldown so the Send button is always enabled on fresh open */
-        s_sendMsgCooldownEnd = 0;
+        /* No cooldown reset here — see sendMsgPopOutShow. s_sendMsgCooldownEnd
+           is set only by an actual send and cleared only by time, so reopening
+           the panel cannot shorten SEND_MSG_WAIT_MS. */
         s_sendMsgFocusInput = true;
         s_closeMenuPopups = true;
 #if BOLO_MOBILE

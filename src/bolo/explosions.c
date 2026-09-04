@@ -201,7 +201,8 @@ void explosionsCalcScreenBullets(explosions *expl, screenBullets *sBullets, BYTE
   q = *expl;
   while (NonEmpty(q)) {
     if (q->mx >= leftPos && q->mx < rightPos && q->my >= topPos && q->my < bottomPos) {
-      screenBulletsAddItem(sBullets, (BYTE) (q->mx-leftPos), (BYTE) (q->my-topPos), q->px, q->py, q->length);
+      /* Explosions only keep a pixel offset, so scale it back up. */
+      screenBulletsAddItem(sBullets, (BYTE) (q->mx-leftPos), (BYTE) (q->my-topPos), q->px, q->py, q->length, (BYTE) (q->px << TANK_SHIFT_RIGHT2), (BYTE) (q->py << TANK_SHIFT_RIGHT2));
     }
     q = ExplosionsTail(q);
   }

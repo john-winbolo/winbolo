@@ -54,6 +54,12 @@ int gameFrontDialogY = -1;
 bool inputGamepadIsConnected(void) { return false; }
 void imguiSteamNavActivateMenuSet(void) {}
 void imguiSteamNavFeedCurrentContext(void) {}
+int imguiSteamNavConsumeMenuTabShift(void) { return 0; }
+bool inputGamepadGetScrollDirection(float *dx, float *dy) {
+  if (dx) *dx = 0.0f;
+  if (dy) *dy = 0.0f;
+  return false;
+}
 
 /* uiShouldUseControllerMode() consults inputSourceCurrent(). LogViewer /
  * MapEditor have no controller input, so report keyboard — keeps the desktop

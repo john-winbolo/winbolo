@@ -47,6 +47,9 @@ typedef struct {
   BYTE my;  /* The map y co-ordinate it is on */
   BYTE px;  /* The pixel offset from the left it is on */
   BYTE py;  /* The pixel offset from the top it is on */
+  BYTE wx;  /* X world offset inside the map square, 0-255. wx >> 4 == px */
+  BYTE wy;  /* Y world offset inside the map square, 0-255. wy >> 4 == py */
+  BYTE angle; /* The full 0-255 facing angle. frame is the 16 step version */
   BYTE frame; /* The direction it is facing */
   BYTE team;
   BYTE dir;
@@ -149,8 +152,11 @@ void lv_screenTanksDestroy(screenTanks *value);
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the tank
 *  playerName - String to hold the player name
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
+*  angle      - The full 0-255 facing angle
 *********************************************************/
-void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName);
+void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName, BYTE wx, BYTE wy, BYTE angle);
 
 /*********************************************************
 *NAME:          lv_screenTanksGetItem
@@ -171,6 +177,24 @@ void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE p
 *  playerName - String to hold the player name
 *********************************************************/
 void lv_screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *team, BYTE *dir, bool *onBoat, char *playerName);
+
+/*********************************************************
+*NAME:          lv_screenTanksGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 15/2/98
+*LAST MODIFIED: 15/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square and the
+*  full facing angle for a specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*  angle      - The full 0-255 facing angle
+*********************************************************/
+void lv_screenTanksGetSubPixel(screenTanks *value, BYTE itemNum, BYTE *wx, BYTE *wy, BYTE *angle);
 
 #endif /* SCREENTANKS_H */
 

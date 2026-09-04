@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Death marker for the recap scoreboard's Deaths / LGM Deaths columns.
+     Two flat shapes, no strokes and no gradients, so it survives being
+     rasterised small: a cranium whose eye sockets and nose are cut out with
+     fill-rule="evenodd", and the mandible below it as a separate shape — the
+     gap between the two reads as the mouth line at 18px, where drawn teeth
+     would blur into a smear. Rendered as a white alpha mask by
+     imguiLoadSvgIconWhite and tinted at draw time. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path fill-rule="evenodd" d="M12 1.5 C6.75 1.5 2.5 5.75 2.5 11 v4.3 c0 1.05 0.85 1.9 1.9 1.9 h15.2 c1.05 0 1.9-0.85 1.9-1.9 V11 C21.5 5.75 17.25 1.5 12 1.5 Z M5.6 11 a2.9 2.9 0 1 1 5.8 0 a2.9 2.9 0 1 1-5.8 0 Z M12.6 11 a2.9 2.9 0 1 1 5.8 0 a2.9 2.9 0 1 1-5.8 0 Z M12 16.4 L10.35 13.5 L13.65 13.5 Z"/>
+  <path d="M7.6 18.8 h8.8 l-0.8 2.35 c-0.3 0.86-1.11 1.45-2.02 1.45 h-3.16 c-0.91 0-1.72-0.59-2.02-1.45 Z"/>
+</svg>

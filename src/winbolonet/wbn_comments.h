@@ -32,8 +32,8 @@ typedef struct WbnComment {
 } WbnComment;
 
 /* ===== Async comment fetch =====
- * GETs logs/<key> and extracts the comments[] array. The rest of the
- * response is discarded. */
+ * GETs logs/<key> and extracts the comments[] array plus the log's
+ * aggregate rating. The rest of the response is discarded. */
 
 typedef struct WbnCommentsFetch WbnCommentsFetch;
 
@@ -53,6 +53,16 @@ int wbn_comments_fetch_result(WbnCommentsFetch *f,
                               const WbnComment **out_comments, size_t *out_count,
                               char *err_msg, size_t err_size);
 
+/* Aggregate rating carried by the same logs/<key> response the comment
+ * fetch reads. rating10 is 0-10; num_ratings is how many ratings are
+ * behind it. Both are 0 until the fetch completes with status 200. */
+void wbn_comments_fetch_rating(WbnCommentsFetch *f, float *out_rating10,
+                               int *out_num_ratings);
+
+/* Cancels the fetch and blocks until its worker has stopped, so the handle
+ * never outlives the thread writing into it. The transfer is cancelled
+ * mid-flight, so the wait is brief. NULL is accepted and does nothing. Call
+ * only from the thread that owns the handle, never from the worker. */
 void wbn_comments_fetch_free(WbnCommentsFetch *f);
 
 /* ===== Async comment post =====
@@ -72,6 +82,10 @@ bool wbn_comments_post_done(const WbnCommentPost *p);
  * empty); caller maps to a localised label if empty. */
 int wbn_comments_post_result(WbnCommentPost *p, char *msg, size_t msg_size);
 
+/* Blocks until the worker has stopped, the way the fetch's free does, but the
+ * POST cannot be cancelled: freeing one that is still in flight waits for the
+ * request to answer or time out. NULL is accepted and does nothing. Call only
+ * from the thread that owns the handle, never from the worker. */
 void wbn_comments_post_free(WbnCommentPost *p);
 
 #ifdef __cplusplus

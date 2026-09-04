@@ -558,6 +558,12 @@ void lv_screenSetSubOffset(int x, int y);
 void lv_screenPanToTotalPixels(int totalPxX, int totalPxY);
 
 void lv_windowAddEvent(int eventType, char *msg);
+/* Add a clickable highlight line: clicking it in the events panel seeks a few
+ * seconds before seekMs and centres the game view on the (mapX,mapY) cell. */
+void lv_windowAddHighlight(char *msg, uint32_t seekMs, int mapX, int mapY);
+/* Add a load-time round-summary line: no stamp of its own, pinned above the
+ * timeline feed so the presentation window never hides it. */
+void lv_windowAddSummary(char *msg);
 void lv_windowStop(int corruptLog);
 void lv_finished();
 
@@ -565,17 +571,67 @@ bool lv_screenCloseLog();
 void lv_screenFastForward();
 void lv_screenRewind();
 void lv_screenGetTime(char *dest);
+/* Format an absolute log time as the displayed (window-relative) mm:ss. */
+void lv_screenFormatTime(uint32_t absMs, char *dest, size_t destSize);
+/* Playback position in absolute log ms (the decoder's own clock, not the
+ * presented window). */
+uint32_t lv_screenGetTimeRunning(void);
 void lv_screenTankCentred(int enabled);
+
+/* Presentation window ("Hide Lobby"). While enabled and the loaded log carries a
+ * log_LobbyExit marker, displayed times and every seek run against
+ * [gameStart, totalTime) rather than the whole file; the decoder, the snapshot
+ * index and the highlight clip times stay absolute. Enabling it while the
+ * playhead sits in the lobby seeks to game start; disabling it moves nothing.
+ * Inert on a log with no lobby and on a live spectator feed. */
+void lv_screenSetHideLobby(int enabled);
+int  lv_screenGetHideLobby(void);
+
+/* Start of the presented window in absolute log ms; 0 when the window is the
+ * whole file. Event lines below it belong to the hidden lobby. */
+uint32_t lv_screenWindowStartMs(void);
 
 void lv_screenMouseCentreClick(int xPos, int yPos);
 void lv_screenMouseClick(int xPos, int yPos);
 
 void lv_screenCentreOnSelectedItem();
-void lv_screenGetPlayerName(char *name, BYTE playerNum);
+
+/* Move the camera onto the followed tank at native-pixel precision (tile
+ * offset plus sub-tile pixel), instead of snapping to whole map squares.
+ * No-op when the followed tank has no position right now. */
+void lv_screenFollowCentredTank(void);
+void lv_screenGetPlayerName(char *name, BYTE playerNum, size_t destSize);
+
+/* Name the log recorded for a slot, from a one-shot scan of its join events at
+ * load. Returns FALSE when the log never named that slot. Independent of the
+ * playhead, unlike lv_screenGetPlayerName. */
+bool lv_screenGetLoggedPlayerName(BYTE slot, char *dest, size_t destSize);
 void lv_screenGetMapName(char *dest);
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
 void lv_screenSeekToPosition(float ratio);
+
+/* Log playback time (ms) at which the game started (the lobby ended); 0 when the
+ * log has no lobby. Attribution/highlight ticks are game-relative, so this is the
+ * offset that maps them onto the scrubber's absolute clock. Computed at load. */
+uint32_t lv_screenGameStartMs(void);
+
+/* Calibration anchors for mapping attribution ticks to scrubber ms: the
+ * playback times of two specific base-ownership gains, each identified as the
+ * ordinal-th gain at cell (x,y) by `owner`. Ordinal matching is what pins the
+ * exact event: the game-over handover re-assigns every base to the winner, so
+ * "the last gain at this cell" can be a later event than the capture the
+ * attribution track recorded. v2 logs only; false if unavailable. Lets the
+ * highlight times/seeks be fitted per log. */
+bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
+                               uint8_t xL, uint8_t yL, uint8_t ownerL, int ordL,
+                               uint32_t *outMsE, uint32_t *outMsL);
+
+/* Seek playback to an absolute log time in ms (clamped to the log length). */
+void lv_screenSeekToTimeMs(uint32_t ms);
+
+/* Centre the game view on a map cell (mapX,mapY). */
+void lv_screenCentreOnCell(int mapX, int mapY);
 
 /* Spectator live-DVR (driven by spectatorRun). While live mode is on,
  * lv_screenStreamPump only appends the arriving bytes and never auto-advances to

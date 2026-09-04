@@ -1142,11 +1142,16 @@ void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName)
   }
 }
 
-void clientSimGetPlayerName(ClientSim *csPtr, char *value) {
+void clientSimGetPlayerName(ClientSim *csPtr, char *value, size_t valueSize) {
+  if (valueSize == 0) {
+    return;
+  }
   if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
-    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
+    SDL_strlcpy(value, clientSimGetMyLastPlayerName(csPtr), valueSize);
   } else {
-    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
+    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs,
+                         clientSimGetMyPlayerNum(csPtr), value, valueSize,
+                         FALSE);
   }
 }
 
@@ -1343,8 +1348,10 @@ uint8_t clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum) {
   return playersGetClientType(&clientSimGetGameSim(cs)->plyrs, playerNum);
 }
 
-void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest) {
-  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest,
+                                size_t destSize) {
+  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest,
+                           destSize);
 }
 
 uint8_t clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum) {
@@ -1385,10 +1392,6 @@ void netGetOurAddressStr(ClientSim *cs, char *dest) {
   } else {
     strcpy(dest, NET_SINGLE_PLAYER_GAME);
   }
-}
-
-BYTE netGetDownloadPos(void) {
-  return 255; /* complete */
 }
 
 void netSecond(void) {
@@ -1995,6 +1998,11 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
 
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
   return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
+}
+
+uint32_t clientSimGetRatingPostedSeq(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return cs->ratingPostedSeq;
 }
 
 const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {

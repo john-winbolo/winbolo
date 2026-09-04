@@ -48,16 +48,18 @@ extern "C" {
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
 #include "imgui_keyboard.h" /* keyboardUpdate */
 
-/* Match openingStates enum from gamefront.h */
+/* The return value is cast straight back to openingStates by the caller, so
+   each code is the openingStates enumerator itself rather than its position.
+   That lets gamefront.h reorder or drop members without shifting these. */
 enum {
-    RESULT_SINGLEPLAYER = 5,   /* openSetup */
-    RESULT_TUTORIAL     = 4,   /* openTutorial */
-    RESULT_INTERNET     = 14,  /* openInternet */
-    RESULT_LAN          = 10,  /* openLan */
-    RESULT_SETTINGS     = 19,  /* openSettings */
-    RESULT_MAPEDITOR    = 20,  /* openMapEditor */
-    RESULT_LOGVIEWER    = 21,  /* openLogViewer */
-    RESULT_QUIT         = -1
+    RESULT_SINGLEPLAYER = openSetup,
+    RESULT_TUTORIAL     = openTutorial,
+    RESULT_INTERNET     = openInternet,
+    RESULT_LAN          = openLan,
+    RESULT_SETTINGS     = openSettings,
+    RESULT_MAPEDITOR    = openMapEditor,
+    RESULT_LOGVIEWER    = openLogViewer,
+    RESULT_QUIT         = -1   /* Quit sentinel, not a dialog state */
 };
 
 /* Load a PNG with alpha via SDL_IOFromFile + stb_image.
@@ -226,7 +228,7 @@ extern "C" int imguiWelcomeShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (dialogHandleUrlDropEvent(&ev)) { result = 16; running = false; continue; } /* openInternetManual */
+            if (dialogHandleUrlDropEvent(&ev)) { result = (int)openInternetManual; running = false; continue; }
             if (ev.type == SDL_EVENT_QUIT) {
                 result = RESULT_QUIT;
                 running = false;

@@ -824,6 +824,9 @@ void printArgs() {
   fprintf(stderr, "                directory (e.g. -log /tmp) to auto-name the log inside it.\n");
   fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
+  fprintf(stderr, "-servelog <on|off> - Hand the last finished round's log to players who ask\n");
+  fprintf(stderr, "                for it, so their post-game recap plays. Omitted, the server\n");
+  fprintf(stderr, "                serves unless it is registered with winbolo.net. Needs -log.\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "                Seeds the C sim stream only; see -brain-lua-seed for Lua.\n");
@@ -1982,6 +1985,26 @@ int main(int argc, char **argv) {
       serverSimSetUserLogFileName(serverSim, userLogFile);
     }
     serverDedicatedLogInstall(serverSim, dontSendLog);
+    /* -servelog on|off overrides the round-log serve policy. Left out, the
+     * mode the install just reset to decides: serve unless winbolo.net is
+     * running. Set after the install, which clears it. */
+    {
+      int serveArg = findArg(argc, argv, "servelog");
+      if (serveArg != ARG_NOT_FOUND && argv[serveArg][0] != '-') {
+        char serveVal[16] = {0};
+        strncpy(serveVal, (char *)argv[serveArg], sizeof(serveVal) - 1);
+        strlower(serveVal);
+        if (strcmp(serveVal, "on") == 0) {
+          serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_ON);
+        } else if (strcmp(serveVal, "off") == 0) {
+          serverDedicatedLogSetServeMode(ROUND_LOG_SERVE_OFF);
+        } else {
+          fprintf(stderr,
+                  "-servelog: expected \"on\" or \"off\", got \"%s\" - using the default\n",
+                  serveVal);
+        }
+      }
+    }
   }
 
   /* Initialize and add bot players */

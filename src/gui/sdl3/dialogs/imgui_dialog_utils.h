@@ -31,6 +31,10 @@
 #include "../../../common/wb_log.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+/* Tile-atlas geometry for imguiDrawTileIcon() below. tiles.h is a
+ * dependency-free constants header, so it costs the many TUs that include
+ * this one nothing beyond the macros themselves. */
+#include "../../tiles.h"
 
 /* Pulled in early so dialogApplyScaling() below can branch on Deck mode.
  * (Same file also re-includes near s_devicePresets — that's fine, the
@@ -383,11 +387,61 @@ static inline void imguiHandOnHover(void) {
 
 /* Show a one-line tooltip on mouse hover OR gamepad/keyboard focus, so
    controller users (who can't hover) still get it. Call right after the
-   item whose tooltip this is. */
+   item whose tooltip this is.
+
+   One test covers both: while the player is on the stick or the keys, ImGui
+   counts the navigated item as the hovered one, and _ForTooltip picks the
+   delay to match whichever of the two is driving. Asking IsItemFocused() on
+   top of that only ever adds the case nobody wants — a mouse click leaves its
+   target focused, which would pin the tooltip up, trailing the pointer around
+   the window, until something else was clicked. */
 static inline void imguiHelpTooltip(const char *text) {
     if (!text) return;
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) || ImGui::IsItemFocused())
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
         ImGui::SetTooltip("%s", text);
+}
+
+/* The game's tile atlas, owned by the SDL3 renderer. Declared here rather
+ * than including sdl3draw.h, which would pull the whole render/sim surface
+ * into every dialog translation unit. Non-game builds that include this
+ * header never call the helpers below, so the declaration costs them
+ * nothing. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+SDL_Texture *sdl3DrawGetTilesTexture(void);
+#ifdef __cplusplus
+}
+#endif
+
+/* Draws a sprite from the game atlas inline at text height, used to mark a
+ * table column with the map art for the thing it counts. The width follows
+ * the source aspect, so a sprite that is not square — the 3x4 LGM — keeps
+ * its proportions instead of being stretched. Source coords and extents are
+ * in 1x units; the atlas is assembled at gSheetScale, but UVs normalised
+ * against the 1x reference size (TILE_FILE_X/Y) stay correct at any scale. */
+static inline void imguiDrawAtlasIcon(int srcX, int srcY, int srcW, int srcH) {
+    SDL_Texture *tex = sdl3DrawGetTilesTexture();
+    if (!tex || srcW <= 0 || srcH <= 0) return;
+    float h = ImGui::GetTextLineHeight();
+    float w = h * (float)srcW / (float)srcH;
+    ImVec2 uv0((float)srcX / TILE_FILE_X, (float)srcY / TILE_FILE_Y);
+    ImVec2 uv1((float)(srcX + srcW) / TILE_FILE_X,
+               (float)(srcY + srcH) / TILE_FILE_Y);
+    ImGui::Image((ImTextureID)tex, ImVec2(w, h), uv0, uv1);
+}
+
+/* A whole 16x16 map tile — the common case, square at text height. */
+static inline void imguiDrawTileIcon(int tileX, int tileY) {
+    imguiDrawAtlasIcon(tileX, tileY, TILE_SIZE_X, TILE_SIZE_Y);
+}
+
+/* Builds a table header cell whose label is preceded by an inline map
+ * sprite (icon to the left of the text). */
+static inline void imguiDrawIconHeader(int tileX, int tileY, const char *label) {
+    imguiDrawTileIcon(tileX, tileY);
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::TableHeader(label);
 }
 
 /* Register Platform_OpenInShellFn on the current ImGui context so that
@@ -633,6 +687,32 @@ extern int g_currentDevicePreset;
 #ifdef __cplusplus
 }
 #endif
+
+/* ── Per-image texture sampling ─────────────────────────────────────
+ * SDL_SetTextureScaleMode() on a texture is IGNORED for anything drawn
+ * through ImGui::Image: the SDL_Renderer backend overwrites the scale
+ * mode of every texture it binds, every draw command, from its own
+ * per-frame state —
+ *
+ *     SDL_SetTextureScaleMode(tex, bd->CurrentScaleMode);
+ *
+ * (imgui_impl_sdlrenderer3.cpp) — and that state is reset to
+ * SDL_SCALEMODE_LINEAR at the top of every render pass. The supported
+ * way to get point sampling is the backend's standard sampler draw
+ * callbacks, which it publishes in the platform IO.
+ *
+ * Bracket a magnified pixel-art Image with these: tile art blown up
+ * several times over turns to mush under bilinear, and everything drawn
+ * after it (glyphs especially) needs LINEAR back. Both no-op when the
+ * active backend publishes no callbacks. */
+static inline void imguiPushNearestSampling(void) {
+    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerNearest;
+    if (cb) ImGui::GetWindowDrawList()->AddCallback(cb, NULL);
+}
+static inline void imguiPopNearestSampling(void) {
+    ImDrawCallback cb = ImGui::GetPlatformIO().DrawCallback_SetSamplerLinear;
+    if (cb) ImGui::GetWindowDrawList()->AddCallback(cb, NULL);
+}
 
 /* Set dialog window size; only re-center if the size actually changed.
  * If a device preset is active, uses the preset dimensions instead.

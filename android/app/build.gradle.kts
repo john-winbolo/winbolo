@@ -21,7 +21,7 @@ val sentryDsn: String = providers.environmentVariable("SENTRY_DSN").orNull
 // ---------------------------------------------------------------------------
 // Download SDL3 Java sources (SDLActivity etc.) for the Android build
 // ---------------------------------------------------------------------------
-val sdlVersion = "release-3.4.2"
+val sdlVersion = "release-3.4.14"
 val sdlJavaExtractDir = layout.buildDirectory.dir("sdl3-java")
 
 tasks.register("downloadSdlJava") {
