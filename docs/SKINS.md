@@ -20,10 +20,15 @@ and creates it the first time.
 Three other locations are also searched, in this order after the one above:
 Steam Workshop installs, `data/skins/` beside the executable (for skins shipped
 with the game), and `skins/` beside the executable (where WinBolo 1.x users kept
-`.wsf` files). The preferences folder wins, so a skin you install yourself
-shadows a shipped one of the same name. It is also the only location writable on
-every platform — the others sit inside the application, which is read-only on
-macOS, Steam and mobile installs.
+`.wsf` files). The preferences folder is the only location writable on every
+platform — the others sit inside the application, which is read-only on macOS,
+Steam and mobile installs.
+
+The picker tags each skin with where it came from, and a skin you install is a
+separate entry from a shipped one of the same name: both are listed. Within the
+two user locations, the preferences folder wins over `skins/` beside the
+executable for the same name, and within one folder a `mytheme/` directory wins
+over a `mytheme.wsf` beside it.
 
 ## A skin is a folder or a zip
 
@@ -41,6 +46,9 @@ skins/mytheme/              skins/mytheme.wsf   (a zip; .zip works too)
 If everything inside the zip sits under a single top-level folder, that folder is
 stripped — so zipping the `mytheme` directory itself gives a working `.wsf`
 without repacking.
+
+Only the top level and the `sounds/` folder are read. Files in any other
+subfolder are ignored, so `sprites/grass.png` never matches `grass.png`.
 
 ## The smallest possible skin
 
@@ -85,7 +93,8 @@ WorkshopAuthor=
   is the statement.
 - **`InGameRotate`** — see [Rotating skins](#rotating-skins).
 - **`RecommendedFilter`** — which Texture filter setting suits your art:
-  `nearest`, `linear` or `pixelart`. The game only shows it. It appears under
+  `nearest`, `linear` or `pixelart` (`pixel art` and `pixel-art` are accepted
+  too). The game only shows it. It appears under
   your notes in the skin picker, and the entry you named is marked
   "(recommended)" in the Texture filter dropdown. Nothing is applied or
   preselected: the player's own Texture filter setting always wins, whatever
@@ -134,8 +143,10 @@ sprites with separate PNGs.
 ### The background
 
 `background.bmp`, or `screen.bmp` (the 1.x name). This is the panel artwork
-around the play area. The stock one is 515 × 325; larger is fine and looks
-sharper, since it is scaled to fit.
+around the play area. The stock one is 515 × 325 and it is drawn at that size
+times the zoom level. A larger image is scaled to fit without smoothing, so it
+only looks sharper at zoom 2 and above; at zoom 1 it is point-sampled down. The
+Texture filter setting does not apply to the background.
 
 ### Sounds
 
@@ -156,7 +167,8 @@ There are **307** sprites. All are **16 × 16** except the 33 listed here:
 | `shell_03`, `_04`, `_05`, `_11`, `_12`, `_13` | 4 × 3 |
 | `shell_02`, `_06`, `_14` | 4 × 4 |
 
-An image of the wrong size is scaled to fit and a warning is logged.
+An image of the wrong size is scaled to fit without smoothing, and nothing is
+logged about it, so check your sizes against this table yourself.
 
 ### Terrain
 
@@ -278,8 +290,9 @@ density, so a single `skin32.bmp` at 992 × 352 gives you a complete 2× skin.
 A `.svg` is rasterised at whatever size is needed, so one file covers every
 density. `MaxPixelDensity` caps how fine it will be drawn.
 
-SVG is tried before PNG for the same sprite name, so if you ship both, the SVG
-wins.
+At base size SVG is tried before PNG for the same sprite name, so if you ship
+both, the SVG wins. Above base size the order in the previous section applies:
+an exact `@Nx` file, or the nearest larger `@Mx`, wins over the SVG.
 
 ## Rotating skins
 
@@ -349,10 +362,54 @@ zip -r mytheme.wsf mytheme
 Copy the result into the skins folder. Either a folder or a `.wsf` works, so
 packaging is only for sharing.
 
+Do not use Finder's **Compress** on macOS: it adds a `__MACOSX` folder beside
+yours, so the archive no longer has a single top-level folder to strip and none
+of your filenames match. Use the `zip` command above instead.
+
+## Publishing to the Steam Workshop
+
+Under Steam, a **Publish to Workshop...** button appears on the Skin row for a
+skin in your own skins folder that loaded. The built-in art, Workshop skins and
+skins that failed to load cannot be published.
+
+The dialog's title defaults to `Name` and its description to `Notes` from
+`skin.ini`. The preview image is rendered from the skin's own art; you cannot
+supply your own. What is uploaded is a `.wsf`: a folder skin is zipped for you,
+and an existing `.wsf` is rebuilt with the `skin.ini` change below. In either
+case the archive entries are flattened to the top level (plus `sounds/`) and
+lowercased.
+
+After a successful publish the game writes `WorkshopId` and `WorkshopAuthor`
+into your `skin.ini`, so publishing again offers **Update the item this skin
+came from**. That option is preselected only when `WorkshopAuthor` matches the
+account you are signed in with; a copy of someone else's skin defaults to
+**Publish as a new item**.
+
+Subscribed Workshop skins appear in the same picker tagged Workshop. One that
+Steam has not finished downloading is listed greyed and cannot be picked until
+it arrives.
+
 ## Which sprites move smoothly
 
 The **Animation smoothness** setting can position sprites more finely than whole
-game pixels, but only where the game has a finer position to use:
+game pixels. It has three modes:
+
+- **Classic** — whole game pixels, as the game has always drawn. This is the
+  default.
+- **Match pixelation** — motion snaps to the size of one sheet texel on screen,
+  a step between Classic and Smooth.
+- **Smooth** — continuous motion, as fine as the screen allows.
+
+A separate **Smooth shells** checkbox, shown in the Classic and Match
+pixelation modes, moves shells smoothly on their own, since they are small and
+fast and stepping shows on them most. Both settings are the player's; a skin
+cannot set them.
+
+A **Texture filter** setting chooses Nearest, Linear or Pixel art for the tile
+sheet only. Nearest is the default. See `RecommendedFilter` above for how a
+skin can suggest one.
+
+Finer positioning only applies where the game has a finer position to use:
 
 | Moves smoothly | Stays on whole pixels |
 |---|---|
@@ -378,13 +435,11 @@ wrong, the log records what was used. It is at `winbolo.log` in the same
 preferences folder as the `skins` directory.
 
 ```
-tileLoaderBuildSheet: scale=2, sheet=992x352, tile detail=classic,
-  loaded 0 SVG, 305 PNG, 2 BMP fallback sprites;
-  skin=user:mytheme: 0 SVG, 12 PNG, 4 @Nx, 0 sheet sprites
-  from a density 1 sheet, 0 slots filled by rotation
+tileLoaderBuildSheet: scale=2, sheet=992x352, tile detail=classic, loaded 0 SVG, 289 PNG, 2 BMP fallback sprites; skin=user:mytheme: 0 SVG, 12 PNG, 4 @Nx, 0 sheet sprites from a density 1 sheet, 0 slots filled by rotation
 ```
 
-Reading it:
+It is one line in the log. Every sprite is counted exactly once, so the
+built-in counts and the skin counts always add up to 307. Reading it:
 
 - **`skin=none`** — your skin was not found or failed to open. Check it is in the
   right folder and that a `.wsf` is a valid zip.
@@ -399,5 +454,8 @@ Reading it:
 - **`0 slots filled by rotation`** with `InGameRotate=1` — the skin did not supply
   a group's `_00`, or it supplies a whole sheet.
 
-A skin that fails to load leaves the previous one selected and shows an error in
-the settings panel rather than falling back silently.
+A skin that fails to load when you pick it leaves the previous one selected and
+shows an error in the settings panel. At startup it is different: if the saved
+skin cannot be opened (a `.wsf` on an unmounted drive, or a Workshop item still
+downloading) the game uses the built-in art and says so only in the log. Your
+choice is kept, and it applies again as soon as the files are there.
