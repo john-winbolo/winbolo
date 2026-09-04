@@ -606,11 +606,13 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     /* ---- Skin ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SKIN));
     {
-        /* Copied, not aliased: skinSetActive() below rewrites the registry's
-           own copy of the active id. */
+        /* The player's choice, not what loaded, so a skin whose files are
+           not there right now still shows as picked.  Copied, not aliased:
+           skinSetActive() below rewrites the registry's own copy of the
+           requested id. */
         char activeId[SKIN_ID_MAX];
         {
-            const char *a = skinGetActive();
+            const char *a = skinGetRequested();
             SDL_strlcpy(activeId, a != nullptr ? a : "", sizeof(activeId));
         }
 
@@ -638,6 +640,15 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         /* A Workshop download finishing while the picker is open leaves the
            rows stale.  Drained every frame so the flag doesn't sit set. */
         const bool workshopChanged = steam_workshop_consume_installed_event();
+
+        /* The item that just finished downloading may be the one the player
+           picked before it existed locally.  activeId is a local copy, so this
+           does not hand skinSetActive its own buffer. */
+        if (workshopChanged && activeId[0] != '\0' &&
+            skinGetActiveSource() == nullptr && skinSetActive(activeId)) {
+            s_skinLoadFailed = false;
+            ctx->wantSkinReload = true;
+        }
 
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
         if (ImGui::BeginCombo("##skin", preview)) {

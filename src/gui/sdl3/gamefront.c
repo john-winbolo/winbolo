@@ -620,7 +620,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   if (!skinSetActive(gameFrontSkinId) && gameFrontSkinId[0] != '\0') {
     WB_LOG_DEBUG(WB_LOG_CAT_ASSET,
                  "gameFrontStart: skin '%s' did not resolve — using the "
-                 "built-in assets", gameFrontSkinId);
+                 "built-in assets; the choice is kept and applies once the "
+                 "files are there", gameFrontSkinId);
   }
 
   /* Push the saved texture filter to the draw layer. There is no sheet
@@ -3381,8 +3382,9 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr((int)uiUiScaleGet(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "UI Scale", buff);
 
-  /* Skin id, "" for the built-in assets. */
-  prefsSetString("SETTINGS", "Skin", skinGetActive());
+  /* Skin id the player chose, "" for the built-in assets.  The choice, not
+     what loaded: a skin that cannot be read right now stays saved. */
+  prefsSetString("SETTINGS", "Skin", skinGetRequested());
 
   /* Graphics settings.  Same four keys the loader reads. */
   intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));

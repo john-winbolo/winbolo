@@ -66,6 +66,7 @@ struct SkinSource {
 };
 
 static char        s_activeId[SKIN_ID_MAX];
+static char        s_requestedId[SKIN_ID_MAX];
 static SkinSource *s_activeSource;
 static uint64_t    s_nextSerial = 1;   /* 0 is reserved for "no source" */
 
@@ -920,6 +921,17 @@ int skinScan(SkinEntry *out, int max) {
 bool skinSetActive(const char *id) {
     int total;
 
+    /* The choice is recorded whether or not the assets load, so a skin that
+     * is not on disk right now — a Workshop item still downloading, a drive
+     * not mounted — stays the saved preference and comes back when the files
+     * do.  A caller retrying its last request may pass s_requestedId itself,
+     * so only copy when it is not already the destination. */
+    if (!id || id[0] == '\0' || SDL_strcasecmp(id, "default") == 0) {
+        s_requestedId[0] = '\0';
+    } else if (id != s_requestedId) {
+        SDL_strlcpy(s_requestedId, id, sizeof(s_requestedId));
+    }
+
     if (s_activeSource) {
         skinSourceClose(s_activeSource);
         s_activeSource = NULL;
@@ -950,10 +962,12 @@ bool skinSetActive(const char *id) {
     }
 
     if (!s_activeSource) {
-        /* An id from another machine, or an unsubscribed Workshop item:
-         * the built-in assets stand in and the caller carries on. */
+        /* An id from another machine, a Workshop item still downloading, or
+         * one whose files are offline: the built-in assets stand in and the
+         * caller carries on, but the id stays the player's choice. */
         WB_LOG_DEBUG(WB_LOG_CAT_GUI,
-                     "[Skin] '%s' did not resolve; using the built-in assets",
+                     "[Skin] '%s' did not resolve; using the built-in assets, "
+                     "keeping it as the choice",
                      id);
         return false;
     }
@@ -962,6 +976,10 @@ bool skinSetActive(const char *id) {
 
 const char *skinGetActive(void) {
     return s_activeId;
+}
+
+const char *skinGetRequested(void) {
+    return s_requestedId;
 }
 
 SkinSource *skinGetActiveSource(void) {

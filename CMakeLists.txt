@@ -3919,6 +3919,7 @@ set(_unit_test_names
     active_sim_armed_on_lobby_tick
     active_sim_cleared_on_cross_thread_destroy
     skin_source_dir_and_zip
+    skin_active_vs_requested
     skin_density_scan
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to

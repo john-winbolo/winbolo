@@ -29,6 +29,10 @@
 #define FLAT_ZIP    "skin_flat_test.zip"
 #define WRAPPED_ZIP "skin_wrapped_test.zip"
 
+/* An id no skin on disk can carry: skinSetActive scans the machine's real
+ * prefpath and base-path skins folders, which are not assumed to be empty. */
+#define MISSING_ID  "user:__wb_missing_skin__"
+
 /* Every source must agree with the directory fixture's skin.ini. */
 static int checkIni(const SkinInfo *info, const char *label) {
     UT_ASSERT_MSG(strcmp(info->name, "Basic Test Skin") == 0,
@@ -243,5 +247,76 @@ int run_skin_source_dir_and_zip(void) {
 
     remove(FLAT_ZIP);
     remove(WRAPPED_ZIP);
+    return rc;
+}
+
+/* skinGetActive names the skin whose assets are loaded; skinGetRequested
+ * names the one the player picked. They part company on an id that cannot be
+ * resolved right now — a Workshop item still downloading, a .wsf on a drive
+ * that is not mounted — and it is the requested id that is written to
+ * WinBolo.json, so a skin that is momentarily absent is not erased from the
+ * preferences by the next save. */
+static int checkActiveVsRequested(void) {
+    /* Built-in assets: nothing loaded and nothing chosen. */
+    if (!skinSetActive("")) {
+        UT_FAIL("skinSetActive(\"\") returned false");
+    }
+    if (skinGetActive()[0] != '\0') {
+        UT_FAIL("after \"\": skinGetActive() is '%s', want empty",
+                skinGetActive());
+    }
+    if (skinGetRequested()[0] != '\0') {
+        UT_FAIL("after \"\": skinGetRequested() is '%s', want empty",
+                skinGetRequested());
+    }
+    if (skinGetActiveSource() != NULL) {
+        UT_FAIL("after \"\": skinGetActiveSource() is not NULL");
+    }
+
+    /* A skin that is not there: the load fails and the built-in assets stay
+     * loaded, but the id survives as the choice. */
+    if (skinSetActive(MISSING_ID)) {
+        UT_FAIL("skinSetActive(\"%s\") returned true", MISSING_ID);
+    }
+    if (skinGetActive()[0] != '\0') {
+        UT_FAIL("after a failed load: skinGetActive() is '%s', want empty",
+                skinGetActive());
+    }
+    if (skinGetActiveSource() != NULL) {
+        UT_FAIL("after a failed load: skinGetActiveSource() is not NULL");
+    }
+    if (strcmp(skinGetRequested(), MISSING_ID) != 0) {
+        UT_FAIL("after a failed load: skinGetRequested() is '%s', want '%s'",
+                skinGetRequested(), MISSING_ID);
+    }
+
+    /* "default" is the built-in assets by another name, and clears both. */
+    if (!skinSetActive("default")) {
+        UT_FAIL("skinSetActive(\"default\") returned false");
+    }
+    if (skinGetActive()[0] != '\0' || skinGetRequested()[0] != '\0') {
+        UT_FAIL("after \"default\": active '%s', requested '%s', want both "
+                "empty", skinGetActive(), skinGetRequested());
+    }
+
+    /* NULL clears both the same way. Requested is put back first so the
+     * clear is what the assertion is reading. */
+    skinSetActive(MISSING_ID);
+    if (!skinSetActive(NULL)) {
+        UT_FAIL("skinSetActive(NULL) returned false");
+    }
+    if (skinGetActive()[0] != '\0' || skinGetRequested()[0] != '\0') {
+        UT_FAIL("after NULL: active '%s', requested '%s', want both empty",
+                skinGetActive(), skinGetRequested());
+    }
+    return 0;
+}
+
+int run_skin_active_vs_requested(void) {
+    int rc = checkActiveVsRequested();
+
+    /* The registry is global: leave it on the built-in assets for whatever
+     * test runs next. */
+    skinSetActive("");
     return rc;
 }

@@ -510,6 +510,7 @@ static const UnitTestEntry s_tests[] = {
     { "addrparse_bad_port",                      run_addrparse_bad_port                      },
     { "addrparse_empty",                         run_addrparse_empty                         },
     { "skin_source_dir_and_zip",                 run_skin_source_dir_and_zip                 },
+    { "skin_active_vs_requested",                run_skin_active_vs_requested                },
     { "skin_density_scan",                       run_skin_density_scan                       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },

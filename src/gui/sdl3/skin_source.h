@@ -138,19 +138,34 @@ bool        skinSourceZipDirectory(const char *dir, const char *outZip,
 /*********************************************************
  * NAME:          skinSetActive
  * PURPOSE:
- *   Makes the skin with this id current. NULL, "" or
- *   "default" clears to the built-in assets and returns
- *   true. An id that does not resolve also clears, and
- *   returns false.
+ *   Records this id as the player's choice and loads its
+ *   assets. NULL, "" or "default" clears to the built-in
+ *   assets and returns true. An id that does not resolve
+ *   leaves the built-in assets loaded and returns false,
+ *   but is still recorded as the player's choice.
  *********************************************************/
 bool         skinSetActive(const char *id);   /* NULL or "" or "default" = none */
 
 /*********************************************************
  * NAME:          skinGetActive
  * PURPOSE:
- *   Id of the active skin, "" when none is active.
+ *   Id of the skin whose assets are loaded, "" for the
+ *   built-in assets. Non-empty exactly when
+ *   skinGetActiveSource() is non-NULL.
  *********************************************************/
 const char  *skinGetActive(void);             /* "" when none */
+
+/*********************************************************
+ * NAME:          skinGetRequested
+ * PURPOSE:
+ *   The id the player last chose, "" for the built-in
+ *   assets. Unlike skinGetActive it survives a load
+ *   failure, so a Workshop skin that has not finished
+ *   downloading is still the saved preference and comes
+ *   back when the files do. This is what gets written to
+ *   WinBolo.json.
+ *********************************************************/
+const char  *skinGetRequested(void);          /* "" = built-in assets */
 
 /*********************************************************
  * NAME:          skinGetActiveSource
