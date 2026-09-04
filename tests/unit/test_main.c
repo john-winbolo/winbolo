@@ -541,6 +541,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_shadow_round_start_fallback",         run_map_shadow_round_start_fallback         },
     { "loopback_map_cull",                       run_loopback_map_cull                       },
     { "loopback_map_cull_resync",                run_loopback_map_cull_resync                },
+    { "view_ally_loopback",                      run_view_ally_loopback                      },
     { "resync_finalize_corrupt_keeps_gen",       run_resync_finalize_corrupt_keeps_gen       },
     { "resync_finalize_valid_advances_gen",      run_resync_finalize_valid_advances_gen      },
     { "install_compressed_map_rejects_garbage",  run_install_compressed_map_rejects_garbage  },

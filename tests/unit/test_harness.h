@@ -1187,6 +1187,14 @@ int run_map_shadow_round_start_fallback(void);
 int run_loopback_map_cull(void);
 int run_loopback_map_cull_resync(void);
 
+/* Ally view over the loopback transport (test_view_ally_loopback.c): under
+ * viewPolicyKey, with an allied in-process player parked outside every rect
+ * the wire client has and absent from the client's interpolation mask, the
+ * ally key still reaches them and the server then starts sending them; the
+ * same press with that ally in its death wait reaches nobody and leaves the
+ * camera on the tank. */
+int run_view_ally_loopback(void);
+
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a
  * valid blob advances them; installCompressedMap reports failure on garbage. */
