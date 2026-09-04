@@ -102,12 +102,12 @@
 #define STR_DLGKEYSETUP_LAYMINE             235
 #define STR_DLGKEYSETUP_TANKVIEW            236
 #define STR_DLGKEYSETUP_PILLVIEW            237
-#define STR_DLGKEYSETUP_BASEVIEW            1964
-#define STR_DLGKEYSETUP_ALLYVIEW            1965
-#define STR_DLGKEYSETUP_OVERVIEWZOOM        1954
-#define STR_DLGKEYSETUP_OVERVIEWFOLLOW      1966
-#define STR_DLGKEYSETUP_OVERVIEWZOOMIN      1967
-#define STR_DLGKEYSETUP_OVERVIEWZOOMOUT     1968
+#define STR_DLGKEYSETUP_BASEVIEW            2003
+#define STR_DLGKEYSETUP_ALLYVIEW            2004
+#define STR_DLGKEYSETUP_OVERVIEWZOOM        1993
+#define STR_DLGKEYSETUP_OVERVIEWFOLLOW      2005
+#define STR_DLGKEYSETUP_OVERVIEWZOOMIN      2006
+#define STR_DLGKEYSETUP_OVERVIEWZOOMOUT     2007
 #define STR_DLGKEYSETUP_SCROLLUP            238
 #define STR_DLGKEYSETUP_SCROLLDOWN          240
 #define STR_DLGKEYSETUP_SCROLLLEFT          241
@@ -390,8 +390,8 @@
 #define STR_MENU_FILE                       539
 #define STR_MENU_NEW                        540
 #define STR_MENU_SAVE_MAP                   541
-#define STR_MENU_MAP_OVERVIEW               1948
-#define STR_MENU_OVERVIEW_IN_WINDOW         1951
+#define STR_MENU_MAP_OVERVIEW               1987
+#define STR_MENU_OVERVIEW_IN_WINDOW         1990
 #define STR_MENU_EXIT                       542
 #define STR_MENU_EDIT                       543
 #define STR_MENU_FRAME_RATE                 544
@@ -443,9 +443,8 @@
 #define STR_BRAINSETTINGS_TITLE             589
 
 /* Map overview pop-out */
-#define STR_OVERVIEW_FOLLOWING              1949
-#define STR_OVERVIEW_FREE                   1950
-
+#define STR_OVERVIEW_FOLLOWING              1988
+#define STR_OVERVIEW_FREE                   1989
 /* Settings panel additions (pre-game) */
 #define STR_DLGSETTINGS_TUTORIAL            590
 #define STR_DLGSETTINGS_PLAY_TUTORIAL       591
@@ -774,6 +773,47 @@
 #define STR_DLGSKIN_NOTES_LBL               769
 #define STR_DLGSKIN_LOADERR                 770
 
+/* Skin section of the Display & Sound settings tab */
+#define STR_DLGSETTINGS_SKIN                1948
+#define STR_DLGSKIN_DEFAULT                 1949
+#define STR_DLGSKIN_SRC_BUILTIN             1950
+#define STR_DLGSKIN_SRC_USER                1951
+#define STR_DLGSKIN_SRC_WORKSHOP            1952
+#define STR_DLGSKIN_DOWNLOADING             1953
+#define STR_DLGSKIN_OPENFOLDER              1954
+#define STR_DLGSKIN_BROWSE_WORKSHOP         1955
+#define STR_DLGSKIN_PUBLISH                 1956
+#define STR_DLGSKIN_TILEDETAIL              1957
+#define STR_DLGSKIN_TILEDETAIL_CLASSIC      1958
+#define STR_DLGSKIN_TILEDETAIL_MATCHZOOM    1959
+#define STR_DLGSKIN_TILEDETAIL_HIGH         1960
+#define STR_DLGSKIN_ANIMSMOOTH              1961
+#define STR_DLGSKIN_ANIMSMOOTH_CLASSIC      1962
+#define STR_DLGSKIN_ANIMSMOOTH_PIXEL        1963
+#define STR_DLGSKIN_ANIMSMOOTH_SMOOTH       1964
+#define STR_DLGSKIN_SMOOTHSHELLS            1965
+#define STR_DLGSKIN_TEXFILTER               1966
+#define STR_DLGSKIN_TEXFILTER_NEAREST       1967
+#define STR_DLGSKIN_TEXFILTER_LINEAR        1968
+#define STR_DLGSKIN_TEXFILTER_PIXELART      1969
+#define STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP  1970
+#define STR_DLGSKIN_TEXFILTER_TIP           1971
+#define STR_DLGSKIN_PUBLISH_HEADING         1972
+#define STR_DLGSKIN_PUBLISH_NAME            1973
+#define STR_DLGSKIN_PUBLISH_DESC            1974
+#define STR_DLGSKIN_PUBLISH_UPDATE          1975
+#define STR_DLGSKIN_PUBLISH_NEW             1976
+#define STR_DLGSKIN_PUBLISH_GO              1977
+#define STR_DLGSKIN_PUBLISH_WORKING         1978
+#define STR_DLGSKIN_PUBLISH_DONE            1979
+#define STR_DLGSKIN_PUBLISH_FAILED          1980
+#define STR_DLGSKIN_PUBLISH_LEGAL           1981
+#define STR_DLGSKIN_PUBLISH_OPENITEM        1982
+#define STR_DLGSKIN_PUBLISH_NEEDUSER        1983
+#define STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP  1984
+#define STR_DLGSKIN_RECFILTER_LBL           1985
+#define STR_DLGSKIN_RECOMMENDED_TAG         1986
+
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
 #define STR_DLGTRACKER_INVALIDPORT          772
@@ -808,9 +848,8 @@
 
 /* The two faces of the welcome screen's full screen button. Which one is
  * shown is decided from the window's real state, not from the preference. */
-#define STR_DLGWELCOME_SWITCH_CLASSIC       1952
-#define STR_DLGWELCOME_SWITCH_FULLSCREEN    1953
-
+#define STR_DLGWELCOME_SWITCH_CLASSIC       1991
+#define STR_DLGWELCOME_SWITCH_FULLSCREEN    1992
 /* Map Chooser dialog */
 #define STR_MAPCHOOSER_EVERARD              793
 #define STR_MAPCHOOSER_LOADMAP              794
@@ -1520,16 +1559,15 @@
 /* Connectivity badge */
 #define STR_DLGLOBBY_CONN_TEST_TIP          1384
 /* Visibility block (pill / base / allied tank view rules) */
-#define STR_DLGLOBBY_VISIBILITY_LBL         1955
-#define STR_DLGLOBBY_VIEW_PILL              1956
-#define STR_DLGLOBBY_VIEW_BASE              1957
-#define STR_DLGLOBBY_VIEW_ALLY              1958
-#define STR_DLGLOBBY_VIEW_ALWAYS            1959
-#define STR_DLGLOBBY_VIEW_KEY               1960
-#define STR_DLGLOBBY_VIEW_DECAY             1961
-#define STR_DLGLOBBY_VIEW_OFF               1962
-#define STR_DLGLOBBY_VIEW_DECAY_SECS        1963
-
+#define STR_DLGLOBBY_VISIBILITY_LBL         1994
+#define STR_DLGLOBBY_VIEW_PILL              1995
+#define STR_DLGLOBBY_VIEW_BASE              1996
+#define STR_DLGLOBBY_VIEW_ALLY              1997
+#define STR_DLGLOBBY_VIEW_ALWAYS            1998
+#define STR_DLGLOBBY_VIEW_KEY               1999
+#define STR_DLGLOBBY_VIEW_DECAY             2000
+#define STR_DLGLOBBY_VIEW_OFF               2001
+#define STR_DLGLOBBY_VIEW_DECAY_SECS        2002
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468

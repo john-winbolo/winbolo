@@ -13,22 +13,35 @@
  */
 
 /*********************************************************
- * Name:          imgui_skins.h
- * Purpose:       ImGui Skins selection dialog.
+ * Name:          skin_preview.h
+ * Purpose:
+ *   Renders a sample of a skin's art to a PNG, at the size
+ *   a Steam Workshop item's preview image wants.
  *********************************************************/
 
-#ifndef IMGUI_SKINS_H
-#define IMGUI_SKINS_H
+#ifndef SKIN_PREVIEW_H
+#define SKIN_PREVIEW_H
+
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Show the ImGui skin selection dialog as a blocking modal loop. */
-void imguiSkinsShow(void);
+struct SkinSource;
+
+/*********************************************************
+ * NAME:          skinWritePreviewPng
+ * PURPOSE:
+ *   Writes a PNG showing a sample of this skin's art,
+ *   sized for a Steam Workshop item's preview image. A
+ *   NULL skin renders the built-in assets. False on any
+ *   failure; the file is not left half-written.
+ *********************************************************/
+bool skinWritePreviewPng(struct SkinSource *skin, const char *outPath);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* IMGUI_SKINS_H */
+#endif /* SKIN_PREVIEW_H */

@@ -555,6 +555,7 @@ static const UnitTestEntry s_tests[] = {
     { "control_overflow_defers_disconnect",      run_control_overflow_defers_disconnect      },
     { "shells_survive_cleared_lgm_slot",         run_shells_survive_cleared_lgm_slot         },
     { "ping_kick_defers_teardown",               run_ping_kick_defers_teardown               },
+    { "ping_kick_clears_strikes_on_disconnect",  run_ping_kick_clears_strikes_on_disconnect  },
     { "tkexp_lgm_pairing",                       run_tkexp_lgm_pairing                       },
     { "input_gate_taxonomy",                     run_input_gate_taxonomy                     },
     { "key_claims",                              run_key_claims                              },
@@ -566,6 +567,10 @@ static const UnitTestEntry s_tests[] = {
     { "addrparse_port_bounds",                   run_addrparse_port_bounds                   },
     { "addrparse_bad_port",                      run_addrparse_bad_port                      },
     { "addrparse_empty",                         run_addrparse_empty                         },
+    { "skin_source_dir_and_zip",                 run_skin_source_dir_and_zip                 },
+    { "skin_active_vs_requested",                run_skin_active_vs_requested                },
+    { "skin_workshop_id_roundtrip",              run_skin_workshop_id_roundtrip              },
+    { "skin_density_scan",                       run_skin_density_scan                       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

@@ -80,6 +80,8 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
   BYTE y;
   BYTE px;
   BYTE py;
+  WORLD wx; /* World co-ords, for the offsets inside the map square */
+  WORLD wy;
   BYTE count; /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
@@ -91,6 +93,7 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
   y = tankGetScreenMY(tnk);
   px = tankGetScreenPX(tnk);
   py = tankGetScreenPY(tnk);
+  tankGetWorld(tnk, &wx, &wy);
 
   if (x >= leftPos && x <= rightPos && y >= top && y <= bottom) {
     (*value).numTanksScreen = 1;
@@ -98,6 +101,11 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
     (*value).pos[0].my = y - top;
     (*value).pos[0].px = px;
     (*value).pos[0].py = py;
+    /* Same TANK_SUBTRACT shift as tankGetScreenPX/PY, stopping one step
+       earlier so the low 8 bits are kept: wx >> 4 is px. */
+    (*value).pos[0].wx = (BYTE) (WORLD) (wx - TANK_SUBTRACT);
+    (*value).pos[0].wy = (BYTE) (WORLD) (wy - TANK_SUBTRACT);
+    (*value).pos[0].angle = tankGet256Dir(tnk);
     (*value).pos[0].frame = tankGetFrame(tnk);
     (*value).pos[0].playerNum = clientSimGetMyPlayerNum(cs);
     /* Get the tanks names */
@@ -178,12 +186,18 @@ void screenTanksDestroy(screenTanks *value) {
 *  frame      - Frame identifer of the tank
 *  playerNum  - Player Number of this tank
 *  playerName - String to hold the player name
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
+*  angle      - The full 0-255 facing angle
 *********************************************************/
-void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName) {
+void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName, BYTE wx, BYTE wy, BYTE angle) {
   (*value).pos[(*value).numTanksScreen].mx = mx;
   (*value).pos[(*value).numTanksScreen].my = my;
   (*value).pos[(*value).numTanksScreen].px = px;
   (*value).pos[(*value).numTanksScreen].py = py;
+  (*value).pos[(*value).numTanksScreen].wx = wx;
+  (*value).pos[(*value).numTanksScreen].wy = wy;
+  (*value).pos[(*value).numTanksScreen].angle = angle;
   (*value).pos[(*value).numTanksScreen].frame = frame;
   (*value).pos[(*value).numTanksScreen].playerNum = playerNum;
   /* Get the tanks names */
@@ -220,5 +234,30 @@ void screenTanksGetItem(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *
     *frame = (*value).pos[itemNum].frame;
     *playerNum = (*value).pos[itemNum].playerNum;
     strcpy(playerName, (*value).pos[itemNum].playerName);
+  }
+}
+
+/*********************************************************
+*NAME:          screenTanksGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 15/2/98
+*LAST MODIFIED: 15/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square and the
+*  full facing angle for a specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*  angle      - The full 0-255 facing angle
+*********************************************************/
+void screenTanksGetSubPixel(const screenTanks *value, BYTE itemNum, BYTE *wx, BYTE *wy, BYTE *angle) {
+  itemNum--;
+  if (itemNum < (*value).numTanksScreen) {
+    *wx = (*value).pos[itemNum].wx;
+    *wy = (*value).pos[itemNum].wy;
+    *angle = (*value).pos[itemNum].angle;
   }
 }

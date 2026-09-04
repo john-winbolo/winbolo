@@ -452,6 +452,7 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
                                        screenBullets *outSb,
                                        bool *outSelfDrawn) {
     BYTE mx, my, px, py, frame, playerNum;
+    BYTE wx, wy, angle;
     char name[PLAYER_NAME_LEN];
     BYTE count;
     BYTE total;
@@ -471,7 +472,9 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
          * outSelfDrawn stays false. */
         if (isSelf && !selfAlive) continue;
         if (!overviewEntityIsVisible(om, mx, my)) continue;
-        screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name);
+        screenTanksGetSubPixel(allTks, count, &wx, &wy, &angle);
+        screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name,
+                           wx, wy, angle);
         if (isSelf) *outSelfDrawn = true;
     }
 
@@ -479,7 +482,8 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
     for (count = 1; count <= total; count++) {
         screenLgmGetItem(allLgms, count, &mx, &my, &px, &py, &frame);
         if (!overviewEntityIsVisible(om, mx, my)) continue;
-        screenLgmAddItem(outLgms, mx, my, px, py, frame);
+        screenLgmGetSubPixel(allLgms, count, &wx, &wy);
+        screenLgmAddItem(outLgms, mx, my, px, py, frame, wx, wy);
     }
 
     /* Shells, shell explosions and tank explosions share one list and one
@@ -489,7 +493,8 @@ static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
     for (bullet = 1; bullet <= bulletTotal; bullet++) {
         screenBulletsGetItem(allSb, bullet, &mx, &my, &px, &py, &frame);
         if (!overviewEntityIsVisible(om, mx, my)) continue;
-        screenBulletsAddItem(outSb, mx, my, px, py, frame);
+        screenBulletsGetSubPixel(allSb, bullet, &wx, &wy);
+        screenBulletsAddItem(outSb, mx, my, px, py, frame, wx, wy);
     }
 }
 
@@ -777,8 +782,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
     if (om != NULL && tiles != NULL) {
         if (sheetScale < 1) sheetScale = 1;
         /* The ImGui SDL3 backend sets the sampler per draw, so the host's
-         * one-off NEAREST at build time does not survive to here. */
-        SDL_SetTextureScaleMode(tiles, SDL_SCALEMODE_NEAREST);
+         * one-off setting at build time does not survive to here. Re-read the
+         * player's texture filter rather than forcing NEAREST: the sheet is
+         * the host's, and leaving it on NEAREST would hold the classic view
+         * to that filter too. */
+        SDL_SetTextureScaleMode(
+            tiles, sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
 
         /* How long since the last frame, taken whether or not a scroll is
          * running: a scroll started after the view sat idle would otherwise

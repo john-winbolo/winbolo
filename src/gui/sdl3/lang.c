@@ -91,12 +91,12 @@ static const LangEntry langTable[] = {
     {235,  "Lay Mine"},
     {236,  "Tank View"},
     {237,  "Pill View"},
-    {1964, "Base View"},
-    {1965, "Allied Tank View"},
-    {1954, "Map Zoom (hold)"},
-    {1966, "Map Follow (toggle)"},
-    {1967, "Map Zoom In"},
-    {1968, "Map Zoom Out"},
+    {2003, "Base View"},
+    {2004, "Allied Tank View"},
+    {1993, "Map Zoom (hold)"},
+    {2005, "Map Follow (toggle)"},
+    {2006, "Map Zoom In"},
+    {2007, "Map Zoom Out"},
     {238,  "Up"},
     {240,  "Down"},
     {241,  "Left"},
@@ -294,8 +294,8 @@ static const LangEntry langTable[] = {
     {539,  "File"},
     {540,  "New"},
     {541,  "Save Map"},
-    {1948, "Map Overview"},
-    {1951, "Full Screen"},
+    {1987, "Map Overview"},
+    {1990, "Full Screen"},
     {542,  "Exit"},
     {543,  "Edit"},
     {544,  "Frame Rate"},
@@ -346,8 +346,8 @@ static const LangEntry langTable[] = {
     {589,  "Brain Settings"},
 
     /* Map overview pop-out */
-    {1949, "following"},
-    {1950, "free"},
+    {1988, "following"},
+    {1989, "free"},
 
     {590,  "Tutorial"},
     {591,  "Play Tutorial"},
@@ -1245,8 +1245,8 @@ static const LangEntry langTable[] = {
 
     /* Welcome screen full screen button. The label names where the button
      * takes you, so it is picked from the window's current state. */
-    {1952, "Switch to Classic"},
-    {1953, "Switch to Full Screen"},
+    {1991, "Switch to Classic"},
+    {1992, "Switch to Full Screen"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
@@ -1397,15 +1397,15 @@ static const LangEntry langTable[] = {
     {1383, "Internet"},
     {1384, "Test in progress"},
     /* Lobby visibility block */
-    {1955, "Visibility"},
-    {1956, "Pill View"},
-    {1957, "Base View"},
-    {1958, "Allied Tank View"},
-    {1959, "Always"},
-    {1960, "Key"},
-    {1961, "Decay"},
-    {1962, "Off"},
-    {1963, "secs"},
+    {1994, "Visibility"},
+    {1995, "Pill View"},
+    {1996, "Base View"},
+    {1997, "Allied Tank View"},
+    {1998, "Always"},
+    {1999, "Key"},
+    {2000, "Decay"},
+    {2001, "Off"},
+    {2002, "secs"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
@@ -1864,6 +1864,47 @@ static const LangEntry langTable[] = {
 
     /* Log viewer Options item: present the round on a game-relative clock. */
     {1921, "Hide Lobby"},
+
+    /* Skin section of the Display & Sound settings tab */
+    {1948, "Skin"},
+    {1949, "Default"},
+    {1950, "Built-in"},
+    {1951, "User"},
+    {1952, "Workshop"},
+    {1953, "Downloading..."},
+    {1954, "Open skins folder"},
+    {1955, "Browse Workshop"},
+    {1956, "Publish to Workshop..."},
+    {1957, "Tile detail"},
+    {1958, "Classic"},
+    {1959, "Match to zoom"},
+    {1960, "High detail"},
+    {1961, "Animation smoothness"},
+    {1962, "Classic"},
+    {1963, "Match pixelation"},
+    {1964, "Smooth"},
+    {1965, "Smooth shells"},
+    {1966, "Texture filter"},
+    {1967, "Nearest"},
+    {1968, "Linear"},
+    {1969, "Pixel art"},
+    {1970, "This skin supplies its art at one size only, so all three settings build the same tiles."},
+    {1971, "Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change."},
+    {1972, "Publish this skin to the Steam Workshop"},
+    {1973, "Title"},
+    {1974, "Description"},
+    {1975, "Update the item this skin came from"},
+    {1976, "Publish as a new item"},
+    {1977, "Publish"},
+    {1978, "Uploading..."},
+    {1979, "Published to the Workshop."},
+    {1980, "The publish failed. Check that Steam is running, then try again."},
+    {1981, "Accept the Workshop legal agreement on the item's page, or nobody else can see the item."},
+    {1982, "Open item page"},
+    {1983, "Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be."},
+    {1984, "This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it."},
+    {1985, "Recommended filter:"},
+    {1986, "(recommended)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

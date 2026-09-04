@@ -2893,7 +2893,8 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
       spy = (BYTE)conv;
       sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
       screenBulletsAddItem(sb, (BYTE)(sx >> TANK_SHIFT_MAPSIZE),
-                           (BYTE)(sy >> TANK_SHIFT_MAPSIZE), spx, spy, sframe);
+                           (BYTE)(sy >> TANK_SHIFT_MAPSIZE), spx, spy, sframe,
+                           (BYTE)sx, (BYTE)sy);
     }
 
     for (si = 0; si < clientSimGetPredictedShellCount(cs); si++) {
@@ -2916,7 +2917,7 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
       pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
       screenBulletsAddItem(sb, (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE),
                            (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE), ppx, ppy,
-                           pframe);
+                           pframe, (BYTE)ps->x, (BYTE)ps->y);
     }
 
     explosionsCalcScreenBullets(&gs->expl, sb, 0, MAP_ARRAY_LAST, 0,

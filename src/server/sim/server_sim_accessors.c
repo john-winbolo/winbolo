@@ -418,6 +418,7 @@ bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
     if (*t == NULL) return false;
     tankGetWorld(t, &out->world_x, &out->world_y);
     out->dir     = tankGetDir(t);
+    out->angle   = tankGetAngle(t);
     out->on_boat = tankIsOnBoat(t);
     out->alive   = (tankGetDeathWait(t) == 0);
     return true;

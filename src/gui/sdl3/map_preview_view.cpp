@@ -46,6 +46,8 @@ extern "C" {
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
+/* From sdl3draw.h */
+extern unsigned int sdl3DrawGetTilesGeneration(void);
 }
 
 /* Zoom steps. The four sub-0.5 entries put the widget into "minimap
@@ -122,8 +124,10 @@ struct MapPreviewView {
     bool        dataLoaded;
 
     /* Tile atlas — shared per-widget; rebuilt at the requested tile
-     * size on first render. */
+     * size on first render, and again whenever a skin change bumps the
+     * atlas generation under us. */
     SDL_Texture *tilesTex;
+    unsigned int tilesGeneration;
 
     /* Offscreen render target. Sized at RenderOffscreen time to match
      * the requested viewport (oversampled when zoom < 1 so the
@@ -780,6 +784,22 @@ static void viewFreeMapData(MapPreviewView *v) {
     v->autoFitDone = false;
 }
 
+/* Release the baked atlas and its downscale cache so viewEnsureMapAtlas
+ * bakes them again. Unlike viewFreeMapData this keeps the parsed map, the
+ * camera and the auto-fit, so a caller that only wants new art does not
+ * pay for a reparse or lose the user's pan/zoom. */
+static void viewDropMapAtlas(MapPreviewView *v) {
+    if (v->mapAtlas) { SDL_DestroyTexture(v->mapAtlas); v->mapAtlas = NULL; }
+    v->mapAtlasTiles  = 0;
+    v->mapAtlasTilePx = 0;
+    if (v->mapAtlasScaled) {
+        SDL_DestroyTexture(v->mapAtlasScaled);
+        v->mapAtlasScaled = NULL;
+    }
+    v->mapAtlasScaledEdge = 0;
+    v->mapAtlasScaledZoom = 0.0f;
+}
+
 /* Build the per-view map atlas. Called once after the map parses
  * (and reset whenever Load* invalidates v->preview). All terrain
  * tiles + mine overlay are baked in; start positions stay as
@@ -947,17 +967,34 @@ static void viewAutoFitZoom(MapPreviewView *v, int viewW, int viewH) {
 }
 
 static void viewEnsureParsed(MapPreviewView *v, SDL_Renderer *renderer) {
-    if (v->dataLoaded) return;
     if (!v->compressedData && !v->filePath) return;
 
-    if (!v->tilesTex) {
+    /* Ahead of the dataLoaded early-out: a skin change rebuilds the tile
+     * atlas in place, and the widget can be on screen while it happens (the
+     * lobby preview sits behind the settings dialog). Whether our sheet is
+     * current has nothing to do with whether the map parsed, so check it
+     * every frame — a pointer and an int compare when nothing has moved. */
+    unsigned int gen = sdl3DrawGetTilesGeneration();
+    if (!v->tilesTex || v->tilesGeneration != gen) {
         SDL_Surface *sheet = tileLoaderBuildSheet(16);
         if (sheet) {
+            /* Only the generation path has an old texture to release, and
+             * it is still live: the renderer has not changed under us. */
+            bool hadSheet = (v->tilesTex != NULL);
+            if (v->tilesTex) SDL_DestroyTexture(v->tilesTex);
             v->tilesTex = SDL_CreateTextureFromSurface(renderer, sheet);
             SDL_SetTextureScaleMode(v->tilesTex, SDL_SCALEMODE_NEAREST);
             SDL_DestroySurface(sheet);
+            v->tilesGeneration = gen;
+            /* The terrain is baked into the map atlas from the sheet that
+             * was live when it was built, so a new sheet has to rebake it.
+             * Without this only the start-position overlays, which blit
+             * from tilesTex every frame, would show the new art. */
+            if (hadSheet) viewDropMapAtlas(v);
         }
     }
+
+    if (v->dataLoaded) return;
 
     if (v->compressedData) {
         v->preview = clientMapPreviewLoadFromBuffer(v->compressedData,

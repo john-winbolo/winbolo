@@ -106,7 +106,6 @@ typedef struct {
 typedef enum {
   openStart,
   openLang,   /* Language selection dialog */
-  openSkins,   /* Skins selection dialog */
   openWelcome,
   openTutorial,
   openSetup,

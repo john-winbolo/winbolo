@@ -54,6 +54,7 @@ extern "C" {
 /* Pure geometry — no SDL, no ImGui — so both the drawing side and the ImGui
  * side can work from the same rectangles. */
 #include "overview_hud_layout.h"
+#include "gfx_settings.h"    /* GfxTextureFilter */
 
 /* Portable RECT when not compiling on Windows */
 #ifndef _WIN32
@@ -95,6 +96,12 @@ bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
    its hit-testing on the same rectangles the blit used. False when the mode
    is off or no HUD was laid out. */
 bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out);
+
+/* Counter bumped every time the tile atlas is rebuilt. A caller that
+ * builds its own sheet from tileLoaderBuildSheet can hold the value it
+ * last saw and rebuild when it no longer matches — that is how a skin
+ * change reaches an atlas the renderer does not own. */
+unsigned int sdl3DrawGetTilesGeneration(void);
 
 /* TRUE if the caller is on the thread that created the renderer. The SDL
  * renderer / Metal command queue must only be touched from that thread, so
@@ -164,6 +171,36 @@ void sdl3DrawReconfigureZoom(int explicitZoom);
 *  not touch the renderer, window, fonts, or zoom.
 *********************************************************/
 void sdl3DrawReloadTiles(void);
+
+/*********************************************************
+*NAME:          sdl3DrawReloadBackground
+*PURPOSE:
+*  Drops the cached game background for a skin change so
+*  the next frame reads it again.  Destroys and clears the
+*  texture only; the draw sites reload it lazily.
+*********************************************************/
+void sdl3DrawReloadBackground(void);
+
+/*********************************************************
+*NAME:          sdl3DrawScaleModeForFilter
+*PURPOSE:
+*  Turns the player's texture filter setting into the SDL
+*  scale mode that matches it.  Anything unrecognised maps
+*  to nearest.  Lives here because gfx_settings.h has no
+*  SDL of its own.
+*********************************************************/
+SDL_ScaleMode sdl3DrawScaleModeForFilter(GfxTextureFilter filter);
+
+/*********************************************************
+*NAME:          sdl3DrawSetTilesScaleMode
+*PURPOSE:
+*  Sets how the tile sheet is sampled.  Applies to the
+*  current sheet when there is one, and is kept for every
+*  sheet built afterwards, so calling it before the first
+*  build is fine.  The status bar draws from the same
+*  texture object and follows without a call of its own.
+*********************************************************/
+void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode);
 
 /*********************************************************
 *NAME:          sdl3DrawSetReconfigureGuard

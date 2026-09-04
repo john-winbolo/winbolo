@@ -34,7 +34,6 @@ typedef struct {
   int  (*udpSetupShow)(void);
   int  (*gameBrowserShow)(const char *title, int useTracker);
   void (*setNameShow)(struct ClientSim *cs, bool inGame);
-  void (*skinsShow)(void);
   int  (*trackerSetupShow)(void);
   void (*messageBox)(const char *msg, const char *title);
   int  (*lobbyShow)(struct ClientSim *cs);

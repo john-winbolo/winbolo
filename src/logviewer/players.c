@@ -581,7 +581,12 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
             }
         } */
         
-        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName); 
+        /* The log only carries a 4 bit pixel offset and a 16 step
+           facing, so the sub-square offsets and the angle are those
+           values scaled back up to world units and to 0-255. */
+        lv_screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, plrs.item[count].team, plrs.item[count].frame, plrs.item[count].onBoat, playerName,
+                              (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
+                              (BYTE) (plrs.item[count].frame << 4)); 
       } else if (count == 0) {
 /*        sprintf(playerName, "NIF: mx=%d, my=%d, l=%d, r=%d, t=%d, b=%d", mx, my, leftPos, rightPos, top, bottom);
             if (strcmp(playerName, testP) != 0) {
@@ -628,7 +633,7 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
         wy = plrs.item[count].lgmMapY << TANK_SHIFT_MAPSIZE;
         wy += plrs.item[count].lgmPixelY << TANK_SHIFT_RIGHT2;
         
-        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame); 
+        lv_screenLgmAddItem(value,(BYTE) (plrs.item[count].lgmMapX - leftPos), (BYTE) (plrs.item[count].lgmMapY - top), plrs.item[count].lgmPixelX, plrs.item[count].lgmPixelY, plrs.item[count].lgmFrame, (BYTE) wx, (BYTE) wy); 
       }
     }
   }

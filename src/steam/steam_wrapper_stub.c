@@ -32,6 +32,8 @@ bool steam_get_persona_name(char *out, size_t outSize) {
   return false;
 }
 
+uint64_t steam_get_steam_id(void) { return 0; }
+
 void steam_cancel_auth_ticket(void) {}
 
 void steam_increment_stat(const char *name, int amount) {
@@ -60,6 +62,56 @@ bool steam_show_floating_keyboard(int x, int y, int w, int h) {
 }
 
 void steam_dismiss_floating_keyboard(void) {}
+
+/* -------- Steam Workshop (UGC) stubs -------- */
+
+bool steam_workshop_available(void)        { return false; }
+int  steam_workshop_subscribed_count(void) { return 0; }
+
+bool steam_workshop_item(int idx, uint64_t *id, char *folder,
+                         size_t folderSize) {
+  (void)idx;
+  if (id) *id = 0;
+  if (folder && folderSize) folder[0] = '\0';
+  return false;
+}
+
+void steam_workshop_request_download(uint64_t id) {
+  (void)id;
+}
+
+bool steam_workshop_consume_installed_event(void) { return false; }
+
+void steam_workshop_open_browse_page(void) {}
+
+bool steam_workshop_publish_begin(const char *contentFolder, const char *title,
+                                  const char *description, const char *previewPng,
+                                  uint64_t existingId) {
+  (void)contentFolder;
+  (void)title;
+  (void)description;
+  (void)previewPng;
+  (void)existingId;
+  return false;
+}
+
+/* -1 (failed) rather than 0 (in progress): without a Steam client no publish
+   can ever complete, and answering 0 would leave a caller waiting on one. */
+int steam_workshop_publish_poll(uint64_t *outId, bool *needsLegalAgreement) {
+  if (outId) *outId = 0;
+  if (needsLegalAgreement) *needsLegalAgreement = false;
+  return -1;
+}
+
+int steam_workshop_publish_progress(uint64_t *bytesDone, uint64_t *bytesTotal) {
+  if (bytesDone) *bytesDone = 0;
+  if (bytesTotal) *bytesTotal = 0;
+  return 0;
+}
+
+void steam_workshop_open_item_page(uint64_t id) {
+  (void)id;
+}
 
 /* -------- Steam Input stubs -------- */
 

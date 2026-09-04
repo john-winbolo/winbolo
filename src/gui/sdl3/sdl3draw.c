@@ -59,6 +59,7 @@
 #include "../ui_mode.h"
 #include "../../steam/steam_wrapper.h"
 #include "tileloader.h"
+#include "skin_source.h"
 #include "sdl_bmp.h"
 #include "glyphs.h"
 #include "global.h"
@@ -135,6 +136,18 @@ void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
+/* Bumped by sdl3DrawReloadTiles, the skin / tile-detail reload, so a caller
+   holding its own atlas (bg_game, the lobby map preview) can tell that copy
+   is stale. Not bumped by the zoom rebuild: that changes only this
+   texture's scale, and the other atlases are built at their own sizes from
+   art that has not changed. */
+static unsigned int  gTilesGeneration = 0;
+
+/* How the tile sheet is sampled.  Held here rather than read from
+   gfx_settings at each build so a sheet built before the settings are
+   loaded still picks the choice up, and so the default matches what the
+   game did before the setting existed. */
+static SDL_ScaleMode gTilesScaleMode = SDL_SCALEMODE_NEAREST;
 
 /* Phase 4 render-target textures.
    Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -416,29 +429,105 @@ static bool sdl3LoadTiles(void) {
     return FALSE;
   }
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
-  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
+  SDL_SetTextureScaleMode(gTilesTex, gTilesScaleMode);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
   return TRUE;
 }
 
+unsigned int sdl3DrawGetTilesGeneration(void) {
+  return gTilesGeneration;
+}
+
+SDL_ScaleMode sdl3DrawScaleModeForFilter(GfxTextureFilter filter) {
+  switch (filter) {
+    case GFX_FILTER_LINEAR:   return SDL_SCALEMODE_LINEAR;
+    case GFX_FILTER_PIXELART: return SDL_SCALEMODE_PIXELART;
+    case GFX_FILTER_NEAREST:
+    default:                  return SDL_SCALEMODE_NEAREST;
+  }
+}
+
+void sdl3DrawSetTilesScaleMode(SDL_ScaleMode mode) {
+  gTilesScaleMode = mode;
+  if (gTilesTex != NULL) {
+    SDL_SetTextureScaleMode(gTilesTex, mode);
+  }
+}
+
 /* Rebuilds only the tile atlas in place (for a skin change) by re-reading
  * the skin assets from disk.  Does not touch the renderer, window, fonts,
- * or zoom. */
+ * or zoom.  Bumps the generation whether or not the build succeeds: the art
+ * has changed either way, and a consumer that rebuilds against it will see
+ * the same failure this path did. */
 void sdl3DrawReloadTiles(void) {
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
   sdl3DrawStatusSetAtlas(NULL, 1);
+  gTilesGeneration++;
   sdl3LoadTiles();
 }
 
-/* Loads data/background.bmp as gBackgroundTex. */
+/* Drops the cached background (for a skin change) so the next frame reads it
+ * again.  Destroys and clears only: the three draw sites call
+ * sdl3LoadBackground() themselves and each is behind !tabletMode, so leaving
+ * the load to them keeps tablet mode from building a texture it never draws,
+ * and makes no assumption about which thread the caller is on or where in the
+ * frame it calls from. */
+void sdl3DrawReloadBackground(void) {
+  if (gBackgroundTex) {
+    SDL_DestroyTexture(gBackgroundTex);
+    gBackgroundTex = NULL;
+  }
+}
+
+/* Reads one BMP by name out of a skin and turns it into a texture.  NULL
+ * when the skin carries no such file or the bytes do not decode. */
+static SDL_Texture *sdl3LoadSkinBmpTexture(SkinSource *skin, const char *name) {
+  void        *buf = NULL;
+  size_t       len = 0;
+  SDL_Texture *tex = NULL;
+
+  if (!skinSourceRead(skin, name, &buf, &len)) {
+    return NULL;
+  }
+  SDL_IOStream *io = SDL_IOFromMem(buf, len);
+  if (io != NULL) {
+    /* closeio closes the stream, not the bytes behind it. */
+    tex = sdlLoadBmpStreamAsTexture(gRenderer, io, true, false);
+  }
+  SDL_free(buf);
+  return tex;
+}
+
+/* Loads the game background as gBackgroundTex: from the active skin when it
+ * carries one, otherwise from data/background.bmp beside the
+ * executable. */
 static bool sdl3LoadBackground(void) {
   if (gBackgroundTex != NULL) {
     return TRUE;
   }
 
-  gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, "data/background.bmp", false);
+  SkinSource *skin = skinGetActiveSource();
+  if (skin != NULL) {
+    /* background.bmp is ours; screen.bmp is what 1.x skins call it. */
+    static const char *names[] = { "background.bmp", "screen.bmp" };
+    for (int i = 0;
+         i < (int)(sizeof(names) / sizeof(names[0])) && gBackgroundTex == NULL;
+         i++) {
+      gBackgroundTex = sdl3LoadSkinBmpTexture(skin, names[i]);
+    }
+  }
+
   if (gBackgroundTex == NULL) {
-    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3DrawBackground: could not load background.bmp: %s", SDL_GetError());
+    /* Use SDL_GetBasePath() so the file is found regardless of CWD. */
+    const char *basePath = SDL_GetBasePath();
+    if (!basePath) basePath = "";
+    char pathBuf[512];
+    SDL_snprintf(pathBuf, sizeof(pathBuf), "%sdata/background.bmp", basePath);
+    gBackgroundTex = sdlLoadBmpAsTexture(gRenderer, pathBuf, false);
+  }
+
+  if (gBackgroundTex == NULL) {
+    WB_LOG_ERROR(WB_LOG_CAT_ASSET, "sdl3DrawBackground: could not load a background: %s", SDL_GetError());
     return FALSE;
   }
   SDL_SetTextureScaleMode(gBackgroundTex, SDL_SCALEMODE_NEAREST);

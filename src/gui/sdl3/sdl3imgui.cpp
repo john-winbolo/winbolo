@@ -369,6 +369,10 @@ static bool s_showSettings       = false;
    rebuilds the font atlas + style at a safe point (between Present and the
    next NewFrame) rather than mid-frame. */
 static bool s_pendingUiScaleRebuild = false;
+/* Set when the Settings Skin combo changes; the main render loop reloads the
+   tile sheet and sound set at the same safe point, since gameFrontReloadSkins
+   destroys and rebuilds the tile texture. */
+static bool s_pendingSkinReload = false;
 static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
@@ -494,6 +498,10 @@ static OverviewView *s_overviewView          = nullptr;
 static SDL_Texture  *s_overviewTiles         = nullptr;
 static SDL_Renderer *s_overviewTilesRenderer = nullptr;
 static int           s_overviewTilesScale    = 0;
+/* The tile-atlas build this sheet came from. A skin change rebuilds the
+   atlas without changing the renderer or the scale, so those two alone
+   would keep the pop-out on the old art. */
+static unsigned int  s_overviewTilesGen      = 0;
 /* The gunsight sprite, on the pop-out's renderer for the same reason. */
 static SDL_Texture  *s_overviewCrosshair         = nullptr;
 static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
@@ -516,9 +524,11 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
 
     int want = sdl3DrawGetSheetScale();
     if (want < 1) want = 1;
+    unsigned int gen = sdl3DrawGetTilesGeneration();
     /* Records the attempt, not just the result: a build that failed must not
        be retried — and the SVGs re-rasterized — on every frame after. */
-    if (s_overviewTilesRenderer == r && s_overviewTilesScale == want) {
+    if (s_overviewTilesRenderer == r && s_overviewTilesScale == want &&
+        s_overviewTilesGen == gen) {
         return s_overviewTiles;
     }
 
@@ -528,6 +538,7 @@ static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
     }
     s_overviewTilesRenderer = r;
     s_overviewTilesScale    = want;
+    s_overviewTilesGen      = gen;
 
     SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * want);
     if (!sheet) {
@@ -3182,6 +3193,7 @@ static void renderSettingsPanel(ClientSim *cs) {
        the existing end-of-frame consumers already act on. */
     if (ctx.pendingZoom != 255)  s_pendingZoom = ctx.pendingZoom;
     if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
+    if (ctx.wantSkinReload)      s_pendingSkinReload = true;
     if (ctx.wantKeySetup)        sdl3ImguiShowKeySetup();
     if (ctx.pendingFullScreen >= 0) s_pendingFullScreen = ctx.pendingFullScreen;
 
@@ -4945,6 +4957,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (s_pendingUiScaleRebuild) {
         s_pendingUiScaleRebuild = false;
         applyMainContextUiScale();
+    }
+
+    /* Same window for a skin change — the previous frame's draw data, which
+       can reference the old tile texture, has already been presented. */
+    if (s_pendingSkinReload) {
+        s_pendingSkinReload = false;
+        gameFrontReloadSkins();
     }
 
     /* Build the ImGui frame */
