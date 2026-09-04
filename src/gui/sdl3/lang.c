@@ -1837,49 +1837,90 @@ static const LangEntry langTable[] = {
     /* Log viewer Options item: present the round on a game-relative clock. */
     {1921, "Hide Lobby"},
 
+    /* Skin section of the Display & Sound settings tab */
+    {1948, "Skin"},
+    {1949, "Default"},
+    {1950, "Built-in"},
+    {1951, "User"},
+    {1952, "Workshop"},
+    {1953, "Downloading..."},
+    {1954, "Open skins folder"},
+    {1955, "Browse Workshop"},
+    {1956, "Publish to Workshop..."},
+    {1957, "Tile detail"},
+    {1958, "Classic"},
+    {1959, "Match to zoom"},
+    {1960, "High detail"},
+    {1961, "Animation smoothness"},
+    {1962, "Classic"},
+    {1963, "Match pixelation"},
+    {1964, "Smooth"},
+    {1965, "Smooth shells"},
+    {1966, "Texture filter"},
+    {1967, "Nearest"},
+    {1968, "Linear"},
+    {1969, "Pixel art"},
+    {1970, "This skin supplies its art at one size only, so all three settings build the same tiles."},
+    {1971, "Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change."},
+    {1972, "Publish this skin to the Steam Workshop"},
+    {1973, "Title"},
+    {1974, "Description"},
+    {1975, "Update the item this skin came from"},
+    {1976, "Publish as a new item"},
+    {1977, "Publish"},
+    {1978, "Uploading..."},
+    {1979, "Published to the Workshop."},
+    {1980, "The publish failed. Check that Steam is running, then try again."},
+    {1981, "Accept the Workshop legal agreement on the item's page, or nobody else can see the item."},
+    {1982, "Open item page"},
+    {1983, "Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be."},
+    {1984, "This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it."},
+    {1985, "Recommended filter:"},
+    {1986, "(recommended)"},
+
     /* Voice section of the Display/Sound settings tab */
-    {1948, "Voice"},
-    {1949, "Test microphone"},
-    {1950, "Mic gain"},
-    {1951, "Input level"},
-    {1953, "Enable voice"},
-    {1954, "Mode"},
-    {1955, "Off"},
-    {1956, "Push to talk"},
-    {1957, "Open mic"},
-    {1958, "Push-to-talk key"},
-    {1959, "Transmitting"},
-    {1960, "Not transmitting"},
-    {1961, "Voice volume"},
+    {1987, "Voice"},
+    {1988, "Test microphone"},
+    {1989, "Mic gain"},
+    {1990, "Input level"},
+    {1991, "Enable voice"},
+    {1992, "Mode"},
+    {1993, "Off"},
+    {1994, "Push to talk"},
+    {1995, "Open mic"},
+    {1996, "Push-to-talk key"},
+    {1997, "Transmitting"},
+    {1998, "Not transmitting"},
+    {1999, "Voice volume"},
 
     /* Key setup — push to talk binding */
-    {1962, "Push to talk"},
+    {2000, "Push to talk"},
 
     /* Players panel — microphone state icon */
-    {1963, "Talking — click to mute"},
-    {1964, "Has a microphone — click to mute"},
-    {1965, "Their microphone is off — click to mute"},
-    {1966, "No microphone — click to mute"},
-    {1967, "Muted by you — click to unmute"},
-    {1968, "Your microphone"},
-    {1969, "You have no microphone"},
-    {1970, "Your microphone is off"},
+    {2001, "Talking — click to mute"},
+    {2002, "Has a microphone — click to mute"},
+    {2003, "Their microphone is off — click to mute"},
+    {2004, "No microphone — click to mute"},
+    {2005, "Muted by you — click to unmute"},
+    {2006, "Your microphone"},
+    {2007, "You have no microphone"},
+    {2008, "Your microphone is off"},
 
     /* Voice settings — tank-label microphone icons */
-    {1971, "Show microphone icons over tanks"},
+    {2009, "Show microphone icons over tanks"},
 
     /* Voice settings — acoustic echo cancellation */
-    {1972, "Echo cancellation"},
+    {2010, "Echo cancellation"},
 
     /* Voice settings — microphone test progress */
-    {1973, "Recording..."},
-    {1974, "Playing back..."},
+    {2011, "Recording..."},
+    {2012, "Playing back..."},
 
     /* Voice settings — echo canceller could not be created */
-    {1975, "Unavailable on this system"},
+    {2013, "Unavailable on this system"},
 
     /* Voice settings — the platform cancels echo itself, so Speex does not */
-    {1976, "Handled by the system"},
+    {2014, "Handled by the system"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

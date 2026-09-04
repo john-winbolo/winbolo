@@ -520,6 +520,10 @@ static const UnitTestEntry s_tests[] = {
     { "voice_flood_cap_enforced",                run_voice_flood_cap_enforced                },
     { "voice_talker_select_ranks_recent",        run_voice_talker_select_ranks_recent        },
     { "voice_talker_select_bounds",              run_voice_talker_select_bounds              },
+    { "skin_source_dir_and_zip",                 run_skin_source_dir_and_zip                 },
+    { "skin_active_vs_requested",                run_skin_active_vs_requested                },
+    { "skin_workshop_id_roundtrip",              run_skin_workshop_id_roundtrip              },
+    { "skin_density_scan",                       run_skin_density_scan                       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

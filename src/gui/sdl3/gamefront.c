@@ -75,6 +75,8 @@
 #include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
+#include "skin_source.h"
+#include "gfx_settings.h"
 
 #include "everard_map.h"
 #include "lobby_bot_pools.h"
@@ -266,6 +268,11 @@ static bool gameFrontShowTutorialButton = TRUE;
  * string means the user has not picked one yet — Phase 5 startup runs
  * langAutoDetect() in that case. */
 static char gameFrontLanguageCode[32] = "";
+
+/* Persisted skin id ("user:foo", "builtin:bar"). Read by
+ * gameFrontGetPrefs and applied by gameFrontSetup before the first tile
+ * sheet is built. Empty string means the built-in assets. */
+static char gameFrontSkinId[SKIN_ID_MAX] = "";
 
 /* One-shot flag set by the Settings dialog's "Play Tutorial" button.
  * Consumed by the openSettings handler in gameFrontDialogs() so that
@@ -637,6 +644,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
 
+  /* Make the saved skin current before anything builds a tile sheet or
+   * loads the background. An id that no longer resolves leaves the
+   * built-in assets active. */
+  if (!skinSetActive(gameFrontSkinId) && gameFrontSkinId[0] != '\0') {
+    WB_LOG_DEBUG(WB_LOG_CAT_ASSET,
+                 "gameFrontStart: skin '%s' did not resolve — using the "
+                 "built-in assets; the choice is kept and applies once the "
+                 "files are there", gameFrontSkinId);
+  }
+
+  /* Push the saved texture filter to the draw layer. There is no sheet
+     yet; the mode is kept and applied when one is built. */
+  sdl3DrawSetTilesScaleMode(sdl3DrawScaleModeForFilter(gfxGetTextureFilter()));
+
   /* Apply persisted language, or auto-detect if this is a fresh
    * install (empty Language slot in the INI). Either way, this runs
    * before any dialog draws so langGetText() returns the right text
@@ -1000,10 +1021,6 @@ static bool gameFrontDialogs(void) {
     }
     case openLang:
       /* Language dialog disabled on SDL3 */
-      dlgState = openWelcome;
-      break;
-    case openSkins:
-      /* Skins dialog not yet ported */
       dlgState = openWelcome;
       break;
     case openUdp:
@@ -2449,9 +2466,13 @@ void gameFrontHandleUrlOpen(char *url) {
   }
 }
 
+/* Picks up a skin change: rebuilds the tile atlas, drops the cached
+ * background so the next frame reads it again, and reloads the sound set.
+ * The renderer, window, fonts and zoom are left alone. */
 void gameFrontReloadSkins(void) {
   sdl3DrawSetReconfigureGuard(true);
   sdl3DrawReloadTiles();
+  sdl3DrawReloadBackground();
   sdl3DrawSetReconfigureGuard(false);
   soundCleanup();
   if (soundSetup() == FALSE) {
@@ -2989,6 +3010,38 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     uiUiScaleSet((UiScalePref)v);
   }
 
+  /* Skin id.  Applied in gameFrontSetup before the tile sheet is built;
+     an empty value keeps the built-in assets. */
+  prefsGetString("SETTINGS", "Skin", "", buff, FILENAME_MAX);
+  strncpy(gameFrontSkinId, buff, sizeof(gameFrontSkinId) - 1);
+  gameFrontSkinId[sizeof(gameFrontSkinId) - 1] = '\0';
+
+  /* Graphics settings.  Tile detail is 0 Classic / 1 Match to Zoom /
+     2 High Detail, animation smoothness 0 Classic / 1 Match Pixelation /
+     2 Smooth, texture filter 0 Nearest / 1 Linear / 2 Pixel Art.  Only tile
+     detail has a reader so far; the rest are kept so all four settings load
+     and save in one place. */
+  prefsGetString("SETTINGS", "TileDetail", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_TILE_DETAIL_CLASSIC || v > (int)GFX_TILE_DETAIL_HIGH) v = 0;
+    gfxSetTileDetail((GfxTileDetail)v);
+  }
+  prefsGetString("SETTINGS", "AnimSmoothness", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_ANIM_CLASSIC || v > (int)GFX_ANIM_SMOOTH) v = 0;
+    gfxSetAnimSmoothness((GfxAnimSmoothness)v);
+  }
+  prefsGetString("SETTINGS", "SmoothShells", "No", buff, FILENAME_MAX);
+  gfxSetSmoothShells(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("SETTINGS", "TextureFilter", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
+    gfxSetTextureFilter((GfxTextureFilter)v);
+  }
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -3403,6 +3456,19 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large). */
   intToStr((int)uiUiScaleGet(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "UI Scale", buff);
+
+  /* Skin id the player chose, "" for the built-in assets.  The choice, not
+     what loaded: a skin that cannot be read right now stays saved. */
+  prefsSetString("SETTINGS", "Skin", skinGetRequested());
+
+  /* Graphics settings.  Same four keys the loader reads. */
+  intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "TileDetail", buff);
+  intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "AnimSmoothness", buff);
+  prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
+  intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "TextureFilter", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

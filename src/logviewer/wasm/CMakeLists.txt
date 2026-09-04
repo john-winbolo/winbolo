@@ -158,6 +158,8 @@ add_executable(logviewer
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
+    ${SRC_ROOT}/gui/sdl3/skin_source.c
+    ${SRC_ROOT}/gui/sdl3/gfx_settings.c
 )
 
 target_include_directories(logviewer PRIVATE

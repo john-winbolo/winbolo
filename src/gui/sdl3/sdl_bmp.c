@@ -18,10 +18,10 @@
 #define COLOR_KEY_G 255
 #define COLOR_KEY_B 0
 
-SDL_Texture *sdlLoadBmpAsTexture(SDL_Renderer *renderer,
-                                 const char *path,
-                                 bool useColorKey) {
-    SDL_Surface *surface = SDL_LoadBMP(path);
+SDL_Texture *sdlLoadBmpStreamAsTexture(SDL_Renderer *renderer,
+                                       SDL_IOStream *src, bool closeio,
+                                       bool useColorKey) {
+    SDL_Surface *surface = SDL_LoadBMP_IO(src, closeio);
     if (!surface) {
         return NULL;
     }
@@ -52,4 +52,14 @@ SDL_Texture *sdlLoadBmpAsTexture(SDL_Renderer *renderer,
     }
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     return texture;
+}
+
+SDL_Texture *sdlLoadBmpAsTexture(SDL_Renderer *renderer,
+                                 const char *path,
+                                 bool useColorKey) {
+    SDL_IOStream *src = SDL_IOFromFile(path, "rb");
+    if (!src) {
+        return NULL;
+    }
+    return sdlLoadBmpStreamAsTexture(renderer, src, true, useColorKey);
 }

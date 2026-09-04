@@ -716,6 +716,47 @@ STR_DLGSKIN_AUTHOR_LBL=Author:
 STR_DLGSKIN_NOTES_LBL=Notes:
 STR_DLGSKIN_LOADERR=Unable to load Skin File
 
+# Skin section of the Display & Sound settings tab
+STR_DLGSETTINGS_SKIN=Skin
+STR_DLGSKIN_DEFAULT=Default
+STR_DLGSKIN_SRC_BUILTIN=Built-in
+STR_DLGSKIN_SRC_USER=User
+STR_DLGSKIN_SRC_WORKSHOP=Workshop
+STR_DLGSKIN_DOWNLOADING=Downloading...
+STR_DLGSKIN_OPENFOLDER=Open skins folder
+STR_DLGSKIN_BROWSE_WORKSHOP=Browse Workshop
+STR_DLGSKIN_PUBLISH=Publish to Workshop...
+STR_DLGSKIN_TILEDETAIL=Tile detail
+STR_DLGSKIN_TILEDETAIL_CLASSIC=Classic
+STR_DLGSKIN_TILEDETAIL_MATCHZOOM=Match to zoom
+STR_DLGSKIN_TILEDETAIL_HIGH=High detail
+STR_DLGSKIN_ANIMSMOOTH=Animation smoothness
+STR_DLGSKIN_ANIMSMOOTH_CLASSIC=Classic
+STR_DLGSKIN_ANIMSMOOTH_PIXEL=Match pixelation
+STR_DLGSKIN_ANIMSMOOTH_SMOOTH=Smooth
+STR_DLGSKIN_SMOOTHSHELLS=Smooth shells
+STR_DLGSKIN_TEXFILTER=Texture filter
+STR_DLGSKIN_TEXFILTER_NEAREST=Nearest
+STR_DLGSKIN_TEXFILTER_LINEAR=Linear
+STR_DLGSKIN_TEXFILTER_PIXELART=Pixel art
+STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP=This skin supplies its art at one size only, so all three settings build the same tiles.
+STR_DLGSKIN_TEXFILTER_TIP=Shows most on rotated sprites and on smooth sub-pixel motion. Textures drawn by the interface ignore it, which is why the tiles above do not change.
+STR_DLGSKIN_PUBLISH_HEADING=Publish this skin to the Steam Workshop
+STR_DLGSKIN_PUBLISH_NAME=Title
+STR_DLGSKIN_PUBLISH_DESC=Description
+STR_DLGSKIN_PUBLISH_UPDATE=Update the item this skin came from
+STR_DLGSKIN_PUBLISH_NEW=Publish as a new item
+STR_DLGSKIN_PUBLISH_GO=Publish
+STR_DLGSKIN_PUBLISH_WORKING=Uploading...
+STR_DLGSKIN_PUBLISH_DONE=Published to the Workshop.
+STR_DLGSKIN_PUBLISH_FAILED=The publish failed. Check that Steam is running, then try again.
+STR_DLGSKIN_PUBLISH_LEGAL=Accept the Workshop legal agreement on the item's page, or nobody else can see the item.
+STR_DLGSKIN_PUBLISH_OPENITEM=Open item page
+STR_DLGSKIN_PUBLISH_NEEDUSER=Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be.
+STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it.
+STR_DLGSKIN_RECFILTER_LBL=Recommended filter:
+STR_DLGSKIN_RECOMMENDED_TAG=(recommended)
+
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config
 STR_DLGTRACKER_INVALIDPORT=Invalid port number.

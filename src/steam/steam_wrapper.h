@@ -35,6 +35,12 @@ bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_le
  * this both to pre-fill a signup name and to detect "running under Steam". */
 bool     steam_get_persona_name(char *out, size_t outSize);
 
+/* The local user's SteamID64, 0 when Steam is not initialized. This is a
+ * public identifier — it is the number in every Steam profile URL — and not a
+ * credential: it is written into a published skin so a later publish can tell
+ * the author's own item from someone else's. */
+uint64_t steam_get_steam_id(void);
+
 /* Cancel the auth-session ticket acquired by the most recent
  * steam_get_auth_ticket call, releasing its HAuthTicket handle.
  * No-op if no ticket is outstanding or Steam is not initialized. */
@@ -70,6 +76,78 @@ bool     steam_show_floating_keyboard(int x, int y, int w, int h);
 /* Dismiss the floating keyboard shown by steam_show_floating_keyboard.  Must
  * be called when the text field loses focus — Steam does not auto-dismiss it. */
 void     steam_dismiss_floating_keyboard(void);
+
+/* -------- Steam Workshop (UGC) --------
+ * Read side of the Workshop: what the local user is subscribed to, where
+ * Steam unpacked it, and a way into the overlay's Workshop page.  Everything
+ * here reports "no Workshop" in stub builds and when Steam is not
+ * initialized, so callers need no #ifdef. */
+
+/* True iff Steam is initialized and the UGC interface is live. */
+bool     steam_workshop_available(void);
+
+/* How many Workshop items the local user is subscribed to for this app.
+ * 0 when the Workshop is unavailable. */
+int      steam_workshop_subscribed_count(void);
+
+/* Details of the idx'th subscribed item.  Writes the item's published file
+ * id to *id whether or not the item is installed, and returns true only when
+ * the item IS installed and *folder holds its install path.  A false return
+ * with a non-zero *id therefore reads as "subscribed, still downloading" —
+ * the caller can list it as pending and ask for it with
+ * steam_workshop_request_download.  Both outs are cleared on entry, so a
+ * false return with a zero *id is "no such item". */
+bool     steam_workshop_item(int idx, uint64_t *id, char *folder,
+                             size_t folderSize);
+
+/* Ask Steam to download (or update) a subscribed item.  Completion shows up
+ * as the install event below, not as a return value.  No-op when the
+ * Workshop is unavailable or id is 0. */
+void     steam_workshop_request_download(uint64_t id);
+
+/* Consume the "a Workshop item finished installing" edge.  Returns true once
+ * if ItemInstalled_t or DownloadItemResult_t has fired since the previous
+ * call, and clears the flag.  Callers rescan when it fires. */
+bool     steam_workshop_consume_installed_event(void);
+
+/* Open the Steam overlay on this app's Workshop page.  No-op when the
+ * Workshop is unavailable. */
+void     steam_workshop_open_browse_page(void);
+
+/* Publish side of the Workshop.  A publish runs across several frames — the
+ * Steam calls behind it complete asynchronously — so it is started once and
+ * then polled.  One publish at a time. */
+
+/* Start publishing an item.  contentFolder is a directory whose entire
+ * contents become the item's content; the caller creates it and cleans it up
+ * afterwards.  previewPng may be NULL for no preview image, and must be under
+ * 1MB when given.  existingId 0 creates a new item; non-zero updates that
+ * item rather than making a duplicate.  Returns false immediately when the
+ * Workshop is unavailable or a publish is already in flight.  The strings are
+ * copied, so the caller need not keep them alive past the call. */
+bool     steam_workshop_publish_begin(const char *contentFolder, const char *title,
+                                      const char *description, const char *previewPng,
+                                      uint64_t existingId /* 0 = new item */);
+
+/* State of the publish: 0 still in progress, 1 done (*outId holds the
+ * published file id), -1 failed.  Both outs may be NULL and are cleared
+ * before anything is written.  Only meaningful after a
+ * steam_workshop_publish_begin() that returned true — with nothing in flight
+ * this answers -1, so a caller that polls out of order gets a definite answer
+ * rather than waiting forever on a publish that was never started.  The
+ * terminal value stays put until the next steam_workshop_publish_begin(). */
+int      steam_workshop_publish_poll(uint64_t *outId, bool *needsLegalAgreement);
+
+/* Upload progress.  0 when nothing is uploading, otherwise the Steam update
+ * status: 1 preparing config, 2 preparing content, 3 uploading content,
+ * 4 uploading preview, 5 committing.  The byte counts are filled once the
+ * upload has started and are 0 before then.  Either out may be NULL. */
+int      steam_workshop_publish_progress(uint64_t *bytesDone, uint64_t *bytesTotal);
+
+/* Open the Steam overlay on one item's Workshop page — where the author
+ * accepts the Workshop legal agreement and changes the item's visibility.
+ * No-op when the Workshop is unavailable. */
+void     steam_workshop_open_item_page(uint64_t id);
 
 /* Stats & achievements */
 void     steam_increment_stat(const char *name, int amount);

@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
+#include "skin_source.h"
 
 #define NUM_SOUNDS 31
 #define MAX_SOUND_SLOTS 16  /* Maximum simultaneous sounds */
@@ -60,7 +61,14 @@ static SDL_AudioSpec deviceSpec;
 /* Sound effect data (pre-loaded and converted) */
 static SoundData sounds[NUM_SOUNDS];
 
-/* Active sound slots for mixing */
+/* Active sound slots for mixing.  The mutex is created by the first
+ * soundSetup and then kept for the life of the process: soundCleanup runs
+ * on the main thread for a skin reload while the game timer thread is still
+ * ticking the sim, and that thread reaches playSound through
+ * frontEndPlaySound.  A mutex that is destroyed and recreated across the
+ * reload leaves that caller a window in which it locks a dead one.  Keeping
+ * it means the reload and the tick serialise on it instead, and the small
+ * price is one mutex that outlives the last soundCleanup at exit. */
 static SoundSlot slots[MAX_SOUND_SLOTS];
 static SDL_Mutex *slotsMutex = NULL;
 
@@ -142,13 +150,46 @@ static bool convertAudioData(const Uint8 *srcData, Uint32 srcSize,
 }
 
 /*********************************************************
+*NAME:          loadWavFromSkin
+*PURPOSE:
+*  Reads one WAV out of a skin and decodes it. Leaves the
+*  outputs untouched when the skin does not hold relName.
+*
+*ARGUMENTS:
+*  src       - Skin to read from
+*  relName   - Name of the WAV inside the skin
+*  spec      - Filled with the WAV's format
+*  data      - Filled with the WAV bytes (SDL_free by caller)
+*  length    - Filled with the byte count
+*
+*RETURNS:
+*  true if the skin held relName and it decoded
+*********************************************************/
+static bool loadWavFromSkin(SkinSource *src, const char *relName,
+                            SDL_AudioSpec *spec, Uint8 **data, Uint32 *length) {
+    void  *buf = NULL;
+    size_t len = 0;
+
+    if (!skinSourceRead(src, relName, &buf, &len)) {
+        return false;
+    }
+    /* closeio closes the stream, not the bytes behind it. */
+    bool ok = SDL_LoadWAV_IO(SDL_IOFromMem(buf, len), true, spec, data, length);
+    SDL_free(buf);
+    return ok;
+}
+
+/*********************************************************
 *NAME:          loadSoundFromFile
 *AUTHOR:        John Morrison
 *CREATION DATE: 2024
 *LAST MODIFIED: 2024
 *PURPOSE:
-*  Loads a WAV file from disk and converts it to the
-*  device audio format.
+*  Loads a WAV from the active skin or from disk and
+*  converts it to the device audio format.  The skin is
+*  tried under sounds/ first, then at its top level for
+*  the flat 1.x layout; a sound the skin lacks comes from
+*  data/sounds/ beside the executable.
 *
 *ARGUMENTS:
 *  basePath  - Base path to look for sounds
@@ -160,16 +201,29 @@ static bool convertAudioData(const Uint8 *srcData, Uint32 srcSize,
 *********************************************************/
 static bool loadSoundFromFile(const char *basePath, const char *filename, SoundData *sound) {
     SDL_AudioSpec wavSpec;
-    Uint8 *wavData;
-    Uint32 wavLength;
+    Uint8 *wavData = NULL;
+    Uint32 wavLength = 0;
     char fullPath[4096];
+    bool loaded = false;
 
     sound->data = NULL;
     sound->size = 0;
 
-    SDL_snprintf(fullPath, sizeof(fullPath), "%sdata/sounds/%s", basePath, filename);
+    SkinSource *skin = skinGetActiveSource();
+    if (skin != NULL) {
+        SDL_snprintf(fullPath, sizeof(fullPath), "sounds/%s", filename);
+        loaded = loadWavFromSkin(skin, fullPath, &wavSpec, &wavData, &wavLength);
+        if (!loaded) {
+            loaded = loadWavFromSkin(skin, filename, &wavSpec, &wavData, &wavLength);
+        }
+    }
 
-    if (!SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength)) {
+    if (!loaded) {
+        SDL_snprintf(fullPath, sizeof(fullPath), "%sdata/sounds/%s", basePath, filename);
+        loaded = SDL_LoadWAV(fullPath, &wavSpec, &wavData, &wavLength);
+    }
+
+    if (!loaded) {
         return false;
     }
 
@@ -315,30 +369,33 @@ bool soundSetup(void) {
     deviceSpec.channels = 2;
     deviceSpec.freq = 22050;
 
-    /* Create mutex for sound slots */
-    slotsMutex = SDL_CreateMutex();
+    /* The slots mutex is made once and kept across reloads; see its
+     * declaration for why. */
     if (!slotsMutex) {
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error creating mutex",
-                          IMGUI_MSG_WARNING, IMGUI_MSG_OK);
-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
-        return FALSE;
+        slotsMutex = SDL_CreateMutex();
+        if (!slotsMutex) {
+            imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error creating mutex",
+                              IMGUI_MSG_WARNING, IMGUI_MSG_OK);
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            return FALSE;
+        }
     }
 
     /* Initialize sound slots */
+    SDL_LockMutex(slotsMutex);
     for (i = 0; i < MAX_SOUND_SLOTS; i++) {
         slots[i].active = false;
         slots[i].data = NULL;
         slots[i].size = 0;
         slots[i].pos = 0;
     }
+    SDL_UnlockMutex(slotsMutex);
 
     /* Open audio stream with callback for mixing */
     audioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &deviceSpec, mixAudioCallback, NULL);
     if (!audioStream) {
         imguiMessageBoxEx(DIALOG_BOX_TITLE, "Error opening audio device",
                           IMGUI_MSG_WARNING, IMGUI_MSG_OK);
-        SDL_DestroyMutex(slotsMutex);
-        slotsMutex = NULL;
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return FALSE;
     }
@@ -383,11 +440,16 @@ bool soundSetup(void) {
     }
 
     if (returnValue) {
+        /* Under the mutex so a playSound on another thread sees the
+         * samples above before it sees the flag. */
+        SDL_LockMutex(slotsMutex);
         isPlayable = TRUE;
+        SDL_UnlockMutex(slotsMutex);
         /* Resume the audio stream (SDL3 requires explicit resume) */
         SDL_ResumeAudioStreamDevice(audioStream);
     } else {
-        /* Cleanup on failure */
+        /* Cleanup on failure.  The mutex stays: nothing here made it
+         * playable, and the next soundSetup reuses it. */
         for (i = 0; i < NUM_SOUNDS; i++) {
             if (sounds[i].data) {
                 SDL_free(sounds[i].data);
@@ -397,10 +459,6 @@ bool soundSetup(void) {
         if (audioStream) {
             SDL_DestroyAudioStream(audioStream);
             audioStream = NULL;
-        }
-        if (slotsMutex) {
-            SDL_DestroyMutex(slotsMutex);
-            slotsMutex = NULL;
         }
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
     }
@@ -423,7 +481,16 @@ bool soundSetup(void) {
 void soundCleanup(void) {
     int i;
 
+    /* Drop the flag under the mutex.  playSound on the timer thread checks
+     * it under the same mutex, so any call that gets the lock from here on
+     * leaves without touching a sample, and any call that got the lock
+     * first has finished with the samples before this proceeds.  The mutex
+     * is released again before the stream goes: destroying the stream joins
+     * the mixing callback, and that callback takes this mutex, so holding
+     * it here would deadlock. */
+    if (slotsMutex) SDL_LockMutex(slotsMutex);
     isPlayable = FALSE;
+    if (slotsMutex) SDL_UnlockMutex(slotsMutex);
 
     /* Destroy the audio stream first - this stops and joins the mixing
      * callback thread. It must happen before we free anything the callback
@@ -444,8 +511,10 @@ void soundCleanup(void) {
         keepaliveData = NULL;
     }
 
-    /* Now that no callback can run, free all sound data. Active slots may
-     * still reference these buffers, but the mixer thread is gone. */
+    /* Now that no callback can run, free all sound data and clear the
+     * slots that borrowed it, so nothing points at a freed sample if a
+     * later soundSetup fails partway. */
+    if (slotsMutex) SDL_LockMutex(slotsMutex);
     for (i = 0; i < NUM_SOUNDS; i++) {
         if (sounds[i].data) {
             SDL_free(sounds[i].data);
@@ -453,12 +522,15 @@ void soundCleanup(void) {
             sounds[i].size = 0;
         }
     }
-
-    /* Destroy mutex last - the callback that used it is no longer running */
-    if (slotsMutex) {
-        SDL_DestroyMutex(slotsMutex);
-        slotsMutex = NULL;
+    for (i = 0; i < MAX_SOUND_SLOTS; i++) {
+        slots[i].active = false;
+        slots[i].data = NULL;
+        slots[i].size = 0;
+        slots[i].pos = 0;
     }
+    if (slotsMutex) SDL_UnlockMutex(slotsMutex);
+
+    /* The mutex is kept; see its declaration. */
 }
 
 /*********************************************************
@@ -480,15 +552,18 @@ static void playSound(int index) {
     Uint32 most_progress;
     int evict_slot;
 
-    if (!isPlayable || !audioStream || index < 0 || index >= NUM_SOUNDS)
+    if (index < 0 || index >= NUM_SOUNDS || !slotsMutex)
         return;
 
-    if (!sounds[index].data || sounds[index].size == 0)
-        return;
+    /* Lock before reading anything soundCleanup tears down.  It drops
+     * isPlayable under this mutex before freeing a sample, so a call that
+     * gets the lock after that sees the flag and leaves. */
+    SDL_LockMutex(slotsMutex);
 
-    /* Lock mutex to access slots */
-    if (slotsMutex) {
-        SDL_LockMutex(slotsMutex);
+    if (!isPlayable || !audioStream ||
+        !sounds[index].data || sounds[index].size == 0) {
+        SDL_UnlockMutex(slotsMutex);
+        return;
     }
 
     /* Deduplicate: skip if this sound was already triggered this tick

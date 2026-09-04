@@ -98,12 +98,18 @@ void lv_screenTanksDestroy(screenTanks *value) {
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the tank
 *  playerName - String to hold the player name
+*  wx         - X world offset inside the map square (wx >> 4 == px)
+*  wy         - Y world offset inside the map square (wy >> 4 == py)
+*  angle      - The full 0-255 facing angle
 *********************************************************/
-void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName) {
+void lv_screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE team, BYTE dir, bool onBoat, char *playerName, BYTE wx, BYTE wy, BYTE angle) {
   (*value).pos[(*value).numTanksScreen].mx = mx;
   (*value).pos[(*value).numTanksScreen].my = my;
   (*value).pos[(*value).numTanksScreen].px = px;
   (*value).pos[(*value).numTanksScreen].py = py;
+  (*value).pos[(*value).numTanksScreen].wx = wx;
+  (*value).pos[(*value).numTanksScreen].wy = wy;
+  (*value).pos[(*value).numTanksScreen].angle = angle;
   (*value).pos[(*value).numTanksScreen].frame = frame;
   (*value).pos[(*value).numTanksScreen].team = team;
   (*value).pos[(*value).numTanksScreen].dir = dir;
@@ -148,5 +154,30 @@ void lv_screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my,
       strncpy(playerName, (*value).pos[itemNum].playerName, PLAYER_NAME_LEN - 1);
       playerName[PLAYER_NAME_LEN - 1] = '\0';
     }
+  }
+}
+
+/*********************************************************
+*NAME:          lv_screenTanksGetSubPixel
+*AUTHOR:        John Morrison
+*CREATION DATE: 15/2/98
+*LAST MODIFIED: 15/2/98
+*PURPOSE:
+*  Gets the world offsets inside the map square and the
+*  full facing angle for a specific item
+*
+*ARGUMENTS:
+*  value      - Pointer to the screenTanks data structure
+*  itemNum    - The item number to get
+*  wx         - X world offset inside the map square
+*  wy         - Y world offset inside the map square
+*  angle      - The full 0-255 facing angle
+*********************************************************/
+void lv_screenTanksGetSubPixel(screenTanks *value, BYTE itemNum, BYTE *wx, BYTE *wy, BYTE *angle) {
+  itemNum--;
+  if (itemNum < (*value).numTanksScreen) {
+    if (wx) *wx = (*value).pos[itemNum].wx;
+    if (wy) *wy = (*value).pos[itemNum].wy;
+    if (angle) *angle = (*value).pos[itemNum].angle;
   }
 }

@@ -389,6 +389,10 @@ static bool s_showSettings       = false;
    rebuilds the font atlas + style at a safe point (between Present and the
    next NewFrame) rather than mid-frame. */
 static bool s_pendingUiScaleRebuild = false;
+/* Set when the Settings Skin combo changes; the main render loop reloads the
+   tile sheet and sound set at the same safe point, since gameFrontReloadSkins
+   destroys and rebuilds the tile texture. */
+static bool s_pendingSkinReload = false;
 static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
@@ -2746,6 +2750,7 @@ static void renderSettingsPanel(ClientSim *cs) {
        the existing end-of-frame consumers already act on. */
     if (ctx.pendingZoom != 255)  s_pendingZoom = ctx.pendingZoom;
     if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
+    if (ctx.wantSkinReload)      s_pendingSkinReload = true;
     if (ctx.wantKeySetup)        sdl3ImguiShowKeySetup();
 
     ImGui::End();
@@ -4359,6 +4364,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (s_pendingUiScaleRebuild) {
         s_pendingUiScaleRebuild = false;
         applyMainContextUiScale();
+    }
+
+    /* Same window for a skin change — the previous frame's draw data, which
+       can reference the old tile texture, has already been presented. */
+    if (s_pendingSkinReload) {
+        s_pendingSkinReload = false;
+        gameFrontReloadSkins();
     }
 
     /* Build the ImGui frame */

@@ -39,12 +39,14 @@ typedef struct SettingsRenderCtx {
     bool wantKeySetup;          /* Set Keys pressed */
     bool wantAtlasRebuild;      /* a section needs a font-atlas rebuild
                                    (CJK language pick OR UI-scale change) */
+    bool wantSkinReload;        /* the skin changed; shell calls
+                                   gameFrontReloadSkins() after the frame */
 } SettingsRenderCtx;
 
 /* Render the shared Display & Sound tab (frame rate, window size, UI scale,
- * letterbox).  Window size and UI scale only apply in-game; their results are
- * returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the shell to act
- * on after the frame. */
+ * letterbox, skin).  Window size and UI scale only apply in-game; their
+ * results are returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the
+ * shell to act on after the frame, and a skin pick via ctx->wantSkinReload. */
 void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
 
 /* Render the shared Game/HUD tab (scrolling behaviour, gunsight).  ctx->cs is

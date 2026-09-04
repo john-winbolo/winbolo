@@ -21,6 +21,7 @@
  *********************************************************/
 
 #include <cstring>
+#include <vector>
 
 #include <SDL3/SDL.h>
 
@@ -45,7 +46,12 @@ extern "C" {
 #include "upload_policy.h"  /* UploadPolicy — map-upload combo */
 #include "playername_validate.h"
 #include "../bg_game.h"
+#include "../skin_source.h"
+#include "../skin_preview.h"
+#include "../gfx_settings.h"
+#include "../tileloader.h"
 #include "../../lang.h"
+#include "../../../steam/steam_wrapper.h"
 #include "imgui_settings.h"
 #include "imgui_keyboard.h"
 #include "imgui_keysetup.h"
@@ -483,13 +489,196 @@ extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
 #endif
 }
 
+/* Source tag shown beside a skin's name in the picker. */
+static const char *skinKindLabel(SkinKind kind) {
+    switch (kind) {
+        case SKIN_KIND_WORKSHOP: return langGetText(STR_DLGSKIN_SRC_WORKSHOP);
+        case SKIN_KIND_USER:     return langGetText(STR_DLGSKIN_SRC_USER);
+        case SKIN_KIND_BUILTIN:
+        default:                 return langGetText(STR_DLGSKIN_SRC_BUILTIN);
+    }
+}
+
+/* Which scan location an id came from.  The scan stamps the location into
+   the id's prefix, so the closed combo can tag the active skin without
+   listing the directories again. */
+static SkinKind skinKindFromId(const char *id) {
+    if (strncmp(id, "builtin:", 8) == 0)  return SKIN_KIND_BUILTIN;
+    if (strncmp(id, "workshop:", 9) == 0) return SKIN_KIND_WORKSHOP;
+    return SKIN_KIND_USER;
+}
+
+/* Set when a pick fails to load, cleared by the next one that succeeds.
+   File scope because both settings shells share the tab renderer. */
+static bool s_skinLoadFailed = false;
+
+/* Rows for the open picker, plus whether it was open on the previous frame.
+   A scan is a directory listing across three locations and a skin.ini read
+   per candidate, so it runs on the frame the popup opens and not again
+   until it is reopened — which also means a skin dropped into the folder
+   while the dialog is up shows up the next time the combo is opened.
+   File scope because both settings shells share the tab renderer. */
+static std::vector<SkinEntry> s_skinRows;
+static bool s_skinPopupWasOpen = false;
+
+/* The whole publish path is desktop-only.  skin_preview.c is a client source;
+   the Android, iOS and browser builds compile this file against their own
+   source lists, which carry the PNG reader but not the writer, so a call to
+   skinWritePreviewPng would not link there.  BOLO_MOBILE covers Android and
+   iOS but not Emscripten, hence both halves. */
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+
+/* Publish-to-Workshop state.  A publish runs across frames — the Steam calls
+   behind it finish asynchronously — so the modal keeps what it needs between
+   them.  File scope because both settings shells share the tab renderer. */
+static char     s_pubPath[SKIN_PATH_MAX];  /* the skin on disk being sent */
+static char     s_pubTitle[129];           /* the SDK's title limit */
+static char     s_pubDesc[8000];           /* the SDK's description limit */
+static uint64_t s_pubExistingId = 0;       /* WorkshopId out of the skin.ini */
+static uint64_t s_pubAuthor     = 0;       /* WorkshopAuthor out of the same */
+static bool     s_pubAsNew      = true;    /* make an item vs update that id */
+static bool     s_pubStarted    = false;   /* a begin said yes: poll it */
+static uint64_t s_pubDoneId     = 0;       /* the item Steam published */
+static bool     s_pubNeedsLegal = false;   /* the author still has to accept
+                                              the Workshop agreement */
+static bool     s_pubFailed     = false;   /* the begin or the poll said no */
+static bool     s_pubInFlight   = false;   /* the last poll said in progress:
+                                              Steam is still reading the
+                                              upload folder */
+static bool     s_pubPopupOpen  = false;   /* the modal drew last frame, so a
+                                              frame without it is an exit */
+
+/* <prefpath>workshop_upload is the folder handed to Steam as the item's
+   content; the preview PNG goes beside it, not in it, or it would be uploaded
+   as part of the skin.  SDL_GetPrefPath already ends in a separator. */
+static bool skinPublishPaths(char *folder, size_t folderLen,
+                             char *preview, size_t previewLen) {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir == nullptr) return false;
+    SDL_snprintf(folder, folderLen, "%sworkshop_upload", prefDir);
+    SDL_snprintf(preview, previewLen, "%sworkshop_preview.png", prefDir);
+    SDL_free((void *)prefDir);
+    return true;
+}
+
+/* Empties the upload folder and removes it.  Steam uploads everything the
+   folder holds, so anything an earlier publish left there would go up with
+   this one. */
+static void skinPublishClearFolder(const char *folder) {
+    int    count = 0;
+    char **list = SDL_GlobDirectory(folder, "*", 0, &count);
+    if (list != nullptr) {
+        for (int i = 0; i < count; i++) {
+            char full[SKIN_PATH_MAX * 2];
+            if (list[i] == nullptr || list[i][0] == '\0') continue;
+            SDL_snprintf(full, sizeof(full), "%s/%s", folder, list[i]);
+            SDL_RemovePath(full);
+        }
+        SDL_free(list);
+    }
+    SDL_RemovePath(folder);
+}
+
+/* Copies a skin archive into the upload folder through memory: the pinned SDL
+   has no file-copy call, and a skin is small enough to hold. */
+static bool skinPublishCopyFile(const char *from, const char *to) {
+    size_t        len = 0;
+    void         *data = SDL_LoadFile(from, &len);
+    SDL_IOStream *io;
+    bool          ok;
+
+    if (data == nullptr) return false;
+    io = SDL_IOFromFile(to, "wb");
+    if (io == nullptr) {
+        SDL_free(data);
+        return false;
+    }
+    ok = (len == 0 || SDL_WriteIO(io, data, len) == len);
+    if (!SDL_CloseIO(io)) ok = false;
+    SDL_free(data);
+    if (!ok) SDL_RemovePath(to);
+    return ok;
+}
+
+/* The scratch the upload was built from, once the modal is done with it. */
+static void skinPublishCleanup(void) {
+    char folder[SKIN_PATH_MAX];
+    char preview[SKIN_PATH_MAX];
+
+    if (!skinPublishPaths(folder, sizeof(folder), preview, sizeof(preview))) {
+        return;
+    }
+    skinPublishClearFolder(folder);
+    SDL_RemovePath(preview);
+}
+
+/* Builds the item's content — one .wsf, whichever shape the skin has on disk
+   — writes a preview beside it and starts the upload.  Returns what
+   steam_workshop_publish_begin said, so the caller knows whether polling
+   means anything. */
+static bool skinPublishStart(void) {
+    char         folder[SKIN_PATH_MAX];
+    char         preview[SKIN_PATH_MAX];
+    char         archive[SKIN_PATH_MAX * 2];
+    char         name[SKIN_ID_MAX];
+    const char  *previewArg = nullptr;
+    SDL_PathInfo info;
+
+    if (!skinPublishPaths(folder, sizeof(folder), preview, sizeof(preview))) {
+        return false;
+    }
+    skinPublishClearFolder(folder);
+    if (!SDL_CreateDirectory(folder)) return false;
+
+    /* The archive is named after the skin, which is the id's text after the
+       ':' — the same name the scan would give it. */
+    {
+        const char *id = skinGetRequested();
+        const char *colon = (id != nullptr) ? strchr(id, ':') : nullptr;
+        if (colon != nullptr) {
+            SDL_strlcpy(name, colon + 1, sizeof(name));
+        } else {
+            SDL_strlcpy(name, (id != nullptr && id[0] != '\0') ? id : "skin",
+                        sizeof(name));
+        }
+    }
+    SDL_snprintf(archive, sizeof(archive), "%s/%s.wsf", folder, name);
+
+    if (!SDL_GetPathInfo(s_pubPath, &info)) return false;
+    if (info.type == SDL_PATHTYPE_DIRECTORY) {
+        /* A folder holding one archive is read as that archive, so the item
+           gets the archive itself rather than a zip wrapping it. */
+        char inner[SKIN_PATH_MAX];
+        if (skinSourceResolveArchive(s_pubPath, inner, sizeof(inner))) {
+            if (!skinPublishCopyFile(inner, archive)) return false;
+        } else if (!skinSourceZipDirectory(s_pubPath, archive, nullptr)) {
+            return false;
+        }
+    } else if (!skinPublishCopyFile(s_pubPath, archive)) {
+        return false;
+    }
+
+    /* A preview that will not render is not a reason to stop: the item
+       publishes without one and Steam shows its own placeholder. */
+    if (skinWritePreviewPng(skinGetActiveSource(), preview)) {
+        previewArg = preview;
+    }
+
+    return steam_workshop_publish_begin(folder, s_pubTitle, s_pubDesc,
+                                        previewArg,
+                                        s_pubAsNew ? 0 : s_pubExistingId);
+}
+#endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
+
 /* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
  * the pre-game dialog and the in-game overlay.  Frame rate,
- * letterbox, and Sound apply in both; window size and UI scale only
- * apply in-game (ctx->inGame), and their results are returned via
- * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
- * to apply after the frame.  The Sound section renders last.
+ * letterbox, Skin and Sound apply in both; window size and UI scale
+ * only apply in-game (ctx->inGame), and their results are returned
+ * via ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
+ * to apply after the frame.  A skin pick applies at once but needs
+ * the tile sheet and sound set rebuilt, which the shell does after
+ * the frame off ctx->wantSkinReload.  The Sound section renders last.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
@@ -582,6 +771,605 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                          "ratio differs from the game).");
     }
 #endif
+
+    /* ---- Skin ---- */
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SKIN));
+    {
+        /* The player's choice, not what loaded, so a skin whose files are
+           not there right now still shows as picked.  Copied, not aliased:
+           skinSetActive() below rewrites the registry's own copy of the
+           requested id. */
+        char activeId[SKIN_ID_MAX];
+        {
+            const char *a = skinGetRequested();
+            SDL_strlcpy(activeId, a != nullptr ? a : "", sizeof(activeId));
+        }
+
+        /* The shut combo needs only the active skin, so it takes the name
+           from that skin's own ini — falling back to the id's text after the
+           ':', which is what the scan would name it — and the source tag
+           from the id's prefix.  No id is the built-in assets, which have no
+           source tag. */
+        char preview[SKIN_NAME_MAX + 32];
+        if (activeId[0] == '\0') {
+            SDL_strlcpy(preview, langGetText(STR_DLGSKIN_DEFAULT),
+                        sizeof(preview));
+        } else {
+            SkinInfo info;
+            skinSourceReadIni(skinGetActiveSource(), &info);
+            const char *name = info.name;
+            if (name[0] == '\0') {
+                const char *colon = strchr(activeId, ':');
+                name = (colon != nullptr) ? colon + 1 : activeId;
+            }
+            SDL_snprintf(preview, sizeof(preview), "%s (%s)", name,
+                         skinKindLabel(skinKindFromId(activeId)));
+        }
+
+        /* A Workshop download finishing while the picker is open leaves the
+           rows stale.  Drained every frame so the flag doesn't sit set. */
+        const bool workshopChanged = steam_workshop_consume_installed_event();
+
+        /* The item that just finished downloading may be the one the player
+           picked before it existed locally.  activeId is a local copy, so this
+           does not hand skinSetActive its own buffer. */
+        if (workshopChanged && activeId[0] != '\0' &&
+            skinGetActiveSource() == nullptr && skinSetActive(activeId)) {
+            s_skinLoadFailed = false;
+            ctx->wantSkinReload = true;
+        }
+
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        if (ImGui::BeginCombo("##skin", preview)) {
+            if (!s_skinPopupWasOpen || workshopChanged) {
+                s_skinPopupWasOpen = true;
+                s_skinRows.clear();
+                int found = skinScanCount();
+                if (found > 0) {
+                    s_skinRows.resize((size_t)found);
+                    found = skinScan(s_skinRows.data(), found);
+                    s_skinRows.resize((size_t)(found > 0 ? found : 0));
+                }
+            }
+
+            /* -1 is the Default row, which has no id and no source tag.  An
+               active skin deleted since it was picked is not in the rows
+               either, and lands here too. */
+            int cur = -1;
+            for (int i = 0; i < (int)s_skinRows.size(); i++) {
+                if (strcmp(s_skinRows[(size_t)i].id, activeId) == 0) {
+                    cur = i;
+                    break;
+                }
+            }
+
+            /* Default first: clears back to the built-in assets. */
+            if (ImGui::Selectable(langGetText(STR_DLGSKIN_DEFAULT),
+                                  activeId[0] == '\0') &&
+                activeId[0] != '\0') {
+                skinSetActive("");
+                s_skinLoadFailed = false;
+                gameFrontSaveCurrentPrefs();
+                ctx->wantSkinReload = true;
+            }
+            for (int i = 0; i < (int)s_skinRows.size(); i++) {
+                const SkinEntry &e = s_skinRows[(size_t)i];
+                bool sel = (cur == i);
+                char tag[64];
+                /* A pending row says what it is waiting on instead of naming
+                   its source — it has no folder to be a source yet. */
+                SDL_snprintf(tag, sizeof(tag), "(%s)",
+                             e.pending ? langGetText(STR_DLGSKIN_DOWNLOADING)
+                                       : skinKindLabel(e.kind));
+                /* Leave the dim source tag room at the right rather than let
+                   a full-width row push it outside the popup and clip it.
+                   The row still takes the click everywhere but under the tag. */
+                float nameW = ImGui::CalcTextSize(e.displayName).x;
+                float rowW  = ImGui::GetContentRegionAvail().x -
+                              ImGui::CalcTextSize(tag).x -
+                              ImGui::GetStyle().ItemSpacing.x;
+                if (rowW < nameW) rowW = nameW;
+                ImGui::PushID(i);
+                ImGui::BeginDisabled(e.pending);
+                if (ImGui::Selectable(e.displayName, sel,
+                                      ImGuiSelectableFlags_None,
+                                      ImVec2(rowW, 0.0f)) &&
+                    strcmp(e.id, activeId) != 0) {
+                    if (skinSetActive(e.id)) {
+                        s_skinLoadFailed = false;
+                        gameFrontSaveCurrentPrefs();
+                        ctx->wantSkinReload = true;
+                    } else {
+                        /* A failed load clears to the built-in assets, so put
+                           the previous skin back instead of letting a bad pick
+                           reset it. */
+                        skinSetActive(activeId);
+                        s_skinLoadFailed = true;
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", tag);
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        } else {
+            s_skinPopupWasOpen = false;
+        }
+        if (s_skinLoadFailed) {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "%s", langGetText(STR_DLGSKIN_LOADERR));
+        }
+
+        /* Name / author / notes off the active skin's skin.ini.  Default has
+           no source, and three "N/A" rows say nothing, so show none. */
+        SkinSource *src = skinGetActiveSource();
+        if (src != nullptr) {
+            SkinInfo info;
+            const char *na = langGetText(STR_DLGSKIN_NA);
+            skinSourceReadIni(src, &info);
+            ImGui::Text("%s %s", langGetText(STR_DLGSKIN_NAME_LBL),
+                        info.name[0]   != '\0' ? info.name   : na);
+            ImGui::Text("%s %s", langGetText(STR_DLGSKIN_AUTHOR_LBL),
+                        info.author[0] != '\0' ? info.author : na);
+            ImGui::TextWrapped("%s %s", langGetText(STR_DLGSKIN_NOTES_LBL),
+                               info.notes[0] != '\0' ? info.notes : na);
+
+            /* Unlike the three above, no row at all when the author did not
+               name a filter — an "N/A" recommendation says nothing.  The
+               name is the same word the Texture filter dropdown below uses.
+               Shown only; the player's own setting is what applies. */
+            const char *recName = nullptr;
+            switch (info.recommendedFilter) {
+                case SKIN_FILTER_NEAREST:
+                    recName = langGetText(STR_DLGSKIN_TEXFILTER_NEAREST);
+                    break;
+                case SKIN_FILTER_LINEAR:
+                    recName = langGetText(STR_DLGSKIN_TEXFILTER_LINEAR);
+                    break;
+                case SKIN_FILTER_PIXELART:
+                    recName = langGetText(STR_DLGSKIN_TEXFILTER_PIXELART);
+                    break;
+                default:
+                    break;
+            }
+            if (recName != nullptr) {
+                ImGui::Text("%s %s", langGetText(STR_DLGSKIN_RECFILTER_LBL),
+                            recName);
+            }
+        }
+
+        /* Sample of the sheet that is live right now.  The tiles reload
+           after the frame, so the strip trails a selection by a frame. */
+        {
+            static const struct { int x, y; } previewTiles[] = {
+                { TANK_SELF_0_X,  TANK_SELF_0_Y  },
+                { TANK_SELF_1_X,  TANK_SELF_1_Y  },
+                { TANK_SELF_2_X,  TANK_SELF_2_Y  },
+                { TANK_SELF_3_X,  TANK_SELF_3_Y  },
+                { TANK_SELF_4_X,  TANK_SELF_4_Y  },
+                { TANK_SELF_5_X,  TANK_SELF_5_Y  },
+                { TANK_SELF_6_X,  TANK_SELF_6_Y  },
+                { TANK_SELF_7_X,  TANK_SELF_7_Y  },
+                { TANK_SELF_8_X,  TANK_SELF_8_Y  },
+                { TANK_SELF_9_X,  TANK_SELF_9_Y  },
+                { TANK_SELF_10_X, TANK_SELF_10_Y },
+                { TANK_SELF_11_X, TANK_SELF_11_Y },
+                { TANK_SELF_12_X, TANK_SELF_12_Y },
+                { TANK_SELF_13_X, TANK_SELF_13_Y },
+                { TANK_SELF_14_X, TANK_SELF_14_Y },
+                { TANK_SELF_15_X, TANK_SELF_15_Y },
+                { BASE_GOOD_X,    BASE_GOOD_Y    },
+                { PILL_GOOD15_X,  PILL_GOOD15_Y  },
+                { GRASS_X,        GRASS_Y        },
+                { ROAD_CROSS_X,   ROAD_CROSS_Y   },
+                { SWAMP_X,        SWAMP_Y        },
+            };
+            const int n = (int)(sizeof(previewTiles) / sizeof(previewTiles[0]));
+            for (int i = 0; i < n; i++) {
+                if (i > 0) ImGui::SameLine(0.0f, 1.0f);
+                imguiDrawTileIcon(previewTiles[i].x, previewTiles[i].y);
+            }
+        }
+
+        if (ImGui::Button(langGetText(STR_DLGSKIN_OPENFOLDER))) {
+            /* SDL_GetPrefPath already ends in a separator. */
+            const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+            if (prefDir != nullptr) {
+                char dir[SKIN_PATH_MAX];
+                char url[SKIN_PATH_MAX + 16];
+                SDL_snprintf(dir, sizeof(dir), "%sskins", prefDir);
+                SDL_free((void *)prefDir);
+                SDL_CreateDirectory(dir);
+                /* file:// wants forward slashes and an extra leading one for
+                   a Windows "C:\..." path, giving "file:///C:/...". */
+                SDL_snprintf(url, sizeof(url), "file://%s%s",
+                             dir[0] == '/' ? "" : "/", dir);
+                for (char *c = url; *c != '\0'; c++) {
+                    if (*c == '\\') *c = '/';
+                }
+                imguiOpenUrl(url);
+            }
+        }
+        imguiHandOnHover();
+
+        /* Runtime check, not an #ifdef: the stub build answers false, so the
+           button simply isn't there when Steam isn't running. */
+        if (steam_workshop_available()) {
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGSKIN_BROWSE_WORKSHOP))) {
+                steam_workshop_open_browse_page();
+            }
+            imguiHandOnHover();
+
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* Publishing is for a skin the player put in their own folder and
+               that actually loaded: the built-in art has no files to send, a
+               Workshop skin belongs to whoever published it, and a skin that
+               failed to load has no source to draw a preview from. */
+            const char *reqId = skinGetRequested();
+            const bool  canPublish =
+                reqId != nullptr && reqId[0] != '\0' &&
+                skinKindFromId(reqId) == SKIN_KIND_USER &&
+                skinGetActiveSource() != nullptr;
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!canPublish);
+            if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH))) {
+                /* The picker's rows only live while its combo is open, so the
+                   skin's path on disk comes from a scan made here. */
+                char path[SKIN_PATH_MAX];
+                path[0] = '\0';
+                int found = skinScanCount();
+                if (found > 0) {
+                    std::vector<SkinEntry> rows((size_t)found);
+                    found = skinScan(rows.data(), found);
+                    for (int i = 0; i < found; i++) {
+                        if (strcmp(rows[(size_t)i].id, reqId) == 0) {
+                            SDL_strlcpy(path, rows[(size_t)i].path,
+                                        sizeof(path));
+                            break;
+                        }
+                    }
+                }
+                /* No path is a skin that went away since it was picked; there
+                   is nothing to publish, so the modal does not open. */
+                if (path[0] != '\0') {
+                    /* Reopening on the skin whose publish is still running
+                       picks the live state back up rather than restarting it;
+                       any other skin starts from its own ini. */
+                    const bool resume =
+                        s_pubStarted && strcmp(s_pubPath, path) == 0;
+                    SDL_strlcpy(s_pubPath, path, sizeof(s_pubPath));
+                    if (!resume) {
+                        SkinInfo info;
+                        skinSourceReadIni(skinGetActiveSource(), &info);
+                        const char *name = info.name;
+                        if (name[0] == '\0') {
+                            const char *colon = strchr(reqId, ':');
+                            name = (colon != nullptr) ? colon + 1 : reqId;
+                        }
+                        SDL_strlcpy(s_pubTitle, name, sizeof(s_pubTitle));
+                        SDL_strlcpy(s_pubDesc, info.notes, sizeof(s_pubDesc));
+                        s_pubExistingId = info.workshopId;
+                        s_pubAuthor     = info.workshopAuthor;
+                        /* An update is offered only when the recorded
+                           publisher is this account.  Steam refuses an update
+                           to somebody else's item, and an unknown publisher is
+                           no proof the item is ours — publishing a second item
+                           by mistake is the recoverable error. */
+                        s_pubAsNew = !(s_pubExistingId != 0 &&
+                                       s_pubAuthor != 0 &&
+                                       s_pubAuthor == steam_get_steam_id());
+                        s_pubStarted    = false;
+                        s_pubDoneId     = 0;
+                        s_pubNeedsLegal = false;
+                        s_pubFailed     = false;
+                    }
+                    ImGui::OpenPopup("##SkinPublish");
+                }
+            }
+            ImGui::EndDisabled();
+            imguiHandOnHover();
+            /* A disabled item is not hovered as far as ImGui is concerned
+               unless it is asked for, and the reason it is disabled is exactly
+               what the player needs to read. */
+            if (!canPublish &&
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled |
+                                     ImGuiHoveredFlags_ForTooltip)) {
+                ImGui::SetTooltip("%s",
+                                  langGetText(STR_DLGSKIN_PUBLISH_NEEDUSER));
+            }
+
+            if (ImGui::BeginPopupModal("##SkinPublish", nullptr,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                const float fieldW = ImGui::GetFontSize() * 20.0f;
+                s_pubPopupOpen = true;
+
+                ImGui::TextUnformatted(
+                    langGetText(STR_DLGSKIN_PUBLISH_HEADING));
+                ImGui::Separator();
+
+                ImGui::TextUnformatted(langGetText(STR_DLGSKIN_PUBLISH_NAME));
+                ImGui::SetNextItemWidth(fieldW);
+                ImGui::InputText("##pubtitle", s_pubTitle, sizeof(s_pubTitle));
+                ImGui::TextUnformatted(langGetText(STR_DLGSKIN_PUBLISH_DESC));
+                ImGui::InputTextMultiline("##pubdesc", s_pubDesc,
+                                          sizeof(s_pubDesc),
+                                          ImVec2(fieldW,
+                                                 ImGui::GetFontSize() * 6.0f));
+
+                /* Only a skin that already carries an id has an item to
+                   update, so the choice is not offered otherwise. */
+                if (s_pubExistingId != 0) {
+                    if (ImGui::RadioButton(
+                            langGetText(STR_DLGSKIN_PUBLISH_UPDATE),
+                            !s_pubAsNew)) {
+                        s_pubAsNew = false;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("#%llu",
+                                        (unsigned long long)s_pubExistingId);
+                    if (ImGui::RadioButton(
+                            langGetText(STR_DLGSKIN_PUBLISH_NEW), s_pubAsNew)) {
+                        s_pubAsNew = true;
+                    }
+                }
+
+                /* The poll answers -1 with nothing in flight, so it is only
+                   asked after a begin that said yes. */
+                int state = 0;
+                if (s_pubStarted) {
+                    uint64_t doneId = 0;
+                    bool     needsLegal = false;
+                    state = steam_workshop_publish_poll(&doneId, &needsLegal);
+                    if (state == 1 && doneId != 0 && s_pubDoneId == 0) {
+                        s_pubDoneId     = doneId;
+                        s_pubNeedsLegal = needsLegal;
+                        /* Written back once, so the next publish of this skin
+                           updates this item instead of making another, and
+                           knows the item is this account's. The modal takes
+                           the new pair from here rather than from the
+                           source's cached ini, which predates the write.
+                           When the write fails the skin still carries no id,
+                           so the modal keeps offering publish-as-new, which
+                           is what the file on disk will do next time too. */
+                        if (skinSetWorkshopId(s_pubPath, doneId,
+                                              steam_get_steam_id())) {
+                            s_pubExistingId = doneId;
+                            s_pubAuthor     = steam_get_steam_id();
+                            s_pubAsNew      = false;
+                        } else {
+                            WB_LOG_WARN(WB_LOG_CAT_ASSET,
+                                        "imgui_settings: published %s as "
+                                        "Workshop item %llu but could not "
+                                        "record the id in its skin.ini; the "
+                                        "next publish will make a new item",
+                                        s_pubPath,
+                                        (unsigned long long)doneId);
+                        }
+                    } else if (state == -1) {
+                        s_pubFailed = true;
+                    }
+                }
+                s_pubInFlight = (s_pubStarted && state == 0);
+
+                ImGui::Spacing();
+                if (s_pubStarted && state == 0) {
+                    ImGui::TextUnformatted(
+                        langGetText(STR_DLGSKIN_PUBLISH_WORKING));
+                    uint64_t bytesDone = 0, bytesTotal = 0;
+                    if (steam_workshop_publish_progress(&bytesDone,
+                                                        &bytesTotal) != 0 &&
+                        bytesTotal > 0) {
+                        ImGui::ProgressBar((float)((double)bytesDone /
+                                                   (double)bytesTotal),
+                                           ImVec2(fieldW, 0.0f));
+                    }
+                } else if (s_pubStarted && state == 1) {
+                    ImGui::TextUnformatted(
+                        langGetText(STR_DLGSKIN_PUBLISH_DONE));
+                    if (s_pubDoneId != 0) {
+                        if (ImGui::Button(
+                                langGetText(STR_DLGSKIN_PUBLISH_OPENITEM))) {
+                            steam_workshop_open_item_page(s_pubDoneId);
+                        }
+                        imguiHandOnHover();
+                    }
+                    if (s_pubNeedsLegal) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
+                                           langGetText(
+                                               STR_DLGSKIN_PUBLISH_LEGAL));
+                    }
+                } else if (s_pubFailed) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
+                                       langGetText(STR_DLGSKIN_PUBLISH_FAILED));
+                }
+
+                ImGui::Separator();
+                ImGui::BeginDisabled(s_pubStarted && state == 0);
+                if (ImGui::Button(langGetText(STR_DLGSKIN_PUBLISH_GO))) {
+                    s_pubDoneId     = 0;
+                    s_pubNeedsLegal = false;
+                    s_pubFailed     = false;
+                    s_pubStarted    = skinPublishStart();
+                    if (!s_pubStarted) s_pubFailed = true;
+                }
+                ImGui::EndDisabled();
+                imguiHandOnHover();
+                ImGui::SameLine();
+                if (ImGui::Button(langGetText(STR_CLOSE))) {
+                    /* Closing does not stop an upload Steam has already been
+                       given — the UGC API has no cancel — so reopening shows
+                       it still running.  Steam reads the content folder after
+                       the update is submitted, so the scratch only goes once
+                       the upload is over; one abandoned mid-upload is cleared
+                       by the next publish, which empties the folder before it
+                       builds. */
+                    if (!s_pubInFlight) skinPublishCleanup();
+                    ImGui::CloseCurrentPopup();
+                }
+                imguiHandOnHover();
+                ImGui::EndPopup();
+            } else if (s_pubPopupOpen) {
+                /* The modal is gone.  Usually the frame after the Close button
+                   ran, where the scratch is already dealt with, but the
+                   settings window can also be closed out from under an open
+                   modal — same rule, so no exit deletes files Steam is still
+                   reading. */
+                s_pubPopupOpen = false;
+                if (!s_pubInFlight) skinPublishCleanup();
+            }
+#endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
+        }
+
+        /* Tile detail.  A pick only shows once the sheet is rebuilt, so it
+           asks for a skin reload the same way picking a skin does.  Nothing
+           to choose between when the skin has no art above its base size,
+           which is the common case: all three modes build the same sheet.
+           tileLoaderGetDensityInfo caches on the source pointer, so asking
+           every frame is a pointer compare, not a rescan. */
+        {
+            const char *detailLabels[] = {
+                langGetText(STR_DLGSKIN_TILEDETAIL_CLASSIC),
+                langGetText(STR_DLGSKIN_TILEDETAIL_MATCHZOOM),
+                langGetText(STR_DLGSKIN_TILEDETAIL_HIGH),
+            };
+            int tdIdx = (int)gfxGetTileDetail();
+            if (tdIdx < 0 || tdIdx > 2) tdIdx = 0;
+            /* Each mode reads a different field of the scan: Match to zoom
+               takes one density for the whole sheet (highestAll), High detail
+               takes each sprite's own (so it is worth having as soon as any
+               sprite is finer, which is what highestAny says).  A skin whose
+               finer art covers only some sprites therefore has something to
+               choose between, but not Match to zoom — that builds Classic's
+               tiles. */
+            const SkinDensityInfo *di =
+                tileLoaderGetDensityInfo(skinGetActiveSource());
+            bool allOneSize    = di->highestAny <= 1;
+            bool zoomIsClassic = di->highestAll <= 1;
+
+            ImGui::BeginDisabled(allOneSize);
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_TILEDETAIL));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##tiledetail", detailLabels[tdIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool sel = (tdIdx == i);
+                    bool sameAsClassic = (!allOneSize && zoomIsClassic &&
+                                          i == TILE_DETAIL_MATCH_ZOOM);
+                    ImGui::BeginDisabled(sameAsClassic);
+                    if (ImGui::Selectable(detailLabels[i], sel) && i != tdIdx) {
+                        gfxSetTileDetail((GfxTileDetail)i);
+                        gameFrontSaveCurrentPrefs();
+                        ctx->wantSkinReload = true;
+                    }
+                    ImGui::EndDisabled();
+                    /* A disabled item is not hovered as far as ImGui is
+                       concerned unless it is asked for, and the reason it is
+                       disabled is exactly what the player needs to read. */
+                    if (sameAsClassic &&
+                        ImGui::IsItemHovered(
+                            ImGuiHoveredFlags_AllowWhenDisabled |
+                            ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip(
+                            "%s",
+                            langGetText(STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP));
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::EndDisabled();
+            if (allOneSize) {
+                imguiHelpTooltip(langGetText(STR_DLGSKIN_TILEDETAIL_ONESIZE_TIP));
+            }
+        }
+
+        /* Animation smoothness, and the shell override.  Both are read where
+           a sprite's screen position is worked out, so a pick shows on the
+           next frame with no sheet rebuild.  Neither is greyed by what the
+           skin holds: this is about where a sprite is put on screen, not how
+           much detail it has, and it shows at any zoom above 1 even with
+           16x16 art. */
+        {
+            const char *smoothLabels[] = {
+                langGetText(STR_DLGSKIN_ANIMSMOOTH_CLASSIC),
+                langGetText(STR_DLGSKIN_ANIMSMOOTH_PIXEL),
+                langGetText(STR_DLGSKIN_ANIMSMOOTH_SMOOTH),
+            };
+            int asIdx = (int)gfxGetAnimSmoothness();
+            if (asIdx < 0 || asIdx > 2) asIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_ANIMSMOOTH));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##animsmooth", smoothLabels[asIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool sel = (asIdx == i);
+                    if (ImGui::Selectable(smoothLabels[i], sel) && i != asIdx) {
+                        gfxSetAnimSmoothness((GfxAnimSmoothness)i);
+                        gameFrontSaveCurrentPrefs();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            /* Redundant once everything already moves smoothly, so it only
+               appears in the other two modes. */
+            if (gfxGetAnimSmoothness() != GFX_ANIM_SMOOTH) {
+                bool ss = gfxGetSmoothShells();
+                if (ImGui::Checkbox(langGetText(STR_DLGSKIN_SMOOTHSHELLS), &ss)) {
+                    gfxSetSmoothShells(ss);
+                    gameFrontSaveCurrentPrefs();
+                }
+            }
+        }
+
+        /* Texture filter.  Set on the sheet that is already there, so a
+           pick shows on the next frame with no rebuild.  Not greyed by
+           what the skin holds: it applies to whatever art is loaded. */
+        {
+            const char *filterLabels[] = {
+                langGetText(STR_DLGSKIN_TEXFILTER_NEAREST),
+                langGetText(STR_DLGSKIN_TEXFILTER_LINEAR),
+                langGetText(STR_DLGSKIN_TEXFILTER_PIXELART),
+            };
+            int tfIdx = (int)gfxGetTextureFilter();
+            if (tfIdx < 0 || tfIdx > 2) tfIdx = 0;
+
+            /* What the active skin's author recommends, if anything, so the
+               entry they named can say so.  The ini is cached after the
+               first read, and a NULL source answers SKIN_FILTER_NONE, so
+               reading it every frame costs a struct copy. */
+            SkinInfo recInfo;
+            skinSourceReadIni(skinGetActiveSource(), &recInfo);
+            const int recFilter = recInfo.recommendedFilter;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_TEXFILTER));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            /* The closed combo shows the plain name: the tag belongs in the
+               list, beside the entry it is about. */
+            if (ImGui::BeginCombo("##texfilter", filterLabels[tfIdx])) {
+                for (int i = 0; i < 3; i++) {
+                    bool sel = (tfIdx == i);
+                    char label[128];
+                    if (i == recFilter) {
+                        SDL_snprintf(label, sizeof(label), "%s %s",
+                                     filterLabels[i],
+                                     langGetText(STR_DLGSKIN_RECOMMENDED_TAG));
+                    } else {
+                        SDL_strlcpy(label, filterLabels[i], sizeof(label));
+                    }
+                    if (ImGui::Selectable(label, sel) && i != tfIdx) {
+                        gfxSetTextureFilter((GfxTextureFilter)i);
+                        gameFrontSaveCurrentPrefs();
+                        sdl3DrawSetTilesScaleMode(
+                            sdl3DrawScaleModeForFilter((GfxTextureFilter)i));
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
+        }
+    }
 
     /* ---- Sound ---- */
     ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
@@ -1101,6 +1889,10 @@ extern "C" void imguiSettingsShow(void) {
      * render in the same dialog session (no app restart needed). */
     bool        pendingFontRebuild = false;
 
+    /* Set when the Skin combo changes.  gameFrontReloadSkins() destroys and
+     * rebuilds the tile texture, so it runs after Present, not mid-frame. */
+    bool        pendingSkinReload = false;
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -1350,6 +2142,8 @@ extern "C" void imguiSettingsShow(void) {
            pre-game atlas-rebuild flag consumed after Present.  Additive:
            never clobber an already-pending rebuild. */
         if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
+        /* Same deal for a skin change: the reload happens after Present. */
+        if (ctx.wantSkinReload) pendingSkinReload = true;
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
@@ -1411,6 +2205,14 @@ extern "C" void imguiSettingsShow(void) {
             imguiLoadBoloFont(fontSize);
             chainPickerNameGlyphs(langEntries, langCount, fontSize);
             pendingFontRebuild = false;
+        }
+
+        /* Rebuild the tile sheet and sound set for a new skin here, between
+         * Present and the next NewFrame — the old tile texture may still be
+         * referenced by draw data before Present. */
+        if (pendingSkinReload) {
+            pendingSkinReload = false;
+            gameFrontReloadSkins();
         }
 
 #if !BOLO_MOBILE

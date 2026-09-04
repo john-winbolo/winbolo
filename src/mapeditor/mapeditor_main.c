@@ -31,7 +31,7 @@
 
 #include "mapeditor.h"
 #include "../third_party/stb/stb_image.h"
-#include "../gui/sdl3/sdl3draw.h"  /* sdl3DrawGetWindow prototype */
+#include "../gui/sdl3/sdl3draw.h"  /* sdl3DrawGetWindow / GetTilesGeneration */
 #if defined(MAPEDITOR_WBN_OPEN) && !defined(__EMSCRIPTEN__)
 #include "../winbolonet/http.h"    /* httpCreate / httpDestroy */
 #include "mapeditor_wbn_open.h"    /* meWbnOpenSetAvailable */
@@ -48,6 +48,14 @@ static SDL_Window *s_window = NULL;
 
 SDL_Window *sdl3DrawGetWindow(void) {
     return s_window;
+}
+
+/* Tile atlas generation, likewise published for a draw layer the editor
+ * does not link. The map preview widget rebuilds its sheet when this
+ * moves, which in the client is a skin change; the editor has no skin
+ * picker, so its sheet is built once and the count never moves. */
+unsigned int sdl3DrawGetTilesGeneration(void) {
+    return 0;
 }
 
 /* Set the window icon (taskbar / title bar) from data/icons/mapeditor-icon.png.

@@ -41,6 +41,22 @@ SDL_Texture *sdlLoadBmpAsTexture(SDL_Renderer *renderer,
                                  const char *path,
                                  bool useColorKey);
 
+/* Load a BMP from an already-open SDL_IOStream and create an SDL
+ * texture. Same conversion, color-key and blend-mode behaviour as
+ * sdlLoadBmpAsTexture — this is the entry point for bytes that did not
+ * come from a plain file, such as a BMP read out of a skin archive.
+ *
+ * If closeio is true the stream is closed whether the load succeeds or
+ * fails. A stream wrapping caller-owned memory (SDL_IOFromMem) closes
+ * the stream only; the caller still frees the bytes.
+ *
+ * Returns NULL on any failure. Caller owns the returned texture and
+ * must SDL_DestroyTexture it.
+ */
+SDL_Texture *sdlLoadBmpStreamAsTexture(SDL_Renderer *renderer,
+                                       SDL_IOStream *src, bool closeio,
+                                       bool useColorKey);
+
 #ifdef __cplusplus
 }
 #endif
