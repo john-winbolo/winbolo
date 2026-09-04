@@ -303,6 +303,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
     case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
     case CTRL_ROUND_RATING_POSTED:   return "CTRL_ROUND_RATING_POSTED";
+    case CTRL_STATS_SEED:            return "CTRL_STATS_SEED";
     default:                         return NULL;
   }
 }
@@ -579,6 +580,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fprintf(f, ",\"fromPlayer\":%u,\"keyPrefix\":",
               (unsigned)evt->u.ratingPosted.fromPlayer);
       logEventsJsonStr(f, evt->u.ratingPosted.key, 6);
+      break;
+
+    case CTRL_STATS_SEED:
+      fprintf(f, ",\"playerCount\":%u",
+              (unsigned)evt->u.statsSeed.playerCount);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

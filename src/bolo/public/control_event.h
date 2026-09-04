@@ -127,6 +127,14 @@ typedef enum {
      * the same round. Carries no rating or comment text — the round's page
      * on WinBolo.net stays the only source. */
     CTRL_ROUND_RATING_POSTED,
+    /* CTRL_STATS_SEED — the server's running per-slot round stats, unicast
+     * to one joiner inside its sync replay while a round is running. The
+     * client counts its live scoreboard from the game-event stream, so it
+     * knows only what happened since it joined; this seeds that accumulator
+     * from the server's own PlayerRoundStats so a mid-round joiner sees the
+     * real numbers. Carries the same RoundPlayerSummary rows CTRL_ROUND_STATS
+     * ships, without the awards, highlights and log key. */
+    CTRL_STATS_SEED,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -435,6 +443,16 @@ typedef struct ControlEvent {
             BYTE fromPlayer;
             char key[ROUND_STATS_LOGKEY_LEN];
         } ratingPosted;
+
+        /* CTRL_STATS_SEED — the in-progress round's scoreboard rows, one per
+         * connected slot. Same row type as RoundStatsSummary.players, so the
+         * seed and the end-of-round recap cannot disagree on what a column
+         * means. dmgDealt and builds ride along in the row and the client
+         * drops them: no client-side event keeps them current. */
+        struct {
+            uint8_t            playerCount;             /* present slots, <= MAX_TANKS */
+            RoundPlayerSummary players[MAX_TANKS];
+        } statsSeed;
     } u;
 } ControlEvent;
 

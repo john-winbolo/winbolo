@@ -3218,6 +3218,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lobby-chat event through the body tables, including the empty/max-length
     # messages and the out-of-range specIdx / msgLen-overrun rejections.
     tests/unit/test_spectator_chat_codec.c
+    # CTRL_STATS_SEED body-codec round-trip: encode/decode the mid-round live
+    # scoreboard seed through the body tables, including the full roster, the
+    # zero-row minimum, and the truncated / bad-slot rejections and the clamp.
+    tests/unit/test_stats_seed_codec.c
     # Spectator-chat routing: a published CTRL_SPECTATOR_CHAT reaches a player
     # bus subscriber and a live spectator (allowlist); broadcast CTRL_CHAT
     # reaches the spectator; team/unicast CTRL_CHAT does not.
@@ -3898,6 +3902,7 @@ set(_unit_test_names
     spectator_roster_publish
     spectator_slot_codec
     spectator_chat_codec
+    stats_seed_codec
     spectator_chat_routing
     spectator_chat_log
     spectator_chat_catchup

@@ -280,6 +280,7 @@ static const UnitTestEntry s_tests[] = {
     { "spectator_roster_publish",                run_spectator_roster_publish                },
     { "spectator_slot_codec",                    run_spectator_slot_codec                    },
     { "spectator_chat_codec",                    run_spectator_chat_codec                    },
+    { "stats_seed_codec",                        run_stats_seed_codec                        },
     { "spectator_chat_routing",                  run_spectator_chat_routing                  },
     { "spectator_chat_log",                      run_spectator_chat_log                      },
     { "spectator_chat_catchup",                  run_spectator_chat_catchup                  },

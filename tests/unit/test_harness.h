@@ -377,6 +377,12 @@ int run_spectator_slot_codec(void);
  * rejections. */
 int run_spectator_chat_codec(void);
 
+/* CTRL_STATS_SEED body-codec round-trip (test_stats_seed_codec.c): the
+ * mid-round live-scoreboard seed encodes/decodes through the body tables, with
+ * a full MAX_TANKS roster, the zero-row minimum, and the short / truncated /
+ * out-of-range-slot rejections plus the over-count clamp. */
+int run_stats_seed_codec(void);
+
 /* Spectator-chat routing (test_spectator_chat_routing.c): a published
  * CTRL_SPECTATOR_CHAT reaches a player bus subscriber and a live spectator
  * (allowlist); broadcast CTRL_CHAT reaches the spectator; team/unicast chat

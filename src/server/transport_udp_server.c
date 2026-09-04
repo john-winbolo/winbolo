@@ -1532,6 +1532,10 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_SPECTATOR_SLOT:
     case CTRL_SPECTATOR_CHAT:
     case CTRL_LOBBY_SYNC_COMPLETE:
+    /* The live scoreboard is public — a viewer can already read captures and
+     * kills off the map, and a spectator whose board never leaves zero looks
+     * broken. */
+    case CTRL_STATS_SEED:
         allow = true;
         break;
     case CTRL_GAME_VOTE_STATE:

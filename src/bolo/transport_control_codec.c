@@ -832,6 +832,82 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* CTRL_STATS_SEED body wire format — the row half of CTRL_ROUND_STATS and
+ * nothing else (no awards, no highlights, no log key):
+ *   [playerCount 1]
+ *   playerCount x [slot 1][isBot 1][kills 2][deaths 2][baseCaptures 2]
+ *                 [pillCaptures 2][dmgDealt 4][builds 2][lgmKills 2]
+ *                 [lgmDeaths 2]                                   (20 bytes)
+ * Multi-byte fields are big-endian via packU16/packU32, matching every other
+ * body encoder. Delivered body-only inside a joiner's sync replay: no
+ * standalone encoder and no PACKET_* type of its own. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeStatsSeedBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    (void)recipient;
+    uint8_t pc = evt->u.statsSeed.playerCount;
+    if (pc > MAX_TANKS) pc = MAX_TANKS;
+
+    if (bufCap < (size_t)1 + (size_t)pc * 20) return ENCODE_OVERFLOW;
+
+    size_t pos = 0;
+    buf[pos++] = pc;
+    for (uint8_t i = 0; i < pc; i++) {
+        const RoundPlayerSummary *p = &evt->u.statsSeed.players[i];
+        buf[pos++] = p->slot;
+        buf[pos++] = p->isBot;
+        packU16(buf + pos, p->kills);        pos += 2;
+        packU16(buf + pos, p->deaths);       pos += 2;
+        packU16(buf + pos, p->baseCaptures); pos += 2;
+        packU16(buf + pos, p->pillCaptures); pos += 2;
+        packU32(buf + pos, p->dmgDealt);     pos += 4;
+        packU16(buf + pos, p->builds);       pos += 2;
+        packU16(buf + pos, p->lgmKills);     pos += 2;
+        packU16(buf + pos, p->lgmDeaths);    pos += 2;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeStatsSeedBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    if (len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_STATS_SEED;
+    size_t pos = 0;
+
+    /* Untrusted input. The claimed count must be backed by real bytes before
+     * any row is read, and only MAX_TANKS of them can be stored — a count
+     * past that is clamped, not trusted. */
+    uint8_t claimed = buf[pos++];
+    if (pos + (size_t)claimed * 20 > len) return false;
+    uint8_t pc = claimed;
+    if (pc > MAX_TANKS) pc = MAX_TANKS;
+
+    for (uint8_t i = 0; i < pc; i++) {
+        RoundPlayerSummary *p = &outEvt->u.statsSeed.players[i];
+        p->slot         = buf[pos++];
+        p->isBot        = buf[pos++];
+        p->kills        = unpackU16(buf + pos); pos += 2;
+        p->deaths       = unpackU16(buf + pos); pos += 2;
+        p->baseCaptures = unpackU16(buf + pos); pos += 2;
+        p->pillCaptures = unpackU16(buf + pos); pos += 2;
+        p->dmgDealt     = unpackU32(buf + pos); pos += 4;
+        p->builds       = unpackU16(buf + pos); pos += 2;
+        p->lgmKills     = unpackU16(buf + pos); pos += 2;
+        p->lgmDeaths    = unpackU16(buf + pos); pos += 2;
+        /* The slot is what the client indexes its per-slot board by. Reject
+         * the whole body rather than silently dropping the row: a valid
+         * server never sends one, and a partial seed would read as truth. */
+        if (p->slot >= MAX_TANKS) return false;
+    }
+    outEvt->u.statsSeed.playerCount = pc;
+    return true;
+}
+
 /* PACKET_LOBBY_BOT_POOL_CHUNK wire format:
  *   [header 8] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
  * Each fragment is one slice of the server's zlib-compressed bot-pool
@@ -2179,6 +2255,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_STATS]           = encodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
     [CTRL_ROUND_RATING_POSTED]   = encodeRoundRatingPostedBody,
+    [CTRL_STATS_SEED]            = encodeStatsSeedBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2218,6 +2295,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ROUND_STATS]           = decodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
     [CTRL_ROUND_RATING_POSTED]   = decodeRoundRatingPostedBody,
+    [CTRL_STATS_SEED]            = decodeStatsSeedBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

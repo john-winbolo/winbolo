@@ -468,6 +468,35 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     cs->lastRoundStats.wbnLogKey);
         break;
 
+    case CTRL_STATS_SEED: {
+        /* Mid-round join (or a re-join of one): the server's running per-slot
+         * counters replace the accumulator wholesale rather than adding to
+         * it, so seeding twice leaves the same board a single seed would.
+         * Only the six counters this client can keep current from the
+         * game-event stream are taken — the row also carries dmgDealt and
+         * builds, which no client-side event maintains, and a number frozen
+         * at its join-time value would be worse than none. */
+        uint8_t n = evt->u.statsSeed.playerCount;
+        uint8_t i;
+        if (n > MAX_TANKS) n = MAX_TANKS;
+        memset(cs->liveStats, 0, sizeof(cs->liveStats));
+        for (i = 0; i < n; i++) {
+            const RoundPlayerSummary *row = &evt->u.statsSeed.players[i];
+            ClientPlayerStats *dst;
+            /* The wire decoder rejects an out-of-range slot, but the
+             * in-process bus hands events over without passing through it. */
+            if (row->slot >= MAX_TANKS) continue;
+            dst = &cs->liveStats[row->slot];
+            dst->kills        = row->kills;
+            dst->deaths       = row->deaths;
+            dst->baseCaptures = row->baseCaptures;
+            dst->pillCaptures = row->pillCaptures;
+            dst->lgmKills     = row->lgmKills;
+            dst->lgmDeaths    = row->lgmDeaths;
+        }
+        break;
+    }
+
     case CTRL_ROUND_RATING_POSTED: {
         const char *key = evt->u.ratingPosted.key;
         /* The poster's own client re-armed its fetch when its POST returned,
