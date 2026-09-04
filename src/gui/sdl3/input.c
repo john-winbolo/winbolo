@@ -707,10 +707,13 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
       }
     }
 
-    if (inputGamepadIsViewToggleEdge()) {
+    if (inputGamepadIsViewToggleEdge() &&
+        clientSimGetViewPolicy(cs, viewCategoryPill) != viewPolicyOff) {
       /* Enter pill view, or advance to the next pill if already in it. Unlike
        * the old toggle, repeated presses cycle pills rather than returning to
-       * tank view — driving (forward/turn) does that, handled above. */
+       * tank view — driving (forward/turn) does that, handled above. The
+       * button is inert while the server has pill view off, matching the
+       * pill view key. */
       clientSimPillView(cs, 0, 0);
       s_controllerPillView = true;
     }

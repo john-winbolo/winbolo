@@ -43,6 +43,7 @@ extern "C" {
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
 #include "upload_policy.h"  /* UploadPolicy — map-upload combo */
+#include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../../lang.h"
@@ -723,6 +724,42 @@ static void SDLCALL hostingLogDirDialogCallback(void *userdata,
     }
 }
 
+/* One visibility row: the category label, a 4-way policy combo, and — only
+ * while that combo reads Decay — the decay-seconds box.  The combo index is
+ * the ViewPolicy value, the enum being in display order.  An edit comes back
+ * in *policy / *secs with the matching flag set, so the caller pushes just
+ * the field the host touched through that category's setter. */
+static void hostingViewRow(const char *id, langid label, int *policy,
+                           int *secs, bool *policyEdited, bool *secsEdited) {
+    const char *modes[4] = {
+        langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+        langGetText(STR_DLGLOBBY_VIEW_KEY),
+        langGetText(STR_DLGLOBBY_VIEW_DECAY),
+        langGetText(STR_DLGLOBBY_VIEW_OFF)
+    };
+    *policyEdited = false;
+    *secsEdited   = false;
+
+    ImGui::PushID(id);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(langGetText(label));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::Combo("##policy", policy, modes, 4)) {
+        *policyEdited = true;
+    }
+    if (*policy == (int)viewPolicyDecay) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+        if (ImGui::InputInt("##decay", secs, 1, 5)) {
+            *secsEdited = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+    }
+    ImGui::PopID();
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
@@ -882,6 +919,40 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                 gameFrontSetHostingServeReplays(serveReplays);
             }
         }
+    }
+
+    /* ---- Visibility ----
+     * The pill / base / allied-tank view rules a game hosted from here
+     * starts with; the host can still change them from the lobby once the
+     * game is up, and this dialog has no path into a running game.  The
+     * setters persist to prefs and clamp the seconds, so the values go
+     * through them untouched. */
+    {
+        int policy, secs;
+        bool policyEdited, secsEdited;
+
+        ImGui::SeparatorText(langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
+
+        policy = gameFrontViewPillPolicy;
+        secs   = gameFrontViewPillDecaySecs;
+        hostingViewRow("viewpill", STR_DLGLOBBY_VIEW_PILL, &policy, &secs,
+                       &policyEdited, &secsEdited);
+        if (policyEdited) gameFrontSetViewPillPolicy(policy);
+        if (secsEdited)   gameFrontSetViewPillDecaySecs(secs);
+
+        policy = gameFrontViewBasePolicy;
+        secs   = gameFrontViewBaseDecaySecs;
+        hostingViewRow("viewbase", STR_DLGLOBBY_VIEW_BASE, &policy, &secs,
+                       &policyEdited, &secsEdited);
+        if (policyEdited) gameFrontSetViewBasePolicy(policy);
+        if (secsEdited)   gameFrontSetViewBaseDecaySecs(secs);
+
+        policy = gameFrontViewAllyPolicy;
+        secs   = gameFrontViewAllyDecaySecs;
+        hostingViewRow("viewally", STR_DLGLOBBY_VIEW_ALLY, &policy, &secs,
+                       &policyEdited, &secsEdited);
+        if (policyEdited) gameFrontSetViewAllyPolicy(policy);
+        if (secsEdited)   gameFrontSetViewAllyDecaySecs(secs);
     }
 
     ImGui::Spacing();
