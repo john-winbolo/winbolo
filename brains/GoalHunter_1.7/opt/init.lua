@@ -3945,7 +3945,12 @@ function Brain.think(info)
             local our_sub = g and g.substate or ""
             local pre_commit = (our_sub == "plan_position" or our_sub == "approach")
             local ce = state.cost_cache and state.cost_cache["6:" .. tostring(rq.pid)]
-            local my_cost = ce and type(ce.cost) == "number" and ce.cost or nil
+            -- VARIANT (c): our reply price is the RAW cost_cache cost, the
+            -- pre-handshake baseline. No competed total, no commitment
+            -- adjustment. The units tag is kept on the log line (always `raw`)
+            -- so the price a reply was made on is still stated outright.
+            local raw_cost = ce and type(ce.cost) == "number" and ce.cost or nil
+            local my_cost, cost_units = raw_cost, "raw"
             local cost_fresh = my_cost and (now - (ce.tick or 0)) <= (C.STEAL_REEVAL_MAX_AGE or 40)
             local deadline = (now - rq.tick) >= (C.STEAL_REPLY_DEADLINE or 20)
             local reply, verdict
@@ -3967,8 +3972,8 @@ function Brain.think(info)
               state._steal_yielded = state._steal_yielded or {}
               state._steal_yielded[rq.pid] = { to = rq.from, tick = now }
               attack.clear_attack_goal(state, string.format(
-                "steal: accepted p%d's request for pill #%d (%s < our %.0f)",
-                rq.from, rq.pid, tostring(rq.cost), my_cost))
+                "steal: accepted p%d's request for pill #%d (%s < our %s %.0f)",
+                rq.from, rq.pid, tostring(rq.cost), cost_units, my_cost))
               reply, verdict = "sta", "challenger_cheaper"
             else
               reply, verdict = "str", "we_re_cheap_enough"
@@ -3978,6 +3983,10 @@ function Brain.think(info)
               state._steal_outbox[#state._steal_outbox + 1] =
                 string.format("/info %s %d %d %d", reply, rq.pid, rq.from,
                               math.floor(math.min(my_cost or 9999999, 9999999) + 0.5))
+              -- our_cost carries its UNITS. VARIANT (c) has one unit only --
+              -- `(raw)`, the bare cost_cache cost -- and it is the number that
+              -- goes out in the sta/str, so the challenger's band test sees
+              -- exactly the price this line prints. raw= repeats it.
             end
           end
         end
@@ -6896,6 +6905,8 @@ function Brain.think(info)
            and pce.goal.mx   == state.goal.mx
            and pce.goal.my   == state.goal.my
            and pce.cost ~= nil then
+          -- VARIANT (c): the advertised cost is the RAW pool cost on every
+          -- pool, pool 6 included, and carries no units tag.
           bse.cost = string.format("%.0f", pce.cost - (pce.ally_claimed_pen or 0))
           break
         end

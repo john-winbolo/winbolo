@@ -793,6 +793,21 @@ M.STEAL_GRANT_TTL      = 250 -- ticks a received accept stays valid in goal sele
 M.STEAL_REPLY_DEADLINE = 20  -- holder answers with its cached score at latest after this many ticks
 M.STEAL_REEVAL_MAX_AGE = 40  -- cached pool-6 score older than this defers the reply (waits for a fresh re-eval)
 M.STEAL_YIELD_BLOCK    = 300 -- after yielding, don't re-pick that pill for this long (covers the gap until the winner's claim broadcast lands)
+-- TARGETED STEAL REQUESTS + EARLY YIELD RELEASE (20260903_193428_1 bot3,
+-- t=1266-1270). p4 sent bot3 two steal requests back to back -- `stq 4 3 188`
+-- and `stq 0 3 379` -- while p4's own goal was attack_pill #5 and stayed #5 the
+-- whole time (it was the commander of the pill-5 blitz). Bot3 yielded both, and
+-- its pool 6 then showed pills #0 and #4 ally_claimed by p4 for the full
+-- STEAL_YIELD_BLOCK (still up at t=1487) for takes p4 never went near.
+-- VARIANT (c) fixes the two mechanical halves of that and nothing else:
+--   * a request now goes out only for the row goal selection would actually
+--     pick if the claim were lifted, at most one per replan;
+--   * a yield block ends the moment the stealer's own advert shows it on
+--     something else.
+-- The prices on the wire stay the RAW cost_cache costs both sides always
+-- traded -- no competed totals, no commitment adjustment, no `cq=` tag --
+-- so ALLY_CLAIMED_STEAL_FRAC keeps deciding on exactly the numbers it used to.
+M.STEAL_YIELD_RELEASE_GRACE = 60  -- ticks after a yield before a stealer's advert may release it (same incident: the yield block outlived the steal by 200+ ticks). One replan interval plus slack, so the stealer gets a full replan to pick the pill up -- its /info state is event-driven and only re-sends on a goal CHANGE, so its pre-yield goal would otherwise read as "went elsewhere" the very next tick
 -- DEPRECATED / unused: the refuel ally-claim FCFS reject (and its
 -- far-claimer override) was replaced by the SOFT per-ally cost penalty
 -- (ALLY_CLAIMED_REFUEL_PENALTY). Refuel is no longer in _REJECT_POOLS, so
