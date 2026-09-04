@@ -10,7 +10,12 @@
 #   sim_owner    - the bolo sim implementation itself. Sees public/, internal/,
 #                  and (transitionally) the flat src/bolo/ directory.
 #   mapeditor    - the standalone map editor binary. Privileged T2 access to
-#                  bolo's internal map-data layouts; never runs the sim.
+#                  bolo's internal map-data layouts; never runs the sim. The
+#                  exception expires the moment anyone adds in-editor
+#                  playtest, live preview against a running sim, or any
+#                  other path that ticks the world from the editor — at
+#                  that point mapeditor joins the T1+T3+T4 group and the
+#                  map-data access moves behind T1 accessors.
 #   braintest    - the BrainTest debug visualiser binary. Privileged
 #                  access to bot_manager.h, brain_pathfinder.h,
 #                  brain_overlay.h, braincore.h, and control_event.h
@@ -36,23 +41,25 @@
 #                  snapshot APIs that the GUI clients already use,
 #                  and gym drops back to runtime_only.
 #   unittests    - the WinBoloUnitTests binary. Privileged access
-#                  to bolo T2 for invariant checks: transport.h
-#                  (passive transport_local queue mechanics under
-#                  cross-thread access), game_sim.h + players.h
-#                  (subscriber-dispatch test reads the client's
-#                  player table back through &cs->sim.plyrs after
-#                  CTRL_PLAYER_NAME delivery). The asymmetric-
-#                  runtime bug class doesn't apply: the tests are
-#                  not shipped to players, have a single consumer
-#                  (CTest), and aren't a runtime peer of the
-#                  GUI / server / mobile / wasm clients. The
-#                  exception expires once T1 accessors expose the
-#                  passive-transport queue state and the
-#                  subscriber-side player view the tests currently
-#                  reach T2 to observe; at that point the tests
-#                  migrate to T1+T3+T4 (the default tests/ row in
-#                  ARCHITECTURE.md's "Who may include what" table)
-#                  and this profile is removed.
+#                  to bolo T2 for invariant checks. The scope is
+#                  broad, and deliberately so: a test asserts on
+#                  the state the code actually keeps. In practice
+#                  that is the sim state structs, both sim
+#                  internals, the wire and transport layer, the
+#                  client's view and render internals, and the
+#                  bot and brain headers; ARCHITECTURE.md's
+#                  "tests/unit/" section carries the authoritative
+#                  list. The asymmetric-runtime bug class doesn't
+#                  apply: the tests are not shipped to players,
+#                  have a single consumer (CTest), and aren't a
+#                  runtime peer of the GUI / server / mobile /
+#                  wasm clients. The exception expires if the
+#                  binary ever ships in a player-facing
+#                  distribution or gains a consumer beyond CTest —
+#                  at that point it is a runtime peer like any
+#                  other. Short of that the scope narrows rather
+#                  than ends: every T2 include a new T1 accessor
+#                  makes unnecessary should go.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
 #                  Sees public/ only. Reaching into bolo internals from a
 #                  GUI translation unit is the asymmetric-runtime bug class

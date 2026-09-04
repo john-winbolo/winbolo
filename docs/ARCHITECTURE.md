@@ -1834,7 +1834,7 @@ no-op stub returning failure. Same pattern as
 
 ## Privileged exceptions
 
-Three non-bolo directories are permitted to include T2 headers
+Four non-bolo directories are permitted to include T2 headers
 today. Each has its own CMake profile in `cmake/bolo_lib.cmake`,
 a scoped justification, and a written expiry condition.
 
