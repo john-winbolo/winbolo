@@ -39,6 +39,11 @@ static const int k_iSteamInputConfigurationLoaded_id = k_iSteamControllerCallbac
 /* Workshop (UGC) callback IDs (k_iSteamUGCCallbacks = 3400). */
 static const int k_iItemInstalled_id      = k_iSteamUGCCallbacks + 5;
 static const int k_iDownloadItemResult_id = k_iSteamUGCCallbacks + 6;
+/* SteamAPICallCompleted_t callback ID (k_iSteamUtilsCallbacks = 700).  Unlike
+   the ids above this does not carry a result: it says that a SteamAPICall_t
+   handle has finished, and the payload is read back separately with
+   SteamAPI_ManualDispatch_GetAPICallResult. */
+static const int k_iSteamAPICallCompleted_id = k_iSteamUtilsCallbacks + 3;
 
 static bool s_initialized = false;
 static SteamJoinCallback s_join_callback = nullptr;
@@ -71,6 +76,47 @@ static bool s_force_actionset_reactivate = false;
    steam_workshop_consume_installed_event() so the skin picker can rescan. */
 static bool s_workshop_installed_event = false;
 
+/* Workshop publish.  CreateItem and SubmitItemUpdate hand back a
+   SteamAPICall_t whose result lands on a later frame, so a publish is spread
+   over several frames: steam_workshop_publish_begin() starts the first call,
+   the call-result arm in steam_run_callbacks() advances the state as each
+   result arrives, and callers watch it with steam_workshop_publish_poll(). */
+namespace {
+enum PublishState {
+  kPublishIdle = 0,   /* nothing started, or reset by steam_shutdown */
+  kPublishCreating,   /* CreateItem in flight (new items only) */
+  kPublishUpdating,   /* SubmitItemUpdate in flight */
+  kPublishDone,       /* finished, s_pubFileId holds the item */
+  kPublishFailed      /* Steam refused a call or returned an error */
+};
+}
+static PublishState s_pubState = kPublishIdle;
+/* The call result being waited on.  The dispatch arm compares every completed
+   handle against this and ignores the ones that don't match, so the wrapper
+   never consumes a call result it didn't start. */
+static SteamAPICall_t s_pubCall = k_uAPICallInvalid;
+/* Live between StartItemUpdate and the SubmitItemUpdate result; read by
+   steam_workshop_publish_progress() for the byte counts. */
+static UGCUpdateHandle_t s_pubUpdate = k_UGCUpdateHandleInvalid;
+static PublishedFileId_t s_pubFileId = 0;
+/* Steam reporting that the author has yet to accept the Workshop legal
+   agreement.  The item stays hidden until they do, so callers send them to
+   the item page. */
+static bool s_pubNeedsLegal = false;
+/* The item's fields, copied rather than aliased: for a new item CreateItem
+   completes frames later and only then are SetItemTitle and friends called,
+   by which point the caller's strings are long gone.  The two text sizes are
+   the SDK's published-document limits. */
+static char s_pubTitle[k_cchPublishedDocumentTitleMax];
+static char s_pubDesc[k_cchPublishedDocumentDescriptionMax];
+static char s_pubPreview[1024];
+static char s_pubFolder[1024];
+
+/* StartItemUpdate through SubmitItemUpdate for one item, using the fields
+   copied above.  Defined with the other publish functions at the foot of the
+   file; the call-result dispatch below runs it when CreateItem completes. */
+static bool steam_publish_submit_update(PublishedFileId_t id);
+
 extern "C" bool steam_init(void) {
   if (s_initialized) return true;
   if (!SteamAPI_Init()) {
@@ -94,6 +140,15 @@ extern "C" void steam_shutdown(void) {
   s_authTicket = k_HAuthTicketInvalid;
   s_overlay_active = false;
   s_workshop_installed_event = false;
+  s_pubState = kPublishIdle;
+  s_pubCall = k_uAPICallInvalid;
+  s_pubUpdate = k_UGCUpdateHandleInvalid;
+  s_pubFileId = 0;
+  s_pubNeedsLegal = false;
+  s_pubTitle[0] = '\0';
+  s_pubDesc[0] = '\0';
+  s_pubPreview[0] = '\0';
+  s_pubFolder[0] = '\0';
 }
 
 extern "C" void steam_run_callbacks(void) {
@@ -149,6 +204,68 @@ extern "C" void steam_run_callbacks(void) {
       WB_LOG_INFO(WB_LOG_CAT_GUI,
                   "steam_workshop: item download finished id=%llu result=%d",
                   (unsigned long long)d->m_nPublishedFileId, (int)d->m_eResult);
+    } else if (msg.m_iCallback == k_iSteamAPICallCompleted_id) {
+      /* A SteamAPICall_t finished.  The message says only which handle it was
+         and how big its payload is — the payload itself has to be fetched with
+         GetAPICallResult.  Only the publish call is ours to take: anything
+         else belongs to code that started its own call and is waiting for it. */
+      auto *d = reinterpret_cast<SteamAPICallCompleted_t *>(msg.m_pubParam);
+      if (s_pubCall != k_uAPICallInvalid && d->m_hAsyncCall == s_pubCall) {
+        unsigned char *buf = new unsigned char[d->m_cubParam];
+        bool failed = false;
+        bool got = SteamAPI_ManualDispatch_GetAPICallResult(
+            pipe, d->m_hAsyncCall, buf, (int)d->m_cubParam, d->m_iCallback,
+            &failed);
+        /* Cleared before dispatching: the create step starts the next call
+           and stores its handle here. */
+        s_pubCall = k_uAPICallInvalid;
+        if (!got || failed) {
+          s_pubState = kPublishFailed;
+          WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                       "steam_workshop: publish call result unavailable "
+                       "(callback=%d)",
+                       d->m_iCallback);
+        } else if (s_pubState == kPublishCreating) {
+          auto *r = reinterpret_cast<CreateItemResult_t *>(buf);
+          if (r->m_eResult != k_EResultOK) {
+            s_pubState = kPublishFailed;
+            WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                         "steam_workshop: CreateItem failed result=%d",
+                         (int)r->m_eResult);
+          } else {
+            s_pubFileId = r->m_nPublishedFileId;
+            if (r->m_bUserNeedsToAcceptWorkshopLegalAgreement)
+              s_pubNeedsLegal = true;
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "steam_workshop: item created id=%llu",
+                        (unsigned long long)s_pubFileId);
+            if (steam_publish_submit_update(s_pubFileId)) {
+              s_pubState = kPublishUpdating;
+            } else {
+              s_pubState = kPublishFailed;
+              WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                           "steam_workshop: could not start update for id=%llu",
+                           (unsigned long long)s_pubFileId);
+            }
+          }
+        } else if (s_pubState == kPublishUpdating) {
+          auto *r = reinterpret_cast<SubmitItemUpdateResult_t *>(buf);
+          if (r->m_eResult != k_EResultOK) {
+            s_pubState = kPublishFailed;
+            WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                         "steam_workshop: SubmitItemUpdate failed id=%llu "
+                         "result=%d",
+                         (unsigned long long)s_pubFileId, (int)r->m_eResult);
+          } else {
+            if (r->m_bUserNeedsToAcceptWorkshopLegalAgreement)
+              s_pubNeedsLegal = true;
+            s_pubState = kPublishDone;
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "steam_workshop: item published id=%llu",
+                        (unsigned long long)s_pubFileId);
+          }
+        }
+        delete[] buf;
+      }
     }
     SteamAPI_ManualDispatch_FreeLastCallback(pipe);
   }
@@ -646,5 +763,147 @@ extern "C" void steam_workshop_open_browse_page(void) {
   char url[128];
   snprintf(url, sizeof(url), "https://steamcommunity.com/app/%u/workshop/",
            (unsigned)utils->GetAppID());
+  friends->ActivateGameOverlayToWebPage(url);
+}
+
+/* -------- Steam Workshop publish --------
+ * A state machine over the call-result path in steam_run_callbacks(): begin
+ * starts a call, each result advances the state, poll reports it. */
+
+/* Copy one publish field into its fixed buffer, NUL-terminated.  A NULL
+ * source means "not set" and leaves an empty string. */
+static void steam_publish_copy(char *dst, size_t dstSize, const char *src) {
+  if (!dst || dstSize == 0) return;
+  if (!src) {
+    dst[0] = '\0';
+    return;
+  }
+  strncpy(dst, src, dstSize - 1);
+  dst[dstSize - 1] = '\0';
+}
+
+static bool steam_publish_submit_update(PublishedFileId_t id) {
+  ISteamUGC *ugc = SteamUGC();
+  ISteamUtils *utils = SteamUtils();
+  if (!ugc || !utils) return false;
+
+  UGCUpdateHandle_t h = ugc->StartItemUpdate(utils->GetAppID(), id);
+  if (h == k_UGCUpdateHandleInvalid) return false;
+
+  ugc->SetItemTitle(h, s_pubTitle);
+  ugc->SetItemDescription(h, s_pubDesc);
+  ugc->SetItemContent(h, s_pubFolder);
+  /* An empty preview path is "no preview image"; handing that to
+     SetItemPreview would fail the whole update. */
+  if (s_pubPreview[0] != '\0') ugc->SetItemPreview(h, s_pubPreview);
+
+  /* One "Skin" tag — what the app's Workshop page filters on. */
+  const char *tags[] = {"Skin"};
+  SteamParamStringArray_t arr;
+  arr.m_ppStrings = tags;
+  arr.m_nNumStrings = 1;
+  ugc->SetItemTags(h, &arr);
+
+  /* Visibility is deliberately left alone.  A new item starts private, and
+     the author makes it public from the item page — where this flow sends
+     them once the upload finishes. */
+
+  s_pubUpdate = h;
+  s_pubCall = ugc->SubmitItemUpdate(h, "Published from WinBolo");
+  return s_pubCall != k_uAPICallInvalid;
+}
+
+extern "C" bool steam_workshop_publish_begin(const char *contentFolder,
+                                             const char *title,
+                                             const char *description,
+                                             const char *previewPng,
+                                             uint64_t existingId) {
+  if (!steam_workshop_available()) return false;
+  /* One publish at a time — a second begin would overwrite the handle the
+     dispatch arm is matching against and strand the first. */
+  if (s_pubState == kPublishCreating || s_pubState == kPublishUpdating)
+    return false;
+  if (!contentFolder || contentFolder[0] == '\0') return false;
+
+  ISteamUGC *ugc = SteamUGC();
+  ISteamUtils *utils = SteamUtils();
+  if (!ugc || !utils) return false;
+
+  steam_publish_copy(s_pubFolder, sizeof(s_pubFolder), contentFolder);
+  steam_publish_copy(s_pubTitle, sizeof(s_pubTitle), title);
+  steam_publish_copy(s_pubDesc, sizeof(s_pubDesc), description);
+  steam_publish_copy(s_pubPreview, sizeof(s_pubPreview), previewPng);
+  s_pubNeedsLegal = false;
+  s_pubFileId = 0;
+  s_pubUpdate = k_UGCUpdateHandleInvalid;
+  s_pubCall = k_uAPICallInvalid;
+
+  if (existingId == 0) {
+    s_pubCall = ugc->CreateItem(utils->GetAppID(), k_EWorkshopFileTypeCommunity);
+    if (s_pubCall == k_uAPICallInvalid) {
+      s_pubState = kPublishFailed;
+      WB_LOG_ERROR(WB_LOG_CAT_GUI, "steam_workshop: CreateItem did not start");
+      return false;
+    }
+    s_pubState = kPublishCreating;
+  } else {
+    /* Re-publishing a known item: no CreateItem, straight to the upload. */
+    s_pubFileId = (PublishedFileId_t)existingId;
+    if (!steam_publish_submit_update(s_pubFileId)) {
+      s_pubState = kPublishFailed;
+      WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                   "steam_workshop: could not start update for id=%llu",
+                   (unsigned long long)s_pubFileId);
+      return false;
+    }
+    s_pubState = kPublishUpdating;
+  }
+  return true;
+}
+
+extern "C" int steam_workshop_publish_poll(uint64_t *outId,
+                                           bool *needsLegalAgreement) {
+  if (outId) *outId = 0;
+  if (needsLegalAgreement) *needsLegalAgreement = false;
+  switch (s_pubState) {
+    case kPublishDone:
+      if (outId) *outId = (uint64_t)s_pubFileId;
+      if (needsLegalAgreement) *needsLegalAgreement = s_pubNeedsLegal;
+      return 1;
+    case kPublishCreating:
+    case kPublishUpdating:
+      return 0;
+    default:
+      /* Idle counts as failure, not as progress: a caller polling without a
+         publish in flight would otherwise wait on one that never comes. */
+      return -1;
+  }
+}
+
+extern "C" int steam_workshop_publish_progress(uint64_t *bytesDone,
+                                               uint64_t *bytesTotal) {
+  if (bytesDone) *bytesDone = 0;
+  if (bytesTotal) *bytesTotal = 0;
+  if (!steam_workshop_available()) return 0;
+  if (s_pubState != kPublishUpdating || s_pubUpdate == k_UGCUpdateHandleInvalid)
+    return 0;
+
+  uint64 done = 0;
+  uint64 total = 0;
+  EItemUpdateStatus status =
+      SteamUGC()->GetItemUpdateProgress(s_pubUpdate, &done, &total);
+  if (bytesDone) *bytesDone = (uint64_t)done;
+  if (bytesTotal) *bytesTotal = (uint64_t)total;
+  return (int)status;
+}
+
+extern "C" void steam_workshop_open_item_page(uint64_t id) {
+  if (!steam_workshop_available() || id == 0) return;
+  ISteamFriends *friends = SteamFriends();
+  if (!friends) return;
+  char url[128];
+  snprintf(url, sizeof(url),
+           "https://steamcommunity.com/sharedfiles/filedetails/?id=%llu",
+           (unsigned long long)id);
   friends->ActivateGameOverlayToWebPage(url);
 }

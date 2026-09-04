@@ -82,6 +82,35 @@ bool steam_workshop_consume_installed_event(void) { return false; }
 
 void steam_workshop_open_browse_page(void) {}
 
+bool steam_workshop_publish_begin(const char *contentFolder, const char *title,
+                                  const char *description, const char *previewPng,
+                                  uint64_t existingId) {
+  (void)contentFolder;
+  (void)title;
+  (void)description;
+  (void)previewPng;
+  (void)existingId;
+  return false;
+}
+
+/* -1 (failed) rather than 0 (in progress): without a Steam client no publish
+   can ever complete, and answering 0 would leave a caller waiting on one. */
+int steam_workshop_publish_poll(uint64_t *outId, bool *needsLegalAgreement) {
+  if (outId) *outId = 0;
+  if (needsLegalAgreement) *needsLegalAgreement = false;
+  return -1;
+}
+
+int steam_workshop_publish_progress(uint64_t *bytesDone, uint64_t *bytesTotal) {
+  if (bytesDone) *bytesDone = 0;
+  if (bytesTotal) *bytesTotal = 0;
+  return 0;
+}
+
+void steam_workshop_open_item_page(uint64_t id) {
+  (void)id;
+}
+
 /* -------- Steam Input stubs -------- */
 
 bool steam_input_init(void)             { return false; }

@@ -108,6 +108,41 @@ bool     steam_workshop_consume_installed_event(void);
  * Workshop is unavailable. */
 void     steam_workshop_open_browse_page(void);
 
+/* Publish side of the Workshop.  A publish runs across several frames — the
+ * Steam calls behind it complete asynchronously — so it is started once and
+ * then polled.  One publish at a time. */
+
+/* Start publishing an item.  contentFolder is a directory whose entire
+ * contents become the item's content; the caller creates it and cleans it up
+ * afterwards.  previewPng may be NULL for no preview image, and must be under
+ * 1MB when given.  existingId 0 creates a new item; non-zero updates that
+ * item rather than making a duplicate.  Returns false immediately when the
+ * Workshop is unavailable or a publish is already in flight.  The strings are
+ * copied, so the caller need not keep them alive past the call. */
+bool     steam_workshop_publish_begin(const char *contentFolder, const char *title,
+                                      const char *description, const char *previewPng,
+                                      uint64_t existingId /* 0 = new item */);
+
+/* State of the publish: 0 still in progress, 1 done (*outId holds the
+ * published file id), -1 failed.  Both outs may be NULL and are cleared
+ * before anything is written.  Only meaningful after a
+ * steam_workshop_publish_begin() that returned true — with nothing in flight
+ * this answers -1, so a caller that polls out of order gets a definite answer
+ * rather than waiting forever on a publish that was never started.  The
+ * terminal value stays put until the next steam_workshop_publish_begin(). */
+int      steam_workshop_publish_poll(uint64_t *outId, bool *needsLegalAgreement);
+
+/* Upload progress.  0 when nothing is uploading, otherwise the Steam update
+ * status: 1 preparing config, 2 preparing content, 3 uploading content,
+ * 4 uploading preview, 5 committing.  The byte counts are filled once the
+ * upload has started and are 0 before then.  Either out may be NULL. */
+int      steam_workshop_publish_progress(uint64_t *bytesDone, uint64_t *bytesTotal);
+
+/* Open the Steam overlay on one item's Workshop page — where the author
+ * accepts the Workshop legal agreement and changes the item's visibility.
+ * No-op when the Workshop is unavailable. */
+void     steam_workshop_open_item_page(uint64_t id);
+
 /* Stats & achievements */
 void     steam_increment_stat(const char *name, int amount);
 void     steam_set_achievement(const char *id);
