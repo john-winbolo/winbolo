@@ -3985,7 +3985,7 @@ function Brain.think(info)
                               math.floor(math.min(my_cost or 9999999, 9999999) + 0.5))
               -- our_cost carries its UNITS. VARIANT (c) has one unit only --
               -- `(raw)`, the bare cost_cache cost -- and it is the number that
-              -- goes out in the sta/str, so the challenger'''s band test sees
+              -- goes out in the sta/str, so the challenger's band test sees
               -- exactly the price this line prints. raw= repeats it.
             end
           end

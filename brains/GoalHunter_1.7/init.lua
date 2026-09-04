@@ -4876,7 +4876,7 @@ function Brain.think(info)
                               math.floor(math.min(my_cost or 9999999, 9999999) + 0.5))
               -- our_cost carries its UNITS. VARIANT (c) has one unit only --
               -- `(raw)`, the bare cost_cache cost -- and it is the number that
-              -- goes out in the sta/str, so the challenger'''s band test sees
+              -- goes out in the sta/str, so the challenger's band test sees
               -- exactly the price this line prints. raw= repeats it.
               if BRAIN_DEBUG_MODE then print2(string.format("STEAL_REPLY t=%d pill=#%d to=p%d %s [%s] our_cost=%s(%s) raw=%s their_cost=%s sub=%s", now, rq.pid, rq.from, reply, verdict, my_cost and string.format("%.1f", my_cost) or "nil", cost_units, raw_cost and string.format("%.1f", raw_cost) or "nil", tostring(rq.cost), our_sub)) end
             end

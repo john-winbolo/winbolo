@@ -9533,9 +9533,9 @@ local function get_formula_inner(e)
     end
     local their_str = their and string.format("%.0f", their) or "?"
     local diff_str  = (their and string.format(" (we_more_by=%.0f)", our - their)) or ""
-    -- Pool 6 quotes the COMPETED total when it has one (see the steal handshake
-    -- in sync_ally_claimed_rejects); say which price this row was judged on and
-    -- what the last outgoing-request decision was, so the row is reproducible.
+    -- Say which price this pool-6 row was judged on (always the raw cost_cache
+    -- cost -- see sync_ally_claimed_rejects) and what the last outgoing-request
+    -- decision was, so the row is reproducible.
     local steal_str = ""
     if e._steal_units then
       steal_str = string.format(" — priced on OUR %s cost %.1f (raw cost_cache %.1f)",
@@ -11866,9 +11866,9 @@ local WSIM_SIM_KINDS = { capture_base=true, capture_pill=true,
 -- "last printed" state and made the think path drop or repeat a line. The
 -- panel pass does the same sync work, silently.
 -- =========================================================================
--- STEAL HANDSHAKE: commitment-aware pricing + one targeted request per replan
--- (20260903_193428_1 bot3 t=1266-1270 -- see the STEAL_COMPETED_* block in
--- constants.lua for the incident.)
+-- STEAL HANDSHAKE: one targeted request per replan + early yield release
+-- (20260903_193428_1 bot3 t=1266-1270 -- see the STEAL_YIELD_RELEASE_GRACE
+-- block in constants.lua for the incident.)
 -- =========================================================================
 
 -- VARIANT (c): NO commitment-aware pricing.  The handshake trades the RAW
