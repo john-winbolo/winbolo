@@ -165,8 +165,9 @@ int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     return count;
 }
 
-int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
-    return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
+int serverSimGetCompressedMap(ServerSim *sim, BYTE *output, int outputCap) {
+    return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss,
+                                output, outputCap);
 }
 
 void serverSimShadowSeed(ServerSim *sim, BYTE slot) {
@@ -273,12 +274,13 @@ void serverSimShadowTick(ServerSim *sim) {
     }
 }
 
-int serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output) {
+int serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output,
+                                 int outputCap) {
     if (sim == NULL || slot >= MAX_TANKS || sim->clientKnownMap[slot] == NULL) {
         return 0;
     }
     return mapSaveCompressedMap(&sim->clientKnownMap[slot], &sim->sim.pb,
-                                &sim->sim.bs, &sim->sim.ss, output);
+                                &sim->sim.bs, &sim->sim.ss, output, outputCap);
 }
 
 int serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,

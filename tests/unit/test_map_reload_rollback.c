@@ -75,7 +75,7 @@ int run_map_reload_rollback(void) {
      * live mp/pb/bs/ss into the caller's buffer; 131,072 bytes is
      * the same headroom serverSimReloadMap allocates internally. */
     BYTE before[131072];
-    int beforeLen = serverSimGetCompressedMap(sim, before);
+    int beforeLen = serverSimGetCompressedMap(sim, before, (int)sizeof(before));
     UT_ASSERT_MSG(beforeLen > 0, "pre-reload compressed map must be non-empty");
 
     /* Stage and attempt the malformed reload. */
@@ -90,7 +90,7 @@ int run_map_reload_rollback(void) {
      * pills/bases/starts shrink the payload, and the all-DEEP_SEA
      * mapItem compresses very differently from a real map. */
     BYTE after[131072];
-    int afterLen = serverSimGetCompressedMap(sim, after);
+    int afterLen = serverSimGetCompressedMap(sim, after, (int)sizeof(after));
     UT_ASSERT_MSG(afterLen == beforeLen,
                   "compressed length differs: before=%d after=%d",
                   beforeLen, afterLen);

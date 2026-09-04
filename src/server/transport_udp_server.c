@@ -1747,7 +1747,8 @@ static void serverAcceptSpectator(ServerSim *sim,
     if (udpServer.compressedMapSize == 0 &&
         (serverSimGetState(sim) == serverStateLobby ||
          serverSimGetState(sim) == serverStateCountdown)) {
-        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap,
+                                               (int)sizeof(udpServer.compressedMap));
         if (mapLen > 0) {
             udpServer.compressedMapSize = (uint32_t)mapLen;
         }
@@ -3251,7 +3252,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * taken over, so the two always describe the same tiles. */
     {
         int mapLen = serverSimGetCompressedMapFor(sim, (BYTE)slot,
-                                                  udpServer.compressedMap);
+                                                  udpServer.compressedMap,
+                                                  (int)sizeof(udpServer.compressedMap));
         if (mapLen <= 0) {
             serverSimRemovePlayer(sim, (BYTE)slot);
             udpServer.clients[slot].connected = false;
@@ -4703,7 +4705,7 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
      * input. Validate the result fits the wire size before copying. */
     BYTE scratchMap[131072];
 
-    mapLen = serverSimGetCompressedMap(sim, scratchMap);
+    mapLen = serverSimGetCompressedMap(sim, scratchMap, (int)sizeof(scratchMap));
     if (mapLen <= 0) {
         fprintf(stderr, "[UDP SERVER] Map change: failed to compress new map\n");
         return;
@@ -5497,7 +5499,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                      * compress that will not fit the wire size leaves staging's
                      * size alone and restarts exactly as before. */
                     int mapLen = serverSimGetCompressedMapFor(
-                        sim, (BYTE)clientIdx, udpServer.compressedMap);
+                        sim, (BYTE)clientIdx, udpServer.compressedMap,
+                        (int)sizeof(udpServer.compressedMap));
                     WB_LOG_INFO(WB_LOG_CAT_NET,
                         "MAP_DL_READY re-ask slot=%d (kind=%d begun=%d "
                         "complete=%d) -> restarting download",
@@ -5551,7 +5554,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                      * It begins on CHANNEL_BULK once the channel is idle
                      * (serverServiceMapTransfer) and rides the snapshot trailer. */
                     int mapLen = serverSimGetCompressedMapFor(
-                        sim, (BYTE)clientIdx, udpServer.compressedMap);
+                        sim, (BYTE)clientIdx, udpServer.compressedMap,
+                        (int)sizeof(udpServer.compressedMap));
                     if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
                         udpServer.compressedMapSize = (uint32_t)mapLen;
                         if (dl->compressedMap != NULL) free(dl->compressedMap);

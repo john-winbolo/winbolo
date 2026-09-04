@@ -457,7 +457,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * map straight from the in-process ServerSim instead. */
                 ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
                 if (spSim) {
-                    mapLen  = serverSimGetCompressedMap(spSim, spBuf);
+                    mapLen  = serverSimGetCompressedMap(spSim, spBuf, (int)sizeof(spBuf));
                     mapData = (mapLen > 0) ? spBuf : NULL;
                     dataSource = "local-direct";
                 }

@@ -3966,7 +3966,7 @@ struct MapPreview *mapGenRunAsPreview(const MapGenConfig *cfg,
         serBuf = scratch;
         serCap = (int)sizeof(scratch);
     }
-    int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, serBuf);
+    int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, serBuf, serCap);
 
     if (outCompressedLen != NULL) {
         *outCompressedLen = (outBuf != NULL && serBuf == outBuf) ? len : 0;

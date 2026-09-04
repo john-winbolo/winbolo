@@ -277,8 +277,8 @@ int run_map_shadow_blob_identical(void) {
             ms_run_tick(sim, kTick2, (int)(sizeof(kTick2) / sizeof(kTick2[0])));
         }
 
-        int liveLen = serverSimGetCompressedMap(sim, live);
-        int slotLen = serverSimGetCompressedMapFor(sim, 1, slotBlob);
+        int liveLen = serverSimGetCompressedMap(sim, live, 131072);
+        int slotLen = serverSimGetCompressedMapFor(sim, 1, slotBlob, 131072);
         if (liveLen <= 0) {
             free(live); free(slotBlob); serverSimDestroy(sim);
             UT_FAIL("step %d: live compressed map is empty (%d)", step, liveLen);
@@ -295,7 +295,8 @@ int run_map_shadow_blob_identical(void) {
     }
 
     /* An out-of-range slot is refused rather than reading past the array. */
-    UT_ASSERT_MSG(serverSimGetCompressedMapFor(sim, (BYTE)MAX_TANKS, slotBlob) == 0,
+    UT_ASSERT_MSG(serverSimGetCompressedMapFor(sim, (BYTE)MAX_TANKS, slotBlob,
+                                               131072) == 0,
                   "an out-of-range slot must produce no blob");
 
     free(live);
@@ -742,7 +743,8 @@ int run_map_shadow_join_seeds_round_start(void) {
 
     /* The blob a joiner would have downloaded at round start, taken from an
      * untouched slot before anything moves. */
-    int startLen = serverSimGetCompressedMapFor(sim, 1, msStartBlob);
+    int startLen = serverSimGetCompressedMapFor(sim, 1, msStartBlob,
+                                                (int)sizeof(msStartBlob));
     UT_ASSERT_MSG(startLen > 0, "the round-start blob is empty (%d)", startLen);
 
     /* Mid-round, with slot 2 marked the way the UDP transport marks the slot it
@@ -771,7 +773,8 @@ int run_map_shadow_join_seeds_round_start(void) {
                   ms_block_stale(sim, 2), MS_BLOCK_SQUARES);
 
     /* So the blob it downloads is the round-start blob, byte for byte. */
-    int joinLen = serverSimGetCompressedMapFor(sim, 2, msJoinBlob);
+    int joinLen = serverSimGetCompressedMapFor(sim, 2, msJoinBlob,
+                                               (int)sizeof(msJoinBlob));
     UT_ASSERT_MSG(joinLen == startLen,
                   "the join blob is %d bytes, the round-start blob %d",
                   joinLen, startLen);
@@ -779,7 +782,8 @@ int run_map_shadow_join_seeds_round_start(void) {
                   "the join blob's bytes differ from the round-start blob's");
 
     /* And is not the live map's: slot 0 took the frame, and its blob differs. */
-    int liveLen = serverSimGetCompressedMapFor(sim, 0, msLiveBlob);
+    int liveLen = serverSimGetCompressedMapFor(sim, 0, msLiveBlob,
+                                               (int)sizeof(msLiveBlob));
     UT_ASSERT_MSG(liveLen > 0, "the live blob is empty (%d)", liveLen);
     UT_ASSERT_MSG(liveLen != joinLen ||
                       memcmp(msLiveBlob, msJoinBlob, (size_t)joinLen) != 0,

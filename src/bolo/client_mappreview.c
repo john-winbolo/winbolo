@@ -119,7 +119,8 @@ BYTE *clientMapConvertFileToCompressed(const BYTE *fileData, int fileLen, int *o
     clientMapPreviewDestroy(mp);
     return NULL;
   }
-  len = mapSaveCompressedMap(&mp->mp, &mp->pb, &mp->bs, &mp->ss, out);
+  len = mapSaveCompressedMap(&mp->mp, &mp->pb, &mp->bs, &mp->ss, out,
+                             CLIENT_MAP_COMPRESSED_MAX);
   clientMapPreviewDestroy(mp);
   if (len <= 0) {
     free(out);

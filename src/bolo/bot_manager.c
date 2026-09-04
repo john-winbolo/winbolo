@@ -359,7 +359,7 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
         return false;
     }
 
-    len = serverSimGetCompressedMap(sim, buf);
+    len = serverSimGetCompressedMap(sim, buf, 65536);
     if (len <= 0) {
         free(buf);
         return false;

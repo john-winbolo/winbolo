@@ -575,8 +575,10 @@ int  serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,
 /* serverSimGetCompressedMap over one slot's copy of the terrain, with the
  * live pills, bases and starts. The blob a client downloads on join or
  * resync comes from here, so it carries the terrain that client's snapshot
- * checksum is computed over. Returns the compressed length. */
-int  serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output);
+ * checksum is computed over. Returns the compressed length, or 0 if the blob
+ * does not fit outputCap bytes — nothing is written past that capacity. */
+int  serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output,
+                                  int outputCap);
 
 /* Stamp the proximity clocks the viewPolicyDecay categories read: for every
  * connected player with a live tank, every pill/base/tank within

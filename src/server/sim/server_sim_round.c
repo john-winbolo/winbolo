@@ -1328,7 +1328,7 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     serverSimShadowSeedAll(sim);
 
     /* Update cached map data */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData != NULL) {
         free(sim->cachedMapData);
     }

@@ -155,7 +155,8 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
   }
 
   /* 4. Pull the compressed map blob. */
-  compLen = serverSimGetCompressedMap(sim, compressedMap);
+  compLen = serverSimGetCompressedMap(sim, compressedMap,
+                                      (int)sizeof(compressedMap));
   if (compLen <= 0) {
     const char *rendered = langGetText(NETERR_MAPSERIALIZE);
     clientSimSetConnectErrorReason(cs, rendered ? rendered : "Map serialise failed");

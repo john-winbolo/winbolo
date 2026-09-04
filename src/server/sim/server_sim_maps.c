@@ -101,7 +101,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     basesClearMines(&sim->sim);
 
     /* Update cached map */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
@@ -401,7 +401,7 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
     }
     basesClearMines(&sim->sim);
 
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = (BYTE *)malloc(len);
     if (sim->cachedMapData == NULL) {
@@ -527,7 +527,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     }
 
     /* Refresh cached compressed map. */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
@@ -674,7 +674,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     sim->mapName[MAP_STR_SIZE - 1] = '\0';
 
     /* Refresh cached compressed map. */
-    compressedLen = serverSimGetCompressedMap(sim, tempBuf);
+    compressedLen = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(compressedLen);
     if (sim->cachedMapData == NULL) {
@@ -705,7 +705,7 @@ bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
     if (sim == NULL || cs == NULL) return FALSE;
     buf = (BYTE *)malloc(65536);
     if (buf == NULL) return FALSE;
-    len = serverSimGetCompressedMap(sim, buf);
+    len = serverSimGetCompressedMap(sim, buf, 65536);
     if (len <= 0) {
         free(buf);
         return FALSE;
@@ -800,7 +800,7 @@ bool serverSimRevertPreview(ServerSim *sim) {
     sim->mapMd5Hex[0] = '\0';
 
     memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = (BYTE *)malloc(len);
     if (sim->cachedMapData) {

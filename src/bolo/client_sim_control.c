@@ -539,7 +539,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
              * freshly-compressed map directly and reinstall — there is
              * no MAP_DOWNLOAD wire path to wait on. */
             BYTE buf[MAP_DOWNLOAD_MAX_SIZE];
-            int  len = serverSimGetCompressedMap(cs->boundServerSim, buf);
+            int  len = serverSimGetCompressedMap(cs->boundServerSim, buf,
+                                                 (int)sizeof(buf));
             if (len > 0) {
                 installCompressedMap(cs, buf, len,
                                      serverSimGetMapName(cs->boundServerSim),

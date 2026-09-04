@@ -750,11 +750,12 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event);
  *  Returns the length of the compressed data.
  *
  *ARGUMENTS:
- *  sim    - Pointer to the ServerSim
- *  output - Buffer to receive compressed data (must be at
- *           least 65536 bytes)
+ *  sim       - Pointer to the ServerSim
+ *  output    - Buffer to receive compressed data
+ *  outputCap - Size of that buffer in bytes. Nothing is written
+ *              past it; a map that does not fit returns 0.
  *********************************************************/
-int serverSimGetCompressedMap(ServerSim *sim, BYTE *output);
+int serverSimGetCompressedMap(ServerSim *sim, BYTE *output, int outputCap);
 
 /* Refresh a ClientSim's map/pill/base/start state from this server's
  * current compressed map cache. Preserves player table, lobby slots,

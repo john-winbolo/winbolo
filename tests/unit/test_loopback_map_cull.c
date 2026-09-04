@@ -323,7 +323,8 @@ int run_loopback_map_cull(void) {
     }
 
     farBefore = h.sim->clientKnownMapObj[slotB].mapItem[farX][farY];
-    blobBeforeLen = serverSimGetCompressedMapFor(h.sim, slotB, blobBefore);
+    blobBeforeLen = serverSimGetCompressedMapFor(h.sim, slotB, blobBefore,
+                                                 (int)sizeof(blobBefore));
     if (blobBeforeLen <= 0) {
         loopbackHarnessStop(&h);
         UT_FAIL("B's copy did not compress (%d)", blobBeforeLen);
@@ -387,8 +388,10 @@ int run_loopback_map_cull(void) {
     /* And the blob a resync would hand B is unchanged, while the live map's is
      * not — B's copy is the whole record of what B was given. */
     {
-        int staleLen = serverSimGetCompressedMapFor(h.sim, slotB, blobStale);
-        int liveLen = serverSimGetCompressedMap(h.sim, blobLive);
+        int staleLen = serverSimGetCompressedMapFor(h.sim, slotB, blobStale,
+                                                    (int)sizeof(blobStale));
+        int liveLen = serverSimGetCompressedMap(h.sim, blobLive,
+                                                (int)sizeof(blobLive));
         if (staleLen != blobBeforeLen ||
             memcmp(blobStale, blobBefore, (size_t)staleLen) != 0) {
             loopbackHarnessStop(&h);

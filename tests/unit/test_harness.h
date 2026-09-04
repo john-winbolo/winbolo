@@ -1097,8 +1097,11 @@ int run_map_resync_stale_gen_rejected(void);
 
 /* Map compressed-codec round-trip (test_map_compress_roundtrip.c): a real map
  * (and a mutated one carrying mine-range terrain near pills/bases) must survive
- * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile. */
+ * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile, and the
+ * compressor must refuse a map that does not fit the output capacity it was
+ * given rather than write past it. */
 int run_map_compress_roundtrip_stock(void);
+int run_map_compress_capacity_refuses(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
