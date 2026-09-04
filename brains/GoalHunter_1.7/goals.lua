@@ -457,6 +457,78 @@ local function refuel_low_stock_chip(d)
   return s
 end
 
+-- =========================================================================
+-- REFUEL-PAD REACH — can any live pill actually shoot a tank that is DOCKED
+-- on the base tile (mx,my)?
+--
+-- The danger grid a pill stamps is deliberately one tile wider than its gun:
+-- PILL_RANGE_MAP is 9 against a real PILL_FIRE_RANGE of 8, so the DRIVE keeps
+-- a margin. That pad is right for steering and wrong for pricing a refuel
+-- stop, where the tank does not pass through the tile, it PARKS on it.
+--
+-- The engine's test (pillbox.c pillsUpdate -> util.c utilIsItemInRange) is the
+-- euclidean distance from the PILL's tile centre (x + MAP_SQUARE_MIDDLE) to
+-- the TANK's world position, against PILLBOX_RANGE 2048 wu = 8.0 tiles. A tank
+-- sitting on a tile is at most half a tile diagonal -- REFUEL_PAD_TANK_OFFSET,
+-- 0.7071 tiles -- from that tile's centre. So a pill can touch a docked tank
+-- only when the tile-centre distance is <= PILL_FIRE_RANGE + that offset
+-- (8.7071); at 9.0 it cannot, from ANY point on the tile.
+--
+-- Incident 20260903_193428 bot2 t=1563: base#0 @(138,112) priced
+-- raw 9 + base 45 + danger 427 = 640.9 and lost to a base 12 tiles away at
+-- 301, while the tank had 10 armour two tiles from base#0. The 427 was
+-- threat.at(base) x REFUEL_DANGER_WEIGHT, and the whole of it came from pill#2
+-- at (138,121) -- exactly 9.0 tiles from the base centre, sitting on the RIM of
+-- the stamp and angry, so the rim still read 21.4. It could not have fired a
+-- single shell at that base.
+--
+-- Returns reachable, nearest_id, nearest_dist:
+--   reachable    -- true if ANY live, deployed hostile/neutral pill is within
+--                   PILL_FIRE_RANGE + REFUEL_PAD_TANK_OFFSET of the tile. No
+--                   fractional scaling: the tank does not choose where on the
+--                   tile it stops, so one pill reaching part of it is a hit.
+--   nearest_id   -- the closest such pill (whichever verdict), nil if there is
+--                   no live hostile/neutral pill on the map at all.
+--   nearest_dist -- its tile-centre euclidean distance, in tiles.
+-- Ties go to the lower id so the verdict is the same in every replay.
+-- Cheap by construction: one pass over world.pills per refuel candidate per
+-- replan (a handful of pills, a handful of bases).
+-- =========================================================================
+local function refuel_pad_pill_reach(world, mx, my)
+  local thresh = (C.PILL_FIRE_RANGE or 8) + (C.REFUEL_PAD_TANK_OFFSET or 0.7071)
+  local best_id, best_d = nil, math.huge
+  local pills = world and world.pills
+  if pills then
+    for id, p in pairs(pills) do
+      if (p.owner == "hostile" or p.owner == "neutral")
+         and (p.health or 0) > 0
+         and not p.in_tank and not p.carrier and not p._synth_carry then
+        local d = U.edist(p.mx, p.my, mx, my)
+        if d < best_d or (d == best_d and best_id ~= nil and id < best_id) then
+          best_d, best_id = d, id
+        end
+      end
+    end
+  end
+  if best_id == nil then return false, nil, nil end
+  return (best_d <= thresh), best_id, best_d
+end
+
+-- The chip both refuel paths print, and the panel repeats: which verdict the
+-- pad reach test reached and the two numbers it compared.
+local function refuel_pad_chip(pad_safe, pad_id, pad_dist)
+  local thresh = (C.PILL_FIRE_RANGE or 8) + (C.REFUEL_PAD_TANK_OFFSET or 0.7071)
+  if pad_safe then
+    if pad_id == nil then
+      return " padsafe{no live hostile pill on the map}"
+    end
+    return string.format(" padsafe{no pill reaches the pad; nearest #%s at %.1f > %.2f}",
+                         tostring(pad_id), pad_dist or 0, thresh)
+  end
+  return string.format(" padhit{#%s reaches: %.1f <= %.2f}",
+                       tostring(pad_id), pad_dist or 0, thresh)
+end
+
 -- Helper: find the best friendly or neutral base for resupply.
 -- danger_weight: REFUEL_DANGER_WEIGHT for normal top-up, FLEE_DANGER_WEIGHT
 --               when health is critical (scales pill-danger penalty steeply).
@@ -621,6 +693,20 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
         local travel = smart_cost(KIND_NORMAL, tmx, tmy, b.mx, b.my, in_boat and 1 or 0,
                                     info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
         local danger = threat.at(b.mx, b.my)
+        -- REFUEL-PAD READ (see refuel_pad_pill_reach). The PILL layer of the
+        -- danger grid is one tile wider than a pill's gun; a tank that PARKS
+        -- on this tile is either inside somebody's fire circle or it is not.
+        -- When no live pill reaches the pad, drop the pill layer entirely and
+        -- keep only the enemy-tank layer. When one does, the stamped value
+        -- stands as it is -- no fractional scaling, the tank does not pick
+        -- which corner of the tile it stops on.
+        local _pad_reach, _pad_id, _pad_dist = refuel_pad_pill_reach(world, b.mx, b.my)
+        local _pad_safe = not _pad_reach
+        local _pad_removed = 0
+        if _pad_safe then
+          _pad_removed = threat.pill_at(b.mx, b.my) or 0
+          danger = math.max(0, danger - _pad_removed)
+        end
         -- When fleeing at critical armour, hard-reject bases that are too
         -- dangerous to sit at.  No point driving to a base where you'll die
         -- before the refuel completes.
@@ -629,9 +715,12 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
             id = id, mx = b.mx, my = b.my, own = b.owner,
             travel = travel, danger = danger, dw = danger_weight,
             score = -1,
-            reject = string.format("danger %.1f > reject %.1f", danger, danger_reject),
+            pad_safe = _pad_safe, pad_pill = _pad_id, pad_dist = _pad_dist,
+            reject = string.format("danger %.1f > reject %.1f%s", danger, danger_reject,
+                                   refuel_pad_chip(_pad_safe, _pad_id, _pad_dist)),
           }
-          print2(string.format("REFUEL_CAND base#%d @(%d,%d) REJECT danger %.1f > reject %.1f", id, b.mx, b.my, danger, danger_reject))
+          print2(string.format("REFUEL_CAND base#%d @(%d,%d) REJECT danger %.1f > reject %.1f%s", id, b.mx, b.my, danger, danger_reject,
+            refuel_pad_chip(_pad_safe, _pad_id, _pad_dist)))
           goto skip
         end
         local score  = travel + danger * danger_weight
@@ -707,6 +796,8 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           travel = travel, danger = danger, dw = danger_weight,
           score = score, hyst = hysteresis, contested = contested,
           low_mult = low_mult, low_d = low_d,
+          pad_safe = _pad_safe, pad_pill = _pad_id, pad_dist = _pad_dist,
+          pad_removed = (_pad_removed > 0) and _pad_removed or nil,
           contest_pen = contest_pen, contest_n = contest_n, contest_h = contest_h,
           stale = b.last_seen and (now - b.last_seen) or 0,
         }
@@ -718,7 +809,10 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           _c_tok = string.format(" CONTESTED{n=%d handled=%d pen=%.0f}",
                                  contest_n, contest_h, contest_pen)
         end
-        print2(string.format("REFUEL_CAND base#%d @(%d,%d) OK score=%.1f travel=%.1f danger=%.1f×%.1f%s%s%s obs_sh=%d obs_arm=%d", id, b.mx, b.my, score, travel, danger, danger_weight, hysteresis and " HYST" or "", _c_tok, refuel_low_stock_chip(low_d), b.obs_shells or -1, b.obs_armour or -1))
+        print2(string.format("REFUEL_CAND base#%d @(%d,%d) OK score=%.1f travel=%.1f danger=%.1f×%.1f%s%s%s%s%s obs_sh=%d obs_arm=%d", id, b.mx, b.my, score, travel, danger, danger_weight,
+          refuel_pad_chip(_pad_safe, _pad_id, _pad_dist),
+          (_pad_removed > 0) and string.format(" padcut{-%.1f pill danger}", _pad_removed) or "",
+          hysteresis and " HYST" or "", _c_tok, refuel_low_stock_chip(low_d), b.obs_shells or -1, b.obs_armour or -1))
         if score < best_score then
           best_score = score; best_id = id; best = b
         end
@@ -9888,6 +9982,45 @@ local function get_formula_inner(e)
       _d_danger = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
         e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
     end
+    -- Refuel-pad reach (goals.lua refuel_pad_pill_reach): the danger_val above
+    -- is a PARKED read, not a driving one. Say which verdict produced it, with
+    -- the two distances compared, and — when the pill layer was dropped — what
+    -- came off, so danger_val is still hand-derivable from threat.at().
+    local _pad_thresh = (C.PILL_FIRE_RANGE or 8) + (C.REFUEL_PAD_TANK_OFFSET or 0.7071)
+    local _pad_token = ""
+    if e._pad_safe ~= nil then
+      _pad_token = (e._pad_safe
+        and ((e._pad_pill == nil)
+             and " padsafe{no live hostile pill on the map}"
+             or string.format(" padsafe{nearest #%s at %.1f > %.2f}",
+                              tostring(e._pad_pill), e._pad_dist or 0, _pad_thresh))
+        or string.format(" padhit{#%s reaches: %.1f <= %.2f}",
+                         tostring(e._pad_pill), e._pad_dist or 0, _pad_thresh))
+      if e._pad_safe then
+        _d_danger = _d_danger .. string.format(
+          " -- PAD SAFE: %s, so the whole PILL layer (%.1f) was REMOVED from "
+          .. "threat.at() and danger_val is the TANK-layer remainder %.1f. "
+          .. "A pill fires on a tank at <= %.0f[PILL_FIRE_RANGE] tiles from its "
+          .. "own tile centre (util.c utilIsItemInRange, PILLBOX_RANGE 2048wu), "
+          .. "and a docked tank is at most %.4f[REFUEL_PAD_TANK_OFFSET] tiles "
+          .. "off the base centre, so nothing past %.2f can touch the pad. "
+          .. "(The PILL_RANGE_MAP %d driving stamp is unchanged.)",
+          (e._pad_pill == nil) and "there is no live hostile/neutral pill on the map"
+            or string.format("the nearest live pill #%s is %.1f tiles away",
+                             tostring(e._pad_pill), e._pad_dist or 0),
+          e._pad_removed or 0, e._dv or 0,
+          C.PILL_FIRE_RANGE or 8, C.REFUEL_PAD_TANK_OFFSET or 0.7071, _pad_thresh,
+          C.PILL_RANGE_MAP or 9)
+      else
+        _d_danger = _d_danger .. string.format(
+          " -- PAD HIT: pill #%s is %.1f tiles from the base centre, inside "
+          .. "%.0f[PILL_FIRE_RANGE] + %.4f[REFUEL_PAD_TANK_OFFSET] = %.2f, so it "
+          .. "can shell part of this tile and the stamped value stands in full "
+          .. "(no fractional scaling -- we do not pick where on the tile we stop).",
+          tostring(e._pad_pill), e._pad_dist or 0,
+          C.PILL_FIRE_RANGE or 8, C.REFUEL_PAD_TANK_OFFSET or 0.7071, _pad_thresh)
+      end
+    end
     local _d_stale   = fmt_stale_detail(e._age, e._stale)
     -- Contested: sum over MOVING enemy tanks inside the range of
     -- PENALTY x (1 - dist/RANGE), skipping any tank an ally's attack_tank
@@ -10004,9 +10137,9 @@ local function get_formula_inner(e)
       "%.0f[REFUEL_BASE_COST] flat floor so refuel-at-own-base isn't ~0",
       C.REFUEL_BASE_COST)
     f = string.format(
-      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s%s%s%s"..
+      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f}%s + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s%s%s%s"..
       "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s%s%s%s",
-      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token, _low_token, _mine_token, _hop_token,
+      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, _pad_token, e._stale, e._contest, e._dep, _shape_head, _safe_token, _low_token, _mine_token, _hop_token,
       _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail, _low_detail, _mine_detail, _hop_detail)
   elseif p == 6 then
     local _d_hp = string.format(
@@ -10913,6 +11046,21 @@ function M.step_eval_queue(state, world, info)
     if pool_idx == 1 then
       -- Refuel: uses its own scoring (danger + staleness + contested + hysteresis + depletion)
       local danger_val = threat.at(obj.mx, obj.my)
+      -- REFUEL-PAD READ (refuel_pad_pill_reach, and the twin in
+      -- nearest_resupply_base). The pill layer of the danger grid carries a
+      -- 1-tile pad (PILL_RANGE_MAP 9 vs PILL_FIRE_RANGE 8) that is there to
+      -- steer the DRIVE. A refuel candidate is a place we PARK, and a pill
+      -- either reaches the tile we park on or it does not. When none does,
+      -- the pill layer comes off and only the enemy-tank layer is left. This
+      -- has to happen BEFORE danger_cost, _safe_refuel and the
+      -- REFUEL_DANGER_PENALTY multiply below, all of which read danger_val.
+      local _pad_reach, _pad_id, _pad_dist = refuel_pad_pill_reach(world, obj.mx, obj.my)
+      local _pad_safe = not _pad_reach
+      local _pad_removed = 0
+      if _pad_safe then
+        _pad_removed = threat.pill_at(obj.mx, obj.my) or 0
+        danger_val = math.max(0, danger_val - _pad_removed)
+      end
       -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
       -- and constants.lua CAUTIOUS_MODE_MULT).  When the bot is
       -- in cautious mode, danger terms get pumped so exposure costs
@@ -11084,6 +11232,10 @@ function M.step_eval_queue(state, world, info)
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
         _lgm_mult = _lgm_mult,
         _safe_refuel = _safe_refuel or nil,
+        -- Refuel-pad reach verdict, so the formula panel can say WHY the
+        -- danger term is what it is (and, when zeroed, what came off).
+        _pad_safe = _pad_safe, _pad_pill = _pad_id, _pad_dist = _pad_dist,
+        _pad_removed = (_pad_removed > 0) and _pad_removed or nil,
         _path = _p1_path_str,
         _ally_n = (ally_claimed_n > 0) and ally_claimed_n or nil,
         ally_claimed_pen = (ally_claimed_cost > 0) and ally_claimed_cost or nil,
@@ -11103,9 +11255,11 @@ function M.step_eval_queue(state, world, info)
       }
       if BRAIN_DEBUG_MODE then
         print2(string.format(
-          "REFUEL_P1 t=%d base#%s @(%d,%d) OK score=%.1f = max(raw %.0f + base %.0f + danger %.0f + stale %.0f + contest %.0f + dep %.0f, %.0f)%s%s + ally %.0f + hop %.0f | need arm=%d/%d sh=%d/%d obs_sh=%s obs_arm=%s obs_age=%s",
+          "REFUEL_P1 t=%d base#%s @(%d,%d) OK score=%.1f = max(raw %.0f + base %.0f + danger %.0f + stale %.0f + contest %.0f + dep %.0f, %.0f)%s%s%s%s + ally %.0f + hop %.0f | need arm=%d/%d sh=%d/%d obs_sh=%s obs_arm=%s obs_age=%s",
           now, tostring(id), obj.mx, obj.my, score, raw_cost, C.REFUEL_BASE_COST,
           danger_cost, stale_cost, contested_cost, depletion_cost, C.REFUEL_BASE_COST,
+          refuel_pad_chip(_pad_safe, _pad_id, _pad_dist),
+          (_pad_removed > 0) and string.format(" padcut{-%.1f pill danger, danger_val %.1f}", _pad_removed, danger_val) or "",
           _safe_refuel and "" or string.format(" ×danger{%.2f}", C.REFUEL_DANGER_PENALTY or (1 / 0.75)),
           refuel_low_stock_chip(_low_d), ally_claimed_cost, _hop_cost,
           info.armour or 0, state.armour_target or C.TANK_FULL_ARMOUR,

@@ -388,6 +388,22 @@ M.MAN_SPEED_BLESSED = 16  -- LGM speed on blessed square
 --   REFUEL: 20 ?? 20 = 400  ??? prefer safe base up to 400 path-cost units further
 --   FLEE:   20 ?? 80 = 1600 ??? at critical armour, cross most maps to reach safety
 M.REFUEL_DANGER_WEIGHT  = 20
+-- Half a tile diagonal (sqrt(2)/2 = 0.7071), in TILES: the farthest a tank
+-- parked on a base tile can sit from that tile's centre.  Used ONLY by the
+-- refuel-pad reach test (goals.lua refuel_pad_pill_reach), which decides
+-- whether a pill can shoot a tank while it DOCKS -- never by the driving
+-- stamp.  The engine (pillbox.c -> util.c utilIsItemInRange) fires when the
+-- euclidean distance from the PILL's tile centre to the TANK's world position
+-- is <= PILLBOX_RANGE (2048 wu = PILL_FIRE_RANGE 8 tiles), so a pill can touch
+-- a docked tank only when dist(pill tile, base tile) <= PILL_FIRE_RANGE + this
+-- (= 8.7071 tiles).  Incident 20260903_193428 bot2 t=1563: refuel candidate
+-- base#0 was priced raw 9 + base 45 + danger 427 (x danger{1.33}) = 640.9 with
+-- the tank on 10 armour two tiles away, and lost to a base twelve tiles off at
+-- 301.  The 427 was the RIM of the PILL_RANGE_MAP(9) danger stamp -- an angry
+-- pill at exactly 9.0 tiles, which cannot hit that base tile from anywhere on
+-- it.  The stamp keeps its 1-tile pad (it steers the DRIVE); the refuel pad
+-- read now drops the pill layer when no pill reaches the pad.
+M.REFUEL_PAD_TANK_OFFSET = 0.7071
 -- Danger/threat-term multiplier applied across goal cost formulas
 -- when state.cautious_mode is true (see init.lua).  Cautious mode
 -- triggers on conditions like "LGM dead AND carrying pills" ??? we

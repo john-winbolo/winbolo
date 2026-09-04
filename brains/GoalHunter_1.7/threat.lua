@@ -55,8 +55,8 @@ M.pill_contrib = {}  -- per-pill contribution sub-tables (still Lua, used by pil
 -- in attack.evaluate_pill_difficulty for pill-take maneuver scoring,
 -- where one extra incoming shot can knock the tank off target.
 --
--- Strictly Euclidean disk at PILL_FIRE_RANGE (= 9), NOT the
--- PILL_RANGE_MAP (= 10) buffered radius used by the danger-smoothing
+-- Strictly Euclidean disk at PILL_FIRE_RANGE (= 8), NOT the
+-- PILL_RANGE_MAP (= 9) buffered radius used by the danger-smoothing
 -- pill_grid. We want "tile literally within the fire cone of N pills",
 -- not the +1 tile danger fade.
 -- M.coverage_grid removed: coverage counts live in C (s_cov_grid_c in gh_threat.c).
@@ -70,9 +70,9 @@ M.pill_contrib = {}  -- per-pill contribution sub-tables (still Lua, used by pil
 --   DISK_DY[i]  = row offset
 --   DISK_OFF[i] = dy * 256 + dx, the index for the proximity / fullhide
 --                 caches (saves a multiply-add per iteration)
---   DISK_LEN    = number of in-disk tiles (~314 for R=10)
+--   DISK_LEN    = number of in-disk tiles (253 for R=9)
 --
--- Same radius (= PILL_RANGE_MAP = 10) and shape (Euclidean) the
+-- Same radius (= PILL_RANGE_MAP = 9) and shape (Euclidean) the
 -- original threat.lua used, so the crossfire multiplier on pill_grid
 -- and the exposed coverage_at() return identical values. No
 -- pathfinding behavior change vs. the original code.
