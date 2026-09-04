@@ -9,22 +9,17 @@ steal_drain_requests, init.lua's stq reply + /info extra cost advert,
 constants.lua STEAL_COMPETED_FRESH_AGE / STEAL_COMPETED_MAX_AGE /
 STEAL_YIELD_RELEASE_GRACE)
 
+    VARIANT (c) of the steal bench: changes 2 and 3 only.  There is NO
+    commitment-aware pricing -- no competed totals, no `cq=` advert tag, no
+    ledger -- so both sides of the handshake trade the RAW cost_cache cost
+    exactly as the pre-handshake baseline did.  The `(raw)` unit tags stay on
+    the log lines, and here they are the only unit there is.
+
     Field incident 20260903_193428_1, bot3, t=1266-1270: p4 sent bot3 two steal
     requests back to back (`stq 4 3 188`, `stq 0 3 379`) while its own goal was
     attack_pill #5 and stayed #5; bot3 yielded both and then carried pills #0
     and #4 as ally_claimed by p4 for the full STEAL_YIELD_BLOCK (300 ticks,
-    still up at t=1487) for takes p4 never went near.  Three changes:
-
-    1. COMMITMENT-AWARE PRICE.  Both sides of the handshake now trade the
-       COMPETED total -- the number that bot's own goal selection used, i.e. the
-       raw pool cost after phase weight, influence, hysteresis, commitment and
-       history -- instead of the raw cost_cache cost.  Bot3's goal selection had
-       priced pill #0 at 223.6 against a raw of 423, and quoting the raw handed
-       the pill to a challenger at 379.  It is used for the holder's sta reply,
-       the holder's advertised `cost=` (tagged `cq=c` on the wire), and both
-       sides' dual-hold decisions; where no competed total exists (the normal
-       challenger case -- an ally-claimed row is REJECTed out of every pool) the
-       raw cost is used and the line says `(raw)`.
+    still up at t=1487) for takes p4 never went near.  Two changes:
 
     2. ONE TARGETED REQUEST PER REPLAN.  An stq now goes out only for the row
        goal selection would actually pick if the claim were lifted -- it has to
@@ -43,17 +38,17 @@ CHECKS (two arenas, see tests/generate_steal_handshake_map.py)
       A2 every stq that IS sent passes its own gate: the STEAL_REQ SEND line's
          est_competed beats the winner it names (or names no winner, which
          means nothing won that replan and the row is the only candidate);
-      A3 the DECISION lines carry units, and at least one reads an ally cost
-         tagged `(competed)` -- i.e. the advert's `cq=c` made it across;
+      A3 the DECISION lines carry units, and EVERY one of them -- ours and the
+         ally's -- reads `(raw)`: this variant has no second price to quote,
+         so a `(competed)` tag anywhere would mean change 1 leaked back in;
       B  at least one STEAL_YIELD_RELEASED naming what the stealer went to,
          fired inside STEAL_YIELD_BLOCK and no sooner than
          STEAL_YIELD_RELEASE_GRACE, and the released row is priced again
          afterwards (it stops being an ally_claimed REJECT);
-      C  at least one sta/str reply quotes a COMPETED cost that is BELOW the
-         raw cost_cache cost for the same pill -- the commitment discount
-         actually on the wire, which is the half of the incident that decided
-         it -- and the challenger's DECISION for a pill it does not hold reads
-         `they_hold` at least once.
+      C  every sta/str reply quotes the RAW cost_cache cost for the pill and
+         says so (our_cost == raw, tagged `(raw)`) -- the baseline price, which
+         is what this variant is here to measure -- and the challenger's
+         DECISION for a pill it does not hold reads `they_hold` at least once.
 
     BUSY arena -- same contested pill plus one 5 tiles from bot1 and 31 from
     bot0, so bot1 always has a cheaper take of its own (the incident's shape):
@@ -378,21 +373,14 @@ def check_duel(logs):
         return 1
     for d in dec:
         for k in ("units", "ally_units"):
-            if d[k] not in ("raw", "competed"):
-                print(f"FAIL: DECISION line has unit tag {d[k]!r}, expected "
-                      f"raw or competed: {d}")
+            if d[k] != "raw":
+                print(f"FAIL: DECISION line has unit tag {d[k]!r}; variant (c) "
+                      f"trades RAW costs only, so every tag must read raw: {d}")
                 return 1
-    competed_ally = [d for d in dec if d["ally_units"] == "competed"]
-    if not competed_ally:
-        print("FAIL: no DECISION line ever read an ally cost tagged (competed) "
-              "-- the holder's cq=c advert never reached the challenger")
-        return 1
-    ex = competed_ally[0]
-    print(f"  A3: {len(dec)} DECISION line(s), all unit-tagged; "
-          f"{len(competed_ally)} read the ally's COMPETED price "
-          f"(first: t={ex['t']} pill #{ex['pid']} ally=p{ex['ally']} "
-          f"ally_cost={ex['ally_cost']}(competed) vs our "
-          f"{ex['cost']:.1f}({ex['units']}))")
+    ex = dec[0]
+    print(f"  A3: {len(dec)} DECISION line(s), every price on both sides tagged "
+          f"(raw) (first: t={ex['t']} pill #{ex['pid']} ally=p{ex['ally']} "
+          f"ally_cost={ex['ally_cost']}(raw) vs our {ex['cost']:.1f}(raw))")
 
     # -- B: a yield block ended early because the stealer went elsewhere.
     rel = [(b, r) for b in ALLIES for r in data[b]["release"]]
@@ -434,28 +422,31 @@ def check_duel(logs):
           f"(first: bot{b} t={r['t']} pill #{r['pid']} to p{r['to']} "
           f"reason={r['reason']} after {r['after']}t)")
 
-    # -- C: the commitment discount was on the wire.
-    discounted = []
-    for b in ALLIES:
-        for rp in data[b]["reply"]:
-            if rp["units"] != "competed":
-                continue
-            try:
-                c, raw = float(rp["cost"]), float(rp["raw"])
-            except ValueError:
-                continue
-            if c < raw:
-                discounted.append((b, rp))
-    if not discounted:
-        print("FAIL: no sta/str reply ever quoted a COMPETED cost below the raw "
-              "cost_cache cost -- the commitment discount never reached the "
-              "wire, which is the half of the incident that decided it")
+    # -- C: the price on the wire is the raw cost, and nothing else.
+    replies = [(b, rp) for b in ALLIES for rp in data[b]["reply"]]
+    if not replies:
+        print("FAIL: no sta/str reply anywhere -- nobody ever answered a steal "
+              "request, so the price on the wire was never under test")
         return 1
-    b, rp = discounted[0]
-    print(f"  C: {len(discounted)} repl(y/ies) quoted a competed price below "
-          f"the raw one (first: bot{b} t={rp['t']} pill #{rp['pid']} {rp['verb']} "
-          f"[{rp['verdict']}] our_cost={rp['cost']}(competed,age={rp['age']}) vs "
-          f"raw={rp['raw']}, sub={rp['sub']})")
+    for b, rp in replies:
+        if rp["units"] != "raw":
+            print(f"FAIL: bot{b} t={rp['t']} replied with a {rp['units']!r} "
+                  f"price; variant (c) quotes the raw cost_cache cost only")
+            return 1
+        try:
+            c, raw = float(rp["cost"]), float(rp["raw"])
+        except ValueError:
+            continue
+        if abs(c - raw) > 0.05:
+            print(f"FAIL: bot{b} t={rp['t']} pill #{rp['pid']} quoted "
+                  f"our_cost={c} but its raw cost_cache cost was {raw} -- the "
+                  f"two must be the same number in this variant")
+            return 1
+    b, rp = replies[0]
+    print(f"  C: {len(replies)} repl(y/ies), every one quoting the raw "
+          f"cost_cache cost and saying so (first: bot{b} t={rp['t']} pill "
+          f"#{rp['pid']} {rp['verb']} [{rp['verdict']}] "
+          f"our_cost={rp['cost']}(raw) == raw={rp['raw']}, sub={rp['sub']})")
     they_hold = [d for d in dec if not d["we_hold"] and d["why"].startswith("they_hold")]
     if not they_hold:
         print("FAIL: no DECISION ever read `they_hold` -- a challenger never "
@@ -526,9 +517,9 @@ def run_one(variant, ticks, build_dir, seed):
     rc = check_duel(logs) if variant == "duel" else check_busy(logs)
     if rc == 0:
         if variant == "duel":
-            print("PASS: the handshake priced on competed costs, sent at most "
-                  "one targeted request per replan, and ended its yield blocks "
-                  "as soon as the stealer went elsewhere.")
+            print("PASS: the handshake priced on RAW costs throughout, sent at "
+                  "most one targeted request per replan, and ended its yield "
+                  "blocks as soon as the stealer went elsewhere.")
         else:
             print("PASS: a challenger committed to its own take never asked for "
                   "the ally-claimed pill it would not have picked.")

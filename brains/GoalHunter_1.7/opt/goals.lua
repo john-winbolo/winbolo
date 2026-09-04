@@ -11871,34 +11871,15 @@ local WSIM_SIM_KINDS = { capture_base=true, capture_pill=true,
 -- constants.lua for the incident.)
 -- =========================================================================
 
--- steal_competed_cost -- the COMPETED total goal selection last used for
--- (pool_idx, id): the raw pool cost after phase weight, influence, hysteresis,
--- commitment and history. This is the number the handshake trades, because it
--- is the number each bot's own goal selection acts on. Returns
---   cost, age_in_ticks, raw_cost
--- or nil, in which case the caller falls back to the raw cost_cache cost and
--- SAYS so, tagged `(raw)`. Three ways to get nil:
---   * the row has never competed (the normal CHALLENGER case: an ally-claimed
---     row is REJECTed out of every pool, so it has no competed total at all);
---   * it last competed more than STEAL_COMPETED_MAX_AGE ago;
---   * `hold` is given and the record was taken under the OTHER hold status.
--- That last one matters as much as the age: a row that competed while it was
--- our goal carries the commitment/hysteresis discount, one that competed while
--- it was not carries the switch penalty, and using one for the other is worse
--- than using the raw cost. Pass `hold` (true when we hold this goal NOW) at
--- every handshake site; omit it only where the answer is a plain lookup.
-local function steal_competed_cost(state, pool_idx, id, hold)
-  if id == nil then return nil end
-  local rec = state._competed and state._competed[pool_idx .. ":" .. tostring(id)]
-  if not rec or type(rec.cost) ~= "number" or rec.cost >= 1e29 then return nil end
-  local age = (state.tick or 0) - (rec.tick or 0)
-  if age > (C.STEAL_COMPETED_MAX_AGE or 150) then return nil end
-  if hold ~= nil and (rec.held and true or false) ~= (hold and true or false) then
-    return nil
-  end
-  return rec.cost, age, rec.raw
-end
-M.steal_competed_cost = steal_competed_cost
+-- VARIANT (c): NO commitment-aware pricing.  The handshake trades the RAW
+-- cost_cache cost on both sides, exactly as the pre-handshake baseline did --
+-- there is no steal_competed_cost, no `cq=` advert tag and no competed reply
+-- price.  What DOES survive from the ledger work is the per-pool bookkeeping
+-- (_pool_competed / _pool_competed_raw / _competed_winner) that change 2's
+-- "would goal selection actually pick this row?" gate needs; the per-row
+-- competed totals are not recorded at all, because nothing reads them.
+-- The `(raw)` unit tags stay on every handshake log line so the price a
+-- decision was made on is still stated outright -- here it is always `raw`.
 
 -- steal_drain_requests -- decide which (if any) of this tick's candidate steal
 -- requests actually goes on the wire. Called from goal_selection, right after
@@ -12302,10 +12283,10 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       -- co-attacker exemption).  You can't steal a kill mid-take.
       local force_engaging_reject = false
       local match_sub = nil
-      -- Units of the ally's advertised `cost=`: 1.7 tags a COMPETED total with
-      -- cq=c (see the /info extra builder in init.lua); anything without the tag
-      -- -- an older brain, or a goal whose competed total went stale -- is a RAW
-      -- pool cost. Carried into the DECISION line so the comparison is readable.
+      -- Units of the ally's advertised `cost=`. VARIANT (c) advertises no cost
+      -- tag at all, so every ally price is a RAW pool cost. Kept as a variable
+      -- (rather than inlined) so the DECISION line still states the units the
+      -- comparison was made in.
       local match_units = "raw"
       local tank_dead_at = state.tank_dead_at
       local _diag_p6 = BRAIN_DEBUG_MODE and pool_idx == 6 and e._id
@@ -12347,7 +12328,6 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
                 end
               end
               match_cost      = tonumber(h.cost)
-              match_units     = (h.cq == "c") and "competed" or "raw"
               match_pn        = ally_pn
               match_heartbeat = 1750 - (now - slot.last_tick)
               if match_heartbeat < 0 then match_heartbeat = 0 end
@@ -12372,26 +12352,10 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
 
       if match_pn then
         local our_cost = e.cost
-        -- Pool 6 prices the handshake on the COMPETED total, not the raw
-        -- cost_cache cost: that is the number our own goal selection acted on,
-        -- so it carries the commitment/hysteresis discount a holder has earned.
-        -- 20260903_193428_1 bot3 pill #0: raw 423, competed 223.6 -- quoting the
-        -- raw number handed the pill to a challenger at 379. Falls back to raw
-        -- (and says so) when the row has never competed, which is the normal
-        -- CHALLENGER case: an ally_claimed row is REJECTed out of every pool, so
-        -- it has no competed total until the claim lifts.
+        -- VARIANT (c): our side of the handshake is the RAW cost_cache cost on
+        -- every pool, pool 6 included. No commitment/hysteresis adjustment is
+        -- read into the price.
         local our_units = "raw"
-        if pool_idx == 6 and e._id then
-          -- we_hold is computed a few lines down from the same state.goal; do
-          -- it here too so the hold status the lookup is matched against is the
-          -- CURRENT one, not the one at the time of the record.
-          local _g6 = state.goal
-          local _hold6 = (_g6 and _g6.kind == "attack_pill"
-            and ((_g6.target_id and _g6.target_id == e._id)
-                 or (_g6.mx == e._mx and _g6.my == e._my))) and true or false
-          local _cc = steal_competed_cost(state, 6, e._id, _hold6)
-          if _cc then our_cost = _cc; our_units = "competed" end
-        end
         -- Per-pool steal threshold: capture_pill grabs are cheap to re-route
         -- (drive-over, no shells invested), so essentially ANY cost edge wins
         -- the pickup (1%); other pools keep the conservative 25% band.
@@ -15474,41 +15438,15 @@ local function goal_selection(state, world, info, quiet)
     -- Parallel raw (pre-shaping) cost per pool index. Only reader today is the
     -- steal handshake's shaping estimate; see steal_drain_requests.
     state._pool_competed_raw = {}
-    -- ── COMPETED-cost ledger, keyed "pool:id" ─────────────────────────────
-    -- The stq/sta/str handshake used to trade RAW cost_cache costs, so a holder
-    -- that had already earned goal selection's commitment/hysteresis discount
-    -- still quoted the undiscounted number and lost a pill it was winning by 92
-    -- points (20260903_193428_1 bot3 t=1266-1270: pill #0 raw 423 vs competed
-    -- 223.6, challenger's raw 379). This is the number goal selection actually
-    -- used, so the handshake can trade it instead.
-    -- NOT wiped between replans: a row that lost a later competition (or is
-    -- REJECTed out of it, which is exactly the challenger's case) keeps the
-    -- total it last competed at, and every reader gates on the age.
-    state._competed = state._competed or {}
+    -- VARIANT (c): no per-row competed ledger. The two per-POOL tables above
+    -- and _competed_winner below are all change 2's outgoing-request gate
+    -- needs (shape = pool-6 competed / pool-6 raw, measured against the goal
+    -- that won the replan); no handshake price is ever read from them.
     local _comp_now = state.tick or 0
-    local _cg = state.goal
     for _, c in ipairs(pool) do
       if c._pool_idx then
         state._pool_competed[c._pool_idx] = c.cost
         state._pool_competed_raw[c._pool_idx] = c._raw_cost
-        local _cid = c._pill_id or (c.goal and c.goal.target_id)
-        if _cid and (c.cost or 0) < 1e29 then
-          -- `held` = was this row OUR CURRENT GOAL when it competed?  The
-          -- shaping is completely different either way -- a held row gets the
-          -- commitment/hysteresis DISCOUNT, an unheld one gets the switch
-          -- PENALTY -- so the two numbers are not interchangeable and a reader
-          -- must never use one where it means the other.  (Seen on the test
-          -- arena: bot1's pill #0 competed at 128 from a replan where it was on
-          -- something else, against a raw of 14; quoting the 128 as its holder
-          -- price gave the pill away.)  state.goal is still the PREVIOUS goal
-          -- here -- pick_goal runs after -- which is exactly the goal the
-          -- hysteresis was computed against.
-          local _held = _cg and c.goal and _cg.kind == c.goal.kind
-            and ((_cg.target_id and c.goal.target_id and _cg.target_id == c.goal.target_id)
-                 or (_cg.mx == c.goal.mx and _cg.my == c.goal.my)) or false
-          state._competed[c._pool_idx .. ":" .. tostring(_cid)] =
-            { cost = c.cost, raw = c._raw_cost, tick = _comp_now, held = _held }
-        end
       end
     end
     -- The goal that actually won this replan's competition (pool is sorted,

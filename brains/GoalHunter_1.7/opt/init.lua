@@ -3945,35 +3945,13 @@ function Brain.think(info)
             local our_sub = g and g.substate or ""
             local pre_commit = (our_sub == "plan_position" or our_sub == "approach")
             local ce = state.cost_cache and state.cost_cache["6:" .. tostring(rq.pid)]
+            -- VARIANT (c): our reply price is the RAW cost_cache cost, the
+            -- pre-handshake baseline. No competed total, no commitment
+            -- adjustment. The units tag is kept on the log line (always `raw`)
+            -- so the price a reply was made on is still stated outright.
             local raw_cost = ce and type(ce.cost) == "number" and ce.cost or nil
-            -- Our PRICE in the handshake is the COMPETED total goal selection
-            -- last used for this pill, not the raw cost_cache cost: a holder
-            -- that is already on the take has earned a commitment/hysteresis
-            -- discount, and quoting the raw number throws that away. bot3 in
-            -- 20260903_193428_1 replied `sta 0 4 423` for a pill its own goal
-            -- selection had priced at 223.6 and lost it to a challenger at 379.
-            -- Falls back to the raw cost (tagged) when the row has no competed
-            -- total inside STEAL_COMPETED_MAX_AGE.
-            -- `holds` gates the lookup: a competed total taken while we were on
-            -- something else carries the SWITCH PENALTY, not the commitment
-            -- discount, and quoting that as our holder price gives the pill away
-            -- for the opposite reason. Mismatch -> raw, tagged (raw).
-            local comp_cost, comp_age = goals.steal_competed_cost(state, 6, rq.pid, holds)
-            local my_cost, cost_units
-            if comp_cost then
-              my_cost, cost_units = comp_cost, "competed"
-            else
-              my_cost, cost_units = raw_cost, "raw"
-            end
-            -- Same "wait for a fresh re-eval" rule either way: a competed total
-            -- refreshes once per replan (GOAL_REPLAN_INTERVAL), so it gets its
-            -- own freshness window rather than the eval-queue one.
-            local cost_fresh
-            if cost_units == "competed" then
-              cost_fresh = comp_age <= (C.STEAL_COMPETED_FRESH_AGE or 60)
-            else
-              cost_fresh = my_cost and (now - (ce.tick or 0)) <= (C.STEAL_REEVAL_MAX_AGE or 40)
-            end
+            local my_cost, cost_units = raw_cost, "raw"
+            local cost_fresh = my_cost and (now - (ce.tick or 0)) <= (C.STEAL_REEVAL_MAX_AGE or 40)
             local deadline = (now - rq.tick) >= (C.STEAL_REPLY_DEADLINE or 20)
             local reply, verdict
             if not holds then
@@ -4005,11 +3983,10 @@ function Brain.think(info)
               state._steal_outbox[#state._steal_outbox + 1] =
                 string.format("/info %s %d %d %d", reply, rq.pid, rq.from,
                               math.floor(math.min(my_cost or 9999999, 9999999) + 0.5))
-              -- our_cost carries its UNITS: `(competed)` is the total our own
-              -- goal selection used for this pill (raw pool cost after phase
-              -- weight, influence, hysteresis, commitment, history), `(raw)` the
-              -- bare cost_cache cost. The number in the sta/str on the wire is
-              -- this one, so the challenger's band test sees the same price.
+              -- our_cost carries its UNITS. VARIANT (c) has one unit only --
+              -- `(raw)`, the bare cost_cache cost -- and it is the number that
+              -- goes out in the sta/str, so the challenger'''s band test sees
+              -- exactly the price this line prints. raw= repeats it.
             end
           end
         end
@@ -6928,24 +6905,9 @@ function Brain.think(info)
            and pce.goal.mx   == state.goal.mx
            and pce.goal.my   == state.goal.my
            and pce.cost ~= nil then
-          local _c = pce.cost - (pce.ally_claimed_pen or 0)
-          -- Units tag `cq`: c = COMPETED total (what our goal selection actually
-          -- used for this goal), r = RAW pool cost. attack_pill (pool 6) is the
-          -- one the steal handshake negotiates on, and a holder there must quote
-          -- the price its own commitment has already earned it -- advertising the
-          -- raw cost is what handed pills #0/#4 away in 20260903_193428_1. Every
-          -- other pool keeps advertising the raw cost, so their steal bands are
-          -- unchanged. Allies without the tag (GoalHunter 1.6) read as raw.
-          local _cq = "r"
-          if pi == 6 and state.goal.target_id then
-            -- We are advertising the cost of the goal we are ON, so only a
-            -- record taken while we held it (hold=true) means what we are about
-            -- to say it means.
-            local _cc = goals.steal_competed_cost(state, 6, state.goal.target_id, true)
-            if _cc then _c = _cc; _cq = "c" end
-          end
-          bse.cost = string.format("%.0f", _c)
-          bse.cq   = _cq
+          -- VARIANT (c): the advertised cost is the RAW pool cost on every
+          -- pool, pool 6 included, and carries no units tag.
+          bse.cost = string.format("%.0f", pce.cost - (pce.ally_claimed_pen or 0))
           break
         end
       end
@@ -6956,14 +6918,11 @@ function Brain.think(info)
     end
     -- `cost` is kept OUT of the change trigger (it drifts every tick); a
     -- cost-only change must not force a send.  Its own 1 Hz cadence
-    -- (cost_due) drives those refreshes instead.  `cq` (the cost's units) is
-    -- excluded with it: it only ever flips alongside a cost that is already
-    -- riding that cadence, so making it a trigger would just re-add the
-    -- per-tick send `cost` was pulled out of the trigger to avoid.
+    -- (cost_due) drives those refreshes instead.
     local extras_differ = false
-    for k, v in pairs(bse)      do if k ~= "cost" and k ~= "cq" and last_ext[k] ~= v then extras_differ = true break end end
+    for k, v in pairs(bse)      do if k ~= "cost" and last_ext[k] ~= v then extras_differ = true break end end
     if not extras_differ then
-      for k, v in pairs(last_ext) do if k ~= "cost" and k ~= "cq" and bse[k] ~= v then extras_differ = true break end end
+      for k, v in pairs(last_ext) do if k ~= "cost" and bse[k] ~= v then extras_differ = true break end end
     end
     -- Send extras when nothing else is going out this tick and either the
     -- non-cost payload changed, the 1 Hz cost refresh is due, or the
