@@ -136,6 +136,29 @@ bool        skinSourceZipDirectory(const char *dir, const char *outZip,
                                    const char *wrapFolder /* NULL = none */);
 
 /*********************************************************
+ * NAME:          skinSourceExtractTo
+ * PURPOSE:
+ *   Writes every file the skin holds into dir, creating dir
+ *   and dir/sounds. Names come from the index, so they
+ *   arrive lowercased and forward-slashed — harmless,
+ *   because every lookup is case-insensitive. False on any
+ *   failure.
+ *********************************************************/
+bool        skinSourceExtractTo(SkinSource *src, const char *dir);
+
+/*********************************************************
+ * NAME:          skinSetWorkshopId
+ * PURPOSE:
+ *   Records the Workshop id in the skin's skin.ini so a
+ *   later publish updates that item instead of making a
+ *   duplicate. skinPath is a directory or a .wsf/.zip; an
+ *   archive is unpacked, edited and rebuilt in place. Every
+ *   other key, and every other file, survives. False on any
+ *   failure, leaving the original untouched.
+ *********************************************************/
+bool        skinSetWorkshopId(const char *skinPath, uint64_t id);
+
+/*********************************************************
  * NAME:          skinSetActive
  * PURPOSE:
  *   Records this id as the player's choice and loads its

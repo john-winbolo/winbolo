@@ -1343,7 +1343,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/wbn_map_source.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -3920,6 +3920,7 @@ set(_unit_test_names
     active_sim_cleared_on_cross_thread_destroy
     skin_source_dir_and_zip
     skin_active_vs_requested
+    skin_workshop_id_roundtrip
     skin_density_scan
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to

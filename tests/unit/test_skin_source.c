@@ -29,6 +29,14 @@
 #define FLAT_ZIP    "skin_flat_test.zip"
 #define WRAPPED_ZIP "skin_wrapped_test.zip"
 
+/* Scratch skin the WorkshopId round trip builds and then removes, as a
+ * directory and as the archive made from it. The two ids differ so the
+ * second write cannot pass on the first one's value. */
+#define WORKSHOP_DIR     "skin_workshop_test_dir"
+#define WORKSHOP_ZIP     "skin_workshop_test.wsf"
+#define WORKSHOP_ID_DIR  1234567890ULL
+#define WORKSHOP_ID_ZIP  9876543210ULL
+
 /* An id no skin on disk can carry: skinSetActive scans the machine's real
  * prefpath and base-path skins folders, which are not assumed to be empty. */
 #define MISSING_ID  "user:__wb_missing_skin__"
@@ -318,5 +326,136 @@ int run_skin_active_vs_requested(void) {
     /* The registry is global: leave it on the built-in assets for whatever
      * test runs next. */
     skinSetActive("");
+    return rc;
+}
+
+/* Publishing to the Workshop writes the item's id back into the skin, so a
+ * later publish updates that item instead of making a second one. The skin on
+ * disk is a directory or an archive, and either way every other key in
+ * skin.ini and every other file in the skin has to come through untouched —
+ * an archive is unpacked, edited and zipped up again to get there.
+ *
+ * The directory under test is the fixture run through skinSourceExtractTo,
+ * so that walk is covered too, and the archive is that directory zipped. */
+
+/* Everything the fixture's skin.ini carries besides WorkshopId: the rewrite
+ * has to hand all of it back exactly as it found it. */
+static int checkOtherIniKeys(const SkinInfo *info, const char *label) {
+    UT_ASSERT_MSG(strcmp(info->name, "Basic Test Skin") == 0,
+                  "%s: Name is '%s'", label, info->name);
+    UT_ASSERT_MSG(strcmp(info->author, "WinBolo Tests") == 0,
+                  "%s: Author is '%s'", label, info->author);
+    UT_ASSERT_MSG(strcmp(info->notes, "Fixture for test_skin_source") == 0,
+                  "%s: Notes is '%s'", label, info->notes);
+    UT_ASSERT_MSG(info->maxPixelDensity == 2,
+                  "%s: MaxPixelDensity is %d", label, info->maxPixelDensity);
+    return 0;
+}
+
+static int checkWorkshopIdRoundtrip(const char *fixture) {
+    SkinSource *src;
+    SkinInfo    info;
+    int         rc;
+
+    src = skinSourceOpen(fixture);
+    if (src == NULL) {
+        UT_FAIL("fixture missing or unreadable: %s", fixture);
+    }
+    if (!skinSourceExtractTo(src, WORKSHOP_DIR)) {
+        skinSourceClose(src);
+        UT_FAIL("skinSourceExtractTo('%s') failed", WORKSHOP_DIR);
+    }
+    skinSourceClose(src);
+
+    /* Directory skin: skin.ini is rewritten where it sits. */
+    if (!skinSetWorkshopId(WORKSHOP_DIR, WORKSHOP_ID_DIR)) {
+        UT_FAIL("skinSetWorkshopId('%s', %llu) failed", WORKSHOP_DIR,
+                (unsigned long long)WORKSHOP_ID_DIR);
+    }
+    src = skinSourceOpen(WORKSHOP_DIR);
+    if (src == NULL) {
+        UT_FAIL("reopening the extracted directory '%s' failed", WORKSHOP_DIR);
+    }
+    skinSourceReadIni(src, &info);
+    skinSourceClose(src);
+    if (info.workshopId != WORKSHOP_ID_DIR) {
+        UT_FAIL("directory: WorkshopId is %llu, want %llu",
+                (unsigned long long)info.workshopId,
+                (unsigned long long)WORKSHOP_ID_DIR);
+    }
+    rc = checkOtherIniKeys(&info, "directory");
+    if (rc != 0) return rc;
+
+    /* Archive skin, under a second id: the one already in the ini has to be
+     * replaced rather than joined by another, and the id read back says
+     * which happened — a leftover line sits after the new one, so a parse
+     * would come away with the old value. */
+    if (!skinSourceZipDirectory(WORKSHOP_DIR, WORKSHOP_ZIP, NULL)) {
+        UT_FAIL("skinSourceZipDirectory('%s', '%s', NULL) failed",
+                WORKSHOP_DIR, WORKSHOP_ZIP);
+    }
+    if (!skinSetWorkshopId(WORKSHOP_ZIP, WORKSHOP_ID_ZIP)) {
+        UT_FAIL("skinSetWorkshopId('%s', %llu) failed", WORKSHOP_ZIP,
+                (unsigned long long)WORKSHOP_ID_ZIP);
+    }
+    src = skinSourceOpen(WORKSHOP_ZIP);
+    if (src == NULL) {
+        UT_FAIL("reopening the rebuilt archive '%s' failed", WORKSHOP_ZIP);
+    }
+    skinSourceReadIni(src, &info);
+    if (!skinSourceExists(src, "tank_self_00.png") ||
+        !skinSourceExists(src, "sounds/hit_tank_far.wav")) {
+        skinSourceClose(src);
+        UT_FAIL("archive: a file did not survive the rebuild");
+    }
+    skinSourceClose(src);
+    if (info.workshopId != WORKSHOP_ID_ZIP) {
+        UT_FAIL("archive: WorkshopId is %llu, want %llu",
+                (unsigned long long)info.workshopId,
+                (unsigned long long)WORKSHOP_ID_ZIP);
+    }
+    return checkOtherIniKeys(&info, "archive");
+}
+
+/* SDL_RemovePath will not delete a directory with anything left in it, so
+   the files go first, and sounds/ before the folder holding it. */
+static void removeDirFiles(const char *dir) {
+    char **list;
+    int    count = 0;
+    int    i;
+
+    list = SDL_GlobDirectory(dir, "*", 0, &count);
+    if (list == NULL) return;
+    for (i = 0; i < count; i++) {
+        char full[512];
+        if (list[i] == NULL || list[i][0] == '\0') continue;
+        snprintf(full, sizeof(full), "%s/%s", dir, list[i]);
+        SDL_RemovePath(full);
+    }
+    SDL_free(list);
+}
+
+static void removeSkinDir(const char *dir) {
+    char sounds[512];
+
+    snprintf(sounds, sizeof(sounds), "%s/sounds", dir);
+    removeDirFiles(sounds);
+    SDL_RemovePath(sounds);
+    removeDirFiles(dir);
+    SDL_RemovePath(dir);
+}
+
+int run_skin_workshop_id_roundtrip(void) {
+    const char *dir = getenv("WB_SKINS_FIXTURE_DIR");
+    char fixture[512];
+    int rc;
+
+    if (dir == NULL || dir[0] == '\0') dir = WB_SKINS_FIXTURE_DIR;
+    snprintf(fixture, sizeof(fixture), "%s/basic", dir);
+
+    rc = checkWorkshopIdRoundtrip(fixture);
+
+    removeSkinDir(WORKSHOP_DIR);
+    remove(WORKSHOP_ZIP);
     return rc;
 }

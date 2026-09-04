@@ -714,6 +714,326 @@ bool skinSourceZipDirectory(const char *dir, const char *outZip,
 }
 
 /* ------------------------------------------------------------------ */
+/* Extracting                                                          */
+/* ------------------------------------------------------------------ */
+
+bool skinSourceExtractTo(SkinSource *src, const char *dir) {
+    char soundsDir[SKIN_PATH_MAX];
+    int  i;
+    bool ok = true;
+
+    if (!src || !dir || !*dir) return false;
+
+    /* Made up front rather than per file: SDL_CreateDirectory reports
+     * success when the directory is already there, and the top level and
+     * sounds/ are the only two levels a skin layout puts files in. */
+    if (!SDL_CreateDirectory(dir)) return false;
+    SDL_snprintf(soundsDir, sizeof(soundsDir), "%s/sounds", dir);
+    if (!SDL_CreateDirectory(soundsDir)) return false;
+
+    for (i = 0; i < src->count && ok; i++) {
+        char          full[SKIN_PATH_MAX * 2];
+        void         *buf = NULL;
+        size_t        len = 0;
+        SDL_IOStream *io;
+
+        /* A directory source indexes every top-level name, the sounds/
+         * folder among them; only the files are worth extracting. A zip
+         * source never indexes a directory entry, so it needs no check. */
+        if (!src->isZip) {
+            SDL_PathInfo pi;
+            const char  *rel = src->entries[i].rel ? src->entries[i].rel
+                                                   : src->entries[i].key;
+            SDL_snprintf(full, sizeof(full), "%s/%s", src->path, rel);
+            if (!SDL_GetPathInfo(full, &pi) || pi.type != SDL_PATHTYPE_FILE) {
+                continue;
+            }
+        }
+
+        /* Reading by the indexed key goes back through the same index the
+         * name came from, so a zip entry and a file on disk come out the
+         * same way. */
+        if (!skinSourceRead(src, src->entries[i].key, &buf, &len)) {
+            ok = false;
+            break;
+        }
+        SDL_snprintf(full, sizeof(full), "%s/%s", dir, src->entries[i].key);
+        io = SDL_IOFromFile(full, "wb");
+        if (!io) {
+            SDL_free(buf);
+            ok = false;
+            break;
+        }
+        if (len > 0 && SDL_WriteIO(io, buf, len) != len) ok = false;
+        if (!SDL_CloseIO(io)) ok = false;
+        SDL_free(buf);
+    }
+    return ok;
+}
+
+/* ------------------------------------------------------------------ */
+/* The Workshop id                                                     */
+/* ------------------------------------------------------------------ */
+
+/* True when the line between b and e, already trimmed at both ends, is a
+ * key=value pair whose key is WorkshopId. Whitespace either side of the key
+ * and of the '=' is tolerated, the way parseSkinIni reads the same line. */
+static bool isWorkshopIdLine(const char *b, const char *e) {
+    const char *eq = b;
+    const char *kend;
+    while (eq < e && *eq != '=') eq++;
+    if (eq == e) return false;
+    kend = eq;
+    while (kend > b && (kend[-1] == ' ' || kend[-1] == '\t')) kend--;
+    if (kend - b != 10) return false;   /* strlen("WorkshopId") */
+    return SDL_strncasecmp(b, "WorkshopId", 10) == 0;
+}
+
+/* The text of a skin.ini carrying WorkshopId=id, built out of the text it
+ * already has — NUL-terminated at [len], as SDL_LoadFile leaves it, and NULL
+ * with len 0 when there is no ini at all. Lines are copied through in order,
+ * so comments, blank lines and other sections survive; a WorkshopId already
+ * in [Skin] is dropped and the new one goes in right after the [Skin]
+ * header. Text with no [Skin] section gets one appended. Returns an
+ * SDL_malloc'ed NUL-terminated string the caller frees, NULL on failure. */
+static char *iniWithWorkshopId(const char *text, size_t len, uint64_t id) {
+    char        idLine[64];
+    char       *out;
+    size_t      idLen;
+    size_t      o = 0;
+    bool        inSkin = false;
+    bool        inserted = false;
+    const char *p = text;
+    const char *end = text ? text + len : NULL;
+
+    SDL_snprintf(idLine, sizeof(idLine), "WorkshopId=%llu\n",
+                 (unsigned long long)id);
+    idLen = SDL_strlen(idLine);
+
+    /* Lines are only ever dropped; all that is ever added is one id line,
+     * one section header and at most two newlines. */
+    out = (char *)SDL_malloc(len + idLen + 32);
+    if (!out) return NULL;
+
+    while (p != NULL && p < end) {
+        const char *lineEnd = p;
+        const char *b;
+        const char *e;
+        size_t      lineLen;
+
+        while (lineEnd < end && *lineEnd != '\n') lineEnd++;
+        if (lineEnd < end) lineEnd++;          /* the newline belongs to it */
+        lineLen = (size_t)(lineEnd - p);
+
+        /* A trimmed view of the line, purely for deciding what it is: what
+         * gets copied is always the original bytes. */
+        b = p;
+        e = p + lineLen;
+        while (e > b && (e[-1] == '\n' || e[-1] == '\r' ||
+                         e[-1] == ' ' || e[-1] == '\t')) {
+            e--;
+        }
+        while (b < e && (*b == ' ' || *b == '\t')) b++;
+
+        if (b < e && *b == '[') {
+            inSkin = (e - b >= 6 && SDL_strncasecmp(b, "[Skin]", 6) == 0);
+            SDL_memcpy(out + o, p, lineLen);
+            o += lineLen;
+            if (inSkin && !inserted) {
+                if (o > 0 && out[o - 1] != '\n') out[o++] = '\n';
+                SDL_memcpy(out + o, idLine, idLen);
+                o += idLen;
+                inserted = true;
+            }
+            p = lineEnd;
+            continue;
+        }
+
+        if (inSkin && isWorkshopIdLine(b, e)) {
+            p = lineEnd;                       /* the id being replaced */
+            continue;
+        }
+
+        SDL_memcpy(out + o, p, lineLen);
+        o += lineLen;
+        p = lineEnd;
+    }
+
+    if (!inserted) {
+        if (o > 0 && out[o - 1] != '\n') out[o++] = '\n';
+        SDL_memcpy(out + o, "[Skin]\n", 7);
+        o += 7;
+        SDL_memcpy(out + o, idLine, idLen);
+        o += idLen;
+    }
+    out[o] = '\0';
+    return out;
+}
+
+/* Writes len bytes to path through a neighbouring temp file, so a write that
+ * fails part way leaves whatever was there before. */
+static bool writeFileReplacing(const char *path, const char *text,
+                               size_t len) {
+    char          tmp[SKIN_PATH_MAX * 2];
+    SDL_IOStream *io;
+    bool          ok;
+
+    SDL_snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+    io = SDL_IOFromFile(tmp, "wb");
+    if (!io) return false;
+    ok = (len == 0 || SDL_WriteIO(io, text, len) == len);
+    if (!SDL_CloseIO(io)) ok = false;
+    if (ok) ok = SDL_RenamePath(tmp, path);
+    if (!ok) SDL_RemovePath(tmp);
+    return ok;
+}
+
+/* Reads <dir>/skin.ini when it is there, puts the id in it and writes it
+ * back. A skin with no ini gets one holding just the [Skin] section. */
+static bool rewriteSkinIni(const char *dir, uint64_t id) {
+    char   iniPath[SKIN_PATH_MAX * 2];
+    void  *old;
+    size_t oldLen = 0;
+    char  *text;
+    bool   ok;
+
+    SDL_snprintf(iniPath, sizeof(iniPath), "%s/skin.ini", dir);
+    old = SDL_LoadFile(iniPath, &oldLen);
+    text = iniWithWorkshopId((const char *)old, old ? oldLen : 0, id);
+    SDL_free(old);
+    if (!text) return false;
+    ok = writeFileReplacing(iniPath, text, SDL_strlen(text));
+    SDL_free(text);
+    return ok;
+}
+
+/* Empties a scratch directory and removes it: the files in its sounds/
+ * folder, that folder, then the files at the top level. SDL_RemovePath will
+ * not delete a directory with anything left in it, so the order matters. */
+static void removeSkinTree(const char *dir) {
+    char   soundsDir[SKIN_PATH_MAX];
+    char **list;
+    int    count = 0;
+    int    i;
+
+    SDL_snprintf(soundsDir, sizeof(soundsDir), "%s/sounds", dir);
+    list = listDirectory(soundsDir, &count);
+    if (list) {
+        for (i = 0; i < count; i++) {
+            char full[SKIN_PATH_MAX * 2];
+            if (!list[i] || list[i][0] == '\0') continue;
+            SDL_snprintf(full, sizeof(full), "%s/%s", soundsDir, list[i]);
+            SDL_RemovePath(full);
+        }
+        freeDirectoryList(list, count);
+    }
+    SDL_RemovePath(soundsDir);
+
+    count = 0;
+    list = listDirectory(dir, &count);
+    if (list) {
+        for (i = 0; i < count; i++) {
+            char full[SKIN_PATH_MAX * 2];
+            if (!list[i] || list[i][0] == '\0') continue;
+            SDL_snprintf(full, sizeof(full), "%s/%s", dir, list[i]);
+            SDL_RemovePath(full);
+        }
+        freeDirectoryList(list, count);
+    }
+    SDL_RemovePath(dir);
+}
+
+/* The archive skinSourceOpen reads this directory as, when it holds one
+ * .wsf/.zip and nothing else skin-like. The id has to go into that archive's
+ * skin.ini: one written beside it in the folder is never read. */
+static bool directoryLoneArchive(const char *dir, char *out, size_t outLen) {
+    char **list;
+    int    count = 0;
+    int    archives = 0;
+    int    skinLike = 0;
+    int    archiveIdx = -1;
+    int    i;
+    bool   found;
+
+    list = listDirectory(dir, &count);
+    if (!list) return false;
+    for (i = 0; i < count; i++) {
+        if (!list[i] || list[i][0] == '\0') continue;
+        if (hasArchiveExt(list[i])) {
+            archives++;
+            archiveIdx = i;
+        } else if (isSkinLikeName(list[i])) {
+            skinLike++;
+        }
+    }
+    found = (archives == 1 && skinLike == 0);
+    if (found) SDL_snprintf(out, outLen, "%s/%s", dir, list[archiveIdx]);
+    freeDirectoryList(list, count);
+    return found;
+}
+
+/* Unpacks the archive into a scratch folder, puts the id in the skin.ini
+ * there, zips it back up and swaps it in. skinSourceZipDirectory writes the
+ * top level plus sounds/, which is exactly the skin layout, so the round
+ * trip is lossless for a valid skin; an archive whose files sat under a
+ * wrapping top-level folder comes back flat, which reads the same. */
+static bool rewriteArchiveSkinIni(const char *archive, uint64_t id) {
+    char        scratch[SKIN_PATH_MAX];
+    char        tmpZip[SKIN_PATH_MAX * 2];
+    char       *prefPath;
+    SkinSource *src;
+    bool        ok;
+
+    prefPath = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (!prefPath) return false;
+    SDL_snprintf(scratch, sizeof(scratch), "%sskin_rezip", prefPath);
+    SDL_free(prefPath);
+
+    /* Anything an interrupted rewrite left behind would otherwise end up in
+     * the rebuilt archive. */
+    removeSkinTree(scratch);
+
+    src = skinSourceOpen(archive);
+    if (!src) return false;
+    ok = skinSourceExtractTo(src, scratch);
+    /* Closed before the file it was read from is replaced. */
+    skinSourceClose(src);
+
+    if (ok) ok = rewriteSkinIni(scratch, id);
+    if (ok) {
+        /* Built beside the original, so swapping it in is a rename within
+         * one filesystem rather than a copy across two. */
+        SDL_snprintf(tmpZip, sizeof(tmpZip), "%s.rezip", archive);
+        SDL_RemovePath(tmpZip);
+        ok = skinSourceZipDirectory(scratch, tmpZip, NULL);
+        if (ok) ok = SDL_RenamePath(tmpZip, archive);
+        if (!ok) SDL_RemovePath(tmpZip);
+    }
+
+    removeSkinTree(scratch);
+    return ok;
+}
+
+bool skinSetWorkshopId(const char *skinPath, uint64_t id) {
+    SDL_PathInfo info;
+    char         nested[SKIN_PATH_MAX];
+
+    if (!skinPath || !*skinPath) return false;
+    if (!SDL_GetPathInfo(skinPath, &info)) return false;
+
+    if (info.type == SDL_PATHTYPE_DIRECTORY) {
+        if (directoryLoneArchive(skinPath, nested, sizeof(nested))) {
+            return rewriteArchiveSkinIni(nested, id);
+        }
+        return rewriteSkinIni(skinPath, id);
+    }
+    if (info.type == SDL_PATHTYPE_FILE && hasArchiveExt(skinPath)) {
+        return rewriteArchiveSkinIni(skinPath, id);
+    }
+    return false;
+}
+
+/* ------------------------------------------------------------------ */
 /* Discovery                                                           */
 /* ------------------------------------------------------------------ */
 

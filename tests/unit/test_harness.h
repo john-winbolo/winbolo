@@ -1027,6 +1027,10 @@ int run_skin_source_dir_and_zip(void);
 /* The loaded skin vs the player's chosen one (test_skin_source.c). */
 int run_skin_active_vs_requested(void);
 
+/* Writing a Workshop id into a directory skin and into an archive
+ * (test_skin_source.c). */
+int run_skin_workshop_id_roundtrip(void);
+
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */
 int run_skin_density_scan(void);
