@@ -29,32 +29,54 @@ extern "C" {
 /*********************************************************
  *NAME:          flagsCreate
  *PURPOSE:
- *  Initialize the flags system, storing the renderer for
- *  lazy texture creation.
+ *  Register a renderer for lazy flag texture creation.
+ *  Two renderers are supported: the first registered gets
+ *  slot 0 (the one flagsGetTexture serves), the second
+ *  slot 1.  Registering a renderer that already holds a
+ *  slot does nothing, so repeat calls with the same
+ *  renderer keep the cache they built.
  *ARGUMENTS:
  *  renderer - The SDL_Renderer to create textures on.
  *RETURNS:
- *  true on success.
+ *  true on success, false if there is no free slot.
  *********************************************************/
 bool flagsCreate(SDL_Renderer *renderer);
 
 /*********************************************************
  *NAME:          flagsDestroy
  *PURPOSE:
- *  Free all cached flag textures.
+ *  Free all cached flag textures and unregister both
+ *  renderers.
  *********************************************************/
 void flagsDestroy(void);
 
 /*********************************************************
  *NAME:          flagsGetTexture
  *PURPOSE:
- *  Return the SDL_Texture for a 2-letter country code.
+ *  Return the SDL_Texture for a 2-letter country code on
+ *  the first registered renderer (slot 0).
  *  Loads and caches the SVG on first request.
  *  Returns NULL if the flag cannot be loaded.
  *ARGUMENTS:
  *  countryCode - 2-char ISO 3166-1 alpha-2 code (e.g. "US")
  *********************************************************/
 SDL_Texture *flagsGetTexture(const char countryCode[2]);
+
+/*********************************************************
+ *NAME:          flagsGetTextureFor
+ *PURPOSE:
+ *  As flagsGetTexture, but against the cache of a specific
+ *  registered renderer.  A texture may only be drawn
+ *  through the renderer that created it, so a second
+ *  window asks for its own copy here.
+ *  Returns NULL if the renderer was never registered or
+ *  the flag cannot be loaded.
+ *ARGUMENTS:
+ *  renderer    - A renderer passed to flagsCreate.
+ *  countryCode - 2-char ISO 3166-1 alpha-2 code (e.g. "US")
+ *********************************************************/
+SDL_Texture *flagsGetTextureFor(SDL_Renderer *renderer,
+                                const char countryCode[2]);
 
 #ifdef __cplusplus
 }

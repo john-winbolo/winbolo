@@ -27,14 +27,29 @@
 /* Cache: 26x26 grid indexed by (row * 26 + col) where row = c0-'a', col = c1-'a'.
  * NULL means not yet loaded; FAILED_SENTINEL means load was attempted and failed. */
 #define CACHE_SIZE (26 * 26)
-static SDL_Texture *flagCache[CACHE_SIZE];
-static SDL_Renderer *s_renderer = NULL;
+
+/* One cache per renderer. A texture may only be drawn through the renderer
+ * that created it, so the players pop-out window rasterizes its own copies
+ * rather than sharing the game window's. Two slots: the game window and the
+ * one pop-out that draws flags. */
+#define SLOT_COUNT 2
+static SDL_Texture *flagCache[SLOT_COUNT][CACHE_SIZE];
+static SDL_Renderer *s_renderer[SLOT_COUNT];
 static NSVGrasterizer *s_rasterizer = NULL;
 
 /* Sentinel value to distinguish "not loaded" from "failed to load" */
 #define FAILED_SENTINEL ((SDL_Texture *)(uintptr_t)1)
 
-static SDL_Texture *loadFlag(const char c0, const char c1) {
+/* Slot holding renderer, or -1 if it was never registered. */
+static int slotFor(SDL_Renderer *renderer) {
+    if (!renderer) return -1;
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        if (s_renderer[i] == renderer) return i;
+    }
+    return -1;
+}
+
+static SDL_Texture *loadFlag(int slot, const char c0, const char c1) {
     char path[256];
     SDL_snprintf(path, sizeof(path), "data/flags/%c%c.svg", c0, c1);
 
@@ -69,7 +84,7 @@ static SDL_Texture *loadFlag(const char c0, const char c1) {
         return NULL;
     }
 
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(s_renderer, surface);
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(s_renderer[slot], surface);
     SDL_DestroySurface(surface);
     SDL_free(pixels);
 
@@ -80,30 +95,50 @@ static SDL_Texture *loadFlag(const char c0, const char c1) {
 }
 
 bool flagsCreate(SDL_Renderer *renderer) {
-    flagsDestroy();
-    s_renderer = renderer;
-    s_rasterizer = nsvgCreateRasterizer();
-    memset(flagCache, 0, sizeof(flagCache));
-    WB_LOG_INFO(WB_LOG_CAT_ASSET, "[FLAGS] Initialized (SVG-based, lazy loading)");
-    return s_rasterizer != NULL;
+    if (!s_rasterizer) {
+        s_rasterizer = nsvgCreateRasterizer();
+    }
+    if (!renderer) {
+        return s_rasterizer != NULL;
+    }
+    /* Already has a slot — keep the cache it built rather than starting over,
+     * and never move it, so a second renderer cannot take slot 0 away from
+     * the game window. */
+    if (slotFor(renderer) >= 0) {
+        return s_rasterizer != NULL;
+    }
+    for (int i = 0; i < SLOT_COUNT; i++) {
+        if (!s_renderer[i]) {
+            s_renderer[i] = renderer;
+            memset(flagCache[i], 0, sizeof(flagCache[i]));
+            WB_LOG_INFO(WB_LOG_CAT_ASSET,
+                        "[FLAGS] Initialized slot %d (SVG-based, lazy loading)", i);
+            return s_rasterizer != NULL;
+        }
+    }
+    WB_LOG_INFO(WB_LOG_CAT_ASSET, "[FLAGS] No free cache slot for renderer %p",
+                (void *)renderer);
+    return false;
 }
 
 void flagsDestroy(void) {
-    for (int i = 0; i < CACHE_SIZE; i++) {
-        if (flagCache[i] && flagCache[i] != FAILED_SENTINEL) {
-            SDL_DestroyTexture(flagCache[i]);
+    for (int s = 0; s < SLOT_COUNT; s++) {
+        for (int i = 0; i < CACHE_SIZE; i++) {
+            if (flagCache[s][i] && flagCache[s][i] != FAILED_SENTINEL) {
+                SDL_DestroyTexture(flagCache[s][i]);
+            }
+            flagCache[s][i] = NULL;
         }
-        flagCache[i] = NULL;
+        s_renderer[s] = NULL;
     }
     if (s_rasterizer) {
         nsvgDeleteRasterizer(s_rasterizer);
         s_rasterizer = NULL;
     }
-    s_renderer = NULL;
 }
 
-SDL_Texture *flagsGetTexture(const char countryCode[2]) {
-    if (!s_renderer || !s_rasterizer || !countryCode) {
+static SDL_Texture *getTextureInSlot(int slot, const char countryCode[2]) {
+    if (slot < 0 || !s_renderer[slot] || !s_rasterizer || !countryCode) {
         return NULL;
     }
 
@@ -115,7 +150,7 @@ SDL_Texture *flagsGetTexture(const char countryCode[2]) {
     }
 
     int idx = (c0 - 'a') * 26 + (c1 - 'a');
-    SDL_Texture *cached = flagCache[idx];
+    SDL_Texture *cached = flagCache[slot][idx];
 
     if (cached == FAILED_SENTINEL) {
         return NULL;
@@ -125,7 +160,16 @@ SDL_Texture *flagsGetTexture(const char countryCode[2]) {
     }
 
     /* First request for this code — try to load */
-    SDL_Texture *tex = loadFlag(c0, c1);
-    flagCache[idx] = tex ? tex : FAILED_SENTINEL;
+    SDL_Texture *tex = loadFlag(slot, c0, c1);
+    flagCache[slot][idx] = tex ? tex : FAILED_SENTINEL;
     return tex;
+}
+
+SDL_Texture *flagsGetTexture(const char countryCode[2]) {
+    return getTextureInSlot(0, countryCode);
+}
+
+SDL_Texture *flagsGetTextureFor(SDL_Renderer *renderer,
+                                const char countryCode[2]) {
+    return getTextureInSlot(slotFor(renderer), countryCode);
 }

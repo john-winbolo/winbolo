@@ -246,6 +246,31 @@ extern "C" bool showNetworkDebugMessages;
 static SDL_Window   *s_window   = nullptr;
 static SDL_Renderer *s_renderer = nullptr;
 
+/* A texture may only be drawn through the renderer that created it, and the
+ * players pop-out window has its own renderer, so the icon textures and the
+ * flag cache are kept per renderer. Two are enough: the game window, and the
+ * one pop-out that draws textures. The other pop-outs draw only text, so they
+ * never load a slot of their own.
+ *
+ * s_popOutRenderer is the renderer of the pop-out currently being drawn,
+ * set by popOutBeginFrame and cleared by popOutEndFrame; NULL means the game
+ * window is drawing. */
+#define ICON_SLOT_MAIN   0
+#define ICON_SLOT_POPOUT 1
+#define ICON_SLOT_COUNT  2
+static SDL_Renderer *s_popOutRenderer = nullptr;
+
+/* The renderer the current draw goes to. */
+static SDL_Renderer *activeRenderer(void) {
+    if (s_popOutRenderer) return s_popOutRenderer;
+    return s_renderer ? s_renderer : sdl3DrawGetRenderer();
+}
+
+/* Texture slot the current draw reads from. */
+static int activeIconSlot(void) {
+    return s_popOutRenderer ? ICON_SLOT_POPOUT : ICON_SLOT_MAIN;
+}
+
 /* UI scale applied to the main in-game ImGui context (font + style), set in
    sdl3ImguiSetup.  Dialog seed/min sizes and the window minimum multiply by
    this so they track the scaled font.  1.0 until setup runs. */
@@ -308,8 +333,8 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
  * (imguiShieldBadge / imguiDrawSpinningShield) rather than from a texture, so
  * there is no s_iconWbnVerified — the Mac menubar loads its own copy of
  * shield.svg for native Cocoa drawing. */
-static SDL_Texture *s_iconSteam = nullptr;
-static SDL_Texture *s_iconBrain = nullptr;
+static SDL_Texture *s_iconSteam[ICON_SLOT_COUNT] = {};
+static SDL_Texture *s_iconBrain[ICON_SLOT_COUNT] = {};
 /* Large brain texture used for tank-label overlays. The small s_iconBrain
  * is rasterized at WBN_ICON_SIZE for the player-popup / renderPlayerName
  * paths; sized up to a tank-label height (~16-48 px depending on zoom)
@@ -317,22 +342,22 @@ static SDL_Texture *s_iconBrain = nullptr;
  * baked into a 14-px bitmap. WBN_ICON_TANK_LABEL_SIZE rasterizes the
  * same SVG at a height that covers the realistic zoom range so the
  * label-side blit is a (sharp) downscale rather than an upscale. */
-static SDL_Texture *s_iconBrainLg = nullptr;
+static SDL_Texture *s_iconBrainLg[ICON_SLOT_COUNT] = {};
 /* Skull for the players panel's death counter columns. Its own copy of
  * data/ui/skull.svg rather than the lobby's — that one lives in the lobby's
  * icon cache behind lobbyIcons(), which is lobby-internal. */
-static SDL_Texture *s_iconSkull = nullptr;
+static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
 #if defined(WINBOLO_VOICE)
 /* Microphone state icons for the players panel. Three assets cover four
  * states — "talking" and "idle" are the same microphone under different
  * tints, because the difference between them is momentary and a shape
  * change would read as flicker. */
-static SDL_Texture *s_iconMic      = nullptr;
-static SDL_Texture *s_iconMicMuted = nullptr;
-static SDL_Texture *s_iconMicOff   = nullptr;
+static SDL_Texture *s_iconMic[ICON_SLOT_COUNT]      = {};
+static SDL_Texture *s_iconMicMuted[ICON_SLOT_COUNT] = {};
+static SDL_Texture *s_iconMicOff[ICON_SLOT_COUNT]   = {};
 /* Tank-label rasterization of the talking microphone, for the same reason
  * s_iconBrainLg exists beside s_iconBrain. */
-static SDL_Texture *s_iconMicLg    = nullptr;
+static SDL_Texture *s_iconMicLg[ICON_SLOT_COUNT]    = {};
 /* Mic icon tints. Declared here rather than beside NO_TINT/SUPPORTER_TINT
  * further down the file because the players panel is rendered above them.
  * Talking is the only one that has to catch the eye mid-game; the rest sit
@@ -342,32 +367,33 @@ static const ImVec4 MIC_TINT_TALKING = ImVec4(0.30f, 1.00f, 0.40f, 1.00f);
 static const ImVec4 MIC_TINT_MUTED   = ImVec4(1.00f, 0.35f, 0.35f, 1.00f);
 static const ImVec4 MIC_TINT_DIM     = ImVec4(1.00f, 1.00f, 1.00f, 0.40f);
 #endif
-static bool s_wbnIconsLoaded = false;
+static bool s_wbnIconsLoaded[ICON_SLOT_COUNT] = {};
 #define WBN_ICON_SIZE 14
 #define WBN_ICON_TANK_LABEL_SIZE 48
 
 static void ensureWbnIconsLoaded(void) {
-    if (s_wbnIconsLoaded) return;
-    s_wbnIconsLoaded = true;
-    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconSteam   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
-    s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
-                                          WBN_ICON_TANK_LABEL_SIZE);
+    int slot = activeIconSlot();
+    if (s_wbnIconsLoaded[slot]) return;
+    s_wbnIconsLoaded[slot] = true;
+    SDL_Renderer *r = activeRenderer();
+    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconBrain[slot]   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    s_iconBrainLg[slot] = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
+                                                WBN_ICON_TANK_LABEL_SIZE);
     /* Outside the voice guard below: the counter columns that draw this are
      * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
-    s_iconSkull   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
+    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
 #if defined(WINBOLO_VOICE)
-    s_iconMic      = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",       WBN_ICON_SIZE);
-    s_iconMicMuted = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg", WBN_ICON_SIZE);
-    s_iconMicOff   = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",   WBN_ICON_SIZE);
-    s_iconMicLg    = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",
-                                           WBN_ICON_TANK_LABEL_SIZE);
+    s_iconMic[slot]      = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",       WBN_ICON_SIZE);
+    s_iconMicMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg", WBN_ICON_SIZE);
+    s_iconMicOff[slot]   = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",   WBN_ICON_SIZE);
+    s_iconMicLg[slot]    = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",
+                                                 WBN_ICON_TANK_LABEL_SIZE);
 #endif
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
-            (void *)s_iconSteam,
-            (void *)s_iconBrain, (void *)s_iconBrainLg,
-            (void *)s_renderer, (void *)sdl3DrawGetRenderer());
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p brain=%p brainLg=%p renderer=%p s_renderer=%p drawRenderer=%p",
+            slot, (void *)s_iconSteam[slot],
+            (void *)s_iconBrain[slot], (void *)s_iconBrainLg[slot],
+            (void *)r, (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
 
 /* Skull for the players panel's death counter columns, drawn square at
@@ -375,9 +401,10 @@ static void ensureWbnIconsLoaded(void) {
  * art rather than shouting. Returns false when the asset is missing, which is
  * the caller's cue to fall back to the column's written label. */
 static bool playersPanelDrawSkull(void) {
-    if (!s_iconSkull) return false;
+    SDL_Texture *skull = s_iconSkull[activeIconSlot()];
+    if (!skull) return false;
     float sz = ImGui::GetTextLineHeight();
-    ImGui::ImageWithBg((ImTextureID)s_iconSkull, ImVec2(sz, sz),
+    ImGui::ImageWithBg((ImTextureID)skull, ImVec2(sz, sz),
                        ImVec2(0, 0), ImVec2(1, 1),
                        ImVec4(0, 0, 0, 0),
                        ImGui::GetStyleColorVec4(ImGuiCol_Text));
@@ -385,23 +412,49 @@ static bool playersPanelDrawSkull(void) {
 }
 
 /* Platform icon textures, indexed by ClientType. UNKNOWN slot stays NULL. */
-static SDL_Texture *s_iconPlatform[CLIENT_TYPE_COUNT] = {};
-static bool s_platformIconsLoaded = false;
+static SDL_Texture *s_iconPlatform[ICON_SLOT_COUNT][CLIENT_TYPE_COUNT] = {};
+static bool s_platformIconsLoaded[ICON_SLOT_COUNT] = {};
 
 static void ensurePlatformIconsLoaded(void) {
-    if (s_platformIconsLoaded) return;
-    s_platformIconsLoaded = true;
-    SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
+    int slot = activeIconSlot();
+    if (s_platformIconsLoaded[slot]) return;
+    s_platformIconsLoaded[slot] = true;
+    SDL_Renderer *r = activeRenderer();
     /* Force white so platform icons read against the dark ImGui background
      * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
-    s_iconPlatform[CLIENT_TYPE_UNKNOWN]   = nullptr;
-    s_iconPlatform[CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
-    s_iconPlatform[CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_UNKNOWN]   = nullptr;
+    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+}
+
+/* Free one renderer's copies of every icon and let them be loaded again.
+ * Must run while that renderer is still alive. */
+static void destroyIconSlot(int slot) {
+    if (s_iconSteam[slot]) { SDL_DestroyTexture(s_iconSteam[slot]); s_iconSteam[slot] = nullptr; }
+    if (s_iconBrain[slot]) { SDL_DestroyTexture(s_iconBrain[slot]); s_iconBrain[slot] = nullptr; }
+    if (s_iconBrainLg[slot]) { SDL_DestroyTexture(s_iconBrainLg[slot]); s_iconBrainLg[slot] = nullptr; }
+    if (s_iconSkull[slot]) { SDL_DestroyTexture(s_iconSkull[slot]); s_iconSkull[slot] = nullptr; }
+#if defined(WINBOLO_VOICE)
+    if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
+    if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
+    if (s_iconMicOff[slot]) { SDL_DestroyTexture(s_iconMicOff[slot]); s_iconMicOff[slot] = nullptr; }
+    if (s_iconMicLg[slot]) { SDL_DestroyTexture(s_iconMicLg[slot]); s_iconMicLg[slot] = nullptr; }
+#endif
+    s_wbnIconsLoaded[slot] = false;
+    for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
+        /* Entry may alias another (e.g. WEB → globe.svg), but each load returns a
+         * distinct SDL_Texture so destroying every one is safe. */
+        if (s_iconPlatform[slot][i]) {
+            SDL_DestroyTexture(s_iconPlatform[slot][i]);
+            s_iconPlatform[slot][i] = nullptr;
+        }
+    }
+    s_platformIconsLoaded[slot] = false;
 }
 
 /* Settings panel state */
@@ -613,6 +666,11 @@ static void popOutHide(PopOutWindow *pw) {
 static bool popOutBeginFrame(PopOutWindow *pw) {
     if (!pw->open || !pw->window) return false;
 
+    /* Everything drawn from here to popOutEndFrame goes to this renderer, so
+     * the icon loaders and the flag cache use its slot rather than the game
+     * window's. */
+    s_popOutRenderer = pw->renderer;
+
     ImGui::SetCurrentContext(pw->imguiCtx);
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -642,6 +700,7 @@ static void popOutEndFrame(PopOutWindow *pw) {
     SDL_RenderClear(pw->renderer);
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), pw->renderer);
     SDL_RenderPresent(pw->renderer);
+    s_popOutRenderer = nullptr;
 }
 
 static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h) {
@@ -1753,10 +1812,22 @@ static void renderPlayersContent(ClientSim *cs) {
      * sits over its column, with the written column name on the tooltip.
      * The name region is left empty. */
     if (showStats && panelRowCount > 0) {
+        /* The tile sheet is built for the game window's renderer only, so a
+         * pop-out cannot draw the map art at all — and unlike a missing SVG
+         * the texture pointer is valid, just not this renderer's, so the
+         * "no sprite" fallback below never fires. Off the main renderer the
+         * whole line prints its written names instead, all six of them, so it
+         * does not mix sprites and words. */
+        const bool headerAsText = (activeRenderer() != s_renderer);
         ImGui::Dummy(ImVec2(1.0f, iconH));
         for (int c = 0; c < 6; c++) {
             const char *label = langGetText(statColStr[c]);
             ImGui::SameLine(statContentX(c, statIconW[c]));
+            if (headerAsText) {
+                ImGui::TextUnformatted(label);
+                imguiHelpTooltip(label);
+                continue;
+            }
             bool drewIcon = true;
             switch (c) {
                 case 0:
@@ -5319,7 +5390,12 @@ void sdl3ImguiShowPlayersPanel(bool open) {
         if (open) {
             /* popOutCreate re-shows and raises a window it made earlier, so
                opening an already-open pop-out raises it. */
-            popOutCreate(&s_popPlayers, langGetText(STR_DLGPLAYERS_TITLE), 520, 420);
+            if (popOutCreate(&s_popPlayers, langGetText(STR_DLGPLAYERS_TITLE), 520, 420)) {
+                /* The rows draw country flags, which have to be rasterized
+                   against this window's own renderer. Idempotent, so the
+                   re-show path above costs nothing. */
+                flagsCreate(s_popPlayers.renderer);
+            }
         } else {
             if (s_popPlayers.open) popOutHide(&s_popPlayers);
         }
@@ -5441,7 +5517,7 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
 
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
-    return s_iconSteam;
+    return s_iconSteam[activeIconSlot()];
 }
 
 SDL_Texture *sdl3ImguiGetBrainIcon(void) {
@@ -5449,18 +5525,20 @@ SDL_Texture *sdl3ImguiGetBrainIcon(void) {
      * tank-label overlay (sdl3DrawTankLabel), which scales the icon to
      * the TTF label height and would alias badly off the 14-px popup
      * texture. renderPlayerName / the in-game player menu read
-     * s_iconBrain directly. */
+     * s_iconBrain directly. The overlay draws on the game window's renderer,
+     * so this always answers with that renderer's copy. */
     ensureWbnIconsLoaded();
-    return s_iconBrainLg;
+    return s_iconBrainLg[ICON_SLOT_MAIN];
 }
 
 #if defined(WINBOLO_VOICE)
 SDL_Texture *sdl3ImguiGetMicIcon(void) {
     /* Same arrangement as the brain icon: the tank-label overlay is the
      * only consumer, so it gets the label-height rasterization rather
-     * than the 14-px players-panel texture. */
+     * than the 14-px players-panel texture, and the game window's copy of
+     * it — the overlay draws on that renderer. */
     ensureWbnIconsLoaded();
-    return s_iconMicLg;
+    return s_iconMicLg[ICON_SLOT_MAIN];
 }
 #endif
 
@@ -5472,7 +5550,7 @@ bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
 SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType) {
     ensurePlatformIconsLoaded();
     if (clientType >= CLIENT_TYPE_COUNT) return nullptr;
-    return s_iconPlatform[clientType];
+    return s_iconPlatform[activeIconSlot()][clientType];
 }
 
 /* Gold tint for supporters; white = no tint (passthrough). */
@@ -5499,7 +5577,7 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     char up[3] = { (char)toupper((unsigned char)countryCode[0]),
                    (char)toupper((unsigned char)countryCode[1]), '\0' };
     if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
-    SDL_Texture *flagTex = flagsGetTexture(countryCode);
+    SDL_Texture *flagTex = flagsGetTextureFor(activeRenderer(), countryCode);
     if (!flagTex) return false;
     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
     if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
@@ -5516,10 +5594,11 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
-    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain) {
+    const int iconSlot = activeIconSlot();
+    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain[iconSlot]) {
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
-        ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::Image((ImTextureID)s_iconBrain[iconSlot], ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
         imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
@@ -5553,9 +5632,9 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
-        if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
+        if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam[iconSlot]) {
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-            ImGui::ImageWithBg((ImTextureID)s_iconSteam,
+            ImGui::ImageWithBg((ImTextureID)s_iconSteam[iconSlot],
                                ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
@@ -5574,7 +5653,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         ImGui::TextUnformatted(name);
         if (showCountry && countryCode && countryCode[0] != '\0' &&
             !(countryCode[0] == 'X' && countryCode[1] == 'X') &&
-            flagsGetTexture(countryCode)) {
+            flagsGetTextureFor(activeRenderer(), countryCode)) {
             ImGui::SameLine();
             drawCountryFlagWithTip(countryCode);
         }
@@ -5585,6 +5664,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
 void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
                          PlayerBitMap talkingMap, bool isSelf, float size) {
     ensureWbnIconsLoaded();
+    const int iconSlot = activeIconSlot();
 
     /* Resolved in precedence order: muting someone is this client's own
      * doing, so it outranks whatever their microphone is doing — you have to
@@ -5605,16 +5685,16 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
     ImVec4       micTint;
     langid       micTip;
     if (mutedByMe) {
-        micTex  = s_iconMicMuted;
+        micTex  = s_iconMicMuted[iconSlot];
         micTint = MIC_TINT_MUTED;
         micTip  = STR_PLAYER_TIP_VOICE_MUTEDBYYOU;
     } else if (!hasMic) {
-        micTex  = s_iconMicOff;
+        micTex  = s_iconMicOff[iconSlot];
         micTint = MIC_TINT_DIM;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_NOMIC
                          : STR_PLAYER_TIP_VOICE_NOMIC;
     } else if (talking) {
-        micTex  = s_iconMic;
+        micTex  = s_iconMic[iconSlot];
         micTint = MIC_TINT_TALKING;
         micTip  = STR_PLAYER_TIP_VOICE_TALKING;
     } else if (selfMuted) {
@@ -5622,12 +5702,12 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
          * icon as a dimmer tint and its own tooltip rather than a
          * fourth asset — it is their doing, not ours, and it does not
          * warrant a shape of its own. */
-        micTex  = s_iconMic;
+        micTex  = s_iconMic[iconSlot];
         micTint = MIC_TINT_DIM;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF_MUTED
                          : STR_PLAYER_TIP_VOICE_SELFMUTED;
     } else {
-        micTex  = s_iconMic;
+        micTex  = s_iconMic[iconSlot];
         micTint = MIC_TINT_NORMAL;
         micTip  = isSelf ? STR_PLAYER_TIP_VOICE_SELF
                          : STR_PLAYER_TIP_VOICE_IDLE;
@@ -5695,28 +5775,17 @@ void sdl3ImguiShowKeySetup(void) {
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
     inputGamepadShutdown();
+    /* Textures die with the renderer that made them, so the pop-out's copies
+     * and its flag cache go before popOutDestroy takes its renderer down —
+     * SDL_DestroyTexture afterwards would be running against freed state. */
+    destroyIconSlot(ICON_SLOT_POPOUT);
+    flagsDestroy();
     popOutDestroy(&s_popSysInfo);
     popOutDestroy(&s_popNetInfo);
     popOutDestroy(&s_popGameInfo);
     popOutDestroy(&s_popSendMsg);
     popOutDestroy(&s_popPlayers);
-    flagsDestroy();
-    if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
-    if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
-    if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }
-#if defined(WINBOLO_VOICE)
-    if (s_iconMic) { SDL_DestroyTexture(s_iconMic); s_iconMic = nullptr; }
-    if (s_iconMicMuted) { SDL_DestroyTexture(s_iconMicMuted); s_iconMicMuted = nullptr; }
-    if (s_iconMicOff) { SDL_DestroyTexture(s_iconMicOff); s_iconMicOff = nullptr; }
-    if (s_iconMicLg) { SDL_DestroyTexture(s_iconMicLg); s_iconMicLg = nullptr; }
-#endif
-    s_wbnIconsLoaded = false;
-    for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
-        /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a
-         * distinct SDL_Texture so destroying every slot is safe. */
-        if (s_iconPlatform[i]) { SDL_DestroyTexture(s_iconPlatform[i]); s_iconPlatform[i] = nullptr; }
-    }
-    s_platformIconsLoaded = false;
+    destroyIconSlot(ICON_SLOT_MAIN);
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;
