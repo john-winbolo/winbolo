@@ -10,6 +10,10 @@
  * resolve, and a sprite reads back byte-for-byte. The wrapped zip passing
  * proves the single common top-level folder is stripped from the index.
  *
+ * It then writes a second, one-file skin whose ini names no
+ * RecommendedFilter, because the value that means "the author did not say"
+ * is not the zero a SkinInfo starts life as.
+ *
  * No .wsf or .zip is committed: the archives are built in the working
  * directory and removed at the end.
  */
@@ -46,6 +50,10 @@
  * prefpath and base-path skins folders, which are not assumed to be empty. */
 #define MISSING_ID  "user:__wb_missing_skin__"
 
+/* Scratch skin the absent-key check writes and then removes: a skin.ini that
+ * names no RecommendedFilter, which the committed fixture does. */
+#define NOKEY_DIR   "skin_nokey_test_dir"
+
 /* Every source must agree with the directory fixture's skin.ini. */
 static int checkIni(const SkinInfo *info, const char *label) {
     UT_ASSERT_MSG(strcmp(info->name, "Basic Test Skin") == 0,
@@ -58,6 +66,9 @@ static int checkIni(const SkinInfo *info, const char *label) {
                   "%s: MaxPixelDensity is %d", label, info->maxPixelDensity);
     UT_ASSERT_MSG(info->inGameRotate == 0,
                   "%s: InGameRotate is %d", label, info->inGameRotate);
+    UT_ASSERT_MSG(info->recommendedFilter == SKIN_FILTER_PIXELART,
+                  "%s: RecommendedFilter is %d", label,
+                  info->recommendedFilter);
     UT_ASSERT_MSG(info->workshopId == 0,
                   "%s: WorkshopId is not zero", label);
     return 0;
@@ -248,6 +259,47 @@ static int checkSkinSources(const char *fixture) {
     return rc;
 }
 
+/* SKIN_FILTER_NEAREST is 0, so a SkinInfo that has only been zeroed reads as
+ * a recommendation of Nearest — a filter the author never asked for. A skin
+ * whose ini does not mention the key, and a read with no source at all, both
+ * have to come back SKIN_FILTER_NONE instead. */
+static int checkNoRecommendedFilter(void) {
+    static const char ini[] = "[Skin]\nName=No Filter Key\nMaxPixelDensity=1\n";
+    char path[512];
+    SkinSource *src;
+    SkinInfo info;
+
+    skinSourceReadIni(NULL, &info);
+    UT_ASSERT_MSG(info.recommendedFilter == SKIN_FILTER_NONE,
+                  "no source: RecommendedFilter is %d, want %d",
+                  info.recommendedFilter, SKIN_FILTER_NONE);
+
+    if (!SDL_CreateDirectory(NOKEY_DIR)) {
+        UT_FAIL("SDL_CreateDirectory('%s') failed", NOKEY_DIR);
+    }
+    snprintf(path, sizeof(path), "%s/skin.ini", NOKEY_DIR);
+    if (!SDL_SaveFile(path, ini, sizeof(ini) - 1)) {
+        UT_FAIL("writing '%s' failed", path);
+    }
+
+    src = skinSourceOpen(NOKEY_DIR);
+    if (src == NULL) {
+        UT_FAIL("skinSourceOpen('%s') failed", NOKEY_DIR);
+    }
+    skinSourceReadIni(src, &info);
+    /* And once more: the second answer comes out of the source's own cached
+       SkinInfo, which is cleared the same way the caller's is. */
+    skinSourceReadIni(src, &info);
+    skinSourceClose(src);
+
+    UT_ASSERT_MSG(strcmp(info.name, "No Filter Key") == 0,
+                  "no key: Name is '%s', so that ini did not parse", info.name);
+    UT_ASSERT_MSG(info.recommendedFilter == SKIN_FILTER_NONE,
+                  "no key: RecommendedFilter is %d, want %d",
+                  info.recommendedFilter, SKIN_FILTER_NONE);
+    return 0;
+}
+
 int run_skin_source_dir_and_zip(void) {
     const char *dir = getenv("WB_SKINS_FIXTURE_DIR");
     char fixture[512];
@@ -257,9 +309,13 @@ int run_skin_source_dir_and_zip(void) {
     snprintf(fixture, sizeof(fixture), "%s/basic", dir);
 
     rc = checkSkinSources(fixture);
+    if (rc == 0) rc = checkNoRecommendedFilter();
 
     remove(FLAT_ZIP);
     remove(WRAPPED_ZIP);
+    /* One file went in, so the directory empties without a walk. */
+    remove(NOKEY_DIR "/skin.ini");
+    SDL_RemovePath(NOKEY_DIR);
     return rc;
 }
 
@@ -356,6 +412,9 @@ static int checkOtherIniKeys(const SkinInfo *info, const char *label) {
                   "%s: Notes is '%s'", label, info->notes);
     UT_ASSERT_MSG(info->maxPixelDensity == 2,
                   "%s: MaxPixelDensity is %d", label, info->maxPixelDensity);
+    UT_ASSERT_MSG(info->recommendedFilter == SKIN_FILTER_PIXELART,
+                  "%s: RecommendedFilter is %d", label,
+                  info->recommendedFilter);
     return 0;
 }
 

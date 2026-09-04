@@ -25,6 +25,7 @@
  *********************************************************/
 
 #include "gfx_settings.h"
+#include "skin_source.h"
 #include "tileloader.h"
 
 #include "platform_types.h"   /* BOLO_STATIC_ASSERT */
@@ -35,6 +36,14 @@ BOLO_STATIC_ASSERT((int)GFX_TILE_DETAIL_CLASSIC    == TILE_DETAIL_CLASSIC &&
                    (int)GFX_TILE_DETAIL_MATCH_ZOOM == TILE_DETAIL_MATCH_ZOOM &&
                    (int)GFX_TILE_DETAIL_HIGH       == TILE_DETAIL_HIGH,
                    gfx_tile_detail_matches_tileloader);
+
+/* skin_source.h spells the same three filters out as SKIN_FILTER_*, so a
+   skin.ini can name one without skin_source depending on this header.  The
+   two sets have to agree. */
+BOLO_STATIC_ASSERT((int)GFX_FILTER_NEAREST  == SKIN_FILTER_NEAREST &&
+                   (int)GFX_FILTER_LINEAR   == SKIN_FILTER_LINEAR &&
+                   (int)GFX_FILTER_PIXELART == SKIN_FILTER_PIXELART,
+                   gfx_texture_filter_matches_skin_source);
 
 static GfxTileDetail     s_tileDetail     = GFX_TILE_DETAIL_CLASSIC;
 static GfxAnimSmoothness s_animSmoothness = GFX_ANIM_CLASSIC;

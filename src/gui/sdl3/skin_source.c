@@ -546,6 +546,27 @@ bool skinSourceReadHead(SkinSource *src, const char *relName,
 /* skin.ini                                                            */
 /* ------------------------------------------------------------------ */
 
+/* Empties a SkinInfo. Not a plain memset: zero is a real filter value
+ * (SKIN_FILTER_NEAREST), so "the author did not say" has to be written in
+ * rather than left to the zeroing. */
+static void skinInfoClear(SkinInfo *info) {
+    SDL_memset(info, 0, sizeof(*info));
+    info->recommendedFilter = SKIN_FILTER_NONE;
+}
+
+/* The value spellings RecommendedFilter accepts. "Pixel art" gets three
+ * because authors write it all three ways; these are spellings of a value,
+ * not of a key, so how key names are matched is untouched. Anything else is
+ * SKIN_FILTER_NONE: a recommendation nothing can read is no recommendation. */
+static int parseFilterName(const char *v) {
+    if (SDL_strcasecmp(v, "nearest") == 0)    return SKIN_FILTER_NEAREST;
+    if (SDL_strcasecmp(v, "linear") == 0)     return SKIN_FILTER_LINEAR;
+    if (SDL_strcasecmp(v, "pixelart") == 0 ||
+        SDL_strcasecmp(v, "pixel art") == 0 ||
+        SDL_strcasecmp(v, "pixel-art") == 0)  return SKIN_FILTER_PIXELART;
+    return SKIN_FILTER_NONE;
+}
+
 /* One pass over the whole [Skin] section, picking up every key it carries.
  * Runs on the loaded buffer, which skinSourceRead leaves writable and
  * NUL-terminated. */
@@ -609,18 +630,20 @@ static void parseSkinIni(char *text, SkinInfo *out) {
             out->maxPixelDensity = SDL_atoi(v);
         } else if (SDL_strcasecmp(k, "InGameRotate") == 0) {
             out->inGameRotate = SDL_atoi(v) ? 1 : 0;
+        } else if (SDL_strcasecmp(k, "RecommendedFilter") == 0) {
+            out->recommendedFilter = parseFilterName(v);
         }
     }
 }
 
 void skinSourceReadIni(SkinSource *src, SkinInfo *out) {
     if (!out) return;
-    SDL_memset(out, 0, sizeof(*out));
+    skinInfoClear(out);
     if (!src) return;
     if (!src->iniLoaded) {
         void *buf = NULL;
         size_t len = 0;
-        SDL_memset(&src->ini, 0, sizeof(src->ini));
+        skinInfoClear(&src->ini);
         if (skinSourceRead(src, "skin.ini", &buf, &len)) {
             parseSkinIni((char *)buf, &src->ini);
             SDL_free(buf);
@@ -1112,7 +1135,7 @@ static void scanRecord(ScanState *st, const char *id, const char *base,
 
     /* Display name comes from skin.ini when the skin carries one. Opening
      * every candidate to read it is the price of the scan. */
-    SDL_memset(&info, 0, sizeof(info));
+    skinInfoClear(&info);
     src = skinSourceOpen(path);
     if (src) {
         skinSourceReadIni(src, &info);

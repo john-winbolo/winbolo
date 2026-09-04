@@ -73,6 +73,7 @@ Author=Your name
 Notes=Free text, shown under the picker
 MaxPixelDensity=0
 InGameRotate=0
+RecommendedFilter=
 WorkshopId=
 WorkshopAuthor=
 ```
@@ -83,6 +84,12 @@ WorkshopAuthor=
   It only caps SVGs; `@Nx` PNG files are never capped, because shipping the file
   is the statement.
 - **`InGameRotate`** — see [Rotating skins](#rotating-skins).
+- **`RecommendedFilter`** — which Texture filter setting suits your art:
+  `nearest`, `linear` or `pixelart`. The game only shows it. It appears under
+  your notes in the skin picker, and the entry you named is marked
+  "(recommended)" in the Texture filter dropdown. Nothing is applied or
+  preselected: the player's own Texture filter setting always wins, whatever
+  you put here. Leave it out if you have no preference.
 - **`WorkshopId`** — the Workshop item this skin was published as. Written by
   the game when you publish to Steam Workshop. Do not set it by hand.
 - **`WorkshopAuthor`** — the SteamID of whoever published that item. Written by

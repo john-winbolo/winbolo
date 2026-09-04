@@ -754,6 +754,8 @@ STR_DLGSKIN_PUBLISH_LEGAL=Accept the Workshop legal agreement on the item's page
 STR_DLGSKIN_PUBLISH_OPENITEM=Open item page
 STR_DLGSKIN_PUBLISH_NEEDUSER=Only a skin in your own skins folder can be published. The built-in art, Workshop skins and skins that did not load cannot be.
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=This skin has finer art for only some sprites, so Match to zoom builds the same tiles as Classic. High detail uses the finer art where the skin has it.
+STR_DLGSKIN_RECFILTER_LBL=Recommended filter:
+STR_DLGSKIN_RECOMMENDED_TAG=(recommended)
 
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config

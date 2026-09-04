@@ -895,6 +895,29 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                         info.author[0] != '\0' ? info.author : na);
             ImGui::TextWrapped("%s %s", langGetText(STR_DLGSKIN_NOTES_LBL),
                                info.notes[0] != '\0' ? info.notes : na);
+
+            /* Unlike the three above, no row at all when the author did not
+               name a filter — an "N/A" recommendation says nothing.  The
+               name is the same word the Texture filter dropdown below uses.
+               Shown only; the player's own setting is what applies. */
+            const char *recName = nullptr;
+            switch (info.recommendedFilter) {
+                case SKIN_FILTER_NEAREST:
+                    recName = langGetText(STR_DLGSKIN_TEXFILTER_NEAREST);
+                    break;
+                case SKIN_FILTER_LINEAR:
+                    recName = langGetText(STR_DLGSKIN_TEXFILTER_LINEAR);
+                    break;
+                case SKIN_FILTER_PIXELART:
+                    recName = langGetText(STR_DLGSKIN_TEXFILTER_PIXELART);
+                    break;
+                default:
+                    break;
+            }
+            if (recName != nullptr) {
+                ImGui::Text("%s %s", langGetText(STR_DLGSKIN_RECFILTER_LBL),
+                            recName);
+            }
         }
 
         /* Sample of the sheet that is live right now.  The tiles reload
@@ -1283,12 +1306,30 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             int tfIdx = (int)gfxGetTextureFilter();
             if (tfIdx < 0 || tfIdx > 2) tfIdx = 0;
 
+            /* What the active skin's author recommends, if anything, so the
+               entry they named can say so.  The ini is cached after the
+               first read, and a NULL source answers SKIN_FILTER_NONE, so
+               reading it every frame costs a struct copy. */
+            SkinInfo recInfo;
+            skinSourceReadIni(skinGetActiveSource(), &recInfo);
+            const int recFilter = recInfo.recommendedFilter;
+
             ImGui::TextUnformatted(langGetText(STR_DLGSKIN_TEXFILTER));
             ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            /* The closed combo shows the plain name: the tag belongs in the
+               list, beside the entry it is about. */
             if (ImGui::BeginCombo("##texfilter", filterLabels[tfIdx])) {
                 for (int i = 0; i < 3; i++) {
                     bool sel = (tfIdx == i);
-                    if (ImGui::Selectable(filterLabels[i], sel) && i != tfIdx) {
+                    char label[128];
+                    if (i == recFilter) {
+                        SDL_snprintf(label, sizeof(label), "%s %s",
+                                     filterLabels[i],
+                                     langGetText(STR_DLGSKIN_RECOMMENDED_TAG));
+                    } else {
+                        SDL_strlcpy(label, filterLabels[i], sizeof(label));
+                    }
+                    if (ImGui::Selectable(label, sel) && i != tfIdx) {
                         gfxSetTextureFilter((GfxTextureFilter)i);
                         gameFrontSaveCurrentPrefs();
                         sdl3DrawSetTilesScaleMode(

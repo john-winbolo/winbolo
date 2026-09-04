@@ -42,7 +42,16 @@ typedef enum SkinKind {
     SKIN_KIND_WORKSHOP       /* Steam Workshop install folder */
 } SkinKind;
 
-/* [Skin] section of skin.ini. Absent keys leave empty strings / zeros. */
+/* The filter a skin.ini recommends. Mirrors GfxTextureFilter so
+   skin_source needs no dependency on the settings module;
+   gfx_settings.c static-asserts that the two agree. */
+#define SKIN_FILTER_NONE     (-1)
+#define SKIN_FILTER_NEAREST    0
+#define SKIN_FILTER_LINEAR     1
+#define SKIN_FILTER_PIXELART   2
+
+/* [Skin] section of skin.ini. Absent keys leave empty strings / zeros,
+   except recommendedFilter, whose "absent" is SKIN_FILTER_NONE. */
 typedef struct SkinInfo {
     char     name[SKIN_NAME_MAX];
     char     author[SKIN_NAME_MAX];
@@ -51,6 +60,7 @@ typedef struct SkinInfo {
     uint64_t workshopAuthor;  /* SteamID64 that published it, 0 = unknown */
     int      maxPixelDensity; /* 0 = unlimited */
     int      inGameRotate;    /* 0 or 1 */
+    int      recommendedFilter; /* SKIN_FILTER_*, SKIN_FILTER_NONE = not set */
 } SkinInfo;
 
 /* One skin found on disk. Fixed size: nothing to free. */
@@ -120,9 +130,10 @@ bool        skinSourceReadHead(SkinSource *src, const char *relName,
  * NAME:          skinSourceReadIni
  * PURPOSE:
  *   Fills out from the skin's skin.ini [Skin] section.
- *   Zeroes out first, so a missing ini leaves it empty.
- *   Parsed once per source and cached, so calling it every
- *   frame is a struct copy.
+ *   Clears out first, so a missing ini leaves it empty and
+ *   recommendedFilter SKIN_FILTER_NONE. Parsed once per
+ *   source and cached, so calling it every frame is a
+ *   struct copy.
  *********************************************************/
 void        skinSourceReadIni(SkinSource *src, SkinInfo *out);
 
