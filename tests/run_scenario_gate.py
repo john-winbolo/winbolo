@@ -32,29 +32,10 @@ KNOWN_BROKEN = {
 # debt. Same rule as KNOWN_BROKEN -- short, dated, and it costs coverage -- but
 # it costs LESS coverage than skipping the whole file, so prefer it.
 PARTIAL = {
-    # builder_pool variant A, assertion 2 (noted 2026-09-03 as "fails for its
-    # own reason"; diagnosed 2026-09-05). The arena cannot produce what the
-    # assertion demands. From session 20260905_133132_1_builder_pool_A:
-    #   * the seeded topup on our worn pill (124,121) FINISHES at brain t=398
-    #     (BP_DONE outcome=ok, hp 6 -> 15; the engine HP trace reads 15/15 at
-    #     sim tick 620);
-    #   * the take's fire exchange runs brain t=1121..1497 with the tank parked
-    #     at (125..127,124) -- 3 tiles from that pill, well inside
-    #     BUILDER_POOL_LEASH (8). The leash is NOT the problem;
-    #   * the pill is not damaged again until sim 4502 (brain ~2251), long
-    #     after the exchange ends, and the arena holds no other job (no forest
-    #     to farm, no second worn pill).
-    # So all 377 fire-exchange ticks legitimately have cands=0: assertion 1
-    # ("nothing was dispatched") is true but vacuous, which is exactly what
-    # assertion 2 exists to say. Fixing it means keeping the pill WORN across
-    # t=1121..1497, and every staging move available today is blocked: the
-    # scenario API has no set_pill_armour to re-damage it (scenario.c
-    # scBuildGameTable), starving the repair of trees would break assertions
-    # 3-5, and a second worn pill inside the leash is repaired by the same
-    # early pass. That is a new scenario hook, not a brain change, so it is
-    # not chased here -- this gate exists to catch BOT regressions.
-    # B, B2, C and D all pass and still run.
-    "builder_pool_test.py": ["--variant", "B,B2,C,D"],
+    # (empty) Repaid 2026-09-05: builder_pool variant A assertion 2 used to sit
+    # here because the arena could not keep our pill worn across the take's
+    # fire exchange. game.set_pill_armour(n, a) (scenario.c, a07fae5e) gave the
+    # sidecar a way to re-wear it, so the whole file runs again.
 }
 
 # Not tests of the bots.

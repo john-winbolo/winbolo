@@ -27,6 +27,15 @@ each variant here checks one of them.
      attack_pill from the spawn, so the dispatch here is a seeded one.  The
      "hold, then go in the next travel window" sequence is variant D's job.
 
+     NOTE 2: that early repair is also why the sidecar RE-WEARS our pill for
+     the length of the exchange (game.set_pill_armour, added 2026-09-05).
+     Without it the pill is full by sim 620 and every one of the 377
+     fire-exchange ticks has cands=0, which makes assertion 1 true but empty --
+     the thing assertion 2 exists to catch.  The re-wear is keyed on the
+     target pill losing armour, which on this map only our own shells can do,
+     and it lets go 1000 engine ticks later so the ordinary repair path still
+     gets the pill back for assertion 4.
+
   B  THE repair_pill SPLIT.  One badly worn pill 18 tiles away -- outside the
      leash, so repair_pill as a TANK goal means "relocate until the repair
      becomes leash-reachable" and nothing else.  The tank must drive, the
@@ -267,7 +276,11 @@ def check_A(sess, logs, build_dir):
     if not cands_during_fire:
         print("FAIL (2): every fire-exchange tick had ZERO candidates, so "
               "assertion 1 proves nothing -- there was nothing to hold back. "
-              "The worn pill has to be inside the leash while the take runs.")
+              "The pill IS inside the leash; what has to be true is that it is "
+              "still WORN while the exchange runs. The sidecar re-wears it "
+              "(set_pill_armour) once the target pill loses armour -- check "
+              "that trigger fired (grep builder_pool_A_hp.log for a drop back "
+              "to 6 during the exchange).")
         return 1
     print(f"  2 OK: {len(cands_during_fire)} fire-exchange tick(s) had a live "
           f"candidate and none of them went (e.g. t={cands_during_fire[0][0]}, "

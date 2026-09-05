@@ -2,7 +2,7 @@
 -- <map>.scenario.lua).  Companion to tests/builder_pool_test.py variant A --
 -- the "stolen blocker" shape.
 --
--- Three jobs.
+-- Four jobs.
 --
 -- 1. AN OPPONENT THAT OWNS THE TARGET.  attack_pill only bids on pills whose
 --    owner reads "hostile", so the take needs a real enemy player.  A scripted
@@ -14,7 +14,20 @@
 --    -bots tank); the target pill goes to the idler.  on_choose_start pins each
 --    tank to its own pond so they cannot swap ends.
 --
--- 3. TRACE.  Write our worn pill's armour to builder_pool_A_hp.log on every
+-- 3. RE-WEAR (the reason this sidecar has a set_pill_armour call).  The test's
+--    assertion 2 needs a LIVE builder-pool candidate on the ticks the fire
+--    exchange holds back -- otherwise assertion 1 ("nothing was dispatched")
+--    only proves the pool was empty.  Left alone this arena cannot supply one:
+--    repair_pill outbids attack_pill from the spawn, so the seeded topup on our
+--    pill finishes at sim ~620, long before the take's exchange starts, and
+--    nothing damages the pill again until well after it ends.  So we damage it
+--    ourselves, keyed on an OBSERVABLE that means "the take is shooting": the
+--    idler's pill has lost armour, and the only thing on this map that can take
+--    armour off it is our tank's shells.  From that tick we hold our pill at
+--    A_OUR_HP for REWEAR_TICKS engine ticks, re-setting it if anything puts it
+--    back up, then let go so the ordinary repair path can have it again.
+--
+-- 4. TRACE.  Write our worn pill's armour to builder_pool_A_hp.log on every
 --    CHANGE, in SIM ticks.  The test's "the repair actually landed" assertion
 --    is checked against the ENGINE, not against the brain's account of itself.
 
@@ -24,10 +37,36 @@ local BASES     = { { 110, 126 }, { 121, 118 } }
 local FOE_BRAIN = "../tests/brains/idle.lua"
 local TRACE     = "builder_pool_A_hp.log"
 
+-- generate_builder_pool_map.A_OUR_HP: 9 missing, 3 trees' worth of topup.
+local WORN_HP      = 6
+-- The exchange measured 376 brain ticks (brain t=1121..1497) = 752 engine
+-- ticks; hold a bit past it so a shift in the take's timing cannot walk off
+-- the end of the window.
+local REWEAR_TICKS = 1000
+
 local our_player  = 0
 local foe_player  = nil
 local spawn_tried = false
 local last_hp     = nil
+
+local our_pn      = nil          -- 1-based pill numbers, resolved on setup
+local foe_pn      = nil
+local foe_hp0     = nil          -- the idler pill's armour before we shot it
+local rewear_from = nil          -- engine tick the exchange was first seen
+
+local function index_pills(g)
+  for i = 1, g.num_pills() do
+    local p = g.pill(i)
+    if p then
+      if p.x == FOE_PILL[1] and p.y == FOE_PILL[2] then
+        foe_pn = i
+        foe_hp0 = foe_hp0 or p.armour
+      elseif p.x == OUR_PILL[1] and p.y == OUR_PILL[2] then
+        our_pn = i
+      end
+    end
+  end
+end
 
 local function own_everything(g)
   for i = 1, g.num_pills() do
@@ -54,6 +93,7 @@ local function own_everything(g)
 end
 
 function on_setup(g)
+  index_pills(g)
   own_everything(g)
   g.set_team(our_player, 0)
   local f = io.open(TRACE, "w")
@@ -79,15 +119,32 @@ function on_tick(g, tick)
       own_everything(g)
     end
   end
-  for i = 1, g.num_pills() do
-    local p = g.pill(i)
-    if p and p.x == OUR_PILL[1] and p.y == OUR_PILL[2] then
-      if last_hp ~= p.armour then
-        local f = io.open(TRACE, "a")
-        if f then f:write(string.format("%d %d\n", tick, p.armour)) f:close() end
-        last_hp = p.armour
-      end
-      break
+  if not our_pn or not foe_pn then index_pills(g) end
+
+  -- The exchange is on once the target pill has lost armour: nothing else on
+  -- this map shoots it.
+  if not rewear_from and foe_pn and foe_hp0 then
+    local fp = g.pill(foe_pn)
+    if fp and not fp.in_tank and fp.armour < foe_hp0 then
+      rewear_from = tick
+      g.message(string.format(
+        "BUILDER_POOL_A exchange seen at t=%d (target hp %d->%d);"
+        .. " holding our pill at %d for %d ticks",
+        tick, foe_hp0, fp.armour, WORN_HP, REWEAR_TICKS))
+    end
+  end
+
+  local op = our_pn and g.pill(our_pn) or nil
+  if op then
+    if rewear_from and tick <= rewear_from + REWEAR_TICKS
+       and not op.in_tank and op.armour > WORN_HP then
+      g.set_pill_armour(our_pn, WORN_HP)
+      op = g.pill(our_pn)
+    end
+    if op and last_hp ~= op.armour then
+      local f = io.open(TRACE, "a")
+      if f then f:write(string.format("%d %d\n", tick, op.armour)) f:close() end
+      last_hp = op.armour
     end
   end
 end
