@@ -512,15 +512,48 @@ static int l_spawn_bot(lua_State *L) {
         st->teamOf[slot] = (BYTE)team;
         serverSimSetBotTeams(sim, st->teamOf, MAX_TANKS);
         /* Restore the lobby-team mirror the create path just reset, then
-         * publish the alliance matrix. The CTRL_PLAYER_JOIN that
-         * serverSimCreateBot broadcast above went out BEFORE this slot had
-         * a team, so its allies list was empty; without the reset a remote
-         * client never learns the wave bots are allied, renders them as
-         * separate sides, and reports every scripted base handover
-         * between them as an enemy steal. One event per spawn. */
+         * tell the clients about the ONE new alliance pair this spawn
+         * created. The CTRL_PLAYER_JOIN that serverSimCreateBot broadcast
+         * above went out BEFORE this slot had a team, so its allies list
+         * was empty; without this a remote client never learns the wave
+         * bots are allied, renders them as separate sides, and reports
+         * every scripted base handover between them as an enemy steal.
+         *
+         * This used to publish CTRL_ALLIANCE_RESET (the whole matrix).
+         * That was wrong mid-game: the client's reset handler clears every
+         * slot's alliance first, and playersLeaveAlliance runs basesMigrate
+         * + pillsMigratePlanted on the way through — so each spawn handed
+         * the LOCAL player's own bases and pills away on their own screen
+         * and the whole map went red. CTRL_ALLIANCE_ACCEPT is a pure union
+         * of the two members' bitmaps with no migration, and because
+         * playersAcceptAlliance merges allyA into every member of allyB and
+         * back, one accept against any existing wave member allies the
+         * newcomer with the entire wave.
+         *
+         * The SERVER side already has the pair: serverSimSetBotTeams above
+         * ran first and allienceAdd'd it into sim->plyrs and into every
+         * bot's ClientSim. This publish is purely for the human/remote
+         * clients. The first bot of a wave has no team-mate to accept
+         * against yet — its own join packet carries the empty roster
+         * correctly, and the second bot's accept brings them together. */
         if (team >= 0 && team < MAX_TANKS) {
             serverSimSetTeamBatch(sim, slot, (BYTE)team);
-            serverSimReapplyTeamAlliances(sim);
+            BYTE mate = 0xFF;
+            for (BYTE i = 0; i < MAX_TANKS; i++) {
+                if (i == (BYTE)slot) continue;
+                if (st->teamOf[i] != (BYTE)team) continue;
+                if (!serverSimIsPlayerConnected(sim, i)) continue;
+                mate = i;
+                break;
+            }
+            if (mate != 0xFF) {
+                ControlEvent allyEvt;
+                memset(&allyEvt, 0, sizeof(allyEvt));
+                allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                allyEvt.u.allianceAccept.acceptedBy = mate;
+                allyEvt.u.allianceAccept.newMember  = (BYTE)slot;
+                serverSimPublishControl(sim, &allyEvt);
+            }
         }
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
