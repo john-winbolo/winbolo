@@ -3380,6 +3380,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Needs the tile loader itself, which no other unit test pulls in.
     tests/unit/test_skin_density.c
     src/gui/sdl3/tileloader.c
+    # The Bolo pascal-string reader in both places it is implemented —
+    # src/bolo/util.c and the log viewer's own copy.
+    tests/unit/test_pascal_string.c
+    # Operator console command parsing, driven through ServerConsoleOps
+    # with recording callbacks instead of a live server (server_console.c
+    # itself comes in with server_static).
+    tests/unit/test_server_console.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -4082,6 +4089,18 @@ set(_unit_test_names
     skin_active_vs_requested
     skin_workshop_id_roundtrip
     skin_density_scan
+    pascal_string_lengths
+    pascal_string_viewer_copy_agrees
+    pascal_string_roundtrip
+    console_lock_unlock
+    console_info_and_status
+    console_savemap_path
+    console_unknown_command_is_inert
+    console_say_keeps_case
+    console_kick_and_host
+    console_kick_host_without_newline
+    console_read_reports_eof
+    console_read_timeout_then_eof
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

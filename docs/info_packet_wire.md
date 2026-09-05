@@ -11,6 +11,19 @@ padding. There is no protocol-version negotiation: a server always emits the ful
 111-byte layout, so a consumer must read this layout and gate any length check on
 `111`.
 
+## Where the packet is built
+
+Every INFO_RESPONSE the server emits comes from `buildInfoPacket()` in
+`src/server/transport_udp_server.c`. Two callers send what it produces:
+
+- `serverHandleInfoRequest()` — replies to an info request from a LAN browser or
+  a game finder, addressed to the requester.
+- `transportUdpServerSendTrackerUpdate()` — the periodic advertisement to the
+  WinBolo.net tracker.
+
+Both send the identical 111 bytes, so a consumer can parse either the same way,
+and a field added to the layout reaches both paths at once.
+
 ## Byte layout
 
 | Off | Size | Type | Field | Notes |

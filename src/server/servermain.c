@@ -62,6 +62,7 @@
 #include "../common/wb_log.h"
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
+#include "server_console.h"
 #include "wire_limits.h"
 #include "cJSON.h"
 
@@ -185,52 +186,74 @@ catch_alarm (int sig)
 #endif
 
 
-void strlower(char *s) {
-  while(*s) {
-    *s = tolower(*s);
-    s++;
-  }
+/* The console command set itself lives in server_console.c, which parses a
+ * line and calls back through ServerConsoleOps for anything that touches
+ * the server. These are those callbacks: each takes the sim mutex for the
+ * whole of its work, exactly as the command bodies did when they were
+ * inline here. */
+
+static void consoleOpSetLock(bool locked) {
+  threadsWaitForMutex();
+  transportUdpServerSetLock(serverSim, locked);
+  threadsReleaseMutex();
 }
 
-void saveMap(char *line) {
-  char *ptr;
-  int len;
-  ptr = line;
-  ptr += 7;
-
-  /* Strip newline */
-  len = (int) strlen(line);
-  if (line[len-1] == '\n') {
-    line[len-1] = '\0';
-  }
-
-  while (*ptr != EMPTY_CHAR  && (*ptr == '\t' || *ptr == ' ')) {
-    ptr++;
-  }
-  if (*ptr == EMPTY_CHAR) {
-    fprintf(stderr, "Sorry, you must enter a filename for this command\n");
-  } else {
-    len = (int) strlen(ptr);
-    {
-      size_t remaining = 256 - (size_t)(ptr - line) - (size_t)len - 1;
-      if (len < 4) {
-        strncat(ptr, ".map", remaining);
-      } else if (strcmp(ptr+len-4, ".map") != 0) {
-        strncat(ptr, ".map", remaining);
-      }
-    }
-    transportUdpServerSendServerMessage("Server Admin saved map file.");
-    if (serverSimSaveMap(serverSim, ptr) == FALSE) {
-      fprintf(stderr, "Sorry, an error occured saving the map. Is the path correct?\n");
-    } else {
-      logAddEvent(log_SaveMap, 0, 0, 0, 0, 0, NULL);
-    }
-  }
+static void consoleOpInfo(void) {
+  threadsWaitForMutex();
+  serverSimInformation(serverSim, transportUdpServerGetLock());
+  threadsReleaseMutex();
 }
 
-void printHelp() {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n");
+static bool consoleOpSaveMap(const char *path) {
+  bool saved;
+
+  threadsWaitForMutex();
+  transportUdpServerSendServerMessage("Server Admin saved map file.");
+  saved = serverSimSaveMap(serverSim, (char *) path);
+  if (saved) {
+    logAddEvent(log_SaveMap, 0, 0, 0, 0, 0, NULL);
+  }
+  threadsReleaseMutex();
+  return saved;
 }
+
+static void consoleOpSay(const char *text) {
+  transportUdpServerSendServerMessage(text);
+}
+
+static void consoleOpLogSay(const char *pstr) {
+  logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, (char *) pstr);
+}
+
+static void consoleOpStatus(void) {
+  transportUdpServerPrintStatus(statusFile);
+}
+
+static void consoleOpKick(const char *name) {
+  threadsWaitForMutex();
+  transportUdpServerKickPlayer(serverSim, name);
+  threadsReleaseMutex();
+}
+
+static bool consoleOpSetHost(const char *name) {
+  bool hostSet;
+
+  threadsWaitForMutex();
+  hostSet = transportUdpServerSetHostByName(serverSim, name);
+  threadsReleaseMutex();
+  return hostSet;
+}
+
+static const ServerConsoleOps serverConsoleOps = {
+  consoleOpSetLock,
+  consoleOpInfo,
+  consoleOpSaveMap,
+  consoleOpSay,
+  consoleOpLogSay,
+  consoleOpStatus,
+  consoleOpKick,
+  consoleOpSetHost
+};
 
 
 #ifdef _WIN32
@@ -258,9 +281,6 @@ static DWORD WINAPI stdinReaderThread(LPVOID param) {
 void processKeys(bool isQuiet) {
 	char keyBuff[256] = "\0";
 	char saveBuff[256] = "\0";
-	char playerKick[33] = "\0";
-	char playerHost[33] = "\0";
-	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
 		while (!serverSimIsTerminalGameOver(serverSim)) {
@@ -288,62 +308,7 @@ void processKeys(bool isQuiet) {
 				strlower(keyBuff);
 				stdinLineReady = 0;
 
-				if (strncmp(keyBuff, "help", 4) == 0) {
-					printHelp();
-				} else if (strncmp(keyBuff, "unlock", 6) == 0) {
-					threadsWaitForMutex();
-					transportUdpServerSetLock(serverSim, FALSE);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "lock", 4) == 0) {
-					threadsWaitForMutex();
-					transportUdpServerSetLock(serverSim, TRUE);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "info", 4) == 0) {
-					threadsWaitForMutex();
-					serverSimInformation(serverSim, transportUdpServerGetLock());
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "savemap", 7) == 0) {
-					threadsWaitForMutex();
-					saveMap(saveBuff);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "say ", 4) == 0) {
-					transportUdpServerSendServerMessage((char *) keyBuff+4);
-					{
-						char pstr[256];
-						int len = (int)strlen(keyBuff + 4);
-						if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
-						if (len > 255) len = 255;
-						pstr[0] = (char)len;
-						memcpy(pstr + 1, keyBuff + 4, len);
-						logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
-					}
-				} else if(strncmp(keyBuff, "status", 6) == 0){
-					transportUdpServerPrintStatus(statusFile);
-				} else if (strncmp(keyBuff, "kick ", 5) == 0) {
-					sprintf(playerKick, "%.*s", 32, keyBuff+5);
-					newbuflen = strlen(playerKick);
-					playerKick[newbuflen - 1] = '\0';
-					threadsWaitForMutex();
-					transportUdpServerKickPlayer(serverSim, playerKick);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "host ", 5) == 0) {
-					bool hostSet;
-					sprintf(playerHost, "%.*s", 32, keyBuff+5);
-					newbuflen = strlen(playerHost);
-					playerHost[newbuflen - 1] = '\0';
-					threadsWaitForMutex();
-					hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
-					threadsReleaseMutex();
-					if (hostSet) {
-						printf("Host set to %s\n", playerHost);
-					} else {
-						printf("No such player\n");
-					}
-				} else if (strncmp(keyBuff, "quit", 4) == 0) {
-					/* Loop's while-condition will exit on next check */
-				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
-				}
+				serverConsoleDispatch(&serverConsoleOps, keyBuff, saveBuff);
 			} else {
 				Sleep(100);
 			}
@@ -356,19 +321,9 @@ void processKeys(bool isQuiet) {
 #else
 /* Linux */
 void processKeys(bool isQuiet) {
-  char keyBuff[256] = "\0";
-  char saveBuff[256] = "\0";
-  fd_set fdmask;
-  struct timeval timer;
-  int ret;
-  char playerKick[33] = "\0";
-  char playerHost[33] = "\0";
-  size_t newbuflen;
-
-  timer.tv_sec = 1;
-  timer.tv_usec = 0;
-  FD_ZERO(&fdmask);
-  FD_SET(STDIN_FILENO, &fdmask);
+  char keyBuff[SERVER_CONSOLE_LINE] = "\0";
+  char saveBuff[SERVER_CONSOLE_LINE] = "\0";
+  bool consoleOpen = TRUE;
 
   if (isQuiet == TRUE || isNoInput == TRUE) {
     while (!serverSimIsTerminalGameOver(serverSim)) {
@@ -389,75 +344,38 @@ void processKeys(bool isQuiet) {
     }
   } else {
     while (strncmp(keyBuff, "quit", 4) != 0 && !serverSimIsTerminalGameOver(serverSim)) {
-      if (strncmp(keyBuff, "help", 4) == 0) {
-        printHelp();
-      } else if (strncmp(keyBuff, "unlock", 6) == 0) {
-        threadsWaitForMutex();
-        transportUdpServerSetLock(serverSim, FALSE);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "lock", 4) == 0) {
-        threadsWaitForMutex();
-        transportUdpServerSetLock(serverSim, TRUE);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "info", 4) == 0) {
-        threadsWaitForMutex();
-        serverSimInformation(serverSim, transportUdpServerGetLock());
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "savemap", 7) == 0) {
-        threadsWaitForMutex();
-        saveMap(saveBuff);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "say ", 4) == 0) {
-        transportUdpServerSendServerMessage((char *) keyBuff+4);
-        {
-            char pstr[256];
-            int len = (int)strlen(keyBuff + 4);
-            if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
-            if (len > 255) len = 255;
-            pstr[0] = (char)len;
-            memcpy(pstr + 1, keyBuff + 4, len);
-            logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
-        }
-      } else if(strncmp(keyBuff, "status", 6) == 0){
-        transportUdpServerPrintStatus(statusFile);
-      } else if (strncmp(keyBuff, "kick ", 5) == 0) {
-        sprintf(playerKick, "%.*s", 32, keyBuff+5);
-        newbuflen = strlen(playerKick);
-        playerKick[newbuflen - 1] = '\0';
-        threadsWaitForMutex();
-        transportUdpServerKickPlayer(serverSim, playerKick);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "host ", 5) == 0) {
-        bool hostSet;
-        sprintf(playerHost, "%.*s", 32, keyBuff+5);
-        newbuflen = strlen(playerHost);
-        playerHost[newbuflen - 1] = '\0';
-        threadsWaitForMutex();
-        hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
-        threadsReleaseMutex();
-        if (hostSet) {
-          printf("Host set to %s\n", playerHost);
-        } else {
-          printf("No such player\n");
-        }
-      } else if (strncmp(keyBuff, "quit", 4) == 0) {
-        /* Loop's while-condition will exit on next check */
-      } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-        fprintf(stderr, "Unknown command - Type \"help\" for help\n");
-      }
+      serverConsoleDispatch(&serverConsoleOps, keyBuff, saveBuff);
 
-      timer.tv_sec = 1;
-      timer.tv_usec = 0;
-      FD_ZERO(&fdmask);
-      FD_SET(STDIN_FILENO, &fdmask);
-
-      ret = select(STDIN_FILENO + 1, &fdmask, NULL, NULL, &timer);
-      if (ret > 0) {
-        fgets(keyBuff, 256, stdin);
-        strcpy(saveBuff, keyBuff);
-        strlower(keyBuff);
-      } else if (ret != -1) {
+      if (consoleOpen == TRUE) {
+        switch (serverConsoleReadLine(stdin, keyBuff, sizeof(keyBuff), 1)) {
+        case SERVER_CONSOLE_READ_LINE:
+          strcpy(saveBuff, keyBuff);
+          strlower(keyBuff);
+          break;
+        case SERVER_CONSOLE_READ_EOF:
+          /* stdin has ended — a server put in the background without
+           * -noinput, or a closed pipe. select() then reports the
+           * descriptor readable for ever and the read fails without
+           * touching the buffer, so the loop used to re-run whatever
+           * command it read last, flat out and with no delay. Stop
+           * reading and idle the way the -noinput path does. */
+          fprintf(stderr, "Console input has closed - no further commands "
+                          "will be read. Use quit or Ctrl-C to stop the "
+                          "server.\n");
+          consoleOpen = FALSE;
+          saveBuff[0] = '\0';
+          break;
+        case SERVER_CONSOLE_READ_TIMEOUT:
+          saveBuff[0] = '\0';
+          break;
+        }
+      } else {
+        /* Console closed: idle a second at a time, the way the read's
+         * timeout does, and clear the line so a command left behind by a
+         * signal below runs once and not once a second. */
+        sleep(1);
         keyBuff[0] = '\0';
+        saveBuff[0] = '\0';
       }
 
       if (alarmRaised == alarmInterrupt) {
