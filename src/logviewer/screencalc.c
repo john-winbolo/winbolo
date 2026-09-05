@@ -419,13 +419,13 @@ BYTE lv_screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, 
   
   if ((above != RIVER && above != ROAD) && (below != RIVER && below != ROAD) && (right != RIVER && right != ROAD) && (left != RIVER && left != ROAD)) {
     returnValue = RIVER_SURROUND;
-  } else if ((above != RIVER && above != ROAD) && (below != RIVER && below != ROAD) && right == RIVER && (left != RIVER && left != ROAD)) {  
+  } else if ((above != RIVER && above != ROAD) && (below != RIVER && below != ROAD) && (right == RIVER || right == ROAD) && (left != RIVER && left != ROAD)) {
     returnValue = RIVER_END1;
-  } else if ((above != RIVER && above != ROAD) && (below != RIVER && below != ROAD) && (right != RIVER && right != ROAD) && left == RIVER) {
+  } else if ((above != RIVER && above != ROAD) && (below != RIVER && below != ROAD) && (right != RIVER && right != ROAD) && (left == RIVER || left == ROAD)) {
     returnValue = RIVER_END2;
-  } else if ((above != RIVER && above != ROAD) && below == RIVER && (right != RIVER && right != ROAD) && (left != RIVER && left != ROAD)) {
+  } else if ((above != RIVER && above != ROAD) && (below == RIVER || below == ROAD) && (right != RIVER && right != ROAD) && (left != RIVER && left != ROAD)) {
     returnValue = RIVER_END3;
-  } else if (above == RIVER && (below != RIVER && below != ROAD) &&  (right != RIVER && right != ROAD) && (left != RIVER && left != ROAD)) {
+  } else if ((above == RIVER || above == ROAD) && (below != RIVER && below != ROAD) && (right != RIVER && right != ROAD) && (left != RIVER && left != ROAD)) {
     returnValue = RIVER_END4;
 
   } else if ((above != RIVER && above != ROAD) && (left != RIVER && left != ROAD)) {
