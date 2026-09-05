@@ -2730,6 +2730,66 @@ target_link_libraries(MapEditor PRIVATE
     nanosvg stb_image utf8proc cjson CURL::libcurl
 )
 
+# ---------------------------------------------------------------------------
+# MakeTileTestMap — writes a small .map that puts the terrain-shape lookups in
+# screencalc.c side by side (river ends around a bridge, the deep-sea
+# shoreline, boats), so each can be eyeballed in the game or the editor.
+# EXCLUDE_FROM_ALL: built on demand, never part of a normal build.
+#   cmake --build build --target MakeTileTestMap && ./build/MakeTileTestMap
+#
+# The source lives under src/mapeditor/ rather than tools/ because it needs
+# bolo's T2 map-data headers (bolo_map.h, starts.h, bases.h, pillbox.h) and
+# the editor's map-render math — exactly the scope of the mapeditor
+# privileged exception in docs/ARCHITECTURE.md. tools/ is a public-only
+# directory (T1+T3+T4); putting it there would have been a new, undocumented
+# T2 exception. MAPEDITOR_SOURCES is an explicit list, not a glob, so this
+# file's main() cannot leak into the MapEditor binary.
+# ---------------------------------------------------------------------------
+# test_stubs.c supplies the frontend / winbolonet / natPortMap link-time
+# defaults, the same way it does for WinBoloUnitTests; transport_udp_client.c
+# is per-target everywhere because of its HAVE_STEAM compile defs.
+add_executable(MakeTileTestMap EXCLUDE_FROM_ALL
+    src/mapeditor/tools/make_tile_test_map.c
+    tests/unit/test_stubs.c
+    src/bolo/transport_udp_client.c
+    src/steam/steam_wrapper_stub.c
+    src/lzw/ecodlzw.c
+    src/lzw/dcodlzw.c
+    src/common/md5.c
+    src/common/mp_diag_log.c)
+bolo_apply_include_rules(MakeTileTestMap mapeditor)
+target_compile_definitions(MakeTileTestMap PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_DISPLAY_VERSION="${WINBOLO_DISPLAY_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+# No bolo_grant_internal_source_access here: the mapeditor profile above
+# already puts public/ + internal/ + the flat src/bolo/ on every TU in this
+# target, so a per-file grant for transport_udp_client.c would grant nothing.
+# MapEditor compiles the same file under the same profile without one.
+target_include_directories(MakeTileTestMap PRIVATE
+    src src/server src/gui src/gui/sdl3 src/client_frontend src/winbolonet
+    ${cjson_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/unit)
+# Same link set WinBoloUnitTests uses — the map writer sits in bolo_static,
+# whose TUs reach back into the server sim and the WinBolo.net client.
+target_link_libraries(MakeTileTestMap PRIVATE
+    bolo_static ${SERVER_LINK_GROUP} bot_brains_static threads_static
+    winbolonet_core winbolonet_client winbolonet_server
+    SDL3::SDL3 minizip lua_static nanosvg stb_image utf8proc cjson CURL::libcurl
+    mdns)
+target_compile_options(MakeTileTestMap PRIVATE -fcommon)
+if(WIN32)
+    target_link_libraries(MakeTileTestMap PRIVATE ws2_32 winmm user32)
+else()
+    target_link_libraries(MakeTileTestMap PRIVATE ${MATH_LIB} pthread)
+endif()
+set_flat_output(MakeTileTestMap "${CMAKE_BINARY_DIR}")
+
 # macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
 # Map Editor's menu bar (used by both the standalone MapEditor.app and
 # the embedded entry from WinBolo's welcome screen).
@@ -3295,6 +3355,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # River tile lookup: ROAD must read as "the river continues" in all four
+    # RIVER_END arms (a bridge on a river cross drew corner pieces), plus the
+    # game vs log-viewer copies of screenCalcRiver never disagreeing.
+    tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
@@ -3929,6 +3993,9 @@ set(_unit_test_names
     channel_reset_two_slot_baselines
     packet_type_names
     lang_name_table
+    screencalc_river_road_counts_as_water
+    screencalc_river_arms_of_road_centred_cross
+    screencalc_river_copies_agree
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
