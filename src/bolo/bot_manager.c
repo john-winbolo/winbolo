@@ -616,6 +616,10 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
 
     SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
 
+    /* Hand the fresh brain the game clock so its own tick counter continues
+     * the session instead of restarting at 0 (see BRAIN_START_ENGINE_TICK). */
+    luaBrainsSetNextStartEngineTick((unsigned int)serverSimGetTick(sim));
+
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, bot->ai,
                                 sim->botMgr.defaultDebugMode,
@@ -777,7 +781,11 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
 
     /* Create the Lua brain instance. debug_mode comes from the static
      * default (host-controlled): BrainTest sets it to true; the release
-     * game leaves it false so brains load from stripped opt/ source. */
+     * game leaves it false so brains load from stripped opt/ source.
+     * The staged start tick is the game clock at creation: a bot added
+     * mid-game (a Survival wave spawn) seeds its brain tick counter from
+     * it rather than restarting at 0 (see BRAIN_START_ENGINE_TICK). */
+    luaBrainsSetNextStartEngineTick((unsigned int)serverSimGetTick(sim));
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, ai, sim->botMgr.defaultDebugMode,
                                 playerNum)) {
