@@ -134,6 +134,22 @@ function M.process_message(sender, text, tick, state)
     return
   end
 
+  -- Blitz suicider designation: "bsu <pill> <pn>". A commander sends one of
+  -- these per tank it designates when GO fires (squad.blitz_designate_suiciders,
+  -- gated on BLITZ_MIN_SUICIDERS). Broadcast like every other blitz verb, so
+  -- everyone sees it; only the named player acts. The flag is TEMPORARY —
+  -- squad.update expires it when the take ends (pill gone, we left the take,
+  -- commander gone, BLITZ_SUICIDER_MAX_TICKS) and reset_blitz_state wipes it on
+  -- death, after which the bot reverts to whatever it was before.
+  local bsu_pill, bsu_pn = text:match("^/info bsu (%d+) (%d+)$")
+  if bsu_pill then
+    local for_us = state and tonumber(bsu_pn) == (state.player_number or -1)
+    if for_us then
+      state.blitz_suicider = { pill = tonumber(bsu_pill), by = sender, since = tick }
+    end
+    return
+  end
+
   -- Known-world digest: ally-relayed base/pill allegiance + location records.
   -- Stashed on state._kw_inbox; init.lua folds them into world.* via
   -- W.sync_ally_world (newest-tick wins). See world.lua "Known-world sharing".

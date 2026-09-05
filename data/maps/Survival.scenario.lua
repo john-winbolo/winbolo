@@ -178,15 +178,18 @@ local SUICIDER_WAVES = { [2] = true, [4] = true }
 -- BRAIN_INIT_ARG and are parsed by the brain (brains/GoalHunter_1.7);
 -- a brain that doesn't know a token ignores it.
 local WAVE_PORTFOLIO = "0/25/75"  -- back/front/aggressive pill share the wave bots aim for
-local WAVE_BLITZ_MIN = 3          -- minimum tanks in a blitz
+local WAVE_BLITZ_MIN = 2          -- minimum tanks in a blitz (counting the commander); below this the commander gives the take up rather than charging short
+local WAVE_BLITZ_MAX = 4          -- most tanks one blitz accepts (counting the commander); a call at 4 refuses a 5th
+local WAVE_BLITZ_MIN_SUICIDERS = 1  -- at GO the blitz commander designates random soldiers until at least this many of the party are pill_suiciders
 
--- "portfolio=...;blitz=N", with "suicider;" in front on a suicider wave.
--- Takes the wave number rather than reading the `wave` upvalue: this sits
--- above `local wave` in the file, so reading it here would find the (nil)
--- global and every wave would look non-suicider.
+-- "portfolio=...;blitz=MIN/MAX;blitzsuiciders=N", with "suicider;" in front on
+-- a suicider wave. Takes the wave number rather than reading the `wave` upvalue:
+-- this sits above `local wave` in the file, so reading it here would find the
+-- (nil) global and every wave would look non-suicider.
 local function wave_init_arg(w)
-  local arg = string.format("portfolio=%s;blitz=%d",
-                            WAVE_PORTFOLIO, WAVE_BLITZ_MIN)
+  local arg = string.format("portfolio=%s;blitz=%d/%d;blitzsuiciders=%d",
+                            WAVE_PORTFOLIO, WAVE_BLITZ_MIN, WAVE_BLITZ_MAX,
+                            WAVE_BLITZ_MIN_SUICIDERS)
   if SUICIDER_WAVES[w] then arg = "suicider;" .. arg end
   return arg
 end

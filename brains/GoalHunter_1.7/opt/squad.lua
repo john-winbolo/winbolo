@@ -102,6 +102,85 @@ function M.blitz_size_label()
   return string.format("blitz min=%d max=%d (%s)", BLITZ_MIN, BLITZ_MAX, M.blitz_size_source)
 end
 
+-- ── Blitz suicider quota (per bot) ────────────────────────────────────────
+-- "At least this many members of a blitz should be pill_suiciders." At GO the
+-- commander counts the suiciders already in the party (itself included, whether
+-- by the "suicider" token or the harasser slate) and designates that many random
+-- non-suicider SOLDIERS to make up the difference — never itself, never one that
+-- already is one. 0 (the default) means it never designates, which is exactly
+-- today's behaviour. Per-bot, like the sizes above; the "blitzsuiciders=N" token
+-- replaces it.
+local BLITZ_MIN_SUICIDERS = C.BLITZ_MIN_SUICIDERS or 0
+M.blitz_suiciders_source = "default"
+
+function M.blitz_min_suiciders() return BLITZ_MIN_SUICIDERS end
+function M.set_blitz_min_suiciders(n, source)
+  BLITZ_MIN_SUICIDERS = math.max(0, n or BLITZ_MIN_SUICIDERS)
+  M.blitz_suiciders_source = source or "init_arg"
+end
+function M.blitz_suiciders_label()
+  return string.format("blitzsuiciders min=%d (%s)", BLITZ_MIN_SUICIDERS, M.blitz_suiciders_source)
+end
+
+-- Every soldier COMMITTED to our blitz on `our_pid`, as an array of
+-- { pn = n, suicider = bool } sorted by player number. Same membership test as
+-- blitz_ready_status (role s, cmdr = us, past negotiation, broadcasting
+-- attack_pill on our pill, alive); `suicider` is the ally's broadcast psu flag,
+-- which is set for a forced, slate-picked OR already blitz-designated suicider.
+-- SORTED because the designation picks from it with the seeded RNG and
+-- ally_state's pairs() order is not reproducible.
+function M.blitz_members(state, now, self_pn, our_pid)
+  local out = {}
+  if not our_pid then return out end
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn then
+      local h = slot.info
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if not is_dead and h.role == "s" and tonumber(h.cmdr or "") == self_pn
+         and h.sqst ~= "nego"
+         and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
+        out[#out + 1] = { pn = pn, suicider = (h.psu == "1") }
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.pn < b.pn end)
+  return out
+end
+
+-- Commander-only, called ONCE per take at the moment GO fires (not on an abort
+-- path). Tops the blitz up to BLITZ_MIN_SUICIDERS suiciders by picking that many
+-- soldiers uniformly at random from the ones that are not suiciders already, and
+-- queues a "bsu <pill> <pn>" broadcast for each (init.lua's blitz TX block sends
+-- them). Uses math.random — the brain's seeded RNG — so a -brain-lua-seed run
+-- designates the same tanks every time.
+function M.blitz_designate_suiciders(state, info, now, our_pid)
+  local want = BLITZ_MIN_SUICIDERS
+  if want <= 0 or not our_pid then return end
+  local self_pn = info and info.player_number or -1
+  local members = M.blitz_members(state, now, self_pn, our_pid)
+  -- The commander counts toward the quota but is never a candidate: it is the
+  -- one tank that has to survive to lead the take.
+  local have = state.is_pill_suicider and 1 or 0
+  local pool = {}
+  for _, m in ipairs(members) do
+    if m.suicider then have = have + 1 else pool[#pool + 1] = m.pn end
+  end
+  local need = want - have
+  local picked = {}
+  while need > 0 and #pool > 0 do
+    local i = math.random(#pool)
+    picked[#picked + 1] = pool[i]
+    table.remove(pool, i)
+    need = need - 1
+  end
+  if #picked > 0 then
+    local q = state._blitz_su_send
+    if not q then q = {}; state._blitz_su_send = q end
+    for _, pn in ipairs(picked) do q[#q + 1] = { pill = our_pid, pn = pn } end
+  end
+end
+
 -- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
 -- comes back with a clean slate — no stale negotiation, offer, reject,
 -- roster, watchdog, broadcast latch, or call registry leaking across the
@@ -149,6 +228,15 @@ function M.reset_blitz_state(state)
   state._blitz_new_call         = nil
   state._blitz_offer_pill       = nil
   state._blitz_pill_reject      = nil
+  -- Blitz-designated suicider is per-take and per-life: a respawn must not come
+  -- back still suiciding for a blitz that ended while it was dead. The pending
+  -- send queue goes too — those designations were for the previous life's take.
+  -- Keep a reason when we actually cancel one, so the [role] revert line says
+  -- WHY rather than going quiet; clear it otherwise so a stale reason can't
+  -- attach itself to an unrelated later revert.
+  state._blitz_su_end_why       = state.blitz_suicider and "death_respawn" or nil
+  state.blitz_suicider          = nil
+  state._blitz_su_send          = nil
   state._blitz_rebroadcast      = nil
   state._blitz_reject           = nil
   state._blitz_repick_tick      = nil
@@ -626,15 +714,59 @@ function M.update(state, info, now, world)
   -- OFF only bars the suicider role; the bot still takes the ordinary
   -- harasser slate if it was designated (that is what lets a scenario run
   -- a plain wave on a suicider map).
+  -- ── Blitz-designated suicider (TEMPORARY) ────────────────────────────────
+  -- Set by a commander's "bsu" broadcast (see comms.lua) when it tops its blitz
+  -- up to BLITZ_MIN_SUICIDERS. It lasts only as long as THAT blitz: the pill
+  -- dying or turning ours, this bot leaving the take, the commander going
+  -- silent/dying, our own death (reset_blitz_state wipes it) or the
+  -- BLITZ_SUICIDER_MAX_TICKS backstop all end it and the bot reverts to
+  -- whatever it was. Resolved BEFORE the flags below so the precedence is
+  -- explicit: permanent force > blitz temp > slate.
+  if state.blitz_suicider then
+    local bs   = state.blitz_suicider
+    local why  = nil
+    local p    = world and world.pills and world.pills[bs.pill]
+    if not p or (p.health or 0) <= 0 or p.owner == "friendly" or p.owner == "allied" then
+      why = "pill_gone"
+    elseif (now - (bs.since or now)) > (C.BLITZ_SUICIDER_MAX_TICKS or 1600) then
+      why = "timeout"
+    else
+      local g = state.goal
+      local on_it = g and (g.kind == "attack_pill" or g.kind == "capture_pill")
+                    and g.target_id == bs.pill
+      -- Short grace: the designation can land a tick or two before pick_goal
+      -- has adopted the blitz pill, and reverting on that would undo it
+      -- immediately. After the grace, being off the take really does end it.
+      if not on_it and (now - (bs.since or now)) > 50 then why = "left_take" end
+    end
+    if not why and bs.by then
+      local cs      = ally_state.get(bs.by)
+      local cactive = cs and cs.active and (now - (cs.last_tick or 0)) <= (C.SQUAD_ALLY_MAX_AGE or 1750)
+      local cdead   = state.tank_dead_at and state.tank_dead_at[bs.by]
+                      and cs and state.tank_dead_at[bs.by] > (cs.last_tick or 0)
+      if not cactive or cdead then why = "commander_gone" end
+    end
+    if why then
+      state.blitz_suicider    = nil
+      state._blitz_su_end_why = why
+    end
+  end
+
   if state.force_pill_suicider ~= nil then
     state.is_pill_suicider = state.force_pill_suicider
     -- The two flags stay mutually exclusive — a suicider must NOT also
     -- carry the harasser cost biases (×5 pill / ×0.2 travel), which are the
     -- opposite of what a suicider wants.
     state.is_harasser = (not state.force_pill_suicider) and _designated or false
+    state.suicider_src = state.force_pill_suicider and "forced" or nil
+  elseif state.blitz_suicider then
+    state.is_pill_suicider = true
+    state.is_harasser = false
+    state.suicider_src = "blitz"
   else
     state.is_pill_suicider = _designated and state._pill_suicider_map or false
     state.is_harasser = _designated and not state._pill_suicider_map
+    state.suicider_src = state.is_pill_suicider and "slate" or nil
   end
   -- One line per bot the first time the designation resolves, and again on
   -- any change: the [harass] line below only fires while the dynamic ramp

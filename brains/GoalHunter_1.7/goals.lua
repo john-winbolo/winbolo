@@ -16834,7 +16834,10 @@ function M.get_queue_status(state)
     local sui = suicider_mult_for_pool(state, pname)
     local weighted = cost_val >= 0 and (cost_val * pw * sui) or -1
     if sui ~= 1.0 and formula ~= "" then
-      formula = formula .. string.format(" * suicider{%.1f}", sui)
+      -- Name the RULE that made this bot a suicider (forced token / blitz
+      -- designation at GO / harasser slate) — the surcharge is meaningless
+      -- without knowing which one is in force and whether it is temporary.
+      formula = formula .. string.format(" * suicider{%.1f, %s}", sui, tostring(state.suicider_src or "?"))
     end
 
     -- Check if this goal is on abandon cooldown or blocked
@@ -17493,9 +17496,14 @@ function M.get_pool_breakdown_json(state)
       -- numbers still reconcile (base x pw x inf x suicider + penalties = total).
       local suicider_mult = (gc and gc.suicider_mult) or 1.0
       if suicider_mult ~= 1.0 then
-        detail_formula = string.format("%s * suicider{%.1f}", detail_formula, suicider_mult)
+        detail_formula = string.format("%s * suicider{%.1f, %s}", detail_formula, suicider_mult,
+                                       tostring(state.suicider_src or "?"))
+        local _sui_bs = state.blitz_suicider
         detail_map[#detail_map + 1] = string.format(
-          "suicider:pill_suicider role -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
+          "suicider:pill_suicider role (source=%s%s) -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
+          tostring(state.suicider_src or "?"),
+          _sui_bs and string.format(", TEMPORARY for blitz pill #%s designated by p%s",
+                                    tostring(_sui_bs.pill), tostring(_sui_bs.by)) or "",
           tostring(w.kind or (gc and gc.kind) or pname), suicider_mult,
           C.PILL_SUICIDER_DEFEND_MULT or 1.0, C.PILL_SUICIDER_OTHER_MULT or 1.0)
       end
@@ -17577,7 +17585,8 @@ function M.get_pool_breakdown_json(state)
         row_summary = row_summary .. string.format(" x inf@%.1f", inf_mult)
       end
       if suicider_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x suicider{%.1f}", suicider_mult)
+        row_summary = row_summary .. string.format(" x suicider{%.1f, %s}", suicider_mult,
+                                                   tostring(state.suicider_src or "?"))
       end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then

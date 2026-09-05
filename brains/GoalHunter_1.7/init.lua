@@ -1117,6 +1117,12 @@ function Brain.think(info)
   --                          MAX caps joiners (a call at MAX reads FULL). MAX
   --                          defaults to SQUAD_MAX_SIZE + 1, raised to MIN when
   --                          MIN is bigger, so "blitz=3" alone is workable.
+  --   "blitzsuiciders=N"  -> minimum number of pill_suiciders a blitz should
+  --                          have. At GO the commander counts the suiciders
+  --                          already in the party (itself included) and
+  --                          designates that many random non-suicider SOLDIERS
+  --                          to make up the difference, TEMPORARILY, for that
+  --                          take only. 0 (the default) never designates.
   -- This block runs early in Brain.think and squad.update (which reads
   -- state.force_pill_suicider) runs much later in the same function, so the
   -- flag is already set on the bot's very first tick. Same for the portfolio
@@ -1192,6 +1198,15 @@ function Brain.think(info)
               "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
           else
             squad.set_blitz_size(mn, mx, "init_arg")
+          end
+        elseif tok:sub(1, 15) == "blitzsuiciders=" then
+          -- Minimum suiciders per blitz. Complaints latch, as above.
+          local n = tok:match("^blitzsuiciders=(%d+)$")
+          if n then
+            squad.set_blitz_min_suiciders(tonumber(n), "init_arg")
+          else
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[blitz] BAD TOKEN '%s' -- want blitzsuiciders=N, integer >= 0; IGNORED. ", tok)
           end
         else
           local n = tok:match("^deprive=(%d+)$")
@@ -1480,8 +1495,9 @@ function Brain.think(info)
       print2(string.format("[portfolio] targets back=%.2f front=%.2f aggro=%.2f util=%.2f (%s)",
                            PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO,
                            PP.TARGET_UTIL, PP.targets_source))
-      print2(string.format("[blitz] size min=%d max=%d (%s)",
-                           squad.blitz_min(), squad.blitz_max(), squad.blitz_size_source))
+      print2(string.format("[blitz] size min=%d max=%d (%s)  suiciders min=%d (%s)",
+                           squad.blitz_min(), squad.blitz_max(), squad.blitz_size_source,
+                           squad.blitz_min_suiciders(), squad.blitz_suiciders_source))
       if state._cfg_warn then print2(state._cfg_warn) end
     end
     -- Raw engine-object dump: EXACTLY what the engine handed the brain this tick
@@ -8858,6 +8874,16 @@ function Brain.think(info)
           print2(string.format("BLITZ_TX bcc t=%d (close pill=%s)", now, tostring(state._my_blitz_call)))
           state._my_blitz_call = cur_call   -- now nil
           state._my_blitz_call_tick = nil
+        end
+      elseif state._blitz_su_send and state._blitz_su_send[1] then
+        -- Blitz suicider designations queued by squad.blitz_designate_suiciders
+        -- at GO. One per tick, oldest first, and dropped from the queue only
+        -- once the send actually goes out (try_send is batched and can refuse).
+        local _d = state._blitz_su_send[1]
+        if try_send(string.format("/info bsu %d %d", _d.pill, _d.pn), 0) then
+          table.remove(state._blitz_su_send, 1)
+          print2(string.format("BLITZ_TX bsu t=%d pill=%d -> p%d (%s)",
+                 now, _d.pill, _d.pn, squad.blitz_suiciders_label()))
         end
       elseif state._blitz_rebroadcast and cur_call then
         if try_send("/info bco " .. cur_call, 0) then

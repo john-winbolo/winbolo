@@ -4897,6 +4897,12 @@ function M.update_attack_substate(goal, state, world, info)
         goal.substate            = "charge"
         goal._blitz_go           = true         -- broadcast GO (bgo) in init.lua
         state.squad_blitz_go     = true
+        -- Quorum met -> this is a real GO, so top the party up to the blitz
+        -- suicider minimum. Once per take (the goal field dies with the goal).
+        if not goal._blitz_su_done then
+          goal._blitz_su_done = true
+          squad.blitz_designate_suiciders(state, info, now, goal.target_id)
+        end
         print2(string.format("BLITZ_GO_ENROUTE t=%d set_inwait=%d (>=%d) [%s] from sub=%s -- soldiers parked, commander rushing in", now, set_inwait, squad.blitz_min(), squad.blitz_size_label(), tostring(_prev)))
         return
       end
@@ -5367,6 +5373,13 @@ function M.update_attack_substate(goal, state, world, info)
       end
       if (ready >= total and party >= bmin) or timed_out or early_go then
         state.squad_blitz_go = true        -- broadcast GO (bgo) in init.lua
+        -- Same moment the quorum is met (NOT the short-handed abandon above):
+        -- designate random soldiers until the blitz has BLITZ_MIN_SUICIDERS
+        -- suiciders. Once per take.
+        if not goal._blitz_su_done then
+          goal._blitz_su_done = true
+          squad.blitz_designate_suiciders(state, info, now, goal.target_id)
+        end
         commit_fire()
         print2(string.format("BLITZ_GO t=%d ready=%d/%d party=%d/%d set_inwait=%d timed_out=%s early=%s [%s] -> %s", now, ready, total, party, bmin, set_inwait, tostring(timed_out), tostring(early_go), squad.blitz_size_label(), goal.substate))
       end
