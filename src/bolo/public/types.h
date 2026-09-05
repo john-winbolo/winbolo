@@ -107,11 +107,13 @@ typedef struct pillsObj *pillboxes;
 struct pillsObj {
   pillbox item[MAX_PILLS];
   BYTE numPills;
-  /* Wire format ends here at SIZEOF_PILLS (145 bytes). Past it: whether each
-   * pill's square is one the server has confirmed is current, or the last
-   * square this client was told about a pill it can no longer see. Zero — the
-   * value pillsCreate's memset and every map install leave — means current, so
-   * the server's own list is never affected. */
+  /* Wire format ends here at SIZEOF_PILLS (145 bytes). Past it: what this
+   * client knows about each pill's square. One of the three PILL_SQUARE_
+   * values in pillbox.h — the server has just told us the pill is on it, we
+   * are only remembering it from the last time we were told, or we watched the
+   * pill go into a tank and come out again and the square means nothing. Zero
+   * — the value pillsCreate's memset and every map install leave — is the
+   * confirmed state, so the server's own list is never affected. */
   BYTE posStale[MAX_PILLS];
 };
 

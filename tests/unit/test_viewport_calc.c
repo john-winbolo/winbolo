@@ -232,3 +232,85 @@ int run_viewport_calc_square_pure(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* A pill this client watched get carried off draws nothing at the square it
+ * was taken from. viewportCalcSquarePure is the only thing that writes the
+ * overview's tile memory — overviewStampRect goes through it — so this is
+ * where the game view and the overview agree to show the terrain underneath
+ * instead. A pill whose square is merely remembered still draws as a pill. */
+int run_viewport_calc_pill_square_moved(void) {
+    ServerSim *sim = ut_make_running_sim("Move");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "map has no pillboxes (%u) — test needs one",
+                  pillsGetNumPills(&gs->pb));
+
+    /* A square holding neither a pill nor a base, so the tile it answers with
+     * is plain terrain and only the pill branch can change it. */
+    BYTE sqX = 0, sqY = 0;
+    bool found = FALSE;
+    int x, y;
+
+    for (x = 100; x < 160 && found == FALSE; x++) {
+        for (y = 100; y < 160 && found == FALSE; y++) {
+            if (pillsViewExistPos(&gs->pb, (BYTE)x, (BYTE)y) == FALSE &&
+                basesExistPos(&gs->bs, (BYTE)x, (BYTE)y) == FALSE) {
+                sqX = (BYTE)x;
+                sqY = (BYTE)y;
+                found = TRUE;
+            }
+        }
+    }
+    UT_ASSERT_MSG(found == TRUE,
+                  "no square clear of pills and bases in the middle of the map");
+
+    bool bareMine = FALSE;
+    BYTE bareTile = viewportCalcSquarePure(gs, 0, sqX, sqY, &bareMine);
+
+    /* Park pill 0 on it with its square only remembered — the pill has not
+     * been touched, we have just lost sight of it. */
+    gs->pb->item[0].owner = 0;
+    gs->pb->item[0].inTank = FALSE;
+    gs->pb->item[0].armour = PILLBOX_15;
+    gs->pb->item[0].x = sqX;
+    gs->pb->item[0].y = sqY;
+    pillsSetPosState(&gs->pb, 0, PILL_SQUARE_REMEMBERED);
+
+    bool rememberedMine = FALSE;
+    BYTE rememberedTile =
+        viewportCalcSquarePure(gs, 0, sqX, sqY, &rememberedMine);
+    UT_ASSERT_MSG(tileIsPillGood(rememberedTile),
+                  "remembered pill at (%u,%u): tile %u is outside "
+                  "PILL_GOOD_15..PILL_GOOD_0 (%u..%u)",
+                  sqX, sqY, rememberedTile, (BYTE)PILL_GOOD_15,
+                  (BYTE)PILL_GOOD_0);
+
+    /* Watched it go into a tank and come out somewhere we cannot see: the
+     * square reads exactly as it did before the pill was ever on it. */
+    pillsSetPosState(&gs->pb, 0, PILL_SQUARE_MOVED);
+    bool movedMine = FALSE;
+    BYTE movedTile = viewportCalcSquarePure(gs, 0, sqX, sqY, &movedMine);
+    UT_ASSERT_MSG(movedTile == bareTile,
+                  "moved pill at (%u,%u): tile %u, expected the terrain "
+                  "underneath (%u)",
+                  sqX, sqY, movedTile, bareTile);
+    UT_ASSERT_MSG(movedMine == bareMine,
+                  "moved pill at (%u,%u): mine %d, expected %d",
+                  sqX, sqY, (int)movedMine, (int)bareMine);
+
+    /* The true square arriving draws it again. */
+    pillsSetPosState(&gs->pb, 0, PILL_SQUARE_CONFIRMED);
+    bool confirmedMine = FALSE;
+    BYTE confirmedTile =
+        viewportCalcSquarePure(gs, 0, sqX, sqY, &confirmedMine);
+    UT_ASSERT_MSG(confirmedTile == rememberedTile,
+                  "confirmed pill at (%u,%u): tile %u, expected the pill tile "
+                  "(%u)",
+                  sqX, sqY, confirmedTile, rememberedTile);
+
+    serverSimDestroy(sim);
+    return 0;
+}

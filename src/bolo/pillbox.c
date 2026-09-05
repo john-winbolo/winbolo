@@ -215,7 +215,9 @@ void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
 
 /* The scan both pillsExistPos and pillsViewExistPos run. skipStale drops a pill
  * whose square this client has not been told is current, which is the
- * difference between the two. */
+ * difference between the two. A pill this client watched leave its square is
+ * dropped either way — there is nothing to draw at a square we know the pill
+ * is not on. */
 static bool pillsScanExistPos(pillboxes *value, BYTE xValue, BYTE yValue, bool skipStale) {
 	bool returnValue; /* Value to return */
 	BYTE count;       /* Looping Variable */
@@ -227,7 +229,8 @@ static bool pillsScanExistPos(pillboxes *value, BYTE xValue, BYTE yValue, bool s
 		if ((((*value)->item[count].x) == xValue)
 		&& (((*value)->item[count].y) == yValue)
 		&& (((*value)->item[count].inTank) == FALSE)
-		&& (skipStale == FALSE || ((*value)->posStale[count]) == 0)) {
+		&& (((*value)->posStale[count]) != PILL_SQUARE_MOVED)
+		&& (skipStale == FALSE || ((*value)->posStale[count]) == PILL_SQUARE_CONFIRMED)) {
 			returnValue = TRUE;
 		}
 		count++;
@@ -573,7 +576,10 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
   returnValue = PILL_EVIL_15;
 
   while (done == FALSE && count < ((*value)->numPills)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
+    /* The same skip pillsViewExistPos makes, which is asked first: two pills
+       on one square must not answer differently about which of them is there. */
+    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE
+        && ((*value)->posStale[count]) != PILL_SQUARE_MOVED) {
       /* Pillbox has been Hit */
       done = TRUE;
 
@@ -979,23 +985,83 @@ BYTE pillsGetViewPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careIn
 }
 
 /*********************************************************
-*NAME:          pillsSetPosStale
+*NAME:          pillsSetPosState
 *AUTHOR:        John Morrison
 *CREATION DATE: 5/9/26
 *LAST MODIFIED: 5/9/26
 *PURPOSE:
-*  Records whether a pill's square is the one the server
-*  says it is on right now, or the last square this client
-*  was told about a pill it can no longer see.
+*  Records what this client knows about a pill's square:
+*  one of PILL_SQUARE_CONFIRMED, PILL_SQUARE_REMEMBERED or
+*  PILL_SQUARE_MOVED.
 *
 *ARGUMENTS:
 *  value   - Pointer to the pillbox structure
 *  pillNum - Pillbox index, 0 based
-*  stale   - TRUE if the square is not known to be current
+*  state   - One of the PILL_SQUARE_ values
 *********************************************************/
-void pillsSetPosStale(pillboxes *value, BYTE pillNum, bool stale) {
+void pillsSetPosState(pillboxes *value, BYTE pillNum, BYTE state) {
   if (pillNum < MAX_PILLS) {
-    (*value)->posStale[pillNum] = (BYTE) (stale ? 1 : 0);
+    (*value)->posStale[pillNum] = state;
+  }
+}
+
+/*********************************************************
+*NAME:          pillsGetPosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns what this client knows about a pill's square, as
+*  one of the PILL_SQUARE_ values.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+BYTE pillsGetPosState(pillboxes *value, BYTE pillNum) {
+  if (pillNum < MAX_PILLS) {
+    return (*value)->posStale[pillNum];
+  }
+  return PILL_SQUARE_CONFIRMED;
+}
+
+/*********************************************************
+*NAME:          pillsUpdatePosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Folds one arriving pill update into that pill's square
+*  state. Call it before writing the new inTank, so the
+*  in-tank flag it reads is the one this client held.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  pillNum    - Pillbox index, 0 based
+*  posCurrent - The position-current bit off the wire
+*  nowInTank  - The in-tank flag that arrived
+*********************************************************/
+void pillsUpdatePosState(pillboxes *value, BYTE pillNum, bool posCurrent,
+                         bool nowInTank) {
+  bool wasInTank; /* The in-tank flag this client held */
+
+  if (pillNum >= MAX_PILLS) {
+    return;
+  }
+
+  wasInTank = (*value)->item[pillNum].inTank;
+  if (posCurrent == TRUE) {
+    /* The square arrived with the update, so it is where the pill is —
+       whatever we believed about it before. */
+    (*value)->posStale[pillNum] = PILL_SQUARE_CONFIRMED;
+  } else if (wasInTank == TRUE && nowInTank == FALSE) {
+    /* It has been put down, and we were not told where. The square we hold is
+       the one it was picked up from, which it is no longer on. */
+    (*value)->posStale[pillNum] = PILL_SQUARE_MOVED;
+  } else if ((*value)->posStale[pillNum] != PILL_SQUARE_MOVED) {
+    /* Nothing new about the square. Only a confirmed one clears the moved
+       state, so an unconfirmed update cannot talk us back into drawing it. */
+    (*value)->posStale[pillNum] = PILL_SQUARE_REMEMBERED;
   }
 }
 
@@ -1006,7 +1072,8 @@ void pillsSetPosStale(pillboxes *value, BYTE pillNum, bool stale) {
 *LAST MODIFIED: 5/9/26
 *PURPOSE:
 *  Returns whether a pill's square is one this client has
-*  not been told is current.
+*  not been told is current — remembered or moved, as
+*  against confirmed.
 *
 *ARGUMENTS:
 *  value   - Pointer to the pillbox structure
@@ -1014,7 +1081,7 @@ void pillsSetPosStale(pillboxes *value, BYTE pillNum, bool stale) {
 *********************************************************/
 bool pillsIsPosStale(pillboxes *value, BYTE pillNum) {
   if (pillNum < MAX_PILLS) {
-    return (*value)->posStale[pillNum] != 0;
+    return (*value)->posStale[pillNum] != PILL_SQUARE_CONFIRMED;
   }
   return FALSE;
 }

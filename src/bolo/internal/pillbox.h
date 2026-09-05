@@ -70,6 +70,15 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
     return (b & PILL_POS_CURRENT) != 0;
 }
 
+/* Values in pillsObj::posStale. Confirmed means the server has just told us
+ * this is where the pill is. Remembered means it has not, but the square is
+ * still the last one we were given and a pill that has not been picked up
+ * cannot have left it. Moved means we watched it go into a tank and come out
+ * again without ever being told where, so the square means nothing. */
+#define PILL_SQUARE_CONFIRMED  0
+#define PILL_SQUARE_REMEMBERED 1
+#define PILL_SQUARE_MOVED      2
+
 /* A pillbox range is 8 map squares or 2048 world units */
 #define PILLBOX_RANGE 2048
 
@@ -404,11 +413,12 @@ BYTE pillsGetViewPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careIn
 *CREATION DATE: 5/9/26
 *LAST MODIFIED: 5/9/26
 *PURPOSE:
-*  pillsExistPos without the position-current filter: is
-*  there a pill here as far as this client last saw. The
-*  view builder draws from this, so a pill you have lost
-*  sight of stays on screen at the square you last saw it
-*  on, rather than the ground underneath showing through.
+*  pillsExistPos for the view: is there a pill here as far
+*  as this client last saw. A pill you have lost sight of
+*  stays on screen at the square you last saw it on rather
+*  than the ground underneath showing through, but one you
+*  watched get carried off — PILL_SQUARE_MOVED — is not
+*  drawn anywhere until its real square arrives.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -418,23 +428,58 @@ BYTE pillsGetViewPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careIn
 bool pillsViewExistPos(pillboxes *value, BYTE xValue, BYTE yValue);
 
 /*********************************************************
-*NAME:          pillsSetPosStale
+*NAME:          pillsSetPosState
 *AUTHOR:        John Morrison
 *CREATION DATE: 5/9/26
 *LAST MODIFIED: 5/9/26
 *PURPOSE:
-*  Records whether a pill's square is the one the server
-*  says it is on right now, or the last square this client
-*  was told about a pill it can no longer see. Only a
-*  client ever sets this; the server's own list is all
-*  current.
+*  Records what this client knows about a pill's square:
+*  one of PILL_SQUARE_CONFIRMED, PILL_SQUARE_REMEMBERED or
+*  PILL_SQUARE_MOVED. Only a client ever sets this; every
+*  square in the server's own list is confirmed.
 *
 *ARGUMENTS:
 *  value   - Pointer to the pillbox structure
 *  pillNum - Pillbox index, 0 based
-*  stale   - TRUE if the square is not known to be current
+*  state   - One of the PILL_SQUARE_ values
 *********************************************************/
-void pillsSetPosStale(pillboxes *value, BYTE pillNum, bool stale);
+void pillsSetPosState(pillboxes *value, BYTE pillNum, BYTE state);
+
+/*********************************************************
+*NAME:          pillsGetPosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns what this client knows about a pill's square,
+*  as one of the PILL_SQUARE_ values.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+BYTE pillsGetPosState(pillboxes *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          pillsUpdatePosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Folds one arriving pill update into that pill's square
+*  state. Call it BEFORE writing the new inTank, so it can
+*  see the flag the client held: a pill that was in a tank
+*  and is not any more, with no square sent, was put down
+*  somewhere this client was never told about.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  pillNum    - Pillbox index, 0 based
+*  posCurrent - The position-current bit off the wire
+*  nowInTank  - The in-tank flag that arrived
+*********************************************************/
+void pillsUpdatePosState(pillboxes *value, BYTE pillNum, bool posCurrent,
+                         bool nowInTank);
 
 /*********************************************************
 *NAME:          pillsIsPosStale
@@ -443,7 +488,8 @@ void pillsSetPosStale(pillboxes *value, BYTE pillNum, bool stale);
 *LAST MODIFIED: 5/9/26
 *PURPOSE:
 *  Returns whether a pill's square is one this client has
-*  not been told is current.
+*  not been told is current — remembered or moved, as
+*  against confirmed.
 *
 *ARGUMENTS:
 *  value   - Pointer to the pillbox structure

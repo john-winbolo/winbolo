@@ -907,19 +907,27 @@ int run_view_cycle_stale_pill(void);
  * still answer for it at the square it was last seen on; two pills on one
  * square resolve to the one that is really there in either order; the client's
  * apply path sets the flag from the snapshot bit on both the pill block and
- * EVENT_PILL_UPDATE, writing the square as sent either way; and a server's own
- * list, which never carries a flag, answers exactly as it did. */
+ * EVENT_PILL_UPDATE, writing the square as sent either way; a pill watched
+ * going into a tank and coming out again with no square sent stops being drawn
+ * anywhere until its real square arrives, while a pill nobody has touched
+ * keeps drawing; and a server's own list, which never carries a flag, answers
+ * exactly as it did. */
 int run_pill_pos_current_lookups(void);
 int run_pill_pos_current_num_split(void);
 int run_pill_pos_current_duplicate_square(void);
 int run_pill_pos_current_snapshot_apply(void);
 int run_pill_pos_current_server_unchanged(void);
+int run_pill_pos_current_moved_state(void);
+int run_pill_pos_current_carry_cycle(void);
 
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,
  * never yields TANK_TRANSPARENT, and resolves pill and base squares by the
- * alliance of the player being asked about. */
+ * alliance of the player being asked about. It draws a pill at a square this
+ * client only remembers, and the terrain underneath at one the pill was
+ * carried away from. */
 int run_viewport_calc_square_pure(void);
+int run_viewport_calc_pill_square_moved(void);
 
 /* Overview region geometry (test_overview_map.c): overviewMapBuildRegions
  * gives the tank a 29x29 block and every viewable pillbox a 15x15 one,

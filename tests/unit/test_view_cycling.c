@@ -834,7 +834,7 @@ int run_view_cycle_stale_pill(void) {
     vc_set_pills(gs, 0, 3);
     BYTE p0x = gs->pb->item[0].x, p0y = gs->pb->item[0].y;
     BYTE p1x = gs->pb->item[1].x, p1y = gs->pb->item[1].y;
-    pillsSetPosStale(&gs->pb, 1, TRUE);
+    pillsSetPosState(&gs->pb, 1, PILL_SQUARE_REMEMBERED);
 
     /* The premise: gameplay has already let go of it. */
     UT_ASSERT_MSG(pillsExistPos(&gs->pb, p1x, p1y) == FALSE,
@@ -881,8 +881,8 @@ int run_view_cycle_stale_pill(void) {
 
     /* With every pill's square merely remembered — a player who has seen none
      * of them this round — entering pill view still parks on one. */
-    pillsSetPosStale(&gs->pb, 0, TRUE);
-    pillsSetPosStale(&gs->pb, 2, TRUE);
+    pillsSetPosState(&gs->pb, 0, PILL_SQUARE_REMEMBERED);
+    pillsSetPosState(&gs->pb, 2, PILL_SQUARE_REMEMBERED);
     vp.viewKind = VIEW_KIND_TANK;
     viewportPanInView(&vp, gs, &scroll, gs->tanks[0], VIEW_KIND_PILL, &in, 0, 0);
     UT_ASSERT_MSG(vp.viewKind == VIEW_KIND_PILL && vp.viewTarget == 0,

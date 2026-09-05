@@ -444,16 +444,21 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
+            /* Before the fields below, so the in-tank flag this reads is the
+             * one we held: a pill that was in a tank and is not any more,
+             * arriving without its square, has been put down somewhere we were
+             * never told about. */
+            pillsUpdatePosState(&csPtr->sim.pb, idx,
+                                pillPosCurrentFromByte(events[i].data[4]),
+                                pillInTankFromByte(events[i].data[4]));
+            /* The square is written as sent — for a pill we cannot see it is
+             * the one the server has us holding, which is what the checksum is
+             * taken over. The bit says whether the pill is on it now. */
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
             (*csPtr->sim.pb).item[idx].armour = pillArmourFromByte(events[i].data[4]);
             (*csPtr->sim.pb).item[idx].inTank = pillInTankFromByte(events[i].data[4]) ? TRUE : FALSE;
-            /* The square is written as sent — for a pill we cannot see it is
-             * the one the server has us holding, which is what the checksum is
-             * taken over. The bit says whether the pill is on it now. */
-            pillsSetPosStale(&csPtr->sim.pb, idx,
-                             !pillPosCurrentFromByte(events[i].data[4]));
           }
         }
         break;
@@ -1121,16 +1126,20 @@ void clientApplySnapshot(ClientSim *csPtr,
   /* Apply pill snapshots */
   if (pillSnaps != NULL && csPtr->sim.pb != NULL) {
     for (i = 0; i < pillCount && i < MAX_PILLS; i++) {
+      /* Before the fields below, so the in-tank flag this reads is the one we
+       * held: a pill that was in a tank and is not any more, arriving without
+       * its square, has been put down somewhere we were never told about. */
+      pillsUpdatePosState(&csPtr->sim.pb, (BYTE)i,
+                          pillPosCurrentFromByte(pillSnaps[i].armourInTank),
+                          pillInTankFromByte(pillSnaps[i].armourInTank));
+      /* The square is written as sent — for a pill we cannot see it is the one
+       * the server has us holding, which is what the checksum is taken over.
+       * The bit says whether the pill is on it now. */
       (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
       (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
       (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
       (*csPtr->sim.pb).item[i].armour = pillArmourFromByte(pillSnaps[i].armourInTank);
       (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].armourInTank) ? TRUE : FALSE;
-      /* The square is written as sent — for a pill we cannot see it is the one
-       * the server has us holding, which is what the checksum is taken over.
-       * The bit says whether the pill is on it now. */
-      pillsSetPosStale(&csPtr->sim.pb, (BYTE)i,
-                       !pillPosCurrentFromByte(pillSnaps[i].armourInTank));
     }
   }
 
