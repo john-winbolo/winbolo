@@ -1925,6 +1925,7 @@ STR_DLGLOBBY_VIEW_OFF=Désactivé
 STR_DLGLOBBY_VIEW_DECAY_SECS=s
 STR_DLGLOBBY_CLASSIC_MODE_CB=Mode classique
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Règle Vue pillbox sur Touche, et Vue base et Vue tanks\nalliés sur Désactivé, puis les maintient ainsi. En le\ndésactivant, ces trois réglages restent là où le mode\nclassique les a laissés.\nIl masque aussi la vue d'ensemble de la carte et la carte\nen plein écran sur l'écran de chaque joueur. Le serveur\nenvoie les mêmes données dans les deux cas : c'est donc\nune règle de confort, pas une garantie face à un client\nmodifié.
+STR_MENU_CLASSIC_MODE_TIP=Le serveur a le mode classique activé, cette vue est donc désactivée.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Par défaut

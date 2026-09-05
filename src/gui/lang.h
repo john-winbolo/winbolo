@@ -1570,6 +1570,7 @@
 #define STR_DLGLOBBY_VIEW_DECAY_SECS        2002
 #define STR_DLGLOBBY_CLASSIC_MODE_CB        2008
 #define STR_DLGLOBBY_CLASSIC_MODE_TIP       2009
+#define STR_MENU_CLASSIC_MODE_TIP           2010
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468

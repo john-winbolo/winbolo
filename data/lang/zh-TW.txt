@@ -1923,6 +1923,7 @@ STR_DLGLOBBY_VIEW_OFF=關閉
 STR_DLGLOBBY_VIEW_DECAY_SECS=秒
 STR_DLGLOBBY_CLASSIC_MODE_CB=經典模式
 STR_DLGLOBBY_CLASSIC_MODE_TIP=將碉堡顯示設為「按鍵」，將基地顯示與友軍坦克顯示設為\n「關閉」，並維持不變。再次關閉經典模式時，這三項會\n停留在經典模式設定的位置。\n它還會在每位玩家自己的螢幕上隱藏地圖總覽與全螢幕地圖。\n無論哪種情況伺服器送出的資料都相同，因此這只是便利\n規則，並不能保證對修改過的用戶端有效。
+STR_MENU_CLASSIC_MODE_TIP=伺服器已開啟經典模式，因此此檢視已關閉。
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=外觀
 STR_DLGSKIN_DEFAULT=預設

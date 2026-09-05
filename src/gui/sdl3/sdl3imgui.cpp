@@ -724,6 +724,15 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint
     }
 }
 
+/* Classic mode as last seen from the connected server, refreshed once a
+ * frame in sdl3ImguiPumpAndRender. A file static rather than a ClientSim
+ * read at each site because the two suppression points below are reached
+ * from callers that have no ClientSim in hand. Spectators are exempt: they
+ * are on the delayed god-view stream and are not competing. */
+static bool s_classicMode = false;
+
+static bool classicModeActive(void) { return s_classicMode; }
+
 /* The overview is the one pop-out whose geometry is remembered, so every
  * place that opens it comes through here rather than calling popOutCreate
  * with a fixed size. A saved size below 200 px is treated as junk and
@@ -746,6 +755,11 @@ static void mapOverviewOpen(void) {
        alone: a player who had the pop-out flagged to reopen gets it back the
        moment they are back in classic mode. */
     if (gameFrontFullScreen) return;
+    /* The server is holding the player in the classic framed view, so the
+       pop-out does not open while that lasts. gameFrontShowMapOverview is
+       left alone for the same reason as above: it is the player's own
+       preference and it hands the pop-out back on the next server. */
+    if (classicModeActive()) return;
     bool firstCreate = (s_popMapOverview.window == nullptr);
     int w = gameFrontOverviewW;
     int h = gameFrontOverviewH;
@@ -807,6 +821,11 @@ static void overviewInWindowSet(bool on) {
  * first because overviewInWindowSet reads it — turning the mode off in game
  * has to clear it before the call or the window never leaves full screen. */
 static void overviewInWindowChoose(bool on) {
+    /* Classic mode refuses entry only. Leaving still has to work, or a
+       player already in the map view when they joined would be stuck in it.
+       Ahead of the assignment below on purpose: gameFrontFullScreen is the
+       player's own preference and must survive a classic-mode server. */
+    if (on && classicModeActive()) return;
     gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
@@ -3248,16 +3267,24 @@ static void renderMenuBar(ClientSim *cs) {
             ImGui::Separator();
             /* The overview draws the map the player has seen, so it stays
                greyed out until a game is running — and all the way through
-               full screen mode, which fills the window with that same map. */
+               full screen mode, which fills the window with that same map.
+               Classic mode greys both out as well, and that is the one
+               reason worth a tooltip: waiting for a game to start explains
+               itself, a server rule does not. */
+            const bool classicMenu = classicModeActive();
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
-                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen)) {
+                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen && !classicMenu)) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
+            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
-                                cs != nullptr && clientSimIsRunning(cs))) {
+                                cs != nullptr && clientSimIsRunning(cs) && !classicMenu)) {
                 overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
             }
+            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
@@ -4785,9 +4812,10 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
     s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
-                             !gameFrontFullScreen);
+                             !gameFrontFullScreen && !classicModeActive());
     s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
-    s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs));
+    s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
+                                  !classicModeActive());
 
     int dispW = 99999, dispH = 99999;
     if (s_window) {
@@ -4936,6 +4964,12 @@ static void drainInGameNameReject(ClientSim *cs) {
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
+
+    /* One read a frame, ahead of the menu bars and the suppression points
+       below. A frame of staleness costs nothing: the setting is lobby-only
+       and cannot change while a game runs. */
+    s_classicMode = (cs != nullptr && !clientSimIsSpectator(cs) &&
+                     clientSimGetClassicMode(cs));
 
     /* Sync Steam Input action set to current gameplay context.  Must
        run before any consumer of action data (edge triggers below

@@ -1966,3 +1966,4 @@ STR_DLGLOBBY_VIEW_OFF=Desactivado
 STR_DLGLOBBY_VIEW_DECAY_SECS=s
 STR_DLGLOBBY_CLASSIC_MODE_CB=Modo clásico
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Ajusta Vista de búnker a Tecla, y Vista de base y Vista\nde tanques aliados a Desactivado, y las mantiene así. Al\ndesactivarlo, esas tres se quedan donde el modo clásico\nlas dejó.\nTambién oculta el mapa general y el mapa a pantalla\ncompleta en la pantalla de cada jugador. El servidor envía\nlos mismos datos en ambos casos, así que es una regla de\ncomodidad, no una garantía frente a un cliente modificado.
+STR_MENU_CLASSIC_MODE_TIP=El servidor tiene el modo clásico activado, así que esta vista está desactivada.

@@ -1923,6 +1923,7 @@ STR_DLGLOBBY_VIEW_OFF=끄기
 STR_DLGLOBBY_VIEW_DECAY_SECS=초
 STR_DLGLOBBY_CLASSIC_MODE_CB=클래식 모드
 STR_DLGLOBBY_CLASSIC_MODE_TIP=토치카 표시를 '키'로, 기지 표시와 아군 탱크 표시를\n'끄기'로 설정하고 그대로 유지합니다. 다시 끄더라도\n이 세 가지는 클래식 모드가 설정한 값으로 남습니다.\n또한 각 플레이어의 화면에서 지도 전체 보기와 전체 화면\n지도를 숨깁니다. 서버는 어느 쪽이든 같은 데이터를\n보내므로, 이는 편의를 위한 규칙일 뿐 변조된 클라이언트에\n대한 보장은 아닙니다.
+STR_MENU_CLASSIC_MODE_TIP=서버가 클래식 모드이므로 이 보기는 꺼져 있습니다.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=스킨
 STR_DLGSKIN_DEFAULT=기본값
