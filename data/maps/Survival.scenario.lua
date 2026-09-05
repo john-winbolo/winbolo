@@ -178,7 +178,11 @@ local spawned       = {}    -- slots this wave's spawns actually landed in
 local spawn_fail_said = false  -- the one "no free slot" report per wave
 local base_owner_slot = {}  -- horde base k -> the slot that should own it
 local pill_owner_slot = {}  -- wave pill n -> the slot that should own it
-local restocked     = 0     -- horde bases topped up so far this wave
+-- Horde bases topped up so far this wave, as a SET keyed by base number. A
+-- base is restocked once per owner change, and it now changes hands more
+-- than once in a wave (an interim owner first, then its real one), so
+-- counting restock CALLS would report more bases than the map has.
+local restocked_bases = {}
 
 -- The staggered DEPARTURE queue (see VANISH_SPACING_TICKS).
 local vanishing     = false -- a wave is filing off the field right now
@@ -390,32 +394,68 @@ end
 -- keeps the newswire to the single "[bases] horde restocked ..." line it
 -- always had, while never leaving a base empty for an attacker that has
 -- already landed on it.
+-- A wave pill this script may still stamp: not carried (it is wherever its
+-- tank is), and not flying DEFENDER colours (one the humans captured stays
+-- theirs). NEUTRAL counts as stampable — the engine reports it as 255,
+-- which is what the "> 5" test is really catching.
+local function pill_stampable(pn, game)
+  local pi = game.pill(pn)
+  if pi == nil or pi.in_tank then return false end
+  local o = pi.owner
+  return o == nil or o > 5
+end
+
 local function stamp_owner_slot(game, s)
-  local n = 0
   for k = 1, HORDE_BASES do
     if base_owner_slot[k] == s then
       base_owner_slot[k] = nil
       game.set_base_owner(k, s)
-      n = n + restock_quiet(game, k, k)
+      if restock_quiet(game, k, k) > 0 then restocked_bases[k] = true end
     end
   end
   for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
     if pill_owner_slot[pn] == s then
       pill_owner_slot[pn] = nil
       -- Same test the one-shot pass used to make, just made now instead
-      -- of at wave start: a pill the DEFENDERS took during the break (or
-      -- since this wave started arriving) stays theirs, and a carried one
-      -- is wherever its tank is.
-      local pi = game.pill(pn)
-      if pi and not pi.in_tank then
-        local o = pi.owner
-        if o == nil or o > 5 then
-          game.set_pill_owner(pn, s)
-        end
-      end
+      -- of at wave start.
+      if pill_stampable(pn, game) then game.set_pill_owner(pn, s) end
     end
   end
-  return n
+end
+
+-- INTERIM OWNER for the rest of the wave, run once, right after the wave's
+-- FIRST attacker lands.
+--
+-- When the last bot of a wave leaves, the engine NEUTRALISES everything
+-- that wave owned — the horde's shore bases and every pillbox the wave
+-- built during its five minutes. A neutral pill shoots at everybody, so
+-- between waves the map is littered with guns firing on the defenders.
+-- The old all-at-once spawn re-stamped the lot on the wave tick and the
+-- neutral spell lasted a single tick; once arrivals were spread out, a
+-- pill whose own owner slot lands ninth sat neutral and firing for nine
+-- seconds. A real game found exactly that ("some of the bots' pillboxes
+-- went to neutral when wave 2 started").
+--
+-- So the first attacker ashore takes PROVISIONAL ownership of everything
+-- still pending. base_owner_slot / pill_owner_slot are deliberately NOT
+-- cleared here: every later arrival still re-stamps its own share as it
+-- lands, so ownership converges on the spoke mapping over the wave's
+-- arrival, and finish_wave_spawn's leftover pass still covers slots that
+-- never land at all. From the wave tick on, nothing wave-owned is neutral.
+local function stamp_interim(game, s)
+  for k = 1, HORDE_BASES do
+    if base_owner_slot[k] ~= nil then
+      game.set_base_owner(k, s)
+      -- This handover drains the base, and so does the real owner's
+      -- re-stamp later, so both have to top it back up.
+      if restock_quiet(game, k, k) > 0 then restocked_bases[k] = true end
+    end
+  end
+  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+    if pill_owner_slot[pn] ~= nil and pill_stampable(pn, game) then
+      game.set_pill_owner(pn, s)
+    end
+  end
 end
 
 -- The wave has finished arriving: hand out anything still unowned, report
@@ -438,12 +478,16 @@ local function finish_wave_spawn(game)
     for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
       if pill_owner_slot[pn] ~= nil then pill_owner_slot[pn] = low end
     end
-    restocked = restocked + stamp_owner_slot(game, low)
+    stamp_owner_slot(game, low)
   end
   base_owner_slot = {}
   pill_owner_slot = {}
 
-  restock_report(game, 1, restocked, "horde")
+  -- Count distinct bases, not restock calls — each base was topped up once
+  -- for the interim owner and again for its real one.
+  local n = 0
+  for _ in pairs(restocked_bases) do n = n + 1 end
+  restock_report(game, 1, n, "horde")
 
   -- The 10 outer pills (7..16) start DEAD ON THE GROUND, parked at
   -- their map spots out on the old ring (r=26) the horde's bases used
@@ -481,7 +525,12 @@ local function pump_spawn_queue(game, tick)
     -- arrivals spread over seconds, stamping ahead of time would leave
     -- each base owned by an empty slot — hostile to both sides — for
     -- seconds instead of the single tick the old all-at-once spawn took.
-    restocked = restocked + stamp_owner_slot(game, p)
+    stamp_owner_slot(game, p)
+    -- ...and the FIRST one ashore also takes provisional ownership of
+    -- everything the rest of the wave hasn't arrived to claim yet, so no
+    -- wave base or wave-built pill is left neutral (and shooting at
+    -- everybody) while the other nine file in. See stamp_interim.
+    if #spawned == 1 then stamp_interim(game, p) end
   elseif not spawn_fail_said then
     -- Every slot is taken. Skip this attacker and carry on with the rest;
     -- say so once per wave rather than once per failed spawn.
@@ -543,7 +592,7 @@ local function spawn_wave(game)
   spawn_left = WAVE_SIZE
   spawn_next_at = nil          -- the first attacker rides the wave's own tick
   spawn_fail_said = false
-  restocked = 0
+  restocked_bases = {}
 
   wave_ends_at = game.tick() + WAVE_LIMIT
   last_min_mark = nil
