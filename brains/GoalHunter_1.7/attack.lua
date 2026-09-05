@@ -181,8 +181,16 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 end
 
 -- Enter swerve substate. Centralises the duplicated swerve-entry
--- setup (timing, direction, pill-dead flag) so all 4 entry points
--- (charge, engage-kill, engage-dodge, shoot_pill) share one path.
+-- setup (timing, direction, pill-dead flag) so all 6 entry points
+-- (charge-kill, charge-defensive, engage-kill, engage-dodge,
+-- shoot_pill, lgm-near) share one path.
+--
+-- A pill_suicider NEVER gets here: every call site is gated on
+-- `not state.is_pill_suicider` (defensive swerves are cancelled, the
+-- pill-dead "kill" swerves run suicider_kill_handoff instead). This is
+-- the single choke point that sets substate="swerve", so the
+-- BRAIN_DEBUG_MODE SWERVE_ENTER line below is the proof of that rule:
+-- a suicider must emit zero SWERVE_ENTER lines over a whole game.
 --
 -- mode:
 --   "kill"      — pill dead or enough shots fired (offensive swerve)
@@ -190,6 +198,11 @@ end
 local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
 local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
   local now = state.tick or 0
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("SWERVE_ENTER t=%d mode=%s sub=%s tid=%s pill=(%d,%d) suicider=%s",
+      now, tostring(mode), tostring(goal.substate), tostring(goal.target_id),
+      pmx, pmy, tostring(state.is_pill_suicider)))
+  end
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
   goal.substate    = "swerve"
@@ -376,6 +389,43 @@ local function handoff_to_capture_pill(state, world, info, pid, now)
     now, pid, p.mx, p.my))
   return true
 end
+-- Pill-suicider post-kill handoff. A suicider NEVER swerves, in any situation,
+-- so where a normal tank enters the "kill" swerve the tick its pill dies and
+-- runs the capture handoff when that swerve FINISHES, the suicider runs the
+-- same handoff immediately — no swerve, straight from firing to driving onto
+-- the body.
+--
+-- Mirrors the pill-dead branch of the swerve-completion block exactly:
+-- mark_kill_pickup -> clear_attack_goal -> handoff_to_capture_pill, with the
+-- same fallback print when the handoff refuses (ally already capturing, pill
+-- carried/gone) and the same command_goal semantics — that branch does NOT
+-- release state.command_goal on a dead pill (only the pill-ALIVE exits do), so
+-- neither do we. _swerve_* bookkeeping is deliberately not written: those
+-- fields are read only by the swerve substate handler and the hud_swerve_debug
+-- overlay, and clear_attack_goal wipes the whole goal on the next line anyway.
+--
+-- Callers MUST `return` immediately after calling this: clear_attack_goal
+-- mutates state.goal in place (kind="none", every other field wiped), so the
+-- caller's cached `goal` local is no longer an attack_pill goal.
+local function suicider_kill_handoff(goal, state, world, info, now, site)
+  local pid = goal.target_id
+  local gmx, gmy = goal.mx, goal.my
+  mark_kill_pickup(state, pid, gmx, gmy, now)
+  clear_attack_goal(state, "pill dead, suicider: straight to capture")
+  local took = handoff_to_capture_pill(state, world, info, pid, now)
+  if took then
+    print(string.format(TAG ..
+      " ATTACK: pill dead, suicider: straight to capture (site=%s) — taking capture_pill on it", site))
+  else
+    print(string.format(TAG ..
+      " ATTACK: pill dead, suicider: straight to capture (site=%s) — releasing to capture_pill", site))
+  end
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("SWERVE_SKIP t=%d site=%s reason=pill_suicider pill_dead=1 handoff=%s pill=(%s,%s) tid=%s",
+      now, site, tostring(took), tostring(gmx), tostring(gmy), tostring(pid)))
+  end
+end
+
 M.enter_swerve      = enter_swerve
 
 local _EMPTY = {}
@@ -6454,6 +6504,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- in-flight prediction (on_target_in_flight >= hp), which stops one shot
     -- short if any in-flight shell diverges. Swerve only once hp hits 0.
     if pill_hp <= 0 then
+      -- Pill-suicider: no kill swerve either — it goes straight from charging
+      -- the pill to capturing the body (same handoff the swerve-done block runs).
+      if state.is_pill_suicider then
+        suicider_kill_handoff(goal, state, world, info, now, "charge")
+        return
+      end
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -6484,8 +6540,22 @@ function M.update_attack_substate(goal, state, world, info)
     -- dead-pill handoff (rush / capture / exit) runs exactly as normal.
     -- A pill_suicider is excluded on the same line as the ammo-deprived decoy,
     -- and for the same reason: its job is to stay on the pill. It charges
-    -- through the return fire instead of peeling off. (The pill-DEAD swerve
-    -- above is untouched — that one is the capture/exit handoff, not a dodge.)
+    -- through the return fire instead of peeling off. (The pill-DEAD case above
+    -- returns before this block for a suicider — it hands straight to
+    -- capture_pill, so a suicider never swerves for any reason at all.)
+    -- Debug-only: log the skip when this WOULD have swerved. Deliberately
+    -- re-derives the two triggers instead of moving the suicider test inside the
+    -- block, so commit_soak_finish (a one-time committing side effect) keeps
+    -- being skipped for suiciders exactly as before.
+    -- (single-line condition on purpose: lua_strip's --strip-block only removes
+    -- the FIRST line of an `if BRAIN_DEBUG_MODE` header, so a wrapped condition
+    -- would leave dangling `and ...` lines in opt/.)
+    if BRAIN_DEBUG_MODE and state.is_pill_suicider and C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 and not state.ammo_deprived and ((goal._charge_hits_total or 0) >= (C.ATTACK_CURVE_AFTER_HITS or 3) or (goal._kill_attempt and (goal._on_target_in_flight or 0) >= (pill.health or 0))) then
+      print2(string.format(
+        "SWERVE_SKIP t=%d site=charge_defensive reason=pill_suicider hits=%s kill_attempt=%s hp=%s",
+        now, tostring(goal._charge_hits_total), tostring(goal._kill_attempt),
+        tostring(pill.health)))
+    end
     if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0
        and not state.ammo_deprived and not state.is_pill_suicider then
       local _soak_ok = commit_soak_finish(goal, state, info)
@@ -7152,6 +7222,12 @@ function M.update_attack_substate(goal, state, world, info)
                         and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
     if pill_hp <= 0 then
       -- Pill actually dead → kill swerve (rush to capture after).
+      -- Pill-suicider: no swerve at all — run the post-kill capture handoff
+      -- right here instead of after a swerve, then bail (goal is wiped).
+      if state.is_pill_suicider then
+        suicider_kill_handoff(goal, state, world, info, now, "shoot_pill_ppt")
+        return
+      end
       should_swerve = true
       pill_dead     = true
     elseif goal._kill_attempt and on_target_in_flight >= pill_hp then
@@ -7167,8 +7243,9 @@ function M.update_attack_substate(goal, state, world, info)
       should_swerve = true
     end
     -- Pill-suicider: cancel every DEFENSIVE swerve (pill still alive — the
-    -- kill-locked and hits-taken exits above). The pill-dead branch keeps its
-    -- swerve: that is the rush-to-capture handoff, not a dodge.
+    -- kill-locked and hits-taken exits above). The pill-dead case never reaches
+    -- here: it returned above through suicider_kill_handoff, because a suicider
+    -- does not swerve in ANY situation — not even the rush-to-capture one.
     if should_swerve and not pill_dead and state.is_pill_suicider then
       should_swerve = false
       if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_SKIP t=%d site=shoot_pill_ppt reason=pill_suicider hits=%s hp=%d", now, tostring(goal._shoot_hits_total), pill_hp)) end
@@ -7210,6 +7287,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- the in-flight prediction, which stops a shot short if a shell diverges.
     local on_target_in_flight = goal._on_target_in_flight or 0
     if pill_hp <= 0 then
+      -- Pill-suicider: no kill swerve — hand straight to capture_pill on the
+      -- body we just made, then bail out (clear_attack_goal wiped `goal`).
+      if state.is_pill_suicider then
+        suicider_kill_handoff(goal, state, world, info, now, "engage")
+        return
+      end
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -7248,10 +7331,11 @@ function M.update_attack_substate(goal, state, world, info)
                             and not _tank_finish
       -- Pill-suicider: hits taken and a locked kill are NOT reasons to peel off
       -- — it stands in the fire and keeps shooting until the pill dies (the
-      -- pill_hp<=0 branch above then runs the normal kill swerve / capture
-      -- handoff). The crosshairs_off exit below is left alone: that one isn't a
-      -- dodge, it means we can no longer hit anything from here, and a suicider
-      -- with no shot has nothing to be brave about.
+      -- pill_hp<=0 branch above then hands straight to capture_pill with no
+      -- swerve at all). The crosshairs_off exit below is left alone: that one
+      -- isn't a dodge, it means we can no longer hit anything from here, and a
+      -- suicider with no shot has nothing to be brave about — but it routes to
+      -- post_engage, never to a swerve.
       if should_swerve and state.is_pill_suicider then
         should_swerve = false
         if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_SKIP t=%d site=engage_dodge reason=pill_suicider hits=%s kill_locked=%s", now, tostring(goal._engage_hits), tostring(_kill_locked))) end
@@ -7290,7 +7374,13 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
         else
-          -- Pill is calm — go straight to loiter/refuel decision
+          if BRAIN_DEBUG_MODE and state.is_pill_suicider and (pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked) then
+            print2(string.format(
+              "SWERVE_SKIP t=%d site=engage_dodge_anger reason=pill_suicider anger=%.2f kill_locked=%s xhair_off=%s",
+              now, pill_anger, tostring(_kill_locked), tostring(crosshairs_off)))
+          end
+          -- Pill is calm (or we're a suicider, which never dodges) — go
+          -- straight to loiter/refuel decision
           goal.substate = "post_engage"
           goal._post_engage_tick = now
         end

@@ -3791,6 +3791,10 @@ function Brain.think(info)
         elseif pill_dead and FIRING_SUBS[sub] then
           -- Keep the goal valid — attack.lua's firing handler enters swerve this
           -- tick (charge:4462 / shoot_pill:4977 / engage). Don't invalidate.
+          -- (A pill_suicider never swerves: those same three sites instead run
+          -- the post-kill capture handoff this tick, which installs a
+          -- capture_pill goal on the body. Either way the goal must survive
+          -- this check so the firing handler gets to run.)
           -- Our shots just dropped this pill to 0 → claim the fresh-kill pickup
           -- so Override 3b grabs the body HARD (ignoring refuel/flee).
           attack.mark_kill_pickup(state, state.goal.target_id, gmx, gmy, now)
