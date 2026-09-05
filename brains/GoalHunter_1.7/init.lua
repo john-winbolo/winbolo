@@ -1197,15 +1197,14 @@ function Brain.think(info)
   --                          "bsu" suicider designations. It still fights and
   --                          takes pills SOLO, exactly as if no ally were in
   --                          range. No constant — blitzing is on by default.
-  --   "noclaim"           -> ignore allies' CLAIMS on live pills: pool 6
-  --                          (attack_pill) rows never take an ally_claimed
-  --                          REJECT, so several bots can sweep the same pill at
-  --                          once and share the fire. It also asks for nothing
-  --                          (no stq steal requests — nothing to steal) and
-  --                          still answers an ally's stq with "we hold" as
-  --                          before. Pool 4 (capture_pill / dead-pill scooping)
-  --                          de-confliction and the refuel soft penalty are
-  --                          UNCHANGED. No constant — claiming is on by default.
+  --   "noclaimdead"       -> ignore allies' CLAIMS on DEAD pills: pool 4
+  --                          (capture_pill) rows never take an ally_claimed
+  --                          REJECT, so several bots race to scoop the same
+  --                          body and draw fire on the way in. Pool 6
+  --                          (attack_pill on a LIVE pill) keeps today's claim /
+  --                          steal de-confliction, and the refuel soft penalty
+  --                          is UNCHANGED. No constant — claiming is on by
+  --                          default.
   --   "refuel=X"          -> float multiplier on the whole "refuel" GOAL_GROUP
   --                          (refuel_at_base + flee_to_base). 1.0 = default;
   --                          1.2 makes this bot resupply less readily.
@@ -1234,10 +1233,10 @@ function Brain.think(info)
         elseif tok == "noblitz" then
           -- Solo bot: no calls opened, none joined, bsu designations ignored.
           state.blitz_disabled = true
-        elseif tok == "noclaim" then
-          -- Sweeping wave: allies' attack_pill claims are ignored (pool 6), so
-          -- several bots pile onto the same pill and draw fire together.
-          state.ally_claim_off = true
+        elseif tok == "noclaimdead" then
+          -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
+          -- so several bots race the same body and draw fire on the way in.
+          state.ally_claim_dead_off = true
         elseif tok:sub(1, 10) == "portfolio=" then
           -- Integer percents, '/' separated: B/F/A or B/F/A/U.
           -- Complaints are LATCHED into state._cfg_warn, not printed here: this
@@ -1610,8 +1609,8 @@ function Brain.think(info)
       end
       print2(string.format("[refuel] cost mult x%.2f (%s)",
                            goals.refuel_mult(), goals.refuel_mult_source))
-      if state.ally_claim_off then
-        print2("[claims] claims=off (init_arg) — pool 6 ignores allies' attack_pill claims (no ally_claimed reject, no stq sent); pool 4 + refuel unchanged")
+      if state.ally_claim_dead_off then
+        print2("[claims] claims_dead=off (init_arg) — pool 4 ignores allies' capture_pill claims on dead pills (no ally_claimed reject); pool 6 + refuel unchanged")
       end
       if state._cfg_warn then print2(state._cfg_warn) end
     end

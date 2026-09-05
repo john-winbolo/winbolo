@@ -12617,6 +12617,17 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       -- Sea-cluster claim (see sea_ally_claim above): an ally harvesting a
       -- deep-sea cluster owns every pill in it, not just its broadcast target.
       local sac = sea_ally_claim and sea_ally_claim[e._id]
+      -- "noclaimdead": an ally's sea-cluster claim is still an ally claim on a
+      -- DEAD pill, so it is ignored too — otherwise the flag would leave the
+      -- biggest pool-4 ally_claimed source in place.
+      if sac and state.ally_claim_dead_off then
+        sac = nil
+        if e._reject == "ally_claimed" then
+          e._reject = nil
+          e._reject_remaining = 0
+          e.formula = nil
+        end
+      end
       if sac and not we_targeted_it then
         if e._reject ~= "ally_claimed" then
           e._reject = "ally_claimed"
@@ -12903,17 +12914,20 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         local we_hold = g and g.kind == kind
                        and ((g.target_id and e._id and g.target_id == e._id)
                             or (g.mx == e._mx and g.my == e._my))
-        if pool_idx == 6 and e._id and state.ally_claim_off then
-          -- ── "noclaim" (BRAIN_INIT_ARG): allies' claims on a LIVE pill are
-          -- ignored outright, so several bots can sweep the same pill at once
-          -- and share the fire. We always keep the row (an existing
-          -- ally_claimed reject is cleared by the we_keep branch below), and
-          -- because we never treat the pill as theirs we never ASK for it
-          -- either — no stq is queued, since there is nothing to steal.
-          -- Scope is pool 6 only: pool 4 (capture_pill / dead-pill scooping)
-          -- de-confliction and the pool-1 refuel soft penalty are untouched.
+        if pool_idx == 4 and state.ally_claim_dead_off then
+          -- ── "noclaimdead" (BRAIN_INIT_ARG): allies' claims on a DEAD pill are
+          -- ignored, so several bots race to scoop the same body — which is the
+          -- point: they draw fire on the way in. Keep the row unconditionally
+          -- (the we_keep branch below clears any ally_claimed reject already on
+          -- it). Scope is pool 4 only: pool 6 (attack_pill on a LIVE pill)
+          -- keeps today's claim/steal de-confliction, and the pool-1 refuel
+          -- soft penalty is untouched.
           we_keep = true
-          _reason = "claims_off (noclaim init_arg — allies' attack_pill claims ignored)"
+          _reason = "claims_dead_off (noclaimdead init_arg — allies' capture_pill claims ignored)"
+          if BRAIN_DEBUG_MODE and not panel_refresh then
+            print2(string.format("SYNC_P4 pid=%s DECISION ally=p%s ally_cost=%s our_cost=%.1f -> KEEP [claims_dead_off]",
+              tostring(e._id), tostring(match_pn), tostring(match_cost), our_cost or 0))
+          end
         elseif pool_idx == 6 and e._id then
           -- ── attack_pill: NEGOTIATED steal (stq/sta/str), no silent takeover ──
           -- The old silent cost-steal let a cheaper challenger just KEEP the
