@@ -3250,4 +3250,42 @@ M.BUILDER_POOL_PANEL_ROWS = 8    -- cap on side-quest rows rendered (always-show
 M.GC_PAUSE   = 200
 M.GC_STEPMUL = 400
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- PRESETS — named bundles of constant overrides, applied per bot
+-- ══════════════════════════════════════════════════════════════════════════
+-- A bot given the BRAIN_INIT_ARG token "preset=NAME" has every entry of
+-- M.PRESETS[NAME] written into ITS OWN copy of this table before any other
+-- module requires it (init.lua, right after `require("constants")`), so
+-- module-level captures like squad.lua's BLITZ_MAX see the preset value.
+-- Explicit "cfg=NAME=VALUE" tokens are applied AFTER the preset whatever
+-- order they appear in, so a cfg= always wins.
+--
+-- The point is A/B play: two sides of the same game, same brain, same build,
+-- one running today's constants and one running the older behaviour --
+--   -bot-init "0-1=<brain>[preset=keel],2-3=<brain>[]"
+-- (see tests/ab_bench.py).
+--
+-- ── RULE (2026-09-05) ─────────────────────────────────────────────────────
+-- EVERY behaviour change from now on adds its PRE-CHANGE value to `keel`, in
+-- the same commit that changes the constant, with a dated one-line comment.
+-- That is the whole contract: `preset=keel` must always reproduce the KEEL
+-- baseline (tag b29c6225 in winbolo2) behaviour, so a bench never has to
+-- rebuild an old brain to have something to compare against. A change that
+-- forgets its entry here silently makes the baseline drift, and every bench
+-- result taken afterwards is measuring less than it says it is.
+--
+-- Only PLAIN VALUES belong here (numbers, booleans, strings): the override
+-- refuses to write a table or a function, and refuses a value whose type does
+-- not match the constant it replaces.
+M.PRESETS = {
+  keel = {
+    -- 2026-09-05: raised to 3, i.e. the default blitz party went 2..2 -> 2..4.
+    SQUAD_MAX_SIZE                = 1,
+    -- 2026-09-05: a take with a hostile tank within BLITZ_CONTESTED_RANGE now
+    -- makes every blitzer a temporary suicider. KEEL only ever designated the
+    -- BLITZ_MIN_SUICIDERS quota (0 by default, i.e. nobody).
+    BLITZ_CONTESTED_ALL_SUICIDERS = false,
+  },
+}
+
 return M

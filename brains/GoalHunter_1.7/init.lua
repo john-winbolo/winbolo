@@ -25,6 +25,137 @@ end
 -- block and would otherwise redirect back to itself indefinitely.
 
 local C       = require("constants")
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- PER-BOT CONSTANT OVERRIDES — must run HERE, before any other require
+-- ══════════════════════════════════════════════════════════════════════════
+-- Two BRAIN_INIT_ARG tokens write straight into this bot's constants table:
+--
+--   "preset=NAME"       -> apply every entry of C.PRESETS[NAME] (see
+--                          constants.lua; `keel` is the pre-change value of
+--                          every behaviour knob changed since the KEEL tag).
+--   "cfg=NAME=VALUE"    -> set C.NAME for THIS bot. Repeatable. VALUE is read
+--                          as a number if it looks like one, as a boolean for
+--                          "true"/"false", and as a plain string otherwise.
+--
+-- Presets are applied FIRST and every cfg= afterwards, so an explicit cfg=
+-- always wins no matter where in the token list it sits.
+--
+-- WHY IT IS UP HERE AND NOT IN THE TICK-1 TOKEN BLOCK (search BRAIN_INIT_ARG,
+-- ~line 1250) where every other token is parsed: several modules CAPTURE a
+-- constant at require time and never look at C again --
+--   squad.lua      BLITZ_MIN / BLITZ_MAX / BLITZ_MIN_SUICIDERS
+--   goals.lua      REFUEL_MULT, TAKE_COVER_REJECT_COST
+--   threat.lua     PRED_DISK_SIZE / PRED_DISK_R (a precomputed disk)
+--   logger.lua     MAX_ENTRIES
+--   pill_portfolio FRONT_NEAR_RADIUS
+--   (and every module's TAG, from C.BRAIN_NAME)
+-- -- so an override applied on the first think is already too late for them:
+-- `cfg=SQUAD_MAX_SIZE=1` set at tick 1 would leave squad.lua's BLITZ_MAX on
+-- the value it read at require time and do nothing at all. Running here, in
+-- the gap between `require("constants")` and the first module that requires
+-- it, is what makes the override mean the same thing for every reader.
+-- Each bot has its own lua_State, so this table is this bot's alone.
+--
+-- The other tokens stay where they are: they call setters (squad.set_*,
+-- PP.set_targets, goals.set_refuel_mult) that are read live every tick, so
+-- they have no such ordering problem, and they need `state`, which does not
+-- exist yet up here.
+--
+-- Nothing can be PRINTED from here: this runs at chunk load, long before the
+-- session's print2 file exists. Warnings and the per-override log lines latch
+-- into _INIT_CFG_LOG / _INIT_CFG_WARN and are emitted in the captured-tick
+-- window with the rest of the [portfolio]/[blitz]/[refuel] config lines.
+local _INIT_CFG_LOG  = {}     -- {"[cfg] NAME=VALUE (init_arg)", ...}
+local _INIT_CFG_WARN = nil    -- one string, same shape as state._cfg_warn
+
+local function _cfg_warn_add(fmt, ...)
+  _INIT_CFG_WARN = (_INIT_CFG_WARN or "") .. string.format(fmt, ...) .. " "
+end
+
+-- Write one NAME=VALUE into C, refusing anything that would not survive the
+-- rest of the brain: a constant that does not exist (a typo silently doing
+-- nothing is the worst outcome for a bench), a table/function constant, and a
+-- type change -- `cfg=SOME_FLAG=0` is a particular trap, since 0 is TRUE in
+-- Lua and would turn a flag ON while reading as "off".
+local function _cfg_set(name, value, source)
+  local cur = C[name]
+  if cur == nil then
+    _cfg_warn_add("[cfg] UNKNOWN CONSTANT '%s' (%s) -- no such name in constants.lua; IGNORED.",
+                  tostring(name), source)
+    return false
+  end
+  if type(cur) == "table" or type(cur) == "function" then
+    _cfg_warn_add("[cfg] '%s' is a %s (%s) -- only numbers, booleans and strings can be overridden; IGNORED.",
+                  tostring(name), type(cur), source)
+    return false
+  end
+  if type(value) ~= type(cur) then
+    _cfg_warn_add("[cfg] '%s'=%s (%s) is a %s but the constant is a %s; IGNORED.",
+                  tostring(name), tostring(value), source, type(value), type(cur))
+    return false
+  end
+  C[name] = value
+  _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] = string.format("[cfg] %s=%s (%s)",
+                                                    name, tostring(value), source)
+  return true
+end
+
+do
+  local a = rawget(_G, "BRAIN_INIT_ARG")
+  if type(a) == "string" and a ~= "" then
+    -- Same token split as the tick-1 block: ',' or ';'. A scenario's
+    -- spawn_bot init string uses ';' and so must a command-line [..] suffix
+    -- (the CLI parser eats commas).
+    local presets, cfgs = {}, {}
+    for tok in a:gmatch("[^,;]+") do
+      tok = tok:gsub("%s", "")
+      local pname = tok:match("^preset=(.+)$")
+      local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
+      if pname then
+        presets[#presets + 1] = pname
+      elseif cname then
+        cfgs[#cfgs + 1] = { cname, cval }
+      elseif tok:sub(1, 4) == "cfg=" then
+        _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
+      end
+      -- Everything else is one of the tick-1 tokens; not our business.
+    end
+    -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
+    for _, pname in ipairs(presets) do
+      local tbl = C.PRESETS and C.PRESETS[pname]
+      if type(tbl) ~= "table" then
+        local known = {}
+        if C.PRESETS then for k in pairs(C.PRESETS) do known[#known + 1] = k end end
+        table.sort(known)
+        _cfg_warn_add("[preset] UNKNOWN PRESET '%s' -- known: %s; IGNORED.",
+                      tostring(pname), table.concat(known, " "))
+      else
+        -- Sorted so the log reads the same on every run (pairs() order is not
+        -- reproducible, and these lines are compared between runs).
+        local keys = {}
+        for k in pairs(tbl) do keys[#keys + 1] = k end
+        table.sort(keys)
+        local n = 0
+        for _, k in ipairs(keys) do
+          if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
+        end
+        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+          string.format("[preset] %s applied (%d values)", pname, n)
+      end
+    end
+    for _, kv in ipairs(cfgs) do
+      local name, raw = kv[1], kv[2]
+      local v
+      if raw == "true" then v = true
+      elseif raw == "false" then v = false
+      elseif tonumber(raw) then v = tonumber(raw)
+      else v = raw end
+      _cfg_set(name, v, "init_arg")
+    end
+  end
+end
+
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
 -- TAG-prefixed brain chatter (goal shifts, stuck warnings, command
 -- echoes) is wrapped in `if BRAIN_DEBUG_MODE then print(...) end` at
@@ -1630,6 +1761,12 @@ function Brain.think(info)
       if state.ally_claim_dead_off then
         print2("[claims] claims_dead=off (init_arg) — pool 4 ignores allies' capture_pill claims on dead pills (no ally_claimed reject); pool 6 + refuel unchanged")
       end
+      -- The preset/cfg overrides, which were applied at CHUNK LOAD (see the
+      -- block right after require("constants")) and could not print there.
+      -- One line per override so a bench can grep a side's log and see
+      -- exactly which constants that side was running.
+      for _i = 1, #_INIT_CFG_LOG do print2(_INIT_CFG_LOG[_i]) end
+      if _INIT_CFG_WARN then print2(_INIT_CFG_WARN) end
       if state._cfg_warn then print2(state._cfg_warn) end
     end
     -- Raw engine-object dump: EXACTLY what the engine handed the brain this tick
