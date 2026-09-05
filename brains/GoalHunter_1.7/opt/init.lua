@@ -1146,7 +1146,16 @@ function Brain.think(info)
   --                          already in the party (itself included) and
   --                          designates that many random non-suicider SOLDIERS
   --                          to make up the difference, TEMPORARILY, for that
-  --                          take only. 0 (the default) never designates.
+  --                          take only. 0 (the default) never designates. If the
+  --                          soldiers can't cover it the commander designates
+  --                          itself too.
+  --   "noblitz"           -> this bot never blitzes at all: it opens no call
+  --                          (never commands one, never enters blitz_wait),
+  --                          answers/joins none (availability says "noblitz",
+  --                          no join discount on any call's pill), and ignores
+  --                          "bsu" suicider designations. It still fights and
+  --                          takes pills SOLO, exactly as if no ally were in
+  --                          range. No constant — blitzing is on by default.
   --   "refuel=X"          -> float multiplier on the whole "refuel" GOAL_GROUP
   --                          (refuel_at_base + flee_to_base). 1.0 = default;
   --                          1.2 makes this bot resupply less readily.
@@ -1172,6 +1181,9 @@ function Brain.think(info)
           state.force_pill_suicider = true
         elseif tok == "nosuicider" then
           state.force_pill_suicider = false
+        elseif tok == "noblitz" then
+          -- Solo bot: no calls opened, none joined, bsu designations ignored.
+          state.blitz_disabled = true
         elseif tok:sub(1, 10) == "portfolio=" then
           -- Integer percents, '/' separated: B/F/A or B/F/A/U.
           -- Complaints are LATCHED into state._cfg_warn, not printed here: this

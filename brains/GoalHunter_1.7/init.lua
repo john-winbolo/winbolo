@@ -1187,7 +1187,16 @@ function Brain.think(info)
   --                          already in the party (itself included) and
   --                          designates that many random non-suicider SOLDIERS
   --                          to make up the difference, TEMPORARILY, for that
-  --                          take only. 0 (the default) never designates.
+  --                          take only. 0 (the default) never designates. If the
+  --                          soldiers can't cover it the commander designates
+  --                          itself too.
+  --   "noblitz"           -> this bot never blitzes at all: it opens no call
+  --                          (never commands one, never enters blitz_wait),
+  --                          answers/joins none (availability says "noblitz",
+  --                          no join discount on any call's pill), and ignores
+  --                          "bsu" suicider designations. It still fights and
+  --                          takes pills SOLO, exactly as if no ally were in
+  --                          range. No constant — blitzing is on by default.
   --   "refuel=X"          -> float multiplier on the whole "refuel" GOAL_GROUP
   --                          (refuel_at_base + flee_to_base). 1.0 = default;
   --                          1.2 makes this bot resupply less readily.
@@ -1213,6 +1222,9 @@ function Brain.think(info)
           state.force_pill_suicider = true
         elseif tok == "nosuicider" then
           state.force_pill_suicider = false
+        elseif tok == "noblitz" then
+          -- Solo bot: no calls opened, none joined, bsu designations ignored.
+          state.blitz_disabled = true
         elseif tok:sub(1, 10) == "portfolio=" then
           -- Integer percents, '/' separated: B/F/A or B/F/A/U.
           -- Complaints are LATCHED into state._cfg_warn, not printed here: this
@@ -1576,9 +1588,13 @@ function Brain.think(info)
       print2(string.format("[portfolio] targets back=%.2f front=%.2f aggro=%.2f util=%.2f (%s)",
                            PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO,
                            PP.TARGET_UTIL, PP.targets_source))
-      print2(string.format("[blitz] size min=%d max=%d (%s)  suiciders min=%d (%s)",
-                           squad.blitz_min(), squad.blitz_max(), squad.blitz_size_source,
-                           squad.blitz_min_suiciders(), squad.blitz_suiciders_source))
+      if state.blitz_disabled then
+        print2("[blitz] blitz=off (init_arg) — no calls opened or joined, bsu ignored (solo takes)")
+      else
+        print2(string.format("[blitz] size min=%d max=%d (%s)  suiciders min=%d (%s)",
+                             squad.blitz_min(), squad.blitz_max(), squad.blitz_size_source,
+                             squad.blitz_min_suiciders(), squad.blitz_suiciders_source))
+      end
       print2(string.format("[refuel] cost mult x%.2f (%s)",
                            goals.refuel_mult(), goals.refuel_mult_source))
       if state._cfg_warn then print2(state._cfg_warn) end

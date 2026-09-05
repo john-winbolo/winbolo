@@ -144,6 +144,9 @@ function M.process_message(sender, text, tick, state)
   local bsu_pill, bsu_pn = text:match("^/info bsu (%d+) (%d+)$")
   if bsu_pill then
     local for_us = state and tonumber(bsu_pn) == (state.player_number or -1)
+    -- "noblitz" (BRAIN_INIT_ARG): we are in no blitz, so a designation aimed at
+    -- us is ignored outright — we never joined the take it belongs to.
+    if for_us and state.blitz_disabled then for_us = false end
     if for_us then
       state.blitz_suicider = { pill = tonumber(bsu_pill), by = sender, since = tick }
     end

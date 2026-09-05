@@ -10715,6 +10715,15 @@ local function get_formula(e)
     local sep = f:find("||", 1, true)
     if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
     else        f = f .. disp .. " ||" .. map:sub(2) end
+  elseif e._blitz_off then
+    -- Same slot, but this bot has blitz=off (init_arg): an open call exists on
+    -- this pill and the join discount was deliberately NOT applied, so the row
+    -- is the plain solo cost.
+    local disp = " x blitz_discount{1.00 off}"
+    local map  = string.format("|blitz_discount:OFF (%s) — an open call on this pill, but this bot never joins; cost unchanged", tostring(e._blitz_off))
+    local sep = f:find("||", 1, true)
+    if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
+    else        f = f .. disp .. " ||" .. map:sub(2) end
   end
   -- REJECT row already formatted by inner — no trailing term to append.
   if e._reject == "ally_claimed"
@@ -13281,6 +13290,21 @@ local function apply_blitz_join_discount(state, info, world)
   if not calls then return end
   local cache = state.cost_cache
   if not cache then return end
+  -- "noblitz" (BRAIN_INIT_ARG): never join, so no call gets a discount. Mark the
+  -- pool-6 rows the discount WOULD have touched so the Term Breakdown / DECISION
+  -- line says why the row is at its plain solo cost instead of silently
+  -- differing from a normal bot.
+  if state.blitz_disabled then
+    for _, call in pairs(calls) do
+      local pid = call.pill
+      if pid then
+        for _, e in pairs(cache) do
+          if e._p == 6 and e._id == pid then e._blitz_off = "noblitz" end
+        end
+      end
+    end
+    return
+  end
   local now     = state.tick or 0
   local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (info.player_number or -1)
   local cap     = squad.blitz_soldier_cap()   -- party MAX minus the commander

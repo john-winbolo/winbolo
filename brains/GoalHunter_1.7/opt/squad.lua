@@ -377,7 +377,14 @@ function M.availability(state, info, help_target_id)
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
   local ok, reason
-  if (info.carried_pills or 0) >= 1
+  if state.blitz_disabled then
+    -- "noblitz" BRAIN_INIT_ARG: this bot never joins anyone's blitz. Answered
+    -- here (rather than at every call site) because availability() is the one
+    -- gate every join path runs through — the squad-layer pick AND
+    -- goals.apply_blitz_target, which is what would force the commander's pill
+    -- to SQUAD_BLITZ_COST.
+    ok, reason = false, "noblitz"
+  elseif (info.carried_pills or 0) >= 1
      and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
     ok, reason = false, "lh"
   elseif (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3) and not state.ammo_deprived then
@@ -745,7 +752,12 @@ function M.update(state, info, now, world)
     local bs   = state.blitz_suicider
     local why  = nil
     local p    = world and world.pills and world.pills[bs.pill]
-    if not p or (p.health or 0) <= 0 or p.owner == "friendly" or p.owner == "allied" then
+    if state.blitz_disabled then
+      -- "noblitz": we take no part in blitzes, so we hold no designation either
+      -- (comms.lua already ignores incoming bsu; this drops any that predates
+      -- the flag).
+      why = "noblitz"
+    elseif not p or (p.health or 0) <= 0 or p.owner == "friendly" or p.owner == "allied" then
       why = "pill_gone"
     elseif (now - (bs.since or now)) > (C.BLITZ_SUICIDER_MAX_TICKS or 1600) then
       why = "timeout"
@@ -1044,7 +1056,20 @@ function M.update(state, info, now, world)
 
   if role ~= M.ROLE_SOLDIER then state.squad_blitz_accepted = nil end  -- only soldiers commit to a blitz
 
-  if role == M.ROLE_COMMANDER then
+  -- "noblitz" BRAIN_INIT_ARG: skip the whole membership stage. The fields it
+  -- would fill were just reset above, so we leave with squad_cmdr = nil,
+  -- squad_blitz_target = nil and status "-": no commander branch (nothing sets
+  -- the take as an ask, so init.lua never broadcasts a bco call and attack.lua
+  -- never flips the goal to _blitz / blitz_wait), and no soldier branch (so
+  -- BLITZ_SCAN / BLITZ_PICK never run and we answer nobody). The bot keeps its
+  -- elected role for everything else and just takes pills solo.
+  if state.blitz_disabled then
+    state.squad_blitz_accepted = nil
+    state.squad_blitz_roster   = nil
+    state.squad_blitz_reject   = nil
+    state.squad_blitz_accept   = nil
+    state.squad_status         = "-"
+  elseif role == M.ROLE_COMMANDER then
     local g = state.goal
     if g and g.kind == "attack_pill" and g.target_id then
       state.squad_help_target  = g.target_id   -- commander's attack_pill IS the ask
