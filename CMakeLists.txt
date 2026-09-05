@@ -2679,12 +2679,20 @@ target_link_libraries(MapEditor PRIVATE
 # shoreline, boats), so each can be eyeballed in the game or the editor.
 # EXCLUDE_FROM_ALL: built on demand, never part of a normal build.
 #   cmake --build build --target MakeTileTestMap && ./build/MakeTileTestMap
+#
+# The source lives under src/mapeditor/ rather than tools/ because it needs
+# bolo's T2 map-data headers (bolo_map.h, starts.h, bases.h, pillbox.h) and
+# the editor's map-render math — exactly the scope of the mapeditor
+# privileged exception in docs/ARCHITECTURE.md. tools/ is a public-only
+# directory (T1+T3+T4); putting it there would have been a new, undocumented
+# T2 exception. MAPEDITOR_SOURCES is an explicit list, not a glob, so this
+# file's main() cannot leak into the MapEditor binary.
 # ---------------------------------------------------------------------------
 # test_stubs.c supplies the frontend / winbolonet / natPortMap link-time
 # defaults, the same way it does for WinBoloUnitTests; transport_udp_client.c
 # is per-target everywhere because of its HAVE_STEAM compile defs.
 add_executable(MakeTileTestMap EXCLUDE_FROM_ALL
-    tools/make_tile_test_map.c
+    src/mapeditor/tools/make_tile_test_map.c
     tests/unit/test_stubs.c
     src/bolo/transport_udp_client.c
     src/steam/steam_wrapper_stub.c
@@ -2703,8 +2711,10 @@ target_compile_definitions(MakeTileTestMap PRIVATE
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
-bolo_grant_internal_source_access(MakeTileTestMap
-    src/bolo/transport_udp_client.c)
+# No bolo_grant_internal_source_access here: the mapeditor profile above
+# already puts public/ + internal/ + the flat src/bolo/ on every TU in this
+# target, so a per-file grant for transport_udp_client.c would grant nothing.
+# MapEditor compiles the same file under the same profile without one.
 target_include_directories(MakeTileTestMap PRIVATE
     src src/server src/gui src/gui/sdl3 src/client_frontend src/winbolonet
     ${cjson_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/unit)
@@ -2715,12 +2725,11 @@ target_link_libraries(MakeTileTestMap PRIVATE
     winbolonet_core winbolonet_client winbolonet_server
     SDL3::SDL3 minizip lua_static nanosvg stb_image utf8proc cjson CURL::libcurl
     mdns)
+target_compile_options(MakeTileTestMap PRIVATE -fcommon)
 if(WIN32)
     target_link_libraries(MakeTileTestMap PRIVATE ws2_32 winmm user32)
-    target_compile_options(MakeTileTestMap PRIVATE -fcommon)
 else()
     target_link_libraries(MakeTileTestMap PRIVATE ${MATH_LIB} pthread)
-    target_compile_options(MakeTileTestMap PRIVATE -fcommon)
 endif()
 set_flat_output(MakeTileTestMap "${CMAKE_BINARY_DIR}")
 

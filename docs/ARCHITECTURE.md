@@ -1737,6 +1737,16 @@ Scope: map-data structures (`bolo_map.h`, `pillbox.h`, `bases.h`,
 `starts.h`, and friends) plus the map-render math it needs for
 the editor preview.
 
+The same scope covers the non-shipping map generators under
+`src/mapeditor/tools/` — currently `make_tile_test_map.c`, the
+`MakeTileTestMap` target (`EXCLUDE_FROM_ALL`, see
+[TOOLS.md](TOOLS.md#maketiletestmap)). They write `.map` files
+through the same map-data headers and never tick a sim, so they
+sit inside the editor's exception rather than needing one of
+their own. They belong here and not in `tools/`, which is a
+public-only directory — see the `tests/`, `tools/` row in "Who
+may include what".
+
 **Expires** the moment anyone adds in-editor playtest, live
 preview against a running sim, or any other path that ticks the
 world from the editor. At that point mapeditor joins the T1+T3+T4

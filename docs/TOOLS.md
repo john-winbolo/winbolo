@@ -21,9 +21,10 @@ binaries (`WinBolo`, `WinBoloDS`, `LogViewer`, `MapEditor`, `WinBoloHeadless`,
 
 ## MakeTileTestMap
 
-`tools/make_tile_test_map.c` — writes a small `.map` that puts the terrain-shape
-lookups in `src/bolo/screencalc.c` next to reference versions of the same
-layout, so their edge cases can be eyeballed in the game or the map editor.
+`src/mapeditor/tools/make_tile_test_map.c` — writes a small `.map` that puts
+the terrain-shape lookups in `src/bolo/screencalc.c` next to reference versions
+of the same layout, so their edge cases can be eyeballed in the game or the map
+editor.
 
 The layouts these functions get wrong are specific and rare, which makes them
 hard to hit by hand on a real map. Each demo is a matched pair: a river mouth at
@@ -60,6 +61,13 @@ the file (`R` river, `O` road, `D` deep sea, `B` boat, `G` grass) and add a
 It links `tests/unit/test_stubs.c` for the frontend / winbolonet / natPortMap
 defaults, the same way `WinBoloUnitTests` does — `bolo_static`'s map TU reaches
 back into the server sim, so lighter link sets don't resolve.
+
+It lives under `src/mapeditor/` rather than `tools/` because it needs bolo's
+T2 map-data headers (`bolo_map.h`, `starts.h`, `bases.h`, `pillbox.h`) and the
+editor's map-render math — the scope of the `mapeditor` privileged exception in
+[ARCHITECTURE.md](ARCHITECTURE.md#srcmapeditor). `tools/` is a public-only
+directory (T1 + T3 + T4), so putting it there would have meant a new
+undocumented T2 exception.
 
 ## tools/dump_lang_en.py
 
