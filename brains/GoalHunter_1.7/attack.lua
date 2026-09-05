@@ -4888,7 +4888,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- soldier tally uses, so the quorum is symmetric across the squad.
       local _self_parked = squad.BLITZ_READY_SUBS[goal.substate or ""] and 1 or 0
       local set_inwait = _self_parked + (_inwait or 0)
-      if set_inwait >= (C.SQUAD_BLITZ_GO_EARLY_READY or 2) then
+      if set_inwait >= squad.blitz_min() then
         local _prev = goal.substate
         goal._blitz_committed    = true
         goal._blitz_start_armour = info.armour or 0
@@ -4897,7 +4897,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal.substate            = "charge"
         goal._blitz_go           = true         -- broadcast GO (bgo) in init.lua
         state.squad_blitz_go     = true
-        print2(string.format("BLITZ_GO_ENROUTE t=%d set_inwait=%d (>=%d) from sub=%s -- soldiers parked, commander rushing in", now, set_inwait, C.SQUAD_BLITZ_GO_EARLY_READY or 2, tostring(_prev)))
+        print2(string.format("BLITZ_GO_ENROUTE t=%d set_inwait=%d (>=%d) [%s] from sub=%s -- soldiers parked, commander rushing in", now, set_inwait, squad.blitz_min(), squad.blitz_size_label(), tostring(_prev)))
         return
       end
     end
@@ -5329,24 +5329,46 @@ function M.update_attack_substate(goal, state, world, info)
       end
       eff = (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + (goal._blitz_timeout_ext or 0)
       local timed_out = (now - goal._blitz_ready_since) >= eff
-      if BRAIN_DEBUG_MODE then state._blitz_wait_viz = { tick = now, pill = goal.target_id, total = total, ready = ready, min_bd = min_bd, ready_since = goal._blitz_ready_since, ext = goal._blitz_timeout_ext or 0, eff_timeout = eff, prog_bd = goal._blitz_prog_bd, base_timeout = (C.SQUAD_BLITZ_READY_TIMEOUT or 150), timed_out = timed_out, unseen = any_unseen, querying = querying } end
+      if BRAIN_DEBUG_MODE then state._blitz_wait_viz = { tick = now, pill = goal.target_id, total = total, ready = ready, min_bd = min_bd, ready_since = goal._blitz_ready_since, ext = goal._blitz_timeout_ext or 0, eff_timeout = eff, prog_bd = goal._blitz_prog_bd, base_timeout = (C.SQUAD_BLITZ_READY_TIMEOUT or 150), timed_out = timed_out, unseen = any_unseen, querying = querying, blitz_min = squad.blitz_min(), blitz_max = squad.blitz_max(), blitz_src = squad.blitz_size_source } end
       -- Heartbeat: why are we still waiting? (print is a no-op in the brain, so
       -- the GO decision was previously invisible in print2 logs.)
-      if BRAIN_DEBUG_MODE and (now % 25 == 0) then print2(string.format("BLITZ_WAIT_CMD t=%d total=%d ready=%d min_bd=%s ext=%d timed_out=%s wait_age=%d is_ppt=%s shielded=%s", now, total, ready, tostring(min_bd), goal._blitz_timeout_ext or 0, tostring(timed_out), now - (goal._blitz_ready_since or now), tostring(goal._is_ppt), tostring(goal._blitz_shielded))) end
+      if BRAIN_DEBUG_MODE and (now % 25 == 0) then print2(string.format("BLITZ_WAIT_CMD t=%d total=%d ready=%d party=%d/%d min_bd=%s ext=%d timed_out=%s wait_age=%d is_ppt=%s shielded=%s [%s]", now, total, ready, 1 + (total or 0), squad.blitz_min(), tostring(min_bd), goal._blitz_timeout_ext or 0, tostring(timed_out), now - (goal._blitz_ready_since or now), tostring(goal._is_ppt), tostring(goal._blitz_shielded), squad.blitz_size_label())) end
       -- Early GO on critical mass: once ENOUGH of the SET (commander + all
       -- soldiers) are PARKED at their standoffs (sub=blitz_wait), fire GO now
       -- instead of waiting for stragglers or the timeout. We're in blitz_wait
       -- here, so the commander counts itself (+1); inwait is the soldiers parked
-      -- at their spots. Default 2 = commander + 1 parked soldier already goes; a
+      -- at their spots. The threshold is the per-bot party MIN (squad.blitz_min,
+      -- default 2 = commander + 1 parked soldier already goes); a
       -- still-approaching extra joins on the broadcast GO. (Mirrors the
       -- substate-independent pre-dispatch check that lets a commander still en
       -- route GO when 2 soldiers are already waiting on it.)
+      local bmin       = squad.blitz_min()
+      -- The party MIN is a floor on: the commander plus every soldier that has
+      -- COMMITTED to this take (total). Committed, not ready — at the timeout
+      -- the stragglers are by definition not ready yet, and requiring MIN READY
+      -- there would make the timeout unusable. At the default MIN of 2 this is
+      -- always satisfied (the total==0 case returned above), so nothing changes
+      -- unless a "blitz=" token raised it.
+      local party      = 1 + (total or 0)
       local set_inwait = 1 + (inwait or 0)
-      local early_go = set_inwait >= (C.SQUAD_BLITZ_GO_EARLY_READY or 2)
-      if ready >= total or timed_out or early_go then
+      local early_go = set_inwait >= bmin
+      -- Short-handed at the deadline: MIN is HARD, so do NOT charge with fewer
+      -- tanks than the blitz asks for. Give up the take instead — clearing the
+      -- attack goal also drops our blitz standoff/claim state, which closes the
+      -- open call (init.lua broadcasts bcc on the transition) and frees any
+      -- soldier still holding for a GO that is never coming. The next replan
+      -- picks a fresh goal; if this pill still looks worth a blitz the call
+      -- reopens, which is also the recruiting window a third tank needs.
+      if timed_out and party < bmin then
+        print2(string.format("BLITZ_ABANDON_SHORT t=%d pill=%s party=%d < min=%d (ready=%d/%d inwait=%d) [%s] -- READY_TIMEOUT with too few tanks; releasing the call instead of charging short",
+              now, tostring(goal.target_id), party, bmin, ready, total, inwait or 0, squad.blitz_size_label()))
+        clear_attack_goal(state, string.format("blitz_wait: READY_TIMEOUT short-handed (party=%d < min=%d)", party, bmin))
+        return
+      end
+      if (ready >= total and party >= bmin) or timed_out or early_go then
         state.squad_blitz_go = true        -- broadcast GO (bgo) in init.lua
         commit_fire()
-        print2(string.format("BLITZ_GO t=%d ready=%d/%d set_inwait=%d timed_out=%s early=%s -> %s", now, ready, total, set_inwait, tostring(timed_out), tostring(early_go), goal.substate))
+        print2(string.format("BLITZ_GO t=%d ready=%d/%d party=%d/%d set_inwait=%d timed_out=%s early=%s [%s] -> %s", now, ready, total, party, bmin, set_inwait, tostring(timed_out), tostring(early_go), squad.blitz_size_label(), goal.substate))
       end
       return
     else
@@ -5767,7 +5789,7 @@ function M.update_attack_substate(goal, state, world, info)
     if C.BLITZ_ABORT_BUILD_ON_READY and goal._blitz then
       local _total, _ready = squad.blitz_ready_status(state, now, info.player_number or -1)
       _ready = _ready or 0
-      if (_ready + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2) then
+      if (_ready + 1) >= squad.blitz_min() then
         -- Do we already have a blocker (built this take OR pre-existing) in our
         -- chosen shield slots? If so KEEP the PPT shield route: on GO we thread to
         -- the exact engage spot and fire from behind cover (firing off-spot would
@@ -5789,7 +5811,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal._blitz_ready_since = nil
         goal._blitz_shielded = _have_blocker or nil   -- blocker up → GO fires PPT from cover; none → charge
         state.squad_blitz_in_position = true
-        print2(string.format("BLITZ_BUILD_ABORT t=%d ready_blitzers=%d (soldiers=%d/%d)>=%d idx=%s/%s have_blocker=%s -> blitz_wait (%s)", now, _ready + 1, _ready, _total or 0, C.BLITZ_MIN_READY_TO_CHARGE or 2, tostring(goal._wall_build_idx), tostring(goal._wall_build_list and #goal._wall_build_list), tostring(_have_blocker), _have_blocker and "PPT from cover" or "unshielded charge"))
+        print2(string.format("BLITZ_BUILD_ABORT t=%d ready_blitzers=%d (soldiers=%d/%d)>=%d [%s] idx=%s/%s have_blocker=%s -> blitz_wait (%s)", now, _ready + 1, _ready, _total or 0, squad.blitz_min(), squad.blitz_size_label(), tostring(goal._wall_build_idx), tostring(goal._wall_build_list and #goal._wall_build_list), tostring(_have_blocker), _have_blocker and "PPT from cover" or "unshielded charge"))
         return
       end
     end
@@ -6032,18 +6054,18 @@ function M.update_attack_substate(goal, state, world, info)
     -- happening — the soldiers share the pill's fire. Solo (or before anyone is
     -- committed) we still need the full planned shield. Gate the early success
     -- on a blitz being underway: either enough blitzers are READY to charge
-    -- (BLITZ_MIN_READY_TO_CHARGE — commander counts as 1, so +1 below), OR at
+    -- (the per-bot party MIN — commander counts as 1, so +1 below), OR at
     -- least PPT_BLOCKERS_ENOUGH_MIN_INWAIT soldier(s) are already parked in
     -- blitz_wait while we (the commander) keep building.
     local _bt, _bready, _bmb, _bun, _binwait =
       squad.blitz_ready_status(state, now, info.player_number or -1, info)
     local blitz_supported = goal._blitz and (
-         ((_bready or 0) + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2)
+         ((_bready or 0) + 1) >= squad.blitz_min()
       or (_binwait or 0) >= (C.PPT_BLOCKERS_ENOUGH_MIN_INWAIT or 1))
     local built_enough = newly_built >= (C.PPT_BLOCKERS_ENOUGH or 1)
                          and blitz_supported
     if built_enough and idx <= #list and not stalled then
-      print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough; ready=%d+1 inwait=%d) idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, _bready or 0, _binwait or 0, idx, #list))
+      print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough; ready=%d+1 >= min=%d, or inwait=%d) [%s] idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, _bready or 0, squad.blitz_min(), _binwait or 0, squad.blitz_size_label(), idx, #list))
     end
 
     -- Cover-sufficient: a friendly pill blocker is worth 3 walls (PILLS_MAX_HEALTH

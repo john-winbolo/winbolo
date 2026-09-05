@@ -61,6 +61,47 @@ local _BLITZ_RANK = {
 }
 local function blitz_rank(sub) return _BLITZ_RANK[sub or ""] or 0 end
 
+-- ── Blitz party size (per bot) ────────────────────────────────────────────
+-- Both numbers are TANKS INCLUDING THE COMMANDER, the same convention the
+-- constants they default from already used ("2 = commander + 1 soldier").
+-- Module-level values, and each bot has its own lua_State, so these are per
+-- bot; init.lua's "blitz=MIN[/MAX]" BRAIN_INIT_ARG token calls set_blitz_size.
+--
+--   MIN — a HARD quorum. No GO path fires below it: not the early-GO on
+--         critical mass, not the abort-build-and-charge, and not the
+--         READY_TIMEOUT (a commander that times out short-handed abandons the
+--         blitz instead of charging under-strength). Defaults to the larger of
+--         the two constants that used to gate those paths separately —
+--         SQUAD_BLITZ_GO_EARLY_READY and BLITZ_MIN_READY_TO_CHARGE, both 2 —
+--         so the default behaviour is unchanged and they now seed ONE quorum.
+--   MAX — caps the party: a call already holding MAX tanks accepts no more
+--         joiners and reads as FULL to a soldier looking for a call. Defaults
+--         to SQUAD_MAX_SIZE + 1 (commander + today's soldier cap). When only
+--         MIN is given it is raised to MIN, so "blitz=3" alone is workable
+--         instead of asking for a quorum the cap can never supply.
+local BLITZ_MIN = math.max(C.SQUAD_BLITZ_GO_EARLY_READY or 2,
+                           C.BLITZ_MIN_READY_TO_CHARGE or 2)
+local BLITZ_MAX = (C.SQUAD_MAX_SIZE or 1) + 1
+M.blitz_size_source = "default"
+
+function M.blitz_min() return BLITZ_MIN end
+function M.blitz_max() return BLITZ_MAX end
+-- Max SOLDIERS a commander accepts = party max minus the commander itself.
+-- This is what every old `cap = C.SQUAD_MAX_SIZE` reader wants.
+function M.blitz_soldier_cap() return math.max(0, BLITZ_MAX - 1) end
+
+function M.set_blitz_size(mn, mx, source)
+  BLITZ_MIN = math.max(1, mn or BLITZ_MIN)
+  BLITZ_MAX = math.max(BLITZ_MIN, mx or BLITZ_MAX)
+  M.blitz_size_source = source or "init_arg"
+end
+
+-- One canonical string for every place that DISPLAYS the party size (print2 /
+-- DECISION lines, the blitz_wait timeout HUD, the joinable-calls HUD).
+function M.blitz_size_label()
+  return string.format("blitz min=%d max=%d (%s)", BLITZ_MIN, BLITZ_MAX, M.blitz_size_source)
+end
+
 -- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
 -- comes back with a clean slate — no stale negotiation, offer, reject,
 -- roster, watchdog, broadcast latch, or call registry leaking across the
@@ -411,7 +452,7 @@ function M.blitz_arbitrate(state, info, now, self_pn)
   -- (blitz_wait/rdy) so we never shed one mid-take, then earliest claimant, then
   -- lowest pn; reject the surplus so they peel off to another target.
   do
-    local cap = C.SQUAD_MAX_SIZE or 1
+    local cap = M.blitz_soldier_cap()   -- party MAX minus the commander
     local cands = {}
     for _, p in ipairs(parts) do
       if p.pn ~= self_pn and p.fx and not reject[p.pn] then cands[#cands + 1] = p end
@@ -869,7 +910,7 @@ function M.update(state, info, now, world)
     -- full, and it's not already in that squad. Once joined it STAYS (no
     -- re-decide each tick) while the commander keeps leading.
     local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
-    local cap = C.SQUAD_MAX_SIZE or 3
+    local cap = M.blitz_soldier_cap()   -- party MAX minus the commander
     local dead = state.tank_dead_at
 
     -- Open blitz calls come from the REGISTRY (state.blitz_calls), populated by
@@ -1455,7 +1496,9 @@ function M.draw_blitz(state, info, now)
     local line2
     if state.squad_role == M.ROLE_COMMANDER and sub == "blitz_wait" then
       local total, ready = M.blitz_ready_status(state, now, self_pn)
-      line2 = string.format("RALLY %d/%d", ready, total)
+      -- party = commander + committed soldiers, against the HARD size floor the
+      -- GO paths enforce, so the label says whether this call can fire at all.
+      line2 = string.format("RALLY %d/%d  party %d/%d", ready, total, 1 + (total or 0), M.blitz_min())
     elseif sub == "blitz_wait" then
       line2 = state.squad_blitz_in_position and "READY -- WAIT GO" or "..."
     elseif committed then
@@ -1618,7 +1661,7 @@ function M.blitz_has_joiner(state, info, now)
   end
   local self_pn = info.player_number or -1
   local rng     = C.SQUAD_HELP_RANGE or 30
-  local cap     = C.SQUAD_MAX_SIZE or 3
+  local cap     = M.blitz_soldier_cap()   -- party MAX minus the commander
   local pmx, pmy = g.mx, g.my
   -- Allied tank tile positions from our own game view, keyed by player number
   -- (idnum is globally unique). attack_pill no longer broadcasts tx/ty.
@@ -1791,6 +1834,13 @@ function M.draw_blitz_wait_timeout(state, info, now)
   local closing  = v.min_bd and v.prog_bd and v.min_bd < v.prog_bd
   y = y + dy
   y = y + dy
+  -- Party size vs the HARD quorum: no GO path fires below MIN, and on the
+  -- timeout a short-handed commander abandons the take instead of charging.
+  do
+    local party = 1 + (v.total or 0)
+    local short = party < (v.blitz_min or 2)
+    y = y + dy
+  end
   y = y + dy
   y = y + dy
   -- Source of the progress signal: live (we can see all pending soldiers) vs a
@@ -1817,7 +1867,7 @@ function M.draw_blitz_joinable(state, info, world, now)
   if not viz.is_on("blitz_joinable") then return end
   local calls   = state.blitz_calls
   local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
-  local cap     = C.SQUAD_MAX_SIZE or 3
+  local cap     = M.blitz_soldier_cap()   -- party MAX minus the commander
   local self_pn = info.player_number or -1
   local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
 
@@ -1834,6 +1884,8 @@ function M.draw_blitz_joinable(state, info, world, now)
   end
 
   local x, y, dy = 480, 230, 14
+  -- The "slot" column below is soldiers/cap; name the party size that produced
+  -- that cap (and the quorum a call must reach to fire) right in the header.
   y = y + dy
   y = y + dy
 

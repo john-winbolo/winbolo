@@ -1076,11 +1076,20 @@ function Brain.think(info)
   --                          warning) when a part isn't an integer or B+F+A>100;
   --                          normalised proportionally (with a warning) when an
   --                          explicit U makes the four not sum to 100.
+  --   "blitz=MIN[/MAX]"   -> blitz party size in TANKS INCLUDING THE COMMANDER
+  --                          (same convention as the constants it replaces).
+  --                          MIN is a HARD quorum: no GO path fires below it,
+  --                          and a commander whose READY_TIMEOUT expires
+  --                          short-handed abandons the take instead of charging.
+  --                          MAX caps joiners (a call at MAX reads FULL). MAX
+  --                          defaults to SQUAD_MAX_SIZE + 1, raised to MIN when
+  --                          MIN is bigger, so "blitz=3" alone is workable.
   -- This block runs early in Brain.think and squad.update (which reads
   -- state.force_pill_suicider) runs much later in the same function, so the
   -- flag is already set on the bot's very first tick. Same for the portfolio
-  -- targets: every PP.targets reader runs later in think and reads M.TARGET_*
-  -- LIVE (no cached copies), so the override is in force from tick 1 onward.
+  -- targets and the blitz sizes: every PP.targets / squad.blitz_* reader runs
+  -- later in think and reads them LIVE (no cached copies), so an override is in
+  -- force from tick 1 onward.
   if state._test_arg_parsed == nil then
     state._test_arg_parsed = true
     local a = rawget(_G, "BRAIN_INIT_ARG")
@@ -1131,6 +1140,25 @@ function Brain.think(info)
               end
               PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
             end
+          end
+        elseif tok:sub(1, 6) == "blitz=" then
+          -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
+          -- Complaints latch into state._cfg_warn for the same reason as above.
+          local nums, bad, extra = {}, false, false
+          for part in tok:sub(7):gmatch("[^/]+") do
+            if #nums >= 2 then extra = true
+            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+            else bad = true end
+          end
+          local mn, mx = nums[1], nums[2]
+          if bad or extra or #nums < 1 or mn < 1 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[blitz] BAD TOKEN '%s' -- want blitz=MIN[/MAX], integers >= 1; IGNORED. ", tok)
+          elseif mx and mx < mn then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
+          else
+            squad.set_blitz_size(mn, mx, "init_arg")
           end
         else
           local n = tok:match("^deprive=(%d+)$")

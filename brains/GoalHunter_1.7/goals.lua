@@ -12728,7 +12728,7 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
                                 or (g.mx == e._mx and g.my == e._my))
         local we_participate = we_on_pill or (state.squad_blitz_target == e._id)
         if not we_participate then
-          local full_n = (C.SQUAD_MAX_SIZE or 1) + 1   -- commander + soldiers
+          local full_n = squad.blitz_max()   -- commander + soldiers, per-bot
           local tdead = state.tank_dead_at
           local n = 0
           for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
@@ -13257,7 +13257,7 @@ local function apply_blitz_join_discount(state, info, world)
   if not cache then return end
   local now     = state.tick or 0
   local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (info.player_number or -1)
-  local cap     = C.SQUAD_MAX_SIZE or 3
+  local cap     = squad.blitz_soldier_cap()   -- party MAX minus the commander
   local ref     = C.SQUAD_BLITZ_JOIN_REF_COST or 120
   -- Mid-take on our OWN pill: don't let a different blitz pull us off once we're
   -- past approach (planning/building/engaging). Our current pill itself stays
