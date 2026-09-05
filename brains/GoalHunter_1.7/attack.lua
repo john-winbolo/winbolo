@@ -3811,15 +3811,27 @@ end
 
 -- CONTESTED TAKE (2026-09-05, C.BLITZ_CONTESTED_ALL_SUICIDERS): commander-only.
 -- If a live hostile tank is sitting within C.BLITZ_CONTESTED_RANGE tiles of the
--- pill we are taking, the whole party goes in as temporary pill_suiciders —
--- every soldier and the commander itself — regardless of BLITZ_MIN_SUICIDERS.
+-- pill we are taking, the take is CONTESTED and the party goes in as temporary
+-- pill_suiciders, regardless of BLITZ_MIN_SUICIDERS. How many depends on the
+-- party size, which squad.blitz_designate_contested decides and reports back as
+-- the MODE:
+--   "all"   party >= C.BLITZ_CONTESTED_ALL_MIN_PARTY -- every soldier and the
+--           commander itself. Terminal: nothing re-checks after it.
+--   "small" a two-tank take -- C.BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS of them
+--           (soldiers first). NOT terminal: we keep re-checking, so a party
+--           that grows to ALL_MIN_PARTY while the take is still contested is
+--           UPGRADED to "all" (the upgrade skips the member already designated
+--           and logs `upgrade=small->all`).
+--   "solo"  no party at all (a solo take). Designates nothing and latches
+--           nothing, so a soldier that joins later still gets the rule.
 -- Called at BOTH GO sites, and again on the commander's replans while the take
--- is live so an enemy that arrives AFTER GO still flips the party. Latched on
--- the goal (`_blitz_contested_done`), so it fires at most once per take and
--- dies with the goal; expiry of the designations themselves is unchanged.
+-- is live so an enemy that arrives AFTER GO still flips the party. The latch is
+-- the mode itself on the goal (`_blitz_contested_mode`), so the designation
+-- happens at most once per party size per take and dies with the goal; expiry
+-- of the designations themselves is unchanged.
 local function blitz_contested_check(goal, state, world, info, now)
   if not C.BLITZ_CONTESTED_ALL_SUICIDERS then return end
-  if goal._blitz_contested_done then return end
+  if goal._blitz_contested_mode == "all" then return end
   local pid = goal.target_id
   if not pid then return end
   local p = world and world.pills and world.pills[pid]
@@ -3828,11 +3840,17 @@ local function blitz_contested_check(goal, state, world, info, now)
   if not (pmx and pmy) then return end
   local epn, edist = squad.blitz_contested_enemy(state, pmx, pmy)
   if not epn then return end
-  goal._blitz_contested_done = true
-  local n = squad.blitz_designate_all_suiciders(state, info, now, pid, epn, edist)
+  local n, mode, party = squad.blitz_designate_contested(
+    state, info, now, pid, epn, edist, goal._blitz_contested_mode)
+  -- Solo: no party to designate, and no latch either -- ask again next replan.
+  if mode == "solo" then return end
+  local prev = goal._blitz_contested
+  goal._blitz_contested_mode = mode
   -- Kept on the goal so every blitz panel / DECISION line that shows the quorum
-  -- or the suicider count can show contested{...} beside it.
-  goal._blitz_contested = { pn = epn, dist = edist, tick = now, n = n }
+  -- or the suicider count can show contested{...} beside it. `n` accumulates
+  -- across a small->all upgrade so the label reports the whole designation.
+  goal._blitz_contested = { pn = epn, dist = edist, tick = now, mode = mode,
+                            party = party, n = (prev and prev.n or 0) + n }
 end
 
 -- Effective loiter-wait cap. Starts at ANGER_WAIT_MAX and shrinks (divisors
@@ -3941,14 +3959,17 @@ function M.update_attack_substate(goal, state, world, info)
   -- by the two GO sites that designate) and only on the bot's REPLAN ticks:
   -- init.lua stamps state.replan_this_tick above this call, and a replan is
   -- already the cadence at which this bot re-reads the world. Cheap either way
-  -- (a scan of this tick's visible hostile tanks) and latched, so it does
-  -- nothing at all once the take is contested.
+  -- (a scan of this tick's visible hostile tanks). The latch is the goal's
+  -- contested MODE: once it reads "all" this stops entirely, while a "small"
+  -- (two-tank) designation keeps re-checking so a party that grows to
+  -- BLITZ_CONTESTED_ALL_MIN_PARTY is upgraded to "all".
   -- BOTH flags are on the GOAL, never state.squad_blitz_go: that one is only
   -- cleared on death/reset_blitz_state, so a commander that finished one take
   -- and opened another in the same life still carries it, and this check would
   -- fire on the new take BEFORE its GO.
   if state.squad_role == "c" and goal._blitz and state.replan_this_tick
-     and (goal._blitz_go or goal._blitz_su_done) and not goal._blitz_contested_done then
+     and (goal._blitz_go or goal._blitz_su_done)
+     and goal._blitz_contested_mode ~= "all" then
     blitz_contested_check(goal, state, world, info, now)
   end
 
