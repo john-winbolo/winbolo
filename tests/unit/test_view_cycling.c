@@ -15,7 +15,9 @@
  * the ally view's side of it: a tank the server is not sending arrives as a
  * hidden stub with its players entry zeroed, so the view centres on the square
  * the client last saw it on, and gives up on it once the stub run outlasts the
- * grace.
+ * grace. The last one is the pill equivalent: a pill whose square the client
+ * has not been told is current has stopped being solid, and must still be
+ * cyclable.
  *
  * Every case drives ut_make_running_sim and pokes the GameSim directly (the
  * unittests profile permits T2-internal access). The bases cases set their own
@@ -812,5 +814,81 @@ int run_view_cycle_ally_stub(void) {
                   "the round reset should clear the last known squares");
 
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* 9. A pill whose square the client has not been told is current is still
+ *    cyclable. The server grants the rect when the camera lands on it and the
+ *    position corrects itself a tick later, so the cycle must reach a pill the
+ *    movement code has already stopped treating as solid. */
+int run_view_cycle_stale_pill(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    gs->viewPlayer = 0;
+
+    /* Three of the player's own pills in a row; the middle one has moved out of
+     * sight, so its square is the last one we were given. */
+    vc_set_pills(gs, 0, 3);
+    BYTE p0x = gs->pb->item[0].x, p0y = gs->pb->item[0].y;
+    BYTE p1x = gs->pb->item[1].x, p1y = gs->pb->item[1].y;
+    pillsSetPosStale(&gs->pb, 1, TRUE);
+
+    /* The premise: gameplay has already let go of it. */
+    UT_ASSERT_MSG(pillsExistPos(&gs->pb, p1x, p1y) == FALSE,
+                  "the stale pill should not be solid — the case proves "
+                  "nothing otherwise");
+
+    /* The cycle still walks onto it, in index order and by direction. */
+    BYTE mx = p0x, my = p0y;
+    UT_ASSERT_MSG(pillsGetNextView(gs, &gs->pb, VC_ALL_ELIGIBLE, &mx, &my,
+                                   TRUE) == TRUE,
+                  "cycling from pill 0 should find the stale pill");
+    UT_ASSERT_MSG(mx == p1x && my == p1y,
+                  "the cycle should land on the stale pill at (%u,%u), got "
+                  "(%u,%u)", p1x, p1y, mx, my);
+
+    mx = p0x; my = p0y;
+    UT_ASSERT_MSG(pillsMoveView(gs, &gs->pb, VC_ALL_ELIGIBLE, &mx, &my, 1, 0) ==
+                      TRUE,
+                  "the step right should find the stale pill");
+    UT_ASSERT_MSG(mx == p1x,
+                  "the step right should take the stale pill at x=%u, got %u",
+                  p1x, mx);
+
+    /* And the view machine keeps a camera parked on it: the square still
+     * resolves to a pill index, and the per-tick upkeep does not drop it. */
+    UT_ASSERT_MSG(pillsCheckView(gs, &gs->pb, p1x, p1y) == TRUE,
+                  "the stale pill should still pass the view check");
+
+    ViewPort vp;
+    ScrollState scroll;
+    ViewCycleInputs in;
+    memset(&vp, 0, sizeof(vp));
+    memset(&scroll, 0, sizeof(scroll));
+    viewCycleInputsDefaults(&in);
+
+    vp.viewKind   = VIEW_KIND_PILL;
+    vp.viewTarget = 1;
+    vp.viewX      = p1x;
+    vp.viewY      = p1y;
+    UT_ASSERT_MSG(viewportUpdateItemView(&vp, gs, &scroll, &in) == TRUE,
+                  "a stale pill must not drop the view");
+    UT_ASSERT_MSG(vp.viewTarget == 1,
+                  "the view should still report pill 1, got %u", vp.viewTarget);
+
+    /* With every pill's square merely remembered — a player who has seen none
+     * of them this round — entering pill view still parks on one. */
+    pillsSetPosStale(&gs->pb, 0, TRUE);
+    pillsSetPosStale(&gs->pb, 2, TRUE);
+    vp.viewKind = VIEW_KIND_TANK;
+    viewportPanInView(&vp, gs, &scroll, gs->tanks[0], VIEW_KIND_PILL, &in, 0, 0);
+    UT_ASSERT_MSG(vp.viewKind == VIEW_KIND_PILL && vp.viewTarget == 0,
+                  "entering pill view should park on the first pill, got kind "
+                  "%u target %u", vp.viewKind, vp.viewTarget);
+
+    serverSimDestroy(sim);
     return 0;
 }

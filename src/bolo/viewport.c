@@ -147,7 +147,11 @@ BYTE viewportCalcSquarePure(struct GameSim *sim, BYTE myPlayerNum,
 
   *isMine = FALSE;
   /* Set up Items */
-  if ((pillsExistPos(&sim->pb, xValue, yValue)) == TRUE) {
+  /* The remembered answer: a pill this client has lost sight of keeps its tile
+   * at the square it was last seen on rather than showing the ground under it.
+   * It is no longer solid — that is pillsExistPos's job, which the movement and
+   * collision paths ask. */
+  if ((pillsViewExistPos(&sim->pb, xValue, yValue)) == TRUE) {
     returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue, myPlayerNum);
   } else if ((basesExistPos(&sim->bs, xValue, yValue)) == TRUE) {
     ba = basesGetAlliancePos(sim, xValue, yValue, myPlayerNum);
@@ -306,7 +310,7 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
   /* Repair a malformed terrain byte; the view is the only path that
    * normalises these. The tile above was computed from the normalised
    * value already, so the write-back only fixes the stored map. */
-  if (pillsExistPos(&sim->pb, xValue, yValue) == FALSE &&
+  if (pillsViewExistPos(&sim->pb, xValue, yValue) == FALSE &&
       basesExistPos(&sim->bs, xValue, yValue) == FALSE) {
     currentPos = mapGetPos(&sim->mp, xValue, yValue);
     if (currentPos >= HALFBUILDING + MINE_SUBTRACT && currentPos != DEEP_SEA) {
@@ -341,7 +345,7 @@ void viewportFollowTank(ViewPort *vp, ScrollState *scroll, tank myTank) {
  * CMD_VIEW_STATE uses. Only ever called for a square a cycling helper has just
  * reported, so the not-found case is unreachable; 0 stands in for it. */
 static BYTE viewportPillIndexAt(struct GameSim *sim, BYTE mx, BYTE my) {
-  BYTE pillNum = pillsGetPillNum(&sim->pb, mx, my, FALSE, FALSE);
+  BYTE pillNum = pillsGetViewPillNum(&sim->pb, mx, my, FALSE, FALSE);
   return (BYTE)(pillNum == PILL_NOT_FOUND ? 0 : pillNum - 1);
 }
 

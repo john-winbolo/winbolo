@@ -899,6 +899,21 @@ int run_view_cycle_exits(void);
 int run_view_cycle_decay_skip(void);
 int run_view_cycle_eligible_mask(void);
 int run_view_cycle_ally_stub(void);
+int run_view_cycle_stale_pill(void);
+
+/* The per-pill position-current flag (test_pill_pos_current.c): the lookups
+ * movement, turn rate and shell collision ask pass over a pill whose square
+ * this client has not been told is current, while the view and camera siblings
+ * still answer for it at the square it was last seen on; two pills on one
+ * square resolve to the one that is really there in either order; the client's
+ * apply path sets the flag from the snapshot bit on both the pill block and
+ * EVENT_PILL_UPDATE, writing the square as sent either way; and a server's own
+ * list, which never carries a flag, answers exactly as it did. */
+int run_pill_pos_current_lookups(void);
+int run_pill_pos_current_num_split(void);
+int run_pill_pos_current_duplicate_square(void);
+int run_pill_pos_current_snapshot_apply(void);
+int run_pill_pos_current_server_unchanged(void);
 
 /* Pure viewport square calculator (test_viewport_calc.c):
  * viewportCalcSquarePure agrees with viewportCalcSquare on every map square,

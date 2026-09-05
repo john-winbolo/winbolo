@@ -3236,7 +3236,7 @@ baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum) {
 }
 
 BYTE clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my) {
-  return pillsGetPillNum(&clientSimGetGameSim(cs)->pb, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my), FALSE, FALSE);
+  return pillsGetViewPillNum(&clientSimGetGameSim(cs)->pb, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my), FALSE, FALSE);
 }
 
 BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {

@@ -3159,6 +3159,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c
     tests/unit/test_view_cycling.c
+    tests/unit/test_pill_pos_current.c
     tests/unit/test_viewport_calc.c
     tests/unit/test_overview_map.c
     tests/unit/test_overview_view_policy.c
@@ -3894,6 +3895,12 @@ set(_unit_test_names
     view_cycle_decay_skip
     view_cycle_eligible_mask
     view_cycle_ally_stub
+    view_cycle_stale_pill
+    pill_pos_current_lookups
+    pill_pos_current_num_split
+    pill_pos_current_duplicate_square
+    pill_pos_current_snapshot_apply
+    pill_pos_current_server_unchanged
     viewport_calc_square_pure
     overview_regions
     overview_reveal

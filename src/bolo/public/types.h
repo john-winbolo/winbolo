@@ -107,6 +107,12 @@ typedef struct pillsObj *pillboxes;
 struct pillsObj {
   pillbox item[MAX_PILLS];
   BYTE numPills;
+  /* Wire format ends here at SIZEOF_PILLS (145 bytes). Past it: whether each
+   * pill's square is one the server has confirmed is current, or the last
+   * square this client was told about a pill it can no longer see. Zero — the
+   * value pillsCreate's memset and every map install leave — means current, so
+   * the server's own list is never affected. */
+  BYTE posStale[MAX_PILLS];
 };
 
 /* 25B = 25x8 = 200b needed to be allocated */
@@ -236,6 +242,12 @@ BOLO_STATIC_ASSERT(sizeof(pillbox) == 9, pillbox_must_be_9_bytes);
  * fields must sit strictly past that boundary. */
 BOLO_STATIC_ASSERT(offsetof(struct basesObj, stealDebounce) == SIZEOF_BASES,
                    bases_steal_debounce_after_wire_format);
+/* Same rule for pillsObj: the position-current flags sit strictly past the
+ * SIZEOF_PILLS bytes pillsSetPillCompressData copies in. pillbox holds only
+ * BYTE and bool, so item[] and numPills pack to exactly 145 with no pad member
+ * of the kind basesObj needs. */
+BOLO_STATIC_ASSERT(offsetof(struct pillsObj, posStale) == SIZEOF_PILLS,
+                   pills_pos_stale_after_wire_format);
 BOLO_STATIC_ASSERT(sizeof(start) == 3,   start_must_be_3_bytes);
 
 #endif

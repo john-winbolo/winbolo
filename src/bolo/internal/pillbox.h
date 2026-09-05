@@ -198,6 +198,11 @@ void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum);
 *LAST MODIFIED: 28/10/98
 *PURPOSE:
 *  Returns whether a pillbox exist at a specific location
+*  A pill whose square this client has not been told is
+*  current does not count as being there, so movement, turn
+*  rate and shell collision never meet a pill that is only
+*  remembered. pillsViewExistPos is the variant the view
+*  builder draws from.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -339,7 +344,9 @@ TURNTYPE pillsTargetTankMove(struct GameSim *sim, map *mp, pillboxes *pb, bases 
 *LAST MODIFIED: 15/1/99
 *PURPOSE:
 *  Returns whether a pillbox a specific location is dead
-*  or not.
+*  or not. A pill whose square this client has not been
+*  told is current does not count as being there. Every
+*  caller is gameplay, so there is no view variant.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -356,6 +363,9 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue);
 *PURPOSE:
 *  Returns the pill number of a pillbox at that location
 *  If not found returns PILL_NOT_FOUND
+*  A pill whose square this client has not been told is
+*  current is passed over. pillsGetViewPillNum is the
+*  variant the camera and the displays use.
 *
 *ARGUMENTS:
 *  value      - Pointer to the pillbox structure
@@ -365,6 +375,81 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue);
 *  inTank     - The intank state to check if we care
 *********************************************************/
 BYTE pillsGetPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank);
+
+/*********************************************************
+*NAME:          pillsGetViewPillNum
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  pillsGetPillNum without the position-current filter:
+*  which pill this client last saw at that square, whether
+*  or not the server has confirmed it is still there. The
+*  camera and the displays use this so a pill you have lost
+*  sight of stays selectable and stays drawn where you last
+*  saw it.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  xValue     - X Location of pillbox
+*  yValue     - Y Location of pillbox
+*  careInTank - Whether we are about the in tank state
+*  inTank     - The intank state to check if we care
+*********************************************************/
+BYTE pillsGetViewPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank);
+
+/*********************************************************
+*NAME:          pillsViewExistPos
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  pillsExistPos without the position-current filter: is
+*  there a pill here as far as this client last saw. The
+*  view builder draws from this, so a pill you have lost
+*  sight of stays on screen at the square you last saw it
+*  on, rather than the ground underneath showing through.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+bool pillsViewExistPos(pillboxes *value, BYTE xValue, BYTE yValue);
+
+/*********************************************************
+*NAME:          pillsSetPosStale
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Records whether a pill's square is the one the server
+*  says it is on right now, or the last square this client
+*  was told about a pill it can no longer see. Only a
+*  client ever sets this; the server's own list is all
+*  current.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*  stale   - TRUE if the square is not known to be current
+*********************************************************/
+void pillsSetPosStale(pillboxes *value, BYTE pillNum, bool stale);
+
+/*********************************************************
+*NAME:          pillsIsPosStale
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns whether a pill's square is one this client has
+*  not been told is current.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+bool pillsIsPosStale(pillboxes *value, BYTE pillNum);
 
 /*********************************************************
 *NAME:          pillsSetPillInTank
