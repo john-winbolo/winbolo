@@ -1017,10 +1017,6 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   char playerName[FILENAME_MAX]; /* Holds playername/location info */
   WORLD conv;                    /* Used in conversion */
   WORLD conv2;
-  WORLD ourTankX;                /* Our tank X and Y co-ordinates */
-  WORLD ourTankY;
-  WORLD tx;                      /* Current tanks X and Y co-ordinates */
-  WORLD ty;
   BYTE frame;                    /* Holds frame info */
   BYTE count;                    /* Looping variable */
   BYTE mx;                       /* Tank map and pixel X and Y co-ordinates */
@@ -1032,7 +1028,6 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   {
     BYTE self = clientSimGetMyPlayerNum(cs);
     if (self >= MAX_TANKS || sim->tanks[self] == NULL) return;
-    tankGetWorld(&sim->tanks[self], &ourTankX, &ourTankY);
   }
 
   for (count=0;count<MAX_TANKS;count++) {
@@ -1057,57 +1052,43 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
       my = (BYTE) conv;
 
       if (mx >= leftPos && mx <= rightPos && my >= top && my <= bottom) {
-        tx = (WORLD) (((*plrs)->item[count].mapX << TANK_SHIFT_MAPSIZE) + ((*plrs)->item[count].pixelX<< TANK_SHIFT_RIGHT2));
-        if (tx > ourTankX) {
-          conv = tx - ourTankX;
-        } else {
-          conv = ourTankX - tx;
-        }
-        ty = (WORLD) ((((*plrs)->item[count].mapY << TANK_SHIFT_MAPSIZE)) + (((*plrs)->item[count].pixelY<< TANK_SHIFT_RIGHT2)));
-        if (ty > ourTankY) {
-          conv2 = ty - ourTankY;
-        } else {
-          conv2 = ourTankY - ty;
-        }
-        if ((playersIsItemInTrees(sim, MY_TANK(cs), tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
-          /* Extract fixed pixel co-ordinates */
-          conv = (*plrs)->item[count].mapX;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv2 = (*plrs)->item[count].pixelX;
-          conv2 <<= TANK_SHIFT_RIGHT2;
-          conv += conv2;
-          conv -= TANK_SUBTRACT;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          px = (BYTE) conv;
+        /* Extract fixed pixel co-ordinates */
+        conv = (*plrs)->item[count].mapX;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv2 = (*plrs)->item[count].pixelX;
+        conv2 <<= TANK_SHIFT_RIGHT2;
+        conv += conv2;
+        conv -= TANK_SUBTRACT;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv >>= TANK_SHIFT_PIXELSIZE;
+        px = (BYTE) conv;
 
-          conv = (*plrs)->item[count].mapY;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv2 = (*plrs)->item[count].pixelY;
-          conv2 <<= TANK_SHIFT_RIGHT2;
-          conv += conv2;
-          conv -= TANK_SUBTRACT;
-          conv <<= TANK_SHIFT_MAPSIZE;
-          conv >>= TANK_SHIFT_PIXELSIZE;
-          py = (BYTE) conv;
-          /* Extract player screen name */
-          playersMakeScreenName(cs, plrs, clientSimGetMyPlayerNum(cs), count, playerName);
-          frame = (*plrs)->item[count].frame;
-          if ((*plrs)->item[count].onBoat == TRUE) {
-            frame += TANK_BOAT_ADD;
-          }
-          if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
-            frame += TANK_GOOD_ADD;
-          } else {
-            frame += TANK_EVIL_ADD;
-          }
-          /* The wire carries a 4 bit pixel offset and a 16 step facing,
-             so the sub-square offsets and the angle are those values
-             scaled back up to world units and to 0-255. */
-          screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, count, playerName,
-                             (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
-                             (BYTE) ((*plrs)->item[count].frame << 4)); 
+        conv = (*plrs)->item[count].mapY;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv2 = (*plrs)->item[count].pixelY;
+        conv2 <<= TANK_SHIFT_RIGHT2;
+        conv += conv2;
+        conv -= TANK_SUBTRACT;
+        conv <<= TANK_SHIFT_MAPSIZE;
+        conv >>= TANK_SHIFT_PIXELSIZE;
+        py = (BYTE) conv;
+        /* Extract player screen name */
+        playersMakeScreenName(cs, plrs, clientSimGetMyPlayerNum(cs), count, playerName);
+        frame = (*plrs)->item[count].frame;
+        if ((*plrs)->item[count].onBoat == TRUE) {
+          frame += TANK_BOAT_ADD;
         }
+        if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
+          frame += TANK_GOOD_ADD;
+        } else {
+          frame += TANK_EVIL_ADD;
+        }
+        /* The wire carries a 4 bit pixel offset and a 16 step facing,
+           so the sub-square offsets and the angle are those values
+           scaled back up to world units and to 0-255. */
+        screenTanksAddItem(value,(BYTE) (mx - leftPos), (BYTE) (my - top), px, py, frame, count, playerName,
+                           (BYTE) (px << TANK_SHIFT_RIGHT2), (BYTE) (py << TANK_SHIFT_RIGHT2),
+                           (BYTE) ((*plrs)->item[count].frame << 4)); 
       }
     }
   }
@@ -1157,7 +1138,13 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
           conv2 = ourTankY - wy;
         }
 
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
+        /* The server withholds a tank standing in trees before the snapshot
+           reaches us, but an LGM can be a long way from its tank — parachuting
+           in from a spawn, or out building — so the client still tests the
+           LGM's own square. An ally's LGM follows the ally: shown while the
+           server's allies-in-trees option is on. */
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST) ||
+            (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame, (BYTE) wx, (BYTE) wy);
         }
       }
@@ -2153,8 +2140,6 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
   WORLD conv;      /* Used in converting items world co-ordinates */
   WORLD wx;        /* Items X and Y positions */
   WORLD wy;
-  WORLD diffX;     /* Tanks differences in position */
-  WORLD diffY;
   BYTE owner;      /* Owner of the tank */
 
   count = 0;
@@ -2184,20 +2169,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
       conv = (*plrs)->item[count].pixelY;
       conv <<= TANK_SHIFT_RIGHT2;
       wy += conv;
-      /* Difference for tree check */
-      if (wx > tankX) {
-        diffX = wx - tankX;
-      } else {
-        diffX = tankX - wx;
-      }
-      if (wy > tankY) {
-        diffY = wy - tankY;
-      } else {
-        diffY = tankY - wy;
-      }
-
-
-      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
+      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom) {
         /* In the rectangle */
         /* wx and wy already set */
         /* Info */
@@ -2274,7 +2246,13 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv2 = ourTankY - wy;
         }
         
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
+        /* The server withholds a tank standing in trees before the snapshot
+           reaches us, but an LGM can be a long way from its tank — parachuting
+           in from a spawn, or out building — so the client still tests the
+           LGM's own square. An ally's LGM follows the ally: shown while the
+           server's allies-in-trees option is on. */
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) ||
+            (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           /* In the rectangle */
           /* Object Type */
           if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME) {

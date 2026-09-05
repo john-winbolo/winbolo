@@ -789,6 +789,34 @@ void serverSimValidateViewTargets(ServerSim *sim) {
     }
 }
 
+/* A tank standing in trees is withheld from a recipient more than
+ * MIN_TREEHIDE_DIST away on either axis: that recipient gets the same
+ * 1-byte stub an out-of-view tank gets. Firing gives the position away
+ * — the shot clears the trees the tank was hiding in — and an ally is
+ * exempt while the server's allies-in-trees option is on. */
+static bool tankHiddenInTrees(ServerSim *sim, BYTE viewer, BYTE target,
+                              WORLD tx, WORLD ty) {
+    WORLD vx = 0, vy = 0;
+    int dx, dy;
+
+    /* A recipient with no tank of its own gets no tree hide. */
+    if (!serverSimGetTankState(sim, viewer, &vx, &vy)) return false;
+
+    dx = (int)tx - (int)vx;
+    if (dx < 0) dx = -dx;
+    dy = (int)ty - (int)vy;
+    if (dy < 0) dy = -dy;
+    if (dx < MIN_TREEHIDE_DIST && dy < MIN_TREEHIDE_DIST) return false;
+
+    if (serverSimGetAlliesInTrees(sim) &&
+        playersIsAllie(&sim->sim.plyrs, target, viewer)) {
+        return false;
+    }
+    if (tankJustFired(&sim->sim.tanks[target])) return false;
+
+    return utilIsTankInTrees(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, tx, ty);
+}
+
 void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
                             TankSnapshot *tanksOut, int maxTanks,
@@ -851,6 +879,13 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 }
             }
             if (!inView) {
+                ts = &tanksOut[tankCount];
+                memset(ts, 0, sizeof(*ts));
+                ts->playerNum = (uint8_t)(i | TANK_SNAPSHOT_HIDDEN_FLAG);
+                tankCount++;
+                continue;
+            }
+            if (tankHiddenInTrees(sim, clientIdx, (BYTE)i, wx, wy)) {
                 ts = &tanksOut[tankCount];
                 memset(ts, 0, sizeof(*ts));
                 ts->playerNum = (uint8_t)(i | TANK_SNAPSHOT_HIDDEN_FLAG);

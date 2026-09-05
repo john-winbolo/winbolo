@@ -821,6 +821,14 @@ int run_view_rects_off(void);
 int run_view_rects_decay(void);
 int run_view_rects_dead_player(void);
 
+/* Server-side tree hide (test_tree_hide.c): serverSimBuildSnapshot ships a
+ * tank standing in trees more than MIN_TREEHIDE_DIST from the recipient on
+ * either axis as a TANK_SNAPSHOT_HIDDEN_FLAG stub — in full inside that
+ * distance, in full just after it has fired, and in full for an ally while the
+ * server's allies-in-trees option is on, never for an enemy. */
+int run_tree_hide_enemy(void);
+int run_tree_hide_ally_option(void);
+
 /* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
  * view a client is in, a viewPolicyKey category grants exactly the claimed
  * item's rect while it still qualifies, and every claim the server cannot

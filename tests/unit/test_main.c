@@ -450,6 +450,8 @@ static const UnitTestEntry s_tests[] = {
     { "view_rects_off",                          run_view_rects_off                          },
     { "view_rects_decay",                        run_view_rects_decay                        },
     { "view_rects_dead_player",                  run_view_rects_dead_player                  },
+    { "tree_hide_enemy",                         run_tree_hide_enemy                         },
+    { "tree_hide_ally_option",                   run_tree_hide_ally_option                   },
     { "view_state_key_grants_rect",              run_view_state_key_grants_rect              },
     { "view_state_bad_claims_degrade",           run_view_state_bad_claims_degrade           },
     { "view_state_invalidation",                 run_view_state_invalidation                 },
