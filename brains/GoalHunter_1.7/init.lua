@@ -3098,11 +3098,13 @@ function Brain.think(info)
       end
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
                                  C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP,
-                                 C.EXPAND_DEEP_MARGIN or 0)
+                                 C.EXPAND_DEEP_MARGIN or 0,
+                                 C.INFLUENCE_ENEMY_TAIL)
       state._tail_sig, state._tail_tick = _tsig, now
       state._tail_rebuilt_tick = now
-      print2(string.format("TAIL_REBUILD t=%d sig=%d deep_margin=%d %.2fms",
-        now, _tsig, C.EXPAND_DEEP_MARGIN or 0, (clock_us() - _t_tail) / 1000))
+      print2(string.format("TAIL_REBUILD t=%d sig=%d deep_margin=%d enemy_tail=%s %.2fms",
+        now, _tsig, C.EXPAND_DEEP_MARGIN or 0, tostring(C.INFLUENCE_ENEMY_TAIL ~= false),
+        (clock_us() - _t_tail) / 1000))
     end
     -- Merged unconditionally, even when _tsig says the tail is unchanged:
     -- cpf.clear_influence() above wipes influence_grid at the top of EVERY

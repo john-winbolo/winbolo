@@ -177,6 +177,23 @@ M.EXPAND_DEEP_MARGIN   = 4    -- tiles within this many tiles (king-move / Cheby
                               -- front line stops short of the shore instead of
                               -- being drawn out over the water. Stamped cores are
                               -- unaffected (they still seed). 0 = old behaviour
+M.INFLUENCE_ENEMY_TAIL = false -- does the ENEMY's influence grow too?
+                              -- true = the old behaviour: both sides grow, and the
+                              -- two tails cancel inside one signed grid, so the
+                              -- front line settles midway and the blank ground
+                              -- between the sides is split evenly.
+                              -- false (default) = only OUR cores grow. Enemy bases
+                              -- and pills keep their raw stamped discs (the stamp
+                              -- radii above are untouched) but spread no further,
+                              -- so nothing cancels our tail and unclaimed ground
+                              -- reads as ours right up to the edge of their disc.
+                              -- The merge still keeps the larger magnitude, so an
+                              -- enemy footprint is never overwritten -- only its
+                              -- faint outer ring (|stamp| < EXPAND_START) can flip.
+                              -- Pushes the front line outward: more ground counts
+                              -- as claimed, so placement, the back/front/aggro
+                              -- portfolio and the beyond-front penalty all
+                              -- encourage the bots to take and hold more land.
 M.EXPAND_REFRESH_TICKS = 250  -- backstop rebuild; normally only on a stamp-set change
 M.EXPAND_DEBUG_MAP     = false -- debug only: TAIL_MAP print2 (ASCII 64x64 around the
                               -- tank on every rebuild). Off for normal play
