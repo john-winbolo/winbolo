@@ -153,7 +153,7 @@ local VANISH_SPACING_TICKS = 50   -- 1 s between one wave removal and the next
 -- pill_suicider role on for that one bot — it charges pillboxes and refuels
 -- and pays a heavy cost surcharge on everything else. Unlisted waves spawn
 -- plain and keep the brain's own fractional designation.
-local SUICIDER_WAVES = { [2] = true }
+local SUICIDER_WAVES = { [2] = true, [4] = true }
 
 -- Map-file layout contracts (see tests/generate_survival_map.py):
 local HORDE_BASES  = 8      -- bases 1..8: the horde's shore ring (r=25)
@@ -605,8 +605,9 @@ local function spawn_wave(game)
   -- reports itself separately, from pump_spawn_queue.)
   game.message(string.format("*** Wave %d/%d: %d attackers inbound!%s ***",
                              wave, WAVES, WAVE_SIZE,
-                             SUICIDER_WAVES[wave] and " PILL SUICIDERS —"
-                               .. " they are coming for your pillboxes!" or ""))
+                             SUICIDER_WAVES[wave] and
+                               " Scouts report this lot have no interest in"
+                               .. " your bases... guard your pillboxes!" or ""))
 end
 
 -- Deterministic spawn pinning (fires for EVERY placement — initial
