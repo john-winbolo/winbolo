@@ -16,9 +16,21 @@ WHAT THE ARENAS ARE FOR
     spawns, same tokens, same seed, and the only thing that differs is the
     pill-to-enemy distance.
 
-      A  CONTESTED.  The enemy sits FOE_A, {DA} tiles from the pill (<= 9).
-         Expect: BLITZ_GO, a BLITZ_CONTESTED line, and all three attackers
-         carrying blitz_suicider=true reason=blitz_contested.
+      A  CONTESTED, BIG PARTY.  Three attackers with `blitz=3/4`; the enemy
+         sits FOE_A, 7.0 tiles from the pill (<= 9).  Party 3 is at
+         BLITZ_CONTESTED_ALL_MIN_PARTY, so the "all" rule applies.
+         Expect: BLITZ_GO, a BLITZ_CONTESTED line reading
+         `party=3 -> all suiciders`, and all three attackers carrying
+         blitz_suicider=true reason=blitz_contested.
+      C  CONTESTED, SMALL PARTY.  The SAME enemy tile as A, but only TWO
+         attackers, with `blitz=2/4`.  Party 2 is below
+         BLITZ_CONTESTED_ALL_MIN_PARTY (3), so the small-party rule applies
+         and exactly BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS (1) member is
+         designated -- soldiers first, so it is the SOLDIER, never the
+         commander, which stays alive to finish the pill.
+         Expect: BLITZ_GO, a BLITZ_CONTESTED line reading
+         `party=2 -> 1 suicider`, one attacker a contested suicider and the
+         other never a suicider at all.
       B  CONTROL.    The enemy sits FOE_B, {DB} tiles from the pill (> 9), and
          is still plainly VISIBLE from the take (well inside the engine's
          14-tile brain view window, which the test asserts from the attackers'
@@ -39,12 +51,18 @@ THE ARENA
                the sidecar, so it is a HARD TAKE (>= HARD_TAKE_MIN_HP): squad
                elects a commander for it and the commander opens a blitz call,
                which is the only way this test gets a GO at all.
-    (114,120)  attacker 0 start pond    (110,116) its base
-    (114,126)  attacker 1 start pond    (110,126) its base
-    (114,132)  attacker 2 start pond    (110,136) its base
+    (114,120)  attacker start pond    (110,116) its base   [A B C]
+    (114,126)  attacker start pond    (110,126) its base   [A B  ]
+    (114,132)  attacker start pond    (110,136) its base   [A B C]
                All three are ~15-16 tiles from the pill, near enough to the
                same distance that no one of them owns the take by geometry.
-    (136,126)  A: the enemy's start pond, on the island, 7 tiles from the pill.
+               Variant C uses only the OUTER pair, which are EXACTLY
+               equidistant from the pill (16.16 each), so its two-tank party
+               has no geometric favourite either.  Attackers are always
+               player slots 0..N-1 in this order and the enemy is slot N, so
+               C runs -bots 3 -teams 2,1 and the idler is p2.
+    (136,126)  A and C: the enemy's start pond, on the island, 7 tiles from
+               the pill.
     (136,138)  B: the same pond moved south, 13.9 tiles from the pill.
 
 WHY THE ENEMY IS ON AN ISLAND IN A POND
@@ -67,16 +85,17 @@ WHY THE ENEMY IS ON AN ISLAND IN A POND
     tests/brains/idle.lua -- it never moves, never fires, never leaves the pond
     -- so it is a stationary "within 9 tiles" fact and nothing else.
 
-WHY `-gametype open -teams 3,1`
-    OPEN hands every tank the full 40/40 loadout (gametype.c) so three tanks
-    can actually shoot a 15 HP pill down, and it leaves -teams alone
-    (TOURNAMENT would override it).  "3,1" is the CONTIGUOUS-BLOCK form
-    (servermain.c): bots 0,1,2 are the allied party under test and bot 3 is the
-    enemy.  "-teams 3" without the comma is the round-robin form and would make
-    the three attackers enemies of each other, which tests nothing.
+WHY `-gametype open -teams <N>,1`
+    OPEN hands every tank the full 40/40 loadout (gametype.c) so the party can
+    actually shoot a 15 HP pill down, and it leaves -teams alone (TOURNAMENT
+    would override it).  "3,1" (and "2,1" for variant C) is the
+    CONTIGUOUS-BLOCK form (servermain.c): bots 0..N-1 are the allied party
+    under test and bot N is the enemy.  "-teams 3" without the comma is the
+    round-robin form and would make the attackers enemies of each other, which
+    tests nothing.
 
 Usage:
-    python tests/generate_blitz_contested_map.py [A|B] [output_path]
+    python tests/generate_blitz_contested_map.py [A|B|C] [output_path]
     Default: writes both, as tests/blitz_contested_<variant>.map
 Writes <output>.map and the matching <output>.scenario.lua sidecar.
 """
@@ -93,7 +112,7 @@ GRASS = 7
 DEEP_SEA = None                # background sentinel (unwritten = deep sea)
 MAP_SIZE = 256
 
-VARIANTS = ("A", "B")
+VARIANTS = ("A", "B", "C")
 
 # -- Geometry (the test runner imports these for its assertions) -------------
 BODY_Y = (106, 146)
@@ -102,12 +121,38 @@ MOAT_X = (134, 135)            # never written -> deep sea, full body height
 ISLAND_X = (136, 146)          # the enemy's island
 
 PILL = (129, 126)              # brain pill #0, owned by the enemy
-BOT_SPAWNS = [(114, 120), (114, 126), (114, 132)]
-BASES = [(110, 116), (110, 126), (110, 136)]
-FOE_SPAWN = {"A": (136, 126), "B": (136, 138)}
+ALL_BOT_SPAWNS = [(114, 120), (114, 126), (114, 132)]
+ALL_BASES = [(110, 116), (110, 126), (110, 136)]
+# Which of the three spawn/base pairs each variant actually uses.  C runs a
+# party of TWO and takes the OUTER pair, which sit at exactly the same distance
+# from the pill (16.16 tiles each), so neither of its two tanks owns the take
+# by geometry.  Whatever the subset, the attackers are always player slots
+# 0..N-1 in this order and the enemy is slot N.
+ALLY_SLOTS = {"A": (0, 1, 2), "B": (0, 1, 2), "C": (0, 2)}
+FOE_SPAWN = {"A": (136, 126), "B": (136, 138), "C": (136, 126)}
+CONTESTED = {"A", "C"}         # variants whose enemy is inside the range
 
-FOE_PLAYER = 3                 # -bots 4, so the idler is slot 3
-ALLIES = (0, 1, 2)
+
+def n_allies(variant):
+    return len(ALLY_SLOTS[variant])
+
+
+def allies(variant):
+    """The attackers' player slots: always 0..N-1."""
+    return tuple(range(n_allies(variant)))
+
+
+def foe_player(variant):
+    """The idler's player slot: always the one after the attackers."""
+    return n_allies(variant)
+
+
+def spawns(variant):
+    return [ALL_BOT_SPAWNS[i] for i in ALLY_SLOTS[variant]]
+
+
+def bases(variant):
+    return [ALL_BASES[i] for i in ALLY_SLOTS[variant]]
 
 # -- Object state ------------------------------------------------------------
 NEUTRAL = 255
@@ -124,8 +169,12 @@ BRAIN_VIEW_HALF = 14           # brain_data.c: the tank view rect is +/-14 tiles
 PILLBOX_RANGE = 8              # tiles a pill can shoot (pillbox.c)
 SQUAD_BLITZ_PREEMPT_TANK_TILES = 10   # constants.lua
 BLITZ_MIN_SUICIDERS = 0        # constants.lua default: nothing else designates
-BLITZ_PARTY = (3, 4)           # the "blitz=3/4" token the test passes: GO needs
-                               # all three tanks, and the call accepts up to 4
+# The "blitz=MIN/MAX" token each variant's attackers are given.  A/B need all
+# THREE tanks before a GO can fire, so "all suiciders" has three members to be
+# all OF; C needs TWO, which is the party size the small-party rule is about.
+BLITZ_PARTY = {"A": (3, 4), "B": (3, 4), "C": (2, 4)}
+BLITZ_CONTESTED_ALL_MIN_PARTY = 3       # constants.lua: party >= this -> all
+BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS = 1   # constants.lua: below it, this many
 
 
 def euclid(a, b):
@@ -137,7 +186,7 @@ def cheb(a, b):
 
 
 def ponds(variant):
-    return list(BOT_SPAWNS) + [FOE_SPAWN[variant]]
+    return spawns(variant) + [FOE_SPAWN[variant]]
 
 
 def make_map(variant):
@@ -175,18 +224,19 @@ SIDECAR = '''\
 --    them a real fallback goal instead of wandering.
 --
 -- 3. PINNED STARTS.  on_choose_start hands every tank its own pond so the
---    three attackers cannot swap ends with each other or with the enemy, and a
---    respawn comes back to the same tile.  Start 4 is the enemy's.
+--    attackers cannot swap ends with each other or with the enemy, and a
+--    respawn comes back to the same tile.  The last start is the enemy's.
 --
--- 4. FILL THE ATTACKERS' PONDS once all three are ashore.  A start square has
+-- 4. FILL THE ATTACKERS' PONDS once they are all ashore.  A start square has
 --    to be DEEP SEA (starts.c startsIsValidSquare), and a tank that later
 --    drives over one without a boat drowns -- noise this test does not want.
 --    The ENEMY's pond is deliberately left alone: the idler never moves, so it
 --    sits in its boat all round, and filling the water under it is not
 --    something this test needs to find out about.
 local PILL_XY   = {{ {PX}, {PY} }}
-local BASES     = {{ {{ {B0X}, {B0Y}, 0 }}, {{ {B1X}, {B1Y}, 1 }}, {{ {B2X}, {B2Y}, 2 }} }}
-local ALLY_PONDS = {{ {{ {S0X}, {S0Y} }}, {{ {S1X}, {S1Y} }}, {{ {S2X}, {S2Y} }} }}
+local ALLIES    = {{ {ALLY_LIST} }}
+local BASES     = {{ {BASES_LIT} }}
+local ALLY_PONDS = {{ {PONDS_LIT} }}
 local FOE_PLAYER = {FOE}
 local FULL      = {FULL}
 local PILL_HP   = {HP}
@@ -225,7 +275,7 @@ local function own_everything(g)
       end
     end
   end
-  for _, a in ipairs({{0, 1, 2}}) do g.set_team(a, 0) end
+  for _, a in ipairs(ALLIES) do g.set_team(a, 0) end
   g.set_team(FOE_PLAYER, 1)
 end
 
@@ -233,13 +283,14 @@ function on_setup(g)
   own_everything(g)
 end
 
--- Start 1/2/3 are the three attackers' ponds, in slot order; start 4 is the
--- enemy's.  Anything else the engine may place goes wherever it likes.
+-- Starts 1..#ALLIES are the attackers' ponds, in slot order; the one after
+-- them is the enemy's.  Anything else the engine may place goes wherever it
+-- likes.
 function on_choose_start(g, p)
-  if p == 0 then return 1 end
-  if p == 1 then return 2 end
-  if p == 2 then return 3 end
-  if p == FOE_PLAYER then return 4 end
+  for i, a in ipairs(ALLIES) do
+    if p == a then return i end
+  end
+  if p == FOE_PLAYER then return #ALLIES + 1 end
   return nil
 end
 
@@ -257,7 +308,7 @@ function on_tick(g, tick)
   -- Fill the ATTACKERS' ponds once none of them is afloat any more (job 4).
   if not ponds_filled and tick > 200 then
     local afloat = false
-    for _, a in ipairs({{0, 1, 2}}) do
+    for _, a in ipairs(ALLIES) do
       local t = g.tank(a)
       if t and t.boat then afloat = true end
     end
@@ -274,6 +325,12 @@ end
 def write_sidecar(path, variant):
     foe = FOE_SPAWN[variant]
     d = euclid(PILL, foe)
+    # The ally-dependent Lua literals: the slot list, the { x, y, owner } bases
+    # and the spawn ponds to fill, all in player-slot order.
+    ally_list = ", ".join(str(a) for a in allies(variant))
+    bases_lit = ", ".join("{ %d, %d, %d }" % (b[0], b[1], a)
+                          for a, b in zip(allies(variant), bases(variant)))
+    ponds_lit = ", ".join("{ %d, %d }" % (q[0], q[1]) for q in spawns(variant))
     text = SIDECAR.format(
         VAR=variant,
         PX=PILL[0], PY=PILL[1],
@@ -281,14 +338,9 @@ def write_sidecar(path, variant):
         DIST="%.1f" % d,
         DA="%.1f" % euclid(PILL, FOE_SPAWN["A"]),
         RANGE=BLITZ_CONTESTED_RANGE,
-        VERDICT="CONTESTED" if d <= BLITZ_CONTESTED_RANGE else "NOT contested",
-        B0X=BASES[0][0], B0Y=BASES[0][1],
-        B1X=BASES[1][0], B1Y=BASES[1][1],
-        B2X=BASES[2][0], B2Y=BASES[2][1],
-        S0X=BOT_SPAWNS[0][0], S0Y=BOT_SPAWNS[0][1],
-        S1X=BOT_SPAWNS[1][0], S1Y=BOT_SPAWNS[1][1],
-        S2X=BOT_SPAWNS[2][0], S2Y=BOT_SPAWNS[2][1],
-        FOE=FOE_PLAYER, FULL=FULL_STOCK, HP=PILL_HP)
+        VERDICT="CONTESTED" if variant in CONTESTED else "NOT contested",
+        ALLY_LIST=ally_list, BASES_LIT=bases_lit, PONDS_LIT=ponds_lit,
+        FOE=foe_player(variant), FULL=FULL_STOCK, HP=PILL_HP)
     Path(path).write_text(text, encoding="utf-8", newline="\n")
 
 
@@ -308,7 +360,7 @@ def check_geometry(terrain, variant):
     #    tanks share one.
     for p in ponds(variant):
         assert terrain[p[1]][p[0]] is DEEP_SEA, p
-    assert len(set(ponds(variant))) == 4, ponds(variant)
+    assert len(set(ponds(variant))) == n_allies(variant) + 1, ponds(variant)
 
     # -- The moat runs the FULL height of the body: no land route to the
     #    island, and with no river anywhere no boat can ever be built, so
@@ -322,7 +374,7 @@ def check_geometry(terrain, variant):
     # -- THE experiment: A is inside BLITZ_CONTESTED_RANGE and B is outside,
     #    and nothing else about the two arenas differs.
     d = euclid(PILL, foe)
-    if variant == "A":
+    if variant in CONTESTED:
         assert d <= BLITZ_CONTESTED_RANGE, d
     else:
         assert d > BLITZ_CONTESTED_RANGE, d
@@ -334,10 +386,28 @@ def check_geometry(terrain, variant):
     # -- The pill is the ENEMY'S (the sidecar sets that) precisely so it does
     #    not shoot the enemy tank down in variant A, where the two are inside
     #    the pill's firing range of each other.
-    if variant == "A":
+    if variant in CONTESTED:
         assert d <= PILLBOX_RANGE + 1, (
-            "variant A only needs an enemy-owned pill because the enemy sits "
-            "inside pillbox range of it")
+            "the contested variants only need an enemy-owned pill because the "
+            "enemy sits inside pillbox range of it")
+
+    # -- The party size is THE variable the two contested arenas separate: A is
+    #    at/above BLITZ_CONTESTED_ALL_MIN_PARTY (so every member is designated)
+    #    and C is below it (so only BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS are).
+    #    The blitz token's MIN is the party size a GO waits for, so it has to
+    #    equal the number of attackers or the arena tests a different party.
+    bmin, bmax = BLITZ_PARTY[variant]
+    assert bmin == n_allies(variant), (bmin, n_allies(variant))
+    assert bmax >= bmin
+    if variant == "A":
+        assert bmin >= BLITZ_CONTESTED_ALL_MIN_PARTY, bmin
+    elif variant == "C":
+        assert bmin < BLITZ_CONTESTED_ALL_MIN_PARTY, bmin
+        assert bmin > BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS, (
+            "a party of 1 designates nobody at all; the small-party rule needs "
+            "at least one soldier to pick and one tank to spare")
+        assert FOE_SPAWN["C"] == FOE_SPAWN["A"], (
+            "C must differ from A in PARTY SIZE only -- same enemy tile")
 
     # -- A HARD take, or squad never elects a commander, no call is opened and
     #    there is no GO to observe.
@@ -351,26 +421,26 @@ def check_geometry(terrain, variant):
     #    that none of them owns the take by geometry, and none starts inside
     #    the pill's range (so all three really do plan and approach, which is
     #    the window a blitz forms in).
-    ds = [euclid(s, PILL) for s in BOT_SPAWNS]
+    ds = [euclid(s, PILL) for s in spawns(variant)]
     assert max(ds) - min(ds) < 2.0, ds
-    for s, dd in zip(BOT_SPAWNS, ds):
+    for s, dd in zip(spawns(variant), ds):
         assert dd > PILLBOX_RANGE, (s, dd)
 
     # -- Bases: a real fallback goal that never beats the take, and far enough
     #    from the pill that the pill-reposition pool has no opinion about them.
-    for s, b in zip(BOT_SPAWNS, BASES):
+    for s, b in zip(spawns(variant), bases(variant)):
         assert euclid(s, b) < euclid(s, PILL), (s, b)
-    for b in BASES:
+    for b in bases(variant):
         assert euclid(b, PILL) > PILLBOX_RANGE + 8, (b, euclid(b, PILL))
 
     # -- Everything in the band it belongs to.
-    for p in [PILL] + BOT_SPAWNS + BASES:
+    for p in [PILL] + spawns(variant) + bases(variant):
         assert FIELD_X[0] <= p[0] <= FIELD_X[1], p
         assert BODY_Y[0] <= p[1] <= BODY_Y[1], p
     assert ISLAND_X[0] <= foe[0] <= ISLAND_X[1], foe
     assert BODY_Y[0] <= foe[1] <= BODY_Y[1], foe
-    for p in BOT_SPAWNS + [foe]:
-        assert p != PILL and p not in BASES, p
+    for p in spawns(variant) + [foe]:
+        assert p != PILL and p not in bases(variant), p
 
 
 def write_variant(variant, output):
@@ -382,23 +452,24 @@ def write_variant(variant, output):
     # handed to the enemy by the sidecar, which is the only place that knows a
     # player slot exists.
     pills = [(PILL[0], PILL[1], NEUTRAL, PILL_HP, SLOW_RELOAD)]
-    # Base records: x, y, owner, armour, shells, mines.
-    bases = [(b[0], b[1], i, FULL_STOCK, FULL_STOCK, 90)
-             for i, b in enumerate(BASES)]
+    # Base records: x, y, owner, armour, shells, mines.  One per attacker, in
+    # player-slot order.
+    base_recs = [(b[0], b[1], i, FULL_STOCK, FULL_STOCK, 90)
+                 for i, b in enumerate(bases(variant))]
     # dir 4 = east in the 16-point start encoding: point every attacker at the
     # pill so none of them wastes its first second turning round.  The enemy's
     # heading is irrelevant (it never moves or fires).
-    starts = [(s[0], s[1], 4) for s in BOT_SPAWNS] + [(foe[0], foe[1], 12)]
+    starts = [(s[0], s[1], 4) for s in spawns(variant)] + [(foe[0], foe[1], 12)]
 
     with open(output, 'wb') as f:
         f.write(b'BMAPBOLO')
         f.write(struct.pack('B', 1))
         f.write(struct.pack('B', len(pills)))
-        f.write(struct.pack('B', len(bases)))
+        f.write(struct.pack('B', len(base_recs)))
         f.write(struct.pack('B', len(starts)))
         for x, y, owner, armour, speed in pills:
             f.write(struct.pack('BBBBB', x, y, owner, armour, speed))
-        for x, y, owner, armour, shells, mines in bases:
+        for x, y, owner, armour, shells, mines in base_recs:
             f.write(struct.pack('BBBBBB', x, y, owner, armour, shells, mines))
         for x, y, d in starts:
             f.write(struct.pack('BBB', x, y, d))
@@ -408,12 +479,15 @@ def write_variant(variant, output):
     write_sidecar(sidecar, variant)
     d = euclid(PILL, foe)
     print(f"wrote {output}")
-    print(f"  {variant}: pill#0 {PILL} owner=p{FOE_PLAYER} hp={PILL_HP}; "
-          f"enemy {foe} is {d:.1f} tiles away "
-          f"({'CONTESTED' if d <= BLITZ_CONTESTED_RANGE else 'NOT contested'}, "
+    print(f"  {variant}: pill#0 {PILL} owner=p{foe_player(variant)} "
+          f"hp={PILL_HP}; enemy {foe} is {d:.1f} tiles away "
+          f"({'CONTESTED' if variant in CONTESTED else 'NOT contested'}, "
           f"range {BLITZ_CONTESTED_RANGE}); view cheb from pill {cheb(PILL, foe)} "
           f"(<= {BRAIN_VIEW_HALF} = visible)")
-    print(f"  attackers {BOT_SPAWNS} bases {BASES}")
+    print(f"  party {n_allies(variant)} (blitz={BLITZ_PARTY[variant][0]}/"
+          f"{BLITZ_PARTY[variant][1]}, rule="
+          f"{'all' if n_allies(variant) >= BLITZ_CONTESTED_ALL_MIN_PARTY else 'small'}"
+          f"): attackers {spawns(variant)} bases {bases(variant)}")
     print(f"wrote {sidecar}")
 
 

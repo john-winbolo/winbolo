@@ -18,16 +18,17 @@
 --    them a real fallback goal instead of wandering.
 --
 -- 3. PINNED STARTS.  on_choose_start hands every tank its own pond so the
---    three attackers cannot swap ends with each other or with the enemy, and a
---    respawn comes back to the same tile.  Start 4 is the enemy's.
+--    attackers cannot swap ends with each other or with the enemy, and a
+--    respawn comes back to the same tile.  The last start is the enemy's.
 --
--- 4. FILL THE ATTACKERS' PONDS once all three are ashore.  A start square has
+-- 4. FILL THE ATTACKERS' PONDS once they are all ashore.  A start square has
 --    to be DEEP SEA (starts.c startsIsValidSquare), and a tank that later
 --    drives over one without a boat drowns -- noise this test does not want.
 --    The ENEMY's pond is deliberately left alone: the idler never moves, so it
 --    sits in its boat all round, and filling the water under it is not
 --    something this test needs to find out about.
 local PILL_XY   = { 129, 126 }
+local ALLIES    = { 0, 1, 2 }
 local BASES     = { { 110, 116, 0 }, { 110, 126, 1 }, { 110, 136, 2 } }
 local ALLY_PONDS = { { 114, 120 }, { 114, 126 }, { 114, 132 } }
 local FOE_PLAYER = 3
@@ -68,7 +69,7 @@ local function own_everything(g)
       end
     end
   end
-  for _, a in ipairs({0, 1, 2}) do g.set_team(a, 0) end
+  for _, a in ipairs(ALLIES) do g.set_team(a, 0) end
   g.set_team(FOE_PLAYER, 1)
 end
 
@@ -76,13 +77,14 @@ function on_setup(g)
   own_everything(g)
 end
 
--- Start 1/2/3 are the three attackers' ponds, in slot order; start 4 is the
--- enemy's.  Anything else the engine may place goes wherever it likes.
+-- Starts 1..#ALLIES are the attackers' ponds, in slot order; the one after
+-- them is the enemy's.  Anything else the engine may place goes wherever it
+-- likes.
 function on_choose_start(g, p)
-  if p == 0 then return 1 end
-  if p == 1 then return 2 end
-  if p == 2 then return 3 end
-  if p == FOE_PLAYER then return 4 end
+  for i, a in ipairs(ALLIES) do
+    if p == a then return i end
+  end
+  if p == FOE_PLAYER then return #ALLIES + 1 end
   return nil
 end
 
@@ -100,7 +102,7 @@ function on_tick(g, tick)
   -- Fill the ATTACKERS' ponds once none of them is afloat any more (job 4).
   if not ponds_filled and tick > 200 then
     local afloat = false
-    for _, a in ipairs({0, 1, 2}) do
+    for _, a in ipairs(ALLIES) do
       local t = g.tank(a)
       if t and t.boat then afloat = true end
     end
