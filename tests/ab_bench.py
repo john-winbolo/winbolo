@@ -541,6 +541,9 @@ def main():
                          "so a 6v6 runs 1 at a time and a 2v2 runs 3 wide)")
     ap.add_argument("--map", default=DEFAULT_MAP,
                     help="path, or one of: " + ", ".join(sorted(MAP_ALIASES)))
+    ap.add_argument("--port-base", type=int, default=PORT_BASE,
+                    help="first UDP port; use a different base per concurrently "
+                         "running bench (games take base+slot)")
     ap.add_argument("--per-side", type=int, default=DEFAULT_PER_SIDE,
                     help="tanks per side (2 = 2v2, 6 = 6v6)")
     ap.add_argument("--label", default=None, help="cache directory name")
@@ -551,6 +554,8 @@ def main():
                     help="300-tick -brain-debug run: show the [preset]/[cfg] "
                          "lines each side got, then delete the session")
     args = ap.parse_args()
+    global PORT_BASE
+    PORT_BASE = args.port_base
 
     seeds = []
     for s in args.seeds:
