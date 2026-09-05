@@ -260,6 +260,8 @@ typedef struct ControlEvent {
             ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
             uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
             bool     lobbyClassicMode;  /* server is running classic mode */
+            bool     lobbyAlliesInTrees; /* server sends allies standing in
+                                          * trees to their allies */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

@@ -62,6 +62,7 @@ int run_lobby_lock_bit_lookup(void) {
     UT_ASSERT(serverSimGetSettingLockBit(LST_BASE_VIEW)         == LOBBY_LOCK_BASE_VIEW);
     UT_ASSERT(serverSimGetSettingLockBit(LST_ALLY_VIEW)         == LOBBY_LOCK_ALLY_VIEW);
     UT_ASSERT(serverSimGetSettingLockBit(LST_CLASSIC_MODE)      == LOBBY_LOCK_CLASSIC_MODE);
+    UT_ASSERT(serverSimGetSettingLockBit(LST_ALLIES_IN_TREES)   == LOBBY_LOCK_ALLIES_IN_TREES);
 
     /* Unknown setting ids must return 0xFFFF so the packet handler can
      * silently drop them (forward-compat) instead of treating them as
@@ -76,10 +77,11 @@ int run_lobby_lock_bit_lookup(void) {
         LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
         LOBBY_LOCK_RANKED | LOBBY_LOCK_PASSWORD | LOBBY_LOCK_OPEN_HOST |
         LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
-        LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE;
+        LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE |
+        LOBBY_LOCK_ALLIES_IN_TREES;
     int popcount = 0;
     for (int i = 0; i < 16; i++) if (allBits & (1u << i)) popcount++;
-    UT_ASSERT_MSG(popcount == 13, "every defined LOBBY_LOCK_* bit must be distinct");
+    UT_ASSERT_MSG(popcount == 14, "every defined LOBBY_LOCK_* bit must be distinct");
 
     return 0;
 }
@@ -165,7 +167,8 @@ int run_lobby_lock_mask_roundtrip(void) {
         LOBBY_LOCK_TIME_LIMIT | LOBBY_LOCK_AUTO_LOCK_ON_GAME |
         LOBBY_LOCK_PASSWORD | LOBBY_LOCK_RANKED | LOBBY_LOCK_OPEN_HOST |
         LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
-        LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE;
+        LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE |
+        LOBBY_LOCK_ALLIES_IN_TREES;
     serverSimSetServerLocks(sim, allLocks);
     UT_ASSERT_MSG(serverSimGetServerLocks(sim) == allLocks,
                   "all-locks mask must round-trip unchanged");

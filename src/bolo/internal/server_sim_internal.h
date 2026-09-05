@@ -155,6 +155,10 @@ struct ServerSim {
                                     * Setting it forces pill view to key and
                                     * base and ally view to off, and blocks
                                     * lobby edits to those three while on. */
+    bool     alliesInTrees;        /* allied tanks standing in trees are sent
+                                    * to their allies instead of being
+                                    * withheld; off is the classic
+                                    * behaviour. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
@@ -197,6 +201,7 @@ struct ServerSim {
         ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
         bool       classicMode;
+        bool       alliesInTrees;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running

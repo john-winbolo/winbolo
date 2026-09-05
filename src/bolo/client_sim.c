@@ -2373,6 +2373,10 @@ bool clientSimGetClassicMode(const ClientSim *cs) {
   return cs ? cs->classicMode : false;
 }
 
+bool clientSimGetAlliesInTrees(const ClientSim *cs) {
+  return cs ? cs->alliesInTrees : false;
+}
+
 uint16_t clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat) {
   if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
     return 0;

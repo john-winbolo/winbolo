@@ -205,6 +205,8 @@ static const UnitTestEntry s_tests[] = {
     { "classic_mode_forces_views",               run_classic_mode_forces_views               },
     { "classic_mode_lock_bit",                   run_classic_mode_lock_bit                   },
     { "classic_mode_lobby_reset",                run_classic_mode_lobby_reset                },
+    { "allies_in_trees_defaults",                run_allies_in_trees_defaults                },
+    { "allies_in_trees_classic_mode",            run_allies_in_trees_classic_mode            },
     { "info_packet_view_policy_layout",          run_info_packet_view_policy_layout          },
     { "info_packet_view_policy_length_tier",     run_info_packet_view_policy_length_tier     },
     { "upload_cap_enforced",                     run_upload_cap_enforced                     },

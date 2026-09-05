@@ -141,6 +141,8 @@ static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
 };
 /* Classic Bolo view; overrides the three switches above when set. */
 static bool optClassicMode = false;
+/* Send allied tanks standing in trees to their allies; off is classic. */
+static bool optAlliesInTrees = false;
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
@@ -1528,8 +1530,12 @@ static void printUsage(const char *prog) {
     "                    default 30)\n"
     "  --baseviewdecay S Same for bases (5-600, default 30)\n"
     "  --allyviewdecay S Same for allied tanks (5-600, default 30)\n"
+    "  --alliesintrees   Send allied tanks standing in trees to their allies\n"
+    "                    instead of withholding them (off by default, and off\n"
+    "                    under --classicmode)\n"
     "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
-    "                    and allyview off, overriding those three switches\n"
+    "                    and allyview off, overriding those three switches,\n"
+    "                    and turns allies in trees off\n"
     "  An unknown mode word or a decay outside the range is an error here,\n"
     "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
@@ -1629,6 +1635,8 @@ static bool parseArgs(int argc, char **argv) {
     } else if (strcmp(argv[i], "--allyviewdecay") == 0 && i + 1 < argc) {
       if (!parseViewDecayWord(argv[++i], "--allyviewdecay",
                               &optViewDecaySecs[viewCategoryAlly])) return FALSE;
+    } else if (strcmp(argv[i], "--alliesintrees") == 0) {
+      optAlliesInTrees = true;
     } else if (strcmp(argv[i], "--classicmode") == 0) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
@@ -1732,7 +1740,11 @@ static void applyViewPolicyOptions(ServerSim *sim) {
     serverSimSetViewPolicy(sim, (ViewCategory)vc, optViewPolicy[vc],
                            (uint16_t)optViewDecaySecs[vc]);
   }
-  /* After the loop, so classic mode wins over the three switches. */
+  if (optAlliesInTrees) {
+    serverSimSetAlliesInTrees(sim, true);
+  }
+  /* After the loop and after allies in trees, so classic mode wins over
+   * the three switches and over that one. */
   if (optClassicMode) {
     serverSimSetClassicMode(sim, true);
   }

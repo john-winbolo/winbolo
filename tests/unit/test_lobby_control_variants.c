@@ -101,6 +101,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.viewDecaySecs[viewCategoryBase] = 600;
     in.u.lobbySettings.viewDecaySecs[viewCategoryAlly] = 5;
     in.u.lobbySettings.lobbyClassicMode                = true;
+    in.u.lobbySettings.lobbyAlliesInTrees              = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -145,13 +146,15 @@ int run_lobby_settings_codec_and_apply(void) {
                   (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryAlly]);
     UT_ASSERT_MSG(out.u.lobbySettings.lobbyClassicMode == true,
                   "lobbyClassicMode did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyAlliesInTrees == true,
+                  "lobbyAlliesInTrees did not survive codec round-trip");
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is ten bytes shorter (3 policies + 3 u16 decay values +
-     * classic mode). */
+     * that is eleven bytes shorter (3 policies + 3 u16 decay values +
+     * classic mode + allies in trees). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -162,7 +165,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 10;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 11;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -177,6 +180,8 @@ int run_lobby_settings_codec_and_apply(void) {
         }
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyClassicMode == false,
                       "short payload must leave classic mode off");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyAlliesInTrees == false,
+                      "short payload must leave allies in trees off");
     }
 
     ClientSim *cs = fresh_client_sim();
@@ -208,6 +213,8 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryAlly) == 5);
     UT_ASSERT_MSG(clientSimGetClassicMode(cs) == true,
                   "classic mode did not reach the client mirror");
+    UT_ASSERT_MSG(clientSimGetAlliesInTrees(cs) == true,
+                  "allies in trees did not reach the client mirror");
     clientSimDestroy(cs);
     return 0;
 }

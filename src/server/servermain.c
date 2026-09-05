@@ -663,7 +663,7 @@ void printArgs() {
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
-  fprintf(stderr, "                baseview, allyview, classicmode.\n");
+  fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -682,9 +682,12 @@ void printArgs() {
   fprintf(stderr, "                An unrecognised mode warns and falls back to that\n");
   fprintf(stderr, "                switch's default; a decay outside the range is\n");
   fprintf(stderr, "                clamped into it.\n");
+  fprintf(stderr, "-alliesintrees- Allied tanks standing in trees are sent to their allies\n");
+  fprintf(stderr, "                instead of being withheld (fog of war still applies).\n");
+  fprintf(stderr, "                Off by default, and off under -classicmode.\n");
   fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
-  fprintf(stderr, "                allyview off, overriding those three switches, and stops\n");
-  fprintf(stderr, "                the lobby changing them.\n");
+  fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
+  fprintf(stderr, "                allies in trees off, and stops the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -1608,12 +1611,13 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "baseview") == 0)  serverLocks |= LOBBY_LOCK_BASE_VIEW;
         else if (strcmp(lo, "allyview") == 0)  serverLocks |= LOBBY_LOCK_ALLY_VIEW;
         else if (strcmp(lo, "classicmode") == 0) serverLocks |= LOBBY_LOCK_CLASSIC_MODE;
+        else if (strcmp(lo, "alliesintrees") == 0) serverLocks |= LOBBY_LOCK_ALLIES_IN_TREES;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
-                  "classicmode)\n", lo);
+                  "classicmode, alliesintrees)\n", lo);
         }
       }
     }
@@ -1677,6 +1681,14 @@ int main(int argc, char **argv) {
       serverSimSetViewPolicy(serverSim, viewArgs[vi].cat, policy,
                              (uint16_t)secs);
     }
+  }
+
+  /* -alliesintrees: send allied tanks standing in trees to their allies.
+   * Applied before -classicmode so classic mode wins when both are on the
+   * same command line. Only set when the flag is present — the sim
+   * default is off. */
+  if (argExist(argc, argv, "alliesintrees") == TRUE) {
+    serverSimSetAlliesInTrees(serverSim, true);
   }
 
   /* -classicmode: the classic Bolo view. Applied after the three view

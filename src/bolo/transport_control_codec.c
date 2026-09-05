@@ -471,7 +471,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [lobbyStartDelay 4 BE] [hostSlot 1]
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
- *   [classicMode 1]
+ *   [classicMode 1] [alliesInTrees 1]
  *
  * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
@@ -483,9 +483,10 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
- * policies(3) + three view decay seconds(6) + classicMode(1). */
+ * policies(3) + three view decay seconds(6) + classicMode(1)
+ * + alliesInTrees(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -532,6 +533,7 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
         pos += 2;
     }
     buf[pos++] = evt->u.lobbySettings.lobbyClassicMode ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyAlliesInTrees ? 1 : 0;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1864,6 +1866,9 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyClassicMode = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbyAlliesInTrees = buf[pos++] ? true : false;
     }
     return true;
 }

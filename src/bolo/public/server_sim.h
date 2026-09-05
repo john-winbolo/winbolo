@@ -1595,6 +1595,14 @@ uint16_t    serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat);
 void        serverSimSetClassicMode(ServerSim *sim, bool on);
 bool        serverSimGetClassicMode(const ServerSim *sim);
 
+/* Allies in trees — when on, an allied tank standing in trees is sent to
+ * its allies instead of being withheld, with the usual fog of war still
+ * applying. Off is the classic behaviour: an ally in trees is never
+ * visible past the viewer's own immediate sight box. Off by default, and
+ * turning classic mode on forces it off. */
+void        serverSimSetAlliesInTrees(ServerSim *sim, bool on);
+bool        serverSimGetAlliesInTrees(const ServerSim *sim);
+
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */
 bool        serverSimGetOpenHost(const ServerSim *sim);

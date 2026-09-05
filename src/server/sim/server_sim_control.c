@@ -175,6 +175,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
         evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
     }
     evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
+    evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {

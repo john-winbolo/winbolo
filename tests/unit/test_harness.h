@@ -241,6 +241,8 @@ int run_classic_mode_defaults(void);
 int run_classic_mode_forces_views(void);
 int run_classic_mode_lock_bit(void);
 int run_classic_mode_lobby_reset(void);
+int run_allies_in_trees_defaults(void);
+int run_allies_in_trees_classic_mode(void);
 int run_info_packet_view_policy_layout(void);
 int run_info_packet_view_policy_length_tier(void);
 int run_upload_cap_enforced(void);

@@ -96,6 +96,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
     sim->originalLobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
   }
   sim->originalLobbySettings.classicMode         = sim->classicMode;
+  sim->originalLobbySettings.alliesInTrees       = sim->alliesInTrees;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -361,6 +362,14 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
         case LST_CLASSIC_MODE: {
             if (len != 1) return false;
             serverSimSetClassicMode(sim, value[0] != 0);
+            return true;
+        }
+        case LST_ALLIES_IN_TREES: {
+            if (len != 1) return false;
+            /* Classic mode hides allies in trees and owns this value while it
+             * is set, the same way it owns the three view policies. */
+            if (sim->classicMode) return false;
+            serverSimSetAlliesInTrees(sim, value[0] != 0);
             return true;
         }
         case LST_PILL_VIEW:

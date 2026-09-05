@@ -858,6 +858,12 @@ uint16_t    clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat);
  * and a payload that predates the field leaves it false too. */
 bool        clientSimGetClassicMode(const ClientSim *cs);
 
+/* True when the server is sending allies who stand in trees, as last
+ * broadcast in the lobby-settings event. Reads back false until the first
+ * event arrives, and a payload that predates the field leaves it false
+ * too — which matches the classic behaviour the option turns off. */
+bool        clientSimGetAlliesInTrees(const ClientSim *cs);
+
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);

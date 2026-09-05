@@ -566,6 +566,7 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_BASE_VIEW:         return LOBBY_LOCK_BASE_VIEW;
         case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
         case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
+        case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
         default:                    return 0xFFFFu;  /* unknown setting */
     }
 }
@@ -612,11 +613,22 @@ void serverSimSetClassicMode(ServerSim *sim, bool on) {
                                sim->viewDecaySecs[viewCategoryBase]);
         serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyOff,
                                sim->viewDecaySecs[viewCategoryAlly]);
+        /* Classic mode hides allies in trees, so it owns this value too. */
+        serverSimSetAlliesInTrees(sim, false);
     }
 }
 
 bool serverSimGetClassicMode(const ServerSim *sim) {
     return sim ? sim->classicMode : false;
+}
+
+void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->alliesInTrees = on;
+}
+
+bool serverSimGetAlliesInTrees(const ServerSim *sim) {
+    return sim ? sim->alliesInTrees : false;
 }
 
 uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {
