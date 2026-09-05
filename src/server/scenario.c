@@ -84,6 +84,13 @@
  *    game.show_pill(n[, x, y])         -- put a hidden pill back on the
  *                                         map, DEAD (armour 0), at its
  *                                         remembered spot or at (x, y)
+ *    game.set_pill_armour(n, a)      -- set pill n's armour outright
+ *                                         (clamped 0..PILLS_MAX_ARMOUR);
+ *                                         a>0 = a manned, firing gun,
+ *                                         0 = dead on the ground. For
+ *                                         staging tests (re-wear a pill
+ *                                         mid-run); refused for a pill
+ *                                         riding in a tank or hidden.
  *    game.set_team(p, team)            -- alliance by team id
  *    game.message(text)                -- broadcast, e.g. "Round 5!"
  *    game.newswire_mute(on)            -- silence/restore the ENGINE
@@ -842,6 +849,40 @@ static int l_show_pill(lua_State *L) {
     return 1;
 }
 
+/* game.set_pill_armour(n, a) -> true | false. Writes pill n's armour
+ * (clamped to 0..PILLS_MAX_ARMOUR) and nothing else, through the same
+ * whole-record write show_pill uses; the per-tick pill diff carries it
+ * to clients. Refused for a pill in a tank or one this scenario hid --
+ * neither is "on the map" and armour means nothing there. Exists so a
+ * scenario test can keep a pill WORN across the window it is testing
+ * (builder_pool variant A) without a hostile tank having to oblige. */
+static int l_set_pill_armour(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    GameSim *gs = serverSimGetGameSim(st->sim);
+    int n = (int)luaL_checkinteger(L, 1);          /* 1-based pill number */
+    int a = (int)luaL_checkinteger(L, 2);
+    pillbox item;
+
+    if (n < 1 || n > (int)pillsGetNumPills(&gs->pb)) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    if ((st->hiddenPills & (uint16_t)(1u << (n - 1))) != 0
+        || (*gs->pb).item[n - 1].inTank) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    if (a < 0) a = 0;
+    if (a > PILLS_MAX_ARMOUR) a = PILLS_MAX_ARMOUR;
+    item = (*gs->pb).item[n - 1];
+    item.armour = (BYTE)a;
+    pillsSetPill(&gs->pb, &item, (BYTE)n);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "scenario: pill %d armour set to %d", n, a);
+    lua_pushboolean(L, TRUE);
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Lobby roster edits — the scenario has FULL authority over the team
  * lists, under two engine-enforced invariants: bots + players never
@@ -1000,6 +1041,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "give_pill",      l_give_pill);
     scRegister(L, st, "hide_pill",      l_hide_pill);
     scRegister(L, st, "show_pill",      l_show_pill);
+    scRegister(L, st, "set_pill_armour", l_set_pill_armour);
     scRegister(L, st, "enemy_team_size", l_enemy_team_size);
     scRegister(L, st, "lobby_slot",     l_lobby_slot);
     scRegister(L, st, "lobby_add_bot",  l_lobby_add_bot);
