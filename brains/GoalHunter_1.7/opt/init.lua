@@ -653,7 +653,25 @@ function Brain.open(info)
   state.command_reply     = nil
   state.auto_explore      = AUTOSTART
   state.paused            = not AUTOSTART
-  state.replan_offset     = math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
+  -- Replan phase. Every reader tests `(now + replan_offset) % GOAL_REPLAN_INTERVAL
+  -- == 0`, so the offset is what decides WHICH ticks of this bot's life are
+  -- replan ticks. `now` used to start at 0 on every Brain.open, so that grid was
+  -- anchored to the bot's own life: the Nth replan always landed on the same tick
+  -- of the life whatever the game clock said. Seeding state.tick from the engine
+  -- tick (above) moved the anchor to absolute game time, which shifts a mid-game
+  -- bot's whole replan cadence by (tick_seed % INTERVAL) ticks relative to its
+  -- life -- the one thing the tick-sentinel audit missed, because it is a
+  -- "every N ticks" schedule rather than a "first N ticks" test. Subtracting the
+  -- seed here puts the grid back on the life clock: the expression above then
+  -- evaluates `(age + random) % INTERVAL`, exactly what it computed before the
+  -- seeding. Folding it into the offset (rather than editing each `now +
+  -- replan_offset` site) keeps every reader -- the timer, the predicted-replan
+  -- dij slip, the ticks_left displays -- consistent by construction.
+  -- Bit-for-bit unchanged at tick_seed 0, i.e. for every bot created at game
+  -- start; only a bot created mid-game (a Survival wave, a scenario spawn_bot)
+  -- moves, and it moves back to what it did before the seeding.
+  state.replan_offset     = (math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
+                             - state.tick_seed) % C.GOAL_REPLAN_INTERVAL
   state.goal_set_tick     = state.tick  -- tick when current goal was chosen (for commitment hysteresis). Seeded to birth, not 0: `now - goal_set_tick` is "how long we've held this goal", so a raw 0 would read as "held it forever" on a mid-game bot's first tick and skip the commitment window entirely.
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
