@@ -1917,6 +1917,8 @@ STR_DLGLOBBY_VIEW_KEY=Klawisz
 STR_DLGLOBBY_VIEW_DECAY=Zanikanie
 STR_DLGLOBBY_VIEW_OFF=Wyłączone
 STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Tryb klasyczny
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Ustawia Widok bunkra na Klawisz, a Widok bazy i Widok\nsojuszniczych czołgów na Wyłączone, i tak je utrzymuje.\nPo jego wyłączeniu te trzy zostają tam, gdzie ustawił je\ntryb klasyczny.\nUkrywa też podgląd mapy i mapę pełnoekranową na ekranie\nkażdego gracza. Serwer i tak wysyła te same dane, więc\njest to ułatwienie, a nie gwarancja wobec zmodyfikowanego\nklienta.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skórka
 STR_DLGSKIN_DEFAULT=Domyślna

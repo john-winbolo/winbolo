@@ -1923,6 +1923,8 @@ STR_DLGLOBBY_VIEW_KEY=Toets
 STR_DLGLOBBY_VIEW_DECAY=Vervagen
 STR_DLGLOBBY_VIEW_OFF=Uit
 STR_DLGLOBBY_VIEW_DECAY_SECS=sec
+STR_DLGLOBBY_CLASSIC_MODE_CB=Klassieke modus
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Zet Bunkerweergave op Toets, en Basisweergave en Weergave\nbondgenoottanks op Uit, en houdt ze daar. Zet je hem weer\nuit, dan blijven die drie staan zoals de klassieke modus\nze heeft gezet.\nHij verbergt ook het kaartoverzicht en de kaart op volledig\nscherm op het scherm van elke speler. De server stuurt in\nbeide gevallen dezelfde gegevens, dus dit is een gemaksregel\nen geen garantie tegen een aangepaste client.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standaard

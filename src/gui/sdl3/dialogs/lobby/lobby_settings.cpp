@@ -459,10 +459,37 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 lobbySendSetting(cs, lst, v, 3);
             };
 
+            /* Classic mode sits above the three rows because it owns
+             * them: while it is on the server writes pill Key, base Off
+             * and ally Off and refuses an edit to any of the three, so
+             * the rows below go disabled rather than letting the host
+             * click a combo and get a silent reject. */
+            bool classic = clientSimGetClassicMode(cs);
+            bool classicLocked =
+                (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_CLASSIC_MODE) != 0;
+            bool classicDisabled = !effectiveHost || classicLocked;
+            if (classicDisabled) ImGui::BeginDisabled();
+            if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
+                                &classic)) {
+                uint8_t v = classic ? 1 : 0;
+                lobbySendSetting(cs, LST_CLASSIC_MODE, &v, 1);
+            }
+            /* Read the hover before the badge draws, so the tooltip
+             * belongs to the checkbox and not to the badge — which
+             * carries its own "locked by the server" tooltip. */
+            bool classicHovered =
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            if (classicDisabled) ImGui::EndDisabled();
+            if (classicLocked) lobbyRenderLockBadge();
+            if (classicHovered) {
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_TIP));
+            }
+            ImGui::Separator();
+
             for (int r = 0; r < 3; r++) {
                 const ViewRow &row = rows[r];
                 bool locked = (clientSimGetLobbyServerLocks(cs) & row.lockBit) != 0;
-                bool disable = !effectiveHost || locked;
+                bool disable = !effectiveHost || locked || classic;
                 int policy = (int)clientSimGetViewPolicy(cs, row.cat);
                 int secs   = (int)clientSimGetViewDecaySecs(cs, row.cat);
                 if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_DEFAULT_SECS;
@@ -476,6 +503,10 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 if (ImGui::Combo("##mode", &policy, modes, 4)) {
                     sendView(row.lst, policy, secs);
                 }
+                /* Held until after EndDisabled so the tooltip is drawn at
+                 * full contrast rather than dimmed with the row. */
+                bool comboHovered =
+                    ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
                 /* The seconds box stays on screen for every mode so the row
                  * doesn't reflow as the host tries the options; it is only
                  * interactive while the row is on Decay. */
@@ -491,6 +522,15 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 ImGui::EndDisabled();
                 if (disable) ImGui::EndDisabled();
                 if (locked) lobbyRenderLockBadge();
+                /* Classic mode gets no badge — a server lock and a
+                 * classic-mode grey-out are different reasons for the
+                 * same disabled row, and only the lock is badged. Say
+                 * why in a tooltip instead, when classic mode is the
+                 * only thing holding the row. */
+                if (classic && !locked && effectiveHost && comboHovered) {
+                    ImGui::SetTooltip("%s",
+                                      langGetText(STR_DLGLOBBY_CLASSIC_MODE_TIP));
+                }
                 ImGui::PopID();
             }
 

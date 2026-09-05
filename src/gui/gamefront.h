@@ -1001,6 +1001,9 @@ extern int gameFrontViewAllyPolicy;     /* default viewPolicyAlways (0) */
 extern int gameFrontViewPillDecaySecs;  /* 5-600, default 30 */
 extern int gameFrontViewBaseDecaySecs;
 extern int gameFrontViewAllyDecaySecs;
+/* Classic mode, applied after the three policies above so it wins when
+ * both are set: it forces pill Key, base Off and ally Off. Default off. */
+extern bool gameFrontClassicMode;
 
 void gameFrontSetViewPillPolicy(int policy);
 void gameFrontSetViewBasePolicy(int policy);
@@ -1008,5 +1011,6 @@ void gameFrontSetViewAllyPolicy(int policy);
 void gameFrontSetViewPillDecaySecs(int secs);
 void gameFrontSetViewBaseDecaySecs(int secs);
 void gameFrontSetViewAllyDecaySecs(int secs);
+void gameFrontSetClassicMode(bool on);
 
 #endif

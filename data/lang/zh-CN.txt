@@ -1921,6 +1921,8 @@ STR_DLGLOBBY_VIEW_KEY=按键
 STR_DLGLOBBY_VIEW_DECAY=衰减
 STR_DLGLOBBY_VIEW_OFF=关闭
 STR_DLGLOBBY_VIEW_DECAY_SECS=秒
+STR_DLGLOBBY_CLASSIC_MODE_CB=经典模式
+STR_DLGLOBBY_CLASSIC_MODE_TIP=将碉堡显示设为“按键”，将基地显示和友军坦克显示设为\n“关闭”，并保持不变。再次关闭经典模式时，这三项会\n停留在经典模式设定的位置。\n它还会在每位玩家自己的屏幕上隐藏地图总览和全屏地图。\n无论哪种情况服务器发送的数据都相同，因此这只是便利\n规则，并不能保证对修改过的客户端有效。
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=皮肤
 STR_DLGSKIN_DEFAULT=默认

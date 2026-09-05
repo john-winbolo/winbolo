@@ -1568,6 +1568,8 @@
 #define STR_DLGLOBBY_VIEW_DECAY             2000
 #define STR_DLGLOBBY_VIEW_OFF               2001
 #define STR_DLGLOBBY_VIEW_DECAY_SECS        2002
+#define STR_DLGLOBBY_CLASSIC_MODE_CB        2008
+#define STR_DLGLOBBY_CLASSIC_MODE_TIP       2009
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468

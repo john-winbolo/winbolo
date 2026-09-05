@@ -238,6 +238,7 @@ int gameFrontViewAllyPolicy    = viewPolicyAlways;
 int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
+bool gameFrontClassicMode      = FALSE;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -2129,6 +2130,11 @@ void gameFrontSetViewAllyDecaySecs(int secs) {
   prefsSetString("GAME OPTIONS", "Ally View Decay", buf);
 }
 
+void gameFrontSetClassicMode(bool on) {
+  gameFrontClassicMode = on;
+  prefsSetString("GAME OPTIONS", "Classic Mode", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2696,6 +2702,11 @@ bool gameFrontSetupServer(void) {
   serverSimSetViewPolicy(spServerSim, viewCategoryAlly,
                          (ViewPolicy)gameFrontViewAllyPolicy,
                          (uint16_t)gameFrontViewAllyDecaySecs);
+  /* After the three, so it wins when both are set. Only pushed when on —
+   * off is what the sim was created with. */
+  if (gameFrontClassicMode) {
+    serverSimSetClassicMode(spServerSim, true);
+  }
 
   /* Resolve a brain path so the lobby's "Add Bot" works regardless of
    * whether the host set compTanks at startup. The AI Policy can be
@@ -3283,6 +3294,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
                      FILENAME_MAX);
       *viewPrefs[vi].decayOut = viewDecayClamp(atoi(buff));
     }
+    prefsGetString("GAME OPTIONS", "Classic Mode", "No", buff, FILENAME_MAX);
+    gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
   }
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
@@ -3635,6 +3648,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("GAME OPTIONS", "Base View Decay", buff);
   intToStr(gameFrontViewAllyDecaySecs, buff, sizeof(buff));
   prefsSetString("GAME OPTIONS", "Ally View Decay", buff);
+  prefsSetString("GAME OPTIONS", "Classic Mode",
+                 TRUEFALSE_TO_STR(gameFrontClassicMode));
 
   prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
   prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));

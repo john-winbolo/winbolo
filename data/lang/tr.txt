@@ -1923,6 +1923,8 @@ STR_DLGLOBBY_VIEW_KEY=Tuş
 STR_DLGLOBBY_VIEW_DECAY=Solma
 STR_DLGLOBBY_VIEW_OFF=Kapalı
 STR_DLGLOBBY_VIEW_DECAY_SECS=sn
+STR_DLGLOBBY_CLASSIC_MODE_CB=Klasik mod
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Bunker Görünümü'nü Tuş, Üs Görünümü ve Müttefik Tank\nGörünümü'nü Kapalı yapar ve öyle tutar. Kapatıldığında\nbu üçü klasik modun bıraktığı yerde kalır.\nAyrıca harita genel görünümünü ve tam ekran haritayı her\noyuncunun kendi ekranında gizler. Sunucu her durumda aynı\nveriyi gönderir; yani bu bir kolaylık kuralıdır, değiştirilmiş\nbir istemciye karşı garanti değildir.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Görünüm
 STR_DLGSKIN_DEFAULT=Varsayılan

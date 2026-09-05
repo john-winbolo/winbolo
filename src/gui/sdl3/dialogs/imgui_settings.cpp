@@ -1741,6 +1741,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                        &policyEdited, &secsEdited);
         if (policyEdited) gameFrontSetViewAllyPolicy(policy);
         if (secsEdited)   gameFrontSetViewAllyDecaySecs(secs);
+
+        bool classic = gameFrontClassicMode;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
+                            &classic)) {
+            gameFrontSetClassicMode(classic);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_TIP));
+        }
     }
 
     ImGui::Spacing();

@@ -1923,6 +1923,8 @@ STR_DLGLOBBY_VIEW_KEY=Taste
 STR_DLGLOBBY_VIEW_DECAY=Verblassen
 STR_DLGLOBBY_VIEW_OFF=Aus
 STR_DLGLOBBY_VIEW_DECAY_SECS=Sek.
+STR_DLGLOBBY_CLASSIC_MODE_CB=Klassischer Modus
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Setzt Bunkeransicht auf Taste und Basenansicht sowie\ndie Ansicht verbündeter Panzer auf Aus und hält sie dort.\nWird er wieder ausgeschaltet, bleiben diese drei so,\nwie der klassische Modus sie gesetzt hat.\nAußerdem werden die Kartenübersicht und die Vollbildkarte\nauf dem Bildschirm jedes Spielers ausgeblendet. Der Server\nsendet in beiden Fällen die gleichen Daten — das ist also\neine Bequemlichkeitsregel und keine Garantie gegenüber\neinem veränderten Client.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standard

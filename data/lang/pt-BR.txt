@@ -1921,6 +1921,8 @@ STR_DLGLOBBY_VIEW_KEY=Tecla
 STR_DLGLOBBY_VIEW_DECAY=Desvanecer
 STR_DLGLOBBY_VIEW_OFF=Desativado
 STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Modo clássico
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Define Visão do bunker como Tecla, e Visão da base e Visão\nde tanques aliados como Desativado, e as mantém assim. Ao\ndesligá-lo, essas três continuam onde o modo clássico as\ndeixou.\nEle também oculta o panorama do mapa e o mapa em tela cheia\nna tela de cada jogador. O servidor envia os mesmos dados\nde qualquer forma, então esta é uma regra de conveniência,\nnão uma garantia contra um cliente modificado.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Padrão

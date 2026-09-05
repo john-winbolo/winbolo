@@ -1921,6 +1921,8 @@ STR_DLGLOBBY_VIEW_KEY=Клавиша
 STR_DLGLOBBY_VIEW_DECAY=Затухание
 STR_DLGLOBBY_VIEW_OFF=Выкл.
 STR_DLGLOBBY_VIEW_DECAY_SECS=сек
+STR_DLGLOBBY_CLASSIC_MODE_CB=Классический режим
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Устанавливает «Вид бункера» на «Клавиша», а «Вид базы»\nи «Вид союзных танков» — на «Выкл.», и удерживает их так.\nЕсли выключить режим, эти три останутся там, куда их\nпоставил классический режим.\nОн также скрывает обзор карты и карту на весь экран на\nэкране каждого игрока. Сервер в любом случае присылает\nте же данные, так что это удобство, а не гарантия\nпротив изменённого клиента.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Скин
 STR_DLGSKIN_DEFAULT=По умолчанию

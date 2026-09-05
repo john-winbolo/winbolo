@@ -1923,6 +1923,8 @@ STR_DLGLOBBY_VIEW_KEY=キー
 STR_DLGLOBBY_VIEW_DECAY=減衰
 STR_DLGLOBBY_VIEW_OFF=オフ
 STR_DLGLOBBY_VIEW_DECAY_SECS=秒
+STR_DLGLOBBY_CLASSIC_MODE_CB=クラシックモード
+STR_DLGLOBBY_CLASSIC_MODE_TIP=トーチカ表示を「キー」に、基地表示と味方戦車表示を\n「オフ」に設定し、そのまま固定します。オフに戻しても、\nこの3つはクラシックモードが設定した状態のまま残ります。\nまた、各プレイヤーの画面でマップ全体表示とフルスクリーン\nマップを非表示にします。サーバーはどちらの場合も同じ\nデータを送るため、これは利便性のためのルールであり、\n改造クライアントに対する保証ではありません。
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=スキン
 STR_DLGSKIN_DEFAULT=デフォルト
