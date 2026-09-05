@@ -693,7 +693,15 @@ def main():
             build = Path(args[i + 1]); i += 2
         else:
             i += 1
-    variants = list(CHECKS) if variant == "all" else [variant]
+    # "all", one name, or a comma-separated subset ("B,B2,C,D") -- the gate
+    # uses the subset form to keep running the variants that pass while one of
+    # them is a documented debt (see PARTIAL in tests/run_scenario_gate.py).
+    variants = list(CHECKS) if variant == "all" else variant.split(",")
+    unknown = [v for v in variants if v not in CHECKS]
+    if unknown:
+        print(f"unknown variant(s): {', '.join(unknown)} "
+              f"(have: {', '.join(CHECKS)})")
+        sys.exit(2)
     rc = 0
     for v in variants:
         try:

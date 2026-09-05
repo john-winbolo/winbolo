@@ -28,6 +28,35 @@ KNOWN_BROKEN = {
     "aim_test.py": "pre-existing failure (noted 2026-09-03), not chased",
 }
 
+# Tests the gate runs with EXTRA ARGUMENTS because one part of them is a known
+# debt. Same rule as KNOWN_BROKEN -- short, dated, and it costs coverage -- but
+# it costs LESS coverage than skipping the whole file, so prefer it.
+PARTIAL = {
+    # builder_pool variant A, assertion 2 (noted 2026-09-03 as "fails for its
+    # own reason"; diagnosed 2026-09-05). The arena cannot produce what the
+    # assertion demands. From session 20260905_133132_1_builder_pool_A:
+    #   * the seeded topup on our worn pill (124,121) FINISHES at brain t=398
+    #     (BP_DONE outcome=ok, hp 6 -> 15; the engine HP trace reads 15/15 at
+    #     sim tick 620);
+    #   * the take's fire exchange runs brain t=1121..1497 with the tank parked
+    #     at (125..127,124) -- 3 tiles from that pill, well inside
+    #     BUILDER_POOL_LEASH (8). The leash is NOT the problem;
+    #   * the pill is not damaged again until sim 4502 (brain ~2251), long
+    #     after the exchange ends, and the arena holds no other job (no forest
+    #     to farm, no second worn pill).
+    # So all 377 fire-exchange ticks legitimately have cands=0: assertion 1
+    # ("nothing was dispatched") is true but vacuous, which is exactly what
+    # assertion 2 exists to say. Fixing it means keeping the pill WORN across
+    # t=1121..1497, and every staging move available today is blocked: the
+    # scenario API has no set_pill_armour to re-damage it (scenario.c
+    # scBuildGameTable), starving the repair of trees would break assertions
+    # 3-5, and a second worn pill inside the leash is repaired by the same
+    # early pass. That is a new scenario hook, not a brain change, so it is
+    # not chased here -- this gate exists to catch BOT regressions.
+    # B, B2, C and D all pass and still run.
+    "builder_pool_test.py": ["--variant", "B,B2,C,D"],
+}
+
 # Not tests of the bots.
 NOT_A_TEST = {"run_test.py"}
 
@@ -40,13 +69,15 @@ def discover():
     return names
 
 
-def run_one(name, log_dir):
+def run_one(name, log_dir, extra=()):
     path = os.path.join(TESTS, name)
     log_path = os.path.join(log_dir, name.replace(".py", ".log"))
     t0 = time.time()
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+        if extra:
+            log.write("[gate] partial run: %s\n" % " ".join(extra))
         try:
-            rc = subprocess.call([sys.executable, path], cwd=ROOT,
+            rc = subprocess.call([sys.executable, path] + list(extra), cwd=ROOT,
                                  stdout=log, stderr=subprocess.STDOUT,
                                  timeout=PER_TEST_TIMEOUT_S)
         except subprocess.TimeoutExpired:
@@ -85,11 +116,14 @@ def main():
             skipped.append(name)
             print("  SKIP  %-32s (%s)" % (name, KNOWN_BROKEN[name]))
             continue
+        extra = () if args.include_known_broken else PARTIAL.get(name, ())
         sys.stdout.write("  ....  %-32s" % name)
         sys.stdout.flush()
-        rc, dt, tail, log_path = run_one(name, log_dir)
+        rc, dt, tail, log_path = run_one(name, log_dir, extra)
         if rc == 0:
-            print("\r  PASS  %-32s %6.0fs" % (name, dt))
+            print("\r  %s  %-32s %6.0fs%s" % (
+                "PART" if extra else "PASS", name, dt,
+                ("  (%s)" % " ".join(extra)) if extra else ""))
         else:
             failed.append(name)
             print("\r  FAIL  %-32s %6.0fs  rc=%s  (%s)" % (name, dt, rc, log_path))
