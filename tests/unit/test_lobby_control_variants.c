@@ -436,3 +436,190 @@ int run_lobby_rating_posted_codec_roundtrip(void) {
                   "decoder must reject a short body");
     return 0;
 }
+
+/* ================================================================
+ * CTRL_NEWSWIRE_MUTE — the server-owned "silence the engine
+ * newswire" switch a server flips around a burst of engine churn
+ * it does not want narrated.
+ *
+ *   codec  — the muted byte survives encode -> decode both ways, and
+ *            an empty body is refused.
+ *   apply  — the event lands on ClientSim.newswireMuted and is
+ *            readable through the shared predicate.
+ *   gate   — with the mute ON, a player LEAVE (which normally writes
+ *            the "<name> has quit game" newswire through
+ *            csCallbackMessageAdd) adds nothing to the message queue;
+ *            with the mute OFF the same leave does.
+ *   text   — server text is NOT newswire: a CTRL_SERVER_TEXT still
+ *            reaches the message queue while muted, which is what
+ *            keeps a host's own banner text on screen.
+ *   phase  — a game-phase event clears the mute, so it can never
+ *            outlive the round that set it.
+ * ================================================================ */
+
+/* Register `pn` so a following LEAVE has a player to remove. */
+static void seat_player(ClientSim *cs, BYTE pn, const char *name) {
+    ControlEvent join;
+    memset(&join, 0, sizeof(join));
+    join.type = CTRL_PLAYER_JOIN;
+    join.u.playerJoin.playerNum = pn;
+    strncpy(join.u.playerJoin.name, name,
+            sizeof(join.u.playerJoin.name) - 1);
+    join.u.playerJoin.country[0] = 'X';
+    join.u.playerJoin.country[1] = 'X';
+    clientSimApplyControl(cs, &join);
+}
+
+static void leave_player(ClientSim *cs, BYTE pn, const char *name) {
+    ControlEvent leave;
+    memset(&leave, 0, sizeof(leave));
+    leave.type = CTRL_PLAYER_LEAVE;
+    leave.u.playerLeave.playerNum = pn;
+    strncpy(leave.u.playerLeave.name, name,
+            sizeof(leave.u.playerLeave.name) - 1);
+    leave.u.playerLeave.country[0] = 'X';
+    leave.u.playerLeave.country[1] = 'X';
+    clientSimApplyControl(cs, &leave);
+}
+
+int run_newswire_mute_codec_and_apply(void) {
+    /* ---- codec: both states round-trip ---- */
+    {
+        ControlEvent in, out;
+        memset(&in, 0, sizeof(in));
+        in.type = CTRL_NEWSWIRE_MUTE;
+        in.u.newswireMute.muted = 1;
+        UT_ASSERT_MSG(codec_roundtrip(CTRL_NEWSWIRE_MUTE, &in, &out) == 0,
+                      "codec_roundtrip failed (muted=1)");
+        UT_ASSERT(out.type == CTRL_NEWSWIRE_MUTE);
+        UT_ASSERT_MSG(out.u.newswireMute.muted == 1,
+                      "muted=1 did not survive the round-trip");
+
+        memset(&in, 0, sizeof(in));
+        in.type = CTRL_NEWSWIRE_MUTE;
+        in.u.newswireMute.muted = 0;
+        UT_ASSERT_MSG(codec_roundtrip(CTRL_NEWSWIRE_MUTE, &in, &out) == 0,
+                      "codec_roundtrip failed (muted=0)");
+        UT_ASSERT_MSG(out.u.newswireMute.muted == 0,
+                      "muted=0 did not survive the round-trip");
+    }
+
+    /* ---- codec: the one-byte body is required ---- */
+    {
+        ControlEncodeBodyFn enc =
+            transportControlCodecBodyEncoder(CTRL_NEWSWIRE_MUTE);
+        ControlDecodeBodyFn dec =
+            transportControlCodecBodyDecoder(CTRL_NEWSWIRE_MUTE);
+        UT_ASSERT_MSG(enc != NULL, "no body encoder for CTRL_NEWSWIRE_MUTE");
+        UT_ASSERT_MSG(dec != NULL, "no body decoder for CTRL_NEWSWIRE_MUTE");
+
+        ControlEvent in, out;
+        uint8_t buf[MAX_CONTROL_PACKET];
+        size_t outLen = 0;
+        memset(&in, 0, sizeof(in));
+        in.type = CTRL_NEWSWIRE_MUTE;
+        in.u.newswireMute.muted = 1;
+        UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+        UT_ASSERT_MSG(outLen == 1, "body len = %zu (want 1)", outLen);
+        memset(&out, 0, sizeof(out));
+        UT_ASSERT_MSG(!dec(buf, 0, &out),
+                      "decoder must reject an empty body");
+    }
+
+    /* ---- apply: the flag lands, and the shared predicate sees it ---- */
+    {
+        ClientSim *cs = fresh_client_sim();
+        UT_ASSERT(cs != NULL);
+        UT_ASSERT_MSG(!clientSimNewswireMuted(cs),
+                      "a fresh ClientSim must start un-muted");
+
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_NEWSWIRE_MUTE;
+        evt.u.newswireMute.muted = 1;
+        clientSimApplyControl(cs, &evt);
+        UT_ASSERT_MSG(cs->newswireMuted, "mute ON did not reach ClientSim");
+        UT_ASSERT(clientSimNewswireMuted(cs));
+
+        evt.u.newswireMute.muted = 0;
+        clientSimApplyControl(cs, &evt);
+        UT_ASSERT_MSG(!cs->newswireMuted, "mute OFF did not reach ClientSim");
+        UT_ASSERT(!clientSimNewswireMuted(cs));
+    }
+
+    /* ---- gate: a muted client writes no newswire for a departure ---- */
+    {
+        ClientSim *cs = fresh_client_sim();
+        UT_ASSERT(cs != NULL);
+        cs->inLobby = false;   /* in game: leaves take the newswire path */
+
+        ControlEvent mute;
+        memset(&mute, 0, sizeof(mute));
+        mute.type = CTRL_NEWSWIRE_MUTE;
+        mute.u.newswireMute.muted = 1;
+        clientSimApplyControl(cs, &mute);
+
+        seat_player(cs, 3, "WaveBot");
+        int before = cs->messages.queueCount;
+        leave_player(cs, 3, "WaveBot");
+        UT_ASSERT_MSG(cs->messages.queueCount == before,
+                      "muted client queued %d newswire cell(s) for a leave",
+                      cs->messages.queueCount - before);
+
+        /* Same leave, mute lifted — the line comes through. */
+        mute.u.newswireMute.muted = 0;
+        clientSimApplyControl(cs, &mute);
+        seat_player(cs, 4, "WaveBot2");
+        before = cs->messages.queueCount;
+        leave_player(cs, 4, "WaveBot2");
+        UT_ASSERT_MSG(cs->messages.queueCount > before,
+                      "un-muted client wrote no newswire for a leave");
+    }
+
+    /* ---- text: the wave banner survives the mute ---- */
+    {
+        ClientSim *cs = fresh_client_sim();
+        UT_ASSERT(cs != NULL);
+        cs->inLobby = false;   /* in game: server text goes to the newswire */
+
+        ControlEvent mute;
+        memset(&mute, 0, sizeof(mute));
+        mute.type = CTRL_NEWSWIRE_MUTE;
+        mute.u.newswireMute.muted = 1;
+        clientSimApplyControl(cs, &mute);
+
+        ControlEvent text;
+        memset(&text, 0, sizeof(text));
+        text.type = CTRL_SERVER_TEXT;
+        strncpy(text.u.serverText.text,
+                "*** Wave 1/5: 10 attackers inbound! ***",
+                sizeof(text.u.serverText.text) - 1);
+        int before = cs->messages.queueCount;
+        clientSimApplyControl(cs, &text);
+        UT_ASSERT_MSG(cs->messages.queueCount > before,
+                      "the mute swallowed server text — the wave warning "
+                      "must always show");
+    }
+
+    /* ---- phase: a mute never outlives its round ---- */
+    {
+        ClientSim *cs = fresh_client_sim();
+        UT_ASSERT(cs != NULL);
+
+        ControlEvent mute;
+        memset(&mute, 0, sizeof(mute));
+        mute.type = CTRL_NEWSWIRE_MUTE;
+        mute.u.newswireMute.muted = 1;
+        clientSimApplyControl(cs, &mute);
+        UT_ASSERT(cs->newswireMuted);
+
+        ControlEvent phase;
+        memset(&phase, 0, sizeof(phase));
+        phase.type = CTRL_GAME_PHASE_RUNNING;
+        clientSimApplyControl(cs, &phase);
+        UT_ASSERT_MSG(!cs->newswireMuted,
+                      "the round start must clear a stuck newswire mute");
+    }
+
+    return 0;
+}

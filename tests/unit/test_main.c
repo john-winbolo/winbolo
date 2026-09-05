@@ -56,6 +56,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_brain_list_codec_and_apply",run_lobby_brain_list_codec_and_apply},
     { "lobby_sync_complete_codec_roundtrip", run_lobby_sync_complete_codec_roundtrip },
     { "lobby_rating_posted_codec_roundtrip", run_lobby_rating_posted_codec_roundtrip },
+    { "newswire_mute_codec_and_apply", run_newswire_mute_codec_and_apply },
     { "command_codec_roundtrip_variants",run_command_codec_roundtrip_variants},
     { "command_codec_lobby_claim_start", run_command_codec_lobby_claim_start },
     { "command_codec_rating_posted",     run_command_codec_rating_posted     },

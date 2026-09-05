@@ -181,8 +181,16 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 end
 
 -- Enter swerve substate. Centralises the duplicated swerve-entry
--- setup (timing, direction, pill-dead flag) so all 4 entry points
--- (charge, engage-kill, engage-dodge, shoot_pill) share one path.
+-- setup (timing, direction, pill-dead flag) so all 6 entry points
+-- (charge-kill, charge-defensive, engage-kill, engage-dodge,
+-- shoot_pill, lgm-near) share one path.
+--
+-- A pill_suicider NEVER gets here: every call site is gated on
+-- `not state.is_pill_suicider` (defensive swerves are cancelled, the
+-- pill-dead "kill" swerves run suicider_kill_handoff instead). This is
+-- the single choke point that sets substate="swerve", so the
+-- BRAIN_DEBUG_MODE SWERVE_ENTER line below is the proof of that rule:
+-- a suicider must emit zero SWERVE_ENTER lines over a whole game.
 --
 -- mode:
 --   "kill"      — pill dead or enough shots fired (offensive swerve)
@@ -190,6 +198,11 @@ end
 local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
 local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
   local now = state.tick or 0
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("SWERVE_ENTER t=%d mode=%s sub=%s tid=%s pill=(%d,%d) suicider=%s",
+      now, tostring(mode), tostring(goal.substate), tostring(goal.target_id),
+      pmx, pmy, tostring(state.is_pill_suicider)))
+  end
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
   goal.substate    = "swerve"
@@ -376,6 +389,43 @@ local function handoff_to_capture_pill(state, world, info, pid, now)
     now, pid, p.mx, p.my))
   return true
 end
+-- Pill-suicider post-kill handoff. A suicider NEVER swerves, in any situation,
+-- so where a normal tank enters the "kill" swerve the tick its pill dies and
+-- runs the capture handoff when that swerve FINISHES, the suicider runs the
+-- same handoff immediately — no swerve, straight from firing to driving onto
+-- the body.
+--
+-- Mirrors the pill-dead branch of the swerve-completion block exactly:
+-- mark_kill_pickup -> clear_attack_goal -> handoff_to_capture_pill, with the
+-- same fallback print when the handoff refuses (ally already capturing, pill
+-- carried/gone) and the same command_goal semantics — that branch does NOT
+-- release state.command_goal on a dead pill (only the pill-ALIVE exits do), so
+-- neither do we. _swerve_* bookkeeping is deliberately not written: those
+-- fields are read only by the swerve substate handler and the hud_swerve_debug
+-- overlay, and clear_attack_goal wipes the whole goal on the next line anyway.
+--
+-- Callers MUST `return` immediately after calling this: clear_attack_goal
+-- mutates state.goal in place (kind="none", every other field wiped), so the
+-- caller's cached `goal` local is no longer an attack_pill goal.
+local function suicider_kill_handoff(goal, state, world, info, now, site)
+  local pid = goal.target_id
+  local gmx, gmy = goal.mx, goal.my
+  mark_kill_pickup(state, pid, gmx, gmy, now)
+  clear_attack_goal(state, "pill dead, suicider: straight to capture")
+  local took = handoff_to_capture_pill(state, world, info, pid, now)
+  if took then
+    print(string.format(TAG ..
+      " ATTACK: pill dead, suicider: straight to capture (site=%s) — taking capture_pill on it", site))
+  else
+    print(string.format(TAG ..
+      " ATTACK: pill dead, suicider: straight to capture (site=%s) — releasing to capture_pill", site))
+  end
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("SWERVE_SKIP t=%d site=%s reason=pill_suicider pill_dead=1 handoff=%s pill=(%s,%s) tid=%s",
+      now, site, tostring(took), tostring(gmx), tostring(gmy), tostring(pid)))
+  end
+end
+
 M.enter_swerve      = enter_swerve
 
 local _EMPTY = {}
@@ -4888,7 +4938,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- soldier tally uses, so the quorum is symmetric across the squad.
       local _self_parked = squad.BLITZ_READY_SUBS[goal.substate or ""] and 1 or 0
       local set_inwait = _self_parked + (_inwait or 0)
-      if set_inwait >= (C.SQUAD_BLITZ_GO_EARLY_READY or 2) then
+      if set_inwait >= squad.blitz_min() then
         local _prev = goal.substate
         goal._blitz_committed    = true
         goal._blitz_start_armour = info.armour or 0
@@ -4897,7 +4947,13 @@ function M.update_attack_substate(goal, state, world, info)
         goal.substate            = "charge"
         goal._blitz_go           = true         -- broadcast GO (bgo) in init.lua
         state.squad_blitz_go     = true
-        print2(string.format("BLITZ_GO_ENROUTE t=%d set_inwait=%d (>=%d) from sub=%s -- soldiers parked, commander rushing in", now, set_inwait, C.SQUAD_BLITZ_GO_EARLY_READY or 2, tostring(_prev)))
+        -- Quorum met -> this is a real GO, so top the party up to the blitz
+        -- suicider minimum. Once per take (the goal field dies with the goal).
+        if not goal._blitz_su_done then
+          goal._blitz_su_done = true
+          squad.blitz_designate_suiciders(state, info, now, goal.target_id)
+        end
+        print2(string.format("BLITZ_GO_ENROUTE t=%d set_inwait=%d (>=%d) [%s] from sub=%s -- soldiers parked, commander rushing in", now, set_inwait, squad.blitz_min(), squad.blitz_size_label(), tostring(_prev)))
         return
       end
     end
@@ -5329,24 +5385,53 @@ function M.update_attack_substate(goal, state, world, info)
       end
       eff = (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + (goal._blitz_timeout_ext or 0)
       local timed_out = (now - goal._blitz_ready_since) >= eff
-      if BRAIN_DEBUG_MODE then state._blitz_wait_viz = { tick = now, pill = goal.target_id, total = total, ready = ready, min_bd = min_bd, ready_since = goal._blitz_ready_since, ext = goal._blitz_timeout_ext or 0, eff_timeout = eff, prog_bd = goal._blitz_prog_bd, base_timeout = (C.SQUAD_BLITZ_READY_TIMEOUT or 150), timed_out = timed_out, unseen = any_unseen, querying = querying } end
+      if BRAIN_DEBUG_MODE then state._blitz_wait_viz = { tick = now, pill = goal.target_id, total = total, ready = ready, min_bd = min_bd, ready_since = goal._blitz_ready_since, ext = goal._blitz_timeout_ext or 0, eff_timeout = eff, prog_bd = goal._blitz_prog_bd, base_timeout = (C.SQUAD_BLITZ_READY_TIMEOUT or 150), timed_out = timed_out, unseen = any_unseen, querying = querying, blitz_min = squad.blitz_min(), blitz_max = squad.blitz_max(), blitz_src = squad.blitz_size_source } end
       -- Heartbeat: why are we still waiting? (print is a no-op in the brain, so
       -- the GO decision was previously invisible in print2 logs.)
-      if BRAIN_DEBUG_MODE and (now % 25 == 0) then print2(string.format("BLITZ_WAIT_CMD t=%d total=%d ready=%d min_bd=%s ext=%d timed_out=%s wait_age=%d is_ppt=%s shielded=%s", now, total, ready, tostring(min_bd), goal._blitz_timeout_ext or 0, tostring(timed_out), now - (goal._blitz_ready_since or now), tostring(goal._is_ppt), tostring(goal._blitz_shielded))) end
+      if BRAIN_DEBUG_MODE and (now % 25 == 0) then print2(string.format("BLITZ_WAIT_CMD t=%d total=%d ready=%d party=%d/%d min_bd=%s ext=%d timed_out=%s wait_age=%d is_ppt=%s shielded=%s [%s]", now, total, ready, 1 + (total or 0), squad.blitz_min(), tostring(min_bd), goal._blitz_timeout_ext or 0, tostring(timed_out), now - (goal._blitz_ready_since or now), tostring(goal._is_ppt), tostring(goal._blitz_shielded), squad.blitz_size_label())) end
       -- Early GO on critical mass: once ENOUGH of the SET (commander + all
       -- soldiers) are PARKED at their standoffs (sub=blitz_wait), fire GO now
       -- instead of waiting for stragglers or the timeout. We're in blitz_wait
       -- here, so the commander counts itself (+1); inwait is the soldiers parked
-      -- at their spots. Default 2 = commander + 1 parked soldier already goes; a
+      -- at their spots. The threshold is the per-bot party MIN (squad.blitz_min,
+      -- default 2 = commander + 1 parked soldier already goes); a
       -- still-approaching extra joins on the broadcast GO. (Mirrors the
       -- substate-independent pre-dispatch check that lets a commander still en
       -- route GO when 2 soldiers are already waiting on it.)
+      local bmin       = squad.blitz_min()
+      -- The party MIN is a floor on: the commander plus every soldier that has
+      -- COMMITTED to this take (total). Committed, not ready — at the timeout
+      -- the stragglers are by definition not ready yet, and requiring MIN READY
+      -- there would make the timeout unusable. At the default MIN of 2 this is
+      -- always satisfied (the total==0 case returned above), so nothing changes
+      -- unless a "blitz=" token raised it.
+      local party      = 1 + (total or 0)
       local set_inwait = 1 + (inwait or 0)
-      local early_go = set_inwait >= (C.SQUAD_BLITZ_GO_EARLY_READY or 2)
-      if ready >= total or timed_out or early_go then
+      local early_go = set_inwait >= bmin
+      -- Short-handed at the deadline: MIN is HARD, so do NOT charge with fewer
+      -- tanks than the blitz asks for. Give up the take instead — clearing the
+      -- attack goal also drops our blitz standoff/claim state, which closes the
+      -- open call (init.lua broadcasts bcc on the transition) and frees any
+      -- soldier still holding for a GO that is never coming. The next replan
+      -- picks a fresh goal; if this pill still looks worth a blitz the call
+      -- reopens, which is also the recruiting window a third tank needs.
+      if timed_out and party < bmin then
+        print2(string.format("BLITZ_ABANDON_SHORT t=%d pill=%s party=%d < min=%d (ready=%d/%d inwait=%d) [%s] -- READY_TIMEOUT with too few tanks; releasing the call instead of charging short",
+              now, tostring(goal.target_id), party, bmin, ready, total, inwait or 0, squad.blitz_size_label()))
+        clear_attack_goal(state, string.format("blitz_wait: READY_TIMEOUT short-handed (party=%d < min=%d)", party, bmin))
+        return
+      end
+      if (ready >= total and party >= bmin) or timed_out or early_go then
         state.squad_blitz_go = true        -- broadcast GO (bgo) in init.lua
+        -- Same moment the quorum is met (NOT the short-handed abandon above):
+        -- designate random soldiers until the blitz has BLITZ_MIN_SUICIDERS
+        -- suiciders. Once per take.
+        if not goal._blitz_su_done then
+          goal._blitz_su_done = true
+          squad.blitz_designate_suiciders(state, info, now, goal.target_id)
+        end
         commit_fire()
-        print2(string.format("BLITZ_GO t=%d ready=%d/%d set_inwait=%d timed_out=%s early=%s -> %s", now, ready, total, set_inwait, tostring(timed_out), tostring(early_go), goal.substate))
+        print2(string.format("BLITZ_GO t=%d ready=%d/%d party=%d/%d set_inwait=%d timed_out=%s early=%s [%s] -> %s", now, ready, total, party, bmin, set_inwait, tostring(timed_out), tostring(early_go), squad.blitz_size_label(), goal.substate))
       end
       return
     else
@@ -5767,7 +5852,7 @@ function M.update_attack_substate(goal, state, world, info)
     if C.BLITZ_ABORT_BUILD_ON_READY and goal._blitz then
       local _total, _ready = squad.blitz_ready_status(state, now, info.player_number or -1)
       _ready = _ready or 0
-      if (_ready + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2) then
+      if (_ready + 1) >= squad.blitz_min() then
         -- Do we already have a blocker (built this take OR pre-existing) in our
         -- chosen shield slots? If so KEEP the PPT shield route: on GO we thread to
         -- the exact engage spot and fire from behind cover (firing off-spot would
@@ -5789,7 +5874,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal._blitz_ready_since = nil
         goal._blitz_shielded = _have_blocker or nil   -- blocker up → GO fires PPT from cover; none → charge
         state.squad_blitz_in_position = true
-        print2(string.format("BLITZ_BUILD_ABORT t=%d ready_blitzers=%d (soldiers=%d/%d)>=%d idx=%s/%s have_blocker=%s -> blitz_wait (%s)", now, _ready + 1, _ready, _total or 0, C.BLITZ_MIN_READY_TO_CHARGE or 2, tostring(goal._wall_build_idx), tostring(goal._wall_build_list and #goal._wall_build_list), tostring(_have_blocker), _have_blocker and "PPT from cover" or "unshielded charge"))
+        print2(string.format("BLITZ_BUILD_ABORT t=%d ready_blitzers=%d (soldiers=%d/%d)>=%d [%s] idx=%s/%s have_blocker=%s -> blitz_wait (%s)", now, _ready + 1, _ready, _total or 0, squad.blitz_min(), squad.blitz_size_label(), tostring(goal._wall_build_idx), tostring(goal._wall_build_list and #goal._wall_build_list), tostring(_have_blocker), _have_blocker and "PPT from cover" or "unshielded charge"))
         return
       end
     end
@@ -6032,18 +6117,18 @@ function M.update_attack_substate(goal, state, world, info)
     -- happening — the soldiers share the pill's fire. Solo (or before anyone is
     -- committed) we still need the full planned shield. Gate the early success
     -- on a blitz being underway: either enough blitzers are READY to charge
-    -- (BLITZ_MIN_READY_TO_CHARGE — commander counts as 1, so +1 below), OR at
+    -- (the per-bot party MIN — commander counts as 1, so +1 below), OR at
     -- least PPT_BLOCKERS_ENOUGH_MIN_INWAIT soldier(s) are already parked in
     -- blitz_wait while we (the commander) keep building.
     local _bt, _bready, _bmb, _bun, _binwait =
       squad.blitz_ready_status(state, now, info.player_number or -1, info)
     local blitz_supported = goal._blitz and (
-         ((_bready or 0) + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2)
+         ((_bready or 0) + 1) >= squad.blitz_min()
       or (_binwait or 0) >= (C.PPT_BLOCKERS_ENOUGH_MIN_INWAIT or 1))
     local built_enough = newly_built >= (C.PPT_BLOCKERS_ENOUGH or 1)
                          and blitz_supported
     if built_enough and idx <= #list and not stalled then
-      print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough; ready=%d+1 inwait=%d) idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, _bready or 0, _binwait or 0, idx, #list))
+      print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough; ready=%d+1 >= min=%d, or inwait=%d) [%s] idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, _bready or 0, squad.blitz_min(), _binwait or 0, squad.blitz_size_label(), idx, #list))
     end
 
     -- Cover-sufficient: a friendly pill blocker is worth 3 walls (PILLS_MAX_HEALTH
@@ -6419,6 +6504,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- in-flight prediction (on_target_in_flight >= hp), which stops one shot
     -- short if any in-flight shell diverges. Swerve only once hp hits 0.
     if pill_hp <= 0 then
+      -- Pill-suicider: no kill swerve either — it goes straight from charging
+      -- the pill to capturing the body (same handoff the swerve-done block runs).
+      if state.is_pill_suicider then
+        suicider_kill_handoff(goal, state, world, info, now, "charge")
+        return
+      end
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -6449,8 +6540,22 @@ function M.update_attack_substate(goal, state, world, info)
     -- dead-pill handoff (rush / capture / exit) runs exactly as normal.
     -- A pill_suicider is excluded on the same line as the ammo-deprived decoy,
     -- and for the same reason: its job is to stay on the pill. It charges
-    -- through the return fire instead of peeling off. (The pill-DEAD swerve
-    -- above is untouched — that one is the capture/exit handoff, not a dodge.)
+    -- through the return fire instead of peeling off. (The pill-DEAD case above
+    -- returns before this block for a suicider — it hands straight to
+    -- capture_pill, so a suicider never swerves for any reason at all.)
+    -- Debug-only: log the skip when this WOULD have swerved. Deliberately
+    -- re-derives the two triggers instead of moving the suicider test inside the
+    -- block, so commit_soak_finish (a one-time committing side effect) keeps
+    -- being skipped for suiciders exactly as before.
+    -- (single-line condition on purpose: lua_strip's --strip-block only removes
+    -- the FIRST line of an `if BRAIN_DEBUG_MODE` header, so a wrapped condition
+    -- would leave dangling `and ...` lines in opt/.)
+    if BRAIN_DEBUG_MODE and state.is_pill_suicider and C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 and not state.ammo_deprived and ((goal._charge_hits_total or 0) >= (C.ATTACK_CURVE_AFTER_HITS or 3) or (goal._kill_attempt and (goal._on_target_in_flight or 0) >= (pill.health or 0))) then
+      print2(string.format(
+        "SWERVE_SKIP t=%d site=charge_defensive reason=pill_suicider hits=%s kill_attempt=%s hp=%s",
+        now, tostring(goal._charge_hits_total), tostring(goal._kill_attempt),
+        tostring(pill.health)))
+    end
     if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0
        and not state.ammo_deprived and not state.is_pill_suicider then
       local _soak_ok = commit_soak_finish(goal, state, info)
@@ -7117,6 +7222,12 @@ function M.update_attack_substate(goal, state, world, info)
                         and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
     if pill_hp <= 0 then
       -- Pill actually dead → kill swerve (rush to capture after).
+      -- Pill-suicider: no swerve at all — run the post-kill capture handoff
+      -- right here instead of after a swerve, then bail (goal is wiped).
+      if state.is_pill_suicider then
+        suicider_kill_handoff(goal, state, world, info, now, "shoot_pill_ppt")
+        return
+      end
       should_swerve = true
       pill_dead     = true
     elseif goal._kill_attempt and on_target_in_flight >= pill_hp then
@@ -7132,8 +7243,9 @@ function M.update_attack_substate(goal, state, world, info)
       should_swerve = true
     end
     -- Pill-suicider: cancel every DEFENSIVE swerve (pill still alive — the
-    -- kill-locked and hits-taken exits above). The pill-dead branch keeps its
-    -- swerve: that is the rush-to-capture handoff, not a dodge.
+    -- kill-locked and hits-taken exits above). The pill-dead case never reaches
+    -- here: it returned above through suicider_kill_handoff, because a suicider
+    -- does not swerve in ANY situation — not even the rush-to-capture one.
     if should_swerve and not pill_dead and state.is_pill_suicider then
       should_swerve = false
       if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_SKIP t=%d site=shoot_pill_ppt reason=pill_suicider hits=%s hp=%d", now, tostring(goal._shoot_hits_total), pill_hp)) end
@@ -7175,6 +7287,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- the in-flight prediction, which stops a shot short if a shell diverges.
     local on_target_in_flight = goal._on_target_in_flight or 0
     if pill_hp <= 0 then
+      -- Pill-suicider: no kill swerve — hand straight to capture_pill on the
+      -- body we just made, then bail out (clear_attack_goal wiped `goal`).
+      if state.is_pill_suicider then
+        suicider_kill_handoff(goal, state, world, info, now, "engage")
+        return
+      end
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -7213,10 +7331,11 @@ function M.update_attack_substate(goal, state, world, info)
                             and not _tank_finish
       -- Pill-suicider: hits taken and a locked kill are NOT reasons to peel off
       -- — it stands in the fire and keeps shooting until the pill dies (the
-      -- pill_hp<=0 branch above then runs the normal kill swerve / capture
-      -- handoff). The crosshairs_off exit below is left alone: that one isn't a
-      -- dodge, it means we can no longer hit anything from here, and a suicider
-      -- with no shot has nothing to be brave about.
+      -- pill_hp<=0 branch above then hands straight to capture_pill with no
+      -- swerve at all). The crosshairs_off exit below is left alone: that one
+      -- isn't a dodge, it means we can no longer hit anything from here, and a
+      -- suicider with no shot has nothing to be brave about — but it routes to
+      -- post_engage, never to a swerve.
       if should_swerve and state.is_pill_suicider then
         should_swerve = false
         if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_SKIP t=%d site=engage_dodge reason=pill_suicider hits=%s kill_locked=%s", now, tostring(goal._engage_hits), tostring(_kill_locked))) end
@@ -7255,7 +7374,13 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
         else
-          -- Pill is calm — go straight to loiter/refuel decision
+          if BRAIN_DEBUG_MODE and state.is_pill_suicider and (pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked) then
+            print2(string.format(
+              "SWERVE_SKIP t=%d site=engage_dodge_anger reason=pill_suicider anger=%.2f kill_locked=%s xhair_off=%s",
+              now, pill_anger, tostring(_kill_locked), tostring(crosshairs_off)))
+          end
+          -- Pill is calm (or we're a suicider, which never dodges) — go
+          -- straight to loiter/refuel decision
           goal.substate = "post_engage"
           goal._post_engage_tick = now
         end

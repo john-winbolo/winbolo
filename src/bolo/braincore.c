@@ -1378,7 +1378,12 @@ static int l_cpf_rebuild_influence_tail(lua_State *L) {
                                        * predate it (GoalHunter 1.6 and older,
                                        * which must stay bit-for-bit) keep the
                                        * old no-margin behaviour. */
-                                      (int)luaL_optinteger(L, 6, 0));
+                                      (int)luaL_optinteger(L, 6, 0),
+                                      /* enemy_tail: optional and defaults to 1
+                                       * (both sides grow) for the same reason
+                                       * -- a brain that does not pass it keeps
+                                       * the old behaviour. */
+                                      (int)luaL_optinteger(L, 7, 1));
   return 0;
 }
 

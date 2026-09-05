@@ -1,7 +1,8 @@
 local function __idiv(a,b) return math.floor(a/b) end
 -- GoalHunter/pill_portfolio.lua
 -- Shared friendly-pill positioning model: classify a pill/tile into
--- back / front / aggressive (+ in-use), and the 35/45/20 target portfolio.
+-- back / front / aggressive (+ in-use), and the 20/45/20/15 target portfolio
+-- (back/front/aggro/util; per-bot overridable via the "portfolio=" init arg).
 -- Single source of truth for both the pill-table visualizer (pill_table.lua)
 -- and strategic placement (goals.lua eval_place_pill_strategic).
 --
@@ -27,10 +28,43 @@ local FRONT_NEAR_RADIUS = C.FRONT_NEAR_RADIUS or 2
 -- Portfolio targets (share of friendly pills). util = blockers + carried pills
 -- (R1): an enforced 15% reserve that flexes to defense. back rolls forward into
 -- front as the line advances; front and aggro are never repositioned.
+-- These are the DEFAULTS; a per-bot "portfolio=B/F/A[/U]" BRAIN_INIT_ARG token
+-- overwrites them through M.set_targets (each bot has its own lua_State, so a
+-- module-level value is per bot). Every reader/display must read the live
+-- M.TARGET_* fields, never these literals.
 M.TARGET_BACK  = 0.20
 M.TARGET_FRONT = 0.45
 M.TARGET_AGGRO = 0.20
 M.TARGET_UTIL  = 0.15
+
+-- Where the live targets came from: "default" or "init_arg". Shown alongside
+-- every displayed target so a panel/log line says which numbers are in force.
+M.targets_source = "default"
+
+-- Overwrite the portfolio targets for THIS bot. Shares are fractions (0..1) and
+-- are expected to sum to 1; the caller (init.lua's BRAIN_INIT_ARG parser) does
+-- the validation/normalisation and passes clean numbers. source defaults to
+-- "init_arg". M.targets() reads the fields live, so this takes effect on the
+-- very next call — no cached target counts anywhere.
+function M.set_targets(back, front, aggro, util, source)
+  M.TARGET_BACK  = back
+  M.TARGET_FRONT = front
+  M.TARGET_AGGRO = aggro
+  M.TARGET_UTIL  = util
+  M.targets_source = source or "init_arg"
+end
+
+-- One canonical "tgt b/f/a/u (source)" string for EVERY place that displays the
+-- targets (BrainTest panels, print2 lines, pool-grid term breakdowns, the
+-- portfolio viz). Percent integers, so "tgt 0/25/75/0 (init_arg)".
+function M.targets_label()
+  return string.format("tgt %d/%d/%d/%d (%s)",
+    math.floor(M.TARGET_BACK  * 100 + 0.5),
+    math.floor(M.TARGET_FRONT * 100 + 0.5),
+    math.floor(M.TARGET_AGGRO * 100 + 0.5),
+    math.floor(M.TARGET_UTIL  * 100 + 0.5),
+    M.targets_source)
+end
 
 -- A tile is on the front line if it has influence AND an orthogonal neighbor
 -- of opposite sign (mirrors brainPathfinderFindFrontLine / the "3" overlay).
@@ -150,7 +184,8 @@ end
 M.FILL_PRIORITY = { "utility", "front", "aggro", "back" }
 
 -- Target counts for a given total. Each category gets the FLOOR of its share
--- (R1: util 15 / front 45 / aggro 20 / back 20), then the leftover rounding
+-- (defaults util 15 / front 45 / aggro 20 / back 20 — read LIVE from
+-- M.TARGET_*, which "portfolio=" may have replaced), then the leftover rounding
 -- slots are handed out in M.FILL_PRIORITY order — so for small totals util/
 -- front/aggro fill before any back pill. (No forced >=1 back anymore: back is
 -- the lowest priority; the base-guardian bonus handles must-cover bases.)

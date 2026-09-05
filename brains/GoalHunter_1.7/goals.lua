@@ -2847,13 +2847,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Portfolio state: classify existing friendly pills and compute targets for
   -- the projected total (current + the one we're about to place). Candidate
   -- tiles in an under-target category get a strong bonus so placement fills
-  -- the deficit role (35% back / 45% front / 20% aggressive, >=1 back).
+  -- the deficit role (default 20% back / 45% front / 20% aggressive / 15% util;
+  -- read live from PP.TARGET_*, which a per-bot "portfolio=" init arg may replace).
   local pf_counts  = PP.counts(world, state.tick)
   local pf_total   = pf_counts.back + pf_counts.front + pf_counts.aggro
   -- Project the back/front/aggro targets over the pills we actually have to
   -- place (built + THIS tank's carried hoard), not just +1. A category is
   -- buildable while its built count is under its projected target (N < T), so a
-  -- hoard can fill back/front/aggro up to the 35/45/20 ratio instead of being
+  -- hoard can fill back/front/aggro up to the live target ratio instead of being
   -- carried forever when every category was "full" at the old +1 projection.
   local pf_place_n = math.max(1, info.carried_pills or 1)
   local pf_targets = PP.targets(pf_total + pf_place_n)
@@ -2927,8 +2928,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- placing down to 1 carried, the normal hold re-engages.
   if not only and util_surplus <= 0 and (info.carried_pills or 0) < 2 then
     state._place_need_cat = "util_reserve"   -- viz hint
-    print2(string.format("PLACE_HOLD_UTIL t=%d util=%d <= reserve=%d — hold carried pill as utility reserve",
-      state.tick or 0, pf_counts.utility or 0, util_reserve))
+    print2(string.format("PLACE_HOLD_UTIL t=%d util=%d <= reserve=%d [%s] — hold carried pill as utility reserve",
+      state.tick or 0, pf_counts.utility or 0, util_reserve, PP.targets_label()))
     return nil
   end
 
@@ -3209,10 +3210,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- No placeable, non-surplus spot anywhere in range. The right move is to
     -- KEEP CARRYING (return nil) until we're somewhere a needed pill belongs —
     -- there is intentionally no fallback that would dump a surplus pill nearby.
-    print2(string.format("PLACE_NO_SPOT t=%d center=(%d,%d) R=%d util_surplus=%d need=%s counts(b/f/a)=%d/%d/%d targets=%d/%d/%d — every placeable tile unplaceable or surplus-skipped; keep carrying",
+    print2(string.format("PLACE_NO_SPOT t=%d center=(%d,%d) R=%d util_surplus=%d need=%s counts(b/f/a)=%d/%d/%d targets=%d/%d/%d [%s] — every placeable tile unplaceable or surplus-skipped; keep carrying",
       state.tick or 0, search_mx or -1, search_my or -1, R, util_surplus or 0, tostring(pf_need_cat),
       pf_counts.back or 0, pf_counts.front or 0, pf_counts.aggro or 0,
-      pf_targets.back or 0, pf_targets.front or 0, pf_targets.aggro or 0))
+      pf_targets.back or 0, pf_targets.front or 0, pf_targets.aggro or 0, PP.targets_label()))
     return nil
   end
 
@@ -3322,9 +3323,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         "score{%.0f} = prx{%.0f} + bdef{%.0f} + inf{%.0f} + spc{%.0f} + los{%.0f} + thr{%.0f} + dst{%.0f} + spk{%.0f} + ep{%.0f} + wz{%.0f} + port{%.0f} + cov{%.0f} + grd{%.0f} + ctr{%.0f}%s",
         c.score, c.sc1, c.sc2, c.sc3, c.sc4, c.sc5, c.sc6, c.sc7, c.sc8, c.sc9, c.sc10,
         c.sc11 or 0, c.sc12 or 0, c.sc13 or 0, c.sc_center or 0,
-        is_win and string.format("  ||  cost{%.0f} = (path{%.0f} + base{%.0f} + carry_pen{%.0f} - carry{%.0f}) x mult{%.2f} x lastpill{%.2f} x bal{%.2f} x surplus{%.2f} x multi{%.2f} + tankpen{%.0f}",
+        is_win and string.format("  ||  cost{%.0f} = (path{%.0f} + base{%.0f} + carry_pen{%.0f} - carry{%.0f}) x mult{%.2f} x lastpill{%.2f} x bal{%.2f} x surplus{%.2f} x multi{%.2f} + tankpen{%.0f}; port{%.0f}/bal{%.2f}/surplus{%.2f} come from balance back %d/%d front %d/%d aggro %d/%d util %d/%d @ %s",
           cost, path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
-          C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult, multi_carry_mult, tank_pen) or "")
+          C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult, multi_carry_mult, tank_pen,
+          c.sc11 or 0, imbalance_mult, surplus_mult,
+          pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
+          pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
+          PP.targets_label()) or "")
       cands[#cands + 1] = {
         id = c.my * 256 + c.mx,
         mx = c.mx, my = c.my,
@@ -3354,12 +3359,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- so the printed formula did not reproduce the printed number. Order matches
     -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
     -- x bal x surplus x multi, then + tankpen.
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d util %d/%d unguarded=%d | %s",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
            multi_carry_mult, armour_mult, tank_pen, cost, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
-           pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
+           pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
+           #unguarded_bases, PP.targets_label()) or "",
     cands = cands,
   }
 end
@@ -3709,7 +3715,7 @@ function M.get_strategic_place_heatmap(state, world, info)
   -- Project the back/front/aggro targets over the pills we actually have to
   -- place (built + THIS tank's carried hoard), not just +1. A category is
   -- buildable while its built count is under its projected target (N < T), so a
-  -- hoard can fill back/front/aggro up to the 35/45/20 ratio instead of being
+  -- hoard can fill back/front/aggro up to the live target ratio instead of being
   -- carried forever when every category was "full" at the old +1 projection.
   local pf_place_n = math.max(1, info.carried_pills or 1)
   local pf_targets = PP.targets(pf_total + pf_place_n)
@@ -5043,7 +5049,7 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- rest are genuine "can't reposition right now" states.
 
   -- Reposition cost is driven primarily by our pill-type BALANCE: a pill in a
-  -- category (back/front/aggressive) that's OVER its 35/45/20 allotment gets a
+  -- category (back/front/aggressive) that's OVER its live allotment gets a
   -- big surplus discount, so the bot sheds from over-full roles. Secondary
   -- terms keep good spots / break ties within a category:
   --   + coverage  (friendly pills + bases in fire range — keep good protectors
@@ -5346,9 +5352,10 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
                wx = U.m2w(mx), wy = U.m2w(my),
                target_id = best_pid or 0, reposition = true },
       desc = BRAIN_POOL_VIZ and string.format(
-             "REJECT{%s} | balance back %d/%d front %d/%d aggro %d/%d",
+             "REJECT{%s} | balance back %d/%d front %d/%d aggro %d/%d util %d/%d | %s",
              reject, counts.back, targets.back, counts.front, targets.front,
-             counts.aggro, targets.aggro) or "",
+             counts.aggro, targets.aggro, counts.utility or 0, targets.utility or 0,
+             PP.targets_label()) or "",
     }
   end
 
@@ -5378,12 +5385,13 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
              awaiting_vote = not (repos_locked or approved) },
     desc = BRAIN_POOL_VIZ and string.format(
            "%s{%.0f} reposition pill#%d@(%d,%d) cat=%s | base%.0f -surp%.0f -card%.0f +basep%.0f +act%.0f +tank%.0f +trav%.0f"..
-           "||list EVERY friendly pill, only BACK eligible; lower=more worth moving. if this BID wins the pool a team vote opens; the shoot is gated on approval. balance back %d/%d front %d/%d aggro %d/%d",
+           "||list EVERY friendly pill, only BACK eligible; lower=more worth moving. if this BID wins the pool a team vote opens; the shoot is gated on approval. surp comes from balance back %d/%d front %d/%d aggro %d/%d util %d/%d @ %s",
            (repos_locked and "LOCK" or (approved and "APPROVED" or "BID")),
            cost, best_pid, best_pill.mx, best_pill.my, tostring(bc.cat),
            C.PILL_REPOSITION_BASE_COST or 500, -(bc.surp or 0), -(bc.card or 0),
            (bc.base or 0), (bc.act or 0), (bc.tank or 0), (bc.travel or 0),
-           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro) or "",
+           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro,
+           counts.utility or 0, targets.utility or 0, PP.targets_label()) or "",
   }
 end
 
@@ -5445,6 +5453,32 @@ local POOL_NAME_TO_KIND = {
 }
 local function suicider_mult_for_pool(state, pname)
   return suicider_cost_mult(state, POOL_NAME_TO_KIND[pname] or pname)
+end
+
+-- ── Refuel cost multiplier (per bot) ──────────────────────────────────────
+-- A whole-cost multiplier on the "refuel" GOAL_GROUP (refuel_at_base +
+-- flee_to_base). Module-level, and each bot has its own lua_State, so it is per
+-- bot; init.lua's "refuel=X" BRAIN_INIT_ARG token calls set_refuel_mult.
+-- Applied at ONE place: the selection-layer pass in goal_selection, right after
+-- the pill-suicider surcharge — NOT per candidate base. Refuel's pool cost is
+-- assembled in three different spots (eval_refuel, finalize_partial's pool 1,
+-- and the critical-armour flee injection that OVERWRITES pool 1), so the only
+-- point that is genuinely single is where the assembled pool is shaped.
+local REFUEL_MULT = C.REFUEL_COST_MULT or 1.0
+M.refuel_mult_source = "default"
+function M.refuel_mult() return REFUEL_MULT end
+function M.set_refuel_mult(x, source)
+  REFUEL_MULT = (type(x) == "number" and x > 0) and x or REFUEL_MULT
+  M.refuel_mult_source = source or "init_arg"
+end
+function M.refuel_mult_label()
+  return string.format("refuelmult{x%.2f (%s)}", REFUEL_MULT, M.refuel_mult_source)
+end
+-- Same question the display renderers ask for the suicider surcharge: is THIS
+-- pool part of the refuel group, and if so what multiplier did selection apply?
+local function refuel_mult_for_pool(pname)
+  local kind = POOL_NAME_TO_KIND[pname] or pname
+  return (GOAL_GROUPS[kind] == "refuel") and REFUEL_MULT or 1.0
 end
 
 -- (LOCK_SUBS defined above eval_attack_tank.)
@@ -10681,6 +10715,15 @@ local function get_formula(e)
     local sep = f:find("||", 1, true)
     if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
     else        f = f .. disp .. " ||" .. map:sub(2) end
+  elseif e._blitz_off then
+    -- Same slot, but this bot has blitz=off (init_arg): an open call exists on
+    -- this pill and the join discount was deliberately NOT applied, so the row
+    -- is the plain solo cost.
+    local disp = " x blitz_discount{1.00 off}"
+    local map  = string.format("|blitz_discount:OFF (%s) — an open call on this pill, but this bot never joins; cost unchanged", tostring(e._blitz_off))
+    local sep = f:find("||", 1, true)
+    if sep then f = f:sub(1, sep - 1) .. disp .. " " .. f:sub(sep) .. map
+    else        f = f .. disp .. " ||" .. map:sub(2) end
   end
   -- REJECT row already formatted by inner — no trailing term to append.
   if e._reject == "ally_claimed"
@@ -12574,6 +12617,17 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       -- Sea-cluster claim (see sea_ally_claim above): an ally harvesting a
       -- deep-sea cluster owns every pill in it, not just its broadcast target.
       local sac = sea_ally_claim and sea_ally_claim[e._id]
+      -- "noclaimdead": an ally's sea-cluster claim is still an ally claim on a
+      -- DEAD pill, so it is ignored too — otherwise the flag would leave the
+      -- biggest pool-4 ally_claimed source in place.
+      if sac and state.ally_claim_dead_off then
+        sac = nil
+        if e._reject == "ally_claimed" then
+          e._reject = nil
+          e._reject_remaining = 0
+          e.formula = nil
+        end
+      end
       if sac and not we_targeted_it then
         if e._reject ~= "ally_claimed" then
           e._reject = "ally_claimed"
@@ -12720,7 +12774,7 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
                                 or (g.mx == e._mx and g.my == e._my))
         local we_participate = we_on_pill or (state.squad_blitz_target == e._id)
         if not we_participate then
-          local full_n = (C.SQUAD_MAX_SIZE or 1) + 1   -- commander + soldiers
+          local full_n = squad.blitz_max()   -- commander + soldiers, per-bot
           local tdead = state.tank_dead_at
           local n = 0
           for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
@@ -12860,7 +12914,21 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         local we_hold = g and g.kind == kind
                        and ((g.target_id and e._id and g.target_id == e._id)
                             or (g.mx == e._mx and g.my == e._my))
-        if pool_idx == 6 and e._id then
+        if pool_idx == 4 and state.ally_claim_dead_off then
+          -- ── "noclaimdead" (BRAIN_INIT_ARG): allies' claims on a DEAD pill are
+          -- ignored, so several bots race to scoop the same body — which is the
+          -- point: they draw fire on the way in. Keep the row unconditionally
+          -- (the we_keep branch below clears any ally_claimed reject already on
+          -- it). Scope is pool 4 only: pool 6 (attack_pill on a LIVE pill)
+          -- keeps today's claim/steal de-confliction, and the pool-1 refuel
+          -- soft penalty is untouched.
+          we_keep = true
+          _reason = "claims_dead_off (noclaimdead init_arg — allies' capture_pill claims ignored)"
+          if BRAIN_DEBUG_MODE and not panel_refresh then
+            print2(string.format("SYNC_P4 pid=%s DECISION ally=p%s ally_cost=%s our_cost=%.1f -> KEEP [claims_dead_off]",
+              tostring(e._id), tostring(match_pn), tostring(match_cost), our_cost or 0))
+          end
+        elseif pool_idx == 6 and e._id then
           -- ── attack_pill: NEGOTIATED steal (stq/sta/str), no silent takeover ──
           -- The old silent cost-steal let a cheaper challenger just KEEP the
           -- pill; the pricier holder stamped REJECT on its own entry but the
@@ -13247,9 +13315,24 @@ local function apply_blitz_join_discount(state, info, world)
   if not calls then return end
   local cache = state.cost_cache
   if not cache then return end
+  -- "noblitz" (BRAIN_INIT_ARG): never join, so no call gets a discount. Mark the
+  -- pool-6 rows the discount WOULD have touched so the Term Breakdown / DECISION
+  -- line says why the row is at its plain solo cost instead of silently
+  -- differing from a normal bot.
+  if state.blitz_disabled then
+    for _, call in pairs(calls) do
+      local pid = call.pill
+      if pid then
+        for _, e in pairs(cache) do
+          if e._p == 6 and e._id == pid then e._blitz_off = "noblitz" end
+        end
+      end
+    end
+    return
+  end
   local now     = state.tick or 0
   local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (info.player_number or -1)
-  local cap     = C.SQUAD_MAX_SIZE or 3
+  local cap     = squad.blitz_soldier_cap()   -- party MAX minus the commander
   local ref     = C.SQUAD_BLITZ_JOIN_REF_COST or 120
   -- Mid-take on our OWN pill: don't let a different blitz pull us off once we're
   -- past approach (planning/building/engaging). Our current pill itself stays
@@ -13516,7 +13599,7 @@ function M.finalize_pools(state, world, info)
   -- reject-flagged (lists each id:reason), (c) a winner was chosen.
   if BRAIN_DEBUG_MODE then
     if not pr1 then
-      print2(string.format("REFUEL_FINALIZE t=%d NO PARTIAL — refuel not queued this cycle (needs_refuel false / queue not built)", state.tick or 0))
+      print2(string.format("REFUEL_FINALIZE t=%d NO PARTIAL %s — refuel not queued this cycle (needs_refuel false / queue not built)", state.tick or 0, M.refuel_mult_label()))
     else
       local nc = pr1.candidates and #pr1.candidates or 0
       local nrej, nscored, nunscored = 0, 0, 0
@@ -13533,7 +13616,7 @@ function M.finalize_pools(state, world, info)
           end
         end
       end
-      print2(string.format("REFUEL_FINALIZE t=%d candidates=%d scored=%d rejected=%d UNSCORED=%d winner=%s cost=%s | scored=[%s] unscored=[%s]%s", state.tick or 0, nc, nscored, nrej, nunscored, tostring(pr1.best_id or "NONE"), pr1.best_obj and string.format("%.0f", pr1.best_cost or -1) or "NONE", table.concat(sc_list, ","), table.concat(un_list, ","), (#rej_list > 0) and (" rejects=[" .. table.concat(rej_list, ",") .. "]") or ""))
+      print2(string.format("REFUEL_FINALIZE t=%d candidates=%d scored=%d rejected=%d UNSCORED=%d winner=%s cost=%s %s | scored=[%s] unscored=[%s]%s", state.tick or 0, nc, nscored, nrej, nunscored, tostring(pr1.best_id or "NONE"), pr1.best_obj and string.format("%.0f", pr1.best_cost or -1) or "NONE", M.refuel_mult_label(), table.concat(sc_list, ","), table.concat(un_list, ","), (#rej_list > 0) and (" rejects=[" .. table.concat(rej_list, ",") .. "]") or ""))
     end
   end
   if pr1 and pr1.best_obj then
@@ -15454,6 +15537,26 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Refuel-group cost multiplier ──
+    -- THE choke point for "this bot values resupply more/less than usual":
+    -- one pass over the assembled pool, the same layer as the phase weight and
+    -- the suicider surcharge above. Covers BOTH members of the refuel
+    -- GOAL_GROUP, so the critical-armour flee injection (a flee_to_base that
+    -- overwrites pool 1) is scaled too — the whole point is that a bot with
+    -- refuel=1.2 goes back for supplies less readily, and exempting the
+    -- emergency case would leave the biggest refuel decision unchanged.
+    -- No-op at the 1.0 default. _refuel_mult is stashed for the WINNERS-row
+    -- reconciliation exactly like _suicider_mult.
+    if REFUEL_MULT ~= 1.0 then
+      for _, c in ipairs(pool) do
+        if c.goal and GOAL_GROUPS[c.goal.kind] == "refuel"
+           and c.cost and c.cost > 0 and not c._reject_sentinel then
+          c.cost = c.cost * REFUEL_MULT
+          c._refuel_mult = REFUEL_MULT
+        end
+      end
+    end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -15793,6 +15896,7 @@ local function goal_selection(state, world, info, quiet)
         phase_weight = c.phase_weight or 1.0,
         inf_mult     = c._inf_mult or 1.0,
         suicider_mult = c._suicider_mult or 1.0,
+        refuel_mult   = c._refuel_mult or 1.0,
         total   = c.cost,
         hyst       = c.hysteresis,
         hist_t     = c.hist_target,
@@ -16824,9 +16928,16 @@ function M.get_queue_status(state)
     -- alongside the phase weight (1.0 for everyone else).
     local pw = phase_weights and pname and phase_weights[pname] or 1.0
     local sui = suicider_mult_for_pool(state, pname)
-    local weighted = cost_val >= 0 and (cost_val * pw * sui) or -1
+    local rfm = refuel_mult_for_pool(pname)
+    local weighted = cost_val >= 0 and (cost_val * pw * sui * rfm) or -1
+    if rfm ~= 1.0 and formula ~= "" then
+      formula = formula .. " * " .. M.refuel_mult_label()
+    end
     if sui ~= 1.0 and formula ~= "" then
-      formula = formula .. string.format(" * suicider{%.1f}", sui)
+      -- Name the RULE that made this bot a suicider (forced token / blitz
+      -- designation at GO / harasser slate) — the surcharge is meaningless
+      -- without knowing which one is in force and whether it is temporary.
+      formula = formula .. string.format(" * suicider{%.1f, %s}", sui, tostring(state.suicider_src or "?"))
     end
 
     -- Check if this goal is on abandon cooldown or blocked
@@ -16868,8 +16979,10 @@ function M.get_queue_status(state)
     local cost = entry.cost or -1
     local pw = phase_weights and phase_weights[pname] or 1.0
     local sui = suicider_mult_for_pool(state, pname)
-    local weighted = cost >= 0 and (cost * pw * sui) or -1
+    local rfm = refuel_mult_for_pool(pname)
+    local weighted = cost >= 0 and (cost * pw * sui * rfm) or -1
     local fdesc = entry.desc or ""
+    if rfm ~= 1.0 then fdesc = fdesc .. " * " .. M.refuel_mult_label() end
     if sui ~= 1.0 then fdesc = fdesc .. string.format(" * suicider{%.1f}", sui) end
     entries[#entries+1] = {
       pool = idx, pname = pname, id = 0,
@@ -17285,7 +17398,7 @@ function M.get_pool_breakdown_json(state)
     -- selection-layer multiplier on this whole pool, so it belongs in
     -- `weighted` (and therefore in the row ordering). 1.0 for non-suiciders.
     local sui = suicider_mult_for_pool(state, pname)
-    local pwx = pw * sui
+    local pwx = pw * sui * refuel_mult_for_pool(pname)
     local rows_raw = by_pool[idx] or {}
     table.sort(rows_raw, function(a, b)
       local ac = (a.cost >= 0) and a.cost * pwx or math.huge
@@ -17485,11 +17598,27 @@ function M.get_pool_breakdown_json(state)
       -- numbers still reconcile (base x pw x inf x suicider + penalties = total).
       local suicider_mult = (gc and gc.suicider_mult) or 1.0
       if suicider_mult ~= 1.0 then
-        detail_formula = string.format("%s * suicider{%.1f}", detail_formula, suicider_mult)
+        detail_formula = string.format("%s * suicider{%.1f, %s}", detail_formula, suicider_mult,
+                                       tostring(state.suicider_src or "?"))
+        local _sui_bs = state.blitz_suicider
         detail_map[#detail_map + 1] = string.format(
-          "suicider:pill_suicider role -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
+          "suicider:pill_suicider role (source=%s%s) -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
+          tostring(state.suicider_src or "?"),
+          _sui_bs and string.format(", TEMPORARY for blitz pill #%s designated by p%s",
+                                    tostring(_sui_bs.pill), tostring(_sui_bs.by)) or "",
           tostring(w.kind or (gc and gc.kind) or pname), suicider_mult,
           C.PILL_SUICIDER_DEFEND_MULT or 1.0, C.PILL_SUICIDER_OTHER_MULT or 1.0)
+      end
+
+      -- Refuel-group multiplier, same layer as the suicider surcharge, so the
+      -- row's numbers still reconcile (base x pw x inf x suicider x refuelmult
+      -- + penalties = total).
+      local refuel_mult_d = (gc and gc.refuel_mult) or 1.0
+      if refuel_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * %s", detail_formula, M.refuel_mult_label())
+        detail_map[#detail_map + 1] = string.format(
+          "refuelmult:the refuel GOAL_GROUP (refuel_at_base + flee_to_base) costs x%.2f for this bot (%s) -- REFUEL_COST_MULT, per-bot overridable with the \"refuel=X\" init token",
+          refuel_mult_d, M.refuel_mult_source)
       end
 
       if w.imminent then
@@ -17569,7 +17698,12 @@ function M.get_pool_breakdown_json(state)
         row_summary = row_summary .. string.format(" x inf@%.1f", inf_mult)
       end
       if suicider_mult ~= 1.0 then
-        row_summary = row_summary .. string.format(" x suicider{%.1f}", suicider_mult)
+        row_summary = row_summary .. string.format(" x suicider{%.1f, %s}", suicider_mult,
+                                                   tostring(state.suicider_src or "?"))
+      end
+      local refuel_mult = (gc and gc.refuel_mult) or 1.0
+      if refuel_mult ~= 1.0 then
+        row_summary = row_summary .. " x " .. M.refuel_mult_label()
       end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then

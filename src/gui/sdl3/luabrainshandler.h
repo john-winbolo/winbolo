@@ -448,6 +448,28 @@ void luaBrainsSetAllowUnsafe(int enable);
 *********************************************************/
 void luaBrainsSetNextInitArg(const char *arg);
 
+/*********************************************************
+*NAME:          luaBrainsSetNextStartEngineTick
+*PURPOSE:
+*  Stages the server sim's current tick for the NEXT brain
+*  instance created; luaBrainInstanceCreate() injects it as
+*  the BRAIN_START_ENGINE_TICK Lua global.
+*
+*  A brain's own tick counter restarts at 0 on every create,
+*  so in a game where bots are re-created mid-session (a
+*  Survival wave respawn) every life re-uses the same tick
+*  numbers and the logs of five lives are indistinguishable.
+*  With this the brain seeds its counter from the game clock
+*  instead, and its tick numbers are unique for the session.
+*
+*  Consume-once: the create reads the staged value, injects
+*  it, then resets it to 0 — so a host that never stages one
+*  gets 0, the correct game-start value. The global is always
+*  a number, never nil. Set it right before each
+*  botManagerAddBot / botManagerReloadBrain call.
+*********************************************************/
+void luaBrainsSetNextStartEngineTick(unsigned int tick);
+
 /* One resolved bot from a -bot-init spec. Indexed by player id. */
 typedef struct {
   char path[512];  /* brain/init.lua path for this bot */

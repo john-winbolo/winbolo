@@ -224,12 +224,18 @@ end
 --- stamped grid, so call it after the stamps and before merge; merge every tick.
 --- deep_margin (optional, 0 = off) keeps the tail off tiles within that many
 --- king-moves of deep sea or the map edge.
+--- enemy_tail (boolean, optional) picks which sides grow. Only `false` turns
+--- the hostile pass off (nil keeps the old both-sides behaviour, so a caller
+--- that does not pass it is unchanged): the enemy then keeps its raw stamped
+--- discs but spreads no further, nothing cancels our tail, and the front line
+--- forms at the edge of the enemy's disc instead of midway.
 function M.clear_neutral_zones() cpf_clear_neutral_zones() end
 function M.stamp_neutral_zone(cx, cy, radius) cpf_stamp_neutral_zone(cx, cy, radius) end
 function M.rebuild_influence_tail(seed_min, radius, start, neutral_step, water_step,
-                                  deep_margin)
+                                  deep_margin, enemy_tail)
   cpf_rebuild_influence_tail(seed_min, radius, start, neutral_step, water_step,
-                             deep_margin or 0)
+                             deep_margin or 0,
+                             (enemy_tail == false) and 0 or 1)
 end
 function M.merge_influence_tail() cpf_merge_influence_tail() end
 --- Tail value at (x,y) if the tail won the merge there, else 0 (viz).

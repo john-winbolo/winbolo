@@ -239,6 +239,17 @@ struct ServerSim {
     uint32_t     timeCreated;
     unsigned short serverPort;
 
+    bool         newswireMuted;        /* TRUE while the engine-generated
+                                        * newswire is silenced server-wide.
+                                        * Set/cleared by the server (a host
+                                        * that wants a burst of engine churn
+                                        * to stay quiet) and mirrored to every
+                                        * client with CTRL_NEWSWIRE_MUTE (plus
+                                        * the join sync replay, so a mid-window
+                                        * joiner is muted too). Server text and
+                                        * player chat are NOT affected. Cleared
+                                        * at every round reset so it can never
+                                        * stick. */
     /* Per-player input queues — allows 2 inputs per server timer callback */
 #define SERVER_INPUT_QUEUE_SIZE 16  /* Must be power of 2 */
     InputPacket  inputQueue[MAX_TANKS][SERVER_INPUT_QUEUE_SIZE];

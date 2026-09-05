@@ -954,6 +954,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
+    case CTRL_NEWSWIRE_MUTE:    return "NEWSWIRE_MUTE";
     default:                    return "<unknown>";
     }
 }

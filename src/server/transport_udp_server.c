@@ -1084,6 +1084,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
+    case CTRL_NEWSWIRE_MUTE:    return "NEWSWIRE_MUTE";
     default:                    return "<unknown>";
     }
 }
@@ -3339,7 +3340,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * for lock-toggle / ping-enforcement announcements. The unready
      * call is a no-op outside lobby/countdown (no human is ready in
      * running state), so it stays unconditional. */
-    {
+    if (!serverSimGetNewswireMuted(sim)) {
+        /* Muted while a scripted scenario is filing a wave on or off the
+         * field: this line IS the newswire "has joined" the mute exists to
+         * stop, so it goes out only when the newswire is live. */
         char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
         snprintf(chatMsg, sizeof(chatMsg), "%s has joined.",
                  udpServer.clients[slot].playerName);
@@ -3852,7 +3856,11 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
          * broadcast a no-op for this slot; the other slots still see
          * "X has left." normally. */
         udpServer.clients[idx].connected = false;
-        serverSendServerEnglishBroadcast(sim, chatMsg);
+        /* Same newswire mute as the join line above — the console trace
+         * (`msg`) is unaffected, only the players' newswire line. */
+        if (!serverSimGetNewswireMuted(sim)) {
+            serverSendServerEnglishBroadcast(sim, chatMsg);
+        }
     }
 
     /* Notify WinBolo.net that the player is leaving (must happen before

@@ -105,6 +105,14 @@ end
 function M.update(state, world, info)
   local perc = state.perc
 
+  -- Ticks since THIS brain instance opened. state.tick is now seeded from the
+  -- engine clock (init.lua Brain.open), so it is game time, not the bot's own
+  -- age. The phase tests below were all written against a counter that
+  -- restarted at 0 on every Brain.open, so they use `age` and keep behaving
+  -- exactly as they did — a bot re-created mid-game still runs its opening
+  -- land-grab from ITS start. Identical to state.tick for a game-start bot.
+  local age = state.tick - (state.birth_tick or 0)
+
   -- Count all pills and bases — neutrals count as unclaimed territory.
   -- Endgame requires ALL pills AND bases to be captured (no neutrals left).
   local friendly_pills = perc.friendly_pill_count or 0
@@ -128,8 +136,8 @@ function M.update(state, world, info)
   -- At 6min (18000t): allow 1/2 of bases neutral (threshold = total * 0.5)
   local neutral_count = perc.neutral_base_count or 0
   local opening_tolerance = 0
-  if state.tick > C.OPENING_MIN_TICKS and total_bases > 0 then
-    local minutes = state.tick / (50 * 60)
+  if age > C.OPENING_MIN_TICKS and total_bases > 0 then
+    local minutes = age / (50 * 60)
     -- Exponential ramp: 0 at 0min, ~0.25 at 4min, ~0.5 at 6min, ~0.75 at 10min
     opening_tolerance = total_bases * (1.0 - math.exp(-minutes * 0.18))
   end
@@ -144,7 +152,7 @@ function M.update(state, world, info)
   -- OPENING test; perc.neutral_base_count is left intact for every other reader.
   local opening_neutral_count = neutral_count
   if neutral_count > 0
-     and state.tick > (C.OPENING_UNREACHABLE_GRACE_TICKS or 1500) then
+     and age > (C.OPENING_UNREACHABLE_GRACE_TICKS or 1500) then
     local reachable = 0
     local boat = (info and info.inboat) and 1 or 0
     for _, b in pairs(world.bases) do
@@ -163,9 +171,9 @@ function M.update(state, world, info)
   local all_bases_taken = (total_bases > 0 and neutral_count == 0)
 
   local new_phase, phase_reason
-  if state.tick < C.OPENING_MIN_TICKS and not all_bases_taken then
+  if age < C.OPENING_MIN_TICKS and not all_bases_taken then
     new_phase = "opening"
-    phase_reason = string.format("tick %d < %d", state.tick, C.OPENING_MIN_TICKS)
+    phase_reason = string.format("tick %d < %d", age, C.OPENING_MIN_TICKS)
   elseif opening_neutral_count > opening_tolerance then
     new_phase = "opening"
     phase_reason = string.format("neutral_bases %d (reachable %d) > %.0f tol",

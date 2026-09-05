@@ -435,12 +435,20 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
  * that many king-moves of deep sea or of the map edge (off-map counts as deep
  * sea): such a tile gets no tail value and passes none on, so no front line is
  * drawn out over the water or along the border. Stamped cores still seed, so a
- * core standing near the shore keeps growing inland. 0 = old behaviour. */
+ * core standing near the shore keeps growing inland. 0 = old behaviour.
+ * enemy_tail selects WHICH sides grow. 1 = old behaviour, both: the friendly
+ * pass adds and the hostile pass subtracts in the one signed expand_grid, so
+ * the two tails cancel and the front line settles midway between the sides.
+ * 0 = only our cores grow; hostile stamps keep their raw discs but spread no
+ * further, so nothing cancels the friendly tail and the front line forms at
+ * the edge of the enemy's disc. The tail can still only overwrite a stamp it
+ * outweighs (Merge compares magnitudes), so the enemy's footprint is intact
+ * and only its outer, weakest ring can be claimed. */
 void brainPathfinderClearNeutralZones(BrainPathfinder *pf);
 void brainPathfinderStampNeutralZone(BrainPathfinder *pf, int cx, int cy, int radius);
 void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
                                          int start, int neutral_step, int water_step,
-                                         int deep_margin);
+                                         int deep_margin, int enemy_tail);
 void brainPathfinderMergeInfluenceTail(BrainPathfinder *pf);
 /* The tail value at (x,y) if the tail won the last merge there, else 0. */
 int16_t brainPathfinderInfluenceTailAt(BrainPathfinder *pf, int x, int y);

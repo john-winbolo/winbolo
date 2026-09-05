@@ -647,8 +647,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 : "started";
             char body[128];
             snprintf(body, sizeof(body), "%s %s.", kindLabel, trig);
-            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
-                             (char *)"Vote", body);
+            if (!clientSimNewswireMuted(cs)) {
+                clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                                 (char *)"Vote", body);
+            }
         } else if (wasRunning && gv->active != GAME_VOTE_ACTIVE_RUNNING) {
             const char *outcome =
                 (gv->active == GAME_VOTE_ACTIVE_PASSED)    ? "passed"
@@ -659,13 +661,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             snprintf(body, sizeof(body), "%s %s (%u / %u).",
                      kindLabel, outcome,
                      (unsigned)gv->yesCount, (unsigned)gv->threshold);
-            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
-                             (char *)"Vote", body);
+            if (!clientSimNewswireMuted(cs)) {
+                clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                                 (char *)"Vote", body);
+            }
         }
         break;
     }
 
     case CTRL_GAME_PHASE_LOBBY:
+        cs->newswireMuted = false;   /* a mute must never outlive its round */
         cs->netStat = netLobby;
         cs->countdownSeconds = 0;
         /* Mirror of the RUNNING arm's inLobby flip. Without this the
@@ -694,6 +699,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         clientSimResetWorld(cs);
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
+        cs->newswireMuted = false;   /* a mute must never outlive its round */
         cs->netStat = netLobbyCountdown;
         cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
         /* Round-only scope: the previous round's stats panel clears when
@@ -702,6 +708,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_RUNNING:
+        cs->newswireMuted = false;   /* a mute must never outlive its round */
         cs->netStat = netRunning;
         cs->countdownSeconds = 0;
         /* Frontends flip out of the lobby view on the running
@@ -836,6 +843,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
     }
+
+    case CTRL_NEWSWIRE_MUTE:
+        /* Server-owned switch: while set, csCallbackMessageAdd (client_sim.c)
+         * drops every engine-generated newswire line, and the two vote lines
+         * below are skipped. Server text and chat are deliberately outside
+         * the gate — the scenario's wave banner must still arrive. */
+        cs->newswireMuted = (evt->u.newswireMute.muted != 0);
+        break;
 
     case CTRL_SERVER_TEXT: {
         const char *text = evt->u.serverText.text;

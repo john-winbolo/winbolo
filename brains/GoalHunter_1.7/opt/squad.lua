@@ -61,6 +61,145 @@ local _BLITZ_RANK = {
 }
 local function blitz_rank(sub) return _BLITZ_RANK[sub or ""] or 0 end
 
+-- ── Blitz party size (per bot) ────────────────────────────────────────────
+-- Both numbers are TANKS INCLUDING THE COMMANDER, the same convention the
+-- constants they default from already used ("2 = commander + 1 soldier").
+-- Module-level values, and each bot has its own lua_State, so these are per
+-- bot; init.lua's "blitz=MIN[/MAX]" BRAIN_INIT_ARG token calls set_blitz_size.
+--
+--   MIN — a HARD quorum. No GO path fires below it: not the early-GO on
+--         critical mass, not the abort-build-and-charge, and not the
+--         READY_TIMEOUT (a commander that times out short-handed abandons the
+--         blitz instead of charging under-strength). Defaults to the larger of
+--         the two constants that used to gate those paths separately —
+--         SQUAD_BLITZ_GO_EARLY_READY and BLITZ_MIN_READY_TO_CHARGE, both 2 —
+--         so the default behaviour is unchanged and they now seed ONE quorum.
+--   MAX — caps the party: a call already holding MAX tanks accepts no more
+--         joiners and reads as FULL to a soldier looking for a call. Defaults
+--         to SQUAD_MAX_SIZE + 1 (commander + today's soldier cap). When only
+--         MIN is given it is raised to MIN, so "blitz=3" alone is workable
+--         instead of asking for a quorum the cap can never supply.
+local BLITZ_MIN = math.max(C.SQUAD_BLITZ_GO_EARLY_READY or 2,
+                           C.BLITZ_MIN_READY_TO_CHARGE or 2)
+local BLITZ_MAX = (C.SQUAD_MAX_SIZE or 1) + 1
+M.blitz_size_source = "default"
+
+function M.blitz_min() return BLITZ_MIN end
+function M.blitz_max() return BLITZ_MAX end
+-- Max SOLDIERS a commander accepts = party max minus the commander itself.
+-- This is what every old `cap = C.SQUAD_MAX_SIZE` reader wants.
+function M.blitz_soldier_cap() return math.max(0, BLITZ_MAX - 1) end
+
+function M.set_blitz_size(mn, mx, source)
+  BLITZ_MIN = math.max(1, mn or BLITZ_MIN)
+  BLITZ_MAX = math.max(BLITZ_MIN, mx or BLITZ_MAX)
+  M.blitz_size_source = source or "init_arg"
+end
+
+-- One canonical string for every place that DISPLAYS the party size (print2 /
+-- DECISION lines, the blitz_wait timeout HUD, the joinable-calls HUD).
+function M.blitz_size_label()
+  return string.format("blitz min=%d max=%d (%s)", BLITZ_MIN, BLITZ_MAX, M.blitz_size_source)
+end
+
+-- ── Blitz suicider quota (per bot) ────────────────────────────────────────
+-- "At least this many members of a blitz should be pill_suiciders." At GO the
+-- commander counts the suiciders already in the party (itself included, whether
+-- by the "suicider" token or the harasser slate) and designates that many random
+-- non-suicider SOLDIERS to make up the difference — never one that already is
+-- one. Soldiers are preferred (the commander is the tank that leads the take),
+-- but if they can't cover the minimum the commander designates ITSELF too, so
+-- blitzsuiciders=4 on a party of 4 really does field four suiciders. 0 (the
+-- default) means it never designates, which is exactly today's behaviour.
+-- Per-bot, like the sizes above; the "blitzsuiciders=N" token replaces it.
+local BLITZ_MIN_SUICIDERS = C.BLITZ_MIN_SUICIDERS or 0
+M.blitz_suiciders_source = "default"
+
+function M.blitz_min_suiciders() return BLITZ_MIN_SUICIDERS end
+function M.set_blitz_min_suiciders(n, source)
+  BLITZ_MIN_SUICIDERS = math.max(0, n or BLITZ_MIN_SUICIDERS)
+  M.blitz_suiciders_source = source or "init_arg"
+end
+function M.blitz_suiciders_label()
+  return string.format("blitzsuiciders min=%d (%s)", BLITZ_MIN_SUICIDERS, M.blitz_suiciders_source)
+end
+
+-- Every soldier COMMITTED to our blitz on `our_pid`, as an array of
+-- { pn = n, suicider = bool } sorted by player number. Same membership test as
+-- blitz_ready_status (role s, cmdr = us, past negotiation, broadcasting
+-- attack_pill on our pill, alive); `suicider` is the ally's broadcast psu flag,
+-- which is set for a forced, slate-picked OR already blitz-designated suicider.
+-- SORTED because the designation picks from it with the seeded RNG and
+-- ally_state's pairs() order is not reproducible.
+function M.blitz_members(state, now, self_pn, our_pid)
+  local out = {}
+  if not our_pid then return out end
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn then
+      local h = slot.info
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if not is_dead and h.role == "s" and tonumber(h.cmdr or "") == self_pn
+         and h.sqst ~= "nego"
+         and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
+        out[#out + 1] = { pn = pn, suicider = (h.psu == "1") }
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.pn < b.pn end)
+  return out
+end
+
+-- Commander-only, called ONCE per take at the moment GO fires (not on an abort
+-- path). Tops the blitz up to BLITZ_MIN_SUICIDERS suiciders by picking that many
+-- soldiers uniformly at random from the ones that are not suiciders already, and
+-- queues a "bsu <pill> <pn>" broadcast for each (init.lua's blitz TX block sends
+-- them). Uses math.random — the brain's seeded RNG — so a -brain-lua-seed run
+-- designates the same tanks every time. If the soldiers can't cover the
+-- minimum, the commander finishes the job by designating itself (see below).
+function M.blitz_designate_suiciders(state, info, now, our_pid)
+  local want = BLITZ_MIN_SUICIDERS
+  if want <= 0 or not our_pid then return end
+  local self_pn = info and info.player_number or -1
+  local members = M.blitz_members(state, now, self_pn, our_pid)
+  -- The commander counts toward the quota but is never a candidate: it is the
+  -- one tank that has to survive to lead the take.
+  local have = state.is_pill_suicider and 1 or 0
+  local pool = {}
+  for _, m in ipairs(members) do
+    if m.suicider then have = have + 1 else pool[#pool + 1] = m.pn end
+  end
+  local need = want - have
+  local picked = {}
+  while need > 0 and #pool > 0 do
+    local i = math.random(#pool)
+    picked[#picked + 1] = pool[i]
+    table.remove(pool, i)
+    need = need - 1
+  end
+  -- Soldiers alone couldn't make the minimum (too few of them, or they are all
+  -- suiciders already) → the commander designates ITSELF as well. Same
+  -- temporary blitz-suicider state a "bsu" broadcast installs on a soldier
+  -- (comms.lua), so it expires exactly the same way: pill gone/ours, off the
+  -- take, BLITZ_SUICIDER_MAX_TICKS backstop, or our own death via
+  -- reset_blitz_state. `by = self_pn` marks it as self-designated — the
+  -- expiry check in update() skips its commander-gone test for that case (we
+  -- are the commander, and we never appear in our own ally_state).
+  -- This is what makes blitzsuiciders=4 on a party of 4 field four suiciders.
+  local self_designated = false
+  if need > 0 and not state.is_pill_suicider and not state.blitz_suicider then
+    state.blitz_suicider = { pill = our_pid, by = self_pn, since = now }
+    self_designated = true
+    have = have + 1
+    need = need - 1
+  end
+  if #picked > 0 then
+    local q = state._blitz_su_send
+    if not q then q = {}; state._blitz_su_send = q end
+    for _, pn in ipairs(picked) do q[#q + 1] = { pill = our_pid, pn = pn } end
+  end
+end
+
 -- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
 -- comes back with a clean slate — no stale negotiation, offer, reject,
 -- roster, watchdog, broadcast latch, or call registry leaking across the
@@ -108,6 +247,15 @@ function M.reset_blitz_state(state)
   state._blitz_new_call         = nil
   state._blitz_offer_pill       = nil
   state._blitz_pill_reject      = nil
+  -- Blitz-designated suicider is per-take and per-life: a respawn must not come
+  -- back still suiciding for a blitz that ended while it was dead. The pending
+  -- send queue goes too — those designations were for the previous life's take.
+  -- Keep a reason when we actually cancel one, so the [role] revert line says
+  -- WHY rather than going quiet; clear it otherwise so a stale reason can't
+  -- attach itself to an unrelated later revert.
+  state._blitz_su_end_why       = state.blitz_suicider and "death_respawn" or nil
+  state.blitz_suicider          = nil
+  state._blitz_su_send          = nil
   state._blitz_rebroadcast      = nil
   state._blitz_reject           = nil
   state._blitz_repick_tick      = nil
@@ -229,7 +377,14 @@ function M.availability(state, info, help_target_id)
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
   local ok, reason
-  if (info.carried_pills or 0) >= 1
+  if state.blitz_disabled then
+    -- "noblitz" BRAIN_INIT_ARG: this bot never joins anyone's blitz. Answered
+    -- here (rather than at every call site) because availability() is the one
+    -- gate every join path runs through — the squad-layer pick AND
+    -- goals.apply_blitz_target, which is what would force the commander's pill
+    -- to SQUAD_BLITZ_COST.
+    ok, reason = false, "noblitz"
+  elseif (info.carried_pills or 0) >= 1
      and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
     ok, reason = false, "lh"
   elseif (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3) and not state.ammo_deprived then
@@ -411,7 +566,7 @@ function M.blitz_arbitrate(state, info, now, self_pn)
   -- (blitz_wait/rdy) so we never shed one mid-take, then earliest claimant, then
   -- lowest pn; reject the surplus so they peel off to another target.
   do
-    local cap = C.SQUAD_MAX_SIZE or 1
+    local cap = M.blitz_soldier_cap()   -- party MAX minus the commander
     local cands = {}
     for _, p in ipairs(parts) do
       if p.pn ~= self_pn and p.fx and not reject[p.pn] then cands[#cands + 1] = p end
@@ -575,8 +730,84 @@ function M.update(state, info, now, world)
   -- are the opposite of what a suicider wants.
   local _designated = M.is_harasser(pns, self_pn, state)
   state._pill_suicider_map = M.is_pill_suicider_map(info)
-  state.is_pill_suicider = _designated and state._pill_suicider_map or false
-  state.is_harasser = _designated and not state._pill_suicider_map
+  -- A PER-BOT FORCE beats the slate entirely (state.force_pill_suicider,
+  -- set from the BRAIN_INIT_ARG "suicider"/"nosuicider" tokens — see
+  -- init.lua — which a scenario stages through game.spawn_bot's init
+  -- argument). Forced ON makes this bot a suicider whatever the slate said
+  -- and whatever map this is: the whole point is a scenario fielding one
+  -- wave of nothing but suiciders, which the fractional slate can't
+  -- express, so it must not depend on C.PILL_SUICIDER_MAPS either. Forced
+  -- OFF only bars the suicider role; the bot still takes the ordinary
+  -- harasser slate if it was designated (that is what lets a scenario run
+  -- a plain wave on a suicider map).
+  -- ── Blitz-designated suicider (TEMPORARY) ────────────────────────────────
+  -- Set by a commander's "bsu" broadcast (see comms.lua) when it tops its blitz
+  -- up to BLITZ_MIN_SUICIDERS. It lasts only as long as THAT blitz: the pill
+  -- dying or turning ours, this bot leaving the take, the commander going
+  -- silent/dying, our own death (reset_blitz_state wipes it) or the
+  -- BLITZ_SUICIDER_MAX_TICKS backstop all end it and the bot reverts to
+  -- whatever it was. Resolved BEFORE the flags below so the precedence is
+  -- explicit: permanent force > blitz temp > slate.
+  if state.blitz_suicider then
+    local bs   = state.blitz_suicider
+    local why  = nil
+    local p    = world and world.pills and world.pills[bs.pill]
+    if state.blitz_disabled then
+      -- "noblitz": we take no part in blitzes, so we hold no designation either
+      -- (comms.lua already ignores incoming bsu; this drops any that predates
+      -- the flag).
+      why = "noblitz"
+    elseif not p or (p.health or 0) <= 0 or p.owner == "friendly" or p.owner == "allied" then
+      why = "pill_gone"
+    elseif (now - (bs.since or now)) > (C.BLITZ_SUICIDER_MAX_TICKS or 1600) then
+      why = "timeout"
+    else
+      local g = state.goal
+      local on_it = g and (g.kind == "attack_pill" or g.kind == "capture_pill")
+                    and g.target_id == bs.pill
+      -- Short grace: the designation can land a tick or two before pick_goal
+      -- has adopted the blitz pill, and reverting on that would undo it
+      -- immediately. After the grace, being off the take really does end it.
+      if not on_it and (now - (bs.since or now)) > 50 then why = "left_take" end
+    end
+    -- bs.by == self_pn means WE designated ourselves (blitz_designate_suiciders
+    -- couldn't make the minimum from the soldiers). Skip the commander-gone
+    -- test in that case: we are the commander, and we never have an
+    -- ally_state slot of our own, so the test would cancel it instantly.
+    if not why and bs.by and bs.by ~= self_pn then
+      local cs      = ally_state.get(bs.by)
+      local cactive = cs and cs.active and (now - (cs.last_tick or 0)) <= (C.SQUAD_ALLY_MAX_AGE or 1750)
+      local cdead   = state.tank_dead_at and state.tank_dead_at[bs.by]
+                      and cs and state.tank_dead_at[bs.by] > (cs.last_tick or 0)
+      if not cactive or cdead then why = "commander_gone" end
+    end
+    if why then
+      state.blitz_suicider    = nil
+      state._blitz_su_end_why = why
+    end
+  end
+
+  if state.force_pill_suicider ~= nil then
+    state.is_pill_suicider = state.force_pill_suicider
+    -- The two flags stay mutually exclusive — a suicider must NOT also
+    -- carry the harasser cost biases (×5 pill / ×0.2 travel), which are the
+    -- opposite of what a suicider wants.
+    state.is_harasser = (not state.force_pill_suicider) and _designated or false
+    state.suicider_src = state.force_pill_suicider and "forced" or nil
+  elseif state.blitz_suicider then
+    state.is_pill_suicider = true
+    state.is_harasser = false
+    state.suicider_src = "blitz"
+  else
+    state.is_pill_suicider = _designated and state._pill_suicider_map or false
+    state.is_harasser = _designated and not state._pill_suicider_map
+    state.suicider_src = state.is_pill_suicider and "slate" or nil
+  end
+  -- One line per bot the first time the designation resolves, and again on
+  -- any change: the [harass] line below only fires while the dynamic ramp
+  -- has pushed the fraction above its floor, so it is no use for reading
+  -- back what a given bot actually IS. Debug-only, so it costs production
+  -- nothing (lua_strip drops it from opt/).
   -- R0 (dynamic commanders, flag-gated): commander status is EMERGENT — you are a
   -- commander only while leading a HARD pill take (your attack_pill target has HP
   -- >= HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
@@ -825,7 +1056,20 @@ function M.update(state, info, now, world)
 
   if role ~= M.ROLE_SOLDIER then state.squad_blitz_accepted = nil end  -- only soldiers commit to a blitz
 
-  if role == M.ROLE_COMMANDER then
+  -- "noblitz" BRAIN_INIT_ARG: skip the whole membership stage. The fields it
+  -- would fill were just reset above, so we leave with squad_cmdr = nil,
+  -- squad_blitz_target = nil and status "-": no commander branch (nothing sets
+  -- the take as an ask, so init.lua never broadcasts a bco call and attack.lua
+  -- never flips the goal to _blitz / blitz_wait), and no soldier branch (so
+  -- BLITZ_SCAN / BLITZ_PICK never run and we answer nobody). The bot keeps its
+  -- elected role for everything else and just takes pills solo.
+  if state.blitz_disabled then
+    state.squad_blitz_accepted = nil
+    state.squad_blitz_roster   = nil
+    state.squad_blitz_reject   = nil
+    state.squad_blitz_accept   = nil
+    state.squad_status         = "-"
+  elseif role == M.ROLE_COMMANDER then
     local g = state.goal
     if g and g.kind == "attack_pill" and g.target_id then
       state.squad_help_target  = g.target_id   -- commander's attack_pill IS the ask
@@ -846,7 +1090,7 @@ function M.update(state, info, now, world)
     -- full, and it's not already in that squad. Once joined it STAYS (no
     -- re-decide each tick) while the commander keeps leading.
     local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
-    local cap = C.SQUAD_MAX_SIZE or 3
+    local cap = M.blitz_soldier_cap()   -- party MAX minus the commander
     local dead = state.tank_dead_at
 
     -- Open blitz calls come from the REGISTRY (state.blitz_calls), populated by
@@ -1432,7 +1676,9 @@ function M.draw_blitz(state, info, now)
     local line2
     if state.squad_role == M.ROLE_COMMANDER and sub == "blitz_wait" then
       local total, ready = M.blitz_ready_status(state, now, self_pn)
-      line2 = string.format("RALLY %d/%d", ready, total)
+      -- party = commander + committed soldiers, against the HARD size floor the
+      -- GO paths enforce, so the label says whether this call can fire at all.
+      line2 = string.format("RALLY %d/%d  party %d/%d", ready, total, 1 + (total or 0), M.blitz_min())
     elseif sub == "blitz_wait" then
       line2 = state.squad_blitz_in_position and "READY -- WAIT GO" or "..."
     elseif committed then
@@ -1595,7 +1841,7 @@ function M.blitz_has_joiner(state, info, now)
   end
   local self_pn = info.player_number or -1
   local rng     = C.SQUAD_HELP_RANGE or 30
-  local cap     = C.SQUAD_MAX_SIZE or 3
+  local cap     = M.blitz_soldier_cap()   -- party MAX minus the commander
   local pmx, pmy = g.mx, g.my
   -- Allied tank tile positions from our own game view, keyed by player number
   -- (idnum is globally unique). attack_pill no longer broadcasts tx/ty.
@@ -1768,6 +2014,13 @@ function M.draw_blitz_wait_timeout(state, info, now)
   local closing  = v.min_bd and v.prog_bd and v.min_bd < v.prog_bd
   y = y + dy
   y = y + dy
+  -- Party size vs the HARD quorum: no GO path fires below MIN, and on the
+  -- timeout a short-handed commander abandons the take instead of charging.
+  do
+    local party = 1 + (v.total or 0)
+    local short = party < (v.blitz_min or 2)
+    y = y + dy
+  end
   y = y + dy
   y = y + dy
   -- Source of the progress signal: live (we can see all pending soldiers) vs a
@@ -1794,7 +2047,7 @@ function M.draw_blitz_joinable(state, info, world, now)
   if not viz.is_on("blitz_joinable") then return end
   local calls   = state.blitz_calls
   local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
-  local cap     = C.SQUAD_MAX_SIZE or 3
+  local cap     = M.blitz_soldier_cap()   -- party MAX minus the commander
   local self_pn = info.player_number or -1
   local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
 
@@ -1811,6 +2064,8 @@ function M.draw_blitz_joinable(state, info, world, now)
   end
 
   local x, y, dy = 480, 230, 14
+  -- The "slot" column below is soldiers/cap; name the party size that produced
+  -- that cap (and the quorum a call must reach to fire) right in the header.
   y = y + dy
   y = y + dy
 

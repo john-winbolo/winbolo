@@ -190,6 +190,18 @@ void luaBrainsSetNextInitArg(const char *arg) {
         s_next_init_arg[0] = '\0';
 }
 
+/* Staged engine tick for the NEXT brain instance created. Injected as the
+ * BRAIN_START_ENGINE_TICK Lua global so a brain born mid-game (a Survival
+ * wave respawn) can seed its own tick counter from the game clock instead
+ * of restarting at 0 every life. Consume-once like s_next_init_arg: a host
+ * that never stages one (BrainTest's in-process create) gets 0, which is
+ * exactly the game-start value, so the global is never nil. */
+static unsigned int s_next_start_engine_tick = 0;
+
+void luaBrainsSetNextStartEngineTick(unsigned int tick) {
+    s_next_start_engine_tick = tick;
+}
+
 bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
     const char *p = spec;
     while (*p) {
@@ -1196,6 +1208,17 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   }
   lua_setglobal(L, "BRAIN_INIT_ARG");
   s_next_init_arg[0] = '\0';
+
+  /* BRAIN_START_ENGINE_TICK: the server sim's tick at the moment this brain
+   * was created. Always a number (0 = created at game start), never nil, so
+   * every host — including BrainTest's in-process create, which stages
+   * nothing — sees a usable value. The brain seeds state.tick with half of
+   * it (brains think once per two engine ticks), so a wave bot's print2 and
+   * jsonl tick numbers continue the session clock instead of restarting at 0
+   * and colliding with every earlier life. Consume-once. */
+  lua_pushinteger(L, (lua_Integer)s_next_start_engine_tick);
+  lua_setglobal(L, "BRAIN_START_ENGINE_TICK");
+  s_next_start_engine_tick = 0;
 
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 

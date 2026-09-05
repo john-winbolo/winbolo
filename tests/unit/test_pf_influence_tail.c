@@ -15,7 +15,10 @@
  *   - a stamped cell is never overwritten by the tail;
  *   - with EXPAND_DEEP_MARGIN set, no tile within that many king-moves of deep
  *     sea or of the map edge is claimed;
- *   - contact between tails produces a front line; no contact, no line.
+ *   - contact between tails produces a front line; no contact, no line;
+ *   - with enemy_tail = 0 (constants.lua INFLUENCE_ENEMY_TAIL) only our cores
+ *     grow: the enemy keeps its raw stamped disc, our tail is no longer
+ *     cancelled, and the front line moves up against that disc.
  */
 
 #include <stdio.h>
@@ -52,14 +55,22 @@ static void seed(BrainPathfinder *pf, int x, int y, int v) {
     pf->influence_grid[y * PF_MAPSZ + x] = (int16_t)v;
 }
 
+/* Both sides grow (enemy_tail = 1): the pre-INFLUENCE_ENEMY_TAIL behaviour,
+ * which is what every test below except the friendly-only one pins. */
 static void rebuild_merge(BrainPathfinder *pf) {
-    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, 0);
+    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, 0, 1);
     brainPathfinderMergeInfluenceTail(pf);
 }
 
 /* Same, with the deep-water margin (EXPAND_DEEP_MARGIN) active. */
 static void rebuild_merge_margin(BrainPathfinder *pf, int margin) {
-    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, margin);
+    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, margin, 1);
+    brainPathfinderMergeInfluenceTail(pf);
+}
+
+/* Only our cores grow (enemy_tail = 0, constants.lua INFLUENCE_ENEMY_TAIL). */
+static void rebuild_merge_friendly_only(BrainPathfinder *pf) {
+    brainPathfinderRebuildInfluenceTail(pf, SEED_MIN, RADIUS, START, NSTEP, WSTEP, 0, 0);
     brainPathfinderMergeInfluenceTail(pf);
 }
 
@@ -248,6 +259,39 @@ int run_pf_tail_contact_makes_a_front_line(void) {
     rebuild_merge(pf);
     n = brainPathfinderFindFrontLine(pf, fx, fy, 4096);
     UT_ASSERT_MSG(n == 0, "no contact but %d front cells", n);
+
+    /* enemy_tail = 0: the same pair of cores, but only ours grows. Nothing
+     * cancels our tail, so it runs all the way up to the enemy stamp and the
+     * front line sits against the enemy's disc instead of midway. With cores
+     * 10 apart that moves the line from x=104/105 to x=109/110 -- five tiles
+     * of ground that used to read as theirs now reads as ours. */
+    brainPathfinderClearInfluence(pf);
+    seed(pf, 100, 100,  100);
+    seed(pf, 110, 100, -100);
+    rebuild_merge_friendly_only(pf);
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 105, 100) == expect(5),
+                  "midpoint should be ours now: got %d want %d",
+                  brainPathfinderInfluenceAt(pf, 105, 100), expect(5));
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 109, 100) == expect(9),
+                  "tile next to the enemy core should be ours: got %d want %d",
+                  brainPathfinderInfluenceAt(pf, 109, 100), expect(9));
+    /* The enemy stamp itself is untouched -- Merge keeps the bigger magnitude,
+     * so the enemy's footprint is intact; only its faint outer ring can lose. */
+    UT_ASSERT_MSG(brainPathfinderInfluenceAt(pf, 110, 100) == -100,
+                  "enemy stamp overwritten: %d", brainPathfinderInfluenceAt(pf, 110, 100));
+    /* No tail cell is negative any more: the hostile pass did not run. */
+    {
+        int i;
+        for (i = 0; i < PF_MAPSZ * PF_MAPSZ; i++)
+            UT_ASSERT_MSG(pf->expand_grid[i] >= 0,
+                          "hostile tail grew at idx %d: %d", i, pf->expand_grid[i]);
+    }
+    n = brainPathfinderFindFrontLine(pf, fx, fy, 4096);
+    UT_ASSERT_MSG(n > 0, "friendly-only tail produced no front line");
+    seen = 0;
+    for (i = 0; i < n; i++)
+        if (fy[i] == 100 && (fx[i] == 109 || fx[i] == 110)) seen = 1;
+    UT_ASSERT_MSG(seen, "front line did not move up against the enemy core");
     brainPathfinderDestroy(pf);
     return 0;
 }

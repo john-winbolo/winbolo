@@ -198,7 +198,7 @@ function Brain.set_setting(id, value)
     if BRAIN_DEBUG_MODE then print(string.format(TAG .. " auto_explore = %s", tostring(value))) end
   elseif id == "logging" then
     if value and not log.is_open() then
-      if log.open(log.make_filename("brain_p" .. state.player_number)) then
+      if log.open(log.make_filename("brain_p" .. state.player_number), state.tick, state.engine_tick0) then
         log.dump_map()
         log.dump_world(world)
       end
@@ -568,12 +568,61 @@ function Brain.open(info)
     opt(string.format("  module resets done %.2f ms", (t_open_resets - t_open_register) / 1000))
   end
 
-  state.tick          = 0
+  -- ── Session-unique tick numbering ──────────────────────────────────────
+  -- state.tick used to start at 0 on every Brain.open. That is fine in a
+  -- game where every bot is created once, but in Survival each wave's bots
+  -- are created fresh (game.spawn_bot -> serverSimCreateBot -> a new
+  -- lua_State), so five lives all ran t=1..7375: print2_bot10.log held five
+  -- overlapping tick ranges, player10.jsonl was truncated per life, and
+  -- "bot10 at tick 5785" meant five different moments.
+  --
+  -- BRAIN_START_ENGINE_TICK is the server sim's tick when THIS instance was
+  -- created, injected by luaBrainInstanceCreate (always a number; 0 at game
+  -- start, and 0 on any host that stages nothing). Brains think once per two
+  -- engine ticks, so half of it is where the session clock already stands in
+  -- brain ticks. Seeding from it makes every later t= unique for the session
+  -- while leaving a game-start bot (seed 0) numbered exactly as before.
+  --
+  -- state.birth_tick is the same number kept under a name that says what it
+  -- means: any "how long since X" field that must measure from THIS life's
+  -- start is initialised to it rather than to 0 (a raw 0 would now read as
+  -- "birth_tick ticks ago", i.e. long ago, and fire on the bot's first tick).
+  local _eng_t0 = rawget(_G, "BRAIN_START_ENGINE_TICK")
+  _eng_t0 = (type(_eng_t0) == "number" and _eng_t0 > 0) and math.floor(_eng_t0) or 0
+  state.engine_tick0  = _eng_t0
+  state.tick_seed     = math.floor(_eng_t0 / 2)
+  state.birth_tick    = state.tick_seed
+  state.tick          = state.tick_seed
+  -- Re-stamp the optimize log now the seed is known; the call at the top of
+  -- Brain.open had to run before it and stamped 0, which would file this
+  -- life's open under "tick 0" alongside every other life's.
+  opt.set_tick(state.tick)
   state.player_number = info.player_number
   _G._BRAIN_SELF_PN   = info.player_number
   state.player_name   = (info.player_names and info.player_names[info.player_number + 1]) or ""
   state.debug_log     = (state.player_name == "Bot 1" or info.player_number == 0)
   state.send_open_msg = true
+
+  -- One line per life, naming the tick this brain starts counting from and
+  -- the engine tick it was created at. This is the row that tells you which
+  -- of a Survival session's five lives a "t=5785" line belongs to.
+  --
+  -- print2 needs its per-bot file bound and its tick stamped before it will
+  -- route a line, and set_tick clears the line buffer — so bind, stamp, write
+  -- and flush here rather than letting the first Brain.think wipe the line.
+  -- The whole block is BRAIN_DEBUG_MODE-gated so lua_strip removes it from
+  -- opt/ entirely; the plain print below is the release-visible copy.
+  if BRAIN_DEBUG_MODE then
+    print2.set_bot(_G.BT_BOT_INDEX or info.player_number or 0)
+    print2.set_tick(state.tick)
+    print2(string.format("BRAIN_OPEN t=%d engine_tick=%d life_seed=%d pn=%d name=%s",
+                         state.tick, state.engine_tick0, state.tick_seed,
+                         info.player_number or -1, state.player_name))
+    print2.flush()
+  end
+  print(string.format("%s BRAIN_OPEN t=%d engine_tick=%d life_seed=%d pn=%d",
+                      TAG, state.tick, state.engine_tick0, state.tick_seed,
+                      info.player_number or -1))
 
   -- Startup mode: minimal first-tick work. Skips threat.update, long
   -- Dijkstra start, pool eval queue, perception, and goal selection
@@ -624,7 +673,7 @@ function Brain.open(info)
   state.auto_explore      = AUTOSTART
   state.paused            = not AUTOSTART
   state.replan_offset     = math.random(0, C.GOAL_REPLAN_INTERVAL - 1)
-  state.goal_set_tick     = 0    -- tick when current goal was chosen (for commitment hysteresis)
+  state.goal_set_tick     = state.tick  -- tick when current goal was chosen (for commitment hysteresis). Seeded to birth, not 0: `now - goal_set_tick` is "how long we've held this goal", so a raw 0 would read as "held it forever" on a mid-game bot's first tick and skip the commitment window entirely.
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
   state.blitz_calls       = {}   -- open blitz calls: { [commander_pn] = { pill, tick } }
@@ -642,7 +691,10 @@ function Brain.open(info)
   --                                30 s (1500 tick @ 50 Hz) heartbeat.
   state.broadcast_state_info       = {}
   state.last_broadcasted_state_info = {}
-  state.last_broadcast_state_tick   = 0
+  -- Seeded to birth, not 0: the heartbeat test is `now - last >= 1500`, so a
+  -- raw 0 makes a mid-game bot's first tick look 1500+ ticks overdue and fire
+  -- a broadcast immediately instead of after the usual 30 s.
+  state.last_broadcast_state_tick   = state.tick
 
   -- Stuck detection
   state.last_mx   = -1
@@ -680,7 +732,11 @@ function Brain.open(info)
   if BRAIN_PROFILE then
     opt(string.format("  W.reset done %.2f ms", (t_open_wreset - t_open_state) / 1000))
   end
-  W.update(world, info, 0)
+  -- state.tick, not 0: this pass stamps last_seen / obs_tick / placed_tick on
+  -- every object visible at open, and those are read as `now - stamp` ages. A
+  -- literal 0 makes everything the bot can see at birth look maximally stale
+  -- once ticks are seeded from the engine clock. Identical at seed 0.
+  W.update(world, info, state.tick)
   local t_open_wupd = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
     opt(string.format("  W.update (initial) done %.2f ms", (t_open_wupd - t_open_wreset) / 1000))
@@ -693,7 +749,7 @@ function Brain.open(info)
     opt(string.format("  rebuild_edge_costs done %.2f ms", (clock_us() - t_open_wupd) / 1000))
   end
   local _t_open_danger = BRAIN_PROFILE and clock_us() or 0
-  danger.update(info, 0)
+  danger.update(info, state.tick)  -- state.tick, not 0: shell-prediction expiries are absolute ticks, and a 0 here writes entries that are already expired on a seeded bot. Identical at seed 0.
   if BRAIN_PROFILE then
     opt(string.format("  danger.update done %.2f ms", (clock_us() - _t_open_danger) / 1000))
   end
@@ -756,7 +812,10 @@ function Brain.open(info)
   end
   local t_open_logsetup = BRAIN_PROFILE and clock_us() or 0
   if log_fname then
-    if log.open(log_fname) then
+    -- Pass this life's starting tick + the engine tick it was created at so
+    -- the jsonl carries a life marker; the logger appends, so a session in
+    -- which this bot is re-created (Survival waves) keeps every life's rows.
+    if log.open(log_fname, state.tick, state.engine_tick0) then
       log.dump_map()
       log.dump_world(world)
     end
@@ -905,6 +964,12 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+  -- Ticks since THIS brain instance opened. `now` is seeded from the engine
+  -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave
+  -- bot's first think already has now ≈ 4350. Anything that means "for the
+  -- first N ticks of this life" must use `age`, not `now`. Identical to `now`
+  -- for a bot created at game start, where birth_tick is 0.
+  local age  = now - (state.birth_tick or 0)
 
   -- ── Tick-budget kill catch-all ──
   -- The per-call blacklists (the plan_position angle-sweep chunk, the shield
@@ -1086,13 +1151,69 @@ function Brain.think(info)
   end
   -- ── end killed-tick decision rollback ────────────────────────────────────
 
-  -- TEST AID: per-bot config from -bot-init [arg] (the BRAIN_INIT_ARG Lua
-  -- global), parsed once. Comma-separated tokens:
+  -- Per-bot config from the BRAIN_INIT_ARG Lua global, parsed once. Two
+  -- things stage it: the -bot-init [arg] CLI suffix (a test aid) and a
+  -- scenario script's game.spawn_bot(..., init) 5th argument (live play —
+  -- that is how Survival fields a whole wave of pill suiciders).
+  -- Tokens:
   --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
   --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
   --   "normal"            -> force never-refuel OFF (a plain captain)
   --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
   --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
+  --   "suicider"          -> FORCE the pill_suicider role on for this bot,
+  --                          whatever the harasser slate picked and whatever
+  --                          map this is (it does NOT need to be listed in
+  --                          C.PILL_SUICIDER_MAPS)
+  --   "nosuicider"        -> force it OFF, so a scenario can also field plain
+  --                          waves on a map that IS listed there
+  --   "portfolio=B/F/A[/U]" -> this bot's pill-portfolio target shares as
+  --                          INTEGER PERCENTS (back/front/aggro/utility).
+  --                          '/' separated because ';' and ',' already separate
+  --                          tokens. U defaults to 100-B-F-A. Rejected (with a
+  --                          warning) when a part isn't an integer or B+F+A>100;
+  --                          normalised proportionally (with a warning) when an
+  --                          explicit U makes the four not sum to 100.
+  --   "blitz=MIN[/MAX]"   -> blitz party size in TANKS INCLUDING THE COMMANDER
+  --                          (same convention as the constants it replaces).
+  --                          MIN is a HARD quorum: no GO path fires below it,
+  --                          and a commander whose READY_TIMEOUT expires
+  --                          short-handed abandons the take instead of charging.
+  --                          MAX caps joiners (a call at MAX reads FULL). MAX
+  --                          defaults to SQUAD_MAX_SIZE + 1, raised to MIN when
+  --                          MIN is bigger, so "blitz=3" alone is workable.
+  --   "blitzsuiciders=N"  -> minimum number of pill_suiciders a blitz should
+  --                          have. At GO the commander counts the suiciders
+  --                          already in the party (itself included) and
+  --                          designates that many random non-suicider SOLDIERS
+  --                          to make up the difference, TEMPORARILY, for that
+  --                          take only. 0 (the default) never designates. If the
+  --                          soldiers can't cover it the commander designates
+  --                          itself too.
+  --   "noblitz"           -> this bot never blitzes at all: it opens no call
+  --                          (never commands one, never enters blitz_wait),
+  --                          answers/joins none (availability says "noblitz",
+  --                          no join discount on any call's pill), and ignores
+  --                          "bsu" suicider designations. It still fights and
+  --                          takes pills SOLO, exactly as if no ally were in
+  --                          range. No constant — blitzing is on by default.
+  --   "noclaimdead"       -> ignore allies' CLAIMS on DEAD pills: pool 4
+  --                          (capture_pill) rows never take an ally_claimed
+  --                          REJECT, so several bots race to scoop the same
+  --                          body and draw fire on the way in. Pool 6
+  --                          (attack_pill on a LIVE pill) keeps today's claim /
+  --                          steal de-confliction, and the refuel soft penalty
+  --                          is UNCHANGED. No constant — claiming is on by
+  --                          default.
+  --   "refuel=X"          -> float multiplier on the whole "refuel" GOAL_GROUP
+  --                          (refuel_at_base + flee_to_base). 1.0 = default;
+  --                          1.2 makes this bot resupply less readily.
+  -- This block runs early in Brain.think and squad.update (which reads
+  -- state.force_pill_suicider) runs much later in the same function, so the
+  -- flag is already set on the bot's very first tick. Same for the portfolio
+  -- targets and the blitz sizes: every PP.targets / squad.blitz_* reader runs
+  -- later in think and reads them LIVE (no cached copies), so an override is in
+  -- force from tick 1 onward.
   if state._test_arg_parsed == nil then
     state._test_arg_parsed = true
     local a = rawget(_G, "BRAIN_INIT_ARG")
@@ -1105,6 +1226,89 @@ function Brain.think(info)
           state.test_never_refuel = true
         elseif tok == "normal" then
           state.test_never_refuel = false
+        elseif tok == "suicider" then
+          state.force_pill_suicider = true
+        elseif tok == "nosuicider" then
+          state.force_pill_suicider = false
+        elseif tok == "noblitz" then
+          -- Solo bot: no calls opened, none joined, bsu designations ignored.
+          state.blitz_disabled = true
+        elseif tok == "noclaimdead" then
+          -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
+          -- so several bots race the same body and draw fire on the way in.
+          state.ally_claim_dead_off = true
+        elseif tok:sub(1, 10) == "portfolio=" then
+          -- Integer percents, '/' separated: B/F/A or B/F/A/U.
+          -- Complaints are LATCHED into state._cfg_warn, not printed here: this
+          -- runs on the bot's first think, a pre-game tick whose print2 output
+          -- never reaches the session's log file (same trap as TEST_ROLE). The
+          -- captured-tick window below re-emits them.
+          local nums, bad, extra = {}, false, false
+          for part in tok:sub(11):gmatch("[^/]+") do
+            if #nums >= 4 then extra = true
+            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+            else bad = true end
+          end
+          local b, f, ag, u = nums[1], nums[2], nums[3], nums[4]
+          if bad or extra or #nums < 3 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[portfolio] BAD TOKEN '%s' -- want portfolio=B/F/A[/U] as integer percents; IGNORED. ", tok)
+          elseif (b + f + ag) > 100 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[portfolio] BAD TOKEN '%s' -- back+front+aggro=%d > 100; IGNORED. ", tok, b + f + ag)
+          else
+            -- No explicit U -> it takes whatever is left (>=0 by the check above),
+            -- so the four always sum to exactly 100 in that form.
+            if not u then u = 100 - (b + f + ag) end
+            local sum = b + f + ag + u
+            if sum <= 0 then
+              state._cfg_warn = (state._cfg_warn or "") .. string.format(
+                "[portfolio] BAD TOKEN '%s' -- shares sum to 0; IGNORED. ", tok)
+            else
+              if sum ~= 100 then
+                state._cfg_warn = (state._cfg_warn or "") .. string.format(
+                  "[portfolio] WARNING '%s' sums to %d, not 100 -- normalising proportionally. ", tok, sum)
+              end
+              PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
+            end
+          end
+        elseif tok:sub(1, 6) == "blitz=" then
+          -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
+          -- Complaints latch into state._cfg_warn for the same reason as above.
+          local nums, bad, extra = {}, false, false
+          for part in tok:sub(7):gmatch("[^/]+") do
+            if #nums >= 2 then extra = true
+            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+            else bad = true end
+          end
+          local mn, mx = nums[1], nums[2]
+          if bad or extra or #nums < 1 or mn < 1 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[blitz] BAD TOKEN '%s' -- want blitz=MIN[/MAX], integers >= 1; IGNORED. ", tok)
+          elseif mx and mx < mn then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
+          else
+            squad.set_blitz_size(mn, mx, "init_arg")
+          end
+        elseif tok:sub(1, 7) == "refuel=" then
+          -- Float multiplier on the refuel GOAL_GROUP. Complaints latch, as above.
+          local x = tonumber(tok:sub(8))
+          if x and x > 0 then
+            goals.set_refuel_mult(x, "init_arg")
+          else
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[refuel] BAD TOKEN '%s' -- want refuel=X, a number > 0; IGNORED. ", tok)
+          end
+        elseif tok:sub(1, 15) == "blitzsuiciders=" then
+          -- Minimum suiciders per blitz. Complaints latch, as above.
+          local n = tok:match("^blitzsuiciders=(%d+)$")
+          if n then
+            squad.set_blitz_min_suiciders(tonumber(n), "init_arg")
+          else
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[blitz] BAD TOKEN '%s' -- want blitzsuiciders=N, integer >= 0; IGNORED. ", tok)
+          end
         else
           local n = tok:match("^deprive=(%d+)$")
           if n then state.test_deprive_ticks = tonumber(n) end
@@ -1181,7 +1385,7 @@ function Brain.think(info)
   -- real spawn position. Brain.open is too early — info isn't
   -- populated yet there. Emit a BOT_START marker so log readers can
   -- correlate bot index ↔ map quadrant.
-  if BRAIN_DEBUG_MODE and now == 1 then
+  if BRAIN_DEBUG_MODE and age == 1 then  -- age, not now: this marks THIS life first think; a mid-game bot starts `now` at the game clock
     print2(string.format(
       "BOT_START player_number=%s name=%s tank=(%.1f,%.1f) tile=(%d,%d)",
       tostring(info.player_number),
@@ -1381,9 +1585,34 @@ function Brain.think(info)
     -- emit every captured tick in a short window (11..40); any completed think
     -- in the window records it, and the reader dedupes (grep | sort -u). The
     -- roll value is stable after first think, so all lines agree.
-    if now >= 11 and now <= 40 then
+    -- The window is counted from THIS life's first tick, not from absolute
+    -- tick 11: state.tick is seeded from the engine clock, so a bot created
+    -- mid-game (a Survival wave) is already well past 40 on its first think
+    -- and an absolute window would never emit for it.
+    if age >= 11 and age <= 40 then
       print2(string.format("TEST_ROLE bot=%d never_refuel=%s",
                            info.player_number or -1, tostring(state.test_never_refuel)))
+      -- Same window, same reason, for the per-bot config parsed from
+      -- BRAIN_INIT_ARG: the parse runs on the FIRST think (a pre-game tick), so
+      -- a line printed there is silently dropped. Emitting the live values here
+      -- means every -brain-debug log states which portfolio shares this bot is
+      -- actually running, default or overridden.
+      print2(string.format("[portfolio] targets back=%.2f front=%.2f aggro=%.2f util=%.2f (%s)",
+                           PP.TARGET_BACK, PP.TARGET_FRONT, PP.TARGET_AGGRO,
+                           PP.TARGET_UTIL, PP.targets_source))
+      if state.blitz_disabled then
+        print2("[blitz] blitz=off (init_arg) — no calls opened or joined, bsu ignored (solo takes)")
+      else
+        print2(string.format("[blitz] size min=%d max=%d (%s)  suiciders min=%d (%s)",
+                             squad.blitz_min(), squad.blitz_max(), squad.blitz_size_source,
+                             squad.blitz_min_suiciders(), squad.blitz_suiciders_source))
+      end
+      print2(string.format("[refuel] cost mult x%.2f (%s)",
+                           goals.refuel_mult(), goals.refuel_mult_source))
+      if state.ally_claim_dead_off then
+        print2("[claims] claims_dead=off (init_arg) — pool 4 ignores allies' capture_pill claims on dead pills (no ally_claimed reject); pool 6 + refuel unchanged")
+      end
+      if state._cfg_warn then print2(state._cfg_warn) end
     end
     -- Raw engine-object dump: EXACTLY what the engine handed the brain this tick
     -- (info.objects — type/id/tile/host/speed). Tanks hidden in trees beyond
@@ -1633,7 +1862,11 @@ function Brain.think(info)
     -- lifetime. By then it's expanded enough of the map that the
     -- normal flow's update_pool_cache will hit cache for distant
     -- candidates instead of falling all the way to A* fallback.
-    if now >= C.DIJKSTRA_SHORT_INTERVAL then
+    -- `age`, not `now`: this is "one short-slate lifetime after THIS brain
+    -- opened". A wave bot's `now` starts in the thousands, so an absolute
+    -- test would leave startup on its very first think and hand the normal
+    -- flow a cold pool cache.
+    if age >= C.DIJKSTRA_SHORT_INTERVAL then
       state.startup_mode = false
       opt("startup: exit at tick=", now,
           " goal_set=", tostring(state._startup_goal_set))
@@ -1657,8 +1890,8 @@ function Brain.think(info)
     }
   end
   local BOT_VERSION = "v8 2026-04-07"
-  if now == 1 then print(TAG .. " >>> CODE VERSION: " .. BOT_VERSION .. " <<<") end
-  if now <= 3 then print(TAG .. " think() tick=" .. now) end
+  if age == 1 then print(TAG .. " >>> CODE VERSION: " .. BOT_VERSION .. " <<<") end
+  if age <= 3 then print(TAG .. " think() tick=" .. now) end
 
   -- Debugger: begin trace capture if armed
   if dbg.is_armed() then
@@ -3029,11 +3262,13 @@ function Brain.think(info)
       end
       cpf.rebuild_influence_tail(C.EXPAND_SEED_MIN, C.EXPAND_RADIUS, C.EXPAND_START,
                                  C.EXPAND_NEUTRAL_STEP, C.EXPAND_WATER_STEP,
-                                 C.EXPAND_DEEP_MARGIN or 0)
+                                 C.EXPAND_DEEP_MARGIN or 0,
+                                 C.INFLUENCE_ENEMY_TAIL)
       state._tail_sig, state._tail_tick = _tsig, now
       state._tail_rebuilt_tick = now
-      print2(string.format("TAIL_REBUILD t=%d sig=%d deep_margin=%d %.2fms",
-        now, _tsig, C.EXPAND_DEEP_MARGIN or 0, (clock_us() - _t_tail) / 1000))
+      print2(string.format("TAIL_REBUILD t=%d sig=%d deep_margin=%d enemy_tail=%s %.2fms",
+        now, _tsig, C.EXPAND_DEEP_MARGIN or 0, tostring(C.INFLUENCE_ENEMY_TAIL ~= false),
+        (clock_us() - _t_tail) / 1000))
     end
     -- Merged unconditionally, even when _tsig says the tail is unchanged:
     -- cpf.clear_influence() above wipes influence_grid at the top of EVERY
@@ -3326,7 +3561,18 @@ function Brain.think(info)
       local s = d.slates[main_idx]
       local age = now - s.started_tick
       local schedule_hit = age >= interval
-      if wait_for_done and schedule_hit and not s.done then
+      -- `s.active` is in this test for the same reason it is in the yield
+      -- guard below: an INACTIVE slate has never been started, so there is
+      -- nothing to "keep stepping until it finishes" and no backup to serve
+      -- lookups in the meantime — holding off would hold off forever. The C
+      -- side reports started_tick=0 / done=false / active=false for a
+      -- never-started slate, so now that state.tick is seeded from the engine
+      -- clock, `age` on a mid-game bot's FIRST think is already past
+      -- `interval`; without this the LONG slate returned here every tick and
+      -- was never started for the whole life of the bot, leaving every
+      -- long-range cost lookup at INF. Unreachable at seed 0, where the first
+      -- think has age=1 < interval and takes the `not s.active` start below.
+      if wait_for_done and schedule_hit and s.active and not s.done then
         -- Holding off: keep stepping the current main until it
         -- finishes, then snapshot + restart on the next pass.
         return
@@ -4483,6 +4729,10 @@ function Brain.think(info)
         elseif pill_dead and FIRING_SUBS[sub] then
           -- Keep the goal valid — attack.lua's firing handler enters swerve this
           -- tick (charge:4462 / shoot_pill:4977 / engage). Don't invalidate.
+          -- (A pill_suicider never swerves: those same three sites instead run
+          -- the post-kill capture handoff this tick, which installs a
+          -- capture_pill goal on the body. Either way the goal must survive
+          -- this check so the firing handler gets to run.)
           -- Our shots just dropped this pill to 0 → claim the fresh-kill pickup
           -- so Override 3b grabs the body HARD (ignoring refuel/flee).
           attack.mark_kill_pickup(state, state.goal.target_id, gmx, gmy, now)
@@ -5694,7 +5944,7 @@ function Brain.think(info)
       -- 20260703_210207 t=6997: bot stood 2 tiles from its freshly-dead
       -- capture target, replanned, and repair_pill won because pool 4 was
       -- empty; the LGM rebuilt the corpse and the free pill was lost.
-      if now <= 3 then print(TAG .. " tick=" .. now .. " calling build_eval_queue") end
+      if age <= 3 then print(TAG .. " tick=" .. now .. " calling build_eval_queue") end
       if C.INCREMENTAL_REPLAN then
         -- Deferred mode still pays the one-cycle blindness for brand-new
         -- corpses; the spike-splitting tradeoff is explicit here.
@@ -5711,7 +5961,7 @@ function Brain.think(info)
       if BRAIN_PROFILE then
         opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
       end
-      if now <= 3 then print(TAG .. " tick=" .. now .. " build_eval_queue done, calling pick_goal") end
+      if age <= 3 then print(TAG .. " tick=" .. now .. " build_eval_queue done, calling pick_goal") end
       metrics.inc("goal_replan")
       local t_pg0 = BRAIN_PROFILE and clock_us() or 0
       local new_goal = goals.pick_goal(state, world, info)
@@ -8248,7 +8498,10 @@ function Brain.think(info)
   -- up before we commit to moving. Without this the bot picks a goal from
   -- a near-empty cache on tick 1 and often flips direction a few ticks
   -- later once better candidates finish evaluating.
-  if now <= C.STARTUP_HOLD_TICKS then
+  -- `age`, not `now`: the warm-up is per brain instance. A bot created
+  -- mid-game (a Survival wave) has a cold eval queue exactly like a
+  -- game-start bot and needs the same hold.
+  if age <= C.STARTUP_HOLD_TICKS then
     keys, taps, build_cmd = 0, 0, -1
   end
 
@@ -8453,7 +8706,7 @@ function Brain.think(info)
     -- erroring out on nil.
     if state.broadcast_state_info == nil       then state.broadcast_state_info       = {} end
     if state.last_broadcasted_state_info == nil then state.last_broadcasted_state_info = {} end
-    if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
+    if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = now end  -- `now`, not 0: 0 reads as "1500+ ticks overdue" once ticks are engine-seeded
     local bsi = state.broadcast_state_info
     for k in pairs(bsi) do bsi[k] = nil end
     -- Squad role (Phase 1): recompute deterministically + broadcast so allies
@@ -8464,7 +8717,7 @@ function Brain.think(info)
     attack.blitz_negotiate(state, world, info, now)
     if state.squad_role then bsi.role = state.squad_role end
     if state.is_harasser then bsi.har = "1" end   -- harasser flag (decoupled from role)
-    if state.is_pill_suicider then bsi.psu = "1" end  -- pill_suicider flag (same slate as har, map-selected; mutually exclusive with it)
+    if state.is_pill_suicider then bsi.psu = "1" end  -- pill_suicider flag (same slate as har, map-selected or forced per-bot via BRAIN_INIT_ARG; mutually exclusive with it)
     if state.squad_cmdr then bsi.cmdr = tostring(state.squad_cmdr) end
     if state.squad_status and state.squad_status ~= "-" then bsi.sqst = state.squad_status end
     -- Blitz engage standoff claim (`be`): a soldier broadcasts its claimed
@@ -8758,6 +9011,16 @@ function Brain.think(info)
           state._my_blitz_call = cur_call   -- now nil
           state._my_blitz_call_tick = nil
         end
+      elseif state._blitz_su_send and state._blitz_su_send[1] then
+        -- Blitz suicider designations queued by squad.blitz_designate_suiciders
+        -- at GO. One per tick, oldest first, and dropped from the queue only
+        -- once the send actually goes out (try_send is batched and can refuse).
+        local _d = state._blitz_su_send[1]
+        if try_send(string.format("/info bsu %d %d", _d.pill, _d.pn), 0) then
+          table.remove(state._blitz_su_send, 1)
+          print2(string.format("BLITZ_TX bsu t=%d pill=%d -> p%d (%s)",
+                 now, _d.pill, _d.pn, squad.blitz_suiciders_label()))
+        end
       elseif state._blitz_rebroadcast and cur_call then
         if try_send("/info bco " .. cur_call, 0) then
           state._blitz_rebroadcast = nil
@@ -8953,8 +9216,11 @@ function Brain.think(info)
     -- Send extras when nothing else is going out this tick and either the
     -- non-cost payload changed, the 1 Hz cost refresh is due, or the
     -- 30 s heartbeat fires (so a freshly-joined/stale-slot ally catches up).
-    state.last_broadcast_extra_tick = state.last_broadcast_extra_tick or 0
-    state.last_broadcast_cost_tick  = state.last_broadcast_cost_tick  or 0
+    -- Lazy init to `now`, not 0: both drive "ticks since the last send", and
+    -- with engine-seeded ticks a 0 would make a mid-game bot's first tick look
+    -- long overdue and fire both refreshes at once.
+    state.last_broadcast_extra_tick = state.last_broadcast_extra_tick or now
+    state.last_broadcast_cost_tick  = state.last_broadcast_cost_tick  or now
     local extra_heartbeat_due = (now - state.last_broadcast_extra_tick) >= 1500
     local cost_due = bse.cost ~= nil and (now - state.last_broadcast_cost_tick) >= 50  -- 50 ticks = 1 s
     if (next(bse) ~= nil or next(last_ext) ~= nil)

@@ -973,7 +973,7 @@ static void tail_pass(BrainPathfinder *pf, int sign, int seed_min, int radius,
 
 void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int radius,
                                          int start, int neutral_step, int water_step,
-                                         int deep_margin) {
+                                         int deep_margin, int enemy_tail) {
   int32_t *pool_idx, *pool_next;
   const uint8_t *deep_mask = NULL;
   if (!pf || !pf->map) return;
@@ -995,8 +995,15 @@ void brainPathfinderRebuildInfluenceTail(BrainPathfinder *pf, int seed_min, int 
   if (!pool_idx || !pool_next) { free(pool_idx); free(pool_next); return; }
   tail_pass(pf, +1, seed_min, radius, start, neutral_step, water_step,
             deep_mask, pool_idx, pool_next);
-  tail_pass(pf, -1, seed_min, radius, start, neutral_step, water_step,
-            deep_mask, pool_idx, pool_next);
+  /* enemy_tail = 0: only OUR cores grow. The hostile stamps keep their raw
+   * discs (StampInfluence is untouched), but they spread no further, so the
+   * two tails no longer cancel inside the single signed expand_grid and the
+   * unclaimed ground between the lines reads as ours. The front line then
+   * forms at the edge of the enemy's disc instead of midway between the
+   * sides, which is what pushes the bots outward to claim more land. */
+  if (enemy_tail)
+    tail_pass(pf, -1, seed_min, radius, start, neutral_step, water_step,
+              deep_mask, pool_idx, pool_next);
   free(pool_idx);
   free(pool_next);
 }

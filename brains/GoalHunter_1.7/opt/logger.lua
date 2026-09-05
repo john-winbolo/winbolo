@@ -63,14 +63,32 @@ function M.make_filename(prefix)
   return prefix .. "_" .. ts .. ".jsonl"
 end
 
-function M.open(filename)
+--- Open the jsonl for this brain.
+--  APPEND, not truncate. Each brain instance is its own lua_State, so a bot
+--  that is re-created mid-game (a Survival wave respawn) runs M.open again on
+--  the SAME session path; with "w" every life wiped the previous one and the
+--  file only ever held the last life. "a" keeps them all. Nothing else writes
+--  this path: the filename is either DEBUG_SESSION_DIR/<prefix>.jsonl (a fresh
+--  per-session directory) or a timestamped name, so appending can't pick up a
+--  stale file from an earlier run.
+--
+--  `seed_tick` / `engine_tick` (optional) are the brain's starting tick and
+--  the engine tick it was created at. When given, a life-marker row is written
+--  first so a reader can tell where one life's rows end and the next begin —
+--  the tick rows themselves are now unique across the session (state.tick is
+--  seeded from the engine clock), but the marker makes the boundary explicit
+--  without having to diff consecutive "t" values.
+function M.open(filename, seed_tick, engine_tick)
   -- If reopening to a new path, remove the old file (avoids stale CWD copies)
   if current_filename and current_filename ~= filename then
     os.remove(current_filename)
   end
-  file = io.open(filename, "w")
+  file = io.open(filename, "a")
   if file then
     current_filename = filename
+    file:write(string.format('{"type":"life","t":%d,"engine_tick":%d}\n',
+                             seed_tick or 0, engine_tick or 0))
+    file:flush()
     print(TAG .. " LOG: opened " .. filename)
   else
     print(TAG .. " LOG: FAILED to open " .. filename)
@@ -338,7 +356,7 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
   -- no open file yet, open one now using the standard naming scheme.
   if not file then
     local fname = M.make_filename("player" .. (info.player_number or 0))
-    if not M.open(fname) then return end
+    if not M.open(fname, state.tick, state.engine_tick0) then return end
     M.dump_map()
   end
 
