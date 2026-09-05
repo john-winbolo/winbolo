@@ -1045,6 +1045,14 @@ int run_skin_workshop_id_roundtrip(void);
  * out of that (test_skin_density.c). */
 int run_skin_density_scan(void);
 
+/* Dedicated-server operator console command parsing
+ * (test_server_console.c). */
+int run_console_lock_unlock(void);
+int run_console_info_and_status(void);
+int run_console_savemap_path(void);
+int run_console_unknown_command_is_inert(void);
+int run_console_kick_and_host(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

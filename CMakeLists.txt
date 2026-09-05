@@ -3316,6 +3316,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Needs the tile loader itself, which no other unit test pulls in.
     tests/unit/test_skin_density.c
     src/gui/sdl3/tileloader.c
+    # Operator console command parsing, driven through ServerConsoleOps
+    # with recording callbacks instead of a live server (server_console.c
+    # itself comes in with server_static).
+    tests/unit/test_server_console.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -3989,6 +3993,11 @@ set(_unit_test_names
     skin_active_vs_requested
     skin_workshop_id_roundtrip
     skin_density_scan
+    console_lock_unlock
+    console_info_and_status
+    console_savemap_path
+    console_unknown_command_is_inert
+    console_kick_and_host
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

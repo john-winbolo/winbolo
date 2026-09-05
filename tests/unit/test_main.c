@@ -517,6 +517,11 @@ static const UnitTestEntry s_tests[] = {
     { "skin_active_vs_requested",                run_skin_active_vs_requested                },
     { "skin_workshop_id_roundtrip",              run_skin_workshop_id_roundtrip              },
     { "skin_density_scan",                       run_skin_density_scan                       },
+    { "console_lock_unlock",                     run_console_lock_unlock                     },
+    { "console_info_and_status",                 run_console_info_and_status                 },
+    { "console_savemap_path",                    run_console_savemap_path                    },
+    { "console_unknown_command_is_inert",        run_console_unknown_command_is_inert        },
+    { "console_kick_and_host",                   run_console_kick_and_host                   },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },
