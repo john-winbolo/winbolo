@@ -114,6 +114,13 @@ function on_lobby(game)
   end
 end
 
+-- Script DEBUG chatter. The per-tick terrain reports ("[forest] ring
+-- r=... planted=..." and "[terrain] shallow rim: ...") are development
+-- traces, not news, and the forest one repeats on the tree-ring clock all
+-- round -- turned off so the newswire carries only what a player needs.
+-- The [pills] / [bases] / "*** ... ***" lines are unaffected.
+local DEBUG_MESSAGES = false
+
 local WAVES        = 5
 local WAVE_TEAM    = 2      -- the enemy side IS lobby Team 2
 -- Wave size AND names come from Team 2's roster as the round begins:
@@ -821,10 +828,12 @@ local function replenish_tree_ring(game)
       planted = planted + 1
     end
   end
-  game.message(string.format(
-    "[forest] ring r=%d (%d tiles): %d picks -> planted=%d already=%d"
-    .. " blocked=%d",
-    TREE_RING_R, n, TREE_RING_PICKS, planted, standing, blocked))
+  if DEBUG_MESSAGES then
+    game.message(string.format(
+      "[forest] ring r=%d (%d tiles): %d picks -> planted=%d already=%d"
+      .. " blocked=%d",
+      TREE_RING_R, n, TREE_RING_PICKS, planted, standing, blocked))
+  end
 end
 
 -- ---------------------------------------------------------------------
@@ -893,9 +902,11 @@ local function build_shallow_rim(game)
   for _, c in ipairs(conv) do
     game.set_tile(c.x, c.y, T_RIVER)
   end
-  game.message(string.format(
-    "[terrain] shallow rim: %d coast tiles deep->river, %d spared"
-    .. " within r=%d of center", #conv, spared, RIM_EXCLUDE_R))
+  if DEBUG_MESSAGES then
+    game.message(string.format(
+      "[terrain] shallow rim: %d coast tiles deep->river, %d spared"
+      .. " within r=%d of center", #conv, spared, RIM_EXCLUDE_R))
+  end
 end
 
 -- The SILENT pre-snapshot tick: on a lobby server the round's tanks
