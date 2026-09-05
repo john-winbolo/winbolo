@@ -175,6 +175,14 @@ typedef struct LobbyIconCache {
     bool          tankSelfAttempted;
     bool          tankEvilAttempted;
     bool          tankGoodAttempted;
+
+    /* Pillbox and base sprites for the read-only view-policy summary,
+     * which pairs each with the tank sprite above. Loaded lazily by
+     * their getters and reloaded on a renderer swap, same as the tanks. */
+    SDL_Texture  *pillbox15;
+    SDL_Texture  *baseGood;
+    bool          pillbox15Attempted;
+    bool          baseGoodAttempted;
 } LobbyIconCache;
 
 /* Map-preview state: the stashed compressed map bytes plus the per-start
@@ -422,6 +430,8 @@ void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);
 SDL_Texture *lobbyGetTankSelf04Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetTankEvil04Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetTankGood04Texture(SDL_Renderer *renderer);
+SDL_Texture *lobbyGetPillbox15Texture(SDL_Renderer *renderer);
+SDL_Texture *lobbyGetBaseGoodTexture(SDL_Renderer *renderer);
 void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale);
 
 /* players */
@@ -479,6 +489,8 @@ void lobbySettingsPostGameEdge(bool showLastRound);
 void lobbyRenderGameSettingsPanel(ClientSim *cs,
                                   int myPlayerNum, float s);
 void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
+/* Read-only one-line summary of the three view policies. */
+void lobbyRenderVisibilitySummary(ClientSim *cs, float s);
 
 /* ── State accessors ──────────────────────────────────────────────
  * The lobby's state lives in per-cluster structs, each private to the source

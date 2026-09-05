@@ -619,6 +619,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Own line, like the labels above it — the view policies are
+             * the one part of the settings a joiner or spectator can see. */
+            lobbyRenderVisibilitySummary(cs, s);
 #else
             /* Leave button sits at the top-left, before the Server: line.
              * Escape key also opens the leave confirmation popup. Rendered as
@@ -670,6 +673,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* The view policies belong on this line because it is the one
+             * place a joiner or spectator sees the host's settings — the
+             * settings panel below is host-only. Before the connectivity
+             * badge, which right-aligns into whatever space is left. */
+            ImGui::SameLine(0, 16);
+            lobbyRenderVisibilitySummary(cs, s);
 #endif
 
             /* Layout A — connectivity badge in the top-right corner.

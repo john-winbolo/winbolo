@@ -30,11 +30,13 @@
 #include "imgui.h"
 #include "imgui_internal.h"  /* ImGui::GetCurrentWindow — the body's font scale */
 #include "lobby_internal.h"
+#include "dialog_footer.h"   /* WBUI::DialogFooter — the Visibility popup's Close */
 extern "C" {
 #include "client_sim.h"
 #include "client_net.h"  /* clientSimNetSendLobbyOpenHost / SetPassword */
 #include "../../../lang.h"
 #include "../../../ui_mode.h"  /* uiModeIsSteamDeck — the header's default state */
+#include "../../sdl3draw.h"    /* sdl3DrawGetRenderer — the summary's sprites */
 }
 
 /* ── Layout A — editable game settings panel ──────────────────────
@@ -403,77 +405,104 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     ImGui::Columns(1);
 
     /* ── Visibility (pillboxes / bases / allied tanks) ─────────────
-     * One row per category: a 4-way combo, plus a decay-seconds input
-     * that is only enabled while that row's combo reads Decay. Each
-     * edit sends the 3-byte [policy][decay hi][decay lo] payload for
-     * that category's LST_* id. Full width rather than a fourth
-     * column — three combos don't fit in a third of the form. */
+     * A button opens the editor and a read-only icon summary sits under
+     * it, because the three rows took more room on the lobby surface
+     * than the rest of the form put together. The rows themselves are
+     * unchanged, they just live in the popup now: one per category, a
+     * 4-way combo plus a decay-seconds input that is only enabled while
+     * that row's combo reads Decay, each edit sending the 3-byte
+     * [policy][decay hi][decay lo] payload for that category's LST_* id. */
+    ImGui::Spacing();
+    if (ImGui::Button(langGetText(STR_DLGLOBBY_VISIBILITY_LBL))) {
+        ImGui::OpenPopup("###visibility");
+    }
+    lobbyRenderVisibilitySummary(cs, s);
+
+    /* Same ID scope as the OpenPopup above — BeginPopupModal only finds
+     * a popup opened at its own scope. The title is composed so the
+     * translated label is the caption and everything after ### is the
+     * ID, which a translation therefore cannot change. */
     {
-        struct ViewRow {
-            int          label;
-            ViewCategory cat;
-            uint8_t      lst;
-            uint16_t     lockBit;
-            const char  *id;
-        };
-        static const ViewRow rows[] = {
-            { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill,
-              LST_PILL_VIEW, LOBBY_LOCK_PILL_VIEW, "pill" },
-            { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase,
-              LST_BASE_VIEW, LOBBY_LOCK_BASE_VIEW, "base" },
-            { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly,
-              LST_ALLY_VIEW, LOBBY_LOCK_ALLY_VIEW, "ally" },
-        };
-        const char *modes[] = {
-            langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
-            langGetText(STR_DLGLOBBY_VIEW_KEY),
-            langGetText(STR_DLGLOBBY_VIEW_DECAY),
-            langGetText(STR_DLGLOBBY_VIEW_OFF),
-        };
-        auto sendView = [&](uint8_t lst, int policy, int secs) {
-            if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_MIN_SECS;
-            if (secs > VIEW_DECAY_MAX_SECS) secs = VIEW_DECAY_MAX_SECS;
-            uint8_t v[3] = { (uint8_t)policy,
-                             (uint8_t)((secs >> 8) & 0xFF),
-                             (uint8_t)(secs & 0xFF) };
-            lobbySendSetting(cs, lst, v, 3);
-        };
+        char visTitle[128];
+        SDL_snprintf(visTitle, sizeof(visTitle), "%s###visibility",
+                     langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
+        static bool s_visOpen = true; s_visOpen = true;
+        if (ImGui::BeginPopupModal(visTitle, &s_visOpen,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            struct ViewRow {
+                int          label;
+                ViewCategory cat;
+                uint8_t      lst;
+                uint16_t     lockBit;
+                const char  *id;
+            };
+            static const ViewRow rows[] = {
+                { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill,
+                  LST_PILL_VIEW, LOBBY_LOCK_PILL_VIEW, "pill" },
+                { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase,
+                  LST_BASE_VIEW, LOBBY_LOCK_BASE_VIEW, "base" },
+                { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly,
+                  LST_ALLY_VIEW, LOBBY_LOCK_ALLY_VIEW, "ally" },
+            };
+            const char *modes[] = {
+                langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+                langGetText(STR_DLGLOBBY_VIEW_KEY),
+                langGetText(STR_DLGLOBBY_VIEW_DECAY),
+                langGetText(STR_DLGLOBBY_VIEW_OFF),
+            };
+            auto sendView = [&](uint8_t lst, int policy, int secs) {
+                if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_MIN_SECS;
+                if (secs > VIEW_DECAY_MAX_SECS) secs = VIEW_DECAY_MAX_SECS;
+                uint8_t v[3] = { (uint8_t)policy,
+                                 (uint8_t)((secs >> 8) & 0xFF),
+                                 (uint8_t)(secs & 0xFF) };
+                lobbySendSetting(cs, lst, v, 3);
+            };
 
-        ImGui::Spacing();
-        ImGui::Text("%s", langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
-        for (int r = 0; r < 3; r++) {
-            const ViewRow &row = rows[r];
-            bool locked = (clientSimGetLobbyServerLocks(cs) & row.lockBit) != 0;
-            bool disable = !effectiveHost || locked;
-            int policy = (int)clientSimGetViewPolicy(cs, row.cat);
-            int secs   = (int)clientSimGetViewDecaySecs(cs, row.cat);
-            if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_DEFAULT_SECS;
+            for (int r = 0; r < 3; r++) {
+                const ViewRow &row = rows[r];
+                bool locked = (clientSimGetLobbyServerLocks(cs) & row.lockBit) != 0;
+                bool disable = !effectiveHost || locked;
+                int policy = (int)clientSimGetViewPolicy(cs, row.cat);
+                int secs   = (int)clientSimGetViewDecaySecs(cs, row.cat);
+                if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_DEFAULT_SECS;
 
-            ImGui::PushID(row.id);
-            if (disable) ImGui::BeginDisabled();
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(langGetText(row.label));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f * s);
-            if (ImGui::Combo("##mode", &policy, modes, 4)) {
-                sendView(row.lst, policy, secs);
+                ImGui::PushID(row.id);
+                if (disable) ImGui::BeginDisabled();
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(langGetText(row.label));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f * s);
+                if (ImGui::Combo("##mode", &policy, modes, 4)) {
+                    sendView(row.lst, policy, secs);
+                }
+                /* The seconds box stays on screen for every mode so the row
+                 * doesn't reflow as the host tries the options; it is only
+                 * interactive while the row is on Decay. */
+                ImGui::SameLine();
+                ImGui::BeginDisabled(policy != (int)viewPolicyDecay);
+                ImGui::SetNextItemWidth(80.0f * s);
+                if (ImGui::InputInt("##decay", &secs, 1, 5,
+                                    ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    sendView(row.lst, policy, secs);
+                }
+                ImGui::SameLine();
+                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+                ImGui::EndDisabled();
+                if (disable) ImGui::EndDisabled();
+                if (locked) lobbyRenderLockBadge();
+                ImGui::PopID();
             }
-            /* The seconds box stays on screen for every mode so the row
-             * doesn't reflow as the host tries the options; it is only
-             * interactive while the row is on Decay. */
-            ImGui::SameLine();
-            ImGui::BeginDisabled(policy != (int)viewPolicyDecay);
-            ImGui::SetNextItemWidth(80.0f * s);
-            if (ImGui::InputInt("##decay", &secs, 1, 5,
-                                ImGuiInputTextFlags_EnterReturnsTrue)) {
-                sendView(row.lst, policy, secs);
+
+            /* A real Close button, not just the title-bar X: ImGui's
+             * NavCancel leaves modals open, so a controller needs
+             * something focusable to leave by. */
+            if (WBUI::DialogFooter(/*cancelLabel*/ NULL,
+                                   /*confirmLabel*/ langGetText(STR_CLOSE))
+                != WBUI::FOOTER_NONE) {
+                ImGui::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
-            ImGui::EndDisabled();
-            if (disable) ImGui::EndDisabled();
-            if (locked) lobbyRenderLockBadge();
-            ImGui::PopID();
+            ImGui::EndPopup();
         }
     }
 
@@ -512,4 +541,87 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         ImGui::PopStyleColor(3);
     }
 #endif
+}
+
+/* ── Visibility summary ───────────────────────────────────────────
+ * The three view policies on one line, read only: pill, base and allied
+ * tank sprite, each followed by its policy word, with the seconds added
+ * under Decay and the whole group dimmed under Off. Drawn under the
+ * Visibility button for the host and on the lobby header line for
+ * everyone, which is how a joiner or spectator — who never sees the
+ * settings panel — finds out what the host chose. Hovering a group
+ * names the category and its policy in full. */
+void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
+    /* The header line draws before the player list, which is what
+     * usually loads the icon cache, so load it here first. The call is
+     * idempotent and reloads the sprites if the renderer changed. */
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (renderer) lobbyLoadStatusIconsOnce(renderer, s);
+
+    struct SummaryItem {
+        int          label;
+        ViewCategory cat;
+        SDL_Texture *(*tex)(SDL_Renderer *);
+    };
+    static const SummaryItem items[] = {
+        { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill, lobbyGetPillbox15Texture },
+        { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase, lobbyGetBaseGoodTexture  },
+        { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly, lobbyGetTankGood04Texture },
+    };
+    const int words[] = {
+        STR_DLGLOBBY_VIEW_ALWAYS,
+        STR_DLGLOBBY_VIEW_KEY,
+        STR_DLGLOBBY_VIEW_DECAY,
+        STR_DLGLOBBY_VIEW_OFF,
+    };
+
+    const float iconSize = 16.0f * s;
+    for (int i = 0; i < 3; i++) {
+        const SummaryItem &it = items[i];
+        if (i > 0) ImGui::SameLine(0, 12.0f * s);
+
+        int policy = (int)clientSimGetViewPolicy(cs, it.cat);
+        if (policy < 0 || policy > (int)viewPolicyOff) policy = (int)viewPolicyAlways;
+        const char *word = langGetText(words[policy]);
+
+        char valueText[96];
+        if (policy == (int)viewPolicyDecay) {
+            SDL_snprintf(valueText, sizeof(valueText), "%s %u %s", word,
+                         (unsigned)clientSimGetViewDecaySecs(cs, it.cat),
+                         langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+        } else {
+            SDL_snprintf(valueText, sizeof(valueText), "%s", word);
+        }
+
+        /* Off reads as "this category is switched off" by being faint,
+         * rather than by a colour the icons would have to carry. */
+        bool dim = (policy == (int)viewPolicyOff);
+        if (dim) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
+        ImGui::BeginGroup();
+        SDL_Texture *tex = renderer ? it.tex(renderer) : nullptr;
+        if (tex) {
+            ImGui::Image((ImTextureID)tex, ImVec2(iconSize, iconSize));
+            ImGui::SameLine(0, 4.0f * s);
+            /* Centre the word against the taller sprite. */
+            float textOffset = (iconSize - ImGui::GetTextLineHeight()) * 0.5f;
+            if (textOffset > 0.0f) {
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + textOffset);
+            }
+        } else {
+            /* Sprite missing — the category's own label stands in for it
+             * so the line still says which policy belongs to what. */
+            ImGui::TextUnformatted(langGetText(it.label));
+            ImGui::SameLine(0, 4.0f * s);
+        }
+        ImGui::TextUnformatted(valueText);
+        ImGui::EndGroup();
+        if (dim) ImGui::PopStyleVar();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s: %s", langGetText(it.label), word);
+        }
+    }
 }
