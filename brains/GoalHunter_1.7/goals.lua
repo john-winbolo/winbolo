@@ -12763,7 +12763,7 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       end
       if blitz_open then
         -- Squad cap: a blitz is at most a commander + SQUAD_MAX_SIZE soldiers
-        -- (2 tanks total). If the squad on this pill is already full and we're
+        -- (4 tanks total by default). If the squad on this pill is already full and we're
         -- not part of it, REJECT (blitz_full) rather than offering it as a
         -- joinable candidate — stops a 3rd tank piling onto a full take. The
         -- count is role-agnostic (any ally broadcasting attack_pill/capture_pill
