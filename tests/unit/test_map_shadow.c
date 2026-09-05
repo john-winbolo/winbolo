@@ -34,14 +34,20 @@
  * every pill, so the checksum a client can compute depends on the pill list it
  * holds as much as on its terrain, and the same three read sites — the snapshot
  * header's checksum, the join/resync blob, and the resync self-check — take
- * their pill list from that record. The last four cases pin it: it follows the
+ * their pill list from that record. The last five cases pin it: it follows the
  * live list across frames in which pills move, its checksum equals the live
  * list's and equals what serverSimBuildSnapshot stamps,
  * serverSimGetCompressedMapFor produces the same bytes as
  * serverSimGetCompressedMap while it does, a slot seeded from the round-start
  * squares compresses to those instead, and a full-sync snapshot's pill entries
  * and pill events rebuild — in the client's own order — the list its checksum
- * was taken over.
+ * was taken over, both for a pill the recipient can see and for one whose
+ * square it is not being told.
+ *
+ * A slot only records the square of a pill inside one of its rects, so the
+ * cases that want the record to follow the live list hand the pill to slot 0
+ * and ally the other slots to it: an allied live pill grants a screen around
+ * itself under the default pill policy, so it is shown wherever it goes.
  *
  * Every case drives ut_make_running_sim and pokes the GameSim directly (the
  * unittests profile permits T2-internal access).
@@ -58,6 +64,7 @@
 #include "bases.h"
 #include "starts.h"
 #include "game_sim.h"
+#include "players.h"
 #include "gametype.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* clientKnownMap, the shadow entry points */
@@ -894,13 +901,16 @@ static BYTE ms_pill_live_y(ServerSim *sim, BYTE p) {
     return (*gs->pb).item[p].y;
 }
 
-/* -1 when every slot's recorded squares match the live list, else the first
- * slot that does not. */
+/* -1 when every connected slot's recorded squares match the live list, else the
+ * first slot that does not. Slots with nobody in them are skipped: the tick
+ * writes the records of the slots it is building views for, and an empty one is
+ * re-seeded when a player takes it. */
 static int ms_pill_first_mismatch(ServerSim *sim) {
     GameSim *gs = serverSimGetGameSim(sim);
     BYTE np = pillsGetNumPills(&gs->pb);
     BYTE slot, p;
     for (slot = 0; slot < MAX_TANKS; slot++) {
+        if (!sim->playerConnected[slot]) continue;
         for (p = 0; p < np && p < MAX_PILLS; p++) {
             if (ms_pill_known_x(sim, slot, p) != ms_pill_live_x(sim, p) ||
                 ms_pill_known_y(sim, slot, p) != ms_pill_live_y(sim, p)) {
@@ -931,9 +941,12 @@ static bool ms_pill_fold_terrain(BYTE t) {
 /* Find a square the fold applies to, clear of bases and of every pill: the
  * checksum rewrites a base tile before it looks at pills, so a pill standing on
  * one would leave the fold invisible. River and building are preferred over
- * deep sea so the pill ends up on ground the game itself could put it on.
- * Returns false if the map holds no such square. */
-static bool ms_find_fold_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
+ * deep sea so the pill ends up on ground the game itself could put it on. With
+ * minDist above zero the square is also at least that many map squares from
+ * (awayX, awayY) on one axis, which is what puts it outside a screen centred
+ * there. Returns false if the map holds no such square. */
+static bool ms_find_fold_square(ServerSim *sim, BYTE awayX, BYTE awayY,
+                                int minDist, BYTE *outX, BYTE *outY) {
     GameSim *gs = serverSimGetGameSim(sim);
     bool haveSea = false;
     BYTE seaX = 0, seaY = 0;
@@ -945,6 +958,13 @@ static bool ms_find_fold_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
             if (!ms_pill_fold_terrain(t)) continue;
             if (basesExistPos(&gs->bs, (BYTE)x, (BYTE)y)) continue;
             if (pillsExistPos(&gs->pb, (BYTE)x, (BYTE)y)) continue;
+            if (minDist > 0) {
+                int dx = x - (int)awayX;
+                int dy = y - (int)awayY;
+                if (dx < 0) dx = -dx;
+                if (dy < 0) dy = -dy;
+                if (dx < minDist && dy < minDist) continue;
+            }
             if (t == DEEP_SEA) {
                 if (!haveSea) {
                     seaX = (BYTE)x;
@@ -966,6 +986,48 @@ static bool ms_find_fold_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
     return false;
 }
 
+/* A square the fold leaves alone, clear of bases and of every pill. Standing a
+ * pill there changes the hash only by where it is no longer standing, which is
+ * what the negative control needs. */
+static bool ms_find_plain_square(ServerSim *sim, BYTE *outX, BYTE *outY) {
+    GameSim *gs = serverSimGetGameSim(sim);
+    int x, y;
+
+    for (x = 20; x < 236; x++) {
+        for (y = 20; y < 236; y++) {
+            BYTE t = ms_live(sim, (BYTE)x, (BYTE)y);
+            if (ms_pill_fold_terrain(t)) continue;
+            if (basesExistPos(&gs->bs, (BYTE)x, (BYTE)y)) continue;
+            if (pillsExistPos(&gs->pb, (BYTE)x, (BYTE)y)) continue;
+            *outX = (BYTE)x;
+            *outY = (BYTE)y;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Hand pill p to slot 0, alive and out of a tank. Under the default pill policy
+ * an allied live pill grants a screen around itself, so slot 0 — and anyone
+ * allied to it — is shown that pill's square wherever it is moved. That is what
+ * a case wants when it is pinning the record against the live list rather than
+ * against what is withheld. */
+static void ms_pill_owned_by_slot0(ServerSim *sim, BYTE p) {
+    GameSim *gs = serverSimGetGameSim(sim);
+    (*gs->pb).item[p].owner  = 0;
+    (*gs->pb).item[p].armour = PILL_MAX_HEALTH;
+    (*gs->pb).item[p].inTank = FALSE;
+}
+
+/* The map square a slot's tank stands on. */
+static bool ms_tank_square(ServerSim *sim, BYTE slot, BYTE *mx, BYTE *my) {
+    WORLD wx = 0, wy = 0;
+    if (!serverSimGetTankState(sim, slot, &wx, &wy)) return false;
+    *mx = (BYTE)(wx >> 8);
+    *my = (BYTE)(wy >> 8);
+    return true;
+}
+
 /* 11. Each slot's record of the pill squares follows the live list: identical
  *     when the sim comes up, and still identical after frames in which pills
  *     move. serverSimGetPillsForSlot hands that list back with the recorded
@@ -981,6 +1043,17 @@ int run_pill_shadow_tracks_real(void) {
     BYTE np = pillsGetNumPills(&gs->pb);
     UT_ASSERT_MSG(np >= 2, "the map carries %u pills; this case needs two",
                   (unsigned)np);
+
+    /* Both pills belong to one alliance all three slots are in, so each of them
+     * stands inside every slot's rects wherever it is moved and every slot's
+     * record is expected to follow the live list. */
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 2, TRUE);
+    ms_pill_owned_by_slot0(sim, 0);
+    ms_pill_owned_by_slot0(sim, 1);
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) == TRUE &&
+                      playersIsAllie(&gs->plyrs, 0, 2) == TRUE,
+                  "slots 0, 1 and 2 should be one alliance for this case");
 
     UT_ASSERT_MSG(ms_pill_first_mismatch(sim) < 0,
                   "slot %d's pill squares differ from the live list on a fresh "
@@ -1011,8 +1084,9 @@ int run_pill_shadow_tracks_real(void) {
                   "slot %d's record missed pill 0 moving back",
                   ms_pill_first_mismatch(sim));
 
-    /* The list a reader is handed: the recorded square, and everything else as
-     * the live pill holds it. */
+    /* The list a reader is handed: that slot's own recorded square, and
+     * everything else as the live pill holds it. Every slot has a record — they
+     * are seeded wherever a map is installed — whether or not anyone is in it. */
     {
         struct pillsObj slotPills;
         BYTE slot, p;
@@ -1025,14 +1099,14 @@ int run_pill_shadow_tracks_real(void) {
                           (unsigned)slot, (unsigned)slotPills.numPills,
                           (unsigned)np);
             for (p = 0; p < np; p++) {
-                UT_ASSERT_MSG(slotPills.item[p].x == ms_pill_live_x(sim, p) &&
-                                  slotPills.item[p].y == ms_pill_live_y(sim, p),
-                              "slot %u pill %u is at %u,%u, the live pill at "
+                UT_ASSERT_MSG(slotPills.item[p].x == ms_pill_known_x(sim, slot, p) &&
+                                  slotPills.item[p].y == ms_pill_known_y(sim, slot, p),
+                              "slot %u pill %u is at %u,%u, its record says "
                               "%u,%u", (unsigned)slot, (unsigned)p,
                               (unsigned)slotPills.item[p].x,
                               (unsigned)slotPills.item[p].y,
-                              (unsigned)ms_pill_live_x(sim, p),
-                              (unsigned)ms_pill_live_y(sim, p));
+                              (unsigned)ms_pill_known_x(sim, slot, p),
+                              (unsigned)ms_pill_known_y(sim, slot, p));
                 UT_ASSERT_MSG(slotPills.item[p].owner == (*gs->pb).item[p].owner &&
                                   slotPills.item[p].armour == (*gs->pb).item[p].armour &&
                                   slotPills.item[p].inTank == (*gs->pb).item[p].inTank &&
@@ -1066,6 +1140,11 @@ int run_pill_shadow_crc_matches(void) {
 
     GameSim *gs = serverSimGetGameSim(sim);
     UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "the map carries no pills");
+
+    /* Both slots are shown pill 0 wherever it goes, so their records stay on
+     * the live square and the checksums are comparable. */
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    ms_pill_owned_by_slot0(sim, 0);
 
     /* A pill move and a frame of terrain changes, so both halves of the record
      * are exercised rather than compared at rest. */
@@ -1142,6 +1221,11 @@ int run_pill_shadow_blob_identical(void) {
 
     GameSim *gs = serverSimGetGameSim(sim);
     UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "the map carries no pills");
+
+    /* Both slots are shown pill 0 wherever it goes, so their records stay on
+     * the live square and the blobs are comparable. */
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, 0, 1, TRUE);
+    ms_pill_owned_by_slot0(sim, 0);
 
     /* 131,072 bytes is the headroom serverSimReloadMap allocates; two of them
      * are too much for the stack, so they come off the heap. */
@@ -1262,10 +1346,13 @@ int run_pill_shadow_fullsync_move_matches(void) {
     UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "the map carries no pills");
 
     BYTE fx = 0, fy = 0;
-    UT_ASSERT_MSG(ms_find_fold_square(sim, &fx, &fy),
+    UT_ASSERT_MSG(ms_find_fold_square(sim, 0, 0, 0, &fx, &fy),
                   "the map holds no river/sea/building square clear of bases "
                   "and pills, so the fold would never fire");
 
+    /* Slot 0 owns the pill, so it is shown the square wherever the pill is put
+     * — this case is about the ordering, not about what is withheld. */
+    ms_pill_owned_by_slot0(sim, 0);
     ms_move_pill(sim, 0, fx, fy);
     UT_ASSERT_MSG(ms_pill_live_x(sim, 0) == fx && ms_pill_live_y(sim, 0) == fy,
                   "pill 0 is at %u,%u, not on the chosen square %u,%u",
@@ -1330,6 +1417,155 @@ int run_pill_shadow_fullsync_move_matches(void) {
     UT_ASSERT_MSG(clientSum == hdr.mapChecksum,
                   "the list rebuilt from the snapshot checksums %04x, the "
                   "header carries %04x", clientSum, hdr.mapChecksum);
+
+    /* The negative control: the same terrain against a pill list with pill 0
+     * somewhere the fold does not apply has to hash differently, or the check
+     * above would pass whatever list it was handed. */
+    {
+        struct pillsObj alt = scratch;
+        pillboxes altPb = &alt;
+        BYTE px = 0, py = 0;
+        uint16_t altSum;
+
+        UT_ASSERT_MSG(ms_find_plain_square(sim, &px, &py),
+                      "the map holds no square outside the fold set clear of "
+                      "bases and pills");
+        alt.item[0].x = px;
+        alt.item[0].y = py;
+        altSum = mapCalcChecksum(&sim->clientKnownMap[0], &gs->bs, &altPb);
+        UT_ASSERT_MSG(altSum != hdr.mapChecksum,
+                      "moving pill 0 off the folded square left the checksum at "
+                      "%04x — this case cannot tell one pill list from another",
+                      altSum);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 15. The same rail with the square withheld. A pill moved far outside a
+ *     recipient's rects reports the square that recipient was last given, in
+ *     the pill block and in the pill event both, and the list rebuilt from that
+ *     snapshot still checksums to the header the snapshot carries — while the
+ *     live list does not, which is what says the case would catch a divergence.
+ */
+int run_pill_shadow_withheld_crc_matches(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1, "the map carries no pills");
+
+    BYTE tx = 0, ty = 0;
+    UT_ASSERT_MSG(ms_tank_square(sim, 0, &tx, &ty), "slot 0 has no tank");
+
+    BYTE fx = 0, fy = 0;
+    UT_ASSERT_MSG(ms_find_fold_square(sim, tx, ty, 60, &fx, &fy),
+                  "the map holds no river/sea/building square 60 squares clear "
+                  "of slot 0's tank at %u,%u", (unsigned)tx, (unsigned)ty);
+
+    /* The pill belongs to nobody, so it grants no screen of its own and the
+     * only rects slot 0 has are the ones around its tank. */
+    (*gs->pb).item[0].owner = NEUTRAL;
+
+    BYTE keptX = sim->clientKnownPillX[0][0];
+    BYTE keptY = sim->clientKnownPillY[0][0];
+    UT_ASSERT_MSG(keptX != fx || keptY != fy,
+                  "pill 0's recorded square is already the fold square %u,%u — "
+                  "the move below would prove nothing",
+                  (unsigned)fx, (unsigned)fy);
+
+    ms_move_pill(sim, 0, fx, fy);
+
+    {
+        ViewportRect vps[MAX_VIEWPORTS];
+        int nv = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
+        UT_ASSERT_MSG(!inAnyViewport(vps, nv, fx, fy),
+                      "the fold square %u,%u is inside slot 0's rects, so "
+                      "nothing would be withheld", (unsigned)fx, (unsigned)fy);
+    }
+    UT_ASSERT_MSG(sim->clientKnownPillX[0][0] == keptX &&
+                      sim->clientKnownPillY[0][0] == keptY,
+                  "slot 0's record took the move to %u,%u",
+                  (unsigned)sim->clientKnownPillX[0][0],
+                  (unsigned)sim->clientKnownPillY[0][0]);
+
+    SnapshotHeader hdr;
+    TankSnapshot tk[MAX_TANKS];
+    ShellSnapshot sh[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot bo[MAX_SNAPSHOT_BASES];
+    PillSnapshot po[MAX_SNAPSHOT_PILLS];
+    GameEvent ev[MAX_SNAPSHOT_EVENTS];
+
+    memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
+    serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
+                           te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
+                           po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false);
+    UT_ASSERT_MSG(hdr.mapChecksum != 0,
+                  "the build stamped no checksum — it was not a full sync");
+    UT_ASSERT_MSG(hdr.pillCount > 0, "the full sync carried no pill entries");
+    UT_ASSERT_MSG(po[0].x == keptX && po[0].y == keptY &&
+                      !pillPosCurrentFromByte(po[0].armourInTank),
+                  "the pill block reports %u,%u for a pill slot 0 cannot see, "
+                  "not the withheld %u,%u", (unsigned)po[0].x,
+                  (unsigned)po[0].y, (unsigned)keptX, (unsigned)keptY);
+
+    /* Rebuild the list a client would be holding when it checks the checksum,
+     * in the order client_snapshot.c applies it. */
+    struct pillsObj scratch;
+    pillboxes scratchPb = &scratch;
+    bool sawPillEvent = false;
+    int i;
+
+    memset(&scratch, 0, sizeof(scratch));
+    scratch.numPills = hdr.pillCount;
+    for (i = 0; i < hdr.pillCount && i < MAX_PILLS; i++) {
+        scratch.item[i].x      = po[i].x;
+        scratch.item[i].y      = po[i].y;
+        scratch.item[i].owner  = po[i].owner;
+        scratch.item[i].armour = pillArmourFromByte(po[i].armourInTank);
+        scratch.item[i].inTank = pillInTankFromByte(po[i].armourInTank) ? TRUE : FALSE;
+    }
+    for (i = 0; i < hdr.reliableEventCount; i++) {
+        BYTE idx;
+        if (ev[i].type != EVENT_PILL_UPDATE) continue;
+        idx = ev[i].data[0];
+        if (idx >= MAX_PILLS) continue;
+        if (idx == 0) {
+            sawPillEvent = true;
+            UT_ASSERT_MSG(ev[i].data[1] == keptX && ev[i].data[2] == keptY &&
+                              !pillPosCurrentFromByte(ev[i].data[4]),
+                          "the pill event carries %u,%u for a pill slot 0 "
+                          "cannot see, not the withheld %u,%u",
+                          (unsigned)ev[i].data[1], (unsigned)ev[i].data[2],
+                          (unsigned)keptX, (unsigned)keptY);
+        }
+        scratch.item[idx].x      = ev[i].data[1];
+        scratch.item[idx].y      = ev[i].data[2];
+        scratch.item[idx].owner  = ev[i].data[3];
+        scratch.item[idx].armour = pillArmourFromByte(ev[i].data[4]);
+        scratch.item[idx].inTank = pillInTankFromByte(ev[i].data[4]) ? TRUE : FALSE;
+    }
+    UT_ASSERT_MSG(sawPillEvent,
+                  "the move produced no pill event for slot 0 — it carries the "
+                  "armour and owner too, so it must be rewritten, not dropped");
+    UT_ASSERT_MSG(scratch.item[0].x == keptX && scratch.item[0].y == keptY,
+                  "the snapshot leaves the client holding pill 0 at %u,%u, not "
+                  "on the withheld square %u,%u", (unsigned)scratch.item[0].x,
+                  (unsigned)scratch.item[0].y, (unsigned)keptX, (unsigned)keptY);
+
+    uint16_t clientSum = mapCalcChecksum(&sim->clientKnownMap[0], &gs->bs,
+                                         &scratchPb);
+    UT_ASSERT_MSG(clientSum == hdr.mapChecksum,
+                  "the list rebuilt from the snapshot checksums %04x, the "
+                  "header carries %04x", clientSum, hdr.mapChecksum);
+
+    uint16_t liveSum = mapCalcChecksum(&sim->clientKnownMap[0], &gs->bs, &gs->pb);
+    UT_ASSERT_MSG(liveSum != hdr.mapChecksum,
+                  "the live pill list checksums to the header value %04x as "
+                  "well — this case cannot tell one pill list from another",
+                  liveSum);
 
     serverSimDestroy(sim);
     return 0;

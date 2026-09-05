@@ -58,6 +58,18 @@ static inline uint8_t pillPackArmourInTank(uint8_t armour, bool inTank) {
 static inline uint8_t pillArmourFromByte(uint8_t b) { return (uint8_t)(b & 0x0F); }
 static inline bool    pillInTankFromByte(uint8_t b) { return (b & 0x10) != 0; }
 
+/* Bit 5 of the same byte: the x/y sent with this pill are its square right
+ * now. Clear means the recipient was not told — the square is the last one it
+ * was given, which may be where the pill used to be. */
+#define PILL_POS_CURRENT 0x20
+static inline uint8_t pillSetPosCurrent(uint8_t b, bool current) {
+    return (uint8_t)(current ? (b | PILL_POS_CURRENT)
+                             : (b & (uint8_t)~PILL_POS_CURRENT));
+}
+static inline bool    pillPosCurrentFromByte(uint8_t b) {
+    return (b & PILL_POS_CURRENT) != 0;
+}
+
 /* A pillbox range is 8 map squares or 2048 world units */
 #define PILLBOX_RANGE 2048
 

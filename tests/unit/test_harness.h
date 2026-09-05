@@ -821,6 +821,19 @@ int run_view_rects_off(void);
 int run_view_rects_decay(void);
 int run_view_rects_dead_player(void);
 
+/* Per-recipient pill squares over the same rects (test_view_policy_rects.c): a
+ * pill inside them reports its real square with the position-current bit set,
+ * one outside every rect reports the square that recipient was last given with
+ * the bit clear while its owner, armour and in-tank flag keep arriving, the
+ * square corrects itself once the recipient's screen reaches it, the
+ * EVENT_PILL_UPDATE the builder emits is rewritten the same way rather than
+ * dropped, and an advantage brain's snapshot is exempt while a plain computer
+ * player's is not. */
+int run_view_pill_pos_current(void);
+int run_view_pill_pos_reveal(void);
+int run_view_pill_update_event_fogged(void);
+int run_view_pill_pos_bot_advantage(void);
+
 /* Server-side tree hide (test_tree_hide.c): serverSimBuildSnapshot ships a
  * tank standing in trees more than MIN_TREEHIDE_DIST from the recipient on
  * either axis as a TANK_SNAPSHOT_HIDDEN_FLAG stub — in full inside that
@@ -1200,11 +1213,13 @@ int run_map_shadow_round_start_fallback(void);
  * serverSimGetCompressedMap while the two agree and the round-start squares
  * once they do not; and a full-sync snapshot's pill entries and pill events
  * rebuild, in the client's order, the list the header's checksum was taken
- * over. */
+ * over — for a pill the recipient can see, and for one whose square it is not
+ * being told. */
 int run_pill_shadow_tracks_real(void);
 int run_pill_shadow_crc_matches(void);
 int run_pill_shadow_blob_identical(void);
 int run_pill_shadow_fullsync_move_matches(void);
+int run_pill_shadow_withheld_crc_matches(void);
 
 /* Map-event culling over the loopback transport (test_loopback_map_cull.c): a
  * change a wire client cannot see is neither queued to it nor written into its

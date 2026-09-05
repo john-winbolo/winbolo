@@ -6809,6 +6809,14 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                         }
                     }
                 }
+                /* A pill this recipient cannot see keeps the square it was last
+                 * given, rewritten into its own copy of the event rather than
+                 * dropped — the event is the only carrier for that pill's
+                 * armour, owner and in-tank flag between full syncs. */
+                if (evType == EVENT_PILL_UPDATE) {
+                    serverSimFogPillUpdateEvent(sim, (BYTE)c, &evToSend,
+                                                fxViewports, fxViewportCount);
+                }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &evToSend);
                 if (forceReliable || gameEventIsReliable(evType)) {

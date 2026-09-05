@@ -176,10 +176,13 @@ void serverSimShadowSeed(ServerSim *sim, BYTE slot) {
      * whole struct, so every path that can reach a slot's copy goes through a
      * seed first and the handle is never left NULL. */
     sim->clientKnownMap[slot] = &sim->clientKnownMapObj[slot];
+    /* Ahead of the map check below so a slot binds both records together: an
+     * unseeded pill record means "fall back to the live list", which is the
+     * wrong side to fail on once positions are being withheld. */
+    serverSimPillShadowSeed(sim, slot);
     if (sim->sim.mp == NULL) return;
     memcpy(sim->clientKnownMapObj[slot].mapItem, (*sim->sim.mp).mapItem,
            sizeof(sim->clientKnownMapObj[slot].mapItem));
-    serverSimPillShadowSeed(sim, slot);
 }
 
 void serverSimPillShadowSeed(ServerSim *sim, BYTE slot) {
@@ -327,7 +330,52 @@ void serverSimShadowTick(ServerSim *sim) {
     serverSimPillShadowTick(sim);
 }
 
+bool serverSimPillPosVisible(ServerSim *sim, BYTE slot, BYTE pillIdx,
+                             const ViewportRect *vps, int numVps) {
+    if (sim == NULL || slot >= MAX_TANKS || sim->sim.pb == NULL) return false;
+    if (pillIdx >= pillsGetNumPills(&sim->sim.pb) || pillIdx >= MAX_PILLS) {
+        return false;
+    }
+    /* Nothing has been recorded for this slot, so its checksum and its blob are
+     * taken over the live pill list. Withholding here would leave the square it
+     * is sent disagreeing with the square its checksum was taken over. */
+    if (!sim->clientKnownPillValid[slot]) return true;
+    /* An advantage brain is promised the location of every pillbox on the map
+     * even out of visual range, and that promise is served out of the bot's own
+     * client data — fogging its snapshot would quietly make the lobby option
+     * untrue. A plain computer player gets the same view a human does. */
+    if (serverSimIsBot(sim, slot) &&
+        (sim->botMgr.bots[slot].ai == aiYesAdvantage ||
+         sim->botMgr.bots[slot].ai == aiFull)) {
+        return true;
+    }
+    return inAnyViewport(vps, numVps, (*sim->sim.pb).item[pillIdx].x,
+                         (*sim->sim.pb).item[pillIdx].y);
+}
+
+void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
+                                 const ViewportRect *vps, int numVps) {
+    BYTE p;
+
+    if (sim == NULL || ev == NULL || slot >= MAX_TANKS) return;
+    p = ev->data[0];
+    if (sim->sim.pb == NULL || p >= pillsGetNumPills(&sim->sim.pb) ||
+        p >= MAX_PILLS) {
+        return;
+    }
+    if (serverSimPillPosVisible(sim, slot, p, vps, numVps)) {
+        ev->data[4] = pillSetPosCurrent(ev->data[4], true);
+        return;
+    }
+    /* Owner and armourInTank's own bits are left as they are: they are public
+     * and have to keep arriving for a pill nobody can see. */
+    ev->data[1] = sim->clientKnownPillX[slot][p];
+    ev->data[2] = sim->clientKnownPillY[slot][p];
+    ev->data[4] = pillSetPosCurrent(ev->data[4], false);
+}
+
 void serverSimPillShadowTick(ServerSim *sim) {
+    ViewportRect vps[MAX_VIEWPORTS];
     BYTE slot;
     BYTE np;
     BYTE p;
@@ -335,16 +383,19 @@ void serverSimPillShadowTick(ServerSim *sim) {
     if (sim == NULL || sim->sim.pb == NULL) return;
     np = pillsGetNumPills(&sim->sim.pb);
     if (np > MAX_PILLS) np = MAX_PILLS;
-    /* Every client is sent every pill position, so each slot's record simply
-     * follows the live list. Once positions start being withheld this becomes
-     * a per-recipient decision, written only when the position is actually
-     * sent — the rule the terrain copy already follows. It runs here, at the
-     * end of the tick, so the record already holds this frame's pill moves
-     * before the UDP drain filters events and before any snapshot stamps a
-     * checksum over it. */
+    /* A slot's record holds the last square that recipient was given, so only
+     * the pills it can see take this frame's move; one it cannot see keeps the
+     * square it had, however far the pill has since travelled. It runs here, at
+     * the end of the tick, so both event filters and every checksum read a
+     * record that already holds this frame's moves. */
     for (slot = 0; slot < MAX_TANKS; slot++) {
-        if (!sim->clientKnownPillValid[slot]) continue;
+        int numVps;
+        if (!sim->clientKnownPillValid[slot] || !sim->playerConnected[slot]) {
+            continue;
+        }
+        numVps = serverSimBuildViewports(sim, slot, vps, MAX_VIEWPORTS);
         for (p = 0; p < np; p++) {
+            if (!serverSimPillPosVisible(sim, slot, p, vps, numVps)) continue;
             sim->clientKnownPillX[slot][p] = (*sim->sim.pb).item[p].x;
             sim->clientKnownPillY[slot][p] = (*sim->sim.pb).item[p].y;
         }
@@ -1079,6 +1130,21 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
+        /* Per-recipient pill visibility (everything but the square is public):
+         * a pill inside one of this recipient's rects reports its real square
+         * with the position-current bit set; one it cannot see reports the
+         * square it was last given, bit clear, while owner, armour and the
+         * in-tank flag stay real and keep updating. */
+        for (i = 0; i < hdr->pillCount && i < MAX_PILLS; i++) {
+            if (serverSimPillPosVisible(sim, clientIdx, (BYTE)i, viewports,
+                                        numViewports)) {
+                pillsOut[i].armourInTank =
+                    pillSetPosCurrent(pillsOut[i].armourInTank, true);
+            } else {
+                pillsOut[i].x = sim->clientKnownPillX[clientIdx][i];
+                pillsOut[i].y = sim->clientKnownPillY[clientIdx][i];
+            }
+        }
         /* Checksum the terrain and the pill squares this recipient has actually
          * been given — its own records — so the comparison the client makes is
          * against the map and the pill list it was sent. mapCalcChecksum folds
@@ -1198,6 +1264,19 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                     if (!bFriendly) {
                         continue;
                     }
+                }
+                /* A pill this recipient cannot see keeps the square it was last
+                 * given. Rewritten rather than dropped: this event is the only
+                 * carrier for that pill's armour, owner and in-tank flag
+                 * between full syncs. Nothing is written into the record here
+                 * or in the UDP drain's copy of this filter — the tick wrote
+                 * it, before either of them and before the checksum above. */
+                if (evType == EVENT_PILL_UPDATE) {
+                    GameEvent pillEv = sim->events[i];
+                    serverSimFogPillUpdateEvent(sim, clientIdx, &pillEv,
+                                                viewports, numViewports);
+                    eventsOut[outCount++] = pillEv;
+                    continue;
                 }
                 eventsOut[outCount++] = sim->events[i];
             }

@@ -628,6 +628,21 @@ int  serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,
  * live list. */
 bool serverSimGetPillsForSlot(ServerSim *sim, BYTE slot, struct pillsObj *out);
 
+/* Is pill `pillIdx`'s square something this recipient is being shown? True
+ * when the pill stands inside one of the rects the caller built for it. An
+ * advantage brain is exempt, and so is a slot with no record yet — that slot's
+ * checksum and blob read the live list, so its square has to go out real. */
+bool serverSimPillPosVisible(ServerSim *sim, BYTE slot, BYTE pillIdx,
+                             const ViewportRect *vps, int numVps);
+
+/* Reshape one EVENT_PILL_UPDATE for a recipient. It is the only carrier for a
+ * pill's armour, owner and in-tank flag between full syncs, so it is rewritten
+ * and never dropped: the real square with the position-current bit set when the
+ * recipient can see the pill, otherwise the square it already holds with the
+ * bit clear. */
+void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
+                                 const ViewportRect *vps, int numVps);
+
 /* serverSimGetCompressedMap over one slot's copy of the terrain and its record
  * of the pill squares, with the live bases and starts. The blob a client
  * downloads on join or resync comes from here, so it carries the terrain and

@@ -3871,6 +3871,10 @@ set(_unit_test_names
     view_rects_off
     view_rects_decay
     view_rects_dead_player
+    view_pill_pos_current
+    view_pill_pos_reveal
+    view_pill_update_event_fogged
+    view_pill_pos_bot_advantage
     tree_hide_enemy
     tree_hide_ally_option
     view_state_key_grants_rect
@@ -3977,6 +3981,7 @@ set(_unit_test_names
     pill_shadow_crc_matches
     pill_shadow_blob_identical
     pill_shadow_fullsync_move_matches
+    pill_shadow_withheld_crc_matches
     loopback_map_cull
     loopback_map_cull_resync
     view_ally_loopback
