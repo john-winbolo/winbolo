@@ -272,6 +272,7 @@ local wave_bases_restocked = 0
 local vanishing     = false -- a wave is filing off the field right now
 local vanish_queue  = {}    -- slots still to be removed, in order
 local vanish_next_at = nil  -- tick the next removal fires (nil = remove now)
+local horde_estate = nil    -- {bases={[k]=slot}, pills={[n]=slot}} recorded before the wave leaves (see vanish_wave)
 
 -- The HIDDEN wave pills (see PILL_REVEAL_LEAD_TICKS): pill number ->
 -- {x=,y=} the spot to put it back on. Filled at setup with the map's
@@ -376,6 +377,27 @@ end
 -- happen — a wave lasts 15000 ticks and arrives in 450 — but the loss
 -- check and any future early clear can end a wave whenever they like.)
 local function vanish_wave(game, tick)
+  -- Record every base and pill the wave owns BEFORE any attacker is
+  -- removed. The engine migrates a leaving player's estate to a surviving
+  -- teammate and neutralises it when the last one goes; the user wants
+  -- the horde's allegiances restored the moment the field is empty (a
+  -- pill or base may be owned by a slot nobody occupies -- John), so the
+  -- breather is played against the horde's guns, not neutral ones. Only
+  -- horde-owned entries are recorded; whatever the defenders captured is
+  -- left exactly as it is.
+  horde_estate = { bases = {}, pills = {} }
+  for k = 1, game.num_bases() do
+    local bi = game.base(k)
+    if bi and bi.owner ~= nil and wave_bots[bi.owner] then
+      horde_estate.bases[k] = bi.owner
+    end
+  end
+  for n = 1, game.num_pills() do
+    local pi = game.pill(n)
+    if pi and pi.owner ~= nil and wave_bots[pi.owner] then
+      horde_estate.pills[n] = pi.owner
+    end
+  end
   spawn_left = 0
   spawn_next_at = nil
   vanish_queue = {}
@@ -391,6 +413,28 @@ local function vanish_wave(game, tick)
   -- first attacker disappears -- the caller mutes on this tick.
   vanish_next_at = tick + NEWSWIRE_MUTE_LEAD_TICKS
   return #vanish_queue
+end
+
+-- The last attacker is gone: put every base and pill the wave owned back
+-- in its recorded slot (absent players can own things), unless the
+-- defenders captured it meanwhile or it is riding in a tank.
+local function restore_horde_estate(game)
+  if not horde_estate then return 0 end
+  local n = 0
+  for k, slot in pairs(horde_estate.bases) do
+    local bi = game.base(k)
+    if bi and (bi.owner == nil or bi.owner > 5) and bi.owner ~= slot then
+      game.set_base_owner(k, slot); n = n + 1
+    end
+  end
+  for pn, slot in pairs(horde_estate.pills) do
+    local pi = game.pill(pn)
+    if pi and not pi.in_tank and (pi.owner == nil or pi.owner > 5) and pi.owner ~= slot then
+      game.set_pill_owner(pn, slot); n = n + 1
+    end
+  end
+  horde_estate = nil
+  return n
 end
 
 -- Pop at most one queued removal. Returns true on the tick the LAST wave
@@ -1228,6 +1272,7 @@ function on_tick(game, tick)
   local wave_over = pump_vanish_queue(game, tick)
 
   if wave_over then
+    restore_horde_estate(game)
     -- The last attacker has left: the newswire comes back
     -- NEWSWIRE_MUTE_TAIL_TICKS later (lifted at the top of on_tick). The
     -- breather still keys off THIS tick, exactly as before -- it just
