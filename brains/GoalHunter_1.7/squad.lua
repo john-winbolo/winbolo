@@ -106,10 +106,12 @@ end
 -- "At least this many members of a blitz should be pill_suiciders." At GO the
 -- commander counts the suiciders already in the party (itself included, whether
 -- by the "suicider" token or the harasser slate) and designates that many random
--- non-suicider SOLDIERS to make up the difference — never itself, never one that
--- already is one. 0 (the default) means it never designates, which is exactly
--- today's behaviour. Per-bot, like the sizes above; the "blitzsuiciders=N" token
--- replaces it.
+-- non-suicider SOLDIERS to make up the difference — never one that already is
+-- one. Soldiers are preferred (the commander is the tank that leads the take),
+-- but if they can't cover the minimum the commander designates ITSELF too, so
+-- blitzsuiciders=4 on a party of 4 really does field four suiciders. 0 (the
+-- default) means it never designates, which is exactly today's behaviour.
+-- Per-bot, like the sizes above; the "blitzsuiciders=N" token replaces it.
 local BLITZ_MIN_SUICIDERS = C.BLITZ_MIN_SUICIDERS or 0
 M.blitz_suiciders_source = "default"
 
@@ -153,7 +155,8 @@ end
 -- soldiers uniformly at random from the ones that are not suiciders already, and
 -- queues a "bsu <pill> <pn>" broadcast for each (init.lua's blitz TX block sends
 -- them). Uses math.random — the brain's seeded RNG — so a -brain-lua-seed run
--- designates the same tanks every time.
+-- designates the same tanks every time. If the soldiers can't cover the
+-- minimum, the commander finishes the job by designating itself (see below).
 function M.blitz_designate_suiciders(state, info, now, our_pid)
   local want = BLITZ_MIN_SUICIDERS
   if want <= 0 or not our_pid then return end
@@ -174,6 +177,22 @@ function M.blitz_designate_suiciders(state, info, now, our_pid)
     table.remove(pool, i)
     need = need - 1
   end
+  -- Soldiers alone couldn't make the minimum (too few of them, or they are all
+  -- suiciders already) → the commander designates ITSELF as well. Same
+  -- temporary blitz-suicider state a "bsu" broadcast installs on a soldier
+  -- (comms.lua), so it expires exactly the same way: pill gone/ours, off the
+  -- take, BLITZ_SUICIDER_MAX_TICKS backstop, or our own death via
+  -- reset_blitz_state. `by = self_pn` marks it as self-designated — the
+  -- expiry check in update() skips its commander-gone test for that case (we
+  -- are the commander, and we never appear in our own ally_state).
+  -- This is what makes blitzsuiciders=4 on a party of 4 field four suiciders.
+  local self_designated = false
+  if need > 0 and not state.is_pill_suicider and not state.blitz_suicider then
+    state.blitz_suicider = { pill = our_pid, by = self_pn, since = now }
+    self_designated = true
+    have = have + 1
+    need = need - 1
+  end
   if #picked > 0 then
     local q = state._blitz_su_send
     if not q then q = {}; state._blitz_su_send = q end
@@ -182,11 +201,15 @@ function M.blitz_designate_suiciders(state, info, now, our_pid)
   if BRAIN_DEBUG_MODE then
     local names = {}
     for _, pn in ipairs(picked) do names[#names + 1] = "p" .. tostring(pn) end
+    if self_designated then names[#names + 1] = "self" end
     local why = ""
-    if #picked == 0 then
-      if #members == 0 then why = " (no soldiers)"
+    if #names == 0 then
+      if #members == 0 and have >= want then why = " (no soldiers, quota already met)"
+      elseif #members == 0 then why = " (no soldiers)"
       elseif need <= 0 then why = " (quota already met)"
       else why = " (all soldiers already suiciders)" end
+    elseif need > 0 then
+      why = string.format(" (still %d short)", need)
     end
     print2(string.format("BLITZ_SUICIDER t=%d pill=#%s GO members=%d suiciders=%d min=%d designate=[%s]%s",
       now, tostring(our_pid), #members + 1, have, want, table.concat(names, " "), why))
@@ -757,7 +780,11 @@ function M.update(state, info, now, world)
       -- immediately. After the grace, being off the take really does end it.
       if not on_it and (now - (bs.since or now)) > 50 then why = "left_take" end
     end
-    if not why and bs.by then
+    -- bs.by == self_pn means WE designated ourselves (blitz_designate_suiciders
+    -- couldn't make the minimum from the soldiers). Skip the commander-gone
+    -- test in that case: we are the commander, and we never have an
+    -- ally_state slot of our own, so the test would cancel it instantly.
+    if not why and bs.by and bs.by ~= self_pn then
       local cs      = ally_state.get(bs.by)
       local cactive = cs and cs.active and (now - (cs.last_tick or 0)) <= (C.SQUAD_ALLY_MAX_AGE or 1750)
       local cdead   = state.tank_dead_at and state.tank_dead_at[bs.by]
