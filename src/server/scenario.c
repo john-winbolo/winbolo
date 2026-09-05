@@ -511,9 +511,16 @@ static int l_spawn_bot(lua_State *L) {
     if (hasTeam) {
         st->teamOf[slot] = (BYTE)team;
         serverSimSetBotTeams(sim, st->teamOf, MAX_TANKS);
-        /* Restore the lobby-team mirror the create path just reset. */
+        /* Restore the lobby-team mirror the create path just reset, then
+         * publish the alliance matrix. The CTRL_PLAYER_JOIN that
+         * serverSimCreateBot broadcast above went out BEFORE this slot had
+         * a team, so its allies list was empty; without the reset a remote
+         * client never learns the wave bots are allied, renders them as
+         * separate sides, and reports every scripted base handover
+         * between them as an enemy steal. One event per spawn. */
         if (team >= 0 && team < MAX_TANKS) {
             serverSimSetTeamBatch(sim, slot, (BYTE)team);
+            serverSimReapplyTeamAlliances(sim);
         }
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
