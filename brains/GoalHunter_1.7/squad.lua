@@ -216,6 +216,103 @@ function M.blitz_designate_suiciders(state, info, now, our_pid)
   end
 end
 
+-- ── Contested take → the WHOLE party goes in as suiciders ─────────────────
+-- The take of a pill is CONTESTED when a live hostile TANK is sitting within
+-- C.BLITZ_CONTESTED_RANGE tiles (euclidean) of that pill. That is the take
+-- that most often gets undone: we kill the pill, the defender's LGM walks
+-- straight back out and repairs it while our survivors are reloading and
+-- backing off. So on a contested take every blitzer is made a suicider —
+-- in practice at least one survives the charge, and a suicider is the role
+-- that actually goes and kills the repairing LGM.
+--
+-- Only REAL sightings count. perc.enemy_tanks is built from this tick's
+-- OBJECT_TANK objects carrying OBJECT_HOSTILE, so allies are never in it and
+-- neither are ghosts (perception keeps those in perc.ghost_tanks — a ghost is
+-- a GUESS at where an out-of-sight tank went, no basis for rewriting the whole
+-- party's role).
+--
+-- Returns the nearest such tank's player number (ob.idnum == player number for
+-- tanks) and its distance from the pill in tiles, or nil when uncontested.
+function M.blitz_contested_enemy(state, pmx, pmy)
+  if not (pmx and pmy) then return nil end
+  local perc = state and state.perc
+  local ets  = perc and perc.enemy_tanks
+  if not ets then return nil end
+  local r     = C.BLITZ_CONTESTED_RANGE or 9
+  local r2    = r * r
+  local best, best_d2 = nil, math.huge
+  for i = 1, #ets do
+    local et = ets[i]
+    local dx = (et.mx or 0) - pmx
+    local dy = (et.my or 0) - pmy
+    local d2 = dx * dx + dy * dy
+    if d2 <= r2 and d2 < best_d2 then
+      best_d2 = d2
+      best    = et
+    end
+  end
+  if not best then return nil end
+  return best.id, math.sqrt(best_d2)
+end
+
+-- Commander-only, and at most once per take (the caller holds the latch on the
+-- goal). Designates EVERY member of the blitz — all soldiers AND the commander
+-- itself — as a temporary blitz suicider, regardless of BLITZ_MIN_SUICIDERS.
+-- Members that are already suiciders (permanent token, harasser slate, or a
+-- designation queued moments ago by blitz_designate_suiciders) are left exactly
+-- as they are. Same "bsu" verb and the same expiry rules as the quota
+-- designation — pill gone/ours, off the take, commander gone,
+-- BLITZ_SUICIDER_MAX_TICKS, or death — so nothing about the wind-down changes.
+-- Returns the number of tanks newly designated.
+function M.blitz_designate_all_suiciders(state, info, now, our_pid, enemy_pn, enemy_dist)
+  if not our_pid then return 0 end
+  local self_pn = info and info.player_number or -1
+  local members = M.blitz_members(state, now, self_pn, our_pid)
+  local q = state._blitz_su_send
+  -- Anything already queued for this take (the BLITZ_MIN_SUICIDERS top-up runs
+  -- at the same GO, and only one bsu goes out per tick) has not reached the
+  -- soldier yet, so its broadcast psu flag still reads 0. Skip those, or we
+  -- send a second bsu and restart its BLITZ_SUICIDER_MAX_TICKS clock.
+  local queued = nil
+  if q then
+    for _, d in ipairs(q) do
+      if d.pill == our_pid then queued = queued or {}; queued[d.pn] = true end
+    end
+  end
+  local names, n = {}, 0
+  for _, m in ipairs(members) do
+    if not m.suicider and not (queued and queued[m.pn]) then
+      if not q then q = {}; state._blitz_su_send = q end
+      q[#q + 1] = { pill = our_pid, pn = m.pn, why = "contested" }
+      names[#names + 1] = "p" .. tostring(m.pn)
+      n = n + 1
+    end
+  end
+  -- "All blitzers" includes the commander: unlike the quota path (which spares
+  -- the tank that has to survive to lead the take) a contested take wants every
+  -- gun in, us included. Self-designation uses `by = self_pn`, which the expiry
+  -- check reads as "we designated ourselves" and so skips its commander-gone
+  -- test — see update().
+  if not state.is_pill_suicider and not state.blitz_suicider then
+    state.blitz_suicider = { pill = our_pid, by = self_pn, since = now, why = "contested" }
+    names[#names + 1] = "self"
+    n = n + 1
+  end
+  print2(string.format(
+    "BLITZ_CONTESTED t=%d pill=#%s enemy=p%s dist=%.1f -> all suiciders (%d designated) party=%d designate=[%s]",
+    now, tostring(our_pid), tostring(enemy_pn), enemy_dist or -1,
+    n, #members + 1, table.concat(names, " ")))
+  return n
+end
+
+-- One canonical string for every place that DISPLAYS whether a take is
+-- contested, next to the quorum / suicider counts it changes the meaning of.
+function M.blitz_contested_label(c)
+  if not c then return "contested{no}" end
+  return string.format("contested{yes enemy=p%s dist=%.1f t=%d designated=%d}",
+                       tostring(c.pn), c.dist or -1, c.tick or -1, c.n or 0)
+end
+
 -- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
 -- comes back with a clean slate — no stale negotiation, offer, reject,
 -- roster, watchdog, broadcast latch, or call registry leaking across the
@@ -819,7 +916,11 @@ function M.update(state, info, now, world)
   elseif state.blitz_suicider then
     state.is_pill_suicider = true
     state.is_harasser = false
-    state.suicider_src = "blitz"
+    -- Name WHICH blitz rule designated us: a contested take (every blitzer,
+    -- BLITZ_CONTESTED_ALL_SUICIDERS) or the BLITZ_MIN_SUICIDERS quota top-up.
+    -- Display only — the designation and its expiry are identical either way.
+    state.suicider_src = (state.blitz_suicider.why == "contested")
+                         and "blitz_contested" or "blitz"
   else
     state.is_pill_suicider = _designated and state._pill_suicider_map or false
     state.is_harasser = _designated and not state._pill_suicider_map
@@ -838,7 +939,9 @@ function M.update(state, info, now, world)
     local extra = ""
     local bs = state.blitz_suicider
     if bs then
-      extra = string.format(" blitz_suicider=true pill=#%s by=p%s", tostring(bs.pill), tostring(bs.by))
+      extra = string.format(" blitz_suicider=true pill=#%s by=p%s reason=%s",
+                            tostring(bs.pill), tostring(bs.by),
+                            (bs.why == "contested") and "blitz_contested" or "blitz_quota")
     elseif state._blitz_su_end_why then
       extra = string.format(" blitz_suicider=false reason=%s", state._blitz_su_end_why)
       state._blitz_su_end_why = nil
@@ -2146,6 +2249,15 @@ function M.draw_blitz_wait_timeout(state, info, now)
                                v.blitz_max or 2, tostring(v.blitz_src or "default"),
                                short and "  SHORT -> abandon at timeout" or ""),
                  "topright", short and 240 or 200, short and 160 or 220, short and 90 or 200, 255)
+    y = y + dy
+  end
+  -- Contested: a hostile tank within BLITZ_CONTESTED_RANGE of the pill turns
+  -- EVERY blitzer into a temporary suicider at GO, so it belongs right under
+  -- the party line it changes the meaning of.
+  do
+    local c = v.contested
+    viz.hud_text("blitz_wait_timeout", x, y, M.blitz_contested_label(c), "topright",
+                 c and 240 or 170, c and 140 or 180, c and 140 or 170, 255)
     y = y + dy
   end
   viz.hud_text("blitz_wait_timeout", x, y, string.format("wait %d/%d  rem %d (%.1fs)  base %d +ext %d",

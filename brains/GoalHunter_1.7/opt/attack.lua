@@ -3634,6 +3634,32 @@ local function blitz_tank_count(goal, state, info)
   return 1 + (total or 0)
 end
 
+-- CONTESTED TAKE (2026-09-05, C.BLITZ_CONTESTED_ALL_SUICIDERS): commander-only.
+-- If a live hostile tank is sitting within C.BLITZ_CONTESTED_RANGE tiles of the
+-- pill we are taking, the whole party goes in as temporary pill_suiciders —
+-- every soldier and the commander itself — regardless of BLITZ_MIN_SUICIDERS.
+-- Called at BOTH GO sites, and again on the commander's replans while the take
+-- is live so an enemy that arrives AFTER GO still flips the party. Latched on
+-- the goal (`_blitz_contested_done`), so it fires at most once per take and
+-- dies with the goal; expiry of the designations themselves is unchanged.
+local function blitz_contested_check(goal, state, world, info, now)
+  if not C.BLITZ_CONTESTED_ALL_SUICIDERS then return end
+  if goal._blitz_contested_done then return end
+  local pid = goal.target_id
+  if not pid then return end
+  local p = world and world.pills and world.pills[pid]
+  local pmx = (p and p.mx) or goal.mx
+  local pmy = (p and p.my) or goal.my
+  if not (pmx and pmy) then return end
+  local epn, edist = squad.blitz_contested_enemy(state, pmx, pmy)
+  if not epn then return end
+  goal._blitz_contested_done = true
+  local n = squad.blitz_designate_all_suiciders(state, info, now, pid, epn, edist)
+  -- Kept on the goal so every blitz panel / DECISION line that shows the quorum
+  -- or the suicider count can show contested{...} beside it.
+  goal._blitz_contested = { pn = epn, dist = edist, tick = now, n = n }
+end
+
 -- Effective loiter-wait cap. Starts at ANGER_WAIT_MAX and shrinks (divisors
 -- stack) when sitting out the pill's anger cooldown is cheap or pointless:
 --   * pill one hit from death — a single shot kills it even fully angry, so the
@@ -3692,6 +3718,19 @@ function M.update_attack_substate(goal, state, world, info)
   local pmx, pmy = goal.mx, goal.my
 
   if not goal.substate then goal.substate = "plan_position" end
+
+  -- CONTESTED TAKE, re-checked. The GO-time check only sees the enemies that
+  -- were near the pill at GO; a defender that rolls up mid-charge should flip
+  -- the party just the same. Commander only, only once GO has actually gone out
+  -- (goal._blitz_go / state.squad_blitz_go — the same flags that broadcast bgo),
+  -- and only on the bot's REPLAN ticks: init.lua stamps state.replan_this_tick
+  -- above this call, and a replan is already the cadence at which this bot
+  -- re-reads the world. Cheap either way (a scan of this tick's visible hostile
+  -- tanks) and latched, so it does nothing at all once the take is contested.
+  if state.squad_role == "c" and goal._blitz and state.replan_this_tick
+     and (goal._blitz_go or state.squad_blitz_go) and not goal._blitz_contested_done then
+    blitz_contested_check(goal, state, world, info, now)
+  end
 
   -- Squad blitz: a soldier attacking its commander's blitz pill flags the goal
   -- and, once committed, heads straight to its NEGOTIATED engage spot via the
@@ -4582,6 +4621,9 @@ function M.update_attack_substate(goal, state, world, info)
           goal._blitz_su_done = true
           squad.blitz_designate_suiciders(state, info, now, goal.target_id)
         end
+        -- ...and if an enemy tank is already sitting on the pill we're charging,
+        -- the take is CONTESTED: everyone goes in as a suicider.
+        blitz_contested_check(goal, state, world, info, now)
         return
       end
     end
@@ -5029,6 +5071,9 @@ function M.update_attack_substate(goal, state, world, info)
           goal._blitz_su_done = true
           squad.blitz_designate_suiciders(state, info, now, goal.target_id)
         end
+        -- ...and if an enemy tank is already sitting on the pill we're charging,
+        -- the take is CONTESTED: everyone goes in as a suicider.
+        blitz_contested_check(goal, state, world, info, now)
         commit_fire()
       end
       return

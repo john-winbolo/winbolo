@@ -16711,8 +16711,11 @@ function M.get_pool_breakdown_json(state)
         detail_map[#detail_map + 1] = string.format(
           "suicider:pill_suicider role (source=%s%s) -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
           tostring(state.suicider_src or "?"),
-          _sui_bs and string.format(", TEMPORARY for blitz pill #%s designated by p%s",
-                                    tostring(_sui_bs.pill), tostring(_sui_bs.by)) or "",
+          _sui_bs and string.format(", TEMPORARY for blitz pill #%s designated by p%s, %s",
+                                    tostring(_sui_bs.pill), tostring(_sui_bs.by),
+                                    (_sui_bs.why == "contested")
+                                      and "contested{yes -- a hostile tank was within BLITZ_CONTESTED_RANGE of that pill, so EVERY blitzer was designated}"
+                                      or  "contested{no -- BLITZ_MIN_SUICIDERS quota top-up}") or "",
           tostring(w.kind or (gc and gc.kind) or pname), suicider_mult,
           C.PILL_SUICIDER_DEFEND_MULT or 1.0, C.PILL_SUICIDER_OTHER_MULT or 1.0)
       end

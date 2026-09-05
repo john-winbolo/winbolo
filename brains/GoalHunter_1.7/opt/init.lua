@@ -6980,8 +6980,15 @@ function Brain.think(info)
         -- Blitz suicider designations queued by squad.blitz_designate_suiciders
         -- at GO. One per tick, oldest first, and dropped from the queue only
         -- once the send actually goes out (try_send is batched and can refuse).
+        -- The optional trailing letter is WHY: "c" = contested take (every
+        -- blitzer is designated), absent = the ordinary BLITZ_MIN_SUICIDERS
+        -- quota top-up. It only feeds the receiver's [role] line / DECISION
+        -- breakdown; an older peer that ignores it still reads the pill and pn.
         local _d = state._blitz_su_send[1]
-        if try_send(string.format("/info bsu %d %d", _d.pill, _d.pn), 0) then
+        local _msg = (_d.why == "contested")
+                     and string.format("/info bsu %d %d c", _d.pill, _d.pn)
+                     or  string.format("/info bsu %d %d", _d.pill, _d.pn)
+        if try_send(_msg, 0) then
           table.remove(state._blitz_su_send, 1)
         end
       elseif state._blitz_rebroadcast and cur_call then
