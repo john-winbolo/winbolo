@@ -1573,6 +1573,12 @@
 #define STR_MENU_CLASSIC_MODE_TIP           2010
 #define STR_DLGLOBBY_ALLIES_TREES_CB        2011
 #define STR_DLGLOBBY_ALLIES_TREES_TIP       2012
+/* Settings > Display & Sound > Full Screen */
+#define STR_DLGSETTINGS_FULLSCREEN          2013
+#define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014
+#define STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP 2015
+#define STR_DLGSETTINGS_NEWS_AUTOHIDE       2016
+#define STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP   2017
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468

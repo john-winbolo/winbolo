@@ -1411,6 +1411,12 @@ static const LangEntry langTable[] = {
     {2010, "The server has classic mode on, so this view is turned off."},
     {2011, "See allies in trees"},
     {2012, "Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off."},
+    /* Settings > Display & Sound > Full Screen */
+    {2013, "Full Screen"},
+    {2014, "Newswire transparency"},
+    {2015, "How much of the map shows through the newswire along\nthe bottom of the full screen view. 0% is solid, and\nthe slider stops at 90% so it cannot be made invisible."},
+    {2016, "Auto-hide the newswire"},
+    {2017, "Drop the newswire off the bottom of the screen after\nno new messages have been received for a while, and\nslide it back up on the next message. Off keeps it on\nscreen the whole game."},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the

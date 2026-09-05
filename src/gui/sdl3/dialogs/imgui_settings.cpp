@@ -743,6 +743,7 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
 #endif
 
 #if !BOLO_MOBILE
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
 #if !defined(__EMSCRIPTEN__)
     /* ---- Full screen ---- */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
@@ -770,6 +771,32 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                          "instead of black (when your monitor's aspect "
                          "ratio differs from the game).");
     }
+
+#if !defined(__EMSCRIPTEN__)
+    /* ---- The newswire on the full screen map ---- Both settings follow the
+       map view they belong to, which is desktop and Deck only.  Applied as
+       the slider moves so the strip changes under it, and written to the
+       preferences once it is let go. */
+    if (!uiModeIsTablet()) {
+        int trans = sdl3DrawGetNewswireTransparency();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
+                             &trans, 0, OVERVIEW_NEWS_TRANSPARENCY_MAX,
+                             "%d%%")) {
+            sdl3DrawSetNewswireTransparency(trans);
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP));
+        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+        bool autoHide = sdl3DrawGetNewswireAutoHide();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE),
+                            &autoHide)) {
+            sdl3DrawSetNewswireAutoHide(autoHide);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
+    }
+#endif
 #endif
 
     /* ---- Skin ---- */

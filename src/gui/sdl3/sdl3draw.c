@@ -196,6 +196,25 @@ static Uint64 gOverviewNewsSlideTick = 0;
 #define OVERVIEW_NEWS_HOLD_MS  30000
 #define OVERVIEW_NEWS_SLIDE_MS 300
 
+/* The strip rides up over the middle of the map rather than sitting in a
+   corner out of the way, so how much of the terrain reads through it is the
+   player's to set, in Settings > Display & Sound > Full Screen. Percent
+   transparent: 0 is solid, and the cap stops short of invisible — turning the
+   strip off altogether is what the auto-hide tick is for. All three parts of
+   it take the same share: the backing, the frame round it, and the slice of
+   panel art carrying the two lines of text.
+
+   With auto-hide off the strip stays up for the whole game instead of
+   dropping off the bottom edge once the newswire has been quiet. */
+#define OVERVIEW_NEWS_TRANSPARENCY_DEFAULT 30
+
+/* The alpha the HUD panels' backing is filled at, and the value the strip
+   takes its own share of. */
+#define OVERVIEW_HUD_BACK_ALPHA 160
+
+static int  gOverviewNewsTransparency = OVERVIEW_NEWS_TRANSPARENCY_DEFAULT;
+static bool gOverviewNewsAutoHide     = TRUE;
+
 /* How far the map is taken down behind the returning-to-lobby caption. Dark
    enough that the caption reads and the round is plainly over, light enough
    that the map is still the thing on screen. */
@@ -731,6 +750,28 @@ bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out) {
   if (!gOverviewInWindow || !gOverviewHudValid || out == NULL) return false;
   *out = gOverviewHud;
   return true;
+}
+
+/* Both settings are clamped here rather than trusted, so a hand-edited
+   WinBolo.json cannot leave the strip invisible or blacker than the panels. */
+void sdl3DrawSetNewswireTransparency(int percent) {
+  if (percent < 0) percent = 0;
+  if (percent > OVERVIEW_NEWS_TRANSPARENCY_MAX) {
+    percent = OVERVIEW_NEWS_TRANSPARENCY_MAX;
+  }
+  gOverviewNewsTransparency = percent;
+}
+
+int sdl3DrawGetNewswireTransparency(void) {
+  return gOverviewNewsTransparency;
+}
+
+void sdl3DrawSetNewswireAutoHide(bool on) {
+  gOverviewNewsAutoHide = on ? TRUE : FALSE;
+}
+
+bool sdl3DrawGetNewswireAutoHide(void) {
+  return gOverviewNewsAutoHide;
 }
 
 int sdl3DrawGetSheetScale(void) {
@@ -1703,18 +1744,22 @@ static bool hudSourceRender(ClientSim *cs, bool showPillLabels, bool showBaseLab
 
 /* A thin chrome frame just outside one HUD backing rect, in the background
    art's greys: a light line on the outside, the chrome grey as the body, a
-   dark line against the backing — the classic window bevel at HUD scale. */
-static void sdl3DrawOverviewHudFrame(const SDL_FRect *r, float scale) {
+   dark line against the backing — the classic window bevel at HUD scale.
+   The panel's own opacity comes in as alpha: 255 for the solid panels, the
+   newswire's value for the strip. The caller leaves the draw blend mode on
+   BLEND, which an alpha of 255 comes out of unchanged. */
+static void sdl3DrawOverviewHudFrame(const SDL_FRect *r, float scale,
+                                     Uint8 alpha) {
   int body = (int)SDL_ceilf(2.0f * scale);
   if (body < 2) body = 2;
   int rings = body + 2;   /* + the light outer and dark inner lines */
   for (int i = 1; i <= rings; i++) {
     if (i == 1) {
-      SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, 255);
+      SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, alpha);
     } else if (i == rings) {
-      SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, 255);
+      SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, alpha);
     } else {
-      SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, 255);
+      SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, alpha);
     }
     SDL_FRect o = { r->x - (float)i, r->y - (float)i,
                     r->w + 2.0f * (float)i, r->h + 2.0f * (float)i };
@@ -1772,7 +1817,10 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
        everything below reads the adjusted rects. */
     Uint64 now     = SDL_GetTicks();
     Uint64 lastMsg = sdl3DrawGetMessageActivityTick();
-    bool newsWanted = lastMsg != 0 && (now - lastMsg) < OVERVIEW_NEWS_HOLD_MS;
+    /* Auto-hide off wants it up whatever the newswire has been doing, so it
+       rides up on the next frame and stays there. */
+    bool newsWanted = !gOverviewNewsAutoHide ||
+                      (lastMsg != 0 && (now - lastMsg) < OVERVIEW_NEWS_HOLD_MS);
     float step = (gOverviewNewsSlideTick == 0)
                      ? 1.0f
                      : (float)(now - gOverviewNewsSlideTick) /
@@ -1812,9 +1860,14 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     float originX = 0.0f;
     float originY = menuBarHeight;
 
+    /* The strip's share of every colour it is drawn in, from the setting. */
+    int   newsOpaque    = 100 - gOverviewNewsTransparency;
+    Uint8 newsAlpha     = (Uint8)((255 * newsOpaque) / 100);
+    Uint8 newsBackAlpha = (Uint8)((OVERVIEW_HUD_BACK_ALPHA * newsOpaque) / 100);
+
     /* Translucent backing, so the map still reads between the panels. */
     SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 160);
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, OVERVIEW_HUD_BACK_ALPHA);
     SDL_FRect colBack = { originX + hud.columnX, originY + hud.columnY,
                           hud.columnW, hud.columnH };
     SDL_FRect buildBack = { originX + hud.buildX, originY + hud.buildY,
@@ -1823,15 +1876,35 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
                            hud.newswireW, hud.newswireH };
     SDL_RenderFillRect(gRenderer, &colBack);
     SDL_RenderFillRect(gRenderer, &buildBack);
-    SDL_RenderFillRect(gRenderer, &newsBack);
-    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+
+    /* The newswire's backing is only the margin between its frame and the
+       slice, not the whole rect. The slice is translucent, and a fill under
+       it would darken the map through it a second time — the strip would come
+       out a good deal less see-through than the setting asked for. The margin
+       is what the layout left round the slice on every side. */
+    {
+      float pad = hud.el[OVERVIEW_HUD_NEWSWIRE].dstX - hud.newswireX;
+      if (pad > 0.0f) {
+        SDL_FRect ring[4] = {
+          { newsBack.x, newsBack.y, newsBack.w, pad },
+          { newsBack.x, newsBack.y + newsBack.h - pad, newsBack.w, pad },
+          { newsBack.x, newsBack.y + pad, pad, newsBack.h - 2.0f * pad },
+          { newsBack.x + newsBack.w - pad, newsBack.y + pad, pad,
+            newsBack.h - 2.0f * pad }
+        };
+        SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, newsBackAlpha);
+        SDL_RenderFillRects(gRenderer, ring, 4);
+      }
+    }
 
     /* The chrome edging the classic window puts around its panels; the
        newswire strip sits on the bottom edge, so its bottom line is
-       clipped by the window and the rest frames it. */
-    sdl3DrawOverviewHudFrame(&colBack, hud.scale);
-    sdl3DrawOverviewHudFrame(&buildBack, hud.scale);
-    sdl3DrawOverviewHudFrame(&newsBack, hud.scale);
+       clipped by the window and the rest frames it. Drawn before the blend
+       mode goes back to NONE, since the strip's frame is translucent. */
+    sdl3DrawOverviewHudFrame(&colBack, hud.scale, 255);
+    sdl3DrawOverviewHudFrame(&buildBack, hud.scale, 255);
+    sdl3DrawOverviewHudFrame(&newsBack, hud.scale, newsAlpha);
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
 
     /* The ridge across the column between the base bars and the tank bars,
        in the same greys as the frames: grey body, light top, dark bottom. */
@@ -1848,10 +1921,11 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
       SDL_RenderFillRect(gRenderer, &edge);
     }
 
-    /* The chrome is opaque, like the classic panel blits, so the backing
-       shows only in the gaps between the pieces. Linear filtering because
-       the column is a downscale from gZoomFactor to the fit scale, and
-       nearest aliases the panel artwork and the digits. */
+    /* The panel art is opaque, like the classic panel blits, so the backing
+       shows only in the gaps between the pieces — the newswire slice is the
+       one exception, blended over the map at the strip's own alpha. Linear
+       filtering because the column is a downscale from gZoomFactor to the fit
+       scale, and nearest aliases the panel artwork and the digits. */
     SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_NONE);
     SDL_SetTextureScaleMode(gHudSrcTex, SDL_SCALEMODE_LINEAR);
     for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
@@ -1863,10 +1937,23 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
          on pixel centres and grey where it straddled two. It is drawn below
          at the scale it is shown at instead. */
       if (i == OVERVIEW_HUD_MANSTATUS) continue;
+      /* The one translucent piece. The source frame is cleared and filled
+         opaque, so every texel under the slice is alpha 255 and the mod is
+         what sets the strip's opacity on its own. Put back straight after:
+         the texture is the source for every other panel and for the next
+         frame's blits. */
+      if (i == OVERVIEW_HUD_NEWSWIRE) {
+        SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(gHudSrcTex, newsAlpha);
+      }
       SDL_FRect src = { (float)(e->srcX * gZoomFactor), (float)(e->srcY * gZoomFactor),
                         (float)(e->srcW * gZoomFactor), (float)(e->srcH * gZoomFactor) };
       SDL_FRect dst = { originX + e->dstX, originY + e->dstY, e->dstW, e->dstH };
       SDL_RenderTexture(gRenderer, gHudSrcTex, &src, &dst);
+      if (i == OVERVIEW_HUD_NEWSWIRE) {
+        SDL_SetTextureAlphaMod(gHudSrcTex, 255);
+        SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_NONE);
+      }
     }
 
     /* The LGM indicator, drawn rather than copied. The black behind it stands
