@@ -3997,6 +3997,7 @@ set(_unit_test_names
     console_info_and_status
     console_savemap_path
     console_unknown_command_is_inert
+    console_say_keeps_case
     console_kick_and_host
     console_kick_host_without_newline
 )

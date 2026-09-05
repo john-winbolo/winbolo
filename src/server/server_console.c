@@ -107,14 +107,18 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
   } else if (strncmp(keyBuff, "savemap", 7) == 0) {
     serverConsoleSaveMap(ops, saveBuff);
   } else if (strncmp(keyBuff, "say ", 4) == 0) {
-    ops->say(keyBuff+4);
+    /* Read the message out of saveBuff, not keyBuff: keyBuff has been
+     * lower-cased so the command word can be matched, and players were
+     * being sent the flattened copy of it. */
+    const char *text = saveBuff + 4;
+    ops->say(text);
     {
         char pstr[256];
-        int len = (int)strlen(keyBuff + 4);
-        if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
+        int len = (int)strlen(text);
+        if (len > 0 && text[len - 1] == '\n') len--;
         if (len > 255) len = 255;
         pstr[0] = (char)len;
-        memcpy(pstr + 1, keyBuff + 4, len);
+        memcpy(pstr + 1, text, len);
         ops->logSay(pstr);
     }
   } else if(strncmp(keyBuff, "status", 6) == 0){

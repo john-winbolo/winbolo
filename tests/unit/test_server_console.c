@@ -212,6 +212,49 @@ int run_console_kick_and_host(void) {
     return 0;
 }
 
+/* say sends the message to every player and records it in the replay log.
+ * Both copies must read the operator's own capitalisation: the command
+ * word is matched against a lower-cased copy of the line, and the message
+ * used to be taken from that copy, so "Say Round starts in 5" reached
+ * every player as "round starts in 5". */
+int run_console_say_keeps_case(void) {
+    recReset();
+    runLine("Say Round starts in 5\n");
+    UT_ASSERT_MSG(g_rec.sayCalls == 1,
+                  "say should broadcast once (calls=%d)", g_rec.sayCalls);
+    /* The broadcast still carries the line's trailing newline — trimming
+     * that is a separate change. */
+    UT_ASSERT_MSG(strcmp(g_rec.lastSay, "Round starts in 5\n") == 0,
+                  "the broadcast should keep the operator's case, got '%s'",
+                  g_rec.lastSay);
+    UT_ASSERT_MSG(g_rec.logSayCalls == 1 &&
+                  strcmp(g_rec.lastLog, "Round starts in 5") == 0,
+                  "the logged message should keep the operator's case, got '%s'",
+                  g_rec.lastLog);
+    UT_ASSERT_MSG(g_rec.lastLogLen == 17,
+                  "the pascal length byte should count the trimmed message, got %d",
+                  g_rec.lastLogLen);
+
+    /* A line with no trailing newline logs the whole message. */
+    recReset();
+    runLine("say GG");
+    UT_ASSERT_MSG(g_rec.sayCalls == 1 && strcmp(g_rec.lastSay, "GG") == 0,
+                  "say without a newline should broadcast the message, got '%s'",
+                  g_rec.lastSay);
+    UT_ASSERT_MSG(g_rec.logSayCalls == 1 && g_rec.lastLogLen == 2 &&
+                  strcmp(g_rec.lastLog, "GG") == 0,
+                  "say without a newline should log the message, got '%s'",
+                  g_rec.lastLog);
+
+    /* "say" with no message is not the say command at all — the branch
+     * matches "say " — so it reaches nothing. */
+    recReset();
+    runLine("say\n");
+    UT_ASSERT_MSG(g_rec.sayCalls == 0 && g_rec.logSayCalls == 0,
+                  "say with no message should send nothing");
+    return 0;
+}
+
 /* A console line does not always end in a newline: a command piped in
  * without a final one, or stdin at EOF, delivers the line bare. kick and
  * host used to strip the last character unconditionally, which ate the
