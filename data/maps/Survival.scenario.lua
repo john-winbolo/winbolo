@@ -10,9 +10,8 @@
 -- 0..5 hugging the spawn puddle, 6 DEAD pills just beyond them (the
 -- defenders' starting pills — scoop, place, repair), 8 horde bases
 -- ringing the shore at r=25 on eight of the ten 36-degree spokes (0,
--- 36, 72, 108, 180, 216, 252, 288 — 144 and 324 left open), owned by
--- slots 15..12 and 10..7, and 10 DEAD neutral pills parked out on the
--- old ring at r=26, stamped to the wave at round start — dead on the
+-- 36, 72, 108, 180, 216, 252, 288 — 144 and 324 left open), and 10 DEAD
+-- neutral pills parked out on the old ring at r=26 — dead on the
 -- ground for the attackers' engineering.
 --
 -- History: the horde first held a full ring of 10 bases at r=26 that
@@ -24,10 +23,12 @@
 -- bots fight for the ground between, instead of for bases that never
 -- mattered.
 --
--- Each base is owned by the slot whose ocean start sits on the SAME
--- spoke (on_choose_start pins slot p to start 22-p), so its bot comes
--- ashore pointing straight at its own base. The other two attackers
--- hold no base.
+-- ONE attacker owns the horde's whole estate for a wave: the first one
+-- ashore takes all eight shore bases and every free outer pill and keeps
+-- them until the wave leaves (stamp_wave_owner). Ownership therefore
+-- changes hands exactly once per wave instead of once per arrival. The
+-- ocean starts are still per-spoke (on_choose_start pins slot p to start
+-- 22-p), so the attackers still come ashore spread evenly around the ring.
 --
 -- Round flow:
 --   * on_setup (the SILENT pre-snapshot tick) deals center bases and
@@ -194,13 +195,10 @@ local spawn_next_at = nil   -- tick the next one spawns (nil = spawn now)
 local spawn_index   = 0     -- next WAVE_NAMES entry to use
 local spawned       = {}    -- slots this wave's spawns actually landed in
 local spawn_fail_said = false  -- the one "no free slot" report per wave
-local base_owner_slot = {}  -- horde base k -> the slot that should own it
-local pill_owner_slot = {}  -- wave pill n -> the slot that should own it
--- Horde bases topped up so far this wave, as a SET keyed by base number. A
--- base is restocked once per owner change, and it now changes hands more
--- than once in a wave (an interim owner first, then its real one), so
--- counting restock CALLS would report more bases than the map has.
-local restocked_bases = {}
+-- Horde bases the wave's owner restocked when it took them, for the one
+-- "[bases] horde restocked N" line at the end of the arrival. Ownership
+-- moves ONCE per wave now, so this is a plain count.
+local wave_bases_restocked = 0
 
 -- The staggered DEPARTURE queue (see VANISH_SPACING_TICKS).
 local vanishing     = false -- a wave is filing off the field right now
@@ -219,14 +217,17 @@ local function set_newswire_mute(game, on)
   game.newswire_mute(on)
 end
 
--- Which wave slot owns each shore base. Not arithmetic any more: the
--- eight bases sit on eight of the map's ten 36-degree spokes, and each one
--- belongs to the slot whose ocean start sits on the SAME spoke, so
--- on_choose_start (slot p -> start 22-p) lands that bot pointing at its
--- own base. Base 1 is the 0 deg spoke (due east), 2 is 72, 3 is 180
--- (due west), 4 is 252.
--- 8 of the 10 spokes (0,36,72,108 / 180,216,252,288 deg; 144 and 324 left
--- open): slot 15-i owns the base on spoke i.
+-- Shore-base owners AT SETUP ONLY. The eight bases sit on eight of the
+-- map's ten 36-degree spokes; slot 15-i owns the base on spoke i, which is
+-- also the slot whose ocean start sits on that spoke (on_choose_start pins
+-- slot p to start 22-p). Base 1 is the 0 deg spoke (due east), 2 is 72,
+-- 3 is 180 (due west), 4 is 252. Eight of the ten spokes are used
+-- (0,36,72,108 / 180,216,252,288 deg; 144 and 324 left open).
+--
+-- WAVES no longer use this mapping: from the wave tick on, ONE slot (the
+-- first attacker ashore) owns every shore base and every wave pill -- see
+-- stamp_wave_owner. It survives only for deal_center's pre-wave-1 pass,
+-- which needs the map-file owners back after the setup re-deal.
 local HORDE_BASE_SLOT = { 15, 14, 13, 12, 10, 9, 8, 7 }
 local function horde_base_slot(k)
   return HORDE_BASE_SLOT[k]
@@ -302,9 +303,6 @@ end
 local function vanish_wave(game, tick)
   spawn_left = 0
   spawn_next_at = nil
-  base_owner_slot = {}
-  pill_owner_slot = {}
-
   vanish_queue = {}
   for p in pairs(wave_bots) do
     vanish_queue[#vanish_queue + 1] = p
@@ -438,61 +436,37 @@ local function pill_stampable(pn, game)
   return o == nil or o > 5
 end
 
-local function stamp_owner_slot(game, s)
+-- THE WAVE'S OWNER. The first attacker ashore takes the horde's whole
+-- estate for the wave: all eight shore bases and every stampable outer
+-- pill, in one pass, on the tick it lands. Later arrivals stamp nothing.
+--
+-- This replaced a per-spoke mapping (base k to the slot whose ocean start
+-- sits on the same spoke) that re-stamped a share of the estate as each of
+-- the ten attackers filed in. It bought nothing a player could see (the
+-- bots fight over the same ground either way) and it cost a handover per
+-- arrival, each of which drains the base and has to be topped back up. One
+-- owner, one handover, and nothing wave-owned is ever neutral -- a neutral
+-- pill shoots at everybody, which is what the old interim pass existed to
+-- avoid.
+--
+-- Order matters per base: game.set_base_owner DRAINS a base every time it
+-- moves between two real owners, so the top-up follows the stamp.
+local function stamp_wave_owner(game, s)
+  local n = 0
   for k = 1, HORDE_BASES do
-    if base_owner_slot[k] == s then
-      base_owner_slot[k] = nil
-      game.set_base_owner(k, s)
-      if restock_quiet(game, k, k) > 0 then restocked_bases[k] = true end
-    end
+    game.set_base_owner(k, s)
+    if restock_quiet(game, k, k) > 0 then n = n + 1 end
   end
   for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-    if pill_owner_slot[pn] == s then
-      pill_owner_slot[pn] = nil
-      -- Same test the one-shot pass used to make, just made now instead
-      -- of at wave start.
-      if pill_stampable(pn, game) then game.set_pill_owner(pn, s) end
-    end
+    -- Not carried (it is wherever its tank is) and not flying DEFENDER
+    -- colours (one the humans captured stays theirs). NEUTRAL counts as
+    -- stampable, which is what pill_stampable's "> 5" is really catching.
+    if pill_stampable(pn, game) then game.set_pill_owner(pn, s) end
   end
+  wave_bases_restocked = n
 end
 
--- INTERIM OWNER for the rest of the wave, run once, right after the wave's
--- FIRST attacker lands.
---
--- When the last bot of a wave leaves, the engine NEUTRALISES everything
--- that wave owned — the horde's shore bases and every pillbox the wave
--- built during its five minutes. A neutral pill shoots at everybody, so
--- between waves the map is littered with guns firing on the defenders.
--- The old all-at-once spawn re-stamped the lot on the wave tick and the
--- neutral spell lasted a single tick; once arrivals were spread out, a
--- pill whose own owner slot lands ninth sat neutral and firing for nine
--- seconds. A real game found exactly that ("some of the bots' pillboxes
--- went to neutral when wave 2 started").
---
--- So the first attacker ashore takes PROVISIONAL ownership of everything
--- still pending. base_owner_slot / pill_owner_slot are deliberately NOT
--- cleared here: every later arrival still re-stamps its own share as it
--- lands, so ownership converges on the spoke mapping over the wave's
--- arrival, and finish_wave_spawn's leftover pass still covers slots that
--- never land at all. From the wave tick on, nothing wave-owned is neutral.
-local function stamp_interim(game, s)
-  for k = 1, HORDE_BASES do
-    if base_owner_slot[k] ~= nil then
-      game.set_base_owner(k, s)
-      -- This handover drains the base, and so does the real owner's
-      -- re-stamp later, so both have to top it back up.
-      if restock_quiet(game, k, k) > 0 then restocked_bases[k] = true end
-    end
-  end
-  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-    if pill_owner_slot[pn] ~= nil and pill_stampable(pn, game) then
-      game.set_pill_owner(pn, s)
-    end
-  end
-end
-
--- The wave has finished arriving: hand out anything still unowned, report
--- the restock, and deal the pills.
+-- The wave has finished arriving: report the restock and deal the pills.
 local function finish_wave_spawn(game)
   spawn_next_at = nil
 
@@ -500,31 +474,10 @@ local function finish_wave_spawn(game)
   -- back NEWSWIRE_MUTE_TAIL_TICKS from now (on_tick lifts it).
   newswire_unmute_at = game.tick() + NEWSWIRE_MUTE_TAIL_TICKS
 
-  -- Anything whose natural owner slot never got a bot (short roster, or a
-  -- spawn that found no free slot) goes to the lowest slot that DID fill.
-  -- A base or pill owned by a player who does not exist reads hostile to
-  -- both sides, so nothing may be left pointing at an empty slot.
-  local low = nil
-  for _, p in ipairs(spawned) do
-    if low == nil or p < low then low = p end
-  end
-  if low ~= nil then
-    for k = 1, HORDE_BASES do
-      if base_owner_slot[k] ~= nil then base_owner_slot[k] = low end
-    end
-    for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-      if pill_owner_slot[pn] ~= nil then pill_owner_slot[pn] = low end
-    end
-    stamp_owner_slot(game, low)
-  end
-  base_owner_slot = {}
-  pill_owner_slot = {}
-
-  -- Count distinct bases, not restock calls — each base was topped up once
-  -- for the interim owner and again for its real one.
-  local n = 0
-  for _ in pairs(restocked_bases) do n = n + 1 end
-  restock_report(game, 1, n, "horde")
+  -- No leftover pass any more: the wave's whole estate went to the first
+  -- attacker on the wave tick (stamp_wave_owner), so nothing can be left
+  -- pointing at a slot that failed to fill.
+  restock_report(game, 1, wave_bases_restocked, "horde")
 
   -- The 10 outer pills (7..16) start DEAD ON THE GROUND, parked at
   -- their map spots out on the old ring (r=26) the horde's bases used
@@ -557,17 +510,13 @@ local function pump_spawn_queue(game, tick)
   if p then
     wave_bots[p] = true
     spawned[#spawned + 1] = p
-    -- The bases and pills this slot owns are stamped HERE, now that the
-    -- bot exists, rather than up front for the whole wave: with the
-    -- arrivals spread over seconds, stamping ahead of time would leave
-    -- each base owned by an empty slot — hostile to both sides — for
-    -- seconds instead of the single tick the old all-at-once spawn took.
-    stamp_owner_slot(game, p)
-    -- ...and the FIRST one ashore also takes provisional ownership of
-    -- everything the rest of the wave hasn't arrived to claim yet, so no
-    -- wave base or wave-built pill is left neutral (and shooting at
-    -- everybody) while the other nine file in. See stamp_interim.
-    if #spawned == 1 then stamp_interim(game, p) end
+    -- The FIRST attacker ashore takes the wave's whole estate: the eight
+    -- shore bases and every stampable outer pill, kept until the wave
+    -- leaves. Stamped here, once the bot exists -- stamping ahead of time
+    -- would leave the bases owned by an empty slot, hostile to both sides,
+    -- for the seconds the arrival takes. Later arrivals own nothing of
+    -- their own. See stamp_wave_owner.
+    if #spawned == 1 then stamp_wave_owner(game, p) end
   elseif not spawn_fail_said then
     -- Every slot is taken. Skip this attacker and carry on with the rest;
     -- say so once per wave rather than once per failed spawn.
@@ -590,46 +539,20 @@ end
 local function spawn_wave(game)
   wave = wave + 1
 
-  -- Every wave opens with the horde's eight back in bot hands — whatever
-  -- the humans captured since the last one. Work out WHO each one belongs
-  -- to now, and let pump_spawn_queue do the actual stamping as the owners
-  -- turn up. Clamp into the slots this wave actually fields (same rule as
-  -- the pill pass below): with a shrunken roster the natural owner slot
-  -- may be EMPTY, and a base owned by a nonexistent player reads hostile
-  -- to BOTH sides — all eight must stay horde no matter how few attackers
-  -- spawn. Several can land on the same slot once the roster is short
-  -- enough; a slot owning two bases is fine, a base owned by nobody is
-  -- not.
-  local lowest_slot = 16 - WAVE_SIZE
-  base_owner_slot = {}
-  for k = 1, HORDE_BASES do
-    local s = horde_base_slot(k)
-    if s < lowest_slot then s = lowest_slot end
-    base_owner_slot[k] = s
-  end
-
-  -- Same for the wave's pills: any of pills 7..16 the DEFENDERS didn't
-  -- claim (still built somewhere from a previous wave, or dropped
-  -- neutral by a vanished attacker) goes back to this wave's
-  -- ownership — a built one flips allegiance and mans up against the
-  -- humans again. Defender-owned pills (captured during the break)
-  -- stay theirs; carried pills are wherever their tank is. The
-  -- defender/carried test is made at stamp time, in stamp_owner_slot.
-  pill_owner_slot = {}
-  for n = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
-    -- pill 7 -> slot 15 ... 16 -> 6, clamped into the slots this wave
-    -- actually fields when the host shrank the enemy roster.
-    local s = 22 - n
-    if s < lowest_slot then s = lowest_slot end
-    pill_owner_slot[n] = s
-  end
+  -- Every wave opens with the horde's eight back in bot hands (whatever
+  -- the humans captured since the last one) and with the outer pills the
+  -- defenders didn't claim back in the wave's hands too -- a built one
+  -- flips allegiance and mans up against the humans again. Both happen in
+  -- one go when the wave's FIRST attacker lands: see stamp_wave_owner,
+  -- called from pump_spawn_queue. Nothing is worked out up front any
+  -- more, because there is no per-slot share to work out.
 
   spawned = {}
   spawn_index = 0
   spawn_left = WAVE_SIZE
   spawn_next_at = nil          -- the first attacker rides the wave's own tick
   spawn_fail_said = false
-  restocked_bases = {}
+  wave_bases_restocked = 0
 
   wave_ends_at = game.tick() + WAVE_LIMIT
   last_min_mark = nil
