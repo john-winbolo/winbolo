@@ -210,10 +210,10 @@ local SUICIDER_WAVES = {}
 local WAVE_PORTFOLIO = "0/25/75"  -- back/front/aggressive pill share the wave bots aim for
 local WAVE_BLITZ_MIN = 2          -- minimum tanks in a blitz (counting the commander); below this the commander gives the take up rather than charging short
 local WAVE_BLITZ_MAX = 4          -- most tanks one blitz accepts (counting the commander); a call at 4 refuses a 5th
-local WAVE_BLITZ_MIN_BY_WAVE = { [2] = 3 }  -- per-wave override of WAVE_BLITZ_MIN (user: wave 2 needs at least 3 per blitz)
+local WAVE_BLITZ_MIN_BY_WAVE = { [2] = 3, [4] = 3 }  -- per-wave override of WAVE_BLITZ_MIN (user: waves 2 and 4 need at least 3 per blitz)
 local WAVE_BLITZ_MIN_SUICIDERS = 1  -- at GO the blitz commander designates random soldiers until at least this many of the party are pill_suiciders
 local WAVE_REFUEL_MULT = 1.2      -- all refuel costs x1.2 for wave bots: attackers go back for supplies less readily than they would in a normal game
-local WAVE_REFUEL_MULT_BY_WAVE = { [2] = 100 }  -- per-wave override (user: wave 2 refuels 100x, i.e. effectively never refuels)
+local WAVE_REFUEL_MULT_BY_WAVE = { [2] = 100, [4] = 100 }  -- per-wave override (user: waves 2 and 4 refuel at 100x, i.e. effectively never refuel)
 
 -- "portfolio=...;blitz=MIN/MAX;blitzsuiciders=N;refuel=X", with "suicider;" in
 -- front on a suicider wave. Takes the wave number rather than reading the `wave`
