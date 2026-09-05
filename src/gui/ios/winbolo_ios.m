@@ -23,7 +23,7 @@
 #include "client_net.h"
 #include "client_render.h"
 #include "input_packet.h"
-#include "transport.h"
+#include "client_frontend_tick.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
 #include "server_sim.h"
@@ -119,39 +119,17 @@ time_t ticks = 0;
 static double gameTickAccum = 0.0;
 static Uint64 lastFrameTime = 0;
 
+/* True when the last shared tick step run was the game half.  The keys/game
+   cadence lives in client_frontend_tick.c and its counter is private, so this
+   is how windowRunGameTick knows which half comes next.  Cleared alongside
+   clientFrontTickReset so a restarted game starts in phase. */
+static bool prevStepWasGameTick = FALSE;
+
 /* -------------------------------------------------------
  * Forward declarations
  * ------------------------------------------------------- */
 extern void sdl3MessageHandler(const char *message, const char *title);
 static void windowRunGameTick(ClientSim *cs);
-
-/* -------------------------------------------------------
- * Helper: sync snapshot from transport
- * ------------------------------------------------------- */
-static void iosSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNum) {
-    SnapshotHeader snapHdr;
-    TankSnapshot snapTanks[MAX_TANKS];
-    ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-    TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-    BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-    PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-    GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-    if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                               &snapHdr, snapTanks, MAX_TANKS,
-                               snapShells, MAX_SNAPSHOT_SHELLS,
-                               snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                               snapBases, MAX_SNAPSHOT_BASES,
-                               snapPills, MAX_SNAPSHOT_PILLS,
-                               snapEvents, MAX_SNAPSHOT_EVENTS)) {
-        clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                                snapShells, snapHdr.shellCount,
-                                snapTkExplosions, snapHdr.tkExplosionCount,
-                                snapBases, snapHdr.baseCount,
-                                snapPills, snapHdr.pillCount,
-                                snapEvents, snapHdr.reliableEventCount,
-                                myPlayerNum);
-    }
-}
 
 /* -------------------------------------------------------
  * SDL message handler
@@ -221,6 +199,14 @@ int main(int argc, char *argv[]) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart OK");
 
 ios_game_start:
+    /* Start the shared keys/game cadence from a known state, so the first
+       running step is a game step on tick 0 (even = game is the wire contract
+       the server routes by).  Placed on the restart label rather than after
+       the lobby, so it covers both the first game and every game reached
+       through the goto below. */
+    clientFrontTickReset();
+    prevStepWasGameTick = FALSE;
+
     /* Set up ImGui and touch input */
     {
         SDL_Window *win = sdl3DrawGetWindow();
@@ -418,7 +404,7 @@ ios_game_start:
         }
 
         /* Game tick accumulation */
-        if (gameFrontGetTransport() != NULL) {
+        if (clientSimHasTransport(cs)) {
             Uint64 now = SDL_GetTicks();
             double elapsed = (double)(now - lastFrameTime);
             lastFrameTime = now;
@@ -484,30 +470,20 @@ ios_game_start:
 }
 
 /* -------------------------------------------------------
- * windowRunGameTick — game logic (matches Android)
+ * windowRunGameTick — one half-step of the shared client tick, plus the
+ * driver-side work around it (disconnect check, bot brains, AI, stats)
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
     static bool inBrain = FALSE;
-    static bool justKeys = FALSE;
     static BYTE t2 = 0;
-    static uint32_t simTickCounter = 0;
-    tankButton tb;
-    bool isShoot;
-    bool isMine = FALSE;
     bool used = FALSE;
     bool brainRunning;
-    Transport *transport;
 
     brainRunning = brainHandlerIsBrainRunning();
-    isShoot = FALSE;
-    tb = 0;
-
-    transport = gameFrontGetTransport();
-    if (transport == NULL) return;
 
     /* Check if the UDP server has disconnected or timed out.
      * Only check for UDP transports (serverSim == NULL means not local). */
-    if (gameFrontGetServerSim() == NULL &&
+    if (clientSimHasTransport(cs) && gameFrontGetServerSim() == NULL &&
         clientSimGetConnectState(cs) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
         clientSimConnectionLost(cs);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
@@ -518,81 +494,43 @@ static void windowRunGameTick(ClientSim *cs) {
         return;
     }
 
-    {
-        BYTE myPlayerNum = gameFrontGetPlayerNum();
-        if (justKeys == TRUE) {
-            if (brainRunning == FALSE) {
-                if (uiModeIsTablet()) {
-                    inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
-                    tb = inputTouchGetMovement();
-                } else {
-                    tb = touchInputGetKeys();
-                }
+    /* Tick bot brains for a local game.  This binary links no server_static,
+     * so nothing else drives them and the client tick owns them here.
+     * serverSimBotTick queues a keys packet and a game packet per bot, so it
+     * belongs once per full frame, on the half-step that is about to be the
+     * game half: a step that returned false was the keys half (or a lobby
+     * step, which does not advance the cadence), so the next one is the game
+     * half.  Skipped in lobby and countdown for the same reason the shared
+     * step skips them — the server runs no half-steps there, so queued bot
+     * input would only pile up. */
+    if (prevStepWasGameTick == FALSE) {
+        netStatus ns = clientSimGetNetStatus(cs);
+        if (ns != netLobby && ns != netLobbyCountdown) {
+            ServerSim *serverSim = gameFrontGetServerSim();
+            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
+                serverSimBotTick(serverSim, clientSimGetAiType(cs));
             }
-            InputPacket pkt;
-            clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
-            clientMutexWaitFor();
-            clientSimKeysTick(cs, &pkt);
-            clientMutexRelease();
-            transport->recordInput(transport->ctx, &pkt);
-            transport->tick(transport->ctx);
-            clientMutexWaitFor();
-            iosSyncSnapshot(cs, transport, myPlayerNum);
-            clientMutexRelease();
-            simTickCounter++;
-            justKeys = FALSE;
-        } else {
-            t2++;
-            if (brainRunning == FALSE) {
-                if (uiModeIsTablet()) {
-                    inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
-                    tb = inputTouchGetMovement();
-                    isShoot = inputTouchIsFirePressed();
-                    isMine = inputTouchIsMinePressed();
-                } else {
-                    tb = touchInputGetKeys();
-                    isShoot = touchInputIsFireKeyPressed();
-                    isMine = touchInputShouldLayMine();
-                }
-            }
-            InputPacket pkt;
-            clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
-            if (brainRunning == FALSE) {
-                if (uiModeIsTablet()) {
-                    int gsChange = inputTouchGetGunsightChange();
-                    if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
-                    else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
-                } else {
-                    int gsChange = touchInputGetGunsightChange();
-                    if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);
-                    else if (gsChange < 0) pkt.flags |= (2 << INPUT_FLAG_GUNSIGHT_SHIFT);
-                }
-            }
-            clientMutexWaitFor();
-            clientSimGameTick(cs, &pkt, brainRunning);
-            clientMutexRelease();
-            transport->sendInput(transport->ctx, &pkt);
-            /* Tick bot brains before the sim tick (local game only) */
-            {
-                ServerSim *serverSim = gameFrontGetServerSim();
-                if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-                    serverSimBotTick(serverSim, clientSimGetAiType(cs));
-                }
-            }
-            transport->tick(transport->ctx);
-            clientMutexWaitFor();
-            iosSyncSnapshot(cs, transport, myPlayerNum);
-            clientSimDisplayTick(cs, brainRunning);
-            clientMutexRelease();
-            simTickCounter++;
-            ticks++;
-            justKeys = TRUE;
-            used = TRUE;
         }
     }
 
+    /* One keys/game/lobby half-step lives in the shared client-frontend tick
+     * core (desktop and web call the same one); the brain run and the
+     * per-second stat rollover below stay here in the driver.  The main loop
+     * owns the catch-up, calling this once per owed half-step. */
+    ttick = SDL_GetTicks();
+    if (clientFrontRunTickStep(cs)) {
+        t2++;
+        ticks++;
+        used = TRUE;
+        prevStepWasGameTick = TRUE;
+    } else {
+        prevStepWasGameTick = FALSE;
+    }
+    dwSysGame += (SDL_GetTicks() - ttick);
+
     /* AI */
-    if (used == TRUE && inBrain == FALSE && brainRunning == TRUE) {
+    if (used == TRUE && inBrain == FALSE && brainRunning == TRUE &&
+        clientSimGetNetStatus(cs) != netFailed) {
         clientMutexWaitFor();
         inBrain = TRUE;
         clientMutexRelease();
@@ -866,7 +804,8 @@ void frontEndGameOver(ClientSim *cs) {
     finishedLoop = TRUE;
 }
 
-void frontEndClearPlayer(playerNumbers value) {
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+    (void)cs;
     sdl3ImguiClearPlayer((unsigned char)value);
 }
 
@@ -889,7 +828,8 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
     sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+    (void)cs;
     sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 

@@ -855,6 +855,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
+    src/client_frontend/client_frontend_tick.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     ${IOS_BOLO_SOURCES}
@@ -957,13 +958,9 @@ target_include_directories(WinBoloIOS PRIVATE
 bolo_apply_include_rules(WinBoloIOS gui)
 # bg_game.c: same grant as the desktop target — the dev-mode lobby
 # background assigns bot teams through server_sim_lifecycle.h.
-# winbolo_ios.m: the iOS tick loop still drives the transport directly
-# through transport.h; the grant deletes when it moves to the shared
-# clientFrontRunTickStep path.
 bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/transport_udp_client.c
-    src/gui/sdl3/bg_game.c
-    src/gui/ios/winbolo_ios.m)
+    src/gui/sdl3/bg_game.c)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
