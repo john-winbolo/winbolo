@@ -213,6 +213,7 @@ local WAVE_BLITZ_MAX = 4          -- most tanks one blitz accepts (counting the 
 local WAVE_BLITZ_MIN_BY_WAVE = { [2] = 3, [4] = 3 }  -- per-wave override of WAVE_BLITZ_MIN (user: waves 2 and 4 need at least 3 per blitz)
 local WAVE_BLITZ_MIN_SUICIDERS = 1  -- at GO the blitz commander designates random soldiers until at least this many of the party are pill_suiciders
 local WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE = { [2] = 4, [4] = 4 }  -- per-wave override (user: on waves 2 and 4 everyone in a blitz is a suicider; 4 = the party max, so every member gets designated)
+local WAVE_NOBLITZ = { [3] = true }  -- waves whose bots never blitz at all (solo takes only; user: no blitzing on wave 3) -- brain token `noblitz`
 local WAVE_REFUEL_MULT = 1.2      -- all refuel costs x1.2 for wave bots: attackers go back for supplies less readily than they would in a normal game
 local WAVE_REFUEL_MULT_BY_WAVE = { [2] = 100, [4] = 100 }  -- per-wave override (user: waves 2 and 4 refuel at 100x, i.e. effectively never refuel)
 
@@ -228,6 +229,7 @@ local function wave_init_arg(w)
                             WAVE_PORTFOLIO, blitz_min, WAVE_BLITZ_MAX,
                             blitz_su, tostring(refuel_mult))
   if SUICIDER_WAVES[w] then arg = "suicider;" .. arg end
+  if WAVE_NOBLITZ[w] then arg = "noblitz;" .. arg end
   return arg
 end
 
