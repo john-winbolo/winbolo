@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <SDL3/SDL.h>
 
 #include "global.h"
@@ -193,6 +194,8 @@ void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {
 }
 void serverInstanceTriggerManualProbe(void) {}
 ManualProbeState serverInstanceGetManualProbeState(void) { return MANUAL_PROBE_IDLE; }
+/* NAT hole punching belongs to the hosting path, which iOS does not have. */
+bool serverInstanceIsNatPunchActive(void) { return false; }
 
 /* ---- window state stubs (provided by sdl3/winbolo.c, not in iOS build) ---- */
 
@@ -245,3 +248,131 @@ bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
     return true;
 }
 void logSetLobbyMode(bool enabled) { (void)enabled; }
+
+/* ---- WinBolo.net REST stubs (requires libcurl) ----
+ *
+ * gamefront.c, imgui_gamebrowser.cpp, wbn_map_source.cpp and
+ * map_preview_fetch.cpp call the WinBolo.net REST layer unconditionally, but
+ * iOS builds without libcurl: no account, no internet game list, no map fetch
+ * by md5, no cloud prefs. Every entry point reports a clean transport failure
+ * and writes each out-parameter, so callers that read or free one on the
+ * failure path are safe. */
+
+#include "../../winbolonet/http.h"
+#include "../../winbolonet/winbolonet_core.h"
+#include "../../winbolonet/wbn_serverlist.h"
+#include "../../winbolonet/wbn_map.h"
+#include "../../winbolonet/wbn_prefs_sync.h"
+
+const char *httpGetBaseUrl(void) { return ""; }
+void httpSetLogUploadTimeout(long seconds) { (void)seconds; }
+
+int wbn_api_get(const char *path, char **response_out) {
+    (void)path;
+    if (response_out) *response_out = NULL;
+    return -1;  /* transport error */
+}
+
+int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
+    (void)path;
+    if (data_out) *data_out = NULL;
+    if (size_out) *size_out = 0;
+    return -1;
+}
+
+int wbn_api_download_to_memory_cancellable(const char *path, uint8_t **data_out,
+                                           size_t *size_out,
+                                           volatile int *cancel_flag) {
+    (void)path; (void)cancel_flag;
+    if (data_out) *data_out = NULL;
+    if (size_out) *size_out = 0;
+    return -1;
+}
+
+bool wbnFetchServerList(WbnServerList *out) {
+    /* Header contract on failure: leave *out zeroed and owning nothing, so
+       the caller's wbnServerListFree is a no-op. */
+    if (out) memset(out, 0, sizeof(*out));
+    return false;
+}
+
+void wbnServerListFree(WbnServerList *out) {
+    if (out == NULL) return;
+    free(out->servers);
+    memset(out, 0, sizeof(*out));
+}
+
+bool wbnMapFetchByMd5(const char *md5Hex, WbnMapResult *out) {
+    (void)md5Hex;
+    if (out) memset(out, 0, sizeof(*out));
+    return false;
+}
+
+void wbnMapResultFree(WbnMapResult *out) {
+    if (out == NULL) return;
+    free(out->mapData);
+    memset(out, 0, sizeof(*out));
+}
+
+WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapshot,
+                                const char *deviceType,
+                                bool localDirty, const char *lastSynced) {
+    (void)userToken; (void)uploadSnapshot; (void)deviceType;
+    (void)localDirty; (void)lastSynced;
+    /* NOOP is the "nothing to apply" outcome; serverPrefs must be NULL so the
+       caller's free() on it is safe. */
+    WbnSyncOutcome out;
+    memset(&out, 0, sizeof(out));
+    out.kind = WBN_SYNC_OUT_NOOP;
+    return out;
+}
+
+void winbolonetEndSession(void) {}
+
+const char *winbolonetGetCountryCode(void) { return ""; }
+
+/* ---- dedicated-server round log stubs ----
+ *
+ * The .wbv round log the host records and uploads lives in
+ * server_dedicated_log.c (server_static), which iOS does not link because a
+ * phone does not host games. gamefront.c drives these on every game start
+ * and leave, so they need bodies; there is never a round to stash or send. */
+
+#include "../../server/server_dedicated_log.h"
+
+void serverDedicatedLogInstall(struct ServerSim *sim, bool dontSendLogFlag) {
+    (void)sim; (void)dontSendLogFlag;
+}
+void serverDedicatedLogUninstall(void) {}
+void serverDedicatedLogSetServeMode(int mode) { (void)mode; }
+void serverDedicatedLogSetCompletedPath(const char *path) { (void)path; }
+void serverDedicatedLogStashCurrentRound(void) {}
+void serverDedicatedLogFlushPendingUpload(void) {}
+bool serverDedicatedLogHasPendingUpload(void) { return false; }
+
+/* ---- macOS menu-bar stubs ----
+ *
+ * The native NSMenu menu bar (mac_menubar.mm) is AppKit and desktop-only;
+ * iOS has no menu bar. sdl3imgui.cpp and gamefront.c call these behind a
+ * plain __APPLE__ check, which is true on iOS too, so they need bodies. */
+
+#include "../sdl3/platform/mac_menubar.h"
+
+void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
+    (void)win; (void)clientSim;
+}
+void mac_menubar_install_dock_menu(void) {}
+void mac_menubar_refresh(const struct MacMenuState *s) { (void)s; }
+
+/* ---- spectator stub ----
+ *
+ * The live delayed spectator feed is hosted by logviewer.c, and the iOS
+ * target links neither src/logviewer nor spectator_input.c. Returning false
+ * is "the user left or the feed never loaded", which sends gamefront.c back
+ * to the menu instead of into a live lobby. */
+
+bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  void *cs, const char *serverHost, uint16_t serverPort) {
+    (void)window; (void)renderer; (void)cs; (void)serverHost; (void)serverPort;
+    return false;
+}

@@ -87,6 +87,7 @@ bool showNetworkDebugMessages = FALSE;
 bool autoScrollingEnabled = FALSE;
 bool smoothScrollingEnabled = FALSE;  /* Touch platform: arrow-key smooth scroll inactive */
 BYTE zoomFactor = ZOOM_FACTOR_NORMAL;
+bool letterboxBarsGray = FALSE;       /* gray vs black letterbox bars (sdl3draw) */
 
 bool showPillLabels = FALSE;
 bool showBaseLabels = FALSE;
@@ -692,9 +693,33 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
+/* Pause hooks driven from sdl3imgui.cpp. All three exist for desktop
+   situations iOS does not have: a Steam Deck pause menu, a lost controller,
+   and the tutorial overlay's solo freeze. The app already stops ticking when
+   it is backgrounded, which is the only pause a phone has. */
+void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+
 /* -------------------------------------------------------
  * Frontend callbacks (matching Android android_frontend.c)
  * ------------------------------------------------------- */
+
+/* The ClientSim that owns the visible player-list UI. Bot, background-game
+   and spectator sims also fire frontEnd* callbacks; registering the human's
+   sim here lets the ones that care tell them apart. */
+static ClientSim *s_activeUiCs = NULL;
+
+void frontEndSetActiveClientSim(ClientSim *cs) {
+    if (cs != s_activeUiCs) {
+        /* Drop the previous game's latched build target: it is the square a
+           tap builds at, and it outlives the ClientSim that set it, so
+           without this the first tap of the next game is dispatched to a
+           tile chosen in the last one. */
+        buildCursorReset();
+    }
+    s_activeUiCs = cs;
+}
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
@@ -826,6 +851,13 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
     if (!clientSimIsRunning(cs)) return;
     sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
+
+/* Runs off the snapshot path, so it stays cheap. The badge cache is seeded by
+   frontEndSetPlayer above; refreshing it mid-game is desktop-only. */
+void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
+                               uint8_t clientType, uint8_t clientFlags) {
+    (void)cs; (void)value; (void)clientType; (void)clientFlags;
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {

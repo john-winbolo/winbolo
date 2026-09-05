@@ -858,6 +858,10 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/client_frontend/client_frontend_tick.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
+    # PNG writer for the map chooser's thumbnail cache (imgui_mapchooser.cpp).
+    # The stb_image target compiles only the reader; the writer is a separate
+    # impl TU each client adds for itself.
+    src/third_party/stb/stb_image_write_impl.c
     ${IOS_BOLO_SOURCES}
     ${IOS_SERVER_SOURCES}
     ${IOS_GUI_SOURCES}
@@ -990,6 +994,27 @@ if(HAVE_SENTRY_IOS)
         target_compile_definitions(WinBoloIOS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBoloIOS PRIVATE "${SENTRY_COCOA_XCFW}")
+    # sentry-cocoa is a Swift framework and this target has no Swift of its
+    # own, so Xcode never runs its Swift link step and the static
+    # compatibility shim the framework's objects reference —
+    # __swift_FORCE_LOAD_$_swiftCompatibility56 — is left unresolved.  It is
+    # the only swiftCompatibility* the framework asks for; the ~29 other
+    # Swift force-load symbols in it are the OS runtime, which resolves from
+    # the SDK and needs no embedding (Swift 5 has shipped inside iOS since
+    # 12.2, well below this target's 15.0 floor).
+    #
+    # The shim lives in the toolchain, one directory per SDK, so the search
+    # path has to be expanded by Xcode rather than by CMake: $(PLATFORM_NAME)
+    # resolves to iphoneos or iphonesimulator from the destination being
+    # built, so a single configure serves a device and a simulator build.
+    # Passed as link flags rather than through
+    # XCODE_ATTRIBUTE_LIBRARY_SEARCH_PATHS because CMake already writes that
+    # setting for this target — it is where the SDK's usr/lib/swift comes
+    # from — and setting the attribute replaces that value instead of adding
+    # to it, which would strand the OS runtime symbols instead.
+    target_link_libraries(WinBoloIOS PRIVATE
+        "-L$(TOOLCHAIN_DIR)/usr/lib/swift/$(PLATFORM_NAME)"
+        "-lswiftCompatibility56")
     # winbolo_ios.m reaches the SDK through `@import Sentry`, which needs
     # Objective-C modules.  Set per-source rather than target-wide: the rest
     # of WinBoloIOS is C and C++ that has no reason to change how it
