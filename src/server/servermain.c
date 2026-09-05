@@ -232,6 +232,76 @@ void printHelp() {
   fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n");
 }
 
+/* Run one console command line. The Windows and Linux input loops differ
+ * only in how they read a line from stdin, so the command set itself lives
+ * here and both call it.
+ *
+ * keyBuff is the lower-cased line the command is matched against; saveBuff
+ * is the same line with its original case, which savemap needs for the
+ * file path. */
+static void processConsoleCommand(char *keyBuff, char *saveBuff) {
+  char playerKick[33] = "\0";
+  char playerHost[33] = "\0";
+  size_t newbuflen;
+
+  if (strncmp(keyBuff, "help", 4) == 0) {
+    printHelp();
+  } else if (strncmp(keyBuff, "unlock", 6) == 0) {
+    threadsWaitForMutex();
+    transportUdpServerSetLock(serverSim, FALSE);
+    threadsReleaseMutex();
+  } else if (strncmp(keyBuff, "lock", 4) == 0) {
+    threadsWaitForMutex();
+    transportUdpServerSetLock(serverSim, TRUE);
+    threadsReleaseMutex();
+  } else if (strncmp(keyBuff, "info", 4) == 0) {
+    threadsWaitForMutex();
+    serverSimInformation(serverSim, transportUdpServerGetLock());
+    threadsReleaseMutex();
+  } else if (strncmp(keyBuff, "savemap", 7) == 0) {
+    threadsWaitForMutex();
+    saveMap(saveBuff);
+    threadsReleaseMutex();
+  } else if (strncmp(keyBuff, "say ", 4) == 0) {
+    transportUdpServerSendServerMessage((char *) keyBuff+4);
+    {
+        char pstr[256];
+        int len = (int)strlen(keyBuff + 4);
+        if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
+        if (len > 255) len = 255;
+        pstr[0] = (char)len;
+        memcpy(pstr + 1, keyBuff + 4, len);
+        logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+    }
+  } else if(strncmp(keyBuff, "status", 6) == 0){
+    transportUdpServerPrintStatus(statusFile);
+  } else if (strncmp(keyBuff, "kick ", 5) == 0) {
+    sprintf(playerKick, "%.*s", 32, keyBuff+5);
+    newbuflen = strlen(playerKick);
+    playerKick[newbuflen - 1] = '\0';
+    threadsWaitForMutex();
+    transportUdpServerKickPlayer(serverSim, playerKick);
+    threadsReleaseMutex();
+  } else if (strncmp(keyBuff, "host ", 5) == 0) {
+    bool hostSet;
+    sprintf(playerHost, "%.*s", 32, keyBuff+5);
+    newbuflen = strlen(playerHost);
+    playerHost[newbuflen - 1] = '\0';
+    threadsWaitForMutex();
+    hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
+    threadsReleaseMutex();
+    if (hostSet) {
+      printf("Host set to %s\n", playerHost);
+    } else {
+      printf("No such player\n");
+    }
+  } else if (strncmp(keyBuff, "quit", 4) == 0) {
+    /* Caller's while-condition will exit on next check */
+  } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
+    fprintf(stderr, "Unknown command - Type \"help\" for help\n");
+  }
+}
+
 
 #ifdef _WIN32
 
@@ -258,9 +328,6 @@ static DWORD WINAPI stdinReaderThread(LPVOID param) {
 void processKeys(bool isQuiet) {
 	char keyBuff[256] = "\0";
 	char saveBuff[256] = "\0";
-	char playerKick[33] = "\0";
-	char playerHost[33] = "\0";
-	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
 		while (!serverSimIsTerminalGameOver(serverSim)) {
@@ -288,62 +355,7 @@ void processKeys(bool isQuiet) {
 				strlower(keyBuff);
 				stdinLineReady = 0;
 
-				if (strncmp(keyBuff, "help", 4) == 0) {
-					printHelp();
-				} else if (strncmp(keyBuff, "unlock", 6) == 0) {
-					threadsWaitForMutex();
-					transportUdpServerSetLock(serverSim, FALSE);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "lock", 4) == 0) {
-					threadsWaitForMutex();
-					transportUdpServerSetLock(serverSim, TRUE);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "info", 4) == 0) {
-					threadsWaitForMutex();
-					serverSimInformation(serverSim, transportUdpServerGetLock());
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "savemap", 7) == 0) {
-					threadsWaitForMutex();
-					saveMap(saveBuff);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "say ", 4) == 0) {
-					transportUdpServerSendServerMessage((char *) keyBuff+4);
-					{
-						char pstr[256];
-						int len = (int)strlen(keyBuff + 4);
-						if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
-						if (len > 255) len = 255;
-						pstr[0] = (char)len;
-						memcpy(pstr + 1, keyBuff + 4, len);
-						logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
-					}
-				} else if(strncmp(keyBuff, "status", 6) == 0){
-					transportUdpServerPrintStatus(statusFile);
-				} else if (strncmp(keyBuff, "kick ", 5) == 0) {
-					sprintf(playerKick, "%.*s", 32, keyBuff+5);
-					newbuflen = strlen(playerKick);
-					playerKick[newbuflen - 1] = '\0';
-					threadsWaitForMutex();
-					transportUdpServerKickPlayer(serverSim, playerKick);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "host ", 5) == 0) {
-					bool hostSet;
-					sprintf(playerHost, "%.*s", 32, keyBuff+5);
-					newbuflen = strlen(playerHost);
-					playerHost[newbuflen - 1] = '\0';
-					threadsWaitForMutex();
-					hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
-					threadsReleaseMutex();
-					if (hostSet) {
-						printf("Host set to %s\n", playerHost);
-					} else {
-						printf("No such player\n");
-					}
-				} else if (strncmp(keyBuff, "quit", 4) == 0) {
-					/* Loop's while-condition will exit on next check */
-				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
-				}
+				processConsoleCommand(keyBuff, saveBuff);
 			} else {
 				Sleep(100);
 			}
@@ -361,9 +373,6 @@ void processKeys(bool isQuiet) {
   fd_set fdmask;
   struct timeval timer;
   int ret;
-  char playerKick[33] = "\0";
-  char playerHost[33] = "\0";
-  size_t newbuflen;
 
   timer.tv_sec = 1;
   timer.tv_usec = 0;
@@ -389,62 +398,7 @@ void processKeys(bool isQuiet) {
     }
   } else {
     while (strncmp(keyBuff, "quit", 4) != 0 && !serverSimIsTerminalGameOver(serverSim)) {
-      if (strncmp(keyBuff, "help", 4) == 0) {
-        printHelp();
-      } else if (strncmp(keyBuff, "unlock", 6) == 0) {
-        threadsWaitForMutex();
-        transportUdpServerSetLock(serverSim, FALSE);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "lock", 4) == 0) {
-        threadsWaitForMutex();
-        transportUdpServerSetLock(serverSim, TRUE);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "info", 4) == 0) {
-        threadsWaitForMutex();
-        serverSimInformation(serverSim, transportUdpServerGetLock());
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "savemap", 7) == 0) {
-        threadsWaitForMutex();
-        saveMap(saveBuff);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "say ", 4) == 0) {
-        transportUdpServerSendServerMessage((char *) keyBuff+4);
-        {
-            char pstr[256];
-            int len = (int)strlen(keyBuff + 4);
-            if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
-            if (len > 255) len = 255;
-            pstr[0] = (char)len;
-            memcpy(pstr + 1, keyBuff + 4, len);
-            logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
-        }
-      } else if(strncmp(keyBuff, "status", 6) == 0){
-        transportUdpServerPrintStatus(statusFile);
-      } else if (strncmp(keyBuff, "kick ", 5) == 0) {
-        sprintf(playerKick, "%.*s", 32, keyBuff+5);
-        newbuflen = strlen(playerKick);
-        playerKick[newbuflen - 1] = '\0';
-        threadsWaitForMutex();
-        transportUdpServerKickPlayer(serverSim, playerKick);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "host ", 5) == 0) {
-        bool hostSet;
-        sprintf(playerHost, "%.*s", 32, keyBuff+5);
-        newbuflen = strlen(playerHost);
-        playerHost[newbuflen - 1] = '\0';
-        threadsWaitForMutex();
-        hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
-        threadsReleaseMutex();
-        if (hostSet) {
-          printf("Host set to %s\n", playerHost);
-        } else {
-          printf("No such player\n");
-        }
-      } else if (strncmp(keyBuff, "quit", 4) == 0) {
-        /* Loop's while-condition will exit on next check */
-      } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-        fprintf(stderr, "Unknown command - Type \"help\" for help\n");
-      }
+      processConsoleCommand(keyBuff, saveBuff);
 
       timer.tv_sec = 1;
       timer.tv_usec = 0;
