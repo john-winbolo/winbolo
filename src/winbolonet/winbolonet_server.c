@@ -80,6 +80,10 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddNumberToObject(body, "baseview", s_lobbyInfo.baseView);
   cJSON_AddNumberToObject(body, "allyview", s_lobbyInfo.allyView);
   cJSON_AddBoolToObject(body, "classicmode", s_lobbyInfo.classicMode);
+  cJSON_AddBoolToObject(body, "alliesintrees", s_lobbyInfo.alliesInTrees);
+  cJSON_AddNumberToObject(body, "pillviewdecay", s_lobbyInfo.pillViewDecay);
+  cJSON_AddNumberToObject(body, "baseviewdecay", s_lobbyInfo.baseViewDecay);
+  cJSON_AddNumberToObject(body, "allyviewdecay", s_lobbyInfo.allyViewDecay);
 }
 
 void winbolonetSendLobbyUpdate(void) {

@@ -101,6 +101,16 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->baseView = readIntFieldDef(src, "baseview", viewPolicyOff);
     dst->allyView = readIntFieldDef(src, "allyview", viewPolicyAlways);
 
+    /* Decay seconds mean something only where the matching policy is
+     * viewPolicyDecay; a tracker that has not learned the fields yet
+     * leaves the server's own default standing. */
+    dst->pillViewDecay = readIntFieldDef(src, "pillviewdecay",
+                                         VIEW_DECAY_DEFAULT_SECS);
+    dst->baseViewDecay = readIntFieldDef(src, "baseviewdecay",
+                                         VIEW_DECAY_DEFAULT_SECS);
+    dst->allyViewDecay = readIntFieldDef(src, "allyviewdecay",
+                                         VIEW_DECAY_DEFAULT_SECS);
+
     dst->mines           = readBoolField(src, "mines");
     dst->password        = readBoolField(src, "password");
     dst->randomMap       = readBoolField(src, "random_map");
@@ -111,6 +121,7 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->autoLock        = readBoolField(src, "auto_lock");
     dst->allowSpectators = readBoolField(src, "allow_spectators");
     dst->classicMode     = readBoolField(src, "classicmode");
+    dst->alliesInTrees   = readBoolField(src, "alliesintrees");
     dst->spectatorCount  = readIntField(src, "spectator_count");
 
     dst->timeLimit   = readBoolField(src, "time_limit");
