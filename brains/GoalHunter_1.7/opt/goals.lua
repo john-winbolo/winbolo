@@ -2763,13 +2763,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Portfolio state: classify existing friendly pills and compute targets for
   -- the projected total (current + the one we're about to place). Candidate
   -- tiles in an under-target category get a strong bonus so placement fills
-  -- the deficit role (35% back / 45% front / 20% aggressive, >=1 back).
+  -- the deficit role (default 20% back / 45% front / 20% aggressive / 15% util;
+  -- read live from PP.TARGET_*, which a per-bot "portfolio=" init arg may replace).
   local pf_counts  = PP.counts(world, state.tick)
   local pf_total   = pf_counts.back + pf_counts.front + pf_counts.aggro
   -- Project the back/front/aggro targets over the pills we actually have to
   -- place (built + THIS tank's carried hoard), not just +1. A category is
   -- buildable while its built count is under its projected target (N < T), so a
-  -- hoard can fill back/front/aggro up to the 35/45/20 ratio instead of being
+  -- hoard can fill back/front/aggro up to the live target ratio instead of being
   -- carried forever when every category was "full" at the old +1 projection.
   local pf_place_n = math.max(1, info.carried_pills or 1)
   local pf_targets = PP.targets(pf_total + pf_place_n)
@@ -3225,12 +3226,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- so the printed formula did not reproduce the printed number. Order matches
     -- the code above: (path + base + carry_pen - carry) x mult x lastpill, then
     -- x bal x surplus x multi, then + tankpen.
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*lastpill{%.2f}*bal{%.2f}*surplus{%.2f}*multi{%.2f}*armour{%.2f}+tankpen{%.0f} = cost{%.1f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d util %d/%d unguarded=%d | %s",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
            C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult,
            multi_carry_mult, armour_mult, tank_pen, cost, search_reason, best_score,
            pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
-           pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
+           pf_counts.aggro, pf_targets.aggro, pf_counts.utility or 0, util_reserve,
+           #unguarded_bases, PP.targets_label()) or "",
     cands = cands,
   }
 end
@@ -3515,7 +3517,7 @@ function M.get_strategic_place_heatmap(state, world, info)
   -- Project the back/front/aggro targets over the pills we actually have to
   -- place (built + THIS tank's carried hoard), not just +1. A category is
   -- buildable while its built count is under its projected target (N < T), so a
-  -- hoard can fill back/front/aggro up to the 35/45/20 ratio instead of being
+  -- hoard can fill back/front/aggro up to the live target ratio instead of being
   -- carried forever when every category was "full" at the old +1 projection.
   local pf_place_n = math.max(1, info.carried_pills or 1)
   local pf_targets = PP.targets(pf_total + pf_place_n)
@@ -4811,7 +4813,7 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- rest are genuine "can't reposition right now" states.
 
   -- Reposition cost is driven primarily by our pill-type BALANCE: a pill in a
-  -- category (back/front/aggressive) that's OVER its 35/45/20 allotment gets a
+  -- category (back/front/aggressive) that's OVER its live allotment gets a
   -- big surplus discount, so the bot sheds from over-full roles. Secondary
   -- terms keep good spots / break ties within a category:
   --   + coverage  (friendly pills + bases in fire range — keep good protectors
@@ -5114,9 +5116,10 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
                wx = U.m2w(mx), wy = U.m2w(my),
                target_id = best_pid or 0, reposition = true },
       desc = BRAIN_POOL_VIZ and string.format(
-             "REJECT{%s} | balance back %d/%d front %d/%d aggro %d/%d",
+             "REJECT{%s} | balance back %d/%d front %d/%d aggro %d/%d util %d/%d | %s",
              reject, counts.back, targets.back, counts.front, targets.front,
-             counts.aggro, targets.aggro) or "",
+             counts.aggro, targets.aggro, counts.utility or 0, targets.utility or 0,
+             PP.targets_label()) or "",
     }
   end
 
@@ -5146,12 +5149,13 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
              awaiting_vote = not (repos_locked or approved) },
     desc = BRAIN_POOL_VIZ and string.format(
            "%s{%.0f} reposition pill#%d@(%d,%d) cat=%s | base%.0f -surp%.0f -card%.0f +basep%.0f +act%.0f +tank%.0f +trav%.0f"..
-           "||list EVERY friendly pill, only BACK eligible; lower=more worth moving. if this BID wins the pool a team vote opens; the shoot is gated on approval. balance back %d/%d front %d/%d aggro %d/%d",
+           "||list EVERY friendly pill, only BACK eligible; lower=more worth moving. if this BID wins the pool a team vote opens; the shoot is gated on approval. surp comes from balance back %d/%d front %d/%d aggro %d/%d util %d/%d @ %s",
            (repos_locked and "LOCK" or (approved and "APPROVED" or "BID")),
            cost, best_pid, best_pill.mx, best_pill.my, tostring(bc.cat),
            C.PILL_REPOSITION_BASE_COST or 500, -(bc.surp or 0), -(bc.card or 0),
            (bc.base or 0), (bc.act or 0), (bc.tank or 0), (bc.travel or 0),
-           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro) or "",
+           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro,
+           counts.utility or 0, targets.utility or 0, PP.targets_label()) or "",
   }
 end
 

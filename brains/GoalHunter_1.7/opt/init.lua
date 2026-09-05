@@ -1069,9 +1069,18 @@ function Brain.think(info)
   --                          C.PILL_SUICIDER_MAPS)
   --   "nosuicider"        -> force it OFF, so a scenario can also field plain
   --                          waves on a map that IS listed there
+  --   "portfolio=B/F/A[/U]" -> this bot's pill-portfolio target shares as
+  --                          INTEGER PERCENTS (back/front/aggro/utility).
+  --                          '/' separated because ';' and ',' already separate
+  --                          tokens. U defaults to 100-B-F-A. Rejected (with a
+  --                          warning) when a part isn't an integer or B+F+A>100;
+  --                          normalised proportionally (with a warning) when an
+  --                          explicit U makes the four not sum to 100.
   -- This block runs early in Brain.think and squad.update (which reads
   -- state.force_pill_suicider) runs much later in the same function, so the
-  -- flag is already set on the bot's very first tick.
+  -- flag is already set on the bot's very first tick. Same for the portfolio
+  -- targets: every PP.targets reader runs later in think and reads M.TARGET_*
+  -- LIVE (no cached copies), so the override is in force from tick 1 onward.
   if state._test_arg_parsed == nil then
     state._test_arg_parsed = true
     local a = rawget(_G, "BRAIN_INIT_ARG")
@@ -1088,6 +1097,41 @@ function Brain.think(info)
           state.force_pill_suicider = true
         elseif tok == "nosuicider" then
           state.force_pill_suicider = false
+        elseif tok:sub(1, 10) == "portfolio=" then
+          -- Integer percents, '/' separated: B/F/A or B/F/A/U.
+          -- Complaints are LATCHED into state._cfg_warn, not printed here: this
+          -- runs on the bot's first think, a pre-game tick whose print2 output
+          -- never reaches the session's log file (same trap as TEST_ROLE). The
+          -- captured-tick window below re-emits them.
+          local nums, bad, extra = {}, false, false
+          for part in tok:sub(11):gmatch("[^/]+") do
+            if #nums >= 4 then extra = true
+            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+            else bad = true end
+          end
+          local b, f, ag, u = nums[1], nums[2], nums[3], nums[4]
+          if bad or extra or #nums < 3 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[portfolio] BAD TOKEN '%s' -- want portfolio=B/F/A[/U] as integer percents; IGNORED. ", tok)
+          elseif (b + f + ag) > 100 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[portfolio] BAD TOKEN '%s' -- back+front+aggro=%d > 100; IGNORED. ", tok, b + f + ag)
+          else
+            -- No explicit U -> it takes whatever is left (>=0 by the check above),
+            -- so the four always sum to exactly 100 in that form.
+            if not u then u = 100 - (b + f + ag) end
+            local sum = b + f + ag + u
+            if sum <= 0 then
+              state._cfg_warn = (state._cfg_warn or "") .. string.format(
+                "[portfolio] BAD TOKEN '%s' -- shares sum to 0; IGNORED. ", tok)
+            else
+              if sum ~= 100 then
+                state._cfg_warn = (state._cfg_warn or "") .. string.format(
+                  "[portfolio] WARNING '%s' sums to %d, not 100 -- normalising proportionally. ", tok, sum)
+              end
+              PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
+            end
+          end
         else
           local n = tok:match("^deprive=(%d+)$")
           if n then state.test_deprive_ticks = tonumber(n) end

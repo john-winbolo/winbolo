@@ -87,6 +87,13 @@ function M.draw(viz, world, state, info)
     "topleft", 215, 215, 215, 235)
   y = y + dy
 
+  -- Target SHARES in force for THIS bot (live PP.TARGET_*, never literals) plus
+  -- their source ("default" or the per-bot "portfolio=" init arg). The have/target
+  -- counts below can't be checked by hand without the shares that produced them.
+  viz.hud_text("pill_portfolio", x, y, PP.targets_label(),
+    "topleft", 185, 205, 185, 225)
+  y = y + dy
+
   -- Ratio line: have/target per category; missing (deficit) shown as (-N).
   do
     local bd = (need.back  > 0) and string.format("(-%d)", need.back)  or ""

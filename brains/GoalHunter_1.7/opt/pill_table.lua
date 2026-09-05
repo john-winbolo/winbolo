@@ -84,6 +84,11 @@ function M.draw(viz, world, state, info)
 
   y = y + dy
 
+  -- Target SHARES in force for THIS bot (live PP.TARGET_*, never literals) plus
+  -- their source ("default" or the per-bot "portfolio=" init arg). The have/target
+  -- counts below can't be checked by hand without the shares that produced them.
+  y = y + dy
+
   -- Ratio line: have/target per category; missing (deficit) shown as (-N).
   do
     local bd = (need.back  > 0) and string.format("(-%d)", need.back)  or ""

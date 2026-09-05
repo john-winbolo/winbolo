@@ -1377,7 +1377,10 @@ M.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS     = 10   -- small bonus for general pro
 M.STRATEGIC_PLACE_WAR_ZONE_BONUS          = 60   -- bonus for tiles near an active pill war
 -- Portfolio model (see PILL_REPOSITION_PLAN.md / pill_portfolio.lua). Classify
 -- friendly pills into back/front/aggro and bias placement toward the under-target
--- role (35/45/20). Roles (pill_portfolio.classify): front = near the front line;
+-- role (default shares 20 back / 45 front / 20 aggro / 15 utility, where utility
+-- = blockers + carried reserve; a per-bot "portfolio=B/F/A[/U]" BRAIN_INIT_ARG
+-- token replaces them, so read pill_portfolio.TARGET_* live, never these
+-- numbers). Roles (pill_portfolio.classify): front = near the front line;
 -- aggro = own tile in enemy influence OR surrounded by it; back = positive
 -- influence and outside the front range.
 M.AGGRO_NEG_NEIGHBORS                = 5      -- pill role = aggro if >= this many of its 8 adjacent tiles have negative influence (or own tile negative)
@@ -1754,7 +1757,8 @@ M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is 
 -- Pill repositioning. Legacy badness conditions (ORPHAN_DIST/THRESHOLD, AFAIK
 -- from aIndy's "pissing") are RETIRED ??? reposition now scores on the influence
 -- portfolio (see pill_portfolio.lua / PILL_REPOSITION_PLAN.md): cost is driven
--- primarily by category balance (35/45/20 back/front/aggressive).
+-- primarily by category balance (default shares 20/45/20/15
+-- back/front/aggressive/utility, per-bot overridable via "portfolio=").
 M.PILL_REPOSITION_ENABLED       = true
 -- BASE_COST: the honest BID floor. Win-then-vote means this cost must actually
 -- WIN the goal pool for a vote to open, so it is tuned to sit just above routine
