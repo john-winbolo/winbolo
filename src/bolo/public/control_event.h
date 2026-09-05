@@ -259,6 +259,7 @@ typedef struct ControlEvent {
             /* Visibility rules, indexed by ViewCategory. */
             ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
             uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
+            bool     lobbyClassicMode;  /* server is running classic mode */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

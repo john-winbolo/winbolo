@@ -174,6 +174,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
         evt->u.lobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
         evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
     }
+    evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {

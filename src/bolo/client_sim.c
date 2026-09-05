@@ -2369,6 +2369,10 @@ ViewPolicy clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat) {
   return cs->viewPolicy[cat];
 }
 
+bool clientSimGetClassicMode(const ClientSim *cs) {
+  return cs ? cs->classicMode : false;
+}
+
 uint16_t clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat) {
   if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
     return 0;

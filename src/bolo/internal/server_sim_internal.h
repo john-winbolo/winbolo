@@ -151,6 +151,10 @@ struct ServerSim {
      * host's value while they flip between modes. */
     ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
     uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
+    bool     classicMode;          /* host asked for the classic Bolo view.
+                                    * Setting it forces pill view to key and
+                                    * base and ally view to off, and blocks
+                                    * lobby edits to those three while on. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
@@ -192,6 +196,7 @@ struct ServerSim {
         uint16_t serverLocks;
         ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
         uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
+        bool       classicMode;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running

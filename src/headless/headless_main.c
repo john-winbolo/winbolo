@@ -139,6 +139,8 @@ static ViewPolicy optViewPolicy[VIEW_CATEGORY_COUNT] = {
 static int optViewDecaySecs[VIEW_CATEGORY_COUNT] = {
   VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS, VIEW_DECAY_DEFAULT_SECS
 };
+/* Classic Bolo view; overrides the three switches above when set. */
+static bool optClassicMode = false;
 
 /* Binary observation format constants */
 #define BINARY_SPATIAL_SIZE 29
@@ -1526,6 +1528,8 @@ static void printUsage(const char *prog) {
     "                    default 30)\n"
     "  --baseviewdecay S Same for bases (5-600, default 30)\n"
     "  --allyviewdecay S Same for allied tanks (5-600, default 30)\n"
+    "  --classicmode     Classic Bolo view: sets pillview key, baseview off\n"
+    "                    and allyview off, overriding those three switches\n"
     "  An unknown mode word or a decay outside the range is an error here,\n"
     "  not a fallback, matching --ai and --gametype.\n",
     prog, prog);
@@ -1625,6 +1629,8 @@ static bool parseArgs(int argc, char **argv) {
     } else if (strcmp(argv[i], "--allyviewdecay") == 0 && i + 1 < argc) {
       if (!parseViewDecayWord(argv[++i], "--allyviewdecay",
                               &optViewDecaySecs[viewCategoryAlly])) return FALSE;
+    } else if (strcmp(argv[i], "--classicmode") == 0) {
+      optClassicMode = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -1725,6 +1731,10 @@ static void applyViewPolicyOptions(ServerSim *sim) {
   for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
     serverSimSetViewPolicy(sim, (ViewCategory)vc, optViewPolicy[vc],
                            (uint16_t)optViewDecaySecs[vc]);
+  }
+  /* After the loop, so classic mode wins over the three switches. */
+  if (optClassicMode) {
+    serverSimSetClassicMode(sim, true);
   }
 }
 

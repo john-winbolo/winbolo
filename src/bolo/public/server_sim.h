@@ -1586,6 +1586,15 @@ void        serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
 ViewPolicy  serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat);
 uint16_t    serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat);
 
+/* Classic mode — the host is asking for the classic Bolo view. Turning
+ * it on sets pill view to key and base and ally view to off, keeping
+ * each category's own decay seconds, and the lobby then refuses edits
+ * to those three until it is turned off. Turning it off clears the flag
+ * and nothing else: the three policies stay where classic mode put
+ * them. Off by default. */
+void        serverSimSetClassicMode(ServerSim *sim, bool on);
+bool        serverSimGetClassicMode(const ServerSim *sim);
+
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */
 bool        serverSimGetOpenHost(const ServerSim *sim);

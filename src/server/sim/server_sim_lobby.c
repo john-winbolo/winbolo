@@ -95,6 +95,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
     sim->originalLobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
     sim->originalLobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
   }
+  sim->originalLobbySettings.classicMode         = sim->classicMode;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -357,9 +358,19 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             }
             return true;
         }
+        case LST_CLASSIC_MODE: {
+            if (len != 1) return false;
+            serverSimSetClassicMode(sim, value[0] != 0);
+            return true;
+        }
         case LST_PILL_VIEW:
         case LST_BASE_VIEW:
         case LST_ALLY_VIEW: {
+            /* Classic mode owns these three values while it is set, so an
+             * edit that would contradict it is refused — the same way
+             * LST_AUTO_LOCK_ON_GAME refuses an edit that contradicts
+             * ranked. */
+            if (sim->classicMode) return false;
             /* [policy 1][decaySecs 2 BE]. Reject an unknown policy the
              * same way LST_AI_POLICY rejects an out-of-range aiType;
              * the decay seconds are clamped by the setter. */

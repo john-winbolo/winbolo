@@ -853,6 +853,11 @@ UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
 ViewPolicy  clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat);
 uint16_t    clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat);
 
+/* True when the server has classic mode on, as last broadcast in the
+ * lobby-settings event. Reads back false until the first event arrives,
+ * and a payload that predates the field leaves it false too. */
+bool        clientSimGetClassicMode(const ClientSim *cs);
+
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);

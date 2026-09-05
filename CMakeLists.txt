@@ -3034,6 +3034,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
     tests/unit/test_view_policy_settings.c
+    tests/unit/test_classic_mode_settings.c
     tests/unit/test_info_packet_view_policies.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
@@ -3642,6 +3643,10 @@ set(_unit_test_names
     view_policy_apply_validates
     view_policy_lock_bits
     view_policy_lobby_reset
+    classic_mode_defaults
+    classic_mode_forces_views
+    classic_mode_lock_bit
+    classic_mode_lobby_reset
     info_packet_view_policy_layout
     info_packet_view_policy_length_tier
     upload_cap_enforced

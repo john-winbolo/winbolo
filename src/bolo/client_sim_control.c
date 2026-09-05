@@ -405,6 +405,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->viewPolicy[vc]    = evt->u.lobbySettings.viewPolicy[vc];
             cs->viewDecaySecs[vc] = evt->u.lobbySettings.viewDecaySecs[vc];
         }
+        cs->classicMode = evt->u.lobbySettings.lobbyClassicMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
          * gameLength (it decrements every running tick), so applying it

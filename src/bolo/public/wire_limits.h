@@ -76,6 +76,7 @@
 #define LOBBY_LOCK_PILL_VIEW         (1u << 9)
 #define LOBBY_LOCK_BASE_VIEW         (1u << 10)
 #define LOBBY_LOCK_ALLY_VIEW         (1u << 11)
+#define LOBBY_LOCK_CLASSIC_MODE      (1u << 12)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -105,7 +106,12 @@ typedef enum {
                                  * admin only. */
     LST_PILL_VIEW         = 8,  /* 3 bytes: [policy][decaySecs hi][decaySecs lo] */
     LST_BASE_VIEW         = 9,  /* same */
-    LST_ALLY_VIEW         = 10  /* same */
+    LST_ALLY_VIEW         = 10, /* same */
+    LST_CLASSIC_MODE      = 11  /* 1 byte bool. When true the server
+                                 * sets pill view to key and base and
+                                 * ally view to off, and refuses an
+                                 * edit to any of those three while it
+                                 * stays on. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

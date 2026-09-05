@@ -663,7 +663,7 @@ void printArgs() {
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
-  fprintf(stderr, "                baseview, allyview.\n");
+  fprintf(stderr, "                baseview, allyview, classicmode.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -682,6 +682,9 @@ void printArgs() {
   fprintf(stderr, "                An unrecognised mode warns and falls back to that\n");
   fprintf(stderr, "                switch's default; a decay outside the range is\n");
   fprintf(stderr, "                clamped into it.\n");
+  fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
+  fprintf(stderr, "                allyview off, overriding those three switches, and stops\n");
+  fprintf(stderr, "                the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -1604,11 +1607,13 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "pillview") == 0)  serverLocks |= LOBBY_LOCK_PILL_VIEW;
         else if (strcmp(lo, "baseview") == 0)  serverLocks |= LOBBY_LOCK_BASE_VIEW;
         else if (strcmp(lo, "allyview") == 0)  serverLocks |= LOBBY_LOCK_ALLY_VIEW;
+        else if (strcmp(lo, "classicmode") == 0) serverLocks |= LOBBY_LOCK_CLASSIC_MODE;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
-                  "openhost, map, pillview, baseview, allyview)\n", lo);
+                  "openhost, map, pillview, baseview, allyview, "
+                  "classicmode)\n", lo);
         }
       }
     }
@@ -1672,6 +1677,14 @@ int main(int argc, char **argv) {
       serverSimSetViewPolicy(serverSim, viewArgs[vi].cat, policy,
                              (uint16_t)secs);
     }
+  }
+
+  /* -classicmode: the classic Bolo view. Applied after the three view
+   * switches so it wins when both are on the same command line, and
+   * before serverInstanceStartup so the lobby snapshot captures it.
+   * Only set when the flag is present — the sim default is off. */
+  if (argExist(argc, argv, "classicmode") == TRUE) {
+    serverSimSetClassicMode(serverSim, true);
   }
 
   /* -nolobby: skip lobby, start running immediately (backward-compatible

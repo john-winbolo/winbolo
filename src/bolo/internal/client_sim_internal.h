@@ -331,6 +331,9 @@ struct ClientSim {
      * before the settings arrive matches what the server is sending. */
     ViewPolicy       viewPolicy[VIEW_CATEGORY_COUNT];
     uint16_t         viewDecaySecs[VIEW_CATEGORY_COUNT];
+    bool             classicMode;   /* server is running classic mode; raw
+                                     * mirror of the lobby-settings event,
+                                     * false until the first one lands */
     /* The client's own copy of the proximity clocks a viewPolicyDecay
      * category runs on, for the local player as the viewer. The server keeps
      * the same clocks and they are what decides which rects it sends; these

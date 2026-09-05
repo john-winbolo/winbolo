@@ -565,6 +565,7 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_PILL_VIEW:         return LOBBY_LOCK_PILL_VIEW;
         case LST_BASE_VIEW:         return LOBBY_LOCK_BASE_VIEW;
         case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
+        case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
         default:                    return 0xFFFFu;  /* unknown setting */
     }
 }
@@ -595,6 +596,27 @@ ViewPolicy serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat) {
     if (sim == NULL) return viewPolicyAlways;
     if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return viewPolicyAlways;
     return sim->viewPolicy[cat];
+}
+
+void serverSimSetClassicMode(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->classicMode = on;
+    if (on) {
+        /* Write the three classic values straight through the view-policy
+         * setter, so the command-line switch and the lobby setting both
+         * get the same result. Each category keeps its own decay seconds
+         * so the host's value survives a trip through classic mode. */
+        serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyKey,
+                               sim->viewDecaySecs[viewCategoryPill]);
+        serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,
+                               sim->viewDecaySecs[viewCategoryBase]);
+        serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyOff,
+                               sim->viewDecaySecs[viewCategoryAlly]);
+    }
+}
+
+bool serverSimGetClassicMode(const ServerSim *sim) {
+    return sim ? sim->classicMode : false;
 }
 
 uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {

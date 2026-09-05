@@ -100,6 +100,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.viewDecaySecs[viewCategoryPill] = 45;
     in.u.lobbySettings.viewDecaySecs[viewCategoryBase] = 600;
     in.u.lobbySettings.viewDecaySecs[viewCategoryAlly] = 5;
+    in.u.lobbySettings.lobbyClassicMode                = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -142,12 +143,15 @@ int run_lobby_settings_codec_and_apply(void) {
                   (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryPill],
                   (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryBase],
                   (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryAlly]);
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyClassicMode == true,
+                  "lobbyClassicMode did not survive codec round-trip");
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is nine bytes shorter (3 policies + 3 u16 decay values). */
+     * that is ten bytes shorter (3 policies + 3 u16 decay values +
+     * classic mode). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -158,7 +162,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 9;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 10;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -171,6 +175,8 @@ int run_lobby_settings_codec_and_apply(void) {
                           "short payload view decay %d = %u, want 0",
                           vc, (unsigned)shortOut.u.lobbySettings.viewDecaySecs[vc]);
         }
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyClassicMode == false,
+                      "short payload must leave classic mode off");
     }
 
     ClientSim *cs = fresh_client_sim();
@@ -200,6 +206,8 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryPill) == 45);
     UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryBase) == 600);
     UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryAlly) == 5);
+    UT_ASSERT_MSG(clientSimGetClassicMode(cs) == true,
+                  "classic mode did not reach the client mirror");
     clientSimDestroy(cs);
     return 0;
 }
