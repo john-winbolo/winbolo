@@ -132,7 +132,7 @@ local WAVE_TEAM    = 2      -- the enemy side IS lobby Team 2
 -- added/removed/renamed some, and on_setup reads the final list ONCE.
 local WAVE_SIZE    = 10     -- fallback when no roster exists (harness)
 local WAVE_NAMES   = {}     -- roster names, reused for every wave
-local GRACE_TICKS  = 3000   -- 60 s before wave 1
+local GRACE_TICKS  = 1500   -- 30 s of prep before wave 1 (user: "30 seconds of prep")
 local BREATHER     = 1500   -- 30 s preparation between waves
 local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 
