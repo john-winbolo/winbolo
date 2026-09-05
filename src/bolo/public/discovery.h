@@ -63,10 +63,11 @@ typedef struct {
                       * hide the rich fields when false. */
   /* Server visibility rules. A server whose INFO predates the
    * view_policies byte reports the defaults (pill always, base off,
-   * ally always). */
+   * ally always) and classic mode off. */
   ViewPolicy pillView;
   ViewPolicy baseView;
   ViewPolicy allyView;
+  bool classicMode;
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format
@@ -107,10 +108,11 @@ typedef struct {
                                    * — consumers hide the rich fields when false. */
   /* Server visibility rules. A server whose INFO predates the
    * view_policies byte reports the defaults (pill always, base off,
-   * ally always). */
+   * ally always) and classic mode off. */
   ViewPolicy     pillView;
   ViewPolicy     baseView;
   ViewPolicy     allyView;
+  bool           classicMode;
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

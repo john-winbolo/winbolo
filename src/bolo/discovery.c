@@ -115,7 +115,8 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
   /* The view-policy byte sits past the rich block, so it has its own
    * length tier: a shorter packet reports the built-in defaults. */
   infoPacketReadViewPolicies(info, len,
-                             &out->pillView, &out->baseView, &out->allyView);
+                             &out->pillView, &out->baseView, &out->allyView,
+                             &out->classicMode);
   out->hasRichInfo = rich;
 }
 
@@ -456,7 +457,8 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     }
     /* Own length tier — see discoveryFillServerFromInfoPacket. */
     infoPacketReadViewPolicies(info, (size_t)len,
-                               &out->pillView, &out->baseView, &out->allyView);
+                               &out->pillView, &out->baseView, &out->allyView,
+                               &out->classicMode);
     out->hasRichInfo = rich;
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,

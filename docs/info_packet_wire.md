@@ -42,7 +42,7 @@ view defaults below.
 | 77 | 1 | u8 | num_bots | AI bots among `num_players` (`num_humans + num_bots == num_players`) |
 | 78 | 1 | u8 | max_players | server join-slot cap (16 unless configured lower) |
 | 79 | 32 | char[32] | map_md5 | 32 lowercase hex chars, no NUL; see below |
-| 111 | 1 | u8 | view_policies | 2 bits per visibility category, see below |
+| 111 | 1 | u8 | view_policies | 2 bits per visibility category plus the classic-mode bit, see below |
 
 Total: **112 bytes**.
 
@@ -68,13 +68,14 @@ Total: **112 bytes**.
 
 ## `view_policies` byte (offset 111)
 
-Two bits per visibility category, low bits first:
+Two bits per visibility category, low bits first, then the classic-mode flag:
 
 ```
 bits 0-1  pillboxes
 bits 2-3  bases
 bits 4-5  allied tanks
-bits 6-7  reserved — ignore
+bit  6    classic mode (set = server runs the classic Bolo view)
+bit  7    reserved — ignore
 ```
 
 Each two-bit field holds a policy value:
@@ -88,7 +89,8 @@ Each two-bit field holds a policy value:
 
 The decay seconds themselves are not on this packet — they reach clients
 through the lobby-settings control event. A packet that stops at 111 bytes
-predates this byte; read it as pill = `always`, base = `off`, ally = `always`.
+predates this byte; read it as pill = `always`, base = `off`, ally = `always`,
+classic mode off.
 
 ## Endianness
 
@@ -99,8 +101,9 @@ servers that produce it) for the multi-byte numerics: `serverport`, `start_delay
 `inet_addr`). Every field at offset 59 and beyond that this format adds is either a
 single byte or a char array, so none of the new fields need byte-swapping.
 
-The mDNS TXT record set below does not carry the view policies; a consumer
-reading a game off mDNS uses the same defaults a 111-byte packet gets.
+The mDNS TXT record set below does not carry the view policies or the
+classic-mode bit; a consumer reading a game off mDNS uses the same defaults a
+111-byte packet gets.
 
 ## `time_limit` interpretation
 

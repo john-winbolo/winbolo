@@ -135,16 +135,19 @@ struct ServerEntry {
                           * the flags/counts/md5 fields; gates the rich-only
                           * lines in the detail pane. */
     /* Server visibility rules. Defaults (pill always, base off, ally
-     * always) for a server whose advertisement doesn't carry them. */
+     * always, classic mode off) for a server whose advertisement
+     * doesn't carry them. */
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
+    bool classicMode;
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
 /* Compact "Views:" tag for the detail pane. Lists only the categories
  * that differ from the defaults, so a stock server shows nothing at
- * all. Returns "" when every category is at its default. */
+ * all. Classic mode leads the list because it explains the policies
+ * that follow it. Returns "" when the server is stock. */
 static std::string viewPolicyTag(const ServerEntry &e) {
     static const char *kModeStr[] = { "always", "key", "decay", "off" };
     struct { const char *letter; ViewPolicy value; ViewPolicy def; } cats[] = {
@@ -153,6 +156,9 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         { "A", e.allyView, viewPolicyAlways },
     };
     std::string out;
+    if (e.classicMode) {
+        out += "Classic";
+    }
     for (const auto &c : cats) {
         if (c.value == c.def) continue;
         int idx = (int)c.value;
@@ -214,6 +220,7 @@ struct PingResult {
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
+    bool classicMode;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -291,6 +298,7 @@ static PingResult pingServer(const PingWork &work) {
     res.pillView = viewPolicyAlways;
     res.baseView = viewPolicyOff;
     res.allyView = viewPolicyAlways;
+    res.classicMode = false;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -316,6 +324,7 @@ static PingResult pingServer(const PingWork &work) {
         res.pillView        = dpr.pillView;
         res.baseView        = dpr.baseView;
         res.allyView        = dpr.allyView;
+        res.classicMode     = dpr.classicMode;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -436,6 +445,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.pillView        = src->pillView;
     e.baseView        = src->baseView;
     e.allyView        = src->allyView;
+    e.classicMode     = src->classicMode;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
      * to minutes the same way the server does (ticks / (50 * 60)). */
@@ -745,6 +755,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.pillView = (ViewPolicy)w.pillView;
                         e.baseView = (ViewPolicy)w.baseView;
                         e.allyView = (ViewPolicy)w.allyView;
+                        e.classicMode = w.classicMode;
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -856,6 +867,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].pillView        = pr.pillView;
                         servers[pr.index].baseView        = pr.baseView;
                         servers[pr.index].allyView        = pr.allyView;
+                        servers[pr.index].classicMode     = pr.classicMode;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }

@@ -33,6 +33,7 @@ typedef struct {
   int  pillView;                             /* "pillview" ViewPolicy; absent = always */
   int  baseView;                             /* "baseview" ViewPolicy; absent = off */
   int  allyView;                             /* "allyview" ViewPolicy; absent = always */
+  bool classicMode;                          /* "classicmode"; absent = off */
   bool mines;                                /* "mines" */
   bool password;                             /* "password" */
   bool randomMap;                            /* "random_map" */

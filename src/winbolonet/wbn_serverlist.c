@@ -110,6 +110,7 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->allowNewPlayers = readBoolField(src, "allow_new_players");
     dst->autoLock        = readBoolField(src, "auto_lock");
     dst->allowSpectators = readBoolField(src, "allow_spectators");
+    dst->classicMode     = readBoolField(src, "classicmode");
     dst->spectatorCount  = readIntField(src, "spectator_count");
 
     dst->timeLimit   = readBoolField(src, "time_limit");

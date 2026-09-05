@@ -75,6 +75,7 @@ typedef struct {
   BYTE     pillView;                 /* ViewPolicy for pillboxes (0..3) */
   BYTE     baseView;                 /* ViewPolicy for bases (0..3) */
   BYTE     allyView;                 /* ViewPolicy for allied tanks (0..3) */
+  bool     classicMode;              /* Classic Bolo view restrictions */
 } WbnLobbyInfo;
 
 /*********************************************************

@@ -4525,7 +4525,8 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.view_policies = infoPacketPackViewPolicies(
         serverSimGetViewPolicy(sim, viewCategoryPill),
         serverSimGetViewPolicy(sim, viewCategoryBase),
-        serverSimGetViewPolicy(sim, viewCategoryAlly));
+        serverSimGetViewPolicy(sim, viewCategoryAlly),
+        serverSimGetClassicMode(sim));
 
     /* wire-only: tracker / external reply (no in-process audience) */
     srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
@@ -5192,7 +5193,8 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.view_policies = infoPacketPackViewPolicies(
         serverSimGetViewPolicy(sim, viewCategoryPill),
         serverSimGetViewPolicy(sim, viewCategoryBase),
-        serverSimGetViewPolicy(sim, viewCategoryAlly));
+        serverSimGetViewPolicy(sim, viewCategoryAlly),
+        serverSimGetClassicMode(sim));
 
     srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
 }

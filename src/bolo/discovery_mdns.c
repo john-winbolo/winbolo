@@ -168,7 +168,8 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
   out->hasRichInfo = true;
   /* The TXT record set carries no view-policy keys, so report the same
    * defaults an INFO packet without the view byte reports. memset alone
-   * would leave the base view reading "always". */
+   * would leave the base view reading "always". There is no classic-mode
+   * key either, and there memset gives the right answer — off. */
   out->pillView = viewPolicyAlways;
   out->baseView = viewPolicyOff;
   out->allyView = viewPolicyAlways;

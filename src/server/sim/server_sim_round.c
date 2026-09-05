@@ -453,6 +453,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.pillView        = (BYTE)sim->viewPolicy[viewCategoryPill];
     info.baseView        = (BYTE)sim->viewPolicy[viewCategoryBase];
     info.allyView        = (BYTE)sim->viewPolicy[viewCategoryAlly];
+    info.classicMode     = sim->classicMode;
     winbolonetSetLobbyInfo(&info);
 }
 
