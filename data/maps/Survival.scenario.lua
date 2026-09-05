@@ -35,7 +35,8 @@
 --     their pills round-robin to the defenders actually seated in
 --     slots 0..5 — human or bot, so the host can stack their own team
 --     with lobby bots for testing — with no newswire spam.
---   * ~10 s grace, then wave 1. At the START OF EVERY WAVE the 8
+--   * 60 s of grace to dig in, called out at the start and again with
+--     30 s and 10 s left, then wave 1. At the START OF EVERY WAVE the 8
 --     shore bases flip back to their bots (humans may capture them
 --     between waves — engine ownership rules apply mid-wave, including
 --     the auto-neutralize when a wave bot dies).
@@ -129,10 +130,16 @@ local WAVE_TEAM    = 2      -- the enemy side IS lobby Team 2
 -- added/removed/renamed some, and on_setup reads the final list ONCE.
 local WAVE_SIZE    = 10     -- fallback when no roster exists (harness)
 local WAVE_NAMES   = {}     -- roster names, reused for every wave
-local GRACE_TICKS  = 500    -- 10 s before wave 1
+local GRACE_TICKS  = 3000   -- 60 s before wave 1
 local BREATHER     = 1500   -- 30 s preparation between waves
-local ANNOUNCE_GAP = 250    -- final "incoming" warning this many ticks early
 local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
+
+-- Countdown warnings before a wave lands, in ticks-left order. The 60 s
+-- grace gets both ("in 30 seconds", "in 10 seconds"); a 30 s breather
+-- only gets the 10 s one, because a warning that would land on the very
+-- tick the countdown starts is dropped — "Wave N survived! 30 second
+-- preparation for wave N+1" has just said the same thing. See warn_gap.
+local WAVE_WARN_TICKS = { 1500, 500 }   -- 30 s, 10 s
 
 -- Wave bots arrive and leave ONE AT A TIME, this many ticks apart, instead
 -- of all ten inside a single tick.
@@ -172,7 +179,15 @@ local NEWSWIRE_MUTE_TAIL_TICKS = 100   -- 2 s of silence after it
 -- pill_suicider role on for that one bot — it charges pillboxes and refuels
 -- and pays a heavy cost surcharge on everything else. Unlisted waves spawn
 -- plain and keep the brain's own fractional designation.
-local SUICIDER_WAVES = { [2] = true, [4] = true }
+--
+-- EMPTY on purpose (Andrew, 2026-09-05: "take out the two rounds with full
+-- suicides"). Waves 2 and 4 used to be all-suicider and it made those two
+-- rounds play as one long pill rush instead of a fight. The mechanism, the
+-- "suicider" token and the wave banner's suicider hint all stay in place —
+-- put a wave number back in this table and it fires again. Note that every
+-- wave still designates WAVE_BLITZ_MIN_SUICIDERS suiciders inside a blitz;
+-- what is gone is the WHOLE WAVE being suiciders.
+local SUICIDER_WAVES = {}
 
 -- Brain init tokens every wave bot is spawned with. They ride
 -- BRAIN_INIT_ARG and are parsed by the brain (brains/GoalHunter_1.7);
@@ -204,7 +219,8 @@ local WAVE_PILLS   = 10     -- pills 7..16: the wave's dead ground pills
 local wave = 0
 local wave_bots = {}        -- playerNum -> true for living wave members
 local next_wave_at = nil    -- tick the next wave spawns (nil = wave live)
-local announced = false
+local warn_gap = nil        -- ticks the current countdown started with
+local warn_next = 1         -- next WAVE_WARN_TICKS entry still to say
 local ended = false
 local wave_ends_at = nil    -- tick the live wave's time runs out
 local last_min_mark = nil   -- minutes-left value last announced
@@ -368,6 +384,15 @@ local function wave_pill_free(pi)
   local o = pi.owner
   if o ~= nil and o <= 5 then return false end
   return true
+end
+
+-- Start the clock on the next wave, `gap` ticks from `tick`, and with it
+-- the countdown warnings that hang off that clock (which marks apply is
+-- decided from the gap — see WAVE_WARN_TICKS).
+local function arm_next_wave(tick, gap)
+  next_wave_at = tick + gap
+  warn_gap = gap
+  warn_next = 1
 end
 
 -- ONE claimable pill per attacker, and not a crumb more.
@@ -948,7 +973,7 @@ function on_tick(game, tick)
 
   -- Arm wave 1 off the round's first running tick.
   if wave == 0 and next_wave_at == nil then
-    next_wave_at = tick + GRACE_TICKS
+    arm_next_wave(tick, GRACE_TICKS)
     return
   end
 
@@ -962,15 +987,23 @@ function on_tick(game, tick)
       newswire_unmute_at = nil
       set_newswire_mute(game, true)
     end
-    -- Countdown to the next wave.
-    if not announced and tick >= next_wave_at - ANNOUNCE_GAP then
-      announced = true
-      game.message(string.format("*** Wave %d incoming in %d seconds! ***",
-                                 wave + 1, ANNOUNCE_GAP / 50))
+    -- Countdown to the next wave: every WAVE_WARN_TICKS mark that is
+    -- actually inside this countdown, in order. A tick that skips past
+    -- two marks at once says both, oldest first.
+    while warn_next <= #WAVE_WARN_TICKS do
+      local w = WAVE_WARN_TICKS[warn_next]
+      if warn_gap ~= nil and w >= warn_gap then
+        warn_next = warn_next + 1        -- countdown never had that long left
+      elseif tick >= next_wave_at - w then
+        warn_next = warn_next + 1
+        game.message(string.format("*** Wave %d incoming in %d seconds! ***",
+                                   wave + 1, w / 50))
+      else
+        break
+      end
     end
     if tick >= next_wave_at then
       next_wave_at = nil
-      announced = false
       spawn_wave(game)
       pump_spawn_queue(game, tick)   -- first attacker lands on the wave tick
     end
@@ -1039,7 +1072,7 @@ function on_tick(game, tick)
       game.end_round(string.format(
         "*** All %d waves survived — the defenders win! ***", WAVES))
     else
-      next_wave_at = tick + BREATHER
+      arm_next_wave(tick, BREATHER)
       game.message(string.format(
         "*** Wave %d survived! %d second preparation for wave %d. ***",
         wave, BREATHER / 50, wave + 1))
