@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 """
-A CONTESTED pill take turns blitzers into suiciders -- ALL of them when the
-party is big, exactly ONE of them when it is only two tanks (GoalHunter 1.7,
-author's rule of 2026-09-05).
+A CONTESTED pill take designates exactly ONE blitzer a suicider -- for any
+party of two or more (GoalHunter 1.7, author's rule of 2026-09-05).
 
 WHAT IS UNDER TEST (constants.lua BLITZ_CONTESTED_RANGE /
-BLITZ_CONTESTED_ALL_SUICIDERS, squad.lua blitz_contested_enemy /
-blitz_designate_all_suiciders, attack.lua blitz_contested_check at both GO
-sites and on the commander's replans, comms.lua's `bsu ... c` verb)
+BLITZ_CONTESTED_ALL_SUICIDERS / BLITZ_CONTESTED_SUICIDERS, squad.lua
+blitz_contested_enemy / blitz_designate_contested, attack.lua
+blitz_contested_check at both GO sites and on the commander's replans,
+comms.lua's `bsu ... c` verb)
 
     The take of a pill is CONTESTED when a live HOSTILE TANK is seen within
     BLITZ_CONTESTED_RANGE (9) tiles, euclidean, of that pill.  That is the take
     that usually gets undone -- we kill the pill, the defender's LGM walks
     straight back out and repairs it while our survivors reload and back off --
-    so on a contested take the commander designates blitzers as temporary
-    pill_suiciders, regardless of BLITZ_MIN_SUICIDERS (which is 0 by default,
-    i.e. nothing else designates anybody).  HOW MANY depends on the party:
-
-      party >= BLITZ_CONTESTED_ALL_MIN_PARTY (3)   EVERY member, commander
-                                                   included.
-      party <  that (a two-tank take)              only
-                                                   BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS
-                                                   (1) of them, soldiers first,
-                                                   so the commander survives to
-                                                   finish the pill.
+    so on a contested take the commander designates
+    BLITZ_CONTESTED_SUICIDERS (1) of the blitz a temporary pill_suicider,
+    regardless of BLITZ_MIN_SUICIDERS (which is 0 by default, i.e. nothing else
+    designates anybody).  SOLDIERS are picked first, uniformly at random over
+    the seeded RNG, and the commander designates ITSELF only when the soldiers
+    cannot cover the number -- so with a soldier available the commander stays
+    a normal tank that can finish the pill and hold the ground.  The party size
+    does NOT change the count: a party of three designates one, exactly as a
+    party of two does.  (It used to designate EVERY blitzer; the 2026-09-05
+    evening bench had that losing 7-3 in 2v2 against KEEL.)
 
 THREE ARENAS (tests/generate_blitz_contested_map.py) on one piece of terrain.
 A and B differ in ONE TILE -- where the enemy tank is parked.  A and C differ
@@ -31,29 +30,26 @@ only in PARTY SIZE -- same enemy tile, two attackers instead of three.  Every
 arena has one enemy-owned 15 HP pill (a HARD take, so a blitz commander is
 elected and a call opens) and one motionless enemy on an unreachable island.
 
-  A  CONTESTED, BIG PARTY (three attackers with `blitz=3/4`, enemy 7.0 tiles
-     from the pill)
+  A  CONTESTED, PARTY OF THREE (three attackers with `blitz=3/4`, enemy 7.0
+     tiles from the pill)
      A1 the commander fired a real GO (BLITZ_GO / BLITZ_GO_ENROUTE);
      A2 it logged BLITZ_CONTESTED naming an enemy inside
         BLITZ_CONTESTED_RANGE, at or after that GO, on the same pill, and the
-        line reads `party=3 -> all suiciders`;
-     A3 ALL THREE attackers -- the commander included -- show
-        `blitz_suicider=true ... reason=blitz_contested` with
-        `src=blitz_contested` on their [role] line, and each is either the
-        commander that self-designated or a bot that received `bsu ... c`;
-     A4 the designation is TEMPORARY: every designee later reverts with
+        line reads `party=3 -> 1 suicider` with ONE name in designate=[...],
+        never `self`;
+     A3 that ONE designee, and only it, shows `blitz_suicider=true ...
+        reason=blitz_contested` with `src=blitz_contested` on its [role] line,
+        arriving on a `bsu ... c` addressed to it;
+     A4 the COMMANDER never became a suicider -- a bigger party does not pull
+        it in;
+     A5 every GO line labels the take `designated=1`;
+     A6 the designation is TEMPORARY: the designee later reverts with
         `blitz_suicider=false reason=<one of the known expiry reasons>`.
 
-  C  CONTESTED, SMALL PARTY (TWO attackers with `blitz=2/4`, the SAME enemy
+  C  CONTESTED, PARTY OF TWO (TWO attackers with `blitz=2/4`, the SAME enemy
      tile as A -- 7.0 tiles from the pill)
-     C1 the commander fired a real GO with party=2;
-     C2 it logged exactly the small-party form, `party=2 -> 1 suicider
-        (1 designated)`, and the designee is a SOLDIER -- the name list never
-        contains `self`;
-     C3 that soldier, and only it, shows `blitz_suicider=true ...
-        reason=blitz_contested`, arriving on a `bsu ... c` addressed to it;
-     C4 the COMMANDER never became a suicider of any kind -- which is the
-        whole point of the rule: a two-tank take keeps one tank alive.
+     C1..C5 are A1..A5 with party=2: the SAME single designation, which is the
+     point of running both -- the count does not follow the party size.
 
   B  CONTROL (the same enemy moved to 13.9 tiles from the pill)
      B1 a GO fired here too, so the arena really did run the same experiment;
@@ -90,7 +86,7 @@ FOE_BRAIN = HERE / "brains" / "idle.lua"
 sys.path.insert(0, str(HERE))
 from generate_blitz_contested_map import (   # noqa: E402
     VARIANTS, CONTESTED, PILL, FOE_SPAWN, BLITZ_CONTESTED_RANGE, BLITZ_PARTY,
-    BLITZ_CONTESTED_ALL_MIN_PARTY, BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS,
+    BLITZ_CONTESTED_SUICIDERS,
     BRAIN_VIEW_HALF, PILL_HP, allies, foe_player, n_allies, spawns,
     euclid, cheb)
 
@@ -115,14 +111,14 @@ GO_RE = re.compile(
     r"BLITZ_GO t=(\d+) ready=\d+/\d+ party=(\d+)/(\d+) .*?contested\{([^}]*)\} -> (\S+)")
 GO_ENROUTE_RE = re.compile(
     r"BLITZ_GO_ENROUTE t=(\d+) set_inwait=(\d+) .*?contested\{([^}]*)\}")
-# squad.lua blitz_designate_all_suiciders -- the line this whole test is about.
-# Two shapes, one line: `-> all suiciders` (party >= ALL_MIN_PARTY) and
-# `-> N suicider(s)` (the small-party rule).  The optional trailing
-# `upgrade=small->all` marks a party that GREW past ALL_MIN_PARTY mid-take.
+# squad.lua blitz_designate_contested -- the line this whole test is about.
+# `-> N suicider(s)` is BLITZ_CONTESTED_SUICIDERS, the number the take WANTS;
+# designate=[...] is who it newly designated, which is empty (with a trailing
+# `(already covered by ...)`) when a member was a suicider already.
 CONTESTED_RE = re.compile(
     r"BLITZ_CONTESTED t=(\d+) pill=#(\d+) enemy=p(\d+) dist=([\d.]+) "
-    r"party=(\d+) -> (all suiciders|\d+ suiciders?) \((\d+) designated\) "
-    r"designate=\[(.*?)\](?: upgrade=(\S+))?")
+    r"party=(\d+) -> (\d+) suiciders? designate=\[(.*?)\]"
+    r"(?: \(already covered by (.*?)\))?")
 # squad.lua's role resolution, one line per CHANGE of is_pill_suicider.
 ROLE_RE = re.compile(
     r"\[role\] t=(\d+) suicider=(\w+) src=(\S+) harasser=\w+ forced=\S+ "
@@ -258,10 +254,12 @@ def collect(text):
                               sub="charge", kind="GO_ENROUTE"))
     out["go"].sort(key=lambda g: g["t"])
     for m in CONTESTED_RE.finditer(text):
+        names = m.group(7).split()
         out["contested"].append(dict(
             t=int(m.group(1)), pid=int(m.group(2)), enemy=int(m.group(3)),
-            dist=float(m.group(4)), party=int(m.group(5)), rule=m.group(6),
-            n=int(m.group(7)), names=m.group(8).split(), upgrade=m.group(9)))
+            dist=float(m.group(4)), party=int(m.group(5)),
+            want=int(m.group(6)), n=len(names), names=names,
+            covered=(m.group(8) or "").split()))
     for m in ROLE_RE.finditer(text):
         t, is_su, src, extra = int(m.group(1)), m.group(2), m.group(3), m.group(4)
         on = SU_ON_RE.search(extra)
@@ -310,134 +308,189 @@ def foe_tiles(data, AL):
 
 
 # ---------------------------------------------------------------------------
-# A: CONTESTED
+# A and C: CONTESTED.  Identical checks either side of the party size, because
+# the rule does not vary with it: ONE designee, and it is a soldier.
 # ---------------------------------------------------------------------------
-def check_A(logs):
-    AL = allies("A")
+def check_contested(variant, logs, tag):
+    """The shared contested-arena checks.  Returns (data, designees) or None.
+
+    `designees` is [(commander bot, designated bot, the BLITZ_CONTESTED line)].
+    """
+    AL = allies(variant)
+    want = BLITZ_CONTESTED_SUICIDERS
     data = {b: collect(t) for b, t in logs.items()}
     summarise(data, AL)
 
-    # -- A1: a real GO happened.  Without one there is nothing to contest.
+    # -- 1: a real GO happened.  Without one there is nothing to contest.
     gos = [(b, g) for b in AL for g in data[b]["go"]]
     if not gos:
-        print("FAIL: no BLITZ_GO anywhere -- the three attackers never formed "
-              "a blitz on the pill, so nothing in this arena is under test")
-        return 1
-    cmdrs = sorted({b for b, _ in gos})
+        print(f"FAIL: no BLITZ_GO anywhere -- the {n_allies(variant)} "
+              f"attackers never formed a blitz on the pill, so nothing in this "
+              f"arena is under test")
+        return None
     b0, g0 = gos[0]
-    print(f"  A1: {len(gos)} GO line(s) from bot(s) {cmdrs} "
-          f"(first: bot{b0} {g0['kind']} t={g0['t']} party={g0['party']} "
-          f"-> {g0['sub']})")
+    print(f"  {tag}1: {len(gos)} GO line(s) from bot(s) "
+          f"{sorted({b for b, _ in gos})} (first: bot{b0} {g0['kind']} "
+          f"t={g0['t']} party={g0['party']} -> {g0['sub']})")
 
-    # -- A2: the commander declared the take contested, naming an enemy inside
-    #        BLITZ_CONTESTED_RANGE, at or after its own GO.
+    # -- 2: the commander declared the take contested, naming an enemy inside
+    #       BLITZ_CONTESTED_RANGE, at or after its own GO, and designated
+    #       exactly BLITZ_CONTESTED_SUICIDERS of the party -- a SOLDIER, which
+    #       is what a name list without `self` means.
     cons = [(b, c) for b in AL for c in data[b]["contested"]]
     if not cons:
         print(f"FAIL: no BLITZ_CONTESTED line -- the enemy is "
-              f"{euclid(PILL, FOE_SPAWN['A']):.1f} tiles from the pill, well "
-              f"inside BLITZ_CONTESTED_RANGE ({BLITZ_CONTESTED_RANGE}), so the "
-              f"take should have flipped the whole party")
-        return 1
+              f"{euclid(PILL, FOE_SPAWN[variant]):.1f} tiles from the pill, "
+              f"well inside BLITZ_CONTESTED_RANGE ({BLITZ_CONTESTED_RANGE}), "
+              f"so the take should have designated {want} of the party")
+        return None
+    designees = []
     for b, c in cons:
         if c["dist"] > BLITZ_CONTESTED_RANGE:
             print(f"FAIL: bot{b} t={c['t']} called the take contested on an "
                   f"enemy {c['dist']:.1f} tiles away, past "
                   f"BLITZ_CONTESTED_RANGE ({BLITZ_CONTESTED_RANGE})")
-            return 1
-        if c["enemy"] != foe_player("A"):
+            return None
+        if c["enemy"] != foe_player(variant):
             print(f"FAIL: bot{b} t={c['t']} named p{c['enemy']} as the "
                   f"contesting tank; the only enemy in this arena is "
-                  f"p{foe_player('A')}")
-            return 1
-        own_go = [g for g in data[b]["go"]]
+                  f"p{foe_player(variant)}")
+            return None
+        own_go = data[b]["go"]
         if not own_go:
             print(f"FAIL: bot{b} logged BLITZ_CONTESTED at t={c['t']} without "
                   f"ever firing a GO -- only a commander at GO (or replanning "
                   f"during its own live take) may designate")
-            return 1
+            return None
         if c["t"] < min(g["t"] for g in own_go):
             print(f"FAIL: bot{b} logged BLITZ_CONTESTED at t={c['t']}, before "
                   f"its first GO at t={min(g['t'] for g in own_go)}")
-            return 1
-        if c["n"] <= 0:
-            print(f"FAIL: bot{b} t={c['t']} declared the take contested but "
-                  f"designated nobody")
-            return 1
-        # The party here is 3, at BLITZ_CONTESTED_ALL_MIN_PARTY, so it is the
-        # ALL rule that must have fired -- not the small-party one.
-        if c["party"] < BLITZ_CONTESTED_ALL_MIN_PARTY:
+            return None
+        if c["party"] != n_allies(variant):
             print(f"FAIL: bot{b} t={c['t']} reports party={c['party']}; this "
-                  f"arena runs {n_allies('A')} attackers with "
-                  f"{blitz_token('A')}, so the whole party should be in the "
-                  f"take before GO")
-            return 1
-        if c["rule"] != "all suiciders":
-            print(f"FAIL: bot{b} t={c['t']} party={c['party']} (>= "
-                  f"BLITZ_CONTESTED_ALL_MIN_PARTY "
-                  f"{BLITZ_CONTESTED_ALL_MIN_PARTY}) took the "
-                  f"{c['rule']!r} rule; a party this big designates everyone")
-            return 1
-        if "self" not in c["names"]:
-            print(f"FAIL: bot{b} t={c['t']} designated [{' '.join(c['names'])}]"
-                  f" -- the all rule includes the COMMANDER itself, which logs "
-                  f"as `self`")
-            return 1
-    b, c = cons[0]
-    print(f"  A2: bot{b} t={c['t']} pill#{c['pid']} enemy=p{c['enemy']} "
+                  f"arena runs {n_allies(variant)} attackers with "
+                  f"{blitz_token(variant)}, so the whole party should be in "
+                  f"the take before GO")
+            return None
+        if c["want"] != want:
+            print(f"FAIL: bot{b} t={c['t']} party={c['party']} wanted "
+                  f"{c['want']} suicider(s); BLITZ_CONTESTED_SUICIDERS is "
+                  f"{want}, and the party size does not change it")
+            return None
+        if c["n"] > want:
+            print(f"FAIL: bot{b} t={c['t']} designated {c['n']} member(s), "
+                  f"more than {want}: designate=[{' '.join(c['names'])}]")
+            return None
+        if "self" in c["names"]:
+            print(f"FAIL: bot{b} t={c['t']} designated ITSELF "
+                  f"(designate=[{' '.join(c['names'])}]); the rule picks "
+                  f"SOLDIERS first and only falls back to the commander when "
+                  f"they cannot cover the number -- with {c['party'] - 1} "
+                  f"soldier(s) available they always can, and the commander "
+                  f"has to stay alive to finish the pill")
+            return None
+        for name in c["names"]:
+            pn = int(name.lstrip("p"))
+            if pn == b or pn not in AL:
+                print(f"FAIL: bot{b} t={c['t']} designated p{pn}, which is not "
+                      f"one of its soldiers (attackers are {list(AL)}, and "
+                      f"bot{b} is the commander)")
+                return None
+            designees.append((b, pn, c))
+    # One designation for the whole arena, no matter how many lines it took.
+    picked = sorted({pn for _, pn, _ in designees})
+    if len(picked) != want:
+        print(f"FAIL: the arena designated {len(picked)} member(s) {picked} "
+              f"in total; BLITZ_CONTESTED_SUICIDERS is {want}")
+        return None
+    b, pn, c = designees[0]
+    print(f"  {tag}2: bot{b} t={c['t']} pill#{c['pid']} enemy=p{c['enemy']} "
           f"dist={c['dist']:.1f} (<= {BLITZ_CONTESTED_RANGE}) "
-          f"party={c['party']} -> {c['rule']} ({c['n']} designated) "
-          f"designate=[{' '.join(c['names'])}]")
+          f"party={c['party']} -> {c['want']} suicider "
+          f"designate=[{' '.join(c['names'])}] -- p{pn} is a SOLDIER, not the "
+          f"commander (bot{b})")
 
-    # -- A3: every one of the three, the commander included, is a suicider and
-    #        says the contested rule is why.
-    missing = []
-    for b in AL:
-        on = [s for s in data[b]["su_on"] if s["reason"] == "blitz_contested"]
-        if not on:
-            missing.append(b)
-            continue
-        s = on[0]
+    # -- 3: that designee, and only it, is a contested suicider, and the
+    #       designation arrived on a `bsu ... c` addressed to it.
+    su_bots = [x for x in AL
+               if [t for t in data[x]["su_on"] if t["reason"] == "blitz_contested"]]
+    if su_bots != picked:
+        print(f"FAIL: contested suiciders were bot(s) {su_bots}, expected "
+              f"exactly {picked} (the designee(s) named on the "
+              f"BLITZ_CONTESTED line(s))")
+        return None
+    for x in su_bots:
+        s = [t for t in data[x]["su_on"] if t["reason"] == "blitz_contested"][0]
         if s["src"] != "blitz_contested":
-            print(f"FAIL: bot{b} t={s['t']} has reason=blitz_contested but "
+            print(f"FAIL: bot{x} t={s['t']} has reason=blitz_contested but "
                   f"src={s['src']!r}; the DECISION breakdown reads src, so the "
                   f"two must agree")
-            return 1
-        # Either it designated itself (it is the commander) or a `bsu ... c`
-        # named it -- there is no third way in.
-        self_designated = s["by"] == b
-        got_rx = [r for r in data[b]["rx"]
-                  if r["us"] and r["why"] == "contested" and r["to"] == b]
-        if not self_designated and not got_rx:
-            print(f"FAIL: bot{b} t={s['t']} became a contested suicider "
-                  f"(by=p{s['by']}) with no `bsu ... c` addressed to it and no "
-                  f"self-designation")
-            return 1
-        who = "self-designated (commander)" if self_designated else (
-            f"bsu from p{got_rx[0]['frm']} t={got_rx[0]['t']}")
-        print(f"  A3: bot{b} t={s['t']} suicider=true src={s['src']} "
-              f"pill=#{s['pid']} by=p{s['by']} reason={s['reason']} -- {who}")
-    if missing:
-        print(f"FAIL: bot(s) {missing} never became a contested suicider; the "
-              f"rule designates EVERY member of the party, commander included")
-        return 1
+            return None
+        rx = [r for r in data[x]["rx"]
+              if r["us"] and r["why"] == "contested" and r["to"] == x]
+        if not rx:
+            print(f"FAIL: bot{x} t={s['t']} became a contested suicider "
+                  f"(by=p{s['by']}) with no `bsu ... c` addressed to it -- a "
+                  f"SOLDIER can only be designated over the wire")
+            return None
+        print(f"  {tag}3: bot{x} t={s['t']} suicider=true src={s['src']} "
+              f"pill=#{s['pid']} by=p{s['by']} reason={s['reason']} -- bsu "
+              f"from p{rx[0]['frm']} t={rx[0]['t']}")
 
-    # -- A4: it is TEMPORARY.  Every designee lets go again, naming a reason
-    #        from squad.update's list.
-    for b in AL:
-        first_on = min(s["t"] for s in data[b]["su_on"]
+    # -- 4: the COMMANDER never became a suicider at all.  BLITZ_MIN_SUICIDERS
+    #       is 0 and nothing else designates here, so one would be the rule
+    #       pulling in the tank that has to survive the take.
+    cmdrs = sorted({x for x, _, _ in designees})
+    for x in cmdrs:
+        if data[x]["su_on"]:
+            s = data[x]["su_on"][0]
+            print(f"FAIL: bot{x} commanded a contested take of "
+                  f"{n_allies(variant)} and still became a suicider at "
+                  f"t={s['t']} (src={s['src']}, reason={s['reason']}): "
+                  f"{s['line']}")
+            return None
+    print(f"  {tag}4: commander(s) {cmdrs} never became a suicider -- the take "
+          f"kept every tank but one a normal tank")
+
+    # -- 5: and every panel/DECISION label reports the size of the designation.
+    labelled = [(x, g) for x in AL for g in data[x]["go"]
+                if g["contested"] != "no"]
+    for x, g in labelled:
+        if f"designated={want}" not in g["contested"]:
+            print(f"FAIL: bot{x} {g['kind']} t={g['t']} reads "
+                  f"contested{{{g['contested']}}}; a contested take must label "
+                  f"itself designated={want}")
+            return None
+    if labelled:
+        x, g = labelled[0]
+        print(f"  {tag}5: bot{x} {g['kind']} t={g['t']} "
+              f"contested{{{g['contested']}}}")
+    return data, designees
+
+
+def check_A(logs):
+    got = check_contested("A", logs, "A")
+    if got is None:
+        return 1
+    data, designees = got
+
+    # -- A6: it is TEMPORARY.  The designee lets go again, naming a reason from
+    #        squad.update's list.
+    for x in sorted({pn for _, pn, _ in designees}):
+        first_on = min(s["t"] for s in data[x]["su_on"]
                        if s["reason"] == "blitz_contested")
-        off = [s for s in data[b]["su_off"] if s["t"] > first_on]
+        off = [s for s in data[x]["su_off"] if s["t"] > first_on]
         if not off:
-            print(f"FAIL: bot{b} was still a blitz suicider at the end of the "
+            print(f"FAIL: bot{x} was still a blitz suicider at the end of the "
                   f"run -- the designation is supposed to expire with the take")
             return 1
         bad = [s for s in off if s["reason"] not in EXPIRY_REASONS]
         if bad:
-            print(f"FAIL: bot{b} t={bad[0]['t']} reverted with reason="
+            print(f"FAIL: bot{x} t={bad[0]['t']} reverted with reason="
                   f"{bad[0]['reason']!r}, which is not one of "
                   f"{sorted(EXPIRY_REASONS)}")
             return 1
-        print(f"  A4: bot{b} reverted at t={off[0]['t']} "
+        print(f"  A6: bot{x} reverted at t={off[0]['t']} "
               f"(reason={off[0]['reason']}), {off[0]['t'] - first_on} ticks "
               f"after it was designated")
     return 0
@@ -518,153 +571,18 @@ def check_B(logs):
 
 
 # ---------------------------------------------------------------------------
-# C: CONTESTED, but a party of TWO -> exactly ONE suicider, and it is the soldier
+# C: CONTESTED with a party of TWO -- the SAME single designation as A, which
+# is the whole point of running both: the count does not follow the party size.
 # ---------------------------------------------------------------------------
 def check_C(logs):
-    AL = allies("C")
-    data = {b: collect(t) for b, t in logs.items()}
-    summarise(data, AL)
-
-    # -- C1: a real GO happened, with the two-tank party.
-    gos = [(b, g) for b in AL for g in data[b]["go"]]
-    if not gos:
-        print("FAIL: no BLITZ_GO anywhere -- the two attackers never formed a "
-              "blitz on the pill, so nothing in this arena is under test")
-        return 1
-    b0, g0 = gos[0]
-    print(f"  C1: {len(gos)} GO line(s) (first: bot{b0} {g0['kind']} "
-          f"t={g0['t']} party={g0['party']} -> {g0['sub']})")
-
-    # -- C2: the take was declared contested and took the SMALL-party rule --
-    #        `party=2 -> 1 suicider (1 designated)` -- and the designee is a
-    #        SOLDIER, never the commander (which would log as `self`).
-    cons = [(b, c) for b in AL for c in data[b]["contested"]]
-    if not cons:
-        print(f"FAIL: no BLITZ_CONTESTED line -- the enemy is "
-              f"{euclid(PILL, FOE_SPAWN['C']):.1f} tiles from the pill, well "
-              f"inside BLITZ_CONTESTED_RANGE ({BLITZ_CONTESTED_RANGE}); a "
-              f"two-tank party still designates "
-              f"{BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS} of its members")
-        return 1
-    want = BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS
-    want_rule = f"{want} suicider" + ("" if want == 1 else "s")
-    designees = []
-    for b, c in cons:
-        if c["dist"] > BLITZ_CONTESTED_RANGE:
-            print(f"FAIL: bot{b} t={c['t']} called the take contested on an "
-                  f"enemy {c['dist']:.1f} tiles away, past "
-                  f"BLITZ_CONTESTED_RANGE ({BLITZ_CONTESTED_RANGE})")
-            return 1
-        if c["enemy"] != foe_player("C"):
-            print(f"FAIL: bot{b} t={c['t']} named p{c['enemy']} as the "
-                  f"contesting tank; the only enemy here is "
-                  f"p{foe_player('C')}")
-            return 1
-        if c["party"] != n_allies("C"):
-            print(f"FAIL: bot{b} t={c['t']} reports party={c['party']}; this "
-                  f"arena runs {n_allies('C')} attackers with "
-                  f"{blitz_token('C')}, and party 2 is what the small-party "
-                  f"rule is about")
-            return 1
-        if c["rule"] != want_rule:
-            print(f"FAIL: bot{b} t={c['t']} party={c['party']} (< "
-                  f"BLITZ_CONTESTED_ALL_MIN_PARTY "
-                  f"{BLITZ_CONTESTED_ALL_MIN_PARTY}) took the {c['rule']!r} "
-                  f"rule; a party this small designates {want_rule}")
-            return 1
-        if c["n"] != want:
-            print(f"FAIL: bot{b} t={c['t']} designated {c['n']} member(s), "
-                  f"not {want}: designate=[{' '.join(c['names'])}]")
-            return 1
-        if "self" in c["names"]:
-            print(f"FAIL: bot{b} t={c['t']} designated ITSELF "
-                  f"(designate=[{' '.join(c['names'])}]); the small-party rule "
-                  f"picks SOLDIERS first and only falls back to the commander "
-                  f"when they cannot cover the number -- with one soldier "
-                  f"available they always can, and the commander has to stay "
-                  f"alive to finish the pill")
-            return 1
-        if c["upgrade"]:
-            print(f"FAIL: bot{b} t={c['t']} logged {c['upgrade']}; the party "
-                  f"never grows in this arena, so nothing should upgrade")
-            return 1
-        pn = int(c["names"][0].lstrip("p"))
-        if pn == b or pn not in AL:
-            print(f"FAIL: bot{b} t={c['t']} designated p{pn}, which is not one "
-                  f"of its soldiers (attackers are {list(AL)}, and bot{b} is "
-                  f"the commander)")
-            return 1
-        designees.append((b, pn, c))
-    b, pn, c = designees[0]
-    print(f"  C2: bot{b} t={c['t']} pill#{c['pid']} enemy=p{c['enemy']} "
-          f"dist={c['dist']:.1f} party={c['party']} -> {c['rule']} "
-          f"({c['n']} designated) designate=[{' '.join(c['names'])}] "
-          f"-- p{pn} is a SOLDIER, not the commander (bot{b})")
-
-    # -- C3: that soldier, and only it, is a contested suicider, and the
-    #        designation arrived on a `bsu ... c` addressed to it.
-    su_bots = [x for x in AL
-               if [t for t in data[x]["su_on"] if t["reason"] == "blitz_contested"]]
-    expect = sorted({q for _, q, _ in designees})
-    if su_bots != expect:
-        print(f"FAIL: contested suiciders were bot(s) {su_bots}, expected "
-              f"exactly {expect} (the designee(s) named on the "
-              f"BLITZ_CONTESTED line(s))")
-        return 1
-    for x in su_bots:
-        t = [t for t in data[x]["su_on"] if t["reason"] == "blitz_contested"][0]
-        if t["src"] != "blitz_contested":
-            print(f"FAIL: bot{x} t={t['t']} has reason=blitz_contested but "
-                  f"src={t['src']!r}; the DECISION breakdown reads src, so the "
-                  f"two must agree")
-            return 1
-        rx = [r for r in data[x]["rx"]
-              if r["us"] and r["why"] == "contested" and r["to"] == x]
-        if not rx:
-            print(f"FAIL: bot{x} t={t['t']} became a contested suicider "
-                  f"(by=p{t['by']}) with no `bsu ... c` addressed to it -- a "
-                  f"SOLDIER can only be designated over the wire")
-            return 1
-        print(f"  C3: bot{x} t={t['t']} suicider=true src={t['src']} "
-              f"pill=#{t['pid']} by=p{t['by']} reason={t['reason']} -- bsu "
-              f"from p{rx[0]['frm']} t={rx[0]['t']}")
-
-    # -- C4: the COMMANDER never became a suicider at all.  BLITZ_MIN_SUICIDERS
-    #        is 0 and nothing else designates here, so one would be the rule
-    #        leaking past the party-size gate.
-    cmdrs = sorted({b for b, _, _ in designees})
-    for x in cmdrs:
-        if data[x]["su_on"]:
-            t = data[x]["su_on"][0]
-            print(f"FAIL: bot{x} commanded a two-tank contested take and still "
-                  f"became a suicider at t={t['t']} (src={t['src']}, "
-                  f"reason={t['reason']}): {t['line']}")
-            return 1
-    print(f"  C4: commander(s) {cmdrs} never became a suicider -- the two-tank "
-          f"take kept a tank alive")
-
-    # -- C5: and every panel/DECISION label says WHICH rule applied.
-    labelled = [(x, g) for x in AL for g in data[x]["go"]
-                if g["contested"] != "no"]
-    for x, g in labelled:
-        if "rule=small" not in g["contested"]:
-            print(f"FAIL: bot{x} {g['kind']} t={g['t']} reads "
-                  f"contested{{{g['contested']}}}; a two-tank contested take "
-                  f"must label itself rule=small")
-            return 1
-    if labelled:
-        x, g = labelled[0]
-        print(f"  C5: bot{x} {g['kind']} t={g['t']} "
-              f"contested{{{g['contested']}}}")
-    return 0
+    return 0 if check_contested("C", logs, "C") is not None else 1
 
 
 def run_one(variant, ticks, build_dir, seed):
     foe = FOE_SPAWN[variant]
     d = euclid(PILL, foe)
-    rule = ("all" if n_allies(variant) >= BLITZ_CONTESTED_ALL_MIN_PARTY
-            else "small")
-    verdict = ("CONTESTED, rule=" + rule) if variant in CONTESTED else "CONTROL"
+    verdict = (f"CONTESTED, designates {BLITZ_CONTESTED_SUICIDERS}"
+               if variant in CONTESTED else "CONTROL")
     print(f"=== blitz contested / {variant} ({verdict}; "
           f"seed {seed}, {ticks} ticks; pill {PILL} hp={PILL_HP} owned by "
           f"p{foe_player(variant)}; enemy at {foe}, {d:.1f} tiles from the "
@@ -680,13 +598,13 @@ def run_one(variant, ticks, build_dir, seed):
     if rc == 0:
         if variant == "A":
             print("PASS: an enemy tank inside BLITZ_CONTESTED_RANGE of the "
-                  "pill turned every member of a THREE-tank blitz -- commander "
-                  "included -- into a temporary suicider, and the designation "
-                  "expired with the take.")
+                  "pill turned exactly ONE member of a THREE-tank blitz -- a "
+                  "soldier, never the commander -- into a temporary suicider, "
+                  "and the designation expired with the take.")
         elif variant == "C":
             print("PASS: the same enemy at the same distance, but a TWO-tank "
-                  "party: exactly one member was designated, it was the "
-                  "soldier, and the commander stayed a normal tank.")
+                  "party: the SAME single designation, again the soldier, and "
+                  "the commander stayed a normal tank.")
         else:
             print("PASS: the same enemy, plainly visible but past "
                   "BLITZ_CONTESTED_RANGE, left the take uncontested and "

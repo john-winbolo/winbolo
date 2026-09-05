@@ -5,32 +5,31 @@ Generate the blitz-contested arenas (companion to tests/blitz_contested_test.py)
 WHAT THE ARENAS ARE FOR
     C.BLITZ_CONTESTED_ALL_SUICIDERS (constants.lua, 2026-09-05): when the
     commander of a blitz fires GO on a pill that has a live HOSTILE TANK within
-    C.BLITZ_CONTESTED_RANGE (9) tiles of it, the take is CONTESTED and every
-    member of the party -- all soldiers AND the commander -- is designated a
-    temporary pill_suicider, regardless of BLITZ_MIN_SUICIDERS.  The commander
-    re-checks on its replans while the take is live, so a defender that arrives
-    after GO flips the party too.
+    C.BLITZ_CONTESTED_RANGE (9) tiles of it, the take is CONTESTED and
+    C.BLITZ_CONTESTED_SUICIDERS (1) of the party -- soldiers first, the
+    commander only if they cannot cover it -- is designated a temporary
+    pill_suicider, regardless of BLITZ_MIN_SUICIDERS.  The commander re-checks
+    on its replans while the take is live, so a defender that arrives after GO
+    still flips one of the party.
 
     Two arenas, IDENTICAL in every respect but ONE TILE: where the hostile tank
     is parked.  That is the whole experiment -- same terrain, same pill, same
     spawns, same tokens, same seed, and the only thing that differs is the
     pill-to-enemy distance.
 
-      A  CONTESTED, BIG PARTY.  Three attackers with `blitz=3/4`; the enemy
-         sits FOE_A, 7.0 tiles from the pill (<= 9).  Party 3 is at
-         BLITZ_CONTESTED_ALL_MIN_PARTY, so the "all" rule applies.
+      A  CONTESTED, PARTY OF THREE.  Three attackers with `blitz=3/4`; the
+         enemy sits FOE_A, 7.0 tiles from the pill (<= 9).
          Expect: BLITZ_GO, a BLITZ_CONTESTED line reading
-         `party=3 -> all suiciders`, and all three attackers carrying
-         blitz_suicider=true reason=blitz_contested.
-      C  CONTESTED, SMALL PARTY.  The SAME enemy tile as A, but only TWO
-         attackers, with `blitz=2/4`.  Party 2 is below
-         BLITZ_CONTESTED_ALL_MIN_PARTY (3), so the small-party rule applies
-         and exactly BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS (1) member is
-         designated -- soldiers first, so it is the SOLDIER, never the
-         commander, which stays alive to finish the pill.
+         `party=3 -> 1 suicider`, exactly ONE attacker (a SOLDIER) carrying
+         blitz_suicider=true reason=blitz_contested, and the commander never a
+         suicider.  The party size is the ONLY thing that separates A from C,
+         and the rule does not care about it: the count is the same.
+      C  CONTESTED, PARTY OF TWO.  The SAME enemy tile as A, but only TWO
+         attackers, with `blitz=2/4`.
          Expect: BLITZ_GO, a BLITZ_CONTESTED line reading
          `party=2 -> 1 suicider`, one attacker a contested suicider and the
-         other never a suicider at all.
+         other -- the commander, which stays alive to finish the pill -- never
+         a suicider at all.
       B  CONTROL.    The enemy sits FOE_B, {DB} tiles from the pill (> 9), and
          is still plainly VISIBLE from the take (well inside the engine's
          14-tile brain view window, which the test asserts from the attackers'
@@ -170,11 +169,10 @@ PILLBOX_RANGE = 8              # tiles a pill can shoot (pillbox.c)
 SQUAD_BLITZ_PREEMPT_TANK_TILES = 10   # constants.lua
 BLITZ_MIN_SUICIDERS = 0        # constants.lua default: nothing else designates
 # The "blitz=MIN/MAX" token each variant's attackers are given.  A/B need all
-# THREE tanks before a GO can fire, so "all suiciders" has three members to be
-# all OF; C needs TWO, which is the party size the small-party rule is about.
+# THREE tanks before a GO can fire, so the party the rule sees really is 3;
+# C needs TWO, the smallest party the rule applies to at all.
 BLITZ_PARTY = {"A": (3, 4), "B": (3, 4), "C": (2, 4)}
-BLITZ_CONTESTED_ALL_MIN_PARTY = 3       # constants.lua: party >= this -> all
-BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS = 1   # constants.lua: below it, this many
+BLITZ_CONTESTED_SUICIDERS = 1   # constants.lua: this many, any party >= 2
 
 
 def euclid(a, b):
@@ -391,21 +389,25 @@ def check_geometry(terrain, variant):
             "the contested variants only need an enemy-owned pill because the "
             "enemy sits inside pillbox range of it")
 
-    # -- The party size is THE variable the two contested arenas separate: A is
-    #    at/above BLITZ_CONTESTED_ALL_MIN_PARTY (so every member is designated)
-    #    and C is below it (so only BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS are).
+    # -- The party size is THE variable the two contested arenas separate: A
+    #    runs three attackers and C two, and the rule designates
+    #    BLITZ_CONTESTED_SUICIDERS in BOTH -- that invariance is what C proves.
     #    The blitz token's MIN is the party size a GO waits for, so it has to
     #    equal the number of attackers or the arena tests a different party.
     bmin, bmax = BLITZ_PARTY[variant]
     assert bmin == n_allies(variant), (bmin, n_allies(variant))
     assert bmax >= bmin
-    if variant == "A":
-        assert bmin >= BLITZ_CONTESTED_ALL_MIN_PARTY, bmin
-    elif variant == "C":
-        assert bmin < BLITZ_CONTESTED_ALL_MIN_PARTY, bmin
-        assert bmin > BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS, (
-            "a party of 1 designates nobody at all; the small-party rule needs "
-            "at least one soldier to pick and one tank to spare")
+    if variant in CONTESTED:
+        assert bmin >= 2, (
+            "a party of 1 designates nobody at all; the rule needs at least "
+            "one soldier to pick and one tank to spare")
+        assert bmin > BLITZ_CONTESTED_SUICIDERS, (
+            "the party has to be bigger than the number designated, or the "
+            "commander gets pulled in and the arena stops testing "
+            "soldiers-first")
+    if variant == "C":
+        assert n_allies("C") < n_allies("A"), (
+            "C is the SMALLER party; that is the only thing it varies")
         assert FOE_SPAWN["C"] == FOE_SPAWN["A"], (
             "C must differ from A in PARTY SIZE only -- same enemy tile")
 
@@ -485,8 +487,8 @@ def write_variant(variant, output):
           f"range {BLITZ_CONTESTED_RANGE}); view cheb from pill {cheb(PILL, foe)} "
           f"(<= {BRAIN_VIEW_HALF} = visible)")
     print(f"  party {n_allies(variant)} (blitz={BLITZ_PARTY[variant][0]}/"
-          f"{BLITZ_PARTY[variant][1]}, rule="
-          f"{'all' if n_allies(variant) >= BLITZ_CONTESTED_ALL_MIN_PARTY else 'small'}"
+          f"{BLITZ_PARTY[variant][1]}, designates "
+          f"{BLITZ_CONTESTED_SUICIDERS if variant in CONTESTED else 0}"
           f"): attackers {spawns(variant)} bases {bases(variant)}")
     print(f"wrote {sidecar}")
 

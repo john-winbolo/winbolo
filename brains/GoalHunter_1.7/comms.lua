@@ -146,8 +146,8 @@ function M.process_message(sender, text, tick, state)
   -- death, after which the bot reverts to whatever it was before.
   -- The optional trailing letter is WHY the commander designated us: "c" = a
   -- CONTESTED take (BLITZ_CONTESTED_ALL_SUICIDERS — a hostile tank was within
-  -- BLITZ_CONTESTED_RANGE of the pill, so the whole party goes in as
-  -- suiciders); absent = the ordinary BLITZ_MIN_SUICIDERS quota top-up. It
+  -- BLITZ_CONTESTED_RANGE of the pill, so BLITZ_CONTESTED_SUICIDERS of the
+  -- party go in as suiciders); absent = the BLITZ_MIN_SUICIDERS top-up. It
   -- changes nothing about the designation itself, only how it is REPORTED
   -- ([role] line, DECISION suicider row), so an old two-token bsu still works.
   local bsu_pill, bsu_pn, bsu_why = text:match("^/info bsu (%d+) (%d+)%s*(%a*)$")

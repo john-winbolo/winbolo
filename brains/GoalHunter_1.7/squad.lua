@@ -216,18 +216,17 @@ function M.blitz_designate_suiciders(state, info, now, our_pid)
   end
 end
 
--- ── Contested take → the party goes in as suiciders ─────────────────
+-- ── Contested take → one of the party goes in as a suicider ─────────
 -- The take of a pill is CONTESTED when a live hostile TANK is sitting within
 -- C.BLITZ_CONTESTED_RANGE tiles (euclidean) of that pill. That is the take
 -- that most often gets undone: we kill the pill, the defender's LGM walks
 -- straight back out and repairs it while our survivors are reloading and
--- backing off. So on a contested take blitzers are made suiciders — a
--- suicider is the role that actually goes and kills the repairing LGM
--- instead of backing off. How MANY depends on the party size (see
--- blitz_designate_contested): a party of BLITZ_CONTESTED_ALL_MIN_PARTY or
--- more sends everyone, since at least one normally survives the charge; a
--- two-tank take sends only BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS of them,
--- because it has no spare tank to lose.
+-- backing off. So on a contested take C.BLITZ_CONTESTED_SUICIDERS (1) of the
+-- blitzers is made a suicider — a suicider is the role that actually goes and
+-- kills the repairing LGM instead of backing off — while the rest stay normal
+-- tanks that can finish the pill and hold the ground. Any party of 2 or more,
+-- soldiers picked first. (It used to designate EVERY blitzer; the 2026-09-05
+-- evening bench had that losing 7-3 in 2v2 against KEEL, so it is one now.)
 --
 -- Only REAL sightings count. perc.enemy_tanks is built from this tick's
 -- OBJECT_TANK objects carrying OBJECT_HOSTILE, so allies are never in it and
@@ -262,19 +261,18 @@ function M.blitz_contested_enemy(state, pmx, pmy)
   return best.id or -1, math.sqrt(best_d2)
 end
 
--- Commander-only. Designates blitz members as temporary blitz suiciders on a
--- CONTESTED take, regardless of BLITZ_MIN_SUICIDERS. HOW MANY depends on the
--- size of the party (the committed soldiers plus the commander itself):
+-- Commander-only. Designates C.BLITZ_CONTESTED_SUICIDERS (1) of the blitz --
+-- the committed soldiers plus the commander itself -- temporary blitz
+-- suiciders on a CONTESTED take, regardless of BLITZ_MIN_SUICIDERS. The same
+-- number for ANY party of 2 or more:
 --
---   party >= C.BLITZ_CONTESTED_ALL_MIN_PARTY (3)
---       EVERY member -- all soldiers AND the commander -- goes in.
---   party <  that, i.e. a two-tank take
---       only C.BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS (1) of them, picked the
---       same way as the BLITZ_MIN_SUICIDERS quota: SOLDIERS first, uniformly
---       at random over the seeded RNG, and the commander designates ITSELF
---       only if the soldiers cannot cover the number. With a party of 2 that
---       is exactly one soldier, and the commander stays alive to finish the
---       pill and hold the ground.
+--   party >= 2
+--       C.BLITZ_CONTESTED_SUICIDERS of them, picked the same way as the
+--       BLITZ_MIN_SUICIDERS quota: SOLDIERS first, uniformly at random over
+--       the seeded RNG, and the commander designates ITSELF only if the
+--       soldiers cannot cover the number. With the default 1 that is exactly
+--       one soldier, and the commander stays a normal tank that can finish
+--       the pill and hold the ground.
 --   party == 1
 --       a solo take -- no call, no party -- so nothing is designated and
 --       nothing is LATCHED either (mode "solo"): the caller is free to ask
@@ -282,20 +280,18 @@ end
 --
 -- Members that are already suiciders (permanent token, harasser slate, or a
 -- designation queued moments ago by blitz_designate_suiciders) are left exactly
--- as they are, and they COUNT toward the small-party number. Same "bsu" verb
--- and the same expiry rules as the quota designation -- pill gone/ours, off the
--- take, commander gone, BLITZ_SUICIDER_MAX_TICKS, or death -- so nothing about
--- the wind-down changes.
+-- as they are, and they COUNT toward the number -- so a party whose only
+-- soldier is already a suicider designates nobody new (the log says who
+-- covers it). Same "bsu" verb and the same expiry rules as the quota
+-- designation -- pill gone/ours, off the take, commander gone,
+-- BLITZ_SUICIDER_MAX_TICKS, or death -- so nothing about the wind-down changes.
 --
--- `prev_mode` is what this same take designated last time ("small", or nil the
--- first time). It is how a party that GREW from 2 to 3 while the take is still
--- contested gets UPGRADED to "all": the caller re-checks on its replans and
--- passes "small" back in, and the all-path below simply skips the member it
--- designated the first time round. Passing "small" back while the party is
--- STILL small is a no-op -- no second designation, no second log line.
+-- ONCE PER TAKE. Any party of 2+ latches (mode "done"), and the caller stops
+-- asking; a party that grows afterwards designates nothing more. Only a solo
+-- take leaves the door open.
 --
--- Returns: number newly designated, mode ("all" | "small" | "solo"), party size.
-function M.blitz_designate_contested(state, info, now, our_pid, enemy_pn, enemy_dist, prev_mode)
+-- Returns: number newly designated, mode ("done" | "solo"), party size.
+function M.blitz_designate_contested(state, info, now, our_pid, enemy_pn, enemy_dist)
   if not our_pid then return 0, "solo", 0 end
   local self_pn = info and info.player_number or -1
   local members = M.blitz_members(state, now, self_pn, our_pid)
@@ -313,8 +309,6 @@ function M.blitz_designate_contested(state, info, now, our_pid, enemy_pn, enemy_
     end
   end
   local self_su = (state.is_pill_suicider or state.blitz_suicider) and true or false
-  local all = party >= (C.BLITZ_CONTESTED_ALL_MIN_PARTY or 3)
-  if not all and prev_mode == "small" then return 0, "small", party end
 
   local names, n = {}, 0
   local function designate(pn)
@@ -323,11 +317,8 @@ function M.blitz_designate_contested(state, info, now, our_pid, enemy_pn, enemy_
     names[#names + 1] = "p" .. tostring(pn)
     n = n + 1
   end
-  -- "All blitzers" includes the commander: unlike the quota path (which spares
-  -- the tank that has to survive to lead the take) a contested take of three or
-  -- more wants every gun in, us included. Self-designation uses `by = self_pn`,
-  -- which the expiry check reads as "we designated ourselves" and so skips its
-  -- commander-gone test -- see update().
+  -- Self-designation uses `by = self_pn`, which the expiry check reads as "we
+  -- designated ourselves" and so skips its commander-gone test -- see update().
   local function designate_self()
     if self_su then return false end
     state.blitz_suicider = { pill = our_pid, by = self_pn, since = now, why = "contested" }
@@ -337,55 +328,50 @@ function M.blitz_designate_contested(state, info, now, our_pid, enemy_pn, enemy_
     return true
   end
 
-  local want
-  if all then
-    for _, m in ipairs(members) do
-      if not m.suicider and not (queued and queued[m.pn]) then designate(m.pn) end
+  local want = C.BLITZ_CONTESTED_SUICIDERS or 1
+  -- Already-suiciders count toward the number, the commander included.
+  local have, covered = 0, {}
+  if self_su then have = 1; covered[#covered + 1] = "self" end
+  local pool = {}
+  for _, m in ipairs(members) do
+    if m.suicider or (queued and queued[m.pn]) then
+      have = have + 1
+      covered[#covered + 1] = "p" .. tostring(m.pn)
+    else
+      pool[#pool + 1] = m.pn
     end
-    designate_self()
-  else
-    want = C.BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS or 1
-    -- Already-suiciders count toward the number, the commander included.
-    local have = self_su and 1 or 0
-    local pool = {}
-    for _, m in ipairs(members) do
-      if m.suicider or (queued and queued[m.pn]) then have = have + 1
-      else pool[#pool + 1] = m.pn end
-    end
-    local need = want - have
-    -- Soldiers FIRST, uniformly at random over the brain's seeded RNG
-    -- (blitz_members is sorted, so the draw is reproducible).
-    while need > 0 and #pool > 0 do
-      local i = math.random(#pool)
-      designate(pool[i])
-      table.remove(pool, i)
-      need = need - 1
-    end
-    -- Only when the soldiers cannot cover it does the commander take a slot.
-    if need > 0 and designate_self() then need = need - 1 end
   end
+  local need = want - have
+  -- Soldiers FIRST, uniformly at random over the brain's seeded RNG
+  -- (blitz_members is sorted, so the draw is reproducible).
+  while need > 0 and #pool > 0 do
+    local i = math.random(#pool)
+    designate(pool[i])
+    table.remove(pool, i)
+    need = need - 1
+  end
+  -- Only when the soldiers cannot cover it does the commander take a slot.
+  if need > 0 and designate_self() then need = need - 1 end
 
   print2(string.format(
-    "BLITZ_CONTESTED t=%d pill=#%s enemy=p%s dist=%.1f party=%d -> %s (%d designated) designate=[%s]%s",
+    "BLITZ_CONTESTED t=%d pill=#%s enemy=p%s dist=%.1f party=%d -> %d suicider%s designate=[%s]%s",
     now, tostring(our_pid), tostring(enemy_pn), enemy_dist or -1, party,
-    all and "all suiciders" or string.format("%d suicider%s", want, want == 1 and "" or "s"),
-    n, table.concat(names, " "),
-    (all and prev_mode == "small") and " upgrade=small->all (the party grew)" or ""))
-  return n, (all and "all" or "small"), party
+    want, want == 1 and "" or "s", table.concat(names, " "),
+    (n == 0 and #covered > 0)
+      and string.format(" (already covered by %s)", table.concat(covered, " ")) or ""))
+  return n, "done", party
 end
 
 -- One canonical string for every place that DISPLAYS whether a take is
 -- contested, next to the quorum / suicider counts it changes the meaning of.
--- `rule` is which of the two contested rules the party size selected --
--- rule=all (>= BLITZ_CONTESTED_ALL_MIN_PARTY, everybody goes in) or rule=small
--- (BLITZ_CONTESTED_SMALL_PARTY_SUICIDERS of them) -- so a panel showing a
--- two-tank take with one suicider reads as the rule working, not as a
--- designation that went missing.
+-- `designated` is how many the take actually designated, so a panel showing a
+-- contested take with one suicider reads as the rule working
+-- (BLITZ_CONTESTED_SUICIDERS is 1), not as a designation that went missing.
 function M.blitz_contested_label(c)
   if not c then return "contested{no}" end
-  return string.format("contested{yes enemy=p%s dist=%.1f t=%d party=%d rule=%s designated=%d}",
+  return string.format("contested{yes enemy=p%s dist=%.1f t=%d party=%d designated=%d}",
                        tostring(c.pn), c.dist or -1, c.tick or -1,
-                       c.party or -1, tostring(c.mode or "?"), c.n or 0)
+                       c.party or -1, c.n or 0)
 end
 
 -- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
@@ -991,8 +977,8 @@ function M.update(state, info, now, world)
   elseif state.blitz_suicider then
     state.is_pill_suicider = true
     state.is_harasser = false
-    -- Name WHICH blitz rule designated us: a contested take (every blitzer,
-    -- BLITZ_CONTESTED_ALL_SUICIDERS) or the BLITZ_MIN_SUICIDERS quota top-up.
+    -- Name WHICH blitz rule designated us: a contested take
+    -- (BLITZ_CONTESTED_SUICIDERS) or the BLITZ_MIN_SUICIDERS quota top-up.
     -- Display only — the designation and its expiry are identical either way.
     state.suicider_src = (state.blitz_suicider.why == "contested")
                          and "blitz_contested" or "blitz"
@@ -2327,8 +2313,8 @@ function M.draw_blitz_wait_timeout(state, info, now)
     y = y + dy
   end
   -- Contested: a hostile tank within BLITZ_CONTESTED_RANGE of the pill turns
-  -- EVERY blitzer into a temporary suicider at GO, so it belongs right under
-  -- the party line it changes the meaning of.
+  -- BLITZ_CONTESTED_SUICIDERS (1) of the blitzers into a temporary suicider at
+  -- GO, so it belongs right under the party line it changes the meaning of.
   do
     local c = v.contested
     viz.hud_text("blitz_wait_timeout", x, y, M.blitz_contested_label(c), "topright",
