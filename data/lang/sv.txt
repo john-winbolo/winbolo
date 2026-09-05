@@ -1926,6 +1926,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=sek
 STR_DLGLOBBY_CLASSIC_MODE_CB=Klassiskt läge
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Ställer Bunkervy på Tangent, och Basvy och Vy för\nallierade tanks på Av, och håller dem där. Stänger du av\ndet igen ligger de tre kvar där det klassiska läget satte\ndem.\nDet döljer också kartöversikten och kartan i helskärm på\nvarje spelares egen skärm. Servern skickar samma data\noavsett, så det här är en bekvämlighetsregel och ingen\ngaranti mot en modifierad klient.
 STR_MENU_CLASSIC_MODE_TIP=Servern har klassiskt läge på, så den här vyn är avstängd.
+STR_DLGLOBBY_ALLIES_TREES_CB=Se allierade i skogen
+STR_DLGLOBBY_ALLIES_TREES_TIP=Allierade tanks som står i skogen ritas på din skärm\ni stället för att gömmas. Krigsdimman gäller ändå, så\ndu ser dem bara där du redan ser. Av är den klassiska\nregeln, och klassiskt läge stänger av det.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standard

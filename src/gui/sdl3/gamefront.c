@@ -239,6 +239,7 @@ int gameFrontViewPillDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewBaseDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 int gameFrontViewAllyDecaySecs = VIEW_DECAY_DEFAULT_SECS;
 bool gameFrontClassicMode      = FALSE;
+bool gameFrontAlliesInTrees    = FALSE;
 
 /* Tutorial: shown on the welcome menu until the player completes it.
  * Defaults to TRUE on a fresh install (key absent from INI). The player
@@ -2135,6 +2136,11 @@ void gameFrontSetClassicMode(bool on) {
   prefsSetString("GAME OPTIONS", "Classic Mode", TRUEFALSE_TO_STR(on));
 }
 
+void gameFrontSetAlliesInTrees(bool on) {
+  gameFrontAlliesInTrees = on;
+  prefsSetString("GAME OPTIONS", "Allies In Trees", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2702,8 +2708,13 @@ bool gameFrontSetupServer(void) {
   serverSimSetViewPolicy(spServerSim, viewCategoryAlly,
                          (ViewPolicy)gameFrontViewAllyPolicy,
                          (uint16_t)gameFrontViewAllyDecaySecs);
-  /* After the three, so it wins when both are set. Only pushed when on —
-   * off is what the sim was created with. */
+  /* After the three policies, so classic mode wins over them when both
+   * are set, and allies in trees before classic mode, which forces it
+   * back off. Both only pushed when on — off is what the sim was
+   * created with. */
+  if (gameFrontAlliesInTrees) {
+    serverSimSetAlliesInTrees(spServerSim, true);
+  }
   if (gameFrontClassicMode) {
     serverSimSetClassicMode(spServerSim, true);
   }
@@ -3296,6 +3307,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     }
     prefsGetString("GAME OPTIONS", "Classic Mode", "No", buff, FILENAME_MAX);
     gameFrontClassicMode = YESNO_TO_TRUEFALSE(buff[0]);
+    prefsGetString("GAME OPTIONS", "Allies In Trees", "No", buff, FILENAME_MAX);
+    gameFrontAlliesInTrees = YESNO_TO_TRUEFALSE(buff[0]);
   }
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
@@ -3650,6 +3663,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("GAME OPTIONS", "Ally View Decay", buff);
   prefsSetString("GAME OPTIONS", "Classic Mode",
                  TRUEFALSE_TO_STR(gameFrontClassicMode));
+  prefsSetString("GAME OPTIONS", "Allies In Trees",
+                 TRUEFALSE_TO_STR(gameFrontAlliesInTrees));
 
   prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
   prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));

@@ -1926,6 +1926,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=Sek.
 STR_DLGLOBBY_CLASSIC_MODE_CB=Klassischer Modus
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Setzt Bunkeransicht auf Taste und Basenansicht sowie\ndie Ansicht verbündeter Panzer auf Aus und hält sie dort.\nWird er wieder ausgeschaltet, bleiben diese drei so,\nwie der klassische Modus sie gesetzt hat.\nAußerdem werden die Kartenübersicht und die Vollbildkarte\nauf dem Bildschirm jedes Spielers ausgeblendet. Der Server\nsendet in beiden Fällen die gleichen Daten — das ist also\neine Bequemlichkeitsregel und keine Garantie gegenüber\neinem veränderten Client.
 STR_MENU_CLASSIC_MODE_TIP=Auf dem Server ist der klassische Modus aktiv, daher ist diese Ansicht abgeschaltet.
+STR_DLGLOBBY_ALLIES_TREES_CB=Verbündete im Wald sehen
+STR_DLGLOBBY_ALLIES_TREES_TIP=Verbündete Panzer, die im Wald stehen, werden auf\ndeinem Bildschirm gezeichnet statt versteckt. Der Nebel\ndes Krieges gilt weiterhin, du siehst sie also nur dort,\nwo du ohnehin siehst. Aus ist die klassische Regel, und\nder klassische Modus schaltet es zwangsweise aus.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Standard

@@ -1004,6 +1004,9 @@ extern int gameFrontViewAllyDecaySecs;
 /* Classic mode, applied after the three policies above so it wins when
  * both are set: it forces pill Key, base Off and ally Off. Default off. */
 extern bool gameFrontClassicMode;
+/* Allied tanks standing in trees are sent to their allies. Applied before
+ * classic mode, which forces it back off. Default off. */
+extern bool gameFrontAlliesInTrees;
 
 void gameFrontSetViewPillPolicy(int policy);
 void gameFrontSetViewBasePolicy(int policy);
@@ -1012,5 +1015,6 @@ void gameFrontSetViewPillDecaySecs(int secs);
 void gameFrontSetViewBaseDecaySecs(int secs);
 void gameFrontSetViewAllyDecaySecs(int secs);
 void gameFrontSetClassicMode(bool on);
+void gameFrontSetAlliesInTrees(bool on);
 
 #endif

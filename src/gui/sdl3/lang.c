@@ -1409,6 +1409,8 @@ static const LangEntry langTable[] = {
     {2008, "Classic mode"},
     {2009, "Sets Pill View to Key, and Base View and Allied Tank\nView to Off, and holds them there. Turning it off\nagain leaves those three where classic mode put them.\nIt also hides the Map Overview and the Full Screen\nmap on each player's own screen. The server sends the\nsame data either way, so this is a convenience rule,\nnot a guarantee about a modified client."},
     {2010, "The server has classic mode on, so this view is turned off."},
+    {2011, "See allies in trees"},
+    {2012, "Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off."},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the

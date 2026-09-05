@@ -1924,6 +1924,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=s
 STR_DLGLOBBY_CLASSIC_MODE_CB=Klasický režim
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Nastaví Pohled na bunkr na Klávesa a Pohled na základnu\ni Pohled na spojenecké tanky na Vypnuto a drží je tak.\nPo jeho vypnutí zůstanou tyto tři tam, kam je klasický\nrežim nastavil.\nTaké skryje přehled mapy a mapu na celou obrazovku na\nobrazovce každého hráče. Server posílá stejná data tak\njako tak, takže jde o pohodlí, ne o záruku vůči\nupravenému klientovi.
 STR_MENU_CLASSIC_MODE_TIP=Server má zapnutý klasický režim, takže je toto zobrazení vypnuté.
+STR_DLGLOBBY_ALLIES_TREES_CB=Vidět spojence v lese
+STR_DLGLOBBY_ALLIES_TREES_TIP=Spojenecké tanky stojící v lese se na tvé obrazovce\nkreslí, místo aby byly skryté. Mlha války stále platí,\ntakže je vidíš jen tam, kam vidíš i tak. Vypnuto je\nklasické pravidlo a klasický režim toto nastavení vypne.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Vzhled
 STR_DLGSKIN_DEFAULT=Výchozí

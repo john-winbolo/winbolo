@@ -1750,6 +1750,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_TIP));
         }
+
+        bool trees = gameFrontAlliesInTrees;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
+                            &trees)) {
+            gameFrontSetAlliesInTrees(trees);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_ALLIES_TREES_TIP));
+        }
     }
 
     ImGui::Spacing();

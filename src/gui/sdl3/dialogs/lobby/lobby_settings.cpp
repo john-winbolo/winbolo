@@ -534,6 +534,34 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 ImGui::PopID();
             }
 
+            /* Under the three rows because it is a plain on/off rule
+             * rather than a view policy. Classic mode holds it off the
+             * same way it holds the rows above: the server refuses an
+             * edit while classic mode is on, so the box goes disabled
+             * rather than letting the host click it for nothing. */
+            bool trees = clientSimGetAlliesInTrees(cs);
+            bool treesLocked =
+                (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_ALLIES_IN_TREES) != 0;
+            bool treesDisabled = !effectiveHost || treesLocked || classic;
+            if (treesDisabled) ImGui::BeginDisabled();
+            if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
+                                &trees)) {
+                uint8_t v = trees ? 1 : 0;
+                lobbySendSetting(cs, LST_ALLIES_IN_TREES, &v, 1);
+            }
+            /* Hover read before the badge draws, as above. */
+            bool treesHovered =
+                ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+            if (treesDisabled) ImGui::EndDisabled();
+            if (treesLocked) lobbyRenderLockBadge();
+            if (treesHovered) {
+                bool classicIsWhy = classic && !treesLocked && effectiveHost;
+                ImGui::SetTooltip(
+                    "%s", langGetText(classicIsWhy
+                                          ? STR_DLGLOBBY_CLASSIC_MODE_TIP
+                                          : STR_DLGLOBBY_ALLIES_TREES_TIP));
+            }
+
             /* A real Close button, not just the title-bar X: ImGui's
              * NavCancel leaves modals open, so a controller needs
              * something focusable to leave by. */

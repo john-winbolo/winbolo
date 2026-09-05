@@ -1496,6 +1496,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=secs
 STR_DLGLOBBY_CLASSIC_MODE_CB=Classic mode
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Sets Pill View to Key, and Base View and Allied Tank\nView to Off, and holds them there. Turning it off\nagain leaves those three where classic mode put them.\nIt also hides the Map Overview and the Full Screen\nmap on each player's own screen. The server sends the\nsame data either way, so this is a convenience rule,\nnot a guarantee about a modified client.
 STR_MENU_CLASSIC_MODE_TIP=The server has classic mode on, so this view is turned off.
+STR_DLGLOBBY_ALLIES_TREES_CB=See allies in trees
+STR_DLGLOBBY_ALLIES_TREES_TIP=Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off.
 
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller

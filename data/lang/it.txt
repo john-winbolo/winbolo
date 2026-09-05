@@ -1928,6 +1928,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=s
 STR_DLGLOBBY_CLASSIC_MODE_CB=Modalità classica
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Imposta Vista bunker su Tasto, e Vista base e Vista tank\nalleati su Disattivato, e le mantiene così. Disattivandola,\nquelle tre restano dove la modalità classica le ha messe.\nNasconde anche la panoramica della mappa e la mappa a\nschermo intero sullo schermo di ogni giocatore. Il server\ninvia gli stessi dati in entrambi i casi, quindi è una\nregola di comodità, non una garanzia contro un client\nmodificato.
 STR_MENU_CLASSIC_MODE_TIP=Il server ha la modalità classica attiva, quindi questa vista è disattivata.
+STR_DLGLOBBY_ALLIES_TREES_CB=Vedi gli alleati negli alberi
+STR_DLGLOBBY_ALLIES_TREES_TIP=I tank alleati fermi negli alberi vengono disegnati sul\ntuo schermo invece di essere nascosti. La nebbia di\nguerra vale ancora, quindi li vedi solo dove vedi già.\nDisattivato è la regola classica, e la modalità classica\nlo disattiva.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Predefinito

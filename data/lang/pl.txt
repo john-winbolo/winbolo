@@ -1920,6 +1920,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=s
 STR_DLGLOBBY_CLASSIC_MODE_CB=Tryb klasyczny
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Ustawia Widok bunkra na Klawisz, a Widok bazy i Widok\nsojuszniczych czołgów na Wyłączone, i tak je utrzymuje.\nPo jego wyłączeniu te trzy zostają tam, gdzie ustawił je\ntryb klasyczny.\nUkrywa też podgląd mapy i mapę pełnoekranową na ekranie\nkażdego gracza. Serwer i tak wysyła te same dane, więc\njest to ułatwienie, a nie gwarancja wobec zmodyfikowanego\nklienta.
 STR_MENU_CLASSIC_MODE_TIP=Serwer ma włączony tryb klasyczny, więc ten widok jest wyłączony.
+STR_DLGLOBBY_ALLIES_TREES_CB=Widok sojuszników w lasie
+STR_DLGLOBBY_ALLIES_TREES_TIP=Sojusznicze czołgi stojące w lasie są rysowane na twoim\nekranie, a nie ukrywane. Mgła wojny nadal obowiązuje,\nwięc widzisz je tylko tam, gdzie i tak widzisz.\nWyłączone to zasada klasyczna, a tryb klasyczny wymusza\nwyłączenie.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skórka
 STR_DLGSKIN_DEFAULT=Domyślna

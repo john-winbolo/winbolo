@@ -1926,6 +1926,8 @@ STR_DLGLOBBY_VIEW_DECAY_SECS=sn
 STR_DLGLOBBY_CLASSIC_MODE_CB=Klasik mod
 STR_DLGLOBBY_CLASSIC_MODE_TIP=Bunker Görünümü'nü Tuş, Üs Görünümü ve Müttefik Tank\nGörünümü'nü Kapalı yapar ve öyle tutar. Kapatıldığında\nbu üçü klasik modun bıraktığı yerde kalır.\nAyrıca harita genel görünümünü ve tam ekran haritayı her\noyuncunun kendi ekranında gizler. Sunucu her durumda aynı\nveriyi gönderir; yani bu bir kolaylık kuralıdır, değiştirilmiş\nbir istemciye karşı garanti değildir.
 STR_MENU_CLASSIC_MODE_TIP=Sunucuda klasik mod açık, bu yüzden bu görünüm kapalı.
+STR_DLGLOBBY_ALLIES_TREES_CB=Ağaçlardaki müttefikleri gör
+STR_DLGLOBBY_ALLIES_TREES_TIP=Ağaçların içinde duran müttefik tanklar gizlenmek yerine\nekranınıza çizilir. Savaş sisi hâlâ geçerli, yani onları\nyalnızca zaten gördüğünüz yerde görürsünüz. Kapalı olması\nklasik kuraldır ve klasik mod bunu kapatır.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Görünüm
 STR_DLGSKIN_DEFAULT=Varsayılan
