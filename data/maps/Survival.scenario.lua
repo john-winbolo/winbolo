@@ -215,6 +215,12 @@ local WAVE_BLITZ_MIN_SUICIDERS = 1  -- at GO the blitz commander designates rand
 local WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE = { [2] = 4, [4] = 4 }  -- per-wave override (user: on waves 2 and 4 everyone in a blitz is a suicider; 4 = the party max, so every member gets designated)
 local WAVE_NOBLITZ = { [3] = true }  -- waves whose bots never blitz at all (solo takes only; user: no blitzing on wave 3) -- brain token `noblitz`
 local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- waves whose bots ignore allies' claims on DEAD pills only, so several go for the same one and draw fire (user) -- brain token `noclaimdead`; live-pill claims stay
+-- PILL SEIZURE (user): at the start of round N (N >= 2) the horde seizes up
+-- to N of the defenders' pillboxes -- picked at random, loaded into random
+-- attackers' tanks as they land -- but never below SEIZE_MIN_LEFT[N] pills
+-- kept by the defenders. A short roster is not topped up to the minimum;
+-- the floor only caps what is taken.
+local SEIZE_MIN_LEFT = { [2] = 7, [3] = 6, [4] = 5, [5] = 4 }
 local WAVE_REFUEL_MULT = 1.2      -- all refuel costs x1.2 for wave bots: attackers go back for supplies less readily than they would in a normal game
 local WAVE_REFUEL_MULT_BY_WAVE = { [2] = 100, [4] = 100 }  -- per-wave override (user: waves 2 and 4 refuel at 100x, i.e. effectively never refuel)
 
@@ -610,6 +616,52 @@ local function stamp_wave_owner(game, s)
 end
 
 -- The wave has finished arriving: report the restock and deal the pills.
+-- The defenders' pills on the map (owner 0..5, not carried): the pool the
+-- seizure draws from. Dead or built alike -- a placed gun is exactly what
+-- the horde wants back.
+local function defender_pills(game)
+  local out = {}
+  for n = 1, game.num_pills() do
+    local pi = game.pill(n)
+    if pi and not pi.in_tank and pi.owner ~= nil and pi.owner <= 5 then
+      out[#out + 1] = n
+    end
+  end
+  return out
+end
+
+-- Runs once the whole wave is ashore: seize up to `wave` defender pills,
+-- respecting SEIZE_MIN_LEFT, and load each into a random attacker.
+local function seize_defender_pills(game)
+  if wave < 2 or #spawned == 0 then return end
+  local pool  = defender_pills(game)
+  local floor = SEIZE_MIN_LEFT[wave] or 0
+  local take  = math.min(wave, math.max(0, #pool - floor))
+  local seized = 0
+  for _ = 1, take do
+    if #pool == 0 then break end
+    local n = table.remove(pool, math.random(#pool))
+    -- Try attackers in random order until one accepts (a dead tank refuses).
+    local order = {}
+    for i, p in ipairs(spawned) do order[i] = p end
+    for i = #order, 2, -1 do
+      local j = math.random(i); order[i], order[j] = order[j], order[i]
+    end
+    for _, p in ipairs(order) do
+      if game.give_pill(p, n) then seized = seized + 1; break end
+    end
+  end
+  local left = #defender_pills(game)
+  if seized > 0 then
+    game.message(string.format(
+      "*** The horde seized %d of your pillboxes! You hold %d. ***", seized, left))
+  else
+    game.message(string.format(
+      "*** The horde found nothing to seize: you hold %d (minimum kept %d). ***",
+      left, floor))
+  end
+end
+
 local function finish_wave_spawn(game)
   spawn_next_at = nil
 
@@ -634,6 +686,7 @@ local function finish_wave_spawn(game)
   -- into tanks instead of being left as defender loot. Ownership is fresh
   -- above, so the free/defender test inside reads this wave's state.
   deal_wave_pills(game, spawned)
+  seize_defender_pills(game)
 end
 
 -- Bring at most ONE attacker ashore, no more often than every
@@ -1197,6 +1250,9 @@ function on_tick(game, tick)
       game.message(string.format(
         "*** Wave %d survived! %d second preparation for wave %d. ***",
         wave, BREATHER / 50, wave + 1))
+      game.message(string.format(
+        "*** Warning: wave %d opens with the horde seizing up to %d of your pillboxes (you keep at least %d). ***",
+        wave + 1, wave + 1, SEIZE_MIN_LEFT[wave + 1] or 0))
     end
   end
 end
