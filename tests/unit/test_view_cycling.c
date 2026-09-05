@@ -880,14 +880,31 @@ int run_view_cycle_stale_pill(void) {
                   "the view should still report pill 1, got %u", vp.viewTarget);
 
     /* With every pill's square merely remembered — a player who has seen none
-     * of them this round — entering pill view still parks on one. */
+     * of them this round — entering pill view still parks on one. Coming back
+     * from the tank resumes on the pill the camera was last on, remembered
+     * square and all. */
     pillsSetPosState(&gs->pb, 0, PILL_SQUARE_REMEMBERED);
     pillsSetPosState(&gs->pb, 2, PILL_SQUARE_REMEMBERED);
     vp.viewKind = VIEW_KIND_TANK;
     viewportPanInView(&vp, gs, &scroll, gs->tanks[0], VIEW_KIND_PILL, &in, 0, 0);
+    UT_ASSERT_MSG(vp.viewKind == VIEW_KIND_PILL && vp.viewTarget == 1,
+                  "entering pill view should resume on the pill it was parked "
+                  "on, got kind %u target %u", vp.viewKind, vp.viewTarget);
+
+    /* With nothing to resume on — the camera on a square no pill is at — it
+     * takes the first pill rather than dropping back to the tank. */
+    vp.viewKind   = VIEW_KIND_TANK;
+    vp.viewTarget = 0;
+    vp.viewX      = 0;
+    vp.viewY      = 0;
+    viewportPanInView(&vp, gs, &scroll, gs->tanks[0], VIEW_KIND_PILL, &in, 0, 0);
     UT_ASSERT_MSG(vp.viewKind == VIEW_KIND_PILL && vp.viewTarget == 0,
-                  "entering pill view should park on the first pill, got kind "
-                  "%u target %u", vp.viewKind, vp.viewTarget);
+                  "with nothing to resume on, entering pill view should park "
+                  "on the first pill, got kind %u target %u", vp.viewKind,
+                  vp.viewTarget);
+    UT_ASSERT_MSG(vp.viewX == p0x && vp.viewY == p0y,
+                  "the first pill is at (%u,%u), parked at (%u,%u)",
+                  p0x, p0y, vp.viewX, vp.viewY);
 
     serverSimDestroy(sim);
     return 0;
