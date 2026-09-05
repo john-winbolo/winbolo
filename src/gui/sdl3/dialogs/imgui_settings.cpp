@@ -773,15 +773,15 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     }
 
 #if !defined(__EMSCRIPTEN__)
-    /* ---- The newswire on the full screen map ---- Both settings follow the
-       map view they belong to, which is desktop and Deck only.  Applied as
-       the slider moves so the strip changes under it, and written to the
+    /* ---- The full screen map's HUD panels ---- These follow the map view
+       they belong to, which is desktop and Deck only.  Each slider is applied
+       as it moves so the panel changes under it, and written to the
        preferences once it is let go. */
     if (!uiModeIsTablet()) {
         int trans = sdl3DrawGetNewswireTransparency();
         ImGui::SetNextItemWidth(200.0f);
         if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
-                             &trans, 0, OVERVIEW_NEWS_TRANSPARENCY_MAX,
+                             &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
                              "%d%%")) {
             sdl3DrawSetNewswireTransparency(trans);
         }
@@ -795,6 +795,26 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
             gameFrontSaveCurrentPrefs();
         }
         imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
+
+        int buildTrans = sdl3DrawGetBuildPanelTransparency();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
+                             &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                             "%d%%")) {
+            sdl3DrawSetBuildPanelTransparency(buildTrans);
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP));
+        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+        int statusTrans = sdl3DrawGetStatusPanelTransparency();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
+                             &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                             "%d%%")) {
+            sdl3DrawSetStatusPanelTransparency(statusTrans);
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP));
+        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
     }
 #endif
 #endif

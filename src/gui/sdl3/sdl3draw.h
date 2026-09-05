@@ -97,18 +97,24 @@ bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
    is off or no HUD was laid out. */
 bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out);
 
-/* The newswire strip along the bottom of the full screen map. Transparency is
-   a percentage — 0 solid, capped short of invisible — and the setter clamps
-   it. With auto-hide on the strip drops off the bottom edge once the newswire
-   has been quiet; with it off the strip stays up. Both are player settings,
-   loaded and saved with the rest in gamefront.c. The cap is here so the
-   settings slider stops where the clamp does. */
-#define OVERVIEW_NEWS_TRANSPARENCY_MAX 90
+/* How see-through each of the full screen map's three HUD panels is drawn:
+   the newswire along the bottom, the build items down the left edge and the
+   status column on the right. Each is a percentage — 0 solid, capped short of
+   invisible — and the setters clamp. Auto-hide is the newswire's own: on, it
+   drops off the bottom edge once no new message has arrived for a while; off,
+   it stays up. All four are player settings, loaded and saved with the rest in
+   gamefront.c. The cap is here so the settings sliders stop where the clamp
+   does. */
+#define OVERVIEW_HUD_TRANSPARENCY_MAX 90
 
 void sdl3DrawSetNewswireTransparency(int percent);
 int  sdl3DrawGetNewswireTransparency(void);
 void sdl3DrawSetNewswireAutoHide(bool on);
 bool sdl3DrawGetNewswireAutoHide(void);
+void sdl3DrawSetBuildPanelTransparency(int percent);
+int  sdl3DrawGetBuildPanelTransparency(void);
+void sdl3DrawSetStatusPanelTransparency(int percent);
+int  sdl3DrawGetStatusPanelTransparency(void);
 
 /* Counter bumped every time the tile atlas is rebuilt. A caller that
  * builds its own sheet from tileLoaderBuildSheet can hold the value it

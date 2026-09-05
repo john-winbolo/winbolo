@@ -1417,6 +1417,10 @@ static const LangEntry langTable[] = {
     {2015, "How much of the map shows through the newswire along\nthe bottom of the full screen view. 0% is solid, and\nthe slider stops at 90% so it cannot be made invisible."},
     {2016, "Auto-hide the newswire"},
     {2017, "Drop the newswire off the bottom of the screen after\nno new messages have been received for a while, and\nslide it back up on the next message. Off keeps it on\nscreen the whole game."},
+    {2018, "Builder tools transparency"},
+    {2019, "How much of the map shows through the builder tools\ndown the left of the full screen view. 0% is solid,\nand the slider stops at 90% so they cannot be made\ninvisible."},
+    {2020, "Status panel transparency"},
+    {2021, "How much of the map shows through the status panel\ndown the right of the full screen view - the LGM,\nkills and deaths, the base, pillbox and tank rows,\nand the stock bars. 0% is solid, and the slider stops\nat 90% so it cannot be made invisible."},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the

@@ -3371,10 +3371,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
      not just the in-window map view a game opens with. */
   prefsGetString("MENU", "Show Full Screen Map", "No", buff, FILENAME_MAX);
   gameFrontFullScreen = YESNO_TO_TRUEFALSE(buff[0]);
-  /* The newswire strip on the full screen map: how see-through it is, and
-     whether it hides itself between messages. Each falls back to what
-     sdl3draw already holds, which is its own default, and sdl3draw clamps
-     the transparency it is given. */
+  /* The full screen map's three HUD panels: how see-through each is drawn,
+     and whether the newswire hides itself between messages. Each falls back
+     to what sdl3draw already holds, which is its own default, and sdl3draw
+     clamps the transparencies it is given. */
   intToStr(sdl3DrawGetNewswireTransparency(), def, sizeof(def));
   prefsGetString("SETTINGS", "Newswire Transparency", def, buff, FILENAME_MAX);
   sdl3DrawSetNewswireTransparency(atoi(buff));
@@ -3382,6 +3382,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
                  TRUEFALSE_TO_STR(sdl3DrawGetNewswireAutoHide()), buff,
                  FILENAME_MAX);
   sdl3DrawSetNewswireAutoHide(YESNO_TO_TRUEFALSE(buff[0]));
+  intToStr(sdl3DrawGetBuildPanelTransparency(), def, sizeof(def));
+  prefsGetString("SETTINGS", "Build Panel Transparency", def, buff,
+                 FILENAME_MAX);
+  sdl3DrawSetBuildPanelTransparency(atoi(buff));
+  intToStr(sdl3DrawGetStatusPanelTransparency(), def, sizeof(def));
+  prefsGetString("SETTINGS", "Status Panel Transparency", def, buff,
+                 FILENAME_MAX);
+  sdl3DrawSetStatusPanelTransparency(atoi(buff));
 #if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
 #else
@@ -3710,11 +3718,15 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gameFrontShowMapOverview));
   prefsSetString("MENU", "Show Full Screen Map",
                  TRUEFALSE_TO_STR(gameFrontFullScreen));
-  /* The full screen map's newswire strip. */
+  /* The full screen map's HUD panels. */
   intToStr(sdl3DrawGetNewswireTransparency(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "Newswire Transparency", buff);
   prefsSetString("SETTINGS", "Newswire Auto Hide",
                  TRUEFALSE_TO_STR(sdl3DrawGetNewswireAutoHide()));
+  intToStr(sdl3DrawGetBuildPanelTransparency(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "Build Panel Transparency", buff);
+  intToStr(sdl3DrawGetStatusPanelTransparency(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "Status Panel Transparency", buff);
   /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
      bypassing debounce since this is the shutdown save path. */
   gameFrontFlushWindowSettings();

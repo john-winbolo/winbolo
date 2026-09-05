@@ -1505,6 +1505,10 @@ STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire transparency
 STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=How much of the map shows through the newswire along\nthe bottom of the full screen view. 0% is solid, and\nthe slider stops at 90% so it cannot be made invisible.
 STR_DLGSETTINGS_NEWS_AUTOHIDE=Auto-hide the newswire
 STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Drop the newswire off the bottom of the screen after\nno new messages have been received for a while, and\nslide it back up on the next message. Off keeps it on\nscreen the whole game.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Builder tools transparency
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=How much of the map shows through the builder tools\ndown the left of the full screen view. 0% is solid,\nand the slider stops at 90% so they cannot be made\ninvisible.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Status panel transparency
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=How much of the map shows through the status panel\ndown the right of the full screen view - the LGM,\nkills and deaths, the base, pillbox and tank rows,\nand the stock bars. 0% is solid, and the slider stops\nat 90% so it cannot be made invisible.
 
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller
