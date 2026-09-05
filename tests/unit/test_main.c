@@ -527,6 +527,8 @@ static const UnitTestEntry s_tests[] = {
     { "console_say_keeps_case",                  run_console_say_keeps_case                  },
     { "console_kick_and_host",                   run_console_kick_and_host                   },
     { "console_kick_host_without_newline",       run_console_kick_host_without_newline       },
+    { "console_read_reports_eof",                run_console_read_reports_eof                },
+    { "console_read_timeout_then_eof",           run_console_read_timeout_then_eof           },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

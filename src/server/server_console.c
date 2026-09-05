@@ -21,6 +21,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef _WIN32
+  #include <sys/select.h>
+  #include <sys/time.h>
+  #include <unistd.h>
+#endif
+
 #include "server_console.h"
 
 void strlower(char *s) {
@@ -141,3 +147,38 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
     fprintf(stderr, "Unknown command - Type \"help\" for help\n");
   }
 }
+
+#ifndef _WIN32
+ServerConsoleRead serverConsoleReadLine(FILE *stream, char *buf,
+                                        size_t bufSize, int timeoutSecs) {
+  fd_set fdmask;
+  struct timeval timer;
+  int fd;
+  int ret;
+
+  buf[0] = '\0';
+  fd = fileno(stream);
+  if (fd < 0) {
+    return SERVER_CONSOLE_READ_EOF;
+  }
+
+  FD_ZERO(&fdmask);
+  FD_SET(fd, &fdmask);
+  timer.tv_sec = timeoutSecs;
+  timer.tv_usec = 0;
+
+  ret = select(fd + 1, &fdmask, NULL, NULL, &timer);
+  if (ret <= 0) {
+    /* Nothing to read, or the wait was interrupted by a signal — the
+     * lock / unlock / interrupt handlers raise those. Either way the
+     * caller should look at its alarms and come back. */
+    return SERVER_CONSOLE_READ_TIMEOUT;
+  }
+
+  if (fgets(buf, (int)bufSize, stream) == NULL) {
+    buf[0] = '\0';
+    return SERVER_CONSOLE_READ_EOF;
+  }
+  return SERVER_CONSOLE_READ_LINE;
+}
+#endif /* !_WIN32 */

@@ -1060,6 +1060,8 @@ int run_console_say_keeps_case(void);
 
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
+int run_console_read_reports_eof(void);
+int run_console_read_timeout_then_eof(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

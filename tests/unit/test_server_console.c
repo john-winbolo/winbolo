@@ -13,6 +13,11 @@
 
 #include <string.h>
 
+#ifndef _WIN32
+  #include <stdio.h>
+  #include <unistd.h>
+#endif
+
 #include "server_console.h"
 #include "test_harness.h"
 
@@ -301,5 +306,97 @@ int run_console_kick_host_without_newline(void) {
     UT_ASSERT_MSG(g_rec.kickCalls == 1 && strlen(g_rec.lastKick) == 32,
                   "an over-long name should be cut to 32 characters, got %d",
                   (int)strlen(g_rec.lastKick));
+    return 0;
+}
+
+/* The console reader must tell its caller that stdin has ended.
+ *
+ * The Linux loop used to throw away the result of fgets. Once stdin hit
+ * EOF — a server put in the background without -noinput, or a closed
+ * pipe — select() reported the descriptor readable for ever, fgets failed
+ * without touching the buffer, and the loop re-ran whatever command it
+ * had read last on every pass with no delay: a core burnt, and every
+ * player spammed if that command happened to be a say.
+ *
+ * Windows reads its console on a background thread instead, so the reader
+ * (and this test) are POSIX-only. */
+int run_console_read_reports_eof(void) {
+#ifndef _WIN32
+    char path[] = "ut_console_readXXXXXX";
+    char buf[SERVER_CONSOLE_LINE];
+    ServerConsoleRead r;
+    FILE *f;
+    int fd;
+    int i;
+
+    fd = mkstemp(path);
+    UT_ASSERT_MSG(fd >= 0, "could not create a temp file for the reader test");
+    f = fdopen(fd, "w+");
+    UT_ASSERT_MSG(f != NULL, "could not open the temp file");
+    fputs("lock\nSay Hello\n", f);
+    fflush(f);
+    rewind(f);
+
+    r = serverConsoleReadLine(f, buf, sizeof(buf), 1);
+    UT_ASSERT_MSG(r == SERVER_CONSOLE_READ_LINE && strcmp(buf, "lock\n") == 0,
+                  "first line should read back, got %d '%s'", (int)r, buf);
+
+    r = serverConsoleReadLine(f, buf, sizeof(buf), 1);
+    UT_ASSERT_MSG(r == SERVER_CONSOLE_READ_LINE && strcmp(buf, "Say Hello\n") == 0,
+                  "second line should read back, got %d '%s'", (int)r, buf);
+
+    /* End of the stream, and it stays that way — with the buffer cleared,
+     * so a caller that dispatches what is in it runs nothing. */
+    for (i = 0; i < 3; i++) {
+        r = serverConsoleReadLine(f, buf, sizeof(buf), 1);
+        UT_ASSERT_MSG(r == SERVER_CONSOLE_READ_EOF,
+                      "read %d past the end should report EOF, got %d", i, (int)r);
+        UT_ASSERT_MSG(buf[0] == '\0',
+                      "the buffer should be empty at EOF, got '%s'", buf);
+    }
+
+    fclose(f);
+    remove(path);
+#endif
+    return 0;
+}
+
+/* A console with nothing typed on it times out and leaves an empty
+ * buffer, and a pipe whose writer goes away reports EOF rather than
+ * handing back the last line again. */
+int run_console_read_timeout_then_eof(void) {
+#ifndef _WIN32
+    int fds[2];
+    char buf[SERVER_CONSOLE_LINE];
+    ServerConsoleRead r;
+    FILE *f;
+
+    UT_ASSERT_MSG(pipe(fds) == 0, "could not create a pipe");
+    f = fdopen(fds[0], "r");
+    UT_ASSERT_MSG(f != NULL, "could not open the pipe read end");
+
+    /* Nothing written yet. */
+    r = serverConsoleReadLine(f, buf, sizeof(buf), 1);
+    UT_ASSERT_MSG(r == SERVER_CONSOLE_READ_TIMEOUT,
+                  "an idle console should time out, got %d", (int)r);
+    UT_ASSERT_MSG(buf[0] == '\0',
+                  "a timeout should leave the buffer empty, got '%s'", buf);
+
+    UT_ASSERT_MSG(write(fds[1], "status\n", 7) == 7, "could not write to the pipe");
+    r = serverConsoleReadLine(f, buf, sizeof(buf), 1);
+    UT_ASSERT_MSG(r == SERVER_CONSOLE_READ_LINE && strcmp(buf, "status\n") == 0,
+                  "a written line should read back, got %d '%s'", (int)r, buf);
+
+    /* The writer goes away: the read end is readable at once and stays
+     * that way, which is exactly the case the loop used to spin on. */
+    close(fds[1]);
+    r = serverConsoleReadLine(f, buf, sizeof(buf), 1);
+    UT_ASSERT_MSG(r == SERVER_CONSOLE_READ_EOF,
+                  "a closed pipe should report EOF, got %d", (int)r);
+    UT_ASSERT_MSG(buf[0] == '\0',
+                  "EOF should leave the buffer empty, got '%s'", buf);
+
+    fclose(f);
+#endif
     return 0;
 }

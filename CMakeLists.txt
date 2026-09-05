@@ -4006,6 +4006,8 @@ set(_unit_test_names
     console_say_keeps_case
     console_kick_and_host
     console_kick_host_without_newline
+    console_read_reports_eof
+    console_read_timeout_then_eof
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

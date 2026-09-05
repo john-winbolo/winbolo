@@ -321,16 +321,9 @@ void processKeys(bool isQuiet) {
 #else
 /* Linux */
 void processKeys(bool isQuiet) {
-  char keyBuff[256] = "\0";
-  char saveBuff[256] = "\0";
-  fd_set fdmask;
-  struct timeval timer;
-  int ret;
-
-  timer.tv_sec = 1;
-  timer.tv_usec = 0;
-  FD_ZERO(&fdmask);
-  FD_SET(STDIN_FILENO, &fdmask);
+  char keyBuff[SERVER_CONSOLE_LINE] = "\0";
+  char saveBuff[SERVER_CONSOLE_LINE] = "\0";
+  bool consoleOpen = TRUE;
 
   if (isQuiet == TRUE || isNoInput == TRUE) {
     while (!serverSimIsTerminalGameOver(serverSim)) {
@@ -353,18 +346,36 @@ void processKeys(bool isQuiet) {
     while (strncmp(keyBuff, "quit", 4) != 0 && !serverSimIsTerminalGameOver(serverSim)) {
       serverConsoleDispatch(&serverConsoleOps, keyBuff, saveBuff);
 
-      timer.tv_sec = 1;
-      timer.tv_usec = 0;
-      FD_ZERO(&fdmask);
-      FD_SET(STDIN_FILENO, &fdmask);
-
-      ret = select(STDIN_FILENO + 1, &fdmask, NULL, NULL, &timer);
-      if (ret > 0) {
-        fgets(keyBuff, 256, stdin);
-        strcpy(saveBuff, keyBuff);
-        strlower(keyBuff);
-      } else if (ret != -1) {
+      if (consoleOpen == TRUE) {
+        switch (serverConsoleReadLine(stdin, keyBuff, sizeof(keyBuff), 1)) {
+        case SERVER_CONSOLE_READ_LINE:
+          strcpy(saveBuff, keyBuff);
+          strlower(keyBuff);
+          break;
+        case SERVER_CONSOLE_READ_EOF:
+          /* stdin has ended — a server put in the background without
+           * -noinput, or a closed pipe. select() then reports the
+           * descriptor readable for ever and the read fails without
+           * touching the buffer, so the loop used to re-run whatever
+           * command it read last, flat out and with no delay. Stop
+           * reading and idle the way the -noinput path does. */
+          fprintf(stderr, "Console input has closed - no further commands "
+                          "will be read. Use quit or Ctrl-C to stop the "
+                          "server.\n");
+          consoleOpen = FALSE;
+          saveBuff[0] = '\0';
+          break;
+        case SERVER_CONSOLE_READ_TIMEOUT:
+          saveBuff[0] = '\0';
+          break;
+        }
+      } else {
+        /* Console closed: idle a second at a time, the way the read's
+         * timeout does, and clear the line so a command left behind by a
+         * signal below runs once and not once a second. */
+        sleep(1);
         keyBuff[0] = '\0';
+        saveBuff[0] = '\0';
       }
 
       if (alarmRaised == alarmInterrupt) {
