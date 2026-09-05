@@ -237,13 +237,16 @@ def side_of(winner, tanks, per_side):
     if not text.strip():
         return None
     gotA = gotB = False
-    for t in tanks or []:
-        nm, pn = t.get("name"), t.get("player")
-        if not nm or pn is None:
-            continue
-        # Whole-name match: a bare substring test let "Hera" claim
-        # "Heracles" (seeds 7/17 of the first 6v6 bench read as undecided).
-        if re.search(r"(?<![A-Za-z0-9])" + re.escape(nm) + r"(?![A-Za-z0-9])", text):
+    # Longest names first, each consumed out of the sentence once matched
+    # as a whole whitespace-bounded token: a bare substring test let "Hera"
+    # claim "Heracles" and "Magpie" claim "Magpie-Lark" (6v6 seeds 7/17 read
+    # as undecided).
+    named = [(t.get("name"), t.get("player")) for t in tanks or []]
+    named = [(nm, pn) for nm, pn in named if nm and pn is not None]
+    for nm, pn in sorted(named, key=lambda x: -len(x[0])):
+        pat = r"(?<!\S)" + re.escape(nm) + r"(?!\S)"
+        if re.search(pat, text):
+            text = re.sub(pat, " ", text, count=1)
             if pn in A:
                 gotA = True
             elif pn in B:
