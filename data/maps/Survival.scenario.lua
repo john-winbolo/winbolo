@@ -174,6 +174,23 @@ local NEWSWIRE_MUTE_TAIL_TICKS = 100   -- 2 s of silence after it
 -- plain and keep the brain's own fractional designation.
 local SUICIDER_WAVES = { [2] = true, [4] = true }
 
+-- Brain init tokens every wave bot is spawned with. They ride
+-- BRAIN_INIT_ARG and are parsed by the brain (brains/GoalHunter_1.7);
+-- a brain that doesn't know a token ignores it.
+local WAVE_PORTFOLIO = "0/25/75"  -- back/front/aggressive pill share the wave bots aim for
+local WAVE_BLITZ_MIN = 3          -- minimum tanks in a blitz
+
+-- "portfolio=...;blitz=N", with "suicider;" in front on a suicider wave.
+-- Takes the wave number rather than reading the `wave` upvalue: this sits
+-- above `local wave` in the file, so reading it here would find the (nil)
+-- global and every wave would look non-suicider.
+local function wave_init_arg(w)
+  local arg = string.format("portfolio=%s;blitz=%d",
+                            WAVE_PORTFOLIO, WAVE_BLITZ_MIN)
+  if SUICIDER_WAVES[w] then arg = "suicider;" .. arg end
+  return arg
+end
+
 -- Map-file layout contracts (see tests/generate_survival_map.py):
 local HORDE_BASES  = 8      -- bases 1..8: the horde's shore ring (r=25)
 local CENTER_FIRST = 9      -- bases 9..14 form the human center, owners 0..5
@@ -502,11 +519,11 @@ local function pump_spawn_queue(game, tick)
   spawn_left = spawn_left - 1
   local name = WAVE_NAMES[spawn_index]
     or string.format("Wave %d-%d", wave, spawn_index)
-  -- 5th argument = the brain's BRAIN_INIT_ARG, per bot. On a suicider wave
-  -- every attacker gets "suicider"; on any other wave nothing is passed and
-  -- the brain designates its own harassers as usual.
-  local p = game.spawn_bot(name, nil, WAVE_TEAM, "open",
-                           SUICIDER_WAVES[wave] and "suicider" or nil)
+  -- 5th argument = the brain's BRAIN_INIT_ARG, per bot: the wave's
+  -- portfolio and blitz settings, plus "suicider" on a suicider wave (which
+  -- forces GoalHunter's pill_suicider role on for that bot instead of
+  -- letting it designate its own harassers). See wave_init_arg.
+  local p = game.spawn_bot(name, nil, WAVE_TEAM, "open", wave_init_arg(wave))
   if p then
     wave_bots[p] = true
     spawned[#spawned + 1] = p

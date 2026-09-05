@@ -561,8 +561,9 @@ static int l_spawn_bot(lua_State *L) {
         }
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "scenario: spawned bot '%s' in slot %d (brain=%s team=%s)",
-        botName, (int)slot, brain, hasTeam ? "set" : "-");
+        "scenario: spawned bot '%s' in slot %d (brain=%s team=%s init=%s)",
+        botName, (int)slot, brain, hasTeam ? "set" : "-",
+        (initArg != NULL && initArg[0] != '\0') ? initArg : "-");
     lua_pushinteger(L, slot);
     return 1;
 }
