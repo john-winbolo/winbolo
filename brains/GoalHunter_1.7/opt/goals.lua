@@ -12416,7 +12416,18 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
         local we_hold = g and g.kind == kind
                        and ((g.target_id and e._id and g.target_id == e._id)
                             or (g.mx == e._mx and g.my == e._my))
-        if pool_idx == 6 and e._id then
+        if pool_idx == 6 and e._id and state.ally_claim_off then
+          -- ── "noclaim" (BRAIN_INIT_ARG): allies' claims on a LIVE pill are
+          -- ignored outright, so several bots can sweep the same pill at once
+          -- and share the fire. We always keep the row (an existing
+          -- ally_claimed reject is cleared by the we_keep branch below), and
+          -- because we never treat the pill as theirs we never ASK for it
+          -- either — no stq is queued, since there is nothing to steal.
+          -- Scope is pool 6 only: pool 4 (capture_pill / dead-pill scooping)
+          -- de-confliction and the pool-1 refuel soft penalty are untouched.
+          we_keep = true
+          _reason = "claims_off (noclaim init_arg — allies' attack_pill claims ignored)"
+        elseif pool_idx == 6 and e._id then
           -- ── attack_pill: NEGOTIATED steal (stq/sta/str), no silent takeover ──
           -- The old silent cost-steal let a cheaper challenger just KEEP the
           -- pill; the pricier holder stamped REJECT on its own entry but the

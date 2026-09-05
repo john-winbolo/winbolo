@@ -1156,6 +1156,15 @@ function Brain.think(info)
   --                          "bsu" suicider designations. It still fights and
   --                          takes pills SOLO, exactly as if no ally were in
   --                          range. No constant — blitzing is on by default.
+  --   "noclaim"           -> ignore allies' CLAIMS on live pills: pool 6
+  --                          (attack_pill) rows never take an ally_claimed
+  --                          REJECT, so several bots can sweep the same pill at
+  --                          once and share the fire. It also asks for nothing
+  --                          (no stq steal requests — nothing to steal) and
+  --                          still answers an ally's stq with "we hold" as
+  --                          before. Pool 4 (capture_pill / dead-pill scooping)
+  --                          de-confliction and the refuel soft penalty are
+  --                          UNCHANGED. No constant — claiming is on by default.
   --   "refuel=X"          -> float multiplier on the whole "refuel" GOAL_GROUP
   --                          (refuel_at_base + flee_to_base). 1.0 = default;
   --                          1.2 makes this bot resupply less readily.
@@ -1184,6 +1193,10 @@ function Brain.think(info)
         elseif tok == "noblitz" then
           -- Solo bot: no calls opened, none joined, bsu designations ignored.
           state.blitz_disabled = true
+        elseif tok == "noclaim" then
+          -- Sweeping wave: allies' attack_pill claims are ignored (pool 6), so
+          -- several bots pile onto the same pill and draw fire together.
+          state.ally_claim_off = true
         elseif tok:sub(1, 10) == "portfolio=" then
           -- Integer percents, '/' separated: B/F/A or B/F/A/U.
           -- Complaints are LATCHED into state._cfg_warn, not printed here: this
