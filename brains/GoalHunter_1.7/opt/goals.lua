@@ -5219,6 +5219,32 @@ local function suicider_mult_for_pool(state, pname)
   return suicider_cost_mult(state, POOL_NAME_TO_KIND[pname] or pname)
 end
 
+-- ── Refuel cost multiplier (per bot) ──────────────────────────────────────
+-- A whole-cost multiplier on the "refuel" GOAL_GROUP (refuel_at_base +
+-- flee_to_base). Module-level, and each bot has its own lua_State, so it is per
+-- bot; init.lua's "refuel=X" BRAIN_INIT_ARG token calls set_refuel_mult.
+-- Applied at ONE place: the selection-layer pass in goal_selection, right after
+-- the pill-suicider surcharge — NOT per candidate base. Refuel's pool cost is
+-- assembled in three different spots (eval_refuel, finalize_partial's pool 1,
+-- and the critical-armour flee injection that OVERWRITES pool 1), so the only
+-- point that is genuinely single is where the assembled pool is shaped.
+local REFUEL_MULT = C.REFUEL_COST_MULT or 1.0
+M.refuel_mult_source = "default"
+function M.refuel_mult() return REFUEL_MULT end
+function M.set_refuel_mult(x, source)
+  REFUEL_MULT = (type(x) == "number" and x > 0) and x or REFUEL_MULT
+  M.refuel_mult_source = source or "init_arg"
+end
+function M.refuel_mult_label()
+  return string.format("refuelmult{x%.2f (%s)}", REFUEL_MULT, M.refuel_mult_source)
+end
+-- Same question the display renderers ask for the suicider surcharge: is THIS
+-- pool part of the refuel group, and if so what multiplier did selection apply?
+local function refuel_mult_for_pool(pname)
+  local kind = POOL_NAME_TO_KIND[pname] or pname
+  return (GOAL_GROUPS[kind] == "refuel") and REFUEL_MULT or 1.0
+end
+
 -- (LOCK_SUBS defined above eval_attack_tank.)
 
 -- Wall-shield investment substates; gain extra commitment penalty
@@ -14821,6 +14847,26 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Refuel-group cost multiplier ──
+    -- THE choke point for "this bot values resupply more/less than usual":
+    -- one pass over the assembled pool, the same layer as the phase weight and
+    -- the suicider surcharge above. Covers BOTH members of the refuel
+    -- GOAL_GROUP, so the critical-armour flee injection (a flee_to_base that
+    -- overwrites pool 1) is scaled too — the whole point is that a bot with
+    -- refuel=1.2 goes back for supplies less readily, and exempting the
+    -- emergency case would leave the biggest refuel decision unchanged.
+    -- No-op at the 1.0 default. _refuel_mult is stashed for the WINNERS-row
+    -- reconciliation exactly like _suicider_mult.
+    if REFUEL_MULT ~= 1.0 then
+      for _, c in ipairs(pool) do
+        if c.goal and GOAL_GROUPS[c.goal.kind] == "refuel"
+           and c.cost and c.cost > 0 and not c._reject_sentinel then
+          c.cost = c.cost * REFUEL_MULT
+          c._refuel_mult = REFUEL_MULT
+        end
+      end
+    end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -15945,7 +15991,11 @@ function M.get_queue_status(state)
     -- alongside the phase weight (1.0 for everyone else).
     local pw = phase_weights and pname and phase_weights[pname] or 1.0
     local sui = suicider_mult_for_pool(state, pname)
-    local weighted = cost_val >= 0 and (cost_val * pw * sui) or -1
+    local rfm = refuel_mult_for_pool(pname)
+    local weighted = cost_val >= 0 and (cost_val * pw * sui * rfm) or -1
+    if rfm ~= 1.0 and formula ~= "" then
+      formula = formula .. " * " .. M.refuel_mult_label()
+    end
     if sui ~= 1.0 and formula ~= "" then
       -- Name the RULE that made this bot a suicider (forced token / blitz
       -- designation at GO / harasser slate) — the surcharge is meaningless
@@ -15992,8 +16042,10 @@ function M.get_queue_status(state)
     local cost = entry.cost or -1
     local pw = phase_weights and phase_weights[pname] or 1.0
     local sui = suicider_mult_for_pool(state, pname)
-    local weighted = cost >= 0 and (cost * pw * sui) or -1
+    local rfm = refuel_mult_for_pool(pname)
+    local weighted = cost >= 0 and (cost * pw * sui * rfm) or -1
     local fdesc = entry.desc or ""
+    if rfm ~= 1.0 then fdesc = fdesc .. " * " .. M.refuel_mult_label() end
     if sui ~= 1.0 then fdesc = fdesc .. string.format(" * suicider{%.1f}", sui) end
     entries[#entries+1] = {
       pool = idx, pname = pname, id = 0,
@@ -16408,7 +16460,7 @@ function M.get_pool_breakdown_json(state)
     -- selection-layer multiplier on this whole pool, so it belongs in
     -- `weighted` (and therefore in the row ordering). 1.0 for non-suiciders.
     local sui = suicider_mult_for_pool(state, pname)
-    local pwx = pw * sui
+    local pwx = pw * sui * refuel_mult_for_pool(pname)
     local rows_raw = by_pool[idx] or {}
     table.sort(rows_raw, function(a, b)
       local ac = (a.cost >= 0) and a.cost * pwx or math.huge
@@ -16620,6 +16672,17 @@ function M.get_pool_breakdown_json(state)
           C.PILL_SUICIDER_DEFEND_MULT or 1.0, C.PILL_SUICIDER_OTHER_MULT or 1.0)
       end
 
+      -- Refuel-group multiplier, same layer as the suicider surcharge, so the
+      -- row's numbers still reconcile (base x pw x inf x suicider x refuelmult
+      -- + penalties = total).
+      local refuel_mult_d = (gc and gc.refuel_mult) or 1.0
+      if refuel_mult_d ~= 1.0 then
+        detail_formula = string.format("%s * %s", detail_formula, M.refuel_mult_label())
+        detail_map[#detail_map + 1] = string.format(
+          "refuelmult:the refuel GOAL_GROUP (refuel_at_base + flee_to_base) costs x%.2f for this bot (%s) -- REFUEL_COST_MULT, per-bot overridable with the \"refuel=X\" init token",
+          refuel_mult_d, M.refuel_mult_source)
+      end
+
       if w.imminent then
         detail_map[#detail_map + 1] = string.format("imminent:cost_forced_to_floor(%.0f) because neutral and close", C.IMMINENT_CAPTURE_FLOOR)
       end
@@ -16699,6 +16762,10 @@ function M.get_pool_breakdown_json(state)
       if suicider_mult ~= 1.0 then
         row_summary = row_summary .. string.format(" x suicider{%.1f, %s}", suicider_mult,
                                                    tostring(state.suicider_src or "?"))
+      end
+      local refuel_mult = (gc and gc.refuel_mult) or 1.0
+      if refuel_mult ~= 1.0 then
+        row_summary = row_summary .. " x " .. M.refuel_mult_label()
       end
 
       if penalty > 0 or wsim_add > 0 or w.imminent then

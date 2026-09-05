@@ -960,6 +960,7 @@ M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
 -- unable to out-bid the anti-thrash stack it had accumulated (switch fee +
 -- commitment + the repeat-goal ratchet) and the bot cycled at 0 armour.
 M.REFUEL_CRITICAL_NEED_MIN = 0.9   -- at/below ARMOUR_LOW, refuel need is at least this
+M.REFUEL_COST_MULT = 1.0  -- whole-cost multiplier on the "refuel" GOAL_GROUP (refuel_at_base + flee_to_base, the same group the pill-suicider surcharge exempts), applied at the ONE selection-layer choke point in goal_selection next to the phase weight / influence / suicider passes. 1.0 = no change. >1 makes a bot resupply less readily (it holds the line longer and dies more), <1 more readily. DEFAULT ONLY: a per-bot "refuel=X" BRAIN_INIT_ARG token replaces it, so read goals.refuel_mult()
 M.REFUEL_MIN_COST          = 25    -- routine-refuel cost floor: an on-base top-off otherwise collapses to ~4 and outbids free-pill grabs (20260703_210207 t=5747). Bypassed at ARMOUR_CRITICAL ??? survival refuel may enter the reserved <20 band.
                                    -- (with squared urgency: floor cost at
                                    -- bscore ?? 0.37; e.g. bscore=60 ??? ~22)

@@ -1090,6 +1090,9 @@ function Brain.think(info)
   --                          designates that many random non-suicider SOLDIERS
   --                          to make up the difference, TEMPORARILY, for that
   --                          take only. 0 (the default) never designates.
+  --   "refuel=X"          -> float multiplier on the whole "refuel" GOAL_GROUP
+  --                          (refuel_at_base + flee_to_base). 1.0 = default;
+  --                          1.2 makes this bot resupply less readily.
   -- This block runs early in Brain.think and squad.update (which reads
   -- state.force_pill_suicider) runs much later in the same function, so the
   -- flag is already set on the bot's very first tick. Same for the portfolio
@@ -1165,6 +1168,15 @@ function Brain.think(info)
               "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
           else
             squad.set_blitz_size(mn, mx, "init_arg")
+          end
+        elseif tok:sub(1, 7) == "refuel=" then
+          -- Float multiplier on the refuel GOAL_GROUP. Complaints latch, as above.
+          local x = tonumber(tok:sub(8))
+          if x and x > 0 then
+            goals.set_refuel_mult(x, "init_arg")
+          else
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[refuel] BAD TOKEN '%s' -- want refuel=X, a number > 0; IGNORED. ", tok)
           end
         elseif tok:sub(1, 15) == "blitzsuiciders=" then
           -- Minimum suiciders per blitz. Complaints latch, as above.
