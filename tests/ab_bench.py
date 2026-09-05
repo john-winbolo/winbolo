@@ -241,7 +241,9 @@ def side_of(winner, tanks, per_side):
         nm, pn = t.get("name"), t.get("player")
         if not nm or pn is None:
             continue
-        if nm in text:
+        # Whole-name match: a bare substring test let "Hera" claim
+        # "Heracles" (seeds 7/17 of the first 6v6 bench read as undecided).
+        if re.search(r"(?<![A-Za-z0-9])" + re.escape(nm) + r"(?![A-Za-z0-9])", text):
             if pn in A:
                 gotA = True
             elif pn in B:
@@ -549,6 +551,9 @@ def main():
                     help="tanks per side (2 = 2v2, 6 = 6v6)")
     ap.add_argument("--label", default=None, help="cache directory name")
     ap.add_argument("--force", action="store_true", help="replay cached seeds")
+    ap.add_argument("--remeasure", action="store_true",
+                    help="re-score every cached seed of this label from its kept "
+                         "snapshot/finaljson (after a scoring fix), then print the table")
     ap.add_argument("--table", action="store_true",
                     help="print the cached table and play nothing")
     ap.add_argument("--verify-tokens", action="store_true",
@@ -598,6 +603,26 @@ def main():
     if args.verify_tokens:
         return verify_tokens(mapfile, args.a, args.b, args.per_side,
                              seeds[0] if seeds else 4242)
+
+    if args.remeasure:
+        n = 0
+        for rp in sorted(out.glob("s*.json")):
+            if rp.name.endswith("_final.json"):
+                continue
+            old = json.loads(rp.read_text(encoding="utf-8"))
+            seed = old["seed"]
+            m = measure(out / f"s{seed}_snap.jsonl", out / f"s{seed}_final.json",
+                        args.per_side)
+            if m is None:
+                continue
+            m["seconds"] = old.get("seconds")
+            m["seed"] = seed
+            rp.write_text(json.dumps(m, indent=1), encoding="utf-8")
+            n += 1
+        print(f"  re-scored {n} cached game(s) from their snapshots")
+        print()
+        print(table_text(load_all(out), args.a, args.b))
+        return 0
 
     if not args.table:
         ds = BUILD / "WinBoloDS.exe"
