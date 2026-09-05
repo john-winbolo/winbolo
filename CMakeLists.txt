@@ -429,21 +429,22 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MAXMINDDB_BUILD_BINARIES OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(libmaxminddb)
     set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE}" CACHE BOOL "" FORCE)
-
-    # cJSON — force static
-    set(BUILD_SHARED_LIBS_SAVE2 "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(CJSON_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
-    set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
-    set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(cjson)
-    # cJSON enables -Werror which breaks on MinGW (isnan/isinf float-conversion warnings)
-    if(TARGET cjson AND MINGW)
-        target_compile_options(cjson PRIVATE -Wno-error)
-    endif()
-    set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE2}" CACHE BOOL "" FORCE)
 endif()
+
+# cJSON — force static.  Outside the guard above: the iOS target compiles
+# src/common/prefs_doc.c and src/bolo/lobby_bot_pools_json.c and links cjson.
+set(BUILD_SHARED_LIBS_SAVE2 "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CJSON_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cjson)
+# cJSON enables -Werror which breaks on MinGW (isnan/isinf float-conversion warnings)
+if(TARGET cjson AND MINGW)
+    target_compile_options(cjson PRIVATE -Wno-error)
+endif()
+set(BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS_SAVE2}" CACHE BOOL "" FORCE)
 
 # minizip library from zlib's contrib/minizip.  Outside the guard above: zlib
 # is fetched on iOS too, and the iOS client reads skin archives through it.
@@ -632,6 +633,53 @@ function(set_flat_output TARGET OUTDIR)
         endforeach()
     endif()
 endfunction()
+
+# ---------------------------------------------------------------------------
+# Sentry crash reporting — optional.
+# Set -DENABLE_SENTRY=OFF to skip entirely.
+# Pass -DSENTRY_DSN="https://key@o0.ingest.sentry.io/0" to enable reporting.
+#
+# Declared here, above the platform split, because the iOS target reads
+# HAVE_SENTRY_IOS / SENTRY_COCOA_XCFW inside that split and CMake is
+# sequential.  The desktop sentry-native fetch stays below with the other
+# desktop dependencies: it manipulates BUILD_SHARED_LIBS and SENTRY_BACKEND
+# and must keep its position relative to them.  The iOS side is a plain
+# download of a prebuilt xcframework, so it moves without side effects.
+# ---------------------------------------------------------------------------
+option(ENABLE_SENTRY "Enable Sentry crash reporting" ON)
+set(SENTRY_DSN "" CACHE STRING "Sentry DSN for crash reporting")
+set(HAVE_SENTRY FALSE)
+set(HAVE_SENTRY_IOS FALSE)
+
+# Sentry crash reporting — iOS (sentry-cocoa static xcframework).
+# Requires CMake 3.28+ for xcframework support with the Xcode generator.
+#
+# SOURCE_DIR is pinned instead of taking the FetchContent default.
+# Sentry.xcframework.zip holds a single top-level directory, which URL
+# extraction strips, so the bundle's contents land directly in the
+# destination directory.  target_link_libraries recognises an xcframework
+# by the .xcframework suffix on the directory name, so the destination has
+# to supply that name itself — with the default name the link step reports
+# a missing Info.plist.
+if(ENABLE_SENTRY AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    FetchContent_Declare(
+        sentry_cocoa
+        URL https://github.com/getsentry/sentry-cocoa/releases/download/9.8.0/Sentry.xcframework.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/Sentry.xcframework"
+    )
+    FetchContent_MakeAvailable(sentry_cocoa)
+    set(SENTRY_COCOA_XCFW "${sentry_cocoa_SOURCE_DIR}")
+    set(HAVE_SENTRY_IOS TRUE)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(HAVE_SENTRY_IOS)
+        message(STATUS "Sentry crash reporting enabled (sentry-cocoa)")
+    else()
+        message(STATUS "Sentry crash reporting disabled")
+    endif()
+endif()
 
 # ===========================================================================
 # Platform targets: iOS vs Desktop
@@ -907,8 +955,15 @@ target_include_directories(WinBoloIOS PRIVATE
     ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(WinBoloIOS gui)
+# bg_game.c: same grant as the desktop target — the dev-mode lobby
+# background assigns bot teams through server_sim_lifecycle.h.
+# winbolo_ios.m: the iOS tick loop still drives the transport directly
+# through transport.h; the grant deletes when it moves to the shared
+# clientFrontRunTickStep path.
 bolo_grant_internal_source_access(WinBoloIOS
-    src/bolo/transport_udp_client.c)
+    src/bolo/transport_udp_client.c
+    src/gui/sdl3/bg_game.c
+    src/gui/ios/winbolo_ios.m)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
@@ -938,6 +993,13 @@ if(HAVE_SENTRY_IOS)
         target_compile_definitions(WinBoloIOS PRIVATE SENTRY_DSN="${SENTRY_DSN}")
     endif()
     target_link_libraries(WinBoloIOS PRIVATE "${SENTRY_COCOA_XCFW}")
+    # winbolo_ios.m reaches the SDK through `@import Sentry`, which needs
+    # Objective-C modules.  Set per-source rather than target-wide: the rest
+    # of WinBoloIOS is C and C++ that has no reason to change how it
+    # compiles.  A different source property from the internal-access grant
+    # above, so the two do not overwrite each other.
+    set_source_files_properties(src/gui/ios/winbolo_ios.m
+        PROPERTIES COMPILE_OPTIONS "-fmodules")
 endif()
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
@@ -1155,14 +1217,9 @@ else()
     message(STATUS "ONNX Runtime not found — ML brain support disabled")
 endif()
 
-# Sentry crash reporting — optional.
-# Set -DENABLE_SENTRY=OFF to skip entirely.
-# Pass -DSENTRY_DSN="https://key@o0.ingest.sentry.io/0" to enable reporting.
-option(ENABLE_SENTRY "Enable Sentry crash reporting" ON)
-set(SENTRY_DSN "" CACHE STRING "Sentry DSN for crash reporting")
-set(HAVE_SENTRY FALSE)
-set(HAVE_SENTRY_IOS FALSE)
-
+# Sentry crash reporting — sentry-native for desktop.  The ENABLE_SENTRY /
+# SENTRY_DSN / HAVE_SENTRY* declarations, and the iOS sentry-cocoa download,
+# live above the iOS/desktop split because the iOS target consumes them there.
 if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     FetchContent_Declare(
         sentry
@@ -1188,19 +1245,6 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     FetchContent_MakeAvailable(sentry)
 
     set(HAVE_SENTRY TRUE)
-endif()
-
-# Sentry crash reporting — iOS (sentry-cocoa static xcframework).
-# Requires CMake 3.28+ for xcframework support with the Xcode generator.
-if(ENABLE_SENTRY AND CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    FetchContent_Declare(
-        sentry_cocoa
-        URL https://github.com/getsentry/sentry-cocoa/releases/download/9.8.0/Sentry.xcframework.zip
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(sentry_cocoa)
-    set(SENTRY_COCOA_XCFW "${sentry_cocoa_SOURCE_DIR}/Sentry.xcframework")
-    set(HAVE_SENTRY_IOS TRUE)
 endif()
 
 if(HAVE_SENTRY)

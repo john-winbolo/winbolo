@@ -26,7 +26,7 @@
 #include "transport.h"
 #include "gui_message.h"
 #include "../../common/wb_log.h"
-#include "../../server/server_sim.h"
+#include "server_sim.h"
 #include "../../server/threads.h"
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
