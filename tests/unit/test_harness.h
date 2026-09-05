@@ -1052,6 +1052,7 @@ int run_console_info_and_status(void);
 int run_console_savemap_path(void);
 int run_console_unknown_command_is_inert(void);
 int run_console_kick_and_host(void);
+int run_console_kick_host_without_newline(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

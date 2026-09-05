@@ -211,3 +211,52 @@ int run_console_kick_and_host(void) {
     UT_ASSERT_MSG(g_rec.hostCalls == 1, "host should still be attempted");
     return 0;
 }
+
+/* A console line does not always end in a newline: a command piped in
+ * without a final one, or stdin at EOF, delivers the line bare. kick and
+ * host used to strip the last character unconditionally, which ate the
+ * last character of the name — and wrote a NUL one byte in front of the
+ * buffer when the name was empty as well (an out-of-bounds write these
+ * cases trip under a sanitiser build). */
+int run_console_kick_host_without_newline(void) {
+    recReset();
+    runLine("kick fred");
+    UT_ASSERT_MSG(g_rec.kickCalls == 1 && strcmp(g_rec.lastKick, "fred") == 0,
+                  "a name with no trailing newline must keep its last "
+                  "character, got '%s'", g_rec.lastKick);
+
+    recReset();
+    runLine("host fred");
+    UT_ASSERT_MSG(g_rec.hostCalls == 1 && strcmp(g_rec.lastHost, "fred") == 0,
+                  "a name with no trailing newline must keep its last "
+                  "character, got '%s'", g_rec.lastHost);
+
+    /* Nothing after the command word, and no newline to strip. */
+    recReset();
+    runLine("kick ");
+    UT_ASSERT_MSG(g_rec.kickCalls == 1 && g_rec.lastKick[0] == '\0',
+                  "an empty kick name should stay empty, got '%s'",
+                  g_rec.lastKick);
+
+    recReset();
+    runLine("host ");
+    UT_ASSERT_MSG(g_rec.hostCalls == 1 && g_rec.lastHost[0] == '\0',
+                  "an empty host name should stay empty, got '%s'",
+                  g_rec.lastHost);
+
+    /* A line that came through a CRLF pipe loses both bytes. */
+    recReset();
+    runLine("kick fred\r\n");
+    UT_ASSERT_MSG(g_rec.kickCalls == 1 && strcmp(g_rec.lastKick, "fred") == 0,
+                  "a CRLF line should not leave a stray return, got '%s'",
+                  g_rec.lastKick);
+
+    /* A name longer than the 32-character buffer is truncated, not
+     * overrun. */
+    recReset();
+    runLine("kick 0123456789012345678901234567890123456789\n");
+    UT_ASSERT_MSG(g_rec.kickCalls == 1 && strlen(g_rec.lastKick) == 32,
+                  "an over-long name should be cut to 32 characters, got %d",
+                  (int)strlen(g_rec.lastKick));
+    return 0;
+}

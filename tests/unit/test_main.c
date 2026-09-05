@@ -522,6 +522,7 @@ static const UnitTestEntry s_tests[] = {
     { "console_savemap_path",                    run_console_savemap_path                    },
     { "console_unknown_command_is_inert",        run_console_unknown_command_is_inert        },
     { "console_kick_and_host",                   run_console_kick_and_host                   },
+    { "console_kick_host_without_newline",       run_console_kick_host_without_newline       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

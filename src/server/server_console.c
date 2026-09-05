@@ -71,11 +71,30 @@ static void serverConsoleSaveMap(const ServerConsoleOps *ops, char *line) {
   }
 }
 
+/* Copy the player-name argument of a kick / host line into dst: at most
+ * dstSize-1 characters, with the trailing end-of-line removed.
+ *
+ * The trim has to be guarded. The argument is empty when the operator
+ * typed nothing after the command word and the line carries no newline —
+ * a command piped in without a final newline, or stdin at EOF — and the
+ * unguarded "strip the last character" this replaces then wrote a NUL
+ * one byte in front of the buffer. Trimming only an actual end-of-line
+ * also keeps the last character of a name that arrives without one. */
+static void serverConsoleCopyName(char *dst, size_t dstSize, const char *arg) {
+  size_t len;
+
+  snprintf(dst, dstSize, "%s", arg);
+  len = strlen(dst);
+  while (len > 0 && (dst[len-1] == '\n' || dst[len-1] == '\r')) {
+    len--;
+    dst[len] = '\0';
+  }
+}
+
 void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
                            char *saveBuff) {
   char playerKick[33] = "\0";
   char playerHost[33] = "\0";
-  size_t newbuflen;
 
   if (strncmp(keyBuff, "help", 4) == 0) {
     serverConsolePrintHelp();
@@ -101,15 +120,11 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
   } else if(strncmp(keyBuff, "status", 6) == 0){
     ops->status();
   } else if (strncmp(keyBuff, "kick ", 5) == 0) {
-    sprintf(playerKick, "%.*s", 32, keyBuff+5);
-    newbuflen = strlen(playerKick);
-    playerKick[newbuflen - 1] = '\0';
+    serverConsoleCopyName(playerKick, sizeof(playerKick), keyBuff+5);
     ops->kick(playerKick);
   } else if (strncmp(keyBuff, "host ", 5) == 0) {
     bool hostSet;
-    sprintf(playerHost, "%.*s", 32, keyBuff+5);
-    newbuflen = strlen(playerHost);
-    playerHost[newbuflen - 1] = '\0';
+    serverConsoleCopyName(playerHost, sizeof(playerHost), keyBuff+5);
     hostSet = ops->setHost(playerHost);
     if (hostSet) {
       printf("Host set to %s\n", playerHost);

@@ -3998,6 +3998,7 @@ set(_unit_test_names
     console_savemap_path
     console_unknown_command_is_inert
     console_kick_and_host
+    console_kick_host_without_newline
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
