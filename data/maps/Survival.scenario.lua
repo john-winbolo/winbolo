@@ -210,6 +210,7 @@ local SUICIDER_WAVES = {}
 local WAVE_PORTFOLIO = "0/25/75"  -- back/front/aggressive pill share the wave bots aim for
 local WAVE_BLITZ_MIN = 2          -- minimum tanks in a blitz (counting the commander); below this the commander gives the take up rather than charging short
 local WAVE_BLITZ_MAX = 4          -- most tanks one blitz accepts (counting the commander); a call at 4 refuses a 5th
+local WAVE_BLITZ_MIN_BY_WAVE = { [2] = 3 }  -- per-wave override of WAVE_BLITZ_MIN (user: wave 2 needs at least 3 per blitz)
 local WAVE_BLITZ_MIN_SUICIDERS = 1  -- at GO the blitz commander designates random soldiers until at least this many of the party are pill_suiciders
 local WAVE_REFUEL_MULT = 1.2      -- all refuel costs x1.2 for wave bots: attackers go back for supplies less readily than they would in a normal game
 
@@ -218,8 +219,9 @@ local WAVE_REFUEL_MULT = 1.2      -- all refuel costs x1.2 for wave bots: attack
 -- upvalue: this sits above `local wave` in the file, so reading it here would
 -- find the (nil) global and every wave would look non-suicider.
 local function wave_init_arg(w)
+  local blitz_min = WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN
   local arg = string.format("portfolio=%s;blitz=%d/%d;blitzsuiciders=%d;refuel=%s",
-                            WAVE_PORTFOLIO, WAVE_BLITZ_MIN, WAVE_BLITZ_MAX,
+                            WAVE_PORTFOLIO, blitz_min, WAVE_BLITZ_MAX,
                             WAVE_BLITZ_MIN_SUICIDERS, tostring(WAVE_REFUEL_MULT))
   if SUICIDER_WAVES[w] then arg = "suicider;" .. arg end
   return arg
