@@ -12,7 +12,9 @@
 -- ringing the shore at r=25 on eight of the ten 36-degree spokes (0,
 -- 36, 72, 108, 180, 216, 252, 288 — 144 and 324 left open), and 10 DEAD
 -- neutral pills parked out on the old ring at r=26 — dead on the
--- ground for the attackers' engineering.
+-- ground for the attackers' engineering. Those 10 are HIDDEN (off the
+-- map entirely) except for the last few seconds before each wave: see
+-- PILL_REVEAL_LEAD_TICKS.
 --
 -- History: the horde first held a full ring of 10 bases at r=26 that
 -- never got fought over, then 4 forward bases at r=13 inside the
@@ -141,6 +143,19 @@ local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 -- preparation for wave N+1" has just said the same thing. See warn_gap.
 local WAVE_WARN_TICKS = { 1500, 500 }   -- 30 s, 10 s
 
+-- The wave's dead ring pills are kept OFF THE MAP (game.hide_pill) and
+-- put back this many ticks before the wave lands. Andrew's reason,
+-- verbatim: don't spawn those enemy dead pillboxes until a few seconds
+-- before the AI swarm is spawned, "otherwise humans will run and pick
+-- them up".
+--
+-- 3 s is long enough that the pills are on every client's map before the
+-- first attacker comes ashore and short enough that nobody can drive out
+-- from the center and scoop one. They sit NEUTRAL for those 3 seconds —
+-- the wave's first attacker stamps them on the wave tick
+-- (stamp_wave_owner), not before, because no attacker exists yet.
+local PILL_REVEAL_LEAD_TICKS = 150   -- 3 s before the wave tick
+
 -- Wave bots arrive and leave ONE AT A TIME, this many ticks apart, instead
 -- of all ten inside a single tick.
 --
@@ -241,6 +256,13 @@ local wave_bases_restocked = 0
 local vanishing     = false -- a wave is filing off the field right now
 local vanish_queue  = {}    -- slots still to be removed, in order
 local vanish_next_at = nil  -- tick the next removal fires (nil = remove now)
+
+-- The HIDDEN wave pills (see PILL_REVEAL_LEAD_TICKS): pill number ->
+-- {x=,y=} the spot to put it back on. Filled at setup with the map's
+-- ring spots and at every breather with wherever the wave LEFT each
+-- pill, so a pill the attackers carried inland comes back inland.
+local hidden_pills = {}
+local reveal_at = nil       -- tick the hidden pills come back (nil = none)
 
 -- Newswire mute state (see NEWSWIRE_MUTE_LEAD_TICKS). newswire_muted is
 -- our mirror of the server switch so we only ask for changes;
@@ -386,13 +408,78 @@ local function wave_pill_free(pi)
   return true
 end
 
+-- Take every free wave pill OFF THE MAP until the next wave is nearly
+-- here (see PILL_REVEAL_LEAD_TICKS), remembering where each one stood so
+-- it can be put back on that exact tile.
+--
+-- The pills that qualify are the ones this script was always allowed to
+-- move: dead, on the ground, not in anybody's tank, and not flying
+-- defender colours (wave_pill_free — a pill the humans captured and
+-- placed is theirs and stays where it is, and a BUILT pill is a manned
+-- gun and stays too). A hidden pill is already in_tank, so a second
+-- hide pass simply finds nothing to do.
+--
+-- Ownership is dropped to neutral on the way out: a hidden pill still
+-- carries an owner, and the brain's own "pills I am carrying" count is
+-- in_tank pills owned by me (brain_data.c). After a wave leaves these
+-- are neutral anyway — the engine hands a leaver's pills to a connected
+-- ally or to nobody — this just guarantees it before we set in_tank.
+local function hide_wave_pills(game, why)
+  local n = 0
+  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+    local pi = game.pill(pn)
+    if wave_pill_free(pi) then
+      game.set_pill_owner(pn, nil)             -- neutral; quiet (no newswire)
+      if game.hide_pill(pn) then
+        hidden_pills[pn] = { x = pi.x, y = pi.y }
+        n = n + 1
+      end
+    end
+  end
+  game.message(string.format(
+    "[pills] %s: %d wave pill(s) off the map until the next wave", why, n))
+  return n
+end
+
+-- Put the hidden pills back, DEAD on the ground, on the tiles they were
+-- hidden on — the map's ring spots for the first wave, and for every
+-- wave after that WHEREVER THE LAST WAVE LEFT THEM (an attacker may
+-- have carried one halfway to the center and dropped it there when it
+-- died), never back out on the ring.
+--
+-- Numeric loop, not pairs(): the same seed must reveal in the same order
+-- on every run.
+local function reveal_wave_pills(game)
+  local n = 0
+  for pn = CENTER_PILLS + 1, CENTER_PILLS + WAVE_PILLS do
+    local spot = hidden_pills[pn]
+    if spot ~= nil then
+      if game.show_pill(pn, spot.x, spot.y) then n = n + 1 end
+      hidden_pills[pn] = nil
+    end
+  end
+  if n > 0 then
+    game.message(string.format(
+      "*** %d dead pillbox(es) drop into place — the horde is landing! ***",
+      n))
+  end
+  return n
+end
+
 -- Start the clock on the next wave, `gap` ticks from `tick`, and with it
--- the countdown warnings that hang off that clock (which marks apply is
--- decided from the gap — see WAVE_WARN_TICKS).
+-- the two things that hang off that clock: the countdown warnings (which
+-- marks apply is decided from the gap — see WAVE_WARN_TICKS) and the
+-- tick the hidden wave pills come back on.
+--
+-- A gap SHORTER than the reveal lead (a harness with a tiny grace) puts
+-- the reveal on this very tick rather than in the past, so the pills are
+-- always on the map before the wave's first attacker stamps them.
 local function arm_next_wave(tick, gap)
   next_wave_at = tick + gap
   warn_gap = gap
   warn_next = 1
+  reveal_at = next_wave_at - PILL_REVEAL_LEAD_TICKS
+  if reveal_at < tick then reveal_at = tick end
 end
 
 -- ONE claimable pill per attacker, and not a crumb more.
@@ -525,9 +612,11 @@ local function finish_wave_spawn(game)
   -- pointing at a slot that failed to fill.
   restock_report(game, 1, wave_bases_restocked, "horde")
 
-  -- The 10 outer pills (7..16) start DEAD ON THE GROUND, parked at
-  -- their map spots out on the old ring (r=26) the horde's bases used
-  -- to sit on — the attackers' first stop ashore. The stamping above put
+  -- The 10 outer pills (7..16) are DEAD ON THE GROUND by now: they were
+  -- hidden until PILL_REVEAL_LEAD_TICKS before this wave's tick and put
+  -- back on the tiles they were hidden on — the map's ring spots (r=26,
+  -- where the horde's bases used to sit) for wave 1, and wherever the
+  -- previous wave left them for every wave after. The stamping above put
   -- them in the wave's slots, so the attackers' brains treat them as
   -- their own dead pills — scoop, carry, place, repair, at the AI's
   -- discretion. One per tank is deliberately left lying there for exactly
@@ -905,6 +994,15 @@ function on_setup(game)
 
   dealt = deal_center(game)
 
+  -- The wave's 10 ring pills go OFF THE MAP right here, after the center
+  -- deal (which only touches pills 1..6) and before any client sees the
+  -- world — so they ride the baseline snapshot and the round simply
+  -- OPENS without them. They come back 3 s before wave 1 lands. Andrew's
+  -- reason: a full minute of grace with ten free dead pillboxes lying on
+  -- the shore is a minute the defenders spend driving out to collect
+  -- them. See PILL_REVEAL_LEAD_TICKS.
+  hide_wave_pills(game, "setup")
+
   -- The ring is fixed geometry, so it is measured once, here, off the
   -- base positions the map file actually shipped.
   math.randomseed(os.time())
@@ -1002,6 +1100,14 @@ function on_tick(game, tick)
         break
       end
     end
+    -- The wave's dead pills come back PILL_REVEAL_LEAD_TICKS before the
+    -- wave itself. Ahead of the spawn below on purpose: on a harness
+    -- whose grace is shorter than the lead both land on the same tick,
+    -- and the pills must be on the map before stamp_wave_owner runs.
+    if reveal_at ~= nil and tick >= reveal_at then
+      reveal_at = nil
+      reveal_wave_pills(game)
+    end
     if tick >= next_wave_at then
       next_wave_at = nil
       spawn_wave(game)
@@ -1072,6 +1178,11 @@ function on_tick(game, tick)
       game.end_round(string.format(
         "*** All %d waves survived — the defenders win! ***", WAVES))
     else
+      -- The field is empty: take the wave's leftover dead pills off the
+      -- map for the breather (whatever the defenders didn't capture and
+      -- place), then start the clock — arm_next_wave sets the reveal for
+      -- 3 s before wave N+1, at the tiles they are standing on right now.
+      hide_wave_pills(game, string.format("wave %d over", wave))
       arm_next_wave(tick, BREATHER)
       game.message(string.format(
         "*** Wave %d survived! %d second preparation for wave %d. ***",

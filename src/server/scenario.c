@@ -76,6 +76,14 @@
  *                                         got
  *    game.remove_bot(p)                -- free a bot slot (wave cleanup)
  *    game.give_pill(p, n)              -- load pill n into p's tank
+ *    game.hide_pill(n)                 -- take pill n OFF THE MAP with
+ *                                         NO carrier: it can't be seen,
+ *                                         shot, driven over, repaired
+ *                                         or captured, and its map spot
+ *                                         is remembered
+ *    game.show_pill(n[, x, y])         -- put a hidden pill back on the
+ *                                         map, DEAD (armour 0), at its
+ *                                         remembered spot or at (x, y)
  *    game.set_team(p, team)            -- alliance by team id
  *    game.message(text)                -- broadcast, e.g. "Round 5!"
  *    game.newswire_mute(on)            -- silence/restore the ENGINE
@@ -143,6 +151,12 @@ typedef struct ScenarioState {
                                          * l_lobby_slot reports it so
                                          * on_choose_start sees the side of
                                          * a tank being born. 0 = none. */
+    uint16_t   hiddenPills;             /* bit n-1 set = pill n was taken
+                                         * off the map by game.hide_pill
+                                         * (and only those may be handed
+                                         * back by game.show_pill — a pill
+                                         * a TANK carries must never be
+                                         * dropped out from under it) */
     char       winMessage[256];         /* game.end_round text */
     char       name[64];                /* scenario.name (logs) */
     char       description[256];        /* scenario.description — one or two
@@ -721,6 +735,113 @@ static int l_give_pill(lua_State *L) {
     return 1;
 }
 
+/* game.hide_pill(n): take pill n OFF THE MAP without giving it to
+ * anybody. The pill is flagged inTank with NO carrier, which is exactly
+ * the "not on the map" state the engine already knows: every path that
+ * looks at the world skips an inTank pill — pillsExistPos (the client's
+ * own draw/collision test), the firing pass in pillsUpdate,
+ * pillsIsPillHit, pillsIsCapturable and the tank's pickup probe,
+ * pillsRepairPos, pillsGetArmourPos, pillsGetBrainPillsInRect. So a
+ * hidden pill cannot be seen, shot, driven over, repaired or captured,
+ * and the bot brains reject it as a capture candidate ("in_tank").
+ *
+ * Nothing in the engine assumes an inTank pill HAS a carrier: the carry
+ * list is per tank (tank->carryPills), so a hidden pill is on nobody's
+ * list, and every path that puts pills back on the ground works from
+ * either that list (tankDropPills on death or destroy) or from the pill
+ * OWNER (the leaver's migration in serverSimRemovePlayer, pillsMigrate,
+ * pillsDropSetNeutralOwner) — none of which can touch a pill this
+ * function hid, unless the script leaves it owned by a player that then
+ * quits, which merely puts it back on the map.
+ *
+ * The pill's x/y are left alone, so game.show_pill(n) puts it back
+ * exactly where it stood.
+ *
+ * REFUSED for a pill that is already inTank: it is either hidden
+ * already or genuinely inside a tank, and taking a carried pill would
+ * strand it on that tank's carry list.
+ *
+ * Reaching clients: the end-of-tick pill diff (server_sim_tick.c)
+ * compares x/y/owner/armour+inTank against the previous tick and emits
+ * EVENT_PILL_UPDATE for anything that moved, and the periodic full pill
+ * snapshot carries the same packed armour+inTank byte as the backstop —
+ * so humans and bot ClientSims alike pick this up on the next tick with
+ * no extra push here. Called from on_setup (the pre-snapshot tick) it
+ * simply rides the baseline snapshot. Returns true, or false. */
+static int l_hide_pill(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    GameSim *gs = serverSimGetGameSim(st->sim);
+    int n = (int)luaL_checkinteger(L, 1);          /* 1-based pill number */
+
+    if (n < 1 || n > (int)pillsGetNumPills(&gs->pb)) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    if ((*gs->pb).item[n - 1].inTank) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    pillsSetPillInTank(&gs->pb, (BYTE)n, TRUE);
+    st->hiddenPills |= (uint16_t)(1u << (n - 1));
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "scenario: pill %d hidden at (%d,%d)", n,
+        (int)(*gs->pb).item[n - 1].x, (int)(*gs->pb).item[n - 1].y);
+    lua_pushboolean(L, TRUE);
+    return 1;
+}
+
+/* game.show_pill(n[, x, y]): put a hidden pill back on the map, DEAD
+ * (armour 0 — the scoopable state), at the spot it was hidden on or at
+ * (x, y) when both are given. Owner and fire rate are left as they are;
+ * the caller sets ownership with game.set_pill_owner.
+ *
+ * Only a pill THIS script hid can be shown: anything else that is
+ * inTank is really being carried, and dropping that flag would leave
+ * the pill on its carrier's list — the carrier would place it a second
+ * time later. Returns true, or false for an unknown/never-hidden pill
+ * or an out-of-range position.
+ *
+ * pillsSetPill writes the whole record and logs owner/health/inTank/
+ * place, so the .wbv replay gets the pill reappearing; the tick's pill
+ * diff carries it to clients the same way hide does. */
+static int l_show_pill(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    GameSim *gs = serverSimGetGameSim(st->sim);
+    int n = (int)luaL_checkinteger(L, 1);          /* 1-based pill number */
+    pillbox item;
+
+    if (n < 1 || n > (int)pillsGetNumPills(&gs->pb)) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    if ((st->hiddenPills & (uint16_t)(1u << (n - 1))) == 0) {
+        lua_pushboolean(L, FALSE);
+        return 1;
+    }
+    /* Copy the live record rather than pillsGetPill, which doesn't carry
+     * justSeen/reload/coolDown — this way only the fields below change. */
+    item = (*gs->pb).item[n - 1];
+    if (!lua_isnoneornil(L, 2) || !lua_isnoneornil(L, 3)) {
+        int x = (int)luaL_checkinteger(L, 2);
+        int y = (int)luaL_checkinteger(L, 3);
+        if (x < 0 || x > 255 || y < 0 || y > 255) {
+            lua_pushboolean(L, FALSE);
+            return 1;
+        }
+        item.x = (BYTE)x;
+        item.y = (BYTE)y;
+    }
+    item.armour = 0;                               /* dead on the ground */
+    item.inTank = FALSE;
+    pillsSetPill(&gs->pb, &item, (BYTE)n);
+    st->hiddenPills &= (uint16_t)~(1u << (n - 1));
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "scenario: pill %d shown at (%d,%d) dead", n,
+        (int)item.x, (int)item.y);
+    lua_pushboolean(L, TRUE);
+    return 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* Lobby roster edits — the scenario has FULL authority over the team
  * lists, under two engine-enforced invariants: bots + players never
@@ -877,6 +998,8 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "spawn_bot",      l_spawn_bot);
     scRegister(L, st, "remove_bot",     l_remove_bot);
     scRegister(L, st, "give_pill",      l_give_pill);
+    scRegister(L, st, "hide_pill",      l_hide_pill);
+    scRegister(L, st, "show_pill",      l_show_pill);
     scRegister(L, st, "enemy_team_size", l_enemy_team_size);
     scRegister(L, st, "lobby_slot",     l_lobby_slot);
     scRegister(L, st, "lobby_add_bot",  l_lobby_add_bot);
@@ -961,6 +1084,7 @@ static bool scBootLocked(ScenarioState *st) {
     st->setupDone = FALSE;
     st->inChooseStart = FALSE;
     st->inLobbyHook = FALSE;
+    st->hiddenPills = 0;
     memset(st->spawnTeamHint, 0, sizeof(st->spawnTeamHint));
     st->maxPlayers = 0;
     st->description[0] = '\0';
