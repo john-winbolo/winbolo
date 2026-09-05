@@ -236,7 +236,10 @@ function M.blitz_contested_enemy(state, pmx, pmy)
     end
   end
   if not best then return nil end
-  return best.id, math.sqrt(best_d2)
+  -- `or -1` so a sighting with no id (never seen in practice — the engine
+  -- always stamps a tank's idnum) still reads as CONTESTED rather than
+  -- silently as "no enemy": the caller treats a nil return as uncontested.
+  return best.id or -1, math.sqrt(best_d2)
 end
 
 -- Commander-only, and at most once per take (the caller holds the latch on the

@@ -3937,13 +3937,18 @@ function M.update_attack_substate(goal, state, world, info)
   -- CONTESTED TAKE, re-checked. The GO-time check only sees the enemies that
   -- were near the pill at GO; a defender that rolls up mid-charge should flip
   -- the party just the same. Commander only, only once GO has actually gone out
-  -- (goal._blitz_go / state.squad_blitz_go — the same flags that broadcast bgo),
-  -- and only on the bot's REPLAN ticks: init.lua stamps state.replan_this_tick
-  -- above this call, and a replan is already the cadence at which this bot
-  -- re-reads the world. Cheap either way (a scan of this tick's visible hostile
-  -- tanks) and latched, so it does nothing at all once the take is contested.
+  -- (goal._blitz_go, the flag every GO route sets, or goal._blitz_su_done, set
+  -- by the two GO sites that designate) and only on the bot's REPLAN ticks:
+  -- init.lua stamps state.replan_this_tick above this call, and a replan is
+  -- already the cadence at which this bot re-reads the world. Cheap either way
+  -- (a scan of this tick's visible hostile tanks) and latched, so it does
+  -- nothing at all once the take is contested.
+  -- BOTH flags are on the GOAL, never state.squad_blitz_go: that one is only
+  -- cleared on death/reset_blitz_state, so a commander that finished one take
+  -- and opened another in the same life still carries it, and this check would
+  -- fire on the new take BEFORE its GO.
   if state.squad_role == "c" and goal._blitz and state.replan_this_tick
-     and (goal._blitz_go or state.squad_blitz_go) and not goal._blitz_contested_done then
+     and (goal._blitz_go or goal._blitz_su_done) and not goal._blitz_contested_done then
     blitz_contested_check(goal, state, world, info, now)
   end
 
