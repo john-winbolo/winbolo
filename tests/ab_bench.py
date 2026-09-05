@@ -525,7 +525,7 @@ def verify_tokens(mapfile, a_arg, b_arg, per_side, seed):
 
 # ---------------------------------------------------------------------------
 def main():
-    global PORT_BASE
+    global PORT_BASE, PORT_TOP
     ap = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=__doc__)
@@ -556,6 +556,7 @@ def main():
                          "lines each side got, then delete the session")
     args = ap.parse_args()
     PORT_BASE = args.port_base
+    PORT_TOP = PORT_BASE + 60   # games take base+slot; the verify run uses the top port
 
     seeds = []
     for s in args.seeds:
