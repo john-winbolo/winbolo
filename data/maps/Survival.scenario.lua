@@ -148,6 +148,17 @@ local WAVE_LIMIT   = 15000  -- 5 min: leftover attackers vanish at this mark
 local SPAWN_SPACING_TICKS  = 50   -- 1 s between one wave arrival and the next
 local VANISH_SPACING_TICKS = 50   -- 1 s between one wave removal and the next
 
+-- Newswire mute window around wave churn. Andrew's reason, verbatim in
+-- spirit: a wave arriving or leaving fires ten "has joined" / "has quit"
+-- newswire lines in a row and buries everything else, so the newswire is
+-- silenced completely on every client and on the server for the whole of
+-- it -- but the wave WARNING must still show, which it does because
+-- game.message is server text and the mute only covers ENGINE-generated
+-- newswire. Off 2 s before the first tank moves, back on 2 s after the
+-- last one lands (or leaves).
+local NEWSWIRE_MUTE_LEAD_TICKS = 100   -- 2 s of silence before the churn
+local NEWSWIRE_MUTE_TAIL_TICKS = 100   -- 2 s of silence after it
+
 -- Waves fielded entirely as PILL SUICIDERS: every bot in a listed wave is
 -- spawned with the brain init argument "suicider", which forces GoalHunter's
 -- pill_suicider role on for that one bot — it charges pillboxes and refuels
@@ -188,6 +199,18 @@ local restocked_bases = {}
 local vanishing     = false -- a wave is filing off the field right now
 local vanish_queue  = {}    -- slots still to be removed, in order
 local vanish_next_at = nil  -- tick the next removal fires (nil = remove now)
+
+-- Newswire mute state (see NEWSWIRE_MUTE_LEAD_TICKS). newswire_muted is
+-- our mirror of the server switch so we only ask for changes;
+-- newswire_unmute_at is the tick the mute comes off (nil = none pending).
+local newswire_muted     = false
+local newswire_unmute_at = nil
+
+local function set_newswire_mute(game, on)
+  if newswire_muted == on then return end
+  newswire_muted = on
+  game.newswire_mute(on)
+end
 
 -- Which wave slot owns each shore base. Not arithmetic any more: the
 -- eight bases sit on eight of the map's ten 36-degree spokes, and each one
@@ -269,7 +292,7 @@ end
 -- horde has been told to leave. (On the shipped numbers this can't
 -- happen — a wave lasts 15000 ticks and arrives in 450 — but the loss
 -- check and any future early clear can end a wave whenever they like.)
-local function vanish_wave(game)
+local function vanish_wave(game, tick)
   spawn_left = 0
   spawn_next_at = nil
   base_owner_slot = {}
@@ -283,7 +306,10 @@ local function vanish_wave(game)
   -- bot first on every run.
   table.sort(vanish_queue)
   vanishing = true
-  vanish_next_at = nil          -- the first removal rides this same tick
+  -- The first removal used to ride this same tick. It now waits out
+  -- NEWSWIRE_MUTE_LEAD_TICKS so the newswire is already silent before the
+  -- first attacker disappears -- the caller mutes on this tick.
+  vanish_next_at = tick + NEWSWIRE_MUTE_LEAD_TICKS
   return #vanish_queue
 end
 
@@ -462,6 +488,10 @@ end
 -- the restock, and deal the pills.
 local function finish_wave_spawn(game)
   spawn_next_at = nil
+
+  -- The last attacker of this wave has just landed: the newswire comes
+  -- back NEWSWIRE_MUTE_TAIL_TICKS from now (on_tick lifts it).
+  newswire_unmute_at = game.tick() + NEWSWIRE_MUTE_TAIL_TICKS
 
   -- Anything whose natural owner slot never got a bot (short roster, or a
   -- spawn that found no free slot) goes to the lowest slot that DID fill.
@@ -921,6 +951,14 @@ function on_tick(game, tick)
   -- Late deal for lobby-less harnesses (see on_setup).
   if not dealt then dealt = deal_center(game) end
 
+  -- Lift a pending newswire mute. Deliberately ahead of every early
+  -- return below (and of the loss check's end_round) so the mute always
+  -- comes off on its own clock, whatever the round is doing.
+  if newswire_unmute_at ~= nil and tick >= newswire_unmute_at then
+    newswire_unmute_at = nil
+    set_newswire_mute(game, false)
+  end
+
   -- INSTANT LOSS: the round is over the moment no inner base is in
   -- defender hands (slots 0..5) — stolen or neutralized, the center
   -- has fallen. This is the flip side of the blurb's win condition;
@@ -935,6 +973,8 @@ function on_tick(game, tick)
   end
   if held == 0 then
     ended = true
+    newswire_unmute_at = nil
+    set_newswire_mute(game, false)
     game.end_round(
       "*** The center has fallen — the attackers take the island! ***")
     return
@@ -958,6 +998,15 @@ function on_tick(game, tick)
   end
 
   if next_wave_at ~= nil then
+    -- Newswire off NEWSWIRE_MUTE_LEAD_TICKS before the wave lands, so the
+    -- ten "has joined" lines the staggered arrival would otherwise write
+    -- never appear. A wave clock set closer than the lead (a harness with
+    -- a tiny grace) mutes on the first tick it is inside the window. The
+    -- "inbound!" warning below is server text and shows regardless.
+    if tick >= next_wave_at - NEWSWIRE_MUTE_LEAD_TICKS then
+      newswire_unmute_at = nil
+      set_newswire_mute(game, true)
+    end
     -- Countdown to the next wave.
     if not announced and tick >= next_wave_at - ANNOUNCE_GAP then
       announced = true
@@ -986,7 +1035,12 @@ function on_tick(game, tick)
     local remaining = wave_ends_at - tick
     if remaining <= 0 then
       wave_ends_at = nil
-      local n = vanish_wave(game)
+      -- Mute FIRST; vanish_wave then holds its first removal for
+      -- NEWSWIRE_MUTE_LEAD_TICKS, so the newswire is already silent by the
+      -- time the first attacker disappears.
+      newswire_unmute_at = nil
+      set_newswire_mute(game, true)
+      local n = vanish_wave(game, tick)
       game.message(string.format(
         "*** Wave %d is over — %d attacker(s) vanish! ***", wave, n))
     elseif remaining <= 1500 and not half_min_said then
@@ -1017,8 +1071,16 @@ function on_tick(game, tick)
   local wave_over = pump_vanish_queue(game, tick)
 
   if wave_over then
+    -- The last attacker has left: the newswire comes back
+    -- NEWSWIRE_MUTE_TAIL_TICKS later (lifted at the top of on_tick). The
+    -- breather still keys off THIS tick, exactly as before -- it just
+    -- arrives NEWSWIRE_MUTE_LEAD_TICKS later than it used to, because the
+    -- departure now starts that much after the wave clock ran out.
+    newswire_unmute_at = tick + NEWSWIRE_MUTE_TAIL_TICKS
     if wave >= WAVES then
       ended = true
+      newswire_unmute_at = nil
+      set_newswire_mute(game, false)
       game.end_round(string.format(
         "*** All %d waves survived — the defenders win! ***", WAVES))
     else

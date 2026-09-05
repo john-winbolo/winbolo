@@ -127,6 +127,18 @@ typedef enum {
      * the same round. Carries no rating or comment text — the round's page
      * on WinBolo.net stays the only source. */
     CTRL_ROUND_RATING_POSTED,
+    /* CTRL_NEWSWIRE_MUTE — server-owned "stop showing event newswire
+     * lines" switch, broadcast to every client and replayed to a late
+     * joiner. While it is set, clients drop the ENGINE-GENERATED
+     * newswire (player quit, base and pill captures, builder lost,
+     * name handover, ...) and the server drops its own "X has joined."
+     * / "X has left." broadcasts. Deliberately-sent server text
+     * (game.message -> CTRL_SERVER_TEXT) and player chat are NOT
+     * affected: the scenario's own wave banners must still arrive.
+     * Set by the scripted scenario around a staggered wave spawn or
+     * despawn (see game.newswire_mute in src/server/scenario.c).
+     * Cleared at every round reset so it can never stick. */
+    CTRL_NEWSWIRE_MUTE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -449,6 +461,12 @@ typedef struct ControlEvent {
             BYTE fromPlayer;
             char key[ROUND_STATS_LOGKEY_LEN];
         } ratingPosted;
+
+        /* CTRL_NEWSWIRE_MUTE — 1 = engine newswire suppressed, 0 = normal.
+         * One byte on the wire; the server only publishes it on a change. */
+        struct {
+            BYTE muted;
+        } newswireMute;
     } u;
 } ControlEvent;
 

@@ -3590,6 +3590,7 @@ set(_unit_test_names
     lobby_brain_list_codec_and_apply
     lobby_sync_complete_codec_roundtrip
     lobby_rating_posted_codec_roundtrip
+    newswire_mute_codec_and_apply
     command_codec_roundtrip_variants
     command_codec_lobby_claim_start
     command_codec_rating_posted

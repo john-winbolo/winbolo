@@ -556,6 +556,20 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               otherwise reset a healthy
                                               client's stream). */
 
+#define PACKET_NEWSWIRE_MUTE           214  /* server → all
+                                              { muted 1 } — 1 while the
+                                              scripted scenario wants the
+                                              engine-generated newswire
+                                              silenced (a wave arriving or
+                                              leaving fires ten joins/leaves
+                                              in a row), 0 to restore it.
+                                              Server text (the wave banner)
+                                              and player chat are unaffected.
+                                              Replayed to a late joiner from
+                                              the sync so a client that
+                                              arrives mid-window is muted
+                                              too. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

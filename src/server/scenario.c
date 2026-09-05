@@ -78,6 +78,10 @@
  *    game.give_pill(p, n)              -- load pill n into p's tank
  *    game.set_team(p, team)            -- alliance by team id
  *    game.message(text)                -- broadcast, e.g. "Round 5!"
+ *    game.newswire_mute(on)            -- silence/restore the ENGINE
+ *                                         newswire (joins, quits,
+ *                                         captures) everywhere; script
+ *                                         messages and chat unaffected
  *    game.end_round([text])            -- programmatic WIN condition
  *********************************************************/
 
@@ -818,6 +822,21 @@ static int l_message(lua_State *L) {
     return 0;
 }
 
+/* game.newswire_mute(on) -> true. Silences (on=true) or restores the
+ * ENGINE-GENERATED newswire for the server and every client attached to
+ * it: player quit lines, base and pill captures, builder lost, name
+ * handover, and the server's own "X has joined." / "X has left."
+ * broadcasts. Server text published by the script (game.message) and
+ * player chat are NOT affected — a scenario can mute the churn and still
+ * put its wave banner on screen. The sim publishes CTRL_NEWSWIRE_MUTE
+ * only on an actual change, and replays the ON state to a late joiner. */
+static int l_newswire_mute(lua_State *L) {
+    ScenarioState *st = scUp(L);
+    serverSimSetNewswireMute(st->sim, lua_toboolean(L, 1) ? true : false);
+    lua_pushboolean(L, TRUE);
+    return 1;
+}
+
 static int l_end_round(lua_State *L) {
     ScenarioState *st = scUp(L);
     const char *msg = luaL_optstring(L, 1, "*** Scenario complete. ***");
@@ -864,6 +883,7 @@ static void scBuildGameTable(lua_State *L, ScenarioState *st) {
     scRegister(L, st, "lobby_set_team", l_lobby_set_team);
     scRegister(L, st, "set_team",       l_set_team);
     scRegister(L, st, "message",        l_message);
+    scRegister(L, st, "newswire_mute",  l_newswire_mute);
     scRegister(L, st, "end_round",      l_end_round);
     /* NEUTRAL constant so scripts don't hardcode 0xFF */
     lua_pushinteger(L, NEUTRAL);

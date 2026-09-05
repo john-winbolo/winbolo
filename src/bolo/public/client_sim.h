@@ -501,6 +501,10 @@ bool         clientSimIsBot(const ClientSim *cs);
 bool         clientSimIsInPillView(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
+/* TRUE while the server has the engine newswire muted (CTRL_NEWSWIRE_MUTE).
+ * Shared predicate for every newswire emitter; server text and chat are not
+ * newswire and must not consult it. */
+bool         clientSimNewswireMuted(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
 /* Map-download progress as 0..100. Returns 100 for the local transport
  * (no download needed) and 0 when no transport is bound. UDP path reads

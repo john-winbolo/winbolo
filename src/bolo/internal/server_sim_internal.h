@@ -255,6 +255,18 @@ struct ServerSim {
                                         * clients skip the "has quit"
                                         * newswire line for scripted wave
                                         * churn (10 leaves at once). */
+    bool         newswireMuted;        /* TRUE while the engine-generated
+                                        * newswire is silenced server-wide.
+                                        * Set/cleared by the scenario script
+                                        * (game.newswire_mute) around a
+                                        * staggered wave spawn or despawn and
+                                        * mirrored to every client with
+                                        * CTRL_NEWSWIRE_MUTE (plus the join
+                                        * sync replay, so a mid-window joiner
+                                        * is muted too). Server text (the wave
+                                        * banner) and player chat are NOT
+                                        * affected. Cleared at every round
+                                        * reset so it can never stick. */
     bool         scenarioCommitInProgress; /* re-entrancy guard for
                                         * serverSimApplyScenarioCommit: its
                                         * seeding can fail into

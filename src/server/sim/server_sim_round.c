@@ -1085,6 +1085,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     sim->roundHadHuman = false;
 
     /* Fresh round, fresh scenario (see serverSimStartGame). */
+    sim->newswireMuted = false;   /* a mute must never outlive its round */
     scenarioReset(sim);
 
     /* Flush any game-events queued during the lobby before the first
@@ -1218,6 +1219,7 @@ void serverSimStartGame(ServerSim *sim) {
     /* Fresh round, fresh scenario: re-boot the sidecar VM so script
      * state (waves, timers, flags) never leaks between rounds; fires
      * the script's on_start for this round. */
+    sim->newswireMuted = false;   /* a mute must never outlive its round */
     scenarioReset(sim);
 
     /* Restore connected-player state so tank creation works */

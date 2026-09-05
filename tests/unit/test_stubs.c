@@ -89,6 +89,15 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   (void)inst; (void)enabled;
 }
 
+/* scenario.c's game.spawn_bot stages a per-bot BRAIN_INIT_ARG through this
+ * before serverSimCreateBot. scenario.obj is pulled into the test binary by
+ * server_sim_control.c's scenarioTick/scenarioReset calls, so the symbol has
+ * to resolve even though no test spawns a scripted bot. */
+void luaBrainsSetNextInitArg(const char *arg);
+void luaBrainsSetNextInitArg(const char *arg) {
+  (void)arg;
+}
+
 /* client_sim.c::netProcessedDnsLookup pairs clientMutexWaitFor with
  * clientMutexRelease around a player-location write. The tests never
  * exercise the DNS-lookup completion path, but the symbols still need
