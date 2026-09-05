@@ -1192,6 +1192,20 @@ int run_map_shadow_round_start_capture(void);
 int run_map_shadow_join_seeds_round_start(void);
 int run_map_shadow_round_start_fallback(void);
 
+/* Per-client records of the pill squares (test_map_shadow.c): each slot's
+ * clientKnownPillX/Y follows the live pill list across frames in which pills
+ * move; the checksum over a slot's terrain copy and its pill squares equals the
+ * live one and equals what serverSimBuildSnapshot stamps;
+ * serverSimGetCompressedMapFor produces the same bytes as
+ * serverSimGetCompressedMap while the two agree and the round-start squares
+ * once they do not; and a full-sync snapshot's pill entries and pill events
+ * rebuild, in the client's order, the list the header's checksum was taken
+ * over. */
+int run_pill_shadow_tracks_real(void);
+int run_pill_shadow_crc_matches(void);
+int run_pill_shadow_blob_identical(void);
+int run_pill_shadow_fullsync_move_matches(void);
+
 /* Map-event culling over the loopback transport (test_loopback_map_cull.c): a
  * change a wire client cannot see is neither queued to it nor written into its
  * copy, its checksum still describes the map it holds so it never resyncs, an

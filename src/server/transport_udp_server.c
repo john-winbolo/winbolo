@@ -5614,25 +5614,36 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         dl->xferEndSeq = 0;
 
                         /* Self-check: the blob the client will install must
-                         * round-trip back to this slot's copy of the terrain —
-                         * the same copy the snapshot header's checksum is
-                         * stamped from. If it doesn't, the client can never
-                         * match that checksum and loops resync requests until
-                         * it self-kicks, so decode the blob into scratch
-                         * structures and compare tile-for-tile against that
-                         * copy. Comparing against the live map instead would
-                         * report a difference on every resync from a culled
-                         * slot, whose copy lags the live map by design. The
-                         * live map is used only for a slot with no copy bound.
-                         * Resyncs are infrequent; the cost is acceptable for
-                         * the diagnosis. */
+                         * round-trip back to this slot's copy of the terrain
+                         * and its record of the pill squares — the same two the
+                         * snapshot header's checksum is stamped from. If it
+                         * doesn't, the client can never match that checksum and
+                         * loops resync requests until it self-kicks, so decode
+                         * the blob into scratch structures and compare
+                         * tile-for-tile against that copy. The pill list
+                         * follows the same rule as the terrain: the check is
+                         * against what the client was actually given, not
+                         * against the live state, because comparing against the
+                         * live map would report a difference on every resync
+                         * from a culled slot, whose copy lags the live map by
+                         * design. The live map and pill list are used only for
+                         * a slot with no records bound. Resyncs are infrequent;
+                         * the cost is acceptable for the diagnosis. */
                         {
                             map *known = sim->clientKnownMap[clientIdx] != NULL
                                              ? &sim->clientKnownMap[clientIdx]
                                              : &serverSimGetGameSim(sim)->mp;
+                            struct pillsObj slotPills;
+                            pillboxes slotPb = &slotPills;
+                            bool useSlotPills =
+                                serverSimGetPillsForSlot(sim, (BYTE)clientIdx,
+                                                         &slotPills);
+                            pillboxes *knownPb = useSlotPills
+                                             ? &slotPb
+                                             : &serverSimGetGameSim(sim)->pb;
                             uint16_t knownSum = mapCalcChecksum(known,
                                                    &serverSimGetGameSim(sim)->bs,
-                                                   &serverSimGetGameSim(sim)->pb);
+                                                   knownPb);
                             map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
                             mapCreate(&rtMap);
                             pillsCreate(&rtPb);
@@ -5658,7 +5669,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                             clientIdx, (unsigned)reqGen);
                                     } else {
                                         bases *liveBs = &serverSimGetGameSim(sim)->bs;
-                                        pillboxes *livePb = &serverSimGetGameSim(sim)->pb;
                                         int diffs = 0, realDiffs = 0, shown = 0, xx, yy;
                                         s_lastResyncDiffSig = sig;
                                         for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
@@ -5672,7 +5682,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                                      * non-convergence — flag it benign. */
                                                     bool onBase = (basesExistPos(liveBs, (BYTE)xx, (BYTE)yy) ||
                                                                    basesExistPos(&rtBs, (BYTE)xx, (BYTE)yy));
-                                                    bool onPill = (pillsExistPos(livePb, (BYTE)xx, (BYTE)yy) ||
+                                                    bool onPill = (pillsExistPos(knownPb, (BYTE)xx, (BYTE)yy) ||
                                                                    pillsExistPos(&rtPb, (BYTE)xx, (BYTE)yy));
                                                     diffs++;
                                                     if (!onBase && !onPill) { realDiffs++; }

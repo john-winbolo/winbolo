@@ -179,6 +179,23 @@ void serverSimShadowSeed(ServerSim *sim, BYTE slot) {
     if (sim->sim.mp == NULL) return;
     memcpy(sim->clientKnownMapObj[slot].mapItem, (*sim->sim.mp).mapItem,
            sizeof(sim->clientKnownMapObj[slot].mapItem));
+    serverSimPillShadowSeed(sim, slot);
+}
+
+void serverSimPillShadowSeed(ServerSim *sim, BYTE slot) {
+    BYTE np;
+    BYTE p;
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    /* Marked here rather than after the copy, for the same reason the terrain
+     * seed binds its handle first: every path that can reach a slot's record
+     * goes through a seed, so the slot is never left looking unseeded. */
+    sim->clientKnownPillValid[slot] = true;
+    if (sim->sim.pb == NULL) return;
+    np = pillsGetNumPills(&sim->sim.pb);
+    for (p = 0; p < np && p < MAX_PILLS; p++) {
+        sim->clientKnownPillX[slot][p] = (*sim->sim.pb).item[p].x;
+        sim->clientKnownPillY[slot][p] = (*sim->sim.pb).item[p].y;
+    }
 }
 
 void serverSimShadowCaptureRoundStart(ServerSim *sim) {
@@ -189,6 +206,24 @@ void serverSimShadowCaptureRoundStart(ServerSim *sim) {
      * handle here has to mean "nothing has been captured", so the seed below
      * can fall back to the live map rather than hand out a zeroed one. */
     sim->roundStartMap = &sim->roundStartMapObj;
+    serverSimPillShadowCaptureRoundStart(sim);
+}
+
+void serverSimPillShadowCaptureRoundStart(ServerSim *sim) {
+    BYTE np;
+    BYTE p;
+    if (sim == NULL || sim->sim.pb == NULL) return;
+    np = pillsGetNumPills(&sim->sim.pb);
+    if (np > MAX_PILLS) np = MAX_PILLS;
+    for (p = 0; p < np; p++) {
+        sim->roundStartPillX[p] = (*sim->sim.pb).item[p].x;
+        sim->roundStartPillY[p] = (*sim->sim.pb).item[p].y;
+    }
+    sim->roundStartPillCount = np;
+    /* Flagged after the copy, not before it as the per-slot seed does: false
+     * here has to mean "nothing has been captured", so the seed below can fall
+     * back to the live list rather than hand out zeroed squares. */
+    sim->roundStartPillsValid = true;
 }
 
 void serverSimShadowSeedAll(ServerSim *sim) {
@@ -214,6 +249,23 @@ void serverSimShadowSeedRoundStart(ServerSim *sim, BYTE slot) {
     sim->clientKnownMap[slot] = &sim->clientKnownMapObj[slot];
     memcpy(sim->clientKnownMapObj[slot].mapItem, sim->roundStartMapObj.mapItem,
            sizeof(sim->clientKnownMapObj[slot].mapItem));
+    serverSimPillShadowSeedRoundStart(sim, slot);
+}
+
+void serverSimPillShadowSeedRoundStart(ServerSim *sim, BYTE slot) {
+    BYTE p;
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    if (!sim->roundStartPillsValid) {
+        /* No map has been installed since create, so there are no round-start
+         * squares to differ from the live list. */
+        serverSimPillShadowSeed(sim, slot);
+        return;
+    }
+    sim->clientKnownPillValid[slot] = true;
+    for (p = 0; p < sim->roundStartPillCount && p < MAX_PILLS; p++) {
+        sim->clientKnownPillX[slot][p] = sim->roundStartPillX[p];
+        sim->clientKnownPillY[slot][p] = sim->roundStartPillY[p];
+    }
 }
 
 void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,
@@ -272,6 +324,47 @@ void serverSimShadowTick(ServerSim *sim) {
                                      sim->mapEvents[e].data[2]);
         }
     }
+    serverSimPillShadowTick(sim);
+}
+
+void serverSimPillShadowTick(ServerSim *sim) {
+    BYTE slot;
+    BYTE np;
+    BYTE p;
+
+    if (sim == NULL || sim->sim.pb == NULL) return;
+    np = pillsGetNumPills(&sim->sim.pb);
+    if (np > MAX_PILLS) np = MAX_PILLS;
+    /* Every client is sent every pill position, so each slot's record simply
+     * follows the live list. Once positions start being withheld this becomes
+     * a per-recipient decision, written only when the position is actually
+     * sent — the rule the terrain copy already follows. It runs here, at the
+     * end of the tick, so the record already holds this frame's pill moves
+     * before the UDP drain filters events and before any snapshot stamps a
+     * checksum over it. */
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+        if (!sim->clientKnownPillValid[slot]) continue;
+        for (p = 0; p < np; p++) {
+            sim->clientKnownPillX[slot][p] = (*sim->sim.pb).item[p].x;
+            sim->clientKnownPillY[slot][p] = (*sim->sim.pb).item[p].y;
+        }
+    }
+}
+
+bool serverSimGetPillsForSlot(ServerSim *sim, BYTE slot, struct pillsObj *out) {
+    BYTE p;
+    if (sim == NULL || out == NULL || slot >= MAX_TANKS ||
+        sim->sim.pb == NULL || !sim->clientKnownPillValid[slot]) {
+        return false;
+    }
+    /* Only the square comes from the record: owner, armour, inTank and the
+     * rest are public and go out as the live list holds them. */
+    *out = *sim->sim.pb;
+    for (p = 0; p < out->numPills && p < MAX_PILLS; p++) {
+        out->item[p].x = sim->clientKnownPillX[slot][p];
+        out->item[p].y = sim->clientKnownPillY[slot][p];
+    }
+    return true;
 }
 
 int serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output,
@@ -279,7 +372,11 @@ int serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output,
     if (sim == NULL || slot >= MAX_TANKS || sim->clientKnownMap[slot] == NULL) {
         return 0;
     }
-    return mapSaveCompressedMap(&sim->clientKnownMap[slot], &sim->sim.pb,
+    struct pillsObj slotPills;
+    pillboxes slotPb = &slotPills;
+    bool useSlotPills = serverSimGetPillsForSlot(sim, slot, &slotPills);
+    return mapSaveCompressedMap(&sim->clientKnownMap[slot],
+                                useSlotPills ? &slotPb : &sim->sim.pb,
                                 &sim->sim.bs, &sim->sim.ss, output, outputCap);
 }
 
@@ -982,14 +1079,23 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
-        /* Checksum the terrain this recipient has actually been given — its
-         * own copy — so the comparison the client makes is against the map it
-         * was sent. The recording paths (noCull) have no client copy behind
-         * them and checksum the live map. */
-        hdr->mapChecksum = (noCull || sim->clientKnownMap[clientIdx] == NULL)
-            ? mapCalcChecksum(&sim->sim.mp, &sim->sim.bs, &sim->sim.pb)
-            : mapCalcChecksum(&sim->clientKnownMap[clientIdx], &sim->sim.bs,
-                              &sim->sim.pb);
+        /* Checksum the terrain and the pill squares this recipient has actually
+         * been given — its own records — so the comparison the client makes is
+         * against the map and the pill list it was sent. mapCalcChecksum folds
+         * the tile under every pill, so the pill list is as much an input to
+         * the hash as the terrain is. The recording paths (noCull) have no
+         * client records behind them and checksum the live map and pills. */
+        {
+            struct pillsObj slotPills;
+            pillboxes slotPb = &slotPills;
+            bool useSlotMap = (!noCull && sim->clientKnownMap[clientIdx] != NULL);
+            bool useSlotPills = useSlotMap &&
+                                serverSimGetPillsForSlot(sim, clientIdx, &slotPills);
+            hdr->mapChecksum = mapCalcChecksum(
+                useSlotMap ? &sim->clientKnownMap[clientIdx] : &sim->sim.mp,
+                &sim->sim.bs,
+                useSlotPills ? &slotPb : &sim->sim.pb);
+        }
         sim->lastFullSyncTick[clientIdx] = sim->tick;
     } else {
         hdr->baseCount = 0;

@@ -3973,6 +3973,10 @@ set(_unit_test_names
     map_shadow_round_start_capture
     map_shadow_join_seeds_round_start
     map_shadow_round_start_fallback
+    pill_shadow_tracks_real
+    pill_shadow_crc_matches
+    pill_shadow_blob_identical
+    pill_shadow_fullsync_move_matches
     loopback_map_cull
     loopback_map_cull_resync
     view_ally_loopback

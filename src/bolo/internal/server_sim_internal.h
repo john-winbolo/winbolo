@@ -349,6 +349,25 @@ struct ServerSim {
     struct mapObj roundStartMapObj;
     map           roundStartMap;
 
+    /* The pill squares each client has actually been sent — the position half
+     * of the copy above, kept because mapCalcChecksum folds the tile under
+     * every pill, so the checksum a client can compute depends on the pill
+     * list it holds as much as on its terrain. Seeded, captured and written
+     * alongside the terrain copy so the two can never describe different
+     * moments. Valid[slot] false means the slot has not been seeded and a
+     * reader falls back to the live list. */
+    BYTE clientKnownPillX[MAX_TANKS][MAX_PILLS];
+    BYTE clientKnownPillY[MAX_TANKS][MAX_PILLS];
+    bool clientKnownPillValid[MAX_TANKS];
+
+    /* The pill squares as they stood when the current map was installed — the
+     * counterpart of roundStartMapObj, and what a player joining a running
+     * game is handed with the round-start terrain. */
+    BYTE roundStartPillX[MAX_PILLS];
+    BYTE roundStartPillY[MAX_PILLS];
+    BYTE roundStartPillCount;
+    bool roundStartPillsValid;
+
     /* Bit i set: slot i's copy is written by the UDP transport rather than by
      * the tick, because that transport only sends it the changes inside its
      * viewports. The transport sets the bit when it takes the slot and clears
@@ -541,6 +560,11 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 void serverSimShadowSeed(ServerSim *sim, BYTE slot);
 void serverSimShadowSeedAll(ServerSim *sim);
 
+/* The same for one slot's record of the pill squares (clientKnownPillX/Y
+ * above). Called from serverSimShadowSeed, so every point that seeds a slot's
+ * terrain seeds its pill squares in the same breath. */
+void serverSimPillShadowSeed(ServerSim *sim, BYTE slot);
+
 /* The round-start copy of the terrain (roundStartMap above). Capture copies the
  * live map into it; it is called from serverSimShadowSeedAll, so every point
  * that installs a map takes a fresh copy and nothing else has to remember to.
@@ -551,6 +575,13 @@ void serverSimShadowSeedAll(ServerSim *sim);
  * handed an empty map. */
 void serverSimShadowCaptureRoundStart(ServerSim *sim);
 void serverSimShadowSeedRoundStart(ServerSim *sim, BYTE slot);
+
+/* The pill squares the round started on (roundStartPillX/Y above), captured and
+ * handed out with the round-start terrain by the two calls above. With nothing
+ * captured yet SeedRoundStart falls back to the live-list seed, so a slot can
+ * never be handed empty squares. */
+void serverSimPillShadowCaptureRoundStart(ServerSim *sim);
+void serverSimPillShadowSeedRoundStart(ServerSim *sim, BYTE slot);
 
 /* Write this tick's map changes into the copies the tick owns. Called once per
  * running frame from the tick core, after both half-steps have finished
@@ -564,6 +595,11 @@ void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain);
 void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,
                               BYTE terrain);
 void serverSimShadowTick(ServerSim *sim);
+
+/* Write this tick's pill squares into the records the tick owns. Called from
+ * serverSimShadowTick, so the pill squares and the terrain are written at the
+ * same point in the frame. */
+void serverSimPillShadowTick(ServerSim *sim);
 
 /* Which slots the tick skips (shadowCulledSlots above). The UDP transport owns
  * this: it marks a slot on join and unmarks it on disconnect. Nothing else
@@ -585,11 +621,19 @@ uint16_t serverSimGetShadowCulledMask(const ServerSim *sim);
 int  serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,
                           int numVps, GameEvent *out, int maxOut);
 
-/* serverSimGetCompressedMap over one slot's copy of the terrain, with the
- * live pills, bases and starts. The blob a client downloads on join or
- * resync comes from here, so it carries the terrain that client's snapshot
- * checksum is computed over. Returns the compressed length, or 0 if the blob
- * does not fit outputCap bytes — nothing is written past that capacity. */
+/* Fill `out` with the live pill list, with each pill's square replaced by the
+ * one that slot has actually been sent. Everything else — owner, armour,
+ * inTank and the rest — is the live record and is public. Returns false, and
+ * writes nothing, for a slot with no record yet; the caller then reads the
+ * live list. */
+bool serverSimGetPillsForSlot(ServerSim *sim, BYTE slot, struct pillsObj *out);
+
+/* serverSimGetCompressedMap over one slot's copy of the terrain and its record
+ * of the pill squares, with the live bases and starts. The blob a client
+ * downloads on join or resync comes from here, so it carries the terrain and
+ * the pill list that client's snapshot checksum is computed over. Returns the
+ * compressed length, or 0 if the blob does not fit outputCap bytes — nothing is
+ * written past that capacity. */
 int  serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output,
                                   int outputCap);
 
