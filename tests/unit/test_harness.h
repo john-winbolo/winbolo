@@ -964,6 +964,16 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* River tile lookup (test_screencalc_river.c): screenCalcRiver reads its
+ * four orthogonal neighbours only as "wet or bridged", so RIVER / ROAD /
+ * DEEP_SEA / BOAT are interchangeable there — the contract the four
+ * RIVER_END1..4 arms broke by asking for == RIVER, which drew corner
+ * pieces instead of end pieces around a road laid on a river cross. Also
+ * pins the log viewer's hand-kept copy against the game's. */
+int run_screencalc_river_road_counts_as_water(void);
+int run_screencalc_river_arms_of_road_centred_cross(void);
+int run_screencalc_river_copies_agree(void);
+
 /* Generated lang-name lookup table pin (test_lang_name_table.c): the
  * K_LANG_NAME_TABLE_SIZE macro matches the real kLangNameTable[] length,
  * the table is strictly sorted for bsearch, and every name round-trips —

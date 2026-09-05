@@ -3231,6 +3231,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # River tile lookup: ROAD must read as "the river continues" in all four
+    # RIVER_END arms (a bridge on a river cross drew corner pieces), plus the
+    # game vs log-viewer copies of screenCalcRiver never disagreeing.
+    tests/unit/test_screencalc_river.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
@@ -3845,6 +3849,9 @@ set(_unit_test_names
     channel_reset_two_slot_baselines
     packet_type_names
     lang_name_table
+    screencalc_river_road_counts_as_water
+    screencalc_river_arms_of_road_centred_cross
+    screencalc_river_copies_agree
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
