@@ -1325,7 +1325,15 @@ static bool gameFrontDialogs(void) {
        * settings and runs the appropriate finisher (lobby host, SP
        * lobby, or tutorial). */
       s_isLanOnly = (dlgState == openLanSetup);
-      gameFrontSetDlgState(openFinished);
+      /* A failed finisher has already torn down whatever it built and left
+       * humanSim NULL, but dlgState was committed to openFinished before the
+       * failure was known. Ending the loop there would hand that NULL sim to
+       * gameFrontStart, so go back to the menu instead. Unhide the background
+       * game the aborted start hid. */
+      if (gameFrontSetDlgState(openFinished) == FALSE) {
+        bgGameSetHiddenByForeground(bgGameGetShared(), false);
+        dlgState = openStart;
+      }
       break;
     }
     case openInternet: {
@@ -1381,7 +1389,18 @@ static bool gameFrontDialogs(void) {
       frontEndTutorialReset();
       isTutorial = TRUE;
       dlgState = openSetup;
-      gameFrontSetDlgState(openFinished);
+      /* Same failed-finisher handling as the openSetup case above, plus the
+       * tutorial launch state this case set up: gameFrontStart clears
+       * isTutorial and fileName only on entry, so a return to the menu from
+       * inside the dialog loop has to clear them here or the next
+       * single-player start inherits the tutorial map and mode. */
+      if (gameFrontSetDlgState(openFinished) == FALSE) {
+        isTutorial = FALSE;
+        fileName[0] = '\0';
+        bgGameSetHiddenByForeground(bgGameGetShared(), false);
+        dlgState = openStart;
+        break;
+      }
       /* Mark both sims so tank.c's tutorial stop logic fires
        * authoritatively on the server and keeps client prediction
        * consistent. */
