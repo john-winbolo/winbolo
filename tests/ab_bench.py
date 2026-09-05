@@ -525,6 +525,7 @@ def verify_tokens(mapfile, a_arg, b_arg, per_side, seed):
 
 # ---------------------------------------------------------------------------
 def main():
+    global PORT_BASE
     ap = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=__doc__)
@@ -554,7 +555,6 @@ def main():
                     help="300-tick -brain-debug run: show the [preset]/[cfg] "
                          "lines each side got, then delete the session")
     args = ap.parse_args()
-    global PORT_BASE
     PORT_BASE = args.port_base
 
     seeds = []
