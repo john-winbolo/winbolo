@@ -15,6 +15,10 @@
  *
  * The program prints the tile each marked square resolves to, so the
  * expected-vs-actual comparison can be made without launching anything.
+ *
+ * It lives under src/mapeditor/ rather than tools/ because it writes .map
+ * files through bolo's T2 map-data headers — the scope of the mapeditor
+ * privileged exception in docs/ARCHITECTURE.md. tools/ is public-only.
  */
 #include <stdio.h>
 #include <string.h>
@@ -76,11 +80,25 @@ static BYTE terrainOf(char c) {
     }
 }
 
+/* Every square this file touches has to sit one square inside the array, so
+ * that resolve() below can read the eight neighbours without walking off the
+ * end. Demos live deep in the island's interior, so a failure here means a
+ * newly added layout was placed badly — say so loudly rather than corrupting
+ * memory. */
+static int inBounds(int x, int y) {
+    if (x < 1 || x >= MAP_ARRAY_SIZE - 1 || y < 1 || y >= MAP_ARRAY_SIZE - 1) {
+        fprintf(stderr, "square (%d,%d) is outside the paintable area "
+                        "(1..%d in each axis)\n", x, y, MAP_ARRAY_SIZE - 2);
+        return 0;
+    }
+    return 1;
+}
+
 /* Paint one row of the ASCII notation with its top-left corner at x,y.
  * '.' leaves the square alone. */
 static void paint(int x, int y, const char *row) {
     for (int i = 0; row[i] != '\0'; i++) {
-        if (row[i] != '.') {
+        if (row[i] != '.' && inBounds(x + i, y)) {
             mp->mapItem[x + i][y] = terrainOf(row[i]);
         }
     }
@@ -89,7 +107,9 @@ static void paint(int x, int y, const char *row) {
 static void fillRect(int x0, int y0, int x1, int y1, BYTE terrain) {
     for (int x = x0; x <= x1; x++) {
         for (int y = y0; y <= y1; y++) {
-            mp->mapItem[x][y] = terrain;
+            if (inBounds(x, y)) {
+                mp->mapItem[x][y] = terrain;
+            }
         }
     }
 }
@@ -140,8 +160,13 @@ static const char *tileName(BYTE v) {
 
 static BYTE sq(int x, int y) { return mp->mapItem[x][y]; }
 
-/* The same terrain switch viewport.c and the log viewer's screen.c run. */
+/* The same terrain switch viewport.c and the log viewer's screen.c run.
+ * Reads all eight neighbours, so the square must be an interior one. */
 static BYTE resolve(int x, int y) {
+    if (!inBounds(x, y)) {
+        return DEEP_SEA;
+    }
+
     BYTE al = sq(x - 1, y - 1), a = sq(x, y - 1), ar = sq(x + 1, y - 1);
     BYTE l  = sq(x - 1, y),                       r  = sq(x + 1, y);
     BYTE bl = sq(x - 1, y + 1), b = sq(x, y + 1), br = sq(x + 1, y + 1);
@@ -165,8 +190,102 @@ static void report(const char *what, int refX, int refY, int bugX, int bugY) {
 
 /* ------------------------------------------------------------------ */
 
+/* Read the file we just wrote back through the real loader. mapRead runs
+ * mapCenter, so the loaded map is the same layout shifted; work the shift
+ * out from the land bounding box, check every square under it, and report
+ * the coordinates the game will actually show. Owns its four handles and
+ * frees them on every exit path. */
+static int verifyReadBack(char *path) {
+    map        rmp;
+    pillboxes  rpb;
+    bases      rbs;
+    starts     rss;
+    char       name[256] = {0};
+    int        dx, dy;
+    int        rc = 0;
+
+    if (!boloMapValidate(path, name, sizeof name)) {
+        fprintf(stderr, "\n%s failed boloMapValidate\n", path);
+        return 1;
+    }
+    mapCreate(&rmp);
+    pillsCreate(&rpb);
+    basesCreate(&rbs);
+    startsCreate(&rss);
+
+    if (!mapRead(path, &rmp, &rpb, &rbs, &rss)) {
+        fprintf(stderr, "\n%s failed to read back\n", path);
+        rc = 1;
+        goto done;
+    }
+
+    {
+        int wx0 = MAP_ARRAY_SIZE, wy0 = MAP_ARRAY_SIZE;
+        int rx0 = MAP_ARRAY_SIZE, ry0 = MAP_ARRAY_SIZE;
+        for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+            for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+                if (mp->mapItem[x][y] != DEEP_SEA) {
+                    if (x < wx0) wx0 = x;
+                    if (y < wy0) wy0 = y;
+                }
+                if (rmp->mapItem[x][y] != DEEP_SEA) {
+                    if (x < rx0) rx0 = x;
+                    if (y < ry0) ry0 = y;
+                }
+            }
+        }
+        dx = rx0 - wx0;
+        dy = ry0 - wy0;
+    }
+
+    for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+        for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+            int sx = x + dx, sy = y + dy;
+            BYTE want = mp->mapItem[x][y];
+            BYTE got  = (sx >= 0 && sx < MAP_ARRAY_SIZE &&
+                         sy >= 0 && sy < MAP_ARRAY_SIZE)
+                        ? rmp->mapItem[sx][sy] : (BYTE)DEEP_SEA;
+            if (want != got) {
+                fprintf(stderr,
+                        "\nsquare (%d,%d) wrote %d, came back at (%d,%d) as %d\n",
+                        x, y, want, sx, sy, got);
+                rc = 1;
+                goto done;
+            }
+        }
+    }
+
+    printf("\nread back and verified: %d starts, %d bases, %d pills\n",
+           startsGetNumStarts(&rss), basesGetNumBases(&rbs),
+           pillsGetNumPills(&rpb));
+    printf("the loader recentres the map by (%+d,%+d), so in game look at:\n",
+           dx, dy);
+    printf("  (%d,%d) and (%d,%d)   river mouths, east coast   <-- deep sea\n",
+           SEA_X + dx, SEA_REF_Y + dy, SEA_X + dx, SEA_BUG_Y + dy);
+    printf("  (%d,%d) and (%d,%d)   boats\n",
+           BOAT_REF_X + 2 + dx, BOAT_Y + 1 + dy,
+           BOAT_BUG_X + 2 + dx, BOAT_Y + 1 + dy);
+    printf("  (%d,%d) and (%d,%d)   river crosses\n",
+           CROSS_REF_X + 2 + dx, CROSS_Y + 1 + dy,
+           CROSS_BUG_X + 2 + dx, CROSS_Y + 1 + dy);
+
+done:
+    mapDestroy(&rmp);
+    pillsDestroy(&rpb);
+    basesDestroy(&rbs);
+    startsDestroy(&rss);
+    return rc;
+}
+
 int main(int argc, char *argv[]) {
-    const char *path = (argc > 1) ? argv[1] : "tile_test.map";
+    /* mapWrite / mapRead take a non-const char *, so keep the path in a
+     * writable buffer rather than casting the const away from argv or from
+     * the default string literal. */
+    char path[512];
+    int  rc = 0;
+
+    snprintf(path, sizeof path, "%s",
+             (argc > 1) ? argv[1] : "tile_test.map");
 
     mapCreate(&mp);
     pillsCreate(&pb);
@@ -228,7 +347,9 @@ int main(int argc, char *argv[]) {
         bse.refuelTime = 0;
         bse.baseTime   = 0;
         basesSetBase(&bs, &bse, i);
-        mp->mapItem[bse.x][bse.y] = ROAD;
+        if (inBounds(bse.x, bse.y)) {
+            mp->mapItem[bse.x][bse.y] = ROAD;
+        }
     }
 
     pillsSetNumPills(&pb, 0);
@@ -243,85 +364,18 @@ int main(int argc, char *argv[]) {
     report("river cross arm (left)",
            CROSS_REF_X + 1, CROSS_Y + 1, CROSS_BUG_X + 1, CROSS_Y + 1);
 
-    if (!mapWrite((char *)path, &mp, &pb, &bs, &ss)) {
+    if (!mapWrite(path, &mp, &pb, &bs, &ss)) {
         fprintf(stderr, "\nfailed to write %s\n", path);
-        return 1;
-    }
-    /* Read it straight back through the real loader. mapRead runs
-     * mapCenter, so the loaded map is the same layout shifted; work the
-     * shift out from the land bounding box, check every square under it,
-     * and report the coordinates the game will actually show. */
-    {
-        map        rmp;
-        pillboxes  rpb;
-        bases      rbs;
-        starts     rss;
-        char       name[256] = {0};
-        int        dx, dy;
-
-        if (!boloMapValidate(path, name, sizeof name)) {
-            fprintf(stderr, "\n%s failed boloMapValidate\n", path);
-            return 1;
-        }
-        mapCreate(&rmp);
-        pillsCreate(&rpb);
-        basesCreate(&rbs);
-        startsCreate(&rss);
-        if (!mapRead((char *)path, &rmp, &rpb, &rbs, &rss)) {
-            fprintf(stderr, "\n%s failed to read back\n", path);
-            return 1;
-        }
-
-        {
-            int wx0 = MAP_ARRAY_SIZE, wy0 = MAP_ARRAY_SIZE;
-            int rx0 = MAP_ARRAY_SIZE, ry0 = MAP_ARRAY_SIZE;
-            for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-                for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
-                    if (mp->mapItem[x][y] != DEEP_SEA) {
-                        if (x < wx0) wx0 = x;
-                        if (y < wy0) wy0 = y;
-                    }
-                    if (rmp->mapItem[x][y] != DEEP_SEA) {
-                        if (x < rx0) rx0 = x;
-                        if (y < ry0) ry0 = y;
-                    }
-                }
-            }
-            dx = rx0 - wx0;
-            dy = ry0 - wy0;
-        }
-
-        for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-            for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
-                int sx = x + dx, sy = y + dy;
-                BYTE want = mp->mapItem[x][y];
-                BYTE got  = (sx >= 0 && sx < MAP_ARRAY_SIZE &&
-                             sy >= 0 && sy < MAP_ARRAY_SIZE)
-                            ? rmp->mapItem[sx][sy] : (BYTE)DEEP_SEA;
-                if (want != got) {
-                    fprintf(stderr,
-                            "\nsquare (%d,%d) wrote %d, came back at (%d,%d) as %d\n",
-                            x, y, want, sx, sy, got);
-                    return 1;
-                }
-            }
-        }
-
-        printf("\nread back and verified: %d starts, %d bases, %d pills\n",
-               startsGetNumStarts(&rss), basesGetNumBases(&rbs),
-               pillsGetNumPills(&rpb));
-        printf("the loader recentres the map by (%+d,%+d), so in game look at:\n",
-               dx, dy);
-        printf("  (%d,%d) and (%d,%d)   river mouths, east coast   <-- deep sea\n",
-               SEA_X + dx, SEA_REF_Y + dy, SEA_X + dx, SEA_BUG_Y + dy);
-        printf("  (%d,%d) and (%d,%d)   boats\n",
-               BOAT_REF_X + 2 + dx, BOAT_Y + 1 + dy,
-               BOAT_BUG_X + 2 + dx, BOAT_Y + 1 + dy);
-        printf("  (%d,%d) and (%d,%d)   river crosses\n",
-               CROSS_REF_X + 2 + dx, CROSS_Y + 1 + dy,
-               CROSS_BUG_X + 2 + dx, CROSS_Y + 1 + dy);
+        rc = 1;
+    } else if (verifyReadBack(path) != 0) {
+        rc = 1;
+    } else {
+        printf("wrote %s\n", path);
     }
 
-    printf("wrote %s\n", path);
-    return 0;
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    return rc;
 }

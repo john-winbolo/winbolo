@@ -385,6 +385,15 @@ BYTE lv_screenCalcBuilding(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE lef
 *  right      - The square right
 *  belowLeft  - The square below left
 *  belowRight - The square below right
+*
+*NOTE: This is a hand-kept duplicate of screenCalcRiver in
+*  src/bolo/screencalc.c. tests/unit/test_screencalc_river.c's
+*  screencalc_river_copies_agree case sweeps both and fails if they
+*  drift apart, so a change here must land there too. That test
+*  re-declares this prototype by hand (including lv_screencalc.h would
+*  pull lv_tilenum.h's tile numbers in on top of tilenum.h's), so
+*  changing this signature will not produce a compile error there --
+*  update the declaration at the top of that file as well.
 *********************************************************/
 BYTE lv_screenCalcRiver(BYTE aboveLeft, BYTE above, BYTE aboveRight, BYTE left, BYTE right, BYTE belowLeft, BYTE below, BYTE belowRight) {
   BYTE returnValue; /* Value to return */
