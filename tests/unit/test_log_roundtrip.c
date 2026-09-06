@@ -40,7 +40,8 @@
 
 /* Per-event "bytes-after-code-byte" table. For variable-length
  * events (pstr suffix) the entry is -1 and the walker handles them
- * inline. Indexed by logitem code (1..46). */
+ * inline. Indexed by logitem code. The three spectator events (50..52)
+ * are missing and decode as unknown; nothing emits them yet. */
 static int eventFixedBytesAfterCode(uint8_t code) {
     switch (code) {
         case log_PlayerJoined:     return -1;  /* 5 + pstr */
@@ -92,6 +93,7 @@ static int eventFixedBytesAfterCode(uint8_t code) {
         case log_GameVoteStart:    return 3;
         case log_GameVoteCast:     return 3;
         case log_GameVoteEnd:      return 2;
+        case log_GameSettings:     return -1;  /* 0 + pstr */
         default:                   return -2;  /* unknown */
     }
 }
@@ -104,6 +106,7 @@ static int variableEventPrefixBytes(uint8_t code) {
         case log_MessagePlayers:  return 2;
         case log_ChangeName:      return 1;
         case log_MapSkipApplied:  return 0;
+        case log_GameSettings:    return 0;
         default:                  return -1;  /* not variable */
     }
 }
@@ -207,9 +210,21 @@ static bool skipSnapshot(const uint8_t *buf, size_t len, size_t *pos) {
     return true;
 }
 
+/* Optional payload capture for walkLog. Set `code` to the event whose bytes
+ * the caller wants; the walker copies the payload of the first event with
+ * that code into `bytes` and records the length. `len` stays -1 when no such
+ * event was seen, or when the payload is longer than `bytes`. */
+typedef struct {
+    uint8_t code;
+    uint8_t bytes[64];
+    int     len;
+} eventPayloadCapture;
+
 /* Walk the buffer from `startPos` (which must point at the first
  * outer byte AFTER the initial logStart header) and fill `eventCodes`
- * with every event code decoded in order. Returns 0 on a clean
+ * with every event code decoded in order. `capture` is optional (NULL to
+ * skip) and grabs one event's payload bytes for callers that assert on the
+ * payload as well as the framing. Returns 0 on a clean
  * LOG_QUIT terminator; -N on the first failure (N indicating which
  * stage broke, useful for human eyeballing on test failure).
  *
@@ -221,7 +236,7 @@ static bool skipSnapshot(const uint8_t *buf, size_t len, size_t *pos) {
  * the writer's switch produces for known types. */
 static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
                    uint8_t *eventCodes, int *outEventCount, int maxCodes,
-                   int *outSnapshotCount) {
+                   int *outSnapshotCount, eventPayloadCapture *capture) {
     size_t pos = startPos;
     int ec = 0;
     int sc = 0;
@@ -275,6 +290,13 @@ static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
                     if (payloadStart + (size_t)pref >= len) return -9;
                     int strLen = buf[payloadStart + (size_t)pref]; /* pstr len byte */
                     if (pref + 1 + strLen != plen) return -10;     /* length disagrees */
+                }
+
+                if (capture != NULL && capture->len < 0 &&
+                    (uint8_t)ev == capture->code &&
+                    (size_t)plen <= sizeof(capture->bytes)) {
+                    memcpy(capture->bytes, buf + payloadStart, (size_t)plen);
+                    capture->len = plen;
                 }
 
                 pos = payloadStart + (size_t)plen;
@@ -370,6 +392,28 @@ static ServerSim *startTestLog(const char *fname) {
 
 int run_log_roundtrip_basic(void) {
     char fname[64];
+    /* A settings blob with nothing left at a default, so a field that is
+       mis-sized, reordered or byte-swapped on the way out shows up as a
+       mismatch rather than matching by luck. The bytes are the wire form and
+       are not checked for sense — the policy byte sets classic mode alongside
+       policies the server would override, which is exactly the sort of value
+       a byte-for-byte round trip has to carry unchanged. */
+    static const uint8_t wantSettings[14] = {
+        0xF6,               /* pill decay, base key, ally off, classic, trees */
+        0x00, 0x2D,         /* pill decay 45s */
+        0x01, 0x2C,         /* base decay 300s */
+        0x00, 0x05,         /* ally decay 5s */
+        0x03,               /* gameStrictTournament */
+        0x02,               /* aiYesAdvantage */
+        0x2A,               /* time limit + ranked + allow new players */
+        0x00, 0x1E,         /* 30 minutes */
+        0x0A, 0x41          /* lock mask, bits 0/6/9/11 */
+    };
+    char settingsBlob[15];
+
+    settingsBlob[0] = (char)sizeof(wantSettings);
+    memcpy(settingsBlob + 1, wantSettings, sizeof(wantSettings));
+
     mkTempPath(fname, sizeof(fname), "basic");
     remove(fname);
 
@@ -388,6 +432,7 @@ int run_log_roundtrip_basic(void) {
     logAddEvent(log_PillSetHealth,   0x3A /* pillNum=3,armour=10 */,
                                      0, 0, 0, 0, NULL);
     logAddEvent(log_Shell,           42, 64, 0x42, 3, 0, NULL);
+    logAddEvent(log_GameSettings,    0, 0, 0, 0, 0, settingsBlob);
     logWriteTick();
 
     logStop();
@@ -409,8 +454,12 @@ int run_log_roundtrip_basic(void) {
     uint8_t got[64];
     int     nGot      = 0;
     int     nSnap     = 0;
+    eventPayloadCapture settings;
+    settings.code = log_GameSettings;
+    settings.len  = -1;
     int     rc        = walkLog(buf, len, blockStart,
-                                got, &nGot, (int)sizeof(got), &nSnap);
+                                got, &nGot, (int)sizeof(got), &nSnap,
+                                &settings);
     free(buf);
     remove(fname);
 
@@ -418,8 +467,8 @@ int run_log_roundtrip_basic(void) {
     /* Must have seen the initial snapshot from logStart. */
     UT_ASSERT_MSG(nSnap >= 1, "expected initial snapshot, saw %d", nSnap);
 
-    /* All seven events we fired must come back in order. */
-    UT_ASSERT_MSG(nGot == 7, "expected 7 events, got %d", nGot);
+    /* All eight events we fired must come back in order. */
+    UT_ASSERT_MSG(nGot == 8, "expected 8 events, got %d", nGot);
     UT_ASSERT(got[0] == log_LobbyEnter);
     UT_ASSERT(got[1] == log_CountdownStart);
     UT_ASSERT(got[2] == log_BalanceApplied);
@@ -427,6 +476,22 @@ int run_log_roundtrip_basic(void) {
     UT_ASSERT(got[4] == log_BaseSetOwner);
     UT_ASSERT(got[5] == log_PillSetHealth);
     UT_ASSERT(got[6] == log_Shell);
+    UT_ASSERT(got[7] == log_GameSettings);
+
+    /* The settings blob is binary and full of 0x00 bytes, so framing alone
+       is not enough — the fourteen bytes have to come back untouched. */
+    UT_ASSERT_MSG(settings.len == (int)sizeof(wantSettings) + 1,
+                  "settings payload len = %d (want %d)",
+                  settings.len, (int)sizeof(wantSettings) + 1);
+    UT_ASSERT_MSG(settings.bytes[0] == (uint8_t)sizeof(wantSettings),
+                  "settings length byte = %d (want %d)",
+                  settings.bytes[0], (int)sizeof(wantSettings));
+    for (int i = 0; i < (int)sizeof(wantSettings); i++) {
+        UT_ASSERT_MSG(settings.bytes[i + 1] == wantSettings[i],
+                      "settings byte %d = 0x%02X (want 0x%02X)",
+                      i, (unsigned)settings.bytes[i + 1],
+                      (unsigned)wantSettings[i]);
+    }
     return 0;
 }
 
@@ -481,7 +546,7 @@ int run_log_roundtrip_snapshot_keeps_chain_synced(void) {
     int     nGot  = 0;
     int     nSnap = 0;
     int     rc = walkLog(buf, len, blockStart,
-                         got, &nGot, (int)sizeof(got), &nSnap);
+                         got, &nGot, (int)sizeof(got), &nSnap, NULL);
     free(buf);
     remove(fname);
 
@@ -631,7 +696,7 @@ int run_log_roundtrip_lobby_mode_drops_world_events(void) {
     int     nGot      = 0;
     int     nSnap     = 0;
     int     rc        = walkLog(buf, blen, blockStart,
-                                got, &nGot, (int)sizeof(got), &nSnap);
+                                got, &nGot, (int)sizeof(got), &nSnap, NULL);
     free(buf);
     remove(fname);
 
