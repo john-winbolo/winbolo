@@ -890,7 +890,7 @@ A single publish therefore reaches every audience by construction: a
 publish that reaches one audience reaches the other by definition,
 and the asymmetric-runtime bug class is closed.
 
-This is foot-gun removal, not compile-time enforcement. The old
+This removes the easy mistake, not compile-time enforcement. The old
 `transportUdpServerBroadcast*` helpers are gone, so the easy copy-
 paste pattern that produced asymmetric runtimes no longer exists.
 But `udpSendTo`, `packHeader`, and the `PACKET_*` constants are

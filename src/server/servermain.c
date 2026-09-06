@@ -2120,7 +2120,7 @@ int main(int argc, char **argv) {
         }
         /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
          * -brain path under -braindebug yields brainrec.btr but zero
-         * print2_botN.log — the exact footgun the usage text warns about.
+         * print2_botN.log — the exact issue the usage text warns about.
          * Auto-redirect an "opt/" (or "opt\") path segment to the base path
          * so the per-bot debug logs always appear in -braindebug. */
         {
