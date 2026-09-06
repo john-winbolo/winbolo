@@ -45,11 +45,12 @@ static int s_num_players = 0;
  * round has time left on it, and that beats either recorded source. */
 static bool s_time_limit_is_live = false;
 
-/* Game type enum from backend.h */
+/* Game type enum from backend.h, which numbers it from 1. The .wbv header
+ * and the settings event both carry these values. */
 enum {
-    gameOpen = 0,
-    gameTournament = 1,
-    gameStrictTournament = 2
+    gameOpen = 1,
+    gameTournament,
+    gameStrictTournament
 };
 
 /* AI type enum */
@@ -239,16 +240,14 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
     s_view_decay[1] = (payload[3] << 8) | payload[4];
     s_view_decay[2] = (payload[5] << 8) | payload[6];
 
-    /* Game type — the recorded byte is the gameType enum as the wire and the
-     * .wbv header carry it (1 open, 2 tournament, 3 strict), not the
-     * zero-based numbering of the enum at the top of this file. */
+    /* Game type */
     {
         langid id;
         switch (payload[7]) {
-            case 1:  id = STR_DLGGAMEINFO_OPEN;   break;
-            case 2:  id = STR_DLGGAMEINFO_TOURN;  break;
-            case 3:  id = STR_DLGGAMEINFO_STRICT; break;
-            default: id = STR_UNKNOWN;            break;
+            case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
+            case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
+            case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            default:                   id = STR_UNKNOWN;            break;
         }
         snprintf(s_ev_game_type, sizeof(s_ev_game_type), "%s", langGetText(id));
     }
