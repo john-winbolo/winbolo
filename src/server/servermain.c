@@ -582,6 +582,8 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
   fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees.\n");
+  fprintf(stderr, "                Locking pillview, baseview, allyview or alliesintrees\n");
+  fprintf(stderr, "                also locks classicmode, which writes those values.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
@@ -1537,6 +1539,18 @@ int main(int argc, char **argv) {
                   "openhost, map, pillview, baseview, allyview, "
                   "classicmode, alliesintrees)\n", lo);
         }
+      }
+      /* Locking any visibility setting locks classicmode too, because
+       * turning classic mode on writes those same values. The sim does
+       * this for us; say so here so the operator isn't surprised by a
+       * locked checkbox they never named. */
+      uint16_t implied = serverSimAddImpliedLocks(serverLocks);
+      if (implied != serverLocks) {
+        fprintf(stderr,
+                "Note: -lock of pillview / baseview / allyview / "
+                "alliesintrees also locks classicmode, which writes "
+                "those values.\n");
+        serverLocks = implied;
       }
     }
   }

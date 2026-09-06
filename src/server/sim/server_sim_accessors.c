@@ -578,6 +578,25 @@ bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
     return (sim->serverLocks & bit) != 0u;
 }
 
+uint16_t serverSimAddImpliedLocks(uint16_t locks) {
+    /* Turning classic mode on writes the three view policies and allies
+     * in trees (serverSimSetClassicMode), so leaving the checkbox
+     * editable while any of those four is locked would let a host change
+     * a locked value with one tick — and the value does not come back,
+     * because turning classic mode off leaves all four where classic
+     * mode put them. Locking any of the four locks classic mode too.
+     *
+     * Deliberately decided from the mask alone rather than from the
+     * current values: the mask is fixed at startup, so the host sees a
+     * checkbox that is either always available or always locked, rather
+     * than one that appears and disappears as other settings move. */
+    if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
+                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES)) {
+        locks |= LOBBY_LOCK_CLASSIC_MODE;
+    }
+    return locks;
+}
+
 void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
     if (sim) sim->aiPolicy = v;
 }
@@ -691,7 +710,7 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
 }
 
 void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
-    if (sim) sim->serverLocks = locks;
+    if (sim) sim->serverLocks = serverSimAddImpliedLocks(locks);
 }
 
 bool serverSimGetRanked(const ServerSim *sim) {

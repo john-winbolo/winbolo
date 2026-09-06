@@ -204,6 +204,8 @@ static const UnitTestEntry s_tests[] = {
     { "classic_mode_defaults",                   run_classic_mode_defaults                   },
     { "classic_mode_forces_views",               run_classic_mode_forces_views               },
     { "classic_mode_lock_bit",                   run_classic_mode_lock_bit                   },
+    { "classic_mode_lock_implied",               run_classic_mode_lock_implied               },
+    { "classic_mode_lock_blocks_dispatch",       run_classic_mode_lock_blocks_dispatch       },
     { "classic_mode_lobby_reset",                run_classic_mode_lobby_reset                },
     { "allies_in_trees_defaults",                run_allies_in_trees_defaults                },
     { "allies_in_trees_classic_mode",            run_allies_in_trees_classic_mode            },

@@ -91,8 +91,11 @@ int run_allies_in_trees_defaults(void) {
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_ALLIES_IN_TREES));
     serverSimSetServerLocks(sim, LOBBY_LOCK_ALLIES_IN_TREES);
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_ALLIES_IN_TREES));
-    UT_ASSERT_MSG(!serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
-                  "the allies-in-trees lock must not cover classic mode");
+    /* Classic mode forces this option off, so locking the option has to
+     * lock classic mode as well — otherwise the checkbox is a way round
+     * the lock. */
+    UT_ASSERT_MSG(serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
+                  "the allies-in-trees lock must also cover classic mode");
 
     serverSimDestroy(sim);
     return 0;

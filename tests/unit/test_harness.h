@@ -240,6 +240,8 @@ int run_view_policy_lobby_reset(void);
 int run_classic_mode_defaults(void);
 int run_classic_mode_forces_views(void);
 int run_classic_mode_lock_bit(void);
+int run_classic_mode_lock_implied(void);
+int run_classic_mode_lock_blocks_dispatch(void);
 int run_classic_mode_lobby_reset(void);
 int run_allies_in_trees_defaults(void);
 int run_allies_in_trees_classic_mode(void);

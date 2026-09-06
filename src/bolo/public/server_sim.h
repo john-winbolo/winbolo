@@ -1591,7 +1591,11 @@ uint16_t    serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat);
  * each category's own decay seconds, and the lobby then refuses edits
  * to those three until it is turned off. Turning it off clears the flag
  * and nothing else: the three policies stay where classic mode put
- * them. Off by default. */
+ * them. Off by default.
+ *
+ * Because it writes those values, an operator lock on any of them locks
+ * classic mode as well — see serverSimAddImpliedLocks. This setter is
+ * not lock-aware; its callers check the mask first. */
 void        serverSimSetClassicMode(ServerSim *sim, bool on);
 bool        serverSimGetClassicMode(const ServerSim *sim);
 
@@ -1612,8 +1616,23 @@ bool        serverSimGetOpenHost(const ServerSim *sim);
 BYTE        serverSimGetHostSlot(const ServerSim *sim);
 
 /* serverLocks — LOBBY_LOCK_* bitmask set from CLI at server start.
- * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
+ * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED.
+ * The stored mask is the CLI mask plus its implied locks, so what the
+ * getter returns — and what the lobby-settings event carries to every
+ * client's lock badges — may hold more bits than the operator typed. */
 uint16_t    serverSimGetServerLocks(const ServerSim *sim);
+
+/* Expand a LOBBY_LOCK_* mask with the locks it implies, and return it.
+ * One setting can write another's value, and a lock the host can reach
+ * around is not a lock; this is where that is settled, once, for both
+ * the server's REJECT_LOCKED check and the client's disabled controls.
+ *
+ * Locking pill / base / ally view or allies in trees also locks classic
+ * mode, which writes all four. serverSimSetServerLocks runs every mask
+ * through this, so callers rarely need it directly — it is exposed so
+ * the CLI can report the expanded set and tests can check the mapping
+ * without a sim. Idempotent. */
+uint16_t    serverSimAddImpliedLocks(uint16_t locks);
 
 /* Map an LST_* setting id to the LOBBY_LOCK_* bit that gates it.
  * Returns 0 for settings with no lock, 0xFFFF for unknown ids. The

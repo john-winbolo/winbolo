@@ -2,7 +2,7 @@
  * Classic mode: the LST_CLASSIC_MODE apply path, the values it forces
  * onto the three view policies, and its lock bit.
  *
- * Four things are pinned here:
+ * Five things are pinned here:
  *
  *   1. A fresh sim is not in classic mode, and the three view policies
  *      are still the shipped defaults. Nothing on the client reads the
@@ -22,7 +22,12 @@
  *      serverSimIsSettingLocked before calling), the same as the
  *      view-policy settings.
  *
- *   4. The flag rides the originalLobbySettings snapshot, so a visiting
+ *   4. The lock runs one way only. Locking classic mode leaves the four
+ *      settings it writes editable, but locking any of those four also
+ *      locks classic mode — otherwise a host could change a locked value
+ *      by ticking the checkbox, and could not undo it afterwards.
+ *
+ *   5. The flag rides the originalLobbySettings snapshot, so a visiting
  *      host's change is undone when the last human leaves and
  *      serverSimResetLobbyToDefaults restores the operator's startup
  *      configuration.
@@ -33,10 +38,12 @@
 #include <string.h>
 
 #include "global.h"
+#include "client_command.h"               /* CMD_LOBBY_SETTING, CmdResult */
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"             /* ServerInstanceConfig */
 #include "server/sim/server_sim_shared.h" /* serverSimResetLobbyToDefaults */
+#include "threads.h"                      /* the dispatcher asserts the mutex */
 #include "view_policy.h"
 #include "wire_limits.h"
 #include "everard_map.h"
@@ -205,9 +212,12 @@ int run_classic_mode_lock_bit(void) {
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_ALLY_VIEW));
     UT_ASSERT(!serverSimIsSettingLocked(sim, LST_RANKED));
 
+    /* The other direction is not symmetric: classic mode writes the
+     * pill view, so a pill-view lock has to cover classic mode too or
+     * the host reaches the locked value through the checkbox. */
     serverSimSetServerLocks(sim, LOBBY_LOCK_PILL_VIEW);
-    UT_ASSERT_MSG(!serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
-                  "the pill-view lock must not gate classic mode");
+    UT_ASSERT_MSG(serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
+                  "the pill-view lock must also lock classic mode");
 
     /* The apply helper is deliberately not lock-aware: a caller that has
      * already checked the lock still gets its change through while the
@@ -216,6 +226,141 @@ int run_classic_mode_lock_bit(void) {
     value[0] = 1;
     UT_ASSERT(serverSimApplyLobbySetting(sim, LST_CLASSIC_MODE, value, 1));
     UT_ASSERT(serverSimGetClassicMode(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Classic mode writes pill / base / ally view and allies in trees, so a
+ * lock on any of those four has to reach classic mode as well or the
+ * checkbox is a way round the lock. serverSimAddImpliedLocks is where
+ * that is settled; this pins the mapping, and
+ * run_classic_mode_lock_blocks_dispatch drives it end-to-end. */
+int run_classic_mode_lock_implied(void) {
+    ServerSim *sim = make_classic_sim();
+    static const uint16_t owned[] = {
+        LOBBY_LOCK_PILL_VIEW, LOBBY_LOCK_BASE_VIEW,
+        LOBBY_LOCK_ALLY_VIEW, LOBBY_LOCK_ALLIES_IN_TREES,
+    };
+    /* Locks on settings classic mode does not write. LOBBY_LOCK_MAP and
+     * LOBBY_LOCK_PASSWORD are in here deliberately: they have no LST_*
+     * of their own, so a fold that keyed off "any lock at all" would
+     * still catch them and freeze a checkbox for no reason. */
+    static const uint16_t unrelated[] = {
+        LOBBY_LOCK_GAME_TYPE, LOBBY_LOCK_AI_POLICY, LOBBY_LOCK_MINES,
+        LOBBY_LOCK_TIME_LIMIT, LOBBY_LOCK_AUTO_LOCK_ON_GAME,
+        LOBBY_LOCK_PASSWORD, LOBBY_LOCK_RANKED, LOBBY_LOCK_OPEN_HOST,
+        LOBBY_LOCK_MAP,
+    };
+    UT_ASSERT(sim != NULL);
+
+    /* An empty mask stays empty — no lock, nothing implied. */
+    UT_ASSERT_MSG(serverSimAddImpliedLocks(0u) == 0u,
+                  "an empty mask must imply no locks");
+
+    for (size_t i = 0; i < sizeof(owned) / sizeof(owned[0]); i++) {
+        uint16_t in  = owned[i];
+        uint16_t out = serverSimAddImpliedLocks(in);
+        /* Exactly the input plus the classic-mode bit: the fold must add
+         * that one bit and nothing else, or an operator who locked the
+         * ally view finds unrelated controls frozen too. */
+        UT_ASSERT_MSG(out == (uint16_t)(in | LOBBY_LOCK_CLASSIC_MODE),
+                      "lock 0x%04X implied 0x%04X, want 0x%04X",
+                      (unsigned)in, (unsigned)out,
+                      (unsigned)(in | LOBBY_LOCK_CLASSIC_MODE));
+        /* Idempotent — the stored mask is re-folded on every lobby
+         * reset (serverSimResetLobbyToDefaults restores the snapshot
+         * through the same setter), so a second pass must not drift. */
+        UT_ASSERT_MSG(serverSimAddImpliedLocks(out) == out,
+                      "serverSimAddImpliedLocks is not idempotent for 0x%04X",
+                      (unsigned)in);
+
+        /* Through a sim: what the getter reports is what the lobby
+         * settings event carries to every client, so this is the value
+         * the lock badge and the disabled checkbox are drawn from. */
+        serverSimSetServerLocks(sim, in);
+        UT_ASSERT_MSG(serverSimGetServerLocks(sim) == out,
+                      "sim mask for 0x%04X = 0x%04X, want 0x%04X",
+                      (unsigned)in, (unsigned)serverSimGetServerLocks(sim),
+                      (unsigned)out);
+        UT_ASSERT_MSG(serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
+                      "lock 0x%04X must also lock classic mode",
+                      (unsigned)in);
+    }
+
+    for (size_t i = 0; i < sizeof(unrelated) / sizeof(unrelated[0]); i++) {
+        uint16_t in = unrelated[i];
+        UT_ASSERT_MSG(serverSimAddImpliedLocks(in) == in,
+                      "lock 0x%04X must imply nothing (got 0x%04X)",
+                      (unsigned)in, (unsigned)serverSimAddImpliedLocks(in));
+        serverSimSetServerLocks(sim, in);
+        UT_ASSERT_MSG(!serverSimIsSettingLocked(sim, LST_CLASSIC_MODE),
+                      "lock 0x%04X must leave classic mode editable",
+                      (unsigned)in);
+    }
+
+    /* The classic-mode lock on its own still implies nothing: the four
+     * settings it writes stay editable, which is the asymmetry
+     * run_classic_mode_lock_bit checks from the other side. */
+    UT_ASSERT(serverSimAddImpliedLocks(LOBBY_LOCK_CLASSIC_MODE)
+                  == LOBBY_LOCK_CLASSIC_MODE);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The scenario the implied lock exists for, driven through the real
+ * dispatcher: an operator pins the ally view, a host ticks classic mode,
+ * and the locked value must not move. Without the implied lock the
+ * command is accepted, the ally view goes to off, and the host cannot
+ * put it back — turning classic mode off leaves the values where classic
+ * mode wrote them, and a direct ally-view edit is refused by the lock. */
+int run_classic_mode_lock_blocks_dispatch(void) {
+    ServerSim *sim = make_classic_sim();
+    ClientCommand cmd;
+    CmdResult r;
+    UT_ASSERT(sim != NULL);
+
+    /* Host in slot 0, which is the default hostSlot, so lobbyClientMayEdit
+     * passes and the lock is the only thing left to refuse the command. */
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimSetServerLocks(sim, LOBBY_LOCK_ALLY_VIEW);
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
+                  "precondition: the operator's ally view is always");
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_LOBBY_SETTING;
+    cmd.cmdSeq = 1;
+    cmd.u.lobbySetting.settingType = LST_CLASSIC_MODE;
+    cmd.u.lobbySetting.valueLen    = 1;
+    cmd.u.lobbySetting.value[0]    = 1;
+
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, 0, &cmd);
+    threadsReleaseMutex();
+
+    UT_ASSERT_MSG(r == CMD_REJECT_LOCKED,
+                  "classic mode under an ally-view lock returned %d, "
+                  "want CMD_REJECT_LOCKED (%d)", (int)r, (int)CMD_REJECT_LOCKED);
+    UT_ASSERT_MSG(!serverSimGetClassicMode(sim),
+                  "a refused command still turned classic mode on");
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyAlways,
+                  "the locked ally view moved to %d",
+                  (int)serverSimGetViewPolicy(sim, viewCategoryAlly));
+
+    /* The control: the same command with no locks set is accepted and
+     * does move the ally view. Without this the test above would still
+     * pass if classic mode were refused for some unrelated reason. */
+    serverSimSetServerLocks(sim, 0);
+    threadsWaitForMutex();
+    r = serverSimApplyCommand(sim, 0, &cmd);
+    threadsReleaseMutex();
+
+    UT_ASSERT_MSG(r == CMD_OK,
+                  "classic mode with no locks returned %d, want CMD_OK", (int)r);
+    UT_ASSERT(serverSimGetClassicMode(sim));
+    UT_ASSERT_MSG(serverSimGetViewPolicy(sim, viewCategoryAlly) == viewPolicyOff,
+                  "classic mode did not write the ally view");
 
     serverSimDestroy(sim);
     return 0;

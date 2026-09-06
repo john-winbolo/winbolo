@@ -129,7 +129,15 @@ int run_lobby_lock_rejects_settings(void) {
     uint16_t composite = LOBBY_LOCK_GAME_TYPE | LOBBY_LOCK_RANKED |
                          LOBBY_LOCK_AUTO_LOCK_ON_GAME | LOBBY_LOCK_BASE_VIEW;
     serverSimSetServerLocks(sim, composite);
-    UT_ASSERT(serverSimGetServerLocks(sim) == composite);
+    /* The stored mask is the CLI mask plus its implied locks: base view
+     * is in the list, so classic mode — which writes the base view —
+     * comes along. See run_classic_mode_lock_implied. */
+    UT_ASSERT_MSG(serverSimGetServerLocks(sim) ==
+                      (composite | LOBBY_LOCK_CLASSIC_MODE),
+                  "stored mask = 0x%04X, want the CLI mask 0x%04X plus "
+                  "the implied classic-mode lock",
+                  (unsigned)serverSimGetServerLocks(sim),
+                  (unsigned)composite);
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_GAME_TYPE));
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_RANKED));
     UT_ASSERT(serverSimIsSettingLocked(sim, LST_AUTO_LOCK_ON_GAME));
@@ -169,6 +177,10 @@ int run_lobby_lock_mask_roundtrip(void) {
         LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
         LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE |
         LOBBY_LOCK_ALLIES_IN_TREES;
+    /* Every bit set means every implied lock is already present, so this
+     * mask is the one case that survives the round trip untouched. A
+     * mask missing an implied bit gains it — run_classic_mode_lock_implied
+     * covers that. */
     serverSimSetServerLocks(sim, allLocks);
     UT_ASSERT_MSG(serverSimGetServerLocks(sim) == allLocks,
                   "all-locks mask must round-trip unchanged");
