@@ -55,6 +55,30 @@ function M.traw(mx, my)
   return raw
 end
 
+-- M.ttype_peek(mx, my) — terrain type with NO change detection.
+--
+-- M.ttype and M.traw above are DETECTORS, not readers: each call primes
+-- terrain_prev for that tile and, when the tile has moved since the last call
+-- ON THAT TILE, pushes its key into changes.terrain — which threat.lua's
+-- check_terrain_dirty turns into a pill-danger recompute around the tile.
+-- The set of tiles the brain has "looked at", and when, is therefore part of
+-- the brain's state.
+--
+-- That makes ttype/traw ILLEGAL from debug-only or viz-gated code. The
+-- recorded (-brain-debug) brain runs blocks that lua_strip deletes from opt/,
+-- so it primes tiles the production brain never touches, and the two play
+-- different games. Found 2026-09-06: ONE call, in init.lua's
+-- stop_predict_live overlay, reading the tank tile's terrain for a speed cap.
+-- It moved threat.pill_at under the tank (6.92 -> 6.15 at brain tick 205 on
+-- seed 4242), which moved imdanger, which moved the steering.
+--
+-- Debug overlays, print2 arguments and anything else inside
+-- `if BRAIN_DEBUG_MODE` or `viz.is_on(...)` read terrain through THIS.
+-- threat.lua has its own copy of the same idea (raw_tt) for the same reason.
+function M.ttype_peek(mx, my)
+  return bit.band(get_terrain(mx, my), TERRAIN_MASK)
+end
+
 function M.in_map(mx, my)
   return mx >= 0 and mx <= 255 and my >= 0 and my <= 255
 end

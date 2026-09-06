@@ -2510,6 +2510,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- In DEBUG only, still run the scan to feed the best-spot overlays even when
   -- we can't place — gated on an overlay being on, so a live game (where
   -- BRAIN_DEBUG_MODE is false) never pays for this and just returns here.
+  --
+  -- BOTH those overlays MUST declare `default_on = false` in viz.lua. An
+  -- unattended -braindebug host (winbolods recording) pushes no _BT_VIZ_*
+  -- toggles, so viz.is_on() falls back to the declared default and a toggle
+  -- with no default reads as ON — which ran this scan in every recorded game
+  -- and in no production game. That is a different brain, and it broke
+  -- production-vs-recorded identity from tick 17701 on the seed-1 Oil Rig
+  -- 2v2 (found 2026-09-06; tests/prod_recorded_identity_test.py guards it).
   local viz_only = BRAIN_DEBUG_MODE
                    and (vizmod.is_on("pill_best_spots_back") or vizmod.is_on("pill_best_spots_aggro"))
   if only then
@@ -17125,14 +17133,34 @@ function M.warm_ready(state)
 end
 
 function M.get_pool_breakdown_json(state)
-  -- Run the ally-claimed REJECT sync every tick the grid is read so
-  -- the displayed _reject flags track live ally_state without waiting
-  -- for the next replan cycle.
+  -- THIS FUNCTION IS A REPORT. IT MUST NOT ADVANCE BRAIN STATE.
+  --
+  -- The host calls it once per bot per tick while recording (winbolods
+  -- -brain-debug, BrainTest's pool panel) and NEVER in a production game.
+  -- Anything it mutates is therefore state the recorded brain has and the
+  -- production brain does not -- a different brain, on the recorder's
+  -- schedule rather than the replan's.
+  --
+  -- It used to open with a refresh of the panel's reject flags:
+  --
+  --     sync_ally_claimed_rejects(state, nil, true)
+  --     apply_blitz_target(state, state._last_info)
+  --     apply_blitz_join_discount(state, state._last_info, state.world)
+  --     apply_blitz_capture_defer(state, state._last_info)
+  --
+  -- "so the displayed _reject flags track live ally_state without waiting for
+  -- the next replan cycle".  All four write cost_cache / pool state that
+  -- goal_selection then reads, and M.finalize_pools already runs the same four
+  -- on the real per-tick path -- so these were a SECOND application on a
+  -- different clock.  On seed 1 that repriced attack_pill at brain tick 15561
+  -- and the recorded bot 1 stayed on attack_pill where production switched to
+  -- defend_pill (found 2026-09-06; -bd-nopool, which skips this call, made the
+  -- recorded game byte-identical to production again).
+  --
+  -- Dropping them also makes the panel HONEST: it now shows the reject flags
+  -- the brain actually decided on at the last replan, not a fresher set the
+  -- brain never used.
   if state.player_number then _SELF_PN = state.player_number end
-  sync_ally_claimed_rejects(state, nil, true)
-  apply_blitz_target(state, state._last_info)
-  apply_blitz_join_discount(state, state._last_info, state.world)
-  apply_blitz_capture_defer(state, state._last_info)
   if not BRAIN_POOL_VIZ then
     return string.format(
       '{"phase":"%s","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"off","label":"Pool viz","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"BRAIN_POOL_VIZ is off","stale":-1,"active":false,"imminent":false,"reject":null}]}]}',

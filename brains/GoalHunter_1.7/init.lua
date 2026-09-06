@@ -2266,7 +2266,7 @@ function Brain.think(info)
     -- wipe. Default off; flip it on in the V window.
     if viz.is_on("stop_predict_live") and info.tankx then
       local _tmx, _tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
-      local _tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(_tmx, _tmy)]) or 16
+      local _tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype_peek(_tmx, _tmy)]) or 16
       local _ang = info.tank_angle or info.direction or 0
       local _espeed = (info.speed or 0) / 4  -- info.speed is engine speed ×4; model wants engine units
       local _psx, _psy, _trace = cpf.predict_stop(info.tankx, info.tanky, _ang, _espeed, _tcap, true)
@@ -7770,7 +7770,7 @@ function Brain.think(info)
     end
     -- Water-ahead LGM suppression indicator
     if state.pf and state.pf.next_mx and state.pf.next_mx >= 0 then
-      local ntt = U.ttype(state.pf.next_mx, state.pf.next_my)
+      local ntt = U.ttype_peek(state.pf.next_mx, state.pf.next_my)
       if ntt == C.T_RIVER or ntt == C.T_DEEPSEA or ntt == C.T_BOAT then
         viz.hud_text("hud_lgm_blocked", 10, 80, "LGM blocked: water ahead", "bottomleft", 255, 200, 50)
       end

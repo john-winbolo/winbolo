@@ -2432,7 +2432,7 @@ local function attack_pill_steer(state, world, info, goal)
     print2(string.format("HARDLINE_DRV t=%d tank=(%d,%d) inboat=%s spd=%d dir=%d look=(%d,%d) mdir=%d corr=%d next=(%s,%s) nextT=%s keys=%d taps=%d",
       state.tick or 0, tmx, tmy, tostring(info.inboat), info.speed or -1, info.direction or -1,
       lookx, looky, move_dir, mcorr, tostring(nx), tostring(ny),
-      (nx and nx >= 0) and tostring(U.ttype(nx, ny)) or "?", keys, taps))
+      (nx and nx >= 0) and tostring(U.ttype_peek(nx, ny)) or "?", keys, taps))
     return keys, taps
   end
 
@@ -4032,7 +4032,7 @@ function M.steer(state, world, info, goal)
       -- Fires here (in the nav overlay block) so it doesn't get skipped by
       -- later early returns.
       if pf.next_mx and pf.next_mx >= 0 then
-        local ntt = U.ttype(pf.next_mx, pf.next_my)
+        local ntt = U.ttype_peek(pf.next_mx, pf.next_my)
         if ntt == C.T_BUILDING or ntt == C.T_HALFBUILD then
           local wdist_wall = U.wdist(info.tankx, info.tanky,
                                      U.m2w(pf.next_mx), U.m2w(pf.next_my))

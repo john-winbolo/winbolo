@@ -6048,7 +6048,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- distance to the wall, and how long since the give-up timer last reset. Lets
     -- us see WHY a wall round-trip takes hundreds of ticks (LGM traveling far,
     -- stuck against terrain, or oscillating) instead of guessing from transitions.
-    if BRAIN_DEBUG_MODE and (now % 25 == 0) and idx <= #list then local _hw=list[idx].mx; local _hh=list[idx].my; local _lx=info.man_x and (bit.rshift(info.man_x, 8)) or -1; local _ly=info.man_y and (bit.rshift(info.man_y, 8)) or -1; print2(string.format("BUILD_HB t=%d idx=%d/%d wall=(%d,%d) wtt=%d man=%s lgm=(%d,%d) lgm2wall=%d tank=(%d,%d) tank2wall=%d pill=(%d,%d) prog_age=%d", now, idx, #list, _hw, _hh, U.ttype(_hw,_hh), tostring(info.man_status), _lx, _ly, (_lx>=0 and (math.abs(_lx-_hw)+math.abs(_ly-_hh)) or -1), tmx, tmy, math.abs(tmx-_hw)+math.abs(tmy-_hh), pmx, pmy, now-(goal._wall_build_last_progress or now))) end
+    if BRAIN_DEBUG_MODE and (now % 25 == 0) and idx <= #list then local _hw=list[idx].mx; local _hh=list[idx].my; local _lx=info.man_x and (bit.rshift(info.man_x, 8)) or -1; local _ly=info.man_y and (bit.rshift(info.man_y, 8)) or -1; print2(string.format("BUILD_HB t=%d idx=%d/%d wall=(%d,%d) wtt=%d man=%s lgm=(%d,%d) lgm2wall=%d tank=(%d,%d) tank2wall=%d pill=(%d,%d) prog_age=%d", now, idx, #list, _hw, _hh, U.ttype_peek(_hw,_hh), tostring(info.man_status), _lx, _ly, (_lx>=0 and (math.abs(_lx-_hw)+math.abs(_ly-_hh)) or -1), tmx, tmy, math.abs(tmx-_hw)+math.abs(tmy-_hh), pmx, pmy, now-(goal._wall_build_last_progress or now))) end
 
     -- Per-wall sub-timeout: if a single queue entry has been the
     -- current target for WALL_STALL_TICKS without finishing, skip to
@@ -6268,7 +6268,7 @@ function M.update_attack_substate(goal, state, world, info)
         local built_n, unbuilt_n = 0, 0
         for i, p in ipairs(list) do
           local tt0 = initial_tt[i]
-          local tt1 = U.ttype(p.mx, p.my)
+          local tt1 = U.ttype_peek(p.mx, p.my)
           local final_is_wall = (tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD or tt1 == C.T_PILLBOX)
           local initial_was_wall = (tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX)
           if final_is_wall and not initial_was_wall then
