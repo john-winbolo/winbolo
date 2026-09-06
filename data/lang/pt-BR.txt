@@ -1966,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Somente um skin na sua própria pasta de skins pode
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Este skin tem arte mais detalhada apenas para alguns sprites, então Corresponder ao zoom gera os mesmos tiles que Clássico. Alto detalhe usa a arte mais detalhada onde o skin a possui.
 STR_DLGSKIN_RECFILTER_LBL=Filtro recomendado:
 STR_DLGSKIN_RECOMMENDED_TAG=(recomendado)
+
+# Panorama do mapa e o mapa em tela cheia
+STR_MENU_MAP_OVERVIEW=Panorama do mapa
+STR_MENU_OVERVIEW_IN_WINDOW=Tela cheia
+STR_OVERVIEW_FOLLOWING=seguindo
+STR_OVERVIEW_FREE=livre
+STR_DLGKEYSETUP_OVERVIEWZOOM=Zoom do mapa (manter pressionado)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Seguir mapa (alternar)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Ampliar mapa
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Reduzir mapa
+STR_DLGWELCOME_SWITCH_CLASSIC=Mudar para o clássico
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Mudar para tela cheia
+
+# Configurações de Tela e som: tela cheia e os painéis de HUD do mapa
+STR_DLGSETTINGS_FULLSCREEN=Tela cheia
+STR_DLGSETTINGS_FULLSCREEN_TIP=Preenche a tela toda em vez de rodar em uma janela.\nLembrado para a próxima vez.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Transparência do newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Quanto do mapa aparece através do newswire na parte de\nbaixo da visão em tela cheia. 0% é sólido, e o controle\ndeslizante para em 90% para que não possa ficar invisível.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Ocultar o newswire automaticamente
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Esconde o newswire por baixo da tela depois de um\ntempo sem novas mensagens, e o traz de volta na\npróxima mensagem. Desativado o mantém na tela\ndurante toda a partida.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Transparência das ferramentas de construção
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Quanto do mapa aparece através das ferramentas de\nconstrução à esquerda da visão em tela cheia. 0% é\nsólido, e o controle deslizante para em 90% para que\nnão possam ficar invisíveis.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Transparência do painel de status
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Quanto do mapa aparece através do painel de status à\ndireita da visão em tela cheia - o construtor, abates\ne mortes, as linhas base/bunker/tanque, e as barras de\nestoque. 0% é sólido, e o controle deslizante para em\n90% para que não possa ficar invisível.
+
+# Legenda da visão de item
+STR_ITEMVIEW_PILL=Visão do bunker
+STR_ITEMVIEW_BASE=Visão da base
+STR_ITEMVIEW_ALLY=Visão de tanques aliados
+STR_ITEMVIEW_ALLY_NAMED=Visão de tanques aliados — {player}
+
+# Etiqueta de visibilidade do navegador de servidores
+STR_DLGBROWSER_VIEWS_LBL=Visões:
+STR_DLGBROWSER_VIEWS_CLASSIC=Clássico
+STR_DLGBROWSER_VIEWS_ALLYTREES=Aliados nas árvores

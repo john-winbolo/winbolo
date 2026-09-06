@@ -1968,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Nur ein Skin im eigenen Skin-Ordner kann veröffent
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Dieser Skin hat feinere Grafiken nur für einige Sprites, daher erzeugt "An Zoom anpassen" dieselben Kacheln wie "Klassisch". "Hohes Detail" verwendet die feineren Grafiken, wo der Skin sie hat.
 STR_DLGSKIN_RECFILTER_LBL=Empfohlener Filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(empfohlen)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=Kartenübersicht
+STR_MENU_OVERVIEW_IN_WINDOW=Vollbild
+STR_OVERVIEW_FOLLOWING=folgt
+STR_OVERVIEW_FREE=frei
+STR_DLGKEYSETUP_OVERVIEWZOOM=Kartenzoom (halten)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Kartenverfolgung (umschalten)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Karte vergrößern
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Karte verkleinern
+STR_DLGWELCOME_SWITCH_CLASSIC=Zu Klassisch wechseln
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Zu Vollbild wechseln
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=Vollbild
+STR_DLGSETTINGS_FULLSCREEN_TIP=Füllt den gesamten Bildschirm, statt in einem Fenster zu laufen.\nWird für das nächste Mal gemerkt.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire-Transparenz
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Wie viel von der Karte durch die Newswire am unteren Rand\nder Vollbildansicht durchscheint. 0% ist undurchsichtig, und\nder Regler stoppt bei 90%, damit sie nicht unsichtbar werden kann.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Newswire automatisch ausblenden
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Blendet die Newswire nach einer Weile ohne neue\nNachrichten am unteren Bildschirmrand aus und schiebt\nsie bei der nächsten Nachricht wieder hoch. Aus lässt\nsie das ganze Spiel über sichtbar.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Bauwerkzeug-Transparenz
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Wie viel von der Karte durch die Bauwerkzeuge am\nlinken Rand der Vollbildansicht durchscheint. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit sie\nnicht unsichtbar werden können.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Statusleisten-Transparenz
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Wie viel von der Karte durch die Statusleiste am\nrechten Rand der Vollbildansicht durchscheint - den\nLGM, Kills und Tode, die Basis-, Bunker- und\nPanzerzeilen sowie die Vorratsbalken. 0% ist\nundurchsichtig, und der Regler stoppt bei 90%, damit\nsie nicht unsichtbar werden kann.
+
+# Item view caption
+STR_ITEMVIEW_PILL=Bunkeransicht
+STR_ITEMVIEW_BASE=Basenansicht
+STR_ITEMVIEW_ALLY=Ansicht verbündeter Panzer
+STR_ITEMVIEW_ALLY_NAMED=Ansicht verbündeter Panzer — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=Ansichten:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klassisch
+STR_DLGBROWSER_VIEWS_ALLYTREES=Verbündete im Wald

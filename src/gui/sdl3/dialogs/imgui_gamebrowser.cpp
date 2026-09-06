@@ -150,7 +150,14 @@ struct ServerEntry {
  * all. Classic mode leads the list because it explains the policies
  * that follow it. Returns "" when the server is stock. */
 static std::string viewPolicyTag(const ServerEntry &e) {
-    static const char *kModeStr[] = { "always", "key", "decay", "off" };
+    /* Same four policy words the lobby, the hosting tab and the game info
+     * panel use, so one server's rules read the same wherever they show. */
+    const char *kModeStr[] = {
+        langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+        langGetText(STR_DLGLOBBY_VIEW_KEY),
+        langGetText(STR_DLGLOBBY_VIEW_DECAY),
+        langGetText(STR_DLGLOBBY_VIEW_OFF),
+    };
     struct { const char *letter; ViewPolicy value; ViewPolicy def; } cats[] = {
         { "P", e.pillView, viewPolicyAlways },
         { "B", e.baseView, viewPolicyOff    },
@@ -158,11 +165,11 @@ static std::string viewPolicyTag(const ServerEntry &e) {
     };
     std::string out;
     if (e.classicMode) {
-        out += "Classic";
+        out += langGetText(STR_DLGBROWSER_VIEWS_CLASSIC);
     }
     if (e.alliesInTrees) {
         if (!out.empty()) out += " ";
-        out += "Allies in trees";
+        out += langGetText(STR_DLGBROWSER_VIEWS_ALLYTREES);
     }
     for (const auto &c : cats) {
         if (c.value == c.def) continue;
@@ -174,7 +181,7 @@ static std::string viewPolicyTag(const ServerEntry &e) {
         out += kModeStr[idx];
     }
     if (out.empty()) return out;
-    return std::string("Views: ") + out;
+    return std::string(langGetText(STR_DLGBROWSER_VIEWS_LBL)) + " " + out;
 }
 
 static const char *gameTypeStr(gameType g) {

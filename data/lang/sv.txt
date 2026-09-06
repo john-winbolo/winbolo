@@ -1968,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Endast ett skin i din egen skinmapp kan publiceras.
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Det här skinnet har finare grafik för endast vissa sprites, så Matcha zoom bygger samma rutor som Klassisk. Hög detalj använder den finare grafiken där skinnet har den.
 STR_DLGSKIN_RECFILTER_LBL=Rekommenderat filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(rekommenderad)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=Kartöversikt
+STR_MENU_OVERVIEW_IN_WINDOW=Helskärm
+STR_OVERVIEW_FOLLOWING=följer
+STR_OVERVIEW_FREE=fri
+STR_DLGKEYSETUP_OVERVIEWZOOM=Kartzoom (håll)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Kartföljning (växla)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Zooma in kartan
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Zooma ut kartan
+STR_DLGWELCOME_SWITCH_CLASSIC=Byt till klassiskt
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Byt till helskärm
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=Helskärm
+STR_DLGSETTINGS_FULLSCREEN_TIP=Fyller hela skärmen istället för att köra i ett fönster.\nSparas till nästa gång.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire-genomskinlighet
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Hur mycket av kartan som syns genom newswiren längs\nnederkanten av helskärmsvyn. 0% är heltäckande, och\nreglaget stannar vid 90% så den inte kan göras osynlig.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Dölj newswiren automatiskt
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Låt newswiren glida ner under skärmens nederkant efter\natt inga nya meddelanden mottagits på ett tag, och\nglid tillbaka upp vid nästa meddelande. Av håller den\nkvar på skärmen hela spelet.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Byggverktygens genomskinlighet
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Hur mycket av kartan som syns genom byggverktygen\nnedför vänsterkanten av helskärmsvyn. 0% är heltäckande,\noch reglaget stannar vid 90% så de inte kan göras\nosynliga.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Statuspanelens genomskinlighet
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Hur mycket av kartan som syns genom statuspanelen\nnedför högerkanten av helskärmsvyn - LGM, dödar och\ndödsfall, bas-, bunker- och tankraderna, samt\nförrådsstaplarna. 0% är heltäckande, och reglaget\nstannar vid 90% så den inte kan göras osynlig.
+
+# Item view caption
+STR_ITEMVIEW_PILL=Bunkervy
+STR_ITEMVIEW_BASE=Basvy
+STR_ITEMVIEW_ALLY=Vy för allierade tanks
+STR_ITEMVIEW_ALLY_NAMED=Vy för allierade tanks — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=Vyer:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klassiskt
+STR_DLGBROWSER_VIEWS_ALLYTREES=Allierade i skogen

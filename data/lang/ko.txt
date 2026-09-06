@@ -1966,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=게시할 수 있는 스킨은 자신의 스킨 폴
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=이 스킨은 일부 스프라이트에만 더 정교한 그림이 있어서, 줌에 맞추기는 클래식과 같은 타일을 만들어요. 높은 디테일은 스킨에 정교한 그림이 있는 곳에서 그 그림을 사용해요.
 STR_DLGSKIN_RECFILTER_LBL=추천 필터:
 STR_DLGSKIN_RECOMMENDED_TAG=(추천)
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=지도 전체 보기
+STR_MENU_OVERVIEW_IN_WINDOW=전체 화면
+STR_OVERVIEW_FOLLOWING=추적
+STR_OVERVIEW_FREE=자유
+STR_DLGKEYSETUP_OVERVIEWZOOM=맵 확대 (홀드)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=맵 추적 (토글)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=맵 확대
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=맵 축소
+STR_DLGWELCOME_SWITCH_CLASSIC=클래식으로 전환
+STR_DLGWELCOME_SWITCH_FULLSCREEN=전체 화면으로 전환
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=전체 화면
+STR_DLGSETTINGS_FULLSCREEN_TIP=창 안이 아니라 화면 전체를 채웁니다.\n다음에도 이 설정이 기억됩니다.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire 투명도
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=전체 화면 하단의 Newswire 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Newswire 자동 숨기기
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=한동안 새 메시지가 없으면 Newswire를 화면 아래로\n숨기고, 다음 메시지가 오면 다시 올라옵니다. 꺼두면\n게임 내내 화면에 계속 표시됩니다.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=건설 도구 투명도
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=전체 화면 왼쪽의 건설 도구 사이로 맵이 얼마나 비쳐\n보이는지를 정합니다. 0%면 불투명하며, 슬라이더는\n90%까지만 움직여 완전히 투명해지지는 않습니다.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=상태 패널 투명도
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=전체 화면 오른쪽의 상태 패널(건설자, 킬과 데스, 기지·\n토치카·탱크 줄, 재고 바)이 맵을 얼마나 비쳐 보이게\n하는지를 정합니다. 0%면 불투명하며, 슬라이더는 90%\n까지만 움직여 완전히 투명해지지는 않습니다.
+
+# Item view caption
+STR_ITEMVIEW_PILL=토치카 뷰
+STR_ITEMVIEW_BASE=기지 뷰
+STR_ITEMVIEW_ALLY=아군 탱크 뷰
+STR_ITEMVIEW_ALLY_NAMED=아군 탱크 뷰 — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=표시:
+STR_DLGBROWSER_VIEWS_CLASSIC=클래식
+STR_DLGBROWSER_VIEWS_ALLYTREES=숲 속 아군

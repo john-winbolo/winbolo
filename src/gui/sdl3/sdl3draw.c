@@ -3449,19 +3449,23 @@ bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen) {
   if (cs == NULL || out == NULL || outLen == 0) return false;
   switch (clientSimGetViewKind(cs)) {
     case VIEW_KIND_PILL:
-      snprintf(out, outLen, "Pillbox View");
+      snprintf(out, outLen, "%s", langGetText(STR_ITEMVIEW_PILL));
       return true;
     case VIEW_KIND_BASE:
-      snprintf(out, outLen, "Base View");
+      snprintf(out, outLen, "%s", langGetText(STR_ITEMVIEW_BASE));
       return true;
     case VIEW_KIND_ALLY: {
       /* Name the ally we are riding along with. The player mirror is empty
          for a slot we have no name for yet; then just say what the view is. */
       const char *name = sdl3ImguiGetPlayerName(clientSimGetViewTarget(cs));
       if (name[0] != '\0') {
-        snprintf(out, outLen, "Allied Tank View \xE2\x80\x94 %s", name);
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        snprintf(out, outLen, "%s",
+                 langGetTextFmt(STR_ITEMVIEW_ALLY_NAMED, &args));
       } else {
-        snprintf(out, outLen, "Allied Tank View");
+        snprintf(out, outLen, "%s", langGetText(STR_ITEMVIEW_ALLY));
       }
       return true;
     }

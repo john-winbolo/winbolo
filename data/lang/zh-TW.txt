@@ -1966,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=只有位於您自己外觀資料夾中的外觀才
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=此外觀僅為部分精靈圖提供了更精細的美術素材，因此配合縮放產生的圖格與經典相同。高精細度會在外觀擁有精細素材之處使用它。
 STR_DLGSKIN_RECFILTER_LBL=建議的過濾方式：
 STR_DLGSKIN_RECOMMENDED_TAG=（建議）
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=地圖總覽
+STR_MENU_OVERVIEW_IN_WINDOW=全螢幕
+STR_OVERVIEW_FOLLOWING=跟隨
+STR_OVERVIEW_FREE=自由
+STR_DLGKEYSETUP_OVERVIEWZOOM=地圖縮放（按住）
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=地圖跟隨（切換）
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=地圖放大
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=地圖縮小
+STR_DLGWELCOME_SWITCH_CLASSIC=切換至經典
+STR_DLGWELCOME_SWITCH_FULLSCREEN=切換至全螢幕
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=全螢幕
+STR_DLGSETTINGS_FULLSCREEN_TIP=鋪滿整個螢幕，而不是顯示在視窗中。\n下次會記住這個設定。
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire 透明度
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=決定全螢幕檢視底部的 Newswire 能透出多少地圖\n內容。0% 為不透明，滑桿最高只能到 90%，\n因此無法完全透明。
+STR_DLGSETTINGS_NEWS_AUTOHIDE=自動隱藏 Newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=一段時間沒有新訊息時，將 Newswire 隱藏到螢幕\n下方，收到新訊息時再次滑出。關閉此項會讓它\n整場遊戲都保持顯示。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=建造工具透明度
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=決定全螢幕檢視左側的建造工具能透出多少地圖\n內容。0% 為不透明，滑桿最高只能到 90%，\n因此無法完全透明。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=狀態面板透明度
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=決定全螢幕檢視右側的狀態面板（建造者、擊殺和\n死亡、基地/碉堡/坦克列、庫存條）能透出多少\n地圖內容。0% 為不透明，滑桿最高只能到 90%，\n因此無法完全透明。
+
+# Item view caption
+STR_ITEMVIEW_PILL=碉堡視角
+STR_ITEMVIEW_BASE=基地視角
+STR_ITEMVIEW_ALLY=友軍坦克視角
+STR_ITEMVIEW_ALLY_NAMED=友軍坦克視角 — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=顯示:
+STR_DLGBROWSER_VIEWS_CLASSIC=經典
+STR_DLGBROWSER_VIEWS_ALLYTREES=樹林中的友軍

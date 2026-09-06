@@ -1421,6 +1421,20 @@ static const LangEntry langTable[] = {
     {2019, "How much of the map shows through the builder tools\ndown the left of the full screen view. 0% is solid,\nand the slider stops at 90% so they cannot be made\ninvisible."},
     {2020, "Status panel transparency"},
     {2021, "How much of the map shows through the status panel\ndown the right of the full screen view - the LGM,\nkills and deaths, the base, pillbox and tank rows,\nand the stock bars. 0% is solid, and the slider stops\nat 90% so it cannot be made invisible."},
+    {2022, "Fill the whole screen instead of running in a window.\nRemembered for next time."},
+
+    /* Item view caption — the corner label and the full screen map's
+     * caption both come through sdl3DrawGetItemViewLabel. */
+    {2023, "Pillbox View"},
+    {2024, "Base View"},
+    {2025, "Allied Tank View"},
+    {2026, "Allied Tank View \xE2\x80\x94 {player}"},
+
+    /* Server browser visibility tag. Short by design: the tag packs the
+     * whole rule set onto one line of the detail pane. */
+    {2027, "Views:"},
+    {2028, "Classic"},
+    {2029, "Allies in trees"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the

@@ -1509,6 +1509,18 @@ STR_DLGSETTINGS_BUILD_TRANSPARENCY=Builder tools transparency
 STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=How much of the map shows through the builder tools\ndown the left of the full screen view. 0% is solid,\nand the slider stops at 90% so they cannot be made\ninvisible.
 STR_DLGSETTINGS_STATUS_TRANSPARENCY=Status panel transparency
 STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=How much of the map shows through the status panel\ndown the right of the full screen view - the LGM,\nkills and deaths, the base, pillbox and tank rows,\nand the stock bars. 0% is solid, and the slider stops\nat 90% so it cannot be made invisible.
+STR_DLGSETTINGS_FULLSCREEN_TIP=Fill the whole screen instead of running in a window.\nRemembered for next time.
+
+# Item view caption — the corner label and the full screen map's caption
+STR_ITEMVIEW_PILL=Pillbox View
+STR_ITEMVIEW_BASE=Base View
+STR_ITEMVIEW_ALLY=Allied Tank View
+STR_ITEMVIEW_ALLY_NAMED=Allied Tank View — {player}
+
+# Server browser visibility tag in the detail pane
+STR_DLGBROWSER_VIEWS_LBL=Views:
+STR_DLGBROWSER_VIEWS_CLASSIC=Classic
+STR_DLGBROWSER_VIEWS_ALLYTREES=Allies in trees
 
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller

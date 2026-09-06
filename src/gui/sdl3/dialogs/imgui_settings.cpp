@@ -750,14 +750,13 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
         /* Read the window itself rather than the preference, so the tick still
            tells the truth after an OS-driven full screen change. */
         bool fs = (SDL_GetWindowFlags(sdl3DrawGetWindow()) & SDL_WINDOW_FULLSCREEN) != 0;
-        if (ImGui::Checkbox(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), &fs)) {
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_FULLSCREEN), &fs)) {
             /* Checkbox has already flipped fs to what the player asked for.
                Moving the window here would do it inside a live frame, so only
                record the request; each shell applies it once the frame ends. */
             ctx->pendingFullScreen = fs ? 1 : 0;
         }
-        imguiHelpTooltip("Fill the whole screen instead of running in a "
-                         "window.  Remembered for next time.");
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_TIP));
     }
 #endif
 

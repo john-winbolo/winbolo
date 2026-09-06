@@ -1583,6 +1583,16 @@
 #define STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP 2019
 #define STR_DLGSETTINGS_STATUS_TRANSPARENCY 2020
 #define STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP 2021
+#define STR_DLGSETTINGS_FULLSCREEN_TIP      2022
+/* Item view caption — the corner label and the full screen map's caption */
+#define STR_ITEMVIEW_PILL                   2023
+#define STR_ITEMVIEW_BASE                   2024
+#define STR_ITEMVIEW_ALLY                   2025
+#define STR_ITEMVIEW_ALLY_NAMED             2026
+/* Server browser visibility tag in the detail pane */
+#define STR_DLGBROWSER_VIEWS_LBL            2027
+#define STR_DLGBROWSER_VIEWS_CLASSIC        2028
+#define STR_DLGBROWSER_VIEWS_ALLYTREES      2029
 /* Gamepad rebinding (Configure Keys → Controller section) */
 #define STR_GP_SECTION                      1467
 #define STR_GP_REBIND_PROMPT                1468

@@ -1968,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=公開できるのは自分のスキンフォルダ
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=このスキンは一部のスプライトにのみ精細な絵を用意しているため、「ズームに合わせる」は「クラシック」と同じタイルになります。「高精細」はスキンに精細な絵がある部分でそれを使用します。
 STR_DLGSKIN_RECFILTER_LBL=推奨フィルター:
 STR_DLGSKIN_RECOMMENDED_TAG=（推奨）
+
+# Map Overview and the full screen map
+STR_MENU_MAP_OVERVIEW=マップ全体表示
+STR_MENU_OVERVIEW_IN_WINDOW=フルスクリーン
+STR_OVERVIEW_FOLLOWING=追従
+STR_OVERVIEW_FREE=自由
+STR_DLGKEYSETUP_OVERVIEWZOOM=マップズーム（長押し）
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=マップ追従（切替）
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=マップ拡大
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=マップ縮小
+STR_DLGWELCOME_SWITCH_CLASSIC=クラシックに切り替え
+STR_DLGWELCOME_SWITCH_FULLSCREEN=フルスクリーンに切り替え
+
+# Display & Sound settings: full screen and the map's HUD panels
+STR_DLGSETTINGS_FULLSCREEN=フルスクリーン
+STR_DLGSETTINGS_FULLSCREEN_TIP=ポップアップウィンドウではなく、画面全体に表示します。\n次回の起動でも記憶されます。
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire 透明度
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=フルスクリーン表示下部のNewswireから、マップが\nどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Newswireを自動的に隠す
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=しばらく新しいメッセージが届かないとNewswireを画面下へ\n消し、次のメッセージが来ると再び現れます。オフにすると\nゲーム中ずっと画面に表示されたままになります。
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=建設ツールの透明度
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=フルスクリーン表示左側の建設ツールから、マップが\nどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=ステータスパネルの透明度
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=フルスクリーン表示右側のステータスパネル（ビルダー、\n撃破と死亡、基地・トーチカ・タンクの行、在庫バー）から、\nマップがどれだけ透けて見えるかです。0%で不透明になり、\nスライダーは90%までしか動かないため透明にはなりません。
+
+# Item view caption
+STR_ITEMVIEW_PILL=トーチカ視点
+STR_ITEMVIEW_BASE=基地視点
+STR_ITEMVIEW_ALLY=味方戦車視点
+STR_ITEMVIEW_ALLY_NAMED=味方戦車視点 — {player}
+
+# Server browser visibility tag
+STR_DLGBROWSER_VIEWS_LBL=表示:
+STR_DLGBROWSER_VIEWS_CLASSIC=クラシック
+STR_DLGBROWSER_VIEWS_ALLYTREES=森の中の味方

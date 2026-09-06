@@ -1966,3 +1966,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Опубликовать можно только с
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=У этого скина более детальная графика есть только для некоторых спрайтов, поэтому «По масштабу» даёт те же тайлы, что и «Классическая». «Высокая детализация» использует более детальную графику там, где она есть у скина.
 STR_DLGSKIN_RECFILTER_LBL=Рекомендуемый фильтр:
 STR_DLGSKIN_RECOMMENDED_TAG=(рекомендуется)
+
+# Обзор карты и карта на весь экран
+STR_MENU_MAP_OVERVIEW=Обзор карты
+STR_MENU_OVERVIEW_IN_WINDOW=Полноэкранный режим
+STR_OVERVIEW_FOLLOWING=слежение
+STR_OVERVIEW_FREE=свободная
+STR_DLGKEYSETUP_OVERVIEWZOOM=Масштаб карты (удерживать)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Слежение на карте (переключение)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Увеличить карту
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Уменьшить карту
+STR_DLGWELCOME_SWITCH_CLASSIC=Переключиться на классический режим
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Переключиться на полноэкранный режим
+
+# Настройки «Экран и звук»: полноэкранный режим и HUD-панели карты
+STR_DLGSETTINGS_FULLSCREEN=Полноэкранный режим
+STR_DLGSETTINGS_FULLSCREEN_TIP=Заполняет весь экран вместо работы в окне.\nЗапоминается для следующего раза.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Прозрачность newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Насколько карта просвечивает сквозь newswire\nвдоль низа полноэкранного вида. 0% означает\nполную непрозрачность, а ползунок останавливается\nна 90%, чтобы её нельзя было сделать невидимой.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Автоскрытие newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Убирает newswire за нижний край экрана, если\nдолгое время не приходят новые сообщения, и\nвозвращает её обратно при следующем сообщении.\nВыключено — держит её на экране всю игру.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Прозрачность инструментов постройки
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Насколько карта просвечивает сквозь инструменты\nпостройки вдоль левого края полноэкранного вида.\n0% означает полную непрозрачность, а ползунок\nостанавливается на 90%, чтобы их нельзя было\nсделать невидимыми.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Прозрачность панели статуса
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Насколько карта просвечивает сквозь панель статуса\nвдоль правого края полноэкранного вида — LGM,\nубийства и смерти, строки базы, бункера и танка,\nа также полосы запасов. 0% означает полную\nнепрозрачность, а ползунок останавливается на 90%,\nчтобы её нельзя было сделать невидимой.
+
+# Подпись вида объекта
+STR_ITEMVIEW_PILL=Вид бункера
+STR_ITEMVIEW_BASE=Вид базы
+STR_ITEMVIEW_ALLY=Вид союзных танков
+STR_ITEMVIEW_ALLY_NAMED=Вид союзных танков — {player}
+
+# Тег видимости в браузере серверов
+STR_DLGBROWSER_VIEWS_LBL=Виды:
+STR_DLGBROWSER_VIEWS_CLASSIC=Классический
+STR_DLGBROWSER_VIEWS_ALLYTREES=Союзники в лесу

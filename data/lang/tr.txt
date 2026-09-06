@@ -1968,3 +1968,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Yalnızca kendi görünüm klasörünüzdeki bir g�
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Bu görünümün yalnızca bazı sprite'lar için daha ince çizimleri var, bu yüzden Yakınlaştırmaya Uydur, Klasik ile aynı karoları oluşturur. Yüksek Detay ise görünümün ince çizimi olduğu yerlerde onu kullanır.
 STR_DLGSKIN_RECFILTER_LBL=Önerilen filtre:
 STR_DLGSKIN_RECOMMENDED_TAG=(önerilen)
+
+# Harita Genel Görünümü ve tam ekran harita
+STR_MENU_MAP_OVERVIEW=Harita Genel Görünümü
+STR_MENU_OVERVIEW_IN_WINDOW=Tam Ekran
+STR_OVERVIEW_FOLLOWING=takip
+STR_OVERVIEW_FREE=serbest
+STR_DLGKEYSETUP_OVERVIEWZOOM=Harita Yakınlaştırma (Basılı Tutun)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Haritayı Takip Et (Değiştir)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Haritayı Yakınlaştır
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Haritayı Uzaklaştır
+STR_DLGWELCOME_SWITCH_CLASSIC=Klasiğe Geç
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Tam Ekrana Geç
+
+# Ekran ve Ses ayarları: tam ekran ve haritanın HUD panelleri
+STR_DLGSETTINGS_FULLSCREEN=Tam Ekran
+STR_DLGSETTINGS_FULLSCREEN_TIP=Pencerede çalışmak yerine tüm ekranı kaplar.\nBir sonraki sefer için hatırlanır.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire Saydamlığı
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Tam ekran görünümünün altındaki newswire'ın\nardından haritanın ne kadarı göründüğü. 0%\ntam opak demektir, kaydırıcı ise 90% noktasında\ndurur; böylece tamamen görünmez yapılamaz.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Newswire'ı Otomatik Gizle
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Bir süre yeni mesaj gelmeyince newswire'ı ekranın\naltından kaydırıp gizler ve bir sonraki mesajda\ngeri kaydırır. Kapalıyken oyun boyunca ekranda\nkalır.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=İnşaat Araçları Saydamlığı
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Tam ekran görünümünün solundaki inşaat\naraçlarının ardından haritanın ne kadarı\ngöründüğü. 0% tam opak demektir, kaydırıcı ise\n90% noktasında durur; böylece tamamen görünmez\nyapılamazlar.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Durum Paneli Saydamlığı
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Tam ekran görünümünün sağındaki durum panelinin\nardından haritanın ne kadarı göründüğü — LGM,\nöldürmeler ve ölümler, üs, bunker ve tank satırları,\nve stok çubukları. 0% tam opak demektir, kaydırıcı\nise 90% noktasında durur; böylece tamamen\ngörünmez yapılamaz.
+
+# Nesne görünümü altyazısı
+STR_ITEMVIEW_PILL=Bunker Görünümü
+STR_ITEMVIEW_BASE=Üs Görünümü
+STR_ITEMVIEW_ALLY=Müttefik Tank Görünümü
+STR_ITEMVIEW_ALLY_NAMED=Müttefik Tank Görünümü — {player}
+
+# Sunucu tarayıcısında görünürlük etiketi
+STR_DLGBROWSER_VIEWS_LBL=Görünümler:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klasik
+STR_DLGBROWSER_VIEWS_ALLYTREES=Ağaçlardaki Müttefikler
