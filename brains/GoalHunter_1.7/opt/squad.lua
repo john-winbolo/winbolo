@@ -346,7 +346,14 @@ end
 -- contested take with one suicider reads as the rule working
 -- (BLITZ_CONTESTED_SUICIDERS is 1), not as a designation that went missing.
 function M.blitz_contested_label(c)
-  if not c then return "contested{no}" end
+  -- Three states, not two. "no" means the rule LOOKED and found no hostile tank
+  -- inside BLITZ_CONTESTED_RANGE; "off" means the rule never ran at all because
+  -- BLITZ_CONTESTED_ALL_SUICIDERS is false (the default since 2026-09-05).
+  -- Collapsing them made a switched-off take read exactly like an uncontested
+  -- one, so a log could not tell "nobody was near" from "we never asked".
+  if not c then
+    return C.BLITZ_CONTESTED_ALL_SUICIDERS and "contested{no}" or "contested{off}"
+  end
   return string.format("contested{yes enemy=p%s dist=%.1f t=%d party=%d designated=%d}",
                        tostring(c.pn), c.dist or -1, c.tick or -1,
                        c.party or -1, c.n or 0)
