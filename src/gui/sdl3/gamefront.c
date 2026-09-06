@@ -2089,6 +2089,17 @@ static const char *viewPolicyPrefWord(int policy) {
                                      : "Always";
 }
 
+/* Reads back what viewPolicyPrefWord wrote. A word that is none of the four
+ * returns the caller's fallback, so a mistyped INI value cannot turn a
+ * category on. */
+static int viewPolicyFromPrefWord(const char *word, int fallback) {
+  if (strcmp(word, "Always") == 0) return viewPolicyAlways;
+  if (strcmp(word, "Key")    == 0) return viewPolicyKey;
+  if (strcmp(word, "Decay")  == 0) return viewPolicyDecay;
+  if (strcmp(word, "Off")    == 0) return viewPolicyOff;
+  return fallback;
+}
+
 static int viewDecayClamp(int secs) {
   if (secs < VIEW_DECAY_MIN_SECS) return VIEW_DECAY_MIN_SECS;
   if (secs > VIEW_DECAY_MAX_SECS) return VIEW_DECAY_MAX_SECS;
@@ -3270,9 +3281,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 
   /* Visibility rules for games this client hosts. Clamped on read so a
    * hand-edited INI can't inject an out-of-range decay. A word that is
-   * none of the four reads as Always for every category, where the
-   * dedicated server's -pillview / -baseview / -allyview fall back to
-   * that switch's own default (Off for bases). */
+   * none of the four reads as that row's own default, matching the
+   * dedicated server's -pillview / -baseview / -allyview (Off for bases). */
   {
     static const struct {
       const char *policyKey;
@@ -3292,15 +3302,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     for (int vi = 0; vi < (int)(sizeof(viewPrefs) / sizeof(viewPrefs[0])); vi++) {
       prefsGetString("GAME OPTIONS", viewPrefs[vi].policyKey,
                      viewPrefs[vi].policyDefault, buff, FILENAME_MAX);
-      if (strcmp(buff, "Key") == 0) {
-        *viewPrefs[vi].policyOut = viewPolicyKey;
-      } else if (strcmp(buff, "Decay") == 0) {
-        *viewPrefs[vi].policyOut = viewPolicyDecay;
-      } else if (strcmp(buff, "Off") == 0) {
-        *viewPrefs[vi].policyOut = viewPolicyOff;
-      } else {
-        *viewPrefs[vi].policyOut = viewPolicyAlways;
-      }
+      int fallback =
+          viewPolicyFromPrefWord(viewPrefs[vi].policyDefault, viewPolicyAlways);
+      *viewPrefs[vi].policyOut = viewPolicyFromPrefWord(buff, fallback);
       prefsGetString("GAME OPTIONS", viewPrefs[vi].decayKey, def, buff,
                      FILENAME_MAX);
       *viewPrefs[vi].decayOut = viewDecayClamp(atoi(buff));
