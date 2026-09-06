@@ -396,6 +396,8 @@ static const UnitTestEntry s_tests[] = {
     { "lv_hide_lobby_no_marker_anchor",          run_lv_hide_lobby_no_marker_anchor          },
     { "lv_hide_lobby_periodic_snapshot",         run_lv_hide_lobby_periodic_snapshot         },
     { "lv_logged_name_from_join_event",          run_lv_logged_name_from_join_event          },
+    { "lv_game_settings_from_walk",              run_lv_game_settings_from_walk              },
+    { "lv_game_settings_absent",                 run_lv_game_settings_absent                 },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
     { "spectator_seed_capture",                  run_spectator_seed_capture                  },
     { "blocks_stream",                           run_blocks_stream                           },

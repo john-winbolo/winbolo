@@ -60,6 +60,57 @@ static LogViewerState *g_lv = NULL;
 void lv_screenSetState(LogViewerState *lv) { g_lv = lv; }
 LogViewerState *lv_screenGetState(void) { return g_lv; }
 
+/* The lobby settings the recording carries, as the raw log_GameSettings
+ * payload (layout in docs/replay-format.md). Length 0 means no settings,
+ * which is every log written before the event existed. Held as raw bytes
+ * because the payload is append-only: the reader that draws it takes the
+ * fields it knows and ignores anything past them. */
+static BYTE s_gameSettings[LV_GAME_SETTINGS_MAX];
+static int  s_gameSettingsLen = 0;
+/* Set once the load-time walk has read the whole file. What it leaves in the
+ * store is the last settings event the file holds, which is the settings the
+ * round was played under — no such event is written after the round starts.
+ * A live feed gets no walk, so this stays FALSE there. */
+static bool s_gameSettingsWalked = FALSE;
+
+/* Keep payload as the current settings. A zero length clears the store. */
+static void lv_screenStoreGameSettings(const BYTE *payload, int len) {
+  if (payload == NULL || len <= 0) {
+    s_gameSettingsLen = 0;
+    return;
+  }
+  if (len > LV_GAME_SETTINGS_MAX) {
+    len = LV_GAME_SETTINGS_MAX;
+  }
+  memcpy(s_gameSettings, payload, (size_t)len);
+  s_gameSettingsLen = len;
+}
+
+/* A settings event the decoder passed. On a live feed this is the only way
+ * the settings arrive. On a loaded file the walk has already read the whole
+ * stream, so an event the playhead crosses is an older one it has seen and
+ * discarded — replaying it would put the lobby's opening settings back in
+ * place of the round's. */
+static void lv_screenPlaybackGameSettings(const BYTE *payload, int len) {
+  if (s_gameSettingsWalked) {
+    return;
+  }
+  lv_screenStoreGameSettings(payload, len);
+}
+
+int lv_screenGetGameSettings(BYTE *out, int maxLen) {
+  int len = s_gameSettingsLen;
+
+  if (out == NULL || len <= 0) {
+    return 0;
+  }
+  if (len > maxLen) {
+    len = maxLen;
+  }
+  memcpy(out, s_gameSettings, (size_t)len);
+  return len;
+}
+
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
 BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
@@ -416,6 +467,10 @@ void lv_screenUpdateView(updateType value) {
 *********************************************************/
 void lv_screenSetup() {
   int a = 0;
+  /* Every load path runs through here, so drop the previous log's recorded
+     settings before the new one's walk can collect its own. */
+  lv_screenStoreGameSettings(NULL, 0);
+  s_gameSettingsWalked = FALSE;
   g_lv->gmeStartDelay = 0;
   g_lv->gmeLength = UNLIMITED_GAME_TIME;
   g_lv->isPlaying = FALSE;
@@ -1102,6 +1157,13 @@ void lv_screenProcessLog(unsigned short numEvents) {
         snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
       }
+      break;
+    case log_GameSettings:
+      /* Panel data, not a chat line: the Game Information window reads the
+         settings back out of the store, so nothing goes to the newswire. */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      lv_screenPlaybackGameSettings((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
     case log_BalanceApplied:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
@@ -2015,8 +2077,24 @@ static bool walkReadSlotName(BYTE code) {
   return TRUE;
 }
 
-/* Like walkSkipEvents, but decodes the two events that carry a slot name;
- * every other event is skipped by the shared helper. */
+/* Read a log_GameSettings payload — a length byte then that many bytes — into
+ * the settings store. Entered with the reader just past the framed length.
+ * The last one in the file wins, and the walk keeps going, because a lobby
+ * edit writes another event and no settings event follows the round start.
+ * Returns FALSE on a short read. */
+static bool walkReadGameSettings(void) {
+  BYTE blob[LV_GAME_SETTINGS_MAX];
+  int  len;
+
+  if (logReadBytes(blob, 1) != 1) return FALSE;
+  len = blob[0];
+  if (len > 0 && logReadBytes(blob, len) != len) return FALSE;
+  lv_screenStoreGameSettings(blob, len);
+  return TRUE;
+}
+
+/* Like walkSkipEvents, but decodes the two events that carry a slot name and
+ * the lobby settings; every other event is skipped by the shared helper. */
 static bool walkScanNames(unsigned short numEvents) {
   unsigned short i;
   BYTE code;
@@ -2035,6 +2113,9 @@ static bool walkScanNames(unsigned short numEvents) {
       evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
       payloadPos = lv_logGetCurrentPosition();
       if (named && !walkReadSlotName(code)) return FALSE;
+      /* Only the v2 arm looks for settings: the event postdates v0 and v1,
+         so no file the arm below reads can contain one. */
+      if (code == log_GameSettings && !walkReadGameSettings()) return FALSE;
       lv_logSetPosition(payloadPos + evLen);
     } else {
       if (named) {
@@ -2097,6 +2178,10 @@ static void lv_walkCollectSlotNames(void) {
 
   lv_logSetPosition(savedPos);
   lv_blocksSetKey(savedKey);
+  /* The whole stream has been read: whatever settings the store holds now are
+     the last the file carries, and playback must not put an earlier set back
+     in their place. */
+  s_gameSettingsWalked = TRUE;
 }
 
 /* Log time (ms) at which the round started (the lobby's world rewrite); 0 if
@@ -2708,6 +2793,8 @@ void lv_decoderDestroy(LogViewerState *lv) {
 bool lv_screenCloseLog() {
   g_lv->isPlaying = FALSE;
   g_lv->logLoaded = FALSE;
+  lv_screenStoreGameSettings(NULL, 0);
+  s_gameSettingsWalked = FALSE;
 
   lv_blocksDestroy();
   lv_screenDestroy();

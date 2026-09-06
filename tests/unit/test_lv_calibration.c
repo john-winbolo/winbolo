@@ -676,3 +676,120 @@ int run_lv_logged_name_from_join_event(void) {
   remove(path);
   return 0;
 }
+
+/* One log_GameSettings event: the pascal-form blob the writer emits, a length
+ * byte then the settings bytes (layout in docs/replay-format.md). */
+static void putGameSettings(LogBuf *b, const uint8_t *settings, uint8_t len) {
+  uint8_t payload[1 + 255];
+  payload[0] = len;
+  memcpy(payload + 1, settings, len);
+  putEventFrame(b, log_GameSettings, payload, (uint16_t)(1 + len));
+}
+
+/* The lobby's opening settings and the set the round is played under, as the
+ * host would leave them after editing the visibility rules, the game type and
+ * the time limit in the lobby. */
+static const uint8_t s_settingsOpened[14] = {
+    0x0C,             /* pill always, base off, ally always, no classic/trees */
+    0x00, 0x1E,       /* pill decay 30s */
+    0x00, 0x1E,       /* base decay 30s */
+    0x00, 0x1E,       /* ally decay 30s */
+    0x01,             /* game type: open */
+    0x00,             /* ai: none */
+    0x01,             /* flags: hidden mines */
+    0x00, 0x00,       /* time minutes (no limit set) */
+    0x00, 0x00        /* lobby locks */
+};
+static const uint8_t s_settingsPlayed[14] = {
+    0xF9,             /* pill key, base decay, ally off, classic, trees */
+    0x00, 0x0F,       /* pill decay 15s */
+    0x00, 0x2D,       /* base decay 45s */
+    0x00, 0x3C,       /* ally decay 60s */
+    0x03,             /* game type: strict tournament */
+    0x02,             /* ai: yes, advantage */
+    0x0A,             /* flags: time limit on, ranked */
+    0x00, 0x0C,       /* time limit 12 minutes */
+    0x0A, 0x41        /* lobby locks */
+};
+
+/*
+ * The settings a round was played under are the last log_GameSettings the file
+ * holds: the lobby writes one when it opens and another when the round starts,
+ * and a seek into the round restores from a snapshot that is past both. So the
+ * load-time walk has to carry them, and what it collects has to survive the
+ * replay of the earlier event the playhead crosses on its way in.
+ */
+int run_lv_game_settings_from_walk(void) {
+  const char *path = "lv_game_settings.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  BYTE got[LV_GAME_SETTINGS_MAX];
+  int len;
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, false);   /* lobby: empty world */
+  putGameSettings(&b, s_settingsOpened, (uint8_t)sizeof(s_settingsOpened));
+  putNoEvents(&b, 50);
+  putEventFrame(&b, log_LobbyExit, NULL, 0);
+  putGameSettings(&b, s_settingsPlayed, (uint8_t)sizeof(s_settingsPlayed));
+  putSnapshot(&b, true);    /* the world rewrite the round starts on */
+  putNoEvents(&b, 100);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, path);
+  UT_ASSERT_MSG(lv != NULL, "synthetic settings log failed to build/load");
+
+  len = lv_screenGetGameSettings(got, (int)sizeof(got));
+  UT_ASSERT_MSG(len == (int)sizeof(s_settingsPlayed),
+                "collected %d settings bytes (want %d)", len,
+                (int)sizeof(s_settingsPlayed));
+  UT_ASSERT_MSG(memcmp(got, s_settingsPlayed, sizeof(s_settingsPlayed)) == 0,
+                "the store holds the lobby's opening settings, not the last "
+                "event in the file");
+
+  lv_decoderDestroy(lv);
+  remove(path);
+  return 0;
+}
+
+/*
+ * A log written before the event existed carries no settings, and opening one
+ * after a log that did must not leave the earlier log's settings on show.
+ */
+int run_lv_game_settings_absent(void) {
+  const char *withPath = "lv_game_settings_with.wbv";
+  const char *withoutPath = "lv_game_settings_without.wbv";
+  LogBuf b;
+  LogViewerState *lv;
+  BYTE got[LV_GAME_SETTINGS_MAX];
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putGameSettings(&b, s_settingsPlayed, (uint8_t)sizeof(s_settingsPlayed));
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, withPath);
+  UT_ASSERT_MSG(lv != NULL, "synthetic settings log failed to build/load");
+  UT_ASSERT_MSG(lv_screenGetGameSettings(got, (int)sizeof(got)) ==
+                    (int)sizeof(s_settingsPlayed),
+                "the settings log reported no settings");
+  lv_decoderDestroy(lv);
+
+  b.len = 0;
+  putHeader(&b);
+  putSnapshot(&b, true);
+  putNoEvents(&b, 50);
+  putU8(&b, LOG_QUIT);
+
+  lv = loadSynthetic(&b, withoutPath);
+  UT_ASSERT_MSG(lv != NULL, "synthetic settings-free log failed to build/load");
+  UT_ASSERT_MSG(lv_screenGetGameSettings(got, (int)sizeof(got)) == 0,
+                "a log with no settings event reported the previous log's");
+
+  lv_decoderDestroy(lv);
+  remove(withPath);
+  remove(withoutPath);
+  return 0;
+}

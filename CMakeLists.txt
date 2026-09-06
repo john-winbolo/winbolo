@@ -3827,6 +3827,8 @@ set(_unit_test_names
     lv_hide_lobby_no_marker_anchor
     lv_hide_lobby_periodic_snapshot
     lv_logged_name_from_join_event
+    lv_game_settings_from_walk
+    lv_game_settings_absent
     blocks_stream
     stream_load
     stream_pump

@@ -710,6 +710,14 @@ int run_lv_hide_lobby_periodic_snapshot(void);
  * the log's own join event instead. */
 int run_lv_logged_name_from_join_event(void);
 
+/* Load-time settings walk (test_lv_calibration.c): the settings a round was
+ * played under are the last log_GameSettings the file holds, so the walk
+ * collects them and a replay of the lobby's earlier event does not put the
+ * opening settings back. A log with no settings event reports none, including
+ * one opened straight after a log that had them. */
+int run_lv_game_settings_from_walk(void);
+int run_lv_game_settings_absent(void);
+
 /* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
  * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
  * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
