@@ -2144,9 +2144,11 @@ extern "C" void imguiSettingsShow(void) {
         if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
         /* Same deal for a skin change: the reload happens after Present. */
         if (ctx.wantSkinReload) pendingSkinReload = true;
+#if !BOLO_MOBILE
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
+#endif
 
         ImGui::EndChild(); /* ##settingsScroll */
 
