@@ -37,10 +37,18 @@ each variant here checks one of them.
      gets the pill back for assertion 4.
 
   B  THE repair_pill SPLIT.  One badly worn pill 18 tiles away -- outside the
-     leash, so repair_pill as a TANK goal means "relocate until the repair
-     becomes leash-reachable" and nothing else.  The tank must drive, the
-     pool-5 row must flip to `REJECT builder_can (leash 8, eta N)` the moment
-     it is in range, and the MAN must finish it.  One executor, two feeders.
+     repair leash, so repair_pill as a TANK goal means "relocate until the
+     repair becomes leash-reachable" and nothing else.  The tank must drive, it
+     must HAND OFF the moment the man can walk the rest, and the MAN must finish
+     it.  One executor, two feeders -- and either feeder counts: the pool-5 row
+     going INF with `REJECT builder_can (leash N, eta M)`, or a repair_pill-
+     SEEDED dispatch.  Since the 2026-09-05 repair rescore it is always the
+     second: the seed used to be priced under MIN_SCORE at the leash edge and
+     sat refused for a few replans (which is when the pool-5 row printed its
+     line), and now it fires on the first in-leash tick.  check_B has the
+     arithmetic.  What is asserted either way is the hand-off -- the tank
+     stopping short and the man walking the last ~11 tiles -- not the constant
+     and not which feeder won.
 
   B2 UNDER-FIRE CLOCK.  Bad ground (the take_cover pill strip) plus a scripted
      shooter putting shells on OUR TANK, with a worn pill inside the leash.
@@ -105,7 +113,8 @@ sys.path.insert(0, str(HERE))
 import generate_builder_pool_map as G   # noqa: E402
 
 # constants.lua
-LEASH = 8
+LEASH = 8              # BUILDER_POOL_LEASH -- the FARM row's reach
+REPAIR_LEASH = 11      # BUILDER_POOL_REPAIR_LEASH -- rebuild/topup reach
 UNDER_FIRE_TICKS = 100
 RESERVE_MARGIN = 40
 
@@ -117,11 +126,66 @@ TICKS = {"A": 9000, "B": 4000, "B2": 4000, "C": 5000, "D": 12000}
 POOL_RE = re.compile(
     r"BUILDER_POOL t=(\d+) owner=(\S+) elig=(.*?) cands=(\d+) ok=(\d+) "
     r"trees=(\d+)/res=(\d+).*?reserve_eta=(\S+) under_fire=(\S+) job=(\S+)")
-# BP_DISPATCH t=453 job=topup target=(126,126) [seeded_by=x ]score=... eta=36 trip=92 ...
+# BP_DISPATCH t=453 job=topup target=(126,126) [ seeded_by=x]score=N (TERMS)[ [linear]]
+#             eta=36 trip=92 trees=40-3 front=12 ...
+#
+# TERMS is one group, not three, because there are now TWO formulas behind it
+# (builder_pool.M.score_terms) and the group count must not depend on which one
+# ran:
+#   linear  score 362 = hp_w(30) x missing(15) = 450 - trip_w(0.25) x trip(352t) = 88
+#   legacy  val 184 - trip 95 - danger 0
+# check_terms() below re-derives the score from whichever shape turned up, so
+# "the row's arithmetic closes" is still asserted on both.
 DISP_RE = re.compile(
     r"BP_DISPATCH t=(\d+) job=(\S+) target=\((\d+),(\d+)\)(.*?) score=(-?[\d.]+) "
-    r"\(val (-?[\d.]+) - trip (-?[\d.]+) - danger (-?[\d.]+)\) "
+    r"\((.*?)\)(?: \[linear\])? "
     r"eta=(\S+) trip=(\S+) trees=(\d+)-(\d+) front=(-?\d+)")
+LINEAR_TERMS_RE = re.compile(
+    r"score (-?[\d.]+) = hp_w\((\d+)\) x missing\((\d+)\) = (-?[\d.]+) - "
+    r"trip_w\(([\d.]+)\) x trip\((\S+?)t\) = (-?[\d.]+)")
+LEGACY_TERMS_RE = re.compile(
+    r"val (-?[\d.]+) - trip (-?[\d.]+) - danger (-?[\d.]+)")
+
+
+def check_terms(score, terms):
+    """Re-derive `score` from the printed term breakdown.
+
+    Returns (ok, human_readable).  The point of this assertion has never been
+    the particular constants -- it is that every factor the pool used is ON the
+    line, so a reader can hand-check the number without opening constants.lua.
+    That contract holds for both formulas, so this checks both."""
+    m = LINEAR_TERMS_RE.match(terms)
+    if m:
+        printed, hp_w, missing, value, trip_w, trip, c_trip = (
+            float(m.group(1)), float(m.group(2)), float(m.group(3)),
+            float(m.group(4)), float(m.group(5)), float(m.group(6)),
+            float(m.group(7)))
+        why = (f"score {score:.0f} = hp_w({hp_w:.0f}) x missing({missing:.0f}) "
+               f"= {value:.0f} - trip_w({trip_w}) x trip({trip:.0f}t) "
+               f"= {c_trip:.0f} [linear]")
+        if abs(hp_w * missing - value) > 0.51:
+            return False, why + f" -- but {hp_w} x {missing} is not {value}"
+        if abs(trip_w * trip - c_trip) > 0.51:
+            return False, why + f" -- but {trip_w} x {trip} is not {c_trip}"
+        if abs(score - (value - c_trip)) > 0.51:
+            return False, why + f" -- but {value} - {c_trip} is not {score}"
+        if abs(score - printed) > 0.51:
+            return False, why + (f" -- the terms say {printed} and the score= "
+                                 f"field says {score}")
+        return True, why
+    m = LEGACY_TERMS_RE.match(terms)
+    if m:
+        val, trip_c, dgr_c = (float(m.group(1)), float(m.group(2)),
+                              float(m.group(3)))
+        why = (f"score {score:.0f} = val {val:.0f} - trip {trip_c:.0f} - "
+               f"danger {dgr_c:.0f}")
+        if abs(score - (val - trip_c - dgr_c)) > 0.51:
+            return False, why + (f" -- but {val} - {trip_c} - {dgr_c} = "
+                                 f"{val - trip_c - dgr_c:.1f}")
+        return True, why
+    return False, (f"the dispatch line's term breakdown '{terms}' matches "
+                   "neither the linear nor the legacy shape -- did "
+                   "builder_pool.M.score_terms change without this test?")
 # BP_DENY t=267 job=topup target=(126,126) reason=discovery:friendly_fire score=93 trip=178 ...
 DENY_RE = re.compile(
     r"BP_DENY t=(\d+) job=(\S+) target=\((\d+),(\d+)\) reason=(.*?) elig=(.*?) "
@@ -312,16 +376,13 @@ def check_A(sess, logs, build_dir):
               "feeder -- an ordinary side-quest may only fire when the stack "
               "says yes.")
         return 1
-    # ...and the row's arithmetic closes: score == val - trip - danger.
-    score, val, trip_c, dgr_c = (float(d0[5]), float(d0[6]),
-                                 float(d0[7]), float(d0[8]))
-    if abs(score - (val - trip_c - dgr_c)) > 0.51:
-        print(f"FAIL (3): the dispatch row does not add up -- score={score} but "
-              f"{val} - {trip_c} - {dgr_c} = {val - trip_c - dgr_c:.1f}")
+    # ...and the row's arithmetic closes, whichever formula priced it.
+    ok_terms, why = check_terms(float(d0[5]), d0[6])
+    if not ok_terms:
+        print(f"FAIL (3): the dispatch row does not add up -- {why}")
         return 1
     print(f"  3 OK: dispatched at t={d0[0]} job={d0[1]} target=({d0[2]},{d0[3]}) "
-          f"eta={d0[9]} trip={d0[10]} front={d0[13]}; "
-          f"score {score:.0f} = val {val:.0f} - trip {trip_c:.0f} - danger {dgr_c:.0f}; "
+          f"eta={d0[7]} trip={d0[8]} front={d0[11]}; {why}; "
           f"verdict '{v0}'"
           + (" (seeded by a feeder)" if seeded else ""))
 
@@ -369,19 +430,69 @@ def check_B(sess, logs, build_dir):
     print(f"  0 OK: repair_pill held the tank for {len(relocate)} tick(s) "
           f"(t={relocate[0]}..{relocate[-1]}) -- the relocate half of the split")
 
-    # 1. ...and stood down the moment the man could walk it.
+    # 1. ...and handed off the moment the man could walk it, rather than
+    #    driving the last tiles itself.
+    #
+    #    TWO SHAPES OF HAND-OFF, and either one is the thing under test. The
+    #    pool-5 row going INF with `builder_can (leash N, eta M)` is the tank
+    #    goal standing down; a repair_pill-SEEDED dispatch is the same goal
+    #    handing its work to the one executor. They are the two feeders the
+    #    variant's headline names, and which of them wins is a RACE that the
+    #    2026-09-05 repair rescore changed the outcome of:
+    #
+    #      before  a seeded row at the leash edge was priced
+    #              VALUE_TOPUP(60) + PER_HP(6) x 12 = 132 against 0.5 x a
+    #              ~276-tick round trip = 138, i.e. -6, under MIN_SCORE(20).
+    #              So the seed was REFUSED for several replans while the tank
+    #              closed in, and the pool-5 row printed REPAIR_SPLIT in the
+    #              gap.
+    #      after   the same row is 30 x 12 - 0.25 x 370 = 268 and fires on the
+    #              FIRST tick the pill comes inside the repair leash -- which
+    #              is the same tick builder_can_repair would first say yes, so
+    #              the man is already out by the next replan and the pool-5 row
+    #              never gets a turn.
+    #
+    #    The hand-off still happened, three tiles earlier than it used to. What
+    #    must not happen is the tank driving onto the pill and repairing from
+    #    on top of it, so the walk itself is checked below.
     ours_split = [s for s in split if (int(s[2]), int(s[3])) == target]
-    if not ours_split:
-        print(f"FAIL (1): the pool-5 row never flipped to REJECT builder_can "
-              f"for {target}, so the tank goal never handed off -- it would "
-              "have driven all the way onto the pill itself.")
+    seeded_disp = [d for d in disp if (int(d[2]), int(d[3])) == target
+                   and "seeded_by=repair_pill" in d[4]]
+    if not ours_split and not seeded_disp:
+        print(f"FAIL (1): neither feeder handed off for {target} -- no "
+              f"REPAIR_SPLIT line and no repair_pill-seeded dispatch. The tank "
+              "goal would have driven all the way onto the pill itself.")
+        for ln in [l for l in text.splitlines() if "BP_DENY" in l][-6:]:
+            print("   " + ln.strip())
         return 1
-    s0 = ours_split[0]
-    if int(s0[0]) < relocate[0]:
-        print(f"FAIL (1): the split fired at t={s0[0]}, before the relocate "
-              f"even started at t={relocate[0]} -- that is not a hand-off.")
-        return 1
-    print(f"  1 OK: split at t={s0[0]} hp={s0[4]} REJECT {s0[5]}")
+    if ours_split:
+        s0 = ours_split[0]
+        if int(s0[0]) < relocate[0]:
+            print(f"FAIL (1): the split fired at t={s0[0]}, before the relocate "
+                  f"even started at t={relocate[0]} -- that is not a hand-off.")
+            return 1
+        print(f"  1 OK: split at t={s0[0]} hp={s0[4]} REJECT {s0[5]}")
+    else:
+        d = seeded_disp[0]
+        # eta is the ONE-WAY walk in ticks. Three tiles of grass is 48, so
+        # anything at or above that means the tank stopped well short and the
+        # MAN covered the rest -- which is the invariant, whichever feeder fired.
+        eta = int(d[7]) if d[7].isdigit() else 0
+        if int(d[0]) < relocate[0]:
+            print(f"FAIL (1): the hand-off dispatch fired at t={d[0]}, before "
+                  f"the relocate started at t={relocate[0]} -- not a hand-off.")
+            return 1
+        if eta < 48:
+            print(f"FAIL (1): the repair_pill feeder handed off at t={d[0]} "
+                  f"with a walk of only {eta} ticks (~{eta / 16:.1f} tiles) -- "
+                  f"the tank had already driven onto the pill, which is the "
+                  f"thing the split exists to stop.")
+            return 1
+        print(f"  1 OK: the repair_pill feeder handed off at t={d[0]} with the "
+              f"man walking {eta}t (~{eta / 16:.1f} tiles of grass) -- the tank "
+              f"stopped short. (No REPAIR_SPLIT line: since the 2026-09-05 "
+              f"rescore the seed fires on the first in-leash tick, so the "
+              f"pool-5 row never gets a replan in which to print one.)")
 
     # 2. the man finished it.
     ours = [d for d in disp if (int(d[2]), int(d[3])) == target]
@@ -396,7 +507,7 @@ def check_B(sess, logs, build_dir):
     owner, v = verdict.get(int(d0[0]), ("?", "?"))
     seeded = "seeded_by" in d0[4]
     print(f"  2 OK: dispatched at t={d0[0]} job={d0[1]} target=({d0[2]},{d0[3]}) "
-          f"owner={owner} verdict='{v}' trees={d0[11]}-{d0[12]} "
+          f"owner={owner} verdict='{v}' trees={d0[9]}-{d0[10]} "
           f"({'seeded by the feeder' if seeded else 'as an ordinary side-quest'})")
 
     hp = read_hp(build_dir, "B")
@@ -409,7 +520,8 @@ def check_B(sess, logs, build_dir):
           f"t={rises[0][0]} to {rises[0][1]}/{G.PILLS_MAX_HEALTH}"
           + (f"; BP_DONE outcome={done[0][4]}" if done else ""))
     print("PASS (B): the tank relocated until the repair was leash-reachable, "
-          "the pool-5 row stood down with its reason, and the man finished it.")
+          "one of the two feeders handed off rather than driving the last "
+          "tiles, and the man finished it.")
     return 0
 
 
@@ -595,7 +707,7 @@ def check_D(sess, logs, build_dir):
         if "seeded_by" in d[4]:
             continue
         rv = res_at.get(int(d[0]))
-        trip = d[10]
+        trip = d[8]
         if rv and trip != "-" and int(trip) + RESERVE_MARGIN > rv[0]:
             violations.append((d[0], trip, rv))
     if violations:
@@ -663,7 +775,7 @@ def check_D(sess, logs, build_dir):
         print("FAIL (3): the pill's armour never rose. HP trace: "
               + ", ".join(f"{t}:{v}" for t, v in hp[:16]))
         return 1
-    print(f"  3 OK: dispatched at t={d0[0]} trip={d0[10]}; pill armour rose at "
+    print(f"  3 OK: dispatched at t={d0[0]} trip={d0[8]}; pill armour rose at "
           f"sim t={rises[0][0]} to {rises[0][1]}/{G.PILLS_MAX_HEALTH}"
           + (f"; BP_DONE outcome={done[0][4]}" if done else ""))
     print("PASS (D): the reservation is declared from the real tank-travel ETA, "
