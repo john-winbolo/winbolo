@@ -40,6 +40,9 @@ local bit = require('bitcompat')
 --   BP_DONE      t=.. job=.. outcome=..     he came home and the job took
 --   BP_ABORT     t=.. job=.. why=..         he came home and it did not
 --   BP_SEED_DROP t=.. target=.. reason=..   a feeder named a pill that is gone
+--   BP_ALLY_CAPTURE t=.. pill#.. BLOCKED/RELEASED  an ally is driving over to
+--                                           SCOOP this corpse; edge-triggered
+--                                           on (tile, ally), never per tick
 -- ...plus REPAIR_SPLIT (goals.lua), which is the tank goal standing down
 -- because the man can already walk the job from where the tank is.
 -- =========================================================================
@@ -214,6 +217,79 @@ function M.ally_claim_on(state, info, mx, my, now, our_tick)
 end
 
 -- -------------------------------------------------------------------------
+-- Ally CAPTURE guard.
+--
+-- The bpj claim above arbitrates who REPAIRS a pill. It has nothing to say
+-- about the other way a corpse can already be spoken for: an ally driving over
+-- to SCOOP it. Rebuilding that corpse turns it into a live friendly pill --
+-- undriveable -- so the ally's trip and the kill that made the corpse are both
+-- thrown away, and our four trees bought the team nothing.
+--
+-- The advert is the ordinary /info state slate, which allies send on every goal
+-- change (plus a 30 s heartbeat):
+--     goal=capture_pill|pill_place   target=<pill id>
+-- and, when the goal carries no object id, `mx`/`my` instead -- init.lua only
+-- spends the bytes on the tile when nothing else identifies the target (the
+-- _need_mxmy gate). So: match on the id when the advert has one, on the tile
+-- when it does not. A repositioning capture carries BOTH, and either match is
+-- the same pill.
+--
+-- ENDING THE BLOCK. set_info replaces an ally's slate wholesale, so the slot
+-- always holds its LATEST advert and nothing else. A move-on is therefore
+-- simply "the slot no longer names this pill", which ends the block on the tick
+-- the new advert lands, at any age. The TTL is only for the ally that stops
+-- talking at all (dead, kicked, removed): see the note on
+-- BUILDER_POOL_ALLY_CAPTURE_TTL in constants.lua for why it is measured on
+-- last_tick rather than state_tick.
+--
+-- Returns nil when nobody is coming for the tile, else { pn, age } for the
+-- LOWEST-numbered ally that is (deterministic, like every other tie-break here).
+-- -------------------------------------------------------------------------
+function M.ally_capture_on(state, info, mx, my, pill_id, now)
+  if not C.BUILDER_POOL_ALLY_CAPTURE_GUARD then return nil end
+  local kinds = C.BUILDER_POOL_ALLY_CAPTURE_GOALS
+                or { capture_pill = true, pill_place = true }
+  local ttl = C.BUILDER_POOL_ALLY_CAPTURE_TTL or 350
+  local self_pn = info and info.player_number
+  local best = nil
+  -- No max_age on the iterator: the TTL below is the age test, and it is a
+  -- tighter one than SQUAD_ALLY_MAX_AGE. iter_active still short-circuits when
+  -- no slot has ever been heard from.
+  for pn, slot in ally_state.iter_active(now, nil) do
+    if pn ~= self_pn and (not best or pn < best.pn) then
+      local h = slot.info
+      if h and kinds[h.goal] then
+        local matched = false
+        local tid = tonumber(h.target)
+        if tid and pill_id and tid == pill_id then
+          matched = true
+        else
+          local amx, amy = tonumber(h.mx), tonumber(h.my)
+          if amx and amy and amx == mx and amy == my then matched = true end
+        end
+        if matched then
+          local age = now - (slot.last_tick or now)
+          if age <= ttl then best = { pn = pn, age = age } end
+        end
+      end
+    end
+  end
+  return best
+end
+
+-- One debug line per (pill, ally) TRANSITION, not per tick: the block itself
+-- lives on the row's reject string (and therefore on the panel and BP_DENY),
+-- and a 350-tick block would otherwise be 350 identical lines. Keyed on the
+-- tile and the ally, so a hand-off from one ally to another re-prints.
+-- The WHOLE body sits inside `if BRAIN_DEBUG_MODE`, not behind an early
+-- `return`, so lua_strip's --strip-block leaves opt/ with an empty stub rather
+-- than a hollowed-out if/else full of dead locals (which is what the early
+-- return produced -- see the "lua_strip eats else branches" note in the
+-- release checklist). Nothing outside this function reads _bp_acap_seen.
+local function log_ally_capture(state, now, mx, my, id, ac)
+end
+
+-- -------------------------------------------------------------------------
 -- Tree reserve: never spend below what the active/imminent goal needs.
 --
 -- Four parts, summed:
@@ -352,7 +428,10 @@ end
 -- up (rebuilding makes it un-grabbable and wastes the kill). The pool does
 -- not, because the pool exists for the case where the tank is NOT going to go
 -- and get it -- that is the whole incident. A corpse the tank has actually
--- committed to collecting is still refused, by the our_target guard below.
+-- committed to collecting is still refused, by the our_target guard below --
+-- and one an ALLY has committed to collecting by the ally_capture guard in
+-- score_row (2026-09-05: our_target only ever looked at OUR OWN goal, so we
+-- happily rebuilt a corpse a teammate was two seconds from scooping).
 --
 -- Pills between LEASH and 2xLEASH are collected too, as out_of_leash REJECT
 -- rows: the panel should show that we can SEE the job and say why the man is
@@ -530,6 +609,21 @@ function M.score_row(state, world, info, now, row, ctx)
     if ac then
       row.ally = ac
       reject = string.format("ally_repairing (p%d eta %dt)", ac.pn, ac.eta)
+    end
+  end
+  -- An ally is coming to SCOOP this corpse (not to repair it). Rebuild only --
+  -- a top-up leaves the pill alive either way, so it cannot spoil a pickup, and
+  -- a farm row has no pill at all.
+  if row.type == "rebuild" then
+    local acap = M.ally_capture_on(state, info, row.mx, row.my, row.id, now)
+    log_ally_capture(state, now, row.mx, row.my, row.id, acap)
+    if acap and not reject then
+      row.ally_capture = acap
+      reject = string.format("ally_capturing (p%d, %dt)", acap.pn, acap.age)
+      -- BP_DENY is edge-triggered on the reject STRING, and this one carries an
+      -- age that moves every tick -- which would make a 350-tick block 350 deny
+      -- lines. Give the deny key an age-free form of the same reason.
+      row.reject_key = string.format("ally_capturing:p%d", acap.pn)
     end
   end
   -- Pool-wide reasons are applied to the row LAST so a row that would also
@@ -1064,7 +1158,8 @@ function M.update(state, world, info, now)
     -- so a take that moves from plan_position to shoot_pill re-prints instead
     -- of staying silent behind an unchanged row-level reason.
     local key = string.format("%s:%d:%d:%s:%s", top.type, top.mx, top.my,
-                              tostring(top.reject or (can_send and "?" or "no_man")),
+                              tostring(top.reject_key or top.reject
+                                       or (can_send and "?" or "no_man")),
                               ok and "yes" or tostring(reason))
     if state._bp_deny_key ~= key then
       state._bp_deny_key = key

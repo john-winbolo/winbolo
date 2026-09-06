@@ -3192,6 +3192,37 @@ M.BUILDER_POOL_IDLE_MODES = {
 M.BUILDER_POOL_CLAIM_MAX_AGE = M.SQUAD_ALLY_MAX_AGE or 1750  -- claim expiry (heartbeat gap)
 M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 
+-- ── Ally CAPTURE guard (2026-09-05) ──────────────────────────────────────
+-- The bpj claim above says "my man is fixing that pill". It says nothing about
+-- the OTHER way an ally can be spoken for by a corpse: driving over to SCOOP
+-- it. Rebuilding a dead pill an ally is on its way to collect makes it a live
+-- friendly pill -- undriveable -- so the kill and the trip are both wasted, and
+-- our four trees bought the team nothing it did not already have.
+--
+-- Allies already advertise that intent on the /info state slate as
+-- `goal=capture_pill|pill_place` plus `target=<pill id>` (or `mx`/`my` when the
+-- goal carries no object id -- see the _need_mxmy gate in init.lua's broadcast
+-- block). This guard reads that advert and refuses the rebuild.
+--
+-- TWO ways the block ends, and they are deliberately different:
+--   MOVE-ON   the ally's LATEST advert names a different goal or a different
+--             pill. Ends the block THAT TICK, whatever its age -- the slate is
+--             replaced wholesale by set_info, so "latest" is all there is.
+--   SILENCE   the ally stopped talking altogether (killed, kicked, removed).
+--             The block then expires TTL ticks after its last advert of ANY
+--             kind. 50 ticks = 1 s throughout this file, so 350 = 7 s.
+--
+-- The age is measured against slot.last_tick (the ally's last message of any
+-- kind), NOT slot.state_tick (its last full /info state). /info state is
+-- event-driven plus a 30 s heartbeat, so a 7 s budget on state_tick would
+-- expire mid-drive on an ally whose goal simply has not changed -- which is
+-- precisely the ally we must keep blocking. Freshness here means "is this ally
+-- still alive and talking"; whether its GOAL is current is answered by the
+-- move-on test, which needs no clock.
+M.BUILDER_POOL_ALLY_CAPTURE_GUARD = true   -- master switch; false = pre-2026-09-05
+M.BUILDER_POOL_ALLY_CAPTURE_TTL   = 350    -- brain ticks (50/s), i.e. 7 s of silence
+M.BUILDER_POOL_ALLY_CAPTURE_GOALS = { capture_pill = true, pill_place = true }
+
 -- ── Job lifecycle ────────────────────────────────────────────────────────
 M.BUILDER_POOL_JOB_MAX_TICKS = 900   -- the man never came back (18 s): drop the job record
                                      -- so a lost LGM cannot hold the claim forever
@@ -3288,6 +3319,10 @@ M.PRESETS = {
     -- i.e. nobody). BLITZ_CONTESTED_SUICIDERS needs NO entry here: false below
     -- disables the whole contested rule, so it is never read under preset=keel.
     BLITZ_CONTESTED_ALL_SUICIDERS = false,
+    -- 2026-09-05: the builder pool and the tank's repair filter now refuse to
+    -- rebuild a dead pill an ALLY has advertised as its capture_pill /
+    -- pill_place target. KEEL rebuilt it and made the ally's scoop impossible.
+    BUILDER_POOL_ALLY_CAPTURE_GUARD = false,
   },
 }
 

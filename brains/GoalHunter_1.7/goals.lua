@@ -6594,6 +6594,13 @@ local function filter_repair_pill(obj, state, info)
       return false
     end
   end
+  -- The OTHER ally interest in a corpse -- "I am driving over to scoop it" --
+  -- is NOT filtered out here, deliberately. It is priced at INF with the reason
+  -- on the row instead (search ally_capturing in the pool-5 block below), for
+  -- the always-show rule the sibling builder_can split states in full: a row
+  -- that reads `REJECT ally_capturing (p3, 42t)` is how the guard is checked
+  -- against the BUILDER strip's matching row. INF cannot win a competition, so
+  -- the refusal is just as hard as a `return false` here would be.
   if C.REPAIR_FIX_ENABLED and obj.health == 0 then
     print2(string.format("REPAIR_DEAD_FILTER t=%d pill@(%d,%d) dead trees=%d/%d %s", state and state.tick or 0, obj.mx, obj.my, info.trees or 0, C.REPAIR_DEAD_MIN_TREES or 4, ((info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4)) and "REJECT(low_trees)" or "enqueue"))
     if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
@@ -12009,6 +12016,40 @@ function M.step_eval_queue(state, world, info)
           end
         elseif state._rsplit_seen then
           state._rsplit_seen[id] = nil
+        end
+      end
+
+      -- ALLY CAPTURE GUARD (2026-09-05). A dead friendly pill an ALLY has
+      -- advertised as its capture_pill / pill_place target is that ally's
+      -- pickup: rebuilding it in place makes it a live friendly pill, which is
+      -- undriveable, so the scoop and the kill that produced the corpse are
+      -- both wasted. filter_repair_pill's own dead-pill rule already covers the
+      -- case where WE could take the corpse (capture outranks rebuild); this is
+      -- the same rule for a teammate, and it is the only thing that covers the
+      -- corner where capture rejects for us (blocked / stale tile) but the ally
+      -- can still drive over. Reason and expiry: builder_pool.ally_capture_on.
+      -- INF + the chip rather than a filter drop, for the always-show rule.
+      if pool_idx == 5 and (obj.health or 0) == 0
+         and C.BUILDER_POOL_ALLY_CAPTURE_GUARD and not entry_skipped_builder then
+        local _acap = bpool.ally_capture_on(state, info, obj.mx, obj.my, id, now)
+        if _acap then
+          c = 1e30
+          entry_skipped_builder = string.format("ally_capturing (p%d, %dt)",
+                                                _acap.pn, _acap.age)
+          -- Edge-triggered on the pill, like REPAIR_SPLIT above: one line when
+          -- the block starts, not one per re-eval for as long as it lasts.
+          state._racap_seen = state._racap_seen or {}
+          if state._racap_seen[id] ~= _acap.pn then
+            state._racap_seen[id] = _acap.pn
+            print2(string.format(
+              "REPAIR_ALLY_CAPTURE t=%d pill#%s@(%d,%d) hp=0 REJECT %s"
+              .. " -- p%d advertised %s on it, and a rebuilt pill cannot be"
+              .. " picked up", now, tostring(id), obj.mx, obj.my,
+              entry_skipped_builder, _acap.pn,
+              ally_state.get_key(_acap.pn, "goal")))
+          end
+        elseif state._racap_seen then
+          state._racap_seen[id] = nil
         end
       end
 
