@@ -221,6 +221,34 @@ static bool gOverviewNewsAutoHide       = TRUE;
 static int  gOverviewBuildTransparency  = 0;
 static int  gOverviewStatusTransparency = 0;
 
+/* A panel the pointer is resting on goes solid, whatever it is set to, and
+   settles back to the setting once the pointer leaves — so a panel can be left
+   see-through enough to play through and still be read by pointing at it.
+
+   Which panels are under the pointer is worked out by the input half in
+   sdl3imgui.cpp, which is already hit-testing these same three rects to keep
+   clicks on the panels off the map. It runs after the draw, so the fade is
+   working from where the pointer was last frame; at these durations that is
+   not something a player can see. Out is the slower of the two, so clipping a
+   corner on the way past does not flash the panel.
+
+   Each fade is how far its panel has travelled from the setting to solid: 0
+   at the setting, 1 fully solid. A panel set solid has nowhere to go and none
+   of this shows. */
+#define OVERVIEW_HUD_FADE_IN_MS  150
+#define OVERVIEW_HUD_FADE_OUT_MS 400
+
+typedef enum {
+  OVERVIEW_HUD_PANEL_STATUS = 0,
+  OVERVIEW_HUD_PANEL_BUILD,
+  OVERVIEW_HUD_PANEL_NEWSWIRE,
+  OVERVIEW_HUD_PANEL_COUNT
+} OverviewHudPanel;
+
+static bool   gOverviewHudHovered[OVERVIEW_HUD_PANEL_COUNT];
+static float  gOverviewHudFade[OVERVIEW_HUD_PANEL_COUNT];
+static Uint64 gOverviewHudFadeTick = 0;
+
 /* How far the map is taken down behind the returning-to-lobby caption. Dark
    enough that the caption reads and the round is plainly over, light enough
    that the map is still the thing on screen. */
@@ -791,6 +819,13 @@ void sdl3DrawSetStatusPanelTransparency(int percent) {
 
 int sdl3DrawGetStatusPanelTransparency(void) {
   return gOverviewStatusTransparency;
+}
+
+void sdl3DrawSetHudPanelHover(bool overStatus, bool overBuild,
+                              bool overNewswire) {
+  gOverviewHudHovered[OVERVIEW_HUD_PANEL_STATUS]   = overStatus;
+  gOverviewHudHovered[OVERVIEW_HUD_PANEL_BUILD]    = overBuild;
+  gOverviewHudHovered[OVERVIEW_HUD_PANEL_NEWSWIRE] = overNewswire;
 }
 
 void sdl3DrawSetNewswireAutoHide(bool on) {
@@ -1779,6 +1814,36 @@ static Uint8 hudBackingAlpha(int transparency) {
   return (Uint8)((OVERVIEW_HUD_BACK_ALPHA * (100 - transparency)) / 100);
 }
 
+/* Move every panel's fade one frame on, towards solid under the pointer and
+   back towards the setting away from it. Called once per HUD frame, before
+   anything is drawn from it. */
+static void hudStepHoverFades(Uint64 now) {
+  float in  = (float)(now - gOverviewHudFadeTick) / (float)OVERVIEW_HUD_FADE_IN_MS;
+  float out = (float)(now - gOverviewHudFadeTick) / (float)OVERVIEW_HUD_FADE_OUT_MS;
+
+  /* The first HUD frame, and the first after the mode has been away long
+     enough for the clock to have run on without it, land wherever the pointer
+     is rather than sweeping there from the last frame's fade. */
+  if (gOverviewHudFadeTick == 0 || now - gOverviewHudFadeTick > 1000) {
+    in  = 1.0f;
+    out = 1.0f;
+  }
+  gOverviewHudFadeTick = now;
+
+  for (int i = 0; i < OVERVIEW_HUD_PANEL_COUNT; i++) {
+    gOverviewHudFade[i] += gOverviewHudHovered[i] ? in : -out;
+    if (gOverviewHudFade[i] < 0.0f) gOverviewHudFade[i] = 0.0f;
+    if (gOverviewHudFade[i] > 1.0f) gOverviewHudFade[i] = 1.0f;
+  }
+}
+
+/* What one panel is actually drawn at: its setting, closed towards solid by
+   however far it has faded up under the pointer. */
+static int hudHoverTransparency(int transparency, OverviewHudPanel panel) {
+  float fade = gOverviewHudFade[panel];
+  return (int)((float)transparency * (1.0f - fade) + 0.5f);
+}
+
 /* The status column's rows plus its divider, which is the most pieces any one
    panel is made of. */
 #define HUD_BACKING_MAX_PIECES (OVERVIEW_HUD_COUNT + 1)
@@ -1924,11 +1989,14 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   bool drawHud = overviewHudLayout(w, h, &hud) &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
   if (drawHud) {
+    Uint64 now = SDL_GetTicks();
+
+    hudStepHoverFades(now);
+
     /* Slide the newswire: wanted on screen while its text has changed within
        the hold time, off the bottom edge otherwise. The offset moves the
        backing, the chrome frame, the slice and the click rect together, so
        everything below reads the adjusted rects. */
-    Uint64 now     = SDL_GetTicks();
     Uint64 lastMsg = sdl3DrawGetMessageActivityTick();
     /* Auto-hide off wants it up whatever the newswire has been doing, so it
        rides up on the next frame and stays there. */
@@ -1973,13 +2041,21 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     float originX = 0.0f;
     float originY = menuBarHeight;
 
-    /* Each panel's share of every colour it is drawn in, from its setting. */
-    Uint8 colAlpha       = hudPanelAlpha(gOverviewStatusTransparency);
-    Uint8 buildAlpha     = hudPanelAlpha(gOverviewBuildTransparency);
-    Uint8 newsAlpha      = hudPanelAlpha(gOverviewNewsTransparency);
-    Uint8 colBackAlpha   = hudBackingAlpha(gOverviewStatusTransparency);
-    Uint8 buildBackAlpha = hudBackingAlpha(gOverviewBuildTransparency);
-    Uint8 newsBackAlpha  = hudBackingAlpha(gOverviewNewsTransparency);
+    /* Each panel's share of every colour it is drawn in: its setting, less
+       whatever the pointer resting on it has taken back towards solid. */
+    int colTrans   = hudHoverTransparency(gOverviewStatusTransparency,
+                                          OVERVIEW_HUD_PANEL_STATUS);
+    int buildTrans = hudHoverTransparency(gOverviewBuildTransparency,
+                                          OVERVIEW_HUD_PANEL_BUILD);
+    int newsTrans  = hudHoverTransparency(gOverviewNewsTransparency,
+                                          OVERVIEW_HUD_PANEL_NEWSWIRE);
+
+    Uint8 colAlpha       = hudPanelAlpha(colTrans);
+    Uint8 buildAlpha     = hudPanelAlpha(buildTrans);
+    Uint8 newsAlpha      = hudPanelAlpha(newsTrans);
+    Uint8 colBackAlpha   = hudBackingAlpha(colTrans);
+    Uint8 buildBackAlpha = hudBackingAlpha(buildTrans);
+    Uint8 newsBackAlpha  = hudBackingAlpha(newsTrans);
 
     SDL_FRect colBack = { originX + hud.columnX, originY + hud.columnY,
                           hud.columnW, hud.columnH };

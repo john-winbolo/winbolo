@@ -116,6 +116,15 @@ int  sdl3DrawGetBuildPanelTransparency(void);
 void sdl3DrawSetStatusPanelTransparency(int percent);
 int  sdl3DrawGetStatusPanelTransparency(void);
 
+/* Which of the three panels the pointer is resting on. A panel named here
+   fades up to solid and holds there until it stops being named, so a panel
+   left see-through enough to play through can still be read by pointing at
+   it; one set solid has nowhere to fade and none of this shows on it. The
+   input half calls this while it is already hit-testing the same three rects
+   to keep clicks on the panels off the map. */
+void sdl3DrawSetHudPanelHover(bool overStatus, bool overBuild,
+                              bool overNewswire);
+
 /* Counter bumped every time the tile atlas is rebuilt. A caller that
  * builds its own sheet from tileLoaderBuildSheet can hold the value it
  * last saw and rebuild when it no longer matches — that is how a skin

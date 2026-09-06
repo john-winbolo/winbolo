@@ -1787,6 +1787,11 @@ static void renderOverviewInWindow(ClientSim *cs) {
     float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
     if (!sdl3DrawGetOverviewInWindowRect(&rx, &ry, &rw, &rh)) return;
 
+    /* Cleared here rather than only set below, so a frame that never reaches
+       the hit-test cannot leave a panel stuck faded up under a pointer that
+       has gone. */
+    sdl3DrawSetHudPanelHover(false, false, false);
+
     ImGui::SetNextWindowPos(ImVec2(rx, ry));
     ImGui::SetNextWindowSize(ImVec2(rw, rh));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -1828,20 +1833,29 @@ static void renderOverviewInWindow(ClientSim *cs) {
            right-drag that began on the map keeps panning either way — that
            path keys off the item being active, not hovered. */
         OverviewHudLayout hud;
-        bool haveHud   = sdl3DrawGetOverviewHudLayout(&hud);
-        bool overBuild = false;
-        bool overHud   = false;
-        ImVec2 mouse   = ImGui::GetMousePos();
+        bool haveHud    = sdl3DrawGetOverviewHudLayout(&hud);
+        bool overBuild  = false;
+        bool overStatus = false;
+        bool overNews   = false;
+        ImVec2 mouse    = ImGui::GetMousePos();
         if (haveHud) {
             overBuild = overviewHudRectHit(mouse, rx, ry, hud.buildX, hud.buildY,
                                            hud.buildW, hud.buildH);
-            overHud = overBuild ||
-                      overviewHudRectHit(mouse, rx, ry, hud.columnX, hud.columnY,
-                                         hud.columnW, hud.columnH) ||
-                      overviewHudRectHit(mouse, rx, ry,
-                                         hud.newswireX, hud.newswireY,
-                                         hud.newswireW, hud.newswireH);
+            overStatus = overviewHudRectHit(mouse, rx, ry,
+                                            hud.columnX, hud.columnY,
+                                            hud.columnW, hud.columnH);
+            overNews = overviewHudRectHit(mouse, rx, ry,
+                                          hud.newswireX, hud.newswireY,
+                                          hud.newswireW, hud.newswireH);
         }
+        bool overHud = overBuild || overStatus || overNews;
+
+        /* The same three hits drive the fade in sdl3draw.c, so a panel the
+           pointer is resting on comes up solid to be read. Qualified by
+           `hovered`, which is false when a dialog or a vote widget is over the
+           map there: the pointer is on that, not on the HUD under it. */
+        sdl3DrawSetHudPanelHover(hovered && overStatus, hovered && overBuild,
+                                 hovered && overNews);
 
         /* The build items are the only interactive part of the HUD; a click
            anywhere else on it is simply swallowed. Same trio the classic
