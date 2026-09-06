@@ -3078,6 +3078,59 @@ M.BUILDER_POOL_DANGER_W = 1.5   -- threat.at() at the target tile
 M.BUILDER_POOL_MIN_SCORE = 20   -- below this the errand is not worth the man's time at all
                                 -- (keeps the farm row from firing on every quiet tick)
 
+-- ── Repair rows: damage, and TIME. Nothing else. (Andrew, 2026-09-05) ─────
+-- The author's rule for repairing pills, verbatim: "it should linearly scale
+-- so closer gets priority, but damage is the most important, up to 11 tiles.
+-- The danger on the tile should not matter. The time to get there is what it
+-- should count for 'distance' (close with lots of swamp in between will be
+-- slower to repair than far but all road) -- it should easily beat any harvest
+-- trees, unless you don't have enough trees to repair of course."
+--
+-- So a rebuild/topup row is priced by TWO numbers and no others:
+--
+--   score = REPAIR_HP_W x missing_hp - REPAIR_TRIP_W x round_trip_ticks
+--
+-- missing_hp = PILLS_MAX_HEALTH - hp, so a corpse is a flat 15 and the row
+-- ranges 120 (the 4-hp minimum top-up) .. 450 (a corpse). No base constant, no
+-- front-line clock, no threat term:
+--   * the FRONT CLOCK is gone because damage already IS the urgency the clock
+--     was standing in for, and mixing the two made a lightly-worn pill on the
+--     line outbid a corpse in the rear;
+--   * the DANGER term is gone by explicit instruction. The tile's threat does
+--     not change how much the pill is worth or how long the walk takes.
+-- Trip is the SIMULATED LGM WALK (brainPathfinderLgmTravelTicks), out and back
+-- plus LGM_BUILD_TIME, which is the whole point of the rule: swamp/crater at 4
+-- wu/tick is 64 ticks a tile against road/grass at 16 wu/tick = 16 ticks a
+-- tile, so "4 tiles through swamp" (272t out) prices ABOVE "8 tiles on road"
+-- (128t out) exactly as the author asked.
+--
+-- REPAIR_TRIP_W is half the old TRIP_W: at 0.25 an 11-tile road round trip
+-- (~372t) costs 93, so a corpse at the leash edge (450 - 93 = 357) still beats
+-- a 4-hp top-up under the tank's tracks (120). Damage first, distance second.
+--
+-- FARM: unchanged formula, and the crossover lands on the tree gate by itself.
+-- A top-up is only affordable when trees - reserve >= 1, i.e. trees >= 5 with
+-- the default base reserve of 4; at 5 trees the farm row is worth
+-- 15 + 12 x (12 - 5) = 99, under the 120 a 4-hp top-up is worth before its
+-- trip is charged. Every tree count at which a repair can be paid for is a
+-- tree count at which the repair outranks farming. Below it the tree_reserve
+-- gate refuses the repair and the farm row is what runs -- which is the
+-- author's "unless you don't have enough trees to repair of course".
+M.BUILDER_POOL_REPAIR_LINEAR = true   -- false = the pre-2026-09-05 formula
+                                      -- (VALUE_REBUILD/TOPUP + front clock -
+                                      -- TRIP_W x trip - DANGER_W x threat)
+M.BUILDER_POOL_REPAIR_HP_W   = 30     -- score per point of missing armour
+M.BUILDER_POOL_REPAIR_TRIP_W = 0.25   -- score per tick of simulated round trip
+-- Repair reach. 11 tiles (MANHATTAN, same measure as BUILDER_POOL_LEASH), for
+-- rebuild and topup rows only -- the farm row keeps the 8-tile leash, because
+-- opportunistic wood was never worth a longer walk. The walk-sim budget covers
+-- it with room to spare: the slowest ground the LGM can cross is swamp/crater/
+-- rubble at 4 wu/tick, i.e. 256/4 = 64 ticks a tile, so the worst 11-tile
+-- straight-line trip is 11 x 64 = 704 ticks against a
+-- BUILDER_POOL_LGM_MAX_TICKS budget of 2000 (which is charged ONE WAY -- see
+-- M.lgm_trip). No raise needed.
+M.BUILDER_POOL_REPAIR_LEASH  = 11
+
 -- ── Eligibility ──────────────────────────────────────────────────────────
 -- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
 -- our tile is non-zero", which is true for most of a firefight's quiet moments
@@ -3321,6 +3374,14 @@ M.PRESETS = {
     -- rebuild a dead pill an ALLY has advertised as its capture_pill /
     -- pill_place target. KEEL rebuilt it and made the ally's scoop impossible.
     BUILDER_POOL_ALLY_CAPTURE_GUARD = false,
+    -- 2026-09-05: repair rows (rebuild/topup) are now priced
+    -- HP_W(30) x missing - TRIP_W(0.25) x round_trip and nothing else -- no
+    -- front clock, no threat term, no path-safety gate -- and reach 11 tiles
+    -- instead of 8. KEEL is the old VALUE_REBUILD/TOPUP + front clock -
+    -- 0.5 x trip - 1.5 x threat formula at the 8-tile leash, with
+    -- lgm_path_safe_enhanced still able to refuse the trip. This one flag
+    -- restores all of it (the leash and the path gate are gated on it too).
+    BUILDER_POOL_REPAIR_LINEAR = false,
   },
 }
 

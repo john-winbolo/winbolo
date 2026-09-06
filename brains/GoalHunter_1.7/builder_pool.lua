@@ -63,6 +63,24 @@ local TYPE_RANK = { rebuild = 1, topup = 2, farm = 3 }
 M.TYPE_RANK = TYPE_RANK
 
 -- -------------------------------------------------------------------------
+-- repair_leash: how far a REBUILD/TOPUP target may sit from the tank.
+--
+-- Two leashes now, and every reader has to ask for the right one: repair rows
+-- reach BUILDER_POOL_REPAIR_LEASH (11 tiles, Manhattan) under the linear
+-- formula, the farm row keeps BUILDER_POOL_LEASH (8). Gated on
+-- BUILDER_POOL_REPAIR_LINEAR so `preset=keel` puts BOTH back to 8 with one
+-- entry. Exported because goals.lua's REPAIR_SPLIT prints the number it hands
+-- off at, and a panel that names a radius the code does not use is worse than
+-- no panel at all.
+-- -------------------------------------------------------------------------
+function M.repair_leash()
+  if C.BUILDER_POOL_REPAIR_LINEAR then
+    return C.BUILDER_POOL_REPAIR_LEASH or 11
+  end
+  return C.BUILDER_POOL_LEASH or 8
+end
+
+-- -------------------------------------------------------------------------
 -- front_distance: tiles from (mx,my) to the nearest front-line tile.
 --
 -- "Front distance" is the plan's CLOCK: a dead pill at the contact line is
@@ -501,7 +519,8 @@ end
 function M.discover(state, world, info)
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
-  local leash = C.BUILDER_POOL_LEASH or 8
+  local leash = C.BUILDER_POOL_LEASH or 8      -- the FARM row's reach
+  local rleash = M.repair_leash()              -- rebuild/topup reach (11)
   local out = {}
   local maxhp = C.PILLS_MAX_HEALTH or 15
   for pid, p in pairs(world.pills or {}) do
@@ -515,7 +534,7 @@ function M.discover(state, world, info)
     if (p.owner == "friendly" or p.owner == "allied")
        and not p.in_tank and not p.carrier then
       local d = U.mdist(tmx, tmy, p.mx, p.my)
-      if d <= leash * 2 then
+      if d <= rleash * 2 then
         local hp = p.health or 0
         local kind, need
         if hp <= 0 then
@@ -530,8 +549,9 @@ function M.discover(state, world, info)
             type = kind, id = pid, mx = p.mx, my = p.my,
             dist = d, hp = hp, missing = maxhp - hp, own = p.owner,
             trees_need = need,
+            leash = rleash,                   -- the reach THIS row was measured against
             hard = blk,                       -- discovery-level refusal, shown as REJECT
-            out_of_leash = (d > leash) or nil,
+            out_of_leash = (d > rleash) or nil,
           }
         end
       end
@@ -558,6 +578,7 @@ function M.discover(state, world, info)
     if best_x then
       out[#out + 1] = { type = "farm", id = -(best_y * 256 + best_x),
                         mx = best_x, my = best_y, dist = best_d,
+                        leash = leash,
                         trees_need = C.BUILDER_POOL_TREES_FARM or 0 }
     end
   end
@@ -567,14 +588,26 @@ end
 -- -------------------------------------------------------------------------
 -- Scoring, and the per-candidate half of the eligibility stack.
 --
---   value = BASE[type] (+ TOPUP_PER_HP x missing) (+ front clock)
---   cost  = TRIP_W x round_trip_ticks + DANGER_W x threat_at_target
---   score = value - cost
+-- TWO formulas now, chosen by BUILDER_POOL_REPAIR_LINEAR (see the long note in
+-- constants.lua). The FARM row is unaffected by the flag and always uses the
+-- old one.
+--
+--   repair, linear (rebuild/topup, the default since 2026-09-05):
+--     score = REPAIR_HP_W x missing_hp - REPAIR_TRIP_W x round_trip_ticks
+--     Damage and walking time, nothing else: no base constant, no front clock,
+--     no threat term. missing_hp is 15 for a corpse, so the row runs
+--     120 (a 4-hp top-up) .. 450 (a rebuild).
+--
+--   everything else (farm always; repair rows under preset=keel):
+--     value = BASE[type] (+ TOPUP_PER_HP x missing | + FARM_URGENCY) (+ front clock)
+--     cost  = TRIP_W x round_trip_ticks + DANGER_W x threat_at_target
+--     score = value - cost
 --
 -- The front clock is deliberately absent from FARM: a forest is not going
 -- anywhere and nobody can steal it, which is exactly why rebuild outranks farm
 -- always -- the 200-vs-15 base gap is wider than any trip term inside the
--- leash can close.
+-- leash can close. (Under the linear formula the same thing is true with more
+-- room: 450 against a farm ceiling of 159.)
 --
 -- Leaves every chip the pool-grid row prints on the row itself; M.row_formula
 -- assembles them into the short||long pair on the panel's cold path, so every
@@ -582,8 +615,38 @@ end
 -- -------------------------------------------------------------------------
 function M.score_row(state, world, info, now, row, ctx)
   local FMAX = C.BUILDER_POOL_FRONT_MAX_TILES or 12
+  -- front_dist is still MEASURED for every row: BP_DISPATCH prints it and the
+  -- panel shows it, and "how close to the line was this job" stays a useful
+  -- thing to read back off a recording even when it no longer scores.
   local fd = M.front_distance(state, row.mx, row.my)
   row.front_dist = fd
+  local linear = (C.BUILDER_POOL_REPAIR_LINEAR and row.type ~= "farm") or false
+  row.linear = linear or nil
+  row.leash = row.leash or (linear and M.repair_leash() or (C.BUILDER_POOL_LEASH or 8))
+
+  if linear then
+    -- Damage x weight, and nothing else on the value side.
+    local hp_w = C.BUILDER_POOL_REPAIR_HP_W or 30
+    local missing = row.missing or 0
+    row.v_hp_w = hp_w
+    row.value  = hp_w * missing
+    row.v_base, row.v_hp, row.v_front = 0, row.value, 0
+
+    local out_ticks, trip = M.lgm_trip(info, row.mx, row.my)
+    row.out_ticks, row.trip = out_ticks, trip
+    -- threat.at is still SAMPLED (the panel prints it, and a reader asking
+    -- "was it dangerous?" should be able to see) but it is not in the score.
+    row.danger = threat.at(row.mx, row.my) or 0
+    if trip then
+      row.c_trip   = (C.BUILDER_POOL_REPAIR_TRIP_W or 0.25) * trip
+      row.c_danger = 0
+      row.score    = row.value - row.c_trip
+    else
+      row.c_trip, row.c_danger, row.score = 0, 0, -1e9
+    end
+    return M.gate_row(state, world, info, now, row, ctx)
+  end
+
   local front_term = 0
   if row.type ~= "farm" then
     front_term = (C.BUILDER_POOL_FRONT_URGENCY or 120)
@@ -621,11 +684,24 @@ function M.score_row(state, world, info, now, row, ctx)
     row.c_trip, row.c_danger, row.score = 0, 0, -1e9
   end
 
+  return M.gate_row(state, world, info, now, row, ctx)
+end
+
+-- -------------------------------------------------------------------------
+-- The per-candidate half of the eligibility stack, shared by both formulas.
+--
+-- Split out of score_row when the linear repair formula arrived: the two
+-- formulas differ ONLY in how the number is arrived at, and every gate below
+-- applies to both. One copy, so a gate can never be added to one path and
+-- forgotten on the other.
+-- -------------------------------------------------------------------------
+function M.gate_row(state, world, info, now, row, ctx)
+  local trip = row.trip
   -- ── per-candidate eligibility, in cost order (cheap tests first) ──────
   local reject = row.hard and ("discovery:" .. row.hard) or nil
   if not reject and row.out_of_leash then
     reject = string.format("out_of_leash (%d > %d)", row.dist,
-                           C.BUILDER_POOL_LEASH or 8)
+                           row.leash or C.BUILDER_POOL_LEASH or 8)
   end
   if not reject and not trip then reject = "unreachable" end
   if not reject then
@@ -668,8 +744,19 @@ function M.score_row(state, world, info, now, row, ctx)
       reject = string.format("reserve(%d < trip %d)", ctx.reserve_eta, need_t)
     end
   end
-  if not reject then
-    -- Most expensive test last: the danger sample along the walk.
+  -- Most expensive test last: the danger sample along the walk.
+  --
+  -- Andrew 2026-09-05: no path safety for repairs; more safety checks to come
+  -- later. Under the linear formula a rebuild/topup is scored on damage and
+  -- trip time only, and it is REFUSED only by tree_reserve, ally_repairing,
+  -- ally_capturing, mode_owned, fire_exchange, under_fire, the reserve ETA,
+  -- out_of_leash, unreachable and MIN_SCORE. The walk's danger sample is not
+  -- one of them any more -- send the man. The FARM row keeps the gate (wood is
+  -- never worth walking into a shell for), and so does every repair row under
+  -- preset=keel.
+  local skip_path = row.linear and true or false
+  row.path_gate = not skip_path
+  if not reject and not skip_path then
     if not danger.lgm_path_safe_enhanced(info, row.mx, row.my,
            C.BUILDER_POOL_PATH_DANGER or C.LGM_DANGER_MED, now, world) then
       reject = "path_unsafe"
@@ -687,6 +774,32 @@ function M.score_row(state, world, info, now, row, ctx)
   row.f_trees   = info.trees or 0
   row.f_reserve = ctx.reserve
   return row
+end
+
+-- -------------------------------------------------------------------------
+-- score_terms: the one-line term breakdown, hand-checkable on its own.
+--
+-- THE RULE this obeys (the author's, standing): every factor in the formula
+-- appears in the string, so the final number can be recomputed from the line
+-- alone without opening constants.lua. Two shapes, one per formula:
+--
+--   linear  score 362 = hp_w(30) x missing(15) = 450 - trip_w(0.25) x trip(352t) = 88
+--   legacy  val 184 - trip 95 - danger 0
+--
+-- Used by BP_DISPATCH, BP_DENY's neighbours and the panel row, so all three
+-- print the SAME arithmetic.
+-- -------------------------------------------------------------------------
+function M.score_terms(row)
+  if row.linear then
+    return string.format(
+      "score %.0f = hp_w(%d) x missing(%d) = %.0f - trip_w(%.2f) x trip(%st) = %.0f",
+      row.score or 0, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
+      row.missing or 0, row.value or 0,
+      C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
+      row.c_trip or 0)
+  end
+  return string.format("val %.0f - trip %.0f - danger %.0f",
+                       row.value or 0, row.c_trip or 0, row.c_danger or 0)
 end
 
 -- -------------------------------------------------------------------------
@@ -718,6 +831,35 @@ function M.row_formula(row)
   -- that does not exist. Say what actually happened instead.
   local score_str = trip and string.format("%.0f", row.score)
                     or "n/a (no walkable route for the man)"
+
+  -- The linear repair row (BUILDER_POOL_REPAIR_LINEAR). Two terms and no
+  -- others, so the string is two terms and no others -- printing a front /
+  -- danger chip that scores nothing would invite the reader to check a sum
+  -- that is not the sum the code computed.
+  if row.linear then
+    return string.format(
+      "%s %s%s"
+      .. "||%s. value = BUILDER_POOL_REPAIR_HP_W(%d) x missing(%d) = %.0f"
+      .. " (hp %d/%d). cost = REPAIR_TRIP_W(%.2f) x round_trip(%s ticks:"
+      .. " 2 x walk_sim(%s) + LGM_BUILD_TIME(%d)) = %.0f."
+      .. " NO danger term and NO path-safety gate on repair rows"
+      .. " (threat.at(%.0f) here is printed, not charged)."
+      .. " score = value - cost = %s (min to fire: %d). trees need %d, have %d,"
+      .. " reserved %d. repair leash %d, dist %d, front_dist %d.%s",
+      label, M.score_terms(row), reject and (" REJECT " .. reject) or "",
+      label,
+      row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30), row.missing or 0,
+      row.value or 0, row.hp or 0, C.PILLS_MAX_HEALTH or 15,
+      C.BUILDER_POOL_REPAIR_TRIP_W or 0.25,
+      tostring(trip or "-"), tostring(out_ticks or "-"),
+      C.LGM_BUILD_TIME or 20, row.c_trip or 0,
+      dgr,
+      score_str, C.BUILDER_POOL_MIN_SCORE or 20,
+      row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
+      row.leash or M.repair_leash(), row.dist or -1, fd,
+      reject and (" REJECTED: " .. reject) or " ACCEPTED.")
+  end
+
   return string.format(
     "%s val{base %.0f + hp %.0f + front %.0f(d=%d/%d)} - trip{%.2fx%s=%.0f}"
     .. " - danger{%.2fx%.0f=%.0f} = %s%s"
@@ -749,7 +891,7 @@ function M.row_formula(row)
     C.BUILDER_POOL_DANGER_W or 1.5, dgr, row.c_trip + row.c_danger,
     score_str, C.BUILDER_POOL_MIN_SCORE or 20,
     row.trees_need or 0, row.f_trees or 0, row.f_reserve,
-    C.BUILDER_POOL_LEASH or 8, row.dist or -1,
+    row.leash or C.BUILDER_POOL_LEASH or 8, row.dist or -1,
     reject and (" REJECTED: " .. reject) or " ACCEPTED.")
 end
 
@@ -958,7 +1100,15 @@ function M.repair_feeder(state, world, info, now)
   -- One number decides "close enough for the man": the leash. The danger
   -- widening still applies on top, so a tank being shelled can still dispatch
   -- from further out than 8.
-  local effective_max = math.max(blend_max, C.BUILDER_POOL_LEASH or 8)
+  --
+  -- 2026-09-05: that number is now the REPAIR leash (11 under the linear
+  -- formula), not the farm leash, and it has to be -- this is a repair feeder.
+  -- Leaving it at 8 would rebuild exactly the dead zone the paragraph above
+  -- describes, three tiles further out: builder_can_repair (also on the repair
+  -- leash) takes the tank's pool-5 row to INF at 11, so between 9 and 11 the
+  -- tank goal would have stood down while the feeder had not yet stood up, and
+  -- the ordinary side-quest path would still be denying mode_owned.
+  local effective_max = math.max(blend_max, M.repair_leash())
   local in_range = dist <= effective_max
   local has_trees = (info.trees or 0) > 0
 
@@ -1045,7 +1195,7 @@ function M.builder_can_repair(state, world, info, p)
   if info.man_status ~= C.LGM_INTANK or info.inboat then return nil end
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
-  local leash = C.BUILDER_POOL_LEASH or 8
+  local leash = M.repair_leash()
   if U.mdist(tmx, tmy, p.mx, p.my) > leash then return nil end
   local maxhp = C.PILLS_MAX_HEALTH or 15
   local hp = p.health or 0
@@ -1320,11 +1470,11 @@ function M.rung(state, world, info, now)
       seed.uf_age and tostring(seed.uf_age) or "-"))
   end
   print2(string.format(
-    "BP_DISPATCH t=%d job=%s target=(%d,%d)%s score=%.0f (val %.0f - trip %.0f - danger %.0f)"
+    "BP_DISPATCH t=%d job=%s target=(%d,%d)%s score=%.0f (%s)%s"
     .. " eta=%s trip=%s trees=%d-%d front=%d owner=%s/%s claim=%d",
     now, row.type, row.mx, row.my,
     row.seeded and (" seeded_by=" .. tostring(row.seeded)) or "",
-    row.score or 0, row.value or 0, row.c_trip or 0, row.c_danger or 0,
+    row.score or 0, M.score_terms(row), row.linear and " [linear]" or "",
     tostring(row.out_ticks or "-"), tostring(row.trip or "-"),
     info.trees or 0, row.trees_need or 0, row.front_dist or -1,
     bp.owner_kind, bp.owner_mode, now))
@@ -1439,12 +1589,21 @@ function M.draw(state, info)
     string.format("%s %s eta=%st", job.type, job.phase or "?",
                   tostring(job.eta or "-")),
     "center", r, g, bcol, 240)
-  -- The leash the discovery actually used, so the overlay cannot claim a
-  -- radius the code does not.
+  -- The leashes the discovery actually used, so the overlay cannot claim a
+  -- radius the code does not. TWO of them since 2026-09-05: repair rows reach
+  -- BUILDER_POOL_REPAIR_LEASH (green, outer) and the farm row keeps
+  -- BUILDER_POOL_LEASH (blue). Only one circle is drawn when they are equal
+  -- (preset=keel), which is the honest picture of that configuration.
   local tmx = bit.rshift(info.tankx, 8)
   local tmy = bit.rshift(info.tanky, 8)
+  local farm_leash = C.BUILDER_POOL_LEASH or 8
+  local rep_leash  = M.repair_leash()
   viz.circle("builder_pool_leash", tmx + 0.5, tmy + 0.5,
-             C.BUILDER_POOL_LEASH or 8, 90, 140, 200, 70)
+             farm_leash, 90, 140, 200, 70)
+  if rep_leash ~= farm_leash then
+    viz.circle("builder_pool_leash", tmx + 0.5, tmy + 0.5,
+               rep_leash, 120, 210, 140, 70)
+  end
 end
 
 return M

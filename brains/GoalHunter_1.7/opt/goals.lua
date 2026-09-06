@@ -11574,8 +11574,10 @@ function M.step_eval_queue(state, world, info)
         local _bc_eta = bpool.builder_can_repair(state, world, info, obj)
         if _bc_eta then
           c = 1e30
+          -- The REPAIR leash, which is what builder_can_repair actually
+          -- measured against (11 under BUILDER_POOL_REPAIR_LINEAR, 8 without).
           entry_skipped_builder = string.format("builder_can (leash %d, eta %d)",
-                                                C.BUILDER_POOL_LEASH or 8, _bc_eta)
+                                                bpool.repair_leash(), _bc_eta)
           -- Edge-triggered on the pill: a committed relocate that finally gets
           -- close enough should produce ONE line saying the hand-off happened,
           -- not one per re-eval for the rest of the game.

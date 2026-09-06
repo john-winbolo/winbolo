@@ -408,7 +408,7 @@ M.IDS = {
                        long  = "The side-quest the LGM is currently out on (builder_pool.lua): a line from the TANK to the target tile, a ring on the target, and a '<type> <phase> eta=Nt' label. The line starts at the tank because the tank is both ends of the trip -- that round trip is what BUILDER_POOL_TRIP_W is charged on. Colour is the phase: pale blue outbound, green working (he is standing on the tile), amber returning. Nothing renders when no job is live." },
 
   builder_pool_leash = { short = "Builder pool: leash",
-                         long  = "The BUILDER_POOL_LEASH circle (radius 8 tiles by default) around the tank, drawn only while a job is live. This is the exact radius discover() uses to decide which friendly pills are side-quest candidates -- a pill outside it is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
+                         long  = "The leash circles around the tank, drawn only while a job is live. BLUE is BUILDER_POOL_LEASH (8 tiles), the reach of the FARM row. GREEN is BUILDER_POOL_REPAIR_LEASH (11 tiles), the reach of the rebuild/topup rows under BUILDER_POOL_REPAIR_LINEAR -- only drawn when the two differ, so preset=keel shows the single blue 8 it actually uses. These are the exact radii discover() measures against (MANHATTAN, so the true shape is a diamond): a pill outside the green one is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
 
   lgm_registry_hud = { short = "HUD: LGM registry",
                        long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },
