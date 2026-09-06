@@ -3206,6 +3206,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.mapEventQueues[slot].nextSeq = 1;
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
+    /* The drop count belongs to this connection, so a client taking over the
+     * slot does not inherit the previous occupant's drops. */
+    udpServer.mapEventQueueDrops[slot] = 0;
     udpServer.mapGen[slot] = 0;
 
     /* Bring up this slot's parallel channel mux alongside the queues. */
@@ -7148,6 +7151,11 @@ bool transportUdpServerGetSpectatorLive(int s) {
 bool transportUdpServerTestDownloadComplete(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return false;
     return udpServer.mapDownload[slot].downloadComplete;
+}
+
+uint32_t transportUdpServerGetMapEventDrops(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    return udpServer.mapEventQueueDrops[slot];
 }
 
 /* Test-only: stage one terrain change for a slot exactly as a real sim tick

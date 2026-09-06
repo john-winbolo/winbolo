@@ -491,6 +491,18 @@ int run_loopback_map_cull(void) {
         UT_FAIL("B has the far square but its queue never carried it");
     }
 
+    /* Nothing here should overflow B's queue, and a drop would mean B's copy
+     * was left stale for a square it should have been sent. */
+    {
+        uint32_t drops = transportUdpServerGetMapEventDrops(slotB);
+        if (drops != 0) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("the server dropped %u map event(s) for B — B's copy is "
+                    "stale for ground it should have been sent",
+                    (unsigned)drops);
+        }
+    }
+
     loopbackHarnessStop(&h);
     return 0;
 }
@@ -590,6 +602,19 @@ int run_loopback_map_cull_resync(void) {
                 "blob came off the live map",
                 (unsigned)clientSimGetMapTerrain(h.cs, farX, farY),
                 (unsigned)farX, (unsigned)farY, (unsigned)farBefore);
+    }
+
+    /* The blob check above only means something while B's copy is behind by
+     * exactly what the cull held back: a drop would leave it stale for other
+     * ground too. */
+    {
+        uint32_t drops = transportUdpServerGetMapEventDrops(slotB);
+        if (drops != 0) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("the server dropped %u map event(s) for B — B's copy is "
+                    "stale for ground it should have been sent",
+                    (unsigned)drops);
+        }
     }
 
     loopbackHarnessStop(&h);

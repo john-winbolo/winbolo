@@ -893,6 +893,14 @@ uint32_t transportUdpServerGetSpectatorControlSeq(int s);
  * invalid slot. */
 uint32_t transportUdpServerGetClientControlSeq(int slot);
 
+/* Read how many map events have been dropped for a player slot because that
+ * client's reliable map-event queue was full. A non-zero value means the
+ * slot's copy of the terrain is deliberately stale for the dropped squares
+ * until the catch-up sweep pays them back. Counted per connection: the join
+ * that resets the slot's queue resets this too. Returns 0 for an invalid
+ * slot. */
+uint32_t transportUdpServerGetMapEventDrops(int slot);
+
 /* True when spectator slot s is a live control-bus subscriber (lobby/countdown),
  * false when it is a delayed-ring reader or the slot is out of range. Lets a
  * test observe the live↔delayed cutover. */
