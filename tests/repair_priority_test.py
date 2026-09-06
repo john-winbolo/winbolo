@@ -86,8 +86,43 @@ luabrainshandler.h) and a longer string is truncated MID-TOKEN with one
 "[cfg] BAD TOKEN" line, so ARG_MAX below asserts it rather than leaving it to
 be rediscovered.
 
-Every outcome is read from print2 or from the sidecar's ENGINE-side armour
-trace, never from the brain's opinion of itself.
+Every outcome is read from print2 or from the sidecar's ENGINE-side trace, never
+from the brain's opinion of itself.
+
+AND, ON TOP OF THE ORDERING, THE THING THE ORDERING IS FOR.  A BP_DISPATCH line
+is a DECISION; it is not a man on the grass and it is not a pill back on its
+feet.  So every arena that expects a dispatch (A, B, C, D) also asserts, from
+two sources that know nothing about builder_pool.lua:
+
+  MAN OUT -- from the brain's per-tick jsonl (logger.lua's `lgm` = man_status,
+     `lx`/`ly` = his world position, tile = >>8).  Within MAN_OUT_GRACE ticks of
+     the dispatch man_status has to leave LGM_INTANK, and over the following
+     ticks his tile has to CLOSE on the target -- and, in A/B/C, reach it or a
+     tile beside it.  The tick he left and the tick he arrived are printed.
+
+  REPAIRED, NOT CAPTURED -- from the sidecar's engine-side trace, which now
+     carries the pill's OWNER and IN_TANK next to its armour (`tick x y armour
+     owner in_tank`, one row per change).  The armour has to rise above where it
+     started, and up to that tick the owner must never have changed and in_tank
+     must never have gone true.  An armour rise on its own proves nothing: a
+     pill somebody captured and repaired, or picked up and re-planted, rises in
+     exactly the same way.  The tick it rose is printed.
+
+  D IS ALLOWED TO GO EITHER WAY, and says which.  Its walk crosses four neutral
+     pillboxes' fire, so the man may not come back.  PASS-D-REPAIRED is man out
+     + armour rose + never captured; PASS-D-MAN-LOST is man out + the man lost
+     (jsonl man_status LGM_DEAD, and/or the `lgm=dead` chip builder_pool prints
+     on the BP_DONE/BP_ABORT that closes the errand -- there is no separate
+     LGM_LOST line) + the pill still dead.  The man never leaving is a FAIL in
+     both readings, because that is the only outcome the rule forbids.
+     As observed on 2026-09-05 at -seed 42 -brain-lua-seed 42 it is
+     PASS-D-REPAIRED with the man killed on the way HOME, identically on repeat
+     runs -- these arenas are deterministic.
+
+  D2 IS THE EXCEPTION AND SAYS SO.  It is the arena where NO LGM is expected;
+     the refusal is the entire result, so it deliberately has neither of the two
+     assertions above, and its PASS line states that rather than letting the
+     absence look like an oversight.
 
 Usage: python repair_priority_test.py [--variant A|B|C|C2|D|D2|all] [--ticks N]
                                       [--build DIR]
@@ -95,6 +130,7 @@ Exit 0 on PASS, 1 on FAIL.
 """
 
 import glob
+import json
 import os
 import re
 import subprocess
@@ -204,7 +240,14 @@ def newest_session(build_dir, label):
 
 
 def read_trace(build_dir, variant):
-    """The sidecar's engine-side view: [(tick, x, y, armour), ...]."""
+    """The sidecar's engine-side view of the arena's pills, one row per CHANGE:
+
+        [(sim_tick, x, y, armour, owner, in_tank), ...]
+
+    x/y are the pill's ORIGINAL tile (its identity), not its live position: the
+    sidecar reads pills BY INDEX precisely so that a pill somebody picks up is
+    still followed. owner is the raw engine owner byte (NEUTRAL is 0xFF); the
+    bot under test is player 0."""
     path = build_dir / f"repair_priority_{variant}_trace.log"
     seq = []
     if path.exists():
@@ -213,9 +256,188 @@ def read_trace(build_dir, variant):
             if not line or line.startswith("#"):
                 continue
             parts = line.split()
-            if len(parts) >= 4:
-                seq.append(tuple(int(p) for p in parts[:4]))
+            if len(parts) >= 6:
+                seq.append(tuple(int(p) for p in parts[:6]))
     return seq
+
+
+# ── the brain's per-tick jsonl (logger.lua log_tick) ──────────────────────
+# The "did the LGM actually come out?" half of every arena. print2 says the
+# pool DISPATCHED a man; only this file says a man LEFT and where he walked.
+LGM_INTANK, LGM_DEAD, LGM_MOVING = 0, 1, 2      # constants.lua 223-225
+# Brain ticks between the BP_DISPATCH line and man_status leaving LGM_INTANK.
+# Measured at 1 on every arena here (dispatch on tick N, out on N+1); the slack
+# is for a tick the brain skipped, not for a different mechanism.
+MAN_OUT_GRACE = 40
+
+
+def read_jsonl(build_dir, sess):
+    """The brain's per-tick rows, as dicts. [] if the log is missing.
+
+    NOT under the debug session directory, despite what the session directory
+    is for: _G.DEBUG_SESSION_DIR is set by BrainTest and by nothing else, so
+    under headless WinBoloDS logger.make_filename falls back to its OTHER
+    branch and writes <cwd>/player0_<YYYYmmdd_HHMMSS>.jsonl -- i.e. straight
+    into build/. The session directory is named <the same stamp>_<n>_<label>,
+    both being os.date/strftime at startup, so the two are paired on the stamp.
+    The fallback (newest player0_*.jsonl no older than the session directory)
+    covers the second in which the two clocks could disagree; it will not pick
+    up an unrelated older run.
+
+    Fields used here, all from logger.lua's tick record:
+      t    brain tick -- THE SAME CLOCK as BP_DISPATCH's t=, not the sim tick
+           the sidecar trace is stamped in
+      lgm  info.man_status: 0 in tank, 1 dead, 2 out on a mission
+      lx/ly  info.man_x / man_y in WORLD units; the man's tile is (lx>>8, ly>>8)
+           and it reads 0,0 while he is aboard"""
+    stamp = "_".join(sess.name.split("_")[:2])
+    cand = build_dir / f"player0_{stamp}.jsonl"
+    if not cand.exists():
+        floor = os.path.getmtime(sess) - 5
+        pool = [p for p in build_dir.glob("player0_*.jsonl")
+                if os.path.getmtime(p) >= floor]
+        if not pool:
+            return []
+        cand = max(pool, key=os.path.getmtime)
+    rows = []
+    for line in cand.read_text(errors="ignore").splitlines():
+        if not line.startswith('{"type":"tick"'):
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            pass
+    return rows
+
+
+def man_walk(rows, disp_tick, target):
+    """What the LGM did after a BP_DISPATCH at brain tick `disp_tick`, or None
+    if he never left the tank within MAN_OUT_GRACE ticks of it.
+
+    One errand only: the scan stops the moment he is back in the tank (or dead),
+    so a later dispatch in the same run is a separate call with its own tick.
+
+      out_t / out_tile / start_d   when he left, from where, how far off target
+      arrive_t                     first tick within one tile of the target
+      closest / closest_t          the nearest he ever got, and when
+      died_t                       LGM_DEAD mid-errand, or None
+      home_t                       LGM_INTANK again, or None (still out at EOF)
+    """
+    out_t = None
+    for r in rows:
+        if disp_tick <= r["t"] <= disp_tick + MAN_OUT_GRACE \
+           and r["lgm"] == LGM_MOVING:
+            out_t = r["t"]
+            break
+    if out_t is None:
+        return None
+    w = {"out_t": out_t, "out_tile": None, "start_d": None, "arrive_t": None,
+         "closest": None, "closest_t": None, "died_t": None, "home_t": None}
+    for r in rows:
+        if r["t"] < out_t:
+            continue
+        if r["lgm"] == LGM_DEAD:
+            w["died_t"] = r["t"]
+            break
+        if r["lgm"] == LGM_INTANK:
+            w["home_t"] = r["t"]
+            break
+        tile = (r["lx"] >> 8, r["ly"] >> 8)
+        d = abs(tile[0] - target[0]) + abs(tile[1] - target[1])
+        if w["out_tile"] is None:
+            w["out_tile"], w["start_d"] = tile, d
+        if w["closest"] is None or d < w["closest"]:
+            w["closest"], w["closest_t"] = d, r["t"]
+        if d <= 1 and w["arrive_t"] is None:
+            w["arrive_t"] = r["t"]
+    return w
+
+
+def check_man_out(step, rows, disp_tick, target, require_arrival=True):
+    """MAN OUT: the man physically left the tank and walked AT the pill.
+
+    A BP_DISPATCH line is the pool's decision, not an event in the world -- the
+    goal layer can hold the man aboard, he can be in a boat, he can be dead --
+    so every arena that claims a dispatch also has to show the man leaving.
+    Returns (rc, walk)."""
+    if not rows:
+        print(f"FAIL ({step}): no per-tick jsonl for this run, so 'the man came "
+              f"out' cannot be checked. Expected build/player0_<stamp>.jsonl "
+              f"next to the session directory (see read_jsonl).")
+        return 1, None
+    w = man_walk(rows, disp_tick, target)
+    if w is None:
+        near = [(r["t"], r["lgm"]) for r in rows
+                if disp_tick <= r["t"] <= disp_tick + MAN_OUT_GRACE]
+        print(f"FAIL ({step}): BP_DISPATCH printed at t={disp_tick}, but "
+              f"man_status never left LGM_INTANK in the next {MAN_OUT_GRACE} "
+              f"brain ticks -- the pool decided and NO MAN CAME OUT. "
+              f"(t,lgm) around it: {near[:12]}")
+        return 1, None
+    if w["closest"] is None:
+        print(f"FAIL ({step}): the man left at t={w['out_t']} but the jsonl "
+              f"logged no position for him while he was out.")
+        return 1, w
+    if w["closest"] >= w["start_d"]:
+        print(f"FAIL ({step}): the man left at t={w['out_t']} from "
+              f"{w['out_tile']} ({w['start_d']} tiles off {target}) and never "
+              f"got closer than {w['closest']} -- he went OUT, but not at this "
+              f"pill.")
+        return 1, w
+    if require_arrival and w["arrive_t"] is None:
+        print(f"FAIL ({step}): the man left at t={w['out_t']} and closed from "
+              f"{w['start_d']} tiles to {w['closest']} at t={w['closest_t']}, "
+              f"but never stood on {target} or beside it"
+              + (f" -- he died at t={w['died_t']}." if w["died_t"] else
+                 f" -- back in the tank at t={w['home_t']}."
+                 if w["home_t"] else " -- still out when the run ended."))
+        return 1, w
+    tail = (f", arrived t={w['arrive_t']}" if w["arrive_t"] is not None
+            else f", closest {w['closest']} tile(s) at t={w['closest_t']}")
+    print(f"  {step} OK: MAN OUT -- dispatch t={disp_tick}, man_status left the "
+          f"tank at t={w['out_t']} from {w['out_tile']} ({w['start_d']} tiles "
+          f"off {target}){tail}")
+    return 0, w
+
+
+def repair_landed(step, trace, target, owner=0):
+    """REPAIR LANDED, NOT CAPTURED: the armour rose, and up to the tick it rose
+    the pill never changed hands and was never in anybody's tank.
+
+    An armour rise on its own does not mean "we repaired it": a pill somebody
+    else captured and repaired, or picked up and re-planted, rises exactly the
+    same way. Returns (rc, rise_row)."""
+    rows = [r for r in trace if (r[1], r[2]) == target]
+    if not rows:
+        print(f"FAIL ({step}): the sidecar traced no pill at {target} -- its "
+              f"OURS list and the generator's geometry have drifted apart.")
+        return 1, None
+    a0 = rows[0][3]
+    rise = next((r for r in rows if r[3] > a0), None)
+    if rise is None:
+        print(f"FAIL ({step}): the engine never saw {target}'s armour rise "
+              f"above the {a0} it started at. Trace: "
+              + ", ".join(f"{t}:a={a},own={o},tank={k}"
+                          for t, _x, _y, a, o, k in rows[:12]))
+        return 1, None
+    before = [r for r in rows if r[0] <= rise[0]]
+    stolen = [r for r in before if r[4] != owner]
+    if stolen:
+        print(f"FAIL ({step}): {target} changed hands at sim t={stolen[0][0]} "
+              f"(owner {owner} -> {stolen[0][4]}) before its armour rose at "
+              f"sim t={rise[0]}. That rise is somebody else's repair, not ours.")
+        return 1, rise
+    boarded = [r for r in before if r[5]]
+    if boarded:
+        print(f"FAIL ({step}): {target} was IN A TANK at sim t={boarded[0][0]}, "
+              f"before the armour rose at sim t={rise[0]} -- it was picked up "
+              f"and re-planted, which is a capture, not a repair.")
+        return 1, rise
+    print(f"  {step} OK: REPAIRED, NOT CAPTURED -- engine says {target} went "
+          f"{a0} -> {rise[3]}/{G.PILLS_MAX_HEALTH} armour at sim t={rise[0]}, "
+          f"and across the {len(before)} traced change(s) up to that tick the "
+          f"owner stayed {owner} and in_tank never went true")
+    return 0, rise
 
 
 def linear_terms(terms):
@@ -391,17 +613,35 @@ def check_A(sess, text, build_dir):
           f"{t_corpse[2] - t_topup[2]}t")
 
     trace = read_trace(build_dir, "A")
-    rose = [(t, x, y, a) for (t, x, y, a) in trace if (x, y) == corpse and a > 0]
+    rose = [r for r in trace if (r[1], r[2]) == corpse and r[3] > 0]
     if not rose:
         print("FAIL (4): the engine never saw the corpse's armour come off 0. "
               "Trace: " + ", ".join(f"{t}:({x},{y})={a}"
-                                    for t, x, y, a in trace[:12]))
+                                    for t, x, y, a, _o, _k in trace[:12]))
         dumps(text, "BP_ABORT")
         return 1
     print(f"  4 OK: engine says the corpse came back up at sim t={rose[0][0]} "
           f"to {rose[0][3]}/{G.PILLS_MAX_HEALTH}")
+
+    rows = read_jsonl(build_dir, sess)
+    rc, _w = check_man_out(5, rows, int(first[0]), corpse)
+    if rc:
+        dumps(text, "BP_ABORT")
+        return 1
+    rc, _r = repair_landed(6, trace, corpse)
+    if rc:
+        return 1
+    # ...and the near job too, so BOTH halves of the order are real errands and
+    # not just two lines the pool printed.
+    rc, _w = check_man_out(7, rows, int(later[0][0]), topup)
+    if rc:
+        return 1
+    rc, _r = repair_landed(8, trace, topup)
+    if rc:
+        return 1
     print("PASS (A): the man walked past a three-tile errand to rebuild a "
-          "nine-tile corpse, then came back for the errand.")
+          "nine-tile corpse, then came back for the errand -- and both pills "
+          "were repaired by OUR man, never captured.")
     return 0
 
 
@@ -474,15 +714,25 @@ def check_B(sess, text, build_dir):
           f"charged on the ticks")
 
     trace = read_trace(build_dir, "B")
-    fixed = {(x, y) for (_t, x, y, a) in trace if a > 0}
+    fixed = {(x, y) for (_t, x, y, a, _o, _k) in trace if a > 0}
     if road not in fixed:
         print("FAIL (4): the engine never saw the road corpse come off 0. "
               "Trace: " + ", ".join(f"{t}:({x},{y})={a}"
-                                    for t, x, y, a in trace[:12]))
+                                    for t, x, y, a, _o, _k in trace[:12]))
         return 1
     print(f"  4 OK: engine says {sorted(fixed)} came back up")
+
+    rows = read_jsonl(build_dir, sess)
+    rc, _w = check_man_out(5, rows, int(first[0]), road)
+    if rc:
+        dumps(text, "BP_ABORT")
+        return 1
+    rc, _r = repair_landed(6, trace, road)
+    if rc:
+        return 1
     print("PASS (B): the pool priced the walk in ticks, not tiles -- eight "
-          "tiles of road beat five tiles of swamp.")
+          "tiles of road beat five tiles of swamp -- and the man really made "
+          "that walk and rebuilt a pill nobody had taken.")
     return 0
 
 
@@ -545,16 +795,28 @@ def check_C(sess, text, build_dir):
           f"repair")
 
     trace = read_trace(build_dir, "C")
-    rose = [(t, a) for (t, x, y, a) in trace if (x, y) == corpse and a > 0]
+    rose = [(t, a) for (t, x, y, a, _o, _k) in trace
+            if (x, y) == corpse and a > 0]
     if not rose:
         print("FAIL (3): the engine never saw the corpse's armour come off 0. "
-              "Trace: " + ", ".join(f"{t}:{a}" for t, _x, _y, a in trace[:12]))
+              "Trace: " + ", ".join(f"{t}:{a}"
+                                    for t, _x, _y, a, _o, _k in trace[:12]))
         dumps(text, "BP_ABORT")
         return 1
     print(f"  3 OK: engine says the corpse came back up at sim t={rose[0][0]} "
-          f"to {rose[0][3] if False else rose[0][1]}/{G.PILLS_MAX_HEALTH}")
+          f"to {rose[0][1]}/{G.PILLS_MAX_HEALTH}")
+
+    rows = read_jsonl(build_dir, sess)
+    rc, _w = check_man_out(4, rows, int(first[0]), corpse)
+    if rc:
+        dumps(text, "BP_ABORT")
+        return 1
+    rc, _r = repair_landed(5, trace, corpse)
+    if rc:
+        return 1
     print("PASS (C): a rebuild the bot could afford outranked the richest farm "
-          "row a five-tree woodpile can produce, standing on the same ground.")
+          "row a five-tree woodpile can produce, standing on the same ground -- "
+          "and the man went out and rebuilt it, uncaptured.")
     return 0
 
 
@@ -658,12 +920,85 @@ def check_D(sess, text, build_dir):
         return 1
     print(f"  3 OK: the row is damage and time only -- 30 x {t[0]} = {t[1]:.0f} "
           f"minus 0.25 x {t[2]}t = {t[3]:.0f}, score {went[0][5]}")
+
+    # 4. THE MAN LEFT. This is the one thing the arena cannot do without: the
+    #    whole claim is "send that LGM out", and a BP_DISPATCH is a decision,
+    #    not a man on the grass. Arrival is NOT required here -- unlike A/B/C
+    #    this walk crosses four neutral pillboxes' fire and he may not finish it.
+    rows = read_jsonl(build_dir, sess)
+    rc, w = check_man_out(4, rows, int(went[0][0]), corpse,
+                          require_arrival=False)
+    if rc:
+        dumps(text, "BP_ABORT")
+        return 1
+
+    # 5. Then EITHER outcome, named. Both are the rule working; what would not
+    #    be the rule working is the man staying in the tank, and step 4 has
+    #    already ruled that out.
+    trace = read_trace(build_dir, "D")
+    mine = [r for r in trace if (r[1], r[2]) == corpse]
+    if not mine:
+        print(f"FAIL (5): the sidecar traced no pill at {corpse} -- its OURS "
+              f"list and the generator's geometry have drifted apart.")
+        return 1
+    rose = next((r for r in mine if r[3] > mine[0][3]), None)
+    # There is no EVENT_LGM_LOST / LGM_LOST print2 line anywhere in
+    # builder_pool.lua -- the man's fate rides as a chip on the BP_DONE /
+    # BP_ABORT that closes the errand (`lgm=dead`, plus ", LGM KILLED on this
+    # trip"), deliberately, because a man dying does not make the errand a
+    # failure. That chip and the jsonl's man_status going to LGM_DEAD are the
+    # two ways to see it, and either counts.
+    closers = [ln.strip() for ln in text.splitlines()
+               if ("BP_DONE" in ln or "BP_ABORT" in ln)
+               and f"target=({corpse[0]},{corpse[1]})" in ln]
+    dead_lines = [ln for ln in closers if "lgm=dead" in ln]
+    died = w["died_t"] is not None or bool(dead_lines)
+    fate = []
+    if w["died_t"] is not None:
+        fate.append(f"jsonl man_status=LGM_DEAD at t={w['died_t']}")
+    if dead_lines:
+        fate.append(dead_lines[0].split("] ")[-1])
+    fate_s = "; ".join(fate) if fate else "the man came home alive"
+
+    if rose is not None:
+        rc, _r = repair_landed(5, trace, corpse)
+        if rc:
+            return 1
+        print(f"PASS-D-REPAIRED: man out at t={w['out_t']}, armour rose at sim "
+              f"t={rose[0]}, nobody captured it. Man's fate: {fate_s}.")
+    elif died:
+        print(f"  5 OK: the corpse was NOT repaired -- the man was killed on "
+              f"the walk. {fate_s}. Trace: "
+              + (", ".join(f"{r[0]}:a={r[3]},own={r[4]},tank={r[5]}"
+                           for r in mine[:12]) or "(no rows)"))
+        print(f"PASS-D-MAN-LOST: man out at t={w['out_t']} (closest "
+              f"{w['closest']} tile(s) off {corpse} at t={w['closest_t']}), "
+              f"then lost, and the pill stayed dead. The rule still sent him.")
+    else:
+        print(f"FAIL (5): the man went out at t={w['out_t']} and came back at "
+              f"t={w['home_t']} alive, but {corpse}'s armour never rose above "
+              f"{mine[0][3] if mine else '?'} -- so neither outcome this arena "
+              f"accepts happened. Trace: "
+              + (", ".join(f"{r[0]}:a={r[3]},own={r[4]},tank={r[5]}"
+                           for r in mine[:12]) or "(no rows)"))
+        dumps(text, "BP_ABORT")
+        dumps(text, "BP_DONE")
+        return 1
     print("PASS (D): the man was sent through a neutral pillbox's danger field "
           "because a repair row no longer asks about it.")
     return 0
 
 
 def check_D2(sess, text, build_dir):
+    """THE CONTROL, and NO LGM IS EXPECTED HERE.
+
+    Every other arena in this file asserts that a man came out. This one is the
+    opposite arena on purpose: with the old formula back, the same corpse across
+    the same danger field must be REFUSED path_unsafe, and the point of the run
+    is the refusal, not an errand. So there is no MAN OUT step and no armour
+    trace step below -- their absence is the claim, and the PASS line says so
+    out loud rather than leaving a reader to wonder which assertion went
+    missing."""
     corpse = G.D_CORPSE
     unsafe = _path_denies(text, corpse)
     disp = [d for d in DISP_RE.findall(text) if (int(d[2]), int(d[3])) == corpse]
@@ -698,8 +1033,25 @@ def check_D2(sess, text, build_dir):
               f"gate firing at all is the point)")
     else:
         print("  2 OK: the man never went at all under the old formula")
+
+    # 3. Informational, not an assertion: how close the man ever got to the
+    #    corpse. It is here so the "no LGM expected" claim in the PASS line is
+    #    backed by a number instead of by silence. Not a gate, because a farm
+    #    row (or any other errand) may legitimately send him somewhere else.
+    rows = read_jsonl(build_dir, sess)
+    outs = [r for r in rows if r["lgm"] == LGM_MOVING]
+    if not outs:
+        print("  3 --: the jsonl shows man_status never left LGM_INTANK at all")
+    else:
+        near = min(abs((r["lx"] >> 8) - corpse[0]) + abs((r["ly"] >> 8) - corpse[1])
+                   for r in outs)
+        print(f"  3 --: the jsonl shows the man out on {len(outs)} tick(s); the "
+              f"nearest he ever got to {corpse} was {near} tile(s)")
     print("PASS (D2): the control reproduces the path_unsafe refusal, so arena "
-          "D measured the rule change and not a quiet arena.")
+          "D measured the rule change and not a quiet arena. NO LGM IS EXPECTED "
+          "IN THIS ARENA -- the refusal is the whole result, so unlike A/B/C/D "
+          "there is deliberately no MAN OUT and no repaired-not-captured "
+          "assertion here.")
     return 0
 
 

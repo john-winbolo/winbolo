@@ -17,9 +17,17 @@
 -- back to GRASS once the tank is ashore, which is what the ground would have
 -- been if the engine did not need a puddle to spawn onto.
 --
--- TRACE.  Every armour CHANGE on the pills the arena is about is written to
--- repair_priority_D2_trace.log in SIM ticks, so "the repair actually landed" is
--- asked of the ENGINE and not of the brain's opinion of itself.
+-- TRACE.  Every change of ARMOUR, OWNER or IN_TANK on the pills the arena is
+-- about is written to repair_priority_D2_trace.log in SIM ticks, so "the repair
+-- actually landed" is asked of the ENGINE and not of the brain's opinion of
+-- itself -- and so is the harder question the armour alone cannot answer: that
+-- the pill came back up WITHOUT anybody capturing it or picking it up first.
+-- An armour rise on a pill that changed hands on the way is not a repair, it is
+-- somebody else's pill; the owner/in_tank columns are what rules that out.
+--
+-- Rows are `tick x y armour owner in_tank`, one per CHANGE.  x/y are the pill's
+-- ORIGINAL tile -- its identity in this file -- not its live position, because a
+-- pill that is picked up rides along with the tank that took it.
 
 local TRACE = "repair_priority_D2_trace.log"
 local OURS  = { { 119, 126 } }
@@ -31,8 +39,28 @@ local p0 = 0
 
 local last = {}
 local filled = false
+local traced = nil               -- { {pill_index, tile_x, tile_y}, ... }
 
 local function same(p, t) return p.x == t[1] and p.y == t[2] end
+
+-- Resolve OURS (tile coords) to PILL INDICES, once.  Everything after this
+-- reads the pill BY INDEX and never by coordinate: a pill that is picked up
+-- moves with the carrier, so a coordinate match would quietly stop finding it
+-- at exactly the moment the trace exists to prove nobody took it.  The pillbox
+-- array is stable (a carried pill keeps its slot, with inTank set), so the
+-- index is good for the whole run.
+local function resolve(g)
+  local out = {}
+  for i = 1, g.num_pills() do
+    local p = g.pill(i)
+    if p then
+      for _, t in ipairs(OURS) do
+        if same(p, t) then out[#out + 1] = { i, t[1], t[2] } end
+      end
+    end
+  end
+  return out
+end
 
 local function own_everything(g)
   for i = 1, g.num_pills() do
@@ -62,7 +90,7 @@ function on_setup(g)
   own_everything(g)
   g.set_team(p0, 0)
   local f = io.open(TRACE, "w")
-  if f then f:write("# tick x y armour\n") f:close() end
+  if f then f:write("# tick x y armour owner in_tank\n") f:close() end
 end
 
 function on_choose_start(g, p)
@@ -86,21 +114,20 @@ function on_tick(g, tick)
         SPAWN[1], SPAWN[2], tick))
     end
   end
-  for i = 1, g.num_pills() do
-    local p = g.pill(i)
+  if not traced then traced = resolve(g) end
+  for _, e in ipairs(traced) do
+    local p = g.pill(e[1])
     if p then
-      for _, t in ipairs(OURS) do
-        if same(p, t) then
-          local key = p.x * 256 + p.y
-          if last[key] ~= p.armour then
-            local f = io.open(TRACE, "a")
-            if f then
-              f:write(string.format("%d %d %d %d\n", tick, p.x, p.y, p.armour))
-              f:close()
-            end
-            last[key] = p.armour
-          end
+      local in_tank = p.in_tank and 1 or 0
+      local sig = p.armour .. "/" .. p.owner .. "/" .. in_tank
+      if last[e[1]] ~= sig then
+        local f = io.open(TRACE, "a")
+        if f then
+          f:write(string.format("%d %d %d %d %d %d\n",
+                                tick, e[2], e[3], p.armour, p.owner, in_tank))
+          f:close()
         end
+        last[e[1]] = sig
       end
     end
   end
