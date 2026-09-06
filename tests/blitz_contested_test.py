@@ -3,6 +3,12 @@
 A CONTESTED pill take designates exactly ONE blitzer a suicider -- for any
 party of two or more (GoalHunter 1.7, author's rule of 2026-09-05).
 
+THE RULE IS OFF BY DEFAULT since the evening of 2026-09-05: ten-seed benches
+against stock KEEL had it LOSING even in this one-suicider form (2v2 DH-Oil Rig
+KEEL 7-3, 6v6 Easter KEEL 6-3 over the nine that finished).  The mechanism was
+kept rather than deleted, so arenas A, B and C opt in per bot with
+`cfg=BLITZ_CONTESTED_ALL_SUICIDERS=true` and arena D checks the default.
+
 WHAT IS UNDER TEST (constants.lua BLITZ_CONTESTED_RANGE /
 BLITZ_CONTESTED_ALL_SUICIDERS / BLITZ_CONTESTED_SUICIDERS, squad.lua
 blitz_contested_enemy / blitz_designate_contested, attack.lua
@@ -24,7 +30,7 @@ comms.lua's `bsu ... c` verb)
     party of two does.  (It used to designate EVERY blitzer; the 2026-09-05
     evening bench had that losing 7-3 in 2v2 against KEEL.)
 
-THREE ARENAS (tests/generate_blitz_contested_map.py) on one piece of terrain.
+FOUR ARENAS (tests/generate_blitz_contested_map.py) on one piece of terrain.
 A and B differ in ONE TILE -- where the enemy tank is parked.  A and C differ
 only in PARTY SIZE -- same enemy tile, two attackers instead of three.  Every
 arena has one enemy-owned 15 HP pill (a HARD take, so a blitz commander is
@@ -51,6 +57,20 @@ elected and a call opens) and one motionless enemy on an unreachable island.
      C1..C5 are A1..A5 with party=2: the SAME single designation, which is the
      point of running both -- the count does not follow the party size.
 
+  D  DEFAULT-OFF CONTROL (byte-identical ground to A, and the SAME three
+     attackers on the SAME `blitz=3/4` -- but WITHOUT the
+     `cfg=BLITZ_CONTESTED_ALL_SUICIDERS=true` token A, B and C carry)
+     D1 a GO fired here too, so the arena really did run the same experiment;
+     D2 the enemy was inside BLITZ_CONTESTED_RANGE of the pill and VISIBLE --
+        this take IS contested by geometry, which is what makes "nobody was
+        designated" mean something;
+     D3 NO BLITZ_CONTESTED line anywhere;
+     D4 nobody ever became a suicider, and every BLITZ_GO line reads
+        contested{off} -- NOT contested{no}. The two are different facts and
+        squad.blitz_contested_label keeps them apart: "no" is the rule running
+        and finding nobody in range (that is arena B), "off" is the rule never
+        running at all.
+
   B  CONTROL (the same enemy moved to 13.9 tiles from the pill)
      B1 a GO fired here too, so the arena really did run the same experiment;
      B2 the enemy was VISIBLE from the take the whole time -- asserted from the
@@ -61,7 +81,7 @@ elected and a call opens) and one motionless enemy on an unreachable island.
      B4 nobody ever became a suicider at all (BLITZ_MIN_SUICIDERS is 0), and
         every BLITZ_GO line reads contested{no}.
 
-Usage: python blitz_contested_test.py [A|B|C] [--ticks N] [--build DIR]
+Usage: python blitz_contested_test.py [A|B|C|D] [--ticks N] [--build DIR]
                                       [--seed N] [--no-asap]
 Exit 0 on pass.
 """
@@ -85,13 +105,20 @@ BRAIN = REPO / "brains" / "GoalHunter_1.7" / "init.lua"
 FOE_BRAIN = HERE / "brains" / "idle.lua"
 sys.path.insert(0, str(HERE))
 from generate_blitz_contested_map import (   # noqa: E402
-    VARIANTS, CONTESTED, PILL, FOE_SPAWN, BLITZ_CONTESTED_RANGE, BLITZ_PARTY,
-    BLITZ_CONTESTED_SUICIDERS,
+    VARIANTS, CONTESTED, RULE_ENABLED, PILL, FOE_SPAWN,
+    BLITZ_CONTESTED_RANGE, BLITZ_PARTY, BLITZ_CONTESTED_SUICIDERS,
     BRAIN_VIEW_HALF, PILL_HP, allies, foe_player, n_allies, spawns,
     euclid, cheb)
 
-PORTS = {"A": 50232, "B": 50233, "C": 50234}
-SEEDS = {"A": 42, "B": 42, "C": 42}
+PORTS = {"A": 50232, "B": 50233, "C": 50234, "D": 50235}
+SEEDS = {"A": 42, "B": 42, "C": 42, "D": 42}
+
+# The contested rule is OFF by default (constants.lua, 2026-09-05: ten-seed
+# benches against stock KEEL had it losing 7-3 in 2v2 and 6-3 in 6v6 even in its
+# one-suicider form).  The mechanism was kept, not deleted, so the arenas that
+# TEST it opt in per bot with this token; variant D deliberately does not, and
+# checks what the default now does.
+RULE_TOKEN = ";cfg=BLITZ_CONTESTED_ALL_SUICIDERS=true"
 # ENGINE ticks.  The brain thinks every other one, so this is ~1250 brain
 # ticks.  Measured on this arena (seed 42): GO at brain t=310, the pill dead
 # and every designation expired by brain t=479 -- so ~2.5x the whole
@@ -180,7 +207,8 @@ def play(variant, ticks, build_dir, seed):
     # of attackers, so no GO path fires until the WHOLE party is in and the GO
     # under test really is a party-of-N one.
     n_al = n_allies(variant)
-    arg = f"{BRAIN}[{blitz_token(variant)}]"
+    arg = (f"{BRAIN}[{blitz_token(variant)}"
+           f"{RULE_TOKEN if variant in RULE_ENABLED else ''}]")
     init = ",".join([f"{b}={arg}" for b in allies(variant)]
                     + [f"{foe_player(variant)}={FOE_BRAIN}"])
     env = dict(os.environ, WINBOLO_BRAINDBG_LABEL=label)
@@ -578,10 +606,91 @@ def check_C(logs):
     return 0 if check_contested("C", logs, "C") is not None else 1
 
 
+# ---------------------------------------------------------------------------
+# D: DEFAULT-OFF CONTROL.  Same ground and same party as A; the only difference
+# in the whole run is that D's attackers are NOT given
+# cfg=BLITZ_CONTESTED_ALL_SUICIDERS=true.  A contested take on stock constants
+# must designate nobody and say so.
+# ---------------------------------------------------------------------------
+def check_D(logs):
+    AL = allies("D")
+    data = {b: collect(t) for b, t in logs.items()}
+    summarise(data, AL)
+
+    # -- D1: the same experiment really did run.
+    gos = [(b, g) for b in AL for g in data[b]["go"]]
+    if not gos:
+        print("FAIL: no BLITZ_GO in the default-off arena -- with no GO, "
+              "'nobody was designated' proves nothing")
+        return 1
+    b0, g0 = gos[0]
+    print(f"  D1: {len(gos)} GO line(s) (first: bot{b0} {g0['kind']} "
+          f"t={g0['t']} party={g0['party']} -> {g0['sub']})")
+
+    # -- D2: the take IS contested by geometry -- the enemy was seen, and seen
+    #        INSIDE the range.  That is the opposite of arena B's check and it
+    #        is what gives D4 its meaning: the rule had every reason to fire.
+    tiles = foe_tiles(data, AL)
+    if not tiles:
+        print("FAIL: no attacker was ever handed a hostile tank by the engine "
+              "-- this arena is testing blindness, not the default")
+        return 1
+    inside = [(k, d) for k, d in tiles.items() if d <= BLITZ_CONTESTED_RANGE]
+    if not inside:
+        print(f"FAIL: the enemy was never seen inside BLITZ_CONTESTED_RANGE "
+              f"({BLITZ_CONTESTED_RANGE}) of the pill {PILL}, so this take is "
+              f"not contested and designating nobody would be correct anyway. "
+              f"Sightings: "
+              + ", ".join(f"p{t}@({x},{y}) d={d:.1f}"
+                          for (t, x, y), d in sorted(tiles.items())))
+        return 1
+    (tid, x, y), d = sorted(inside)[0]
+    print(f"  D2: the enemy was visible INSIDE the range: p{tid}@({x},{y}) "
+          f"d={d:.1f} <= {BLITZ_CONTESTED_RANGE} -- this take is contested by "
+          f"geometry; only the switch stops the designation")
+
+    # -- D3: nothing declared the take contested, because the rule never ran.
+    cons = [(b, c) for b in AL for c in data[b]["contested"]]
+    if cons:
+        b, c = cons[0]
+        print(f"FAIL: bot{b} t={c['t']} logged BLITZ_CONTESTED with the rule "
+              f"OFF by default -- either the default flipped back to true in "
+              f"constants.lua, or an opt-in token leaked into this arena")
+        return 1
+    print("  D3: no BLITZ_CONTESTED line anywhere")
+
+    # -- D4: nobody is a suicider, and the GO lines say OFF rather than NO.
+    for b in AL:
+        if data[b]["su_on"]:
+            s_ = data[b]["su_on"][0]
+            print(f"FAIL: bot{b} t={s_['t']} became a suicider "
+                  f"(src={s_['src']}, reason={s_['reason']}) with the "
+                  f"contested rule off: {s_['line']}")
+            return 1
+        rx = [r for r in data[b]["rx"] if r["why"] == "contested"]
+        if rx:
+            print(f"FAIL: bot{b} received a contested `bsu` at t={rx[0]['t']} "
+                  f"from p{rx[0]['frm']} with the rule off")
+            return 1
+    for b, g in gos:
+        if g["contested"] != "off":
+            print(f"FAIL: bot{b} {g['kind']} t={g['t']} reads "
+                  f"contested{{{g['contested']}}}, expected contested{{off}}. "
+                  f"'no' would mean the rule RAN and found nobody in range "
+                  f"(arena B); with the switch off it must say so, or a log "
+                  f"cannot tell a disabled rule from an uncontested take.")
+            return 1
+    print("  D4: nobody became a suicider, no contested `bsu` was sent, and "
+          "every GO line reads contested{off}")
+    return 0
+
+
 def run_one(variant, ticks, build_dir, seed):
     foe = FOE_SPAWN[variant]
     d = euclid(PILL, foe)
     verdict = (f"CONTESTED, designates {BLITZ_CONTESTED_SUICIDERS}"
+               if variant in CONTESTED and variant in RULE_ENABLED
+               else "CONTESTED but the rule is OFF (default tokens)"
                if variant in CONTESTED else "CONTROL")
     print(f"=== blitz contested / {variant} ({verdict}; "
           f"seed {seed}, {ticks} ticks; pill {PILL} hp={PILL_HP} owned by "
@@ -594,7 +703,7 @@ def run_one(variant, ticks, build_dir, seed):
         return 1
     if not sanity(logs):
         return 1
-    rc = {"A": check_A, "B": check_B, "C": check_C}[variant](logs)
+    rc = {"A": check_A, "B": check_B, "C": check_C, "D": check_D}[variant](logs)
     if rc == 0:
         if variant == "A":
             print("PASS: an enemy tank inside BLITZ_CONTESTED_RANGE of the "
@@ -605,6 +714,11 @@ def run_one(variant, ticks, build_dir, seed):
             print("PASS: the same enemy at the same distance, but a TWO-tank "
                   "party: the SAME single designation, again the soldier, and "
                   "the commander stayed a normal tank.")
+        elif variant == "D":
+            print("PASS: the same contested take on STOCK constants designated "
+                  "nobody and labelled itself contested{off} -- the rule is off "
+                  "by default and says which of the two 'no suicider' answers "
+                  "this is.")
         else:
             print("PASS: the same enemy, plainly visible but past "
                   "BLITZ_CONTESTED_RANGE, left the take uncontested and "
