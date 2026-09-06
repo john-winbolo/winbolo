@@ -6410,9 +6410,11 @@ int main(int argc, char *argv[]) {
                     break;
                 }
                 /* Skip BrainTest hotkeys while a text field is being
-                 * edited inside the V dialog (its own ImGui context
-                 * — has the V-dialog filter input). */
-                if (vizWindowWantsTextInput()) {
+                 * edited: the V dialog's filter (its own ImGui
+                 * context) or any text input in the main ImGui
+                 * context, e.g. the O (Load Session) filter box --
+                 * typing an 's' there used to open the S window. */
+                if (vizWindowWantsTextInput() || mainImGuiWantsTextInput()) {
                     break;
                 }
                 switch (ev.key.key) {
