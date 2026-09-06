@@ -93,11 +93,20 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
     if (playerNum >= MAX_TANKS) return false;
 
     /* A zoom change reopens the fonts; a pop-out close/reopen changes the
-     * renderer. Either way every cached texture is stale at once. */
-    if (r != c->renderer || font != c->font) {
+     * renderer. Either way every cached texture is stale at once.
+     *
+     * The pixel size is in the key as well as the pointer. A zoom change
+     * closes the face and reopens it at the new size, and the reopened face
+     * can be allocated at the address the closed one had. The pointer then
+     * compares equal, nothing is flushed, and because the cached label
+     * strings survive too, every texture goes on drawing glyphs rendered at
+     * the old size until the player's label text happens to change. */
+    float fontSize = font ? TTF_GetFontSize(font) : 0.0f;
+    if (r != c->renderer || font != c->font || fontSize != c->fontSize) {
         tankLabelCacheFlush(c);
         c->renderer = r;
         c->font     = font;
+        c->fontSize = fontSize;
     }
     if (!font) return false;
 
@@ -158,4 +167,5 @@ void tankLabelCacheFlush(TankLabelCache *c) {
     }
     c->renderer = NULL;
     c->font     = NULL;
+    c->fontSize = 0.0f;
 }

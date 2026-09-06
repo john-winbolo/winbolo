@@ -21,8 +21,8 @@
  *  TankLabelCache and the textures inside it are built on
  *  that view's renderer from renderer-independent sources
  *  (the shared TTF face, the flag / brain icon surfaces).
- *  The cache flushes itself when the renderer or the font
- *  it built against changes.
+ *  The cache flushes itself when the renderer, the font or
+ *  the font's pixel size changes under it.
  *********************************************************/
 
 #ifndef TANK_LABEL_H
@@ -48,6 +48,7 @@ extern "C" {
 typedef struct TankLabelCache {
     SDL_Renderer *renderer;
     TTF_Font     *font;
+    float         fontSize;             /* size the textures were rendered at */
     SDL_Texture  *nameTex[MAX_TANKS];
     SDL_Texture  *iconTex[MAX_TANKS];   /* flag or brain icon, NULL for none */
     char          str[MAX_TANKS][TANK_LABEL_NAME_LEN];
@@ -60,7 +61,8 @@ typedef struct TankLabelCache {
  *  over its own shadow, then the country flag (humans
  *  with a 2-letter location) or brain icon (bots) beside
  *  it. Rebuilds the player's cached textures if the label
- *  string, the renderer or the font changed.
+ *  string, the renderer, the font or the font's pixel size
+ *  changed.
  *ARGUMENTS:
  *  c         - the host's label cache
  *  r         - renderer to build on and draw with
@@ -83,9 +85,9 @@ bool tankLabelDraw(TankLabelCache *c, SDL_Renderer *r, TTF_Font *font,
  *NAME:          tankLabelCacheFlush
  *PURPOSE:
  *  Destroys every texture in the cache and forgets the
- *  renderer and font they were built against. Call from
- *  the host's teardown; tankLabelDraw flushes on its own
- *  when the renderer or font changes under it.
+ *  renderer, font and size they were built against. Call
+ *  from the host's teardown; tankLabelDraw flushes on its
+ *  own when any of the three changes under it.
  *********************************************************/
 void tankLabelCacheFlush(TankLabelCache *c);
 
