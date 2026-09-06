@@ -232,11 +232,19 @@ static int  gOverviewStatusTransparency = 0;
    not something a player can see. Out is the slower of the two, so clipping a
    corner on the way past does not flash the panel.
 
+   A panel can also ask to be held up for a while with nothing resting on it,
+   which is what a new build selection does to the build strip: the player has
+   just changed something there and wants to see what it now reads, however
+   see-through the strip is set. The hold runs from the change, so the strip
+   comes up, sits solid for the rest of the second and then goes back the way
+   a pointer leaving takes it.
+
    Each fade is how far its panel has travelled from the setting to solid: 0
    at the setting, 1 fully solid. A panel set solid has nowhere to go and none
    of this shows. */
 #define OVERVIEW_HUD_FADE_IN_MS  150
 #define OVERVIEW_HUD_FADE_OUT_MS 400
+#define OVERVIEW_HUD_HOLD_MS     1000
 
 typedef enum {
   OVERVIEW_HUD_PANEL_STATUS = 0,
@@ -246,6 +254,7 @@ typedef enum {
 } OverviewHudPanel;
 
 static bool   gOverviewHudHovered[OVERVIEW_HUD_PANEL_COUNT];
+static Uint64 gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_COUNT];
 static float  gOverviewHudFade[OVERVIEW_HUD_PANEL_COUNT];
 static Uint64 gOverviewHudFadeTick = 0;
 
@@ -1831,7 +1840,8 @@ static void hudStepHoverFades(Uint64 now) {
   gOverviewHudFadeTick = now;
 
   for (int i = 0; i < OVERVIEW_HUD_PANEL_COUNT; i++) {
-    gOverviewHudFade[i] += gOverviewHudHovered[i] ? in : -out;
+    bool up = gOverviewHudHovered[i] || now < gOverviewHudHoldUntil[i];
+    gOverviewHudFade[i] += up ? in : -out;
     if (gOverviewHudFade[i] < 0.0f) gOverviewHudFade[i] = 0.0f;
     if (gOverviewHudFade[i] > 1.0f) gOverviewHudFade[i] = 1.0f;
   }
@@ -3347,6 +3357,16 @@ void sdl3DrawCopyManStatus(int x, int y) {
 
 void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y) {
   (void)x; (void)y;
+  /* Every way of changing the selection comes through here — the keys, the
+     click on the strip, the classic panel's own hit-test, the D-pad cycle —
+     so this is where the full screen map's build strip is told to come up and
+     show the new one. Only on an actual change: the redraw paths call this
+     with the selection already showing, and holding the strip up for those
+     would leave it up for the whole game. */
+  if (value != gCurrentBuildSelect) {
+    gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_BUILD] =
+        SDL_GetTicks() + OVERVIEW_HUD_HOLD_MS;
+  }
   gCurrentBuildSelect = value;
 }
 
