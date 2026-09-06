@@ -1243,6 +1243,45 @@ static int btParseDirTime(const char *name) {
 
 /* Scan debug_sessions/ for recordings. Loadable = has a version-matching
  * brainrec.btr. Length is wall-clock: btr mtime minus the dir-name timestamp. */
+/* Peek cache: the O dialog rescans on every press, and each entry's peek
+ * gz-decompresses a first frame. With a couple of hundred sessions that was
+ * seconds of main-thread stall per press. Keyed on dir name + brainrec
+ * size + mtime, so a session that changed on disk is peeked again. */
+typedef struct {
+    char     name[128];
+    uint64_t size;
+    int64_t  mtime;
+    char     map[64];
+    int      bots;
+    bool     loadable;
+} PeekCacheEntry;
+static PeekCacheEntry g_peekCache[LOADBROWSER_MAX_SESSIONS];
+static int g_peekCacheCount = 0;
+
+static PeekCacheEntry *peekCacheFind(const char *name, uint64_t size, int64_t mtime) {
+    for (int i = 0; i < g_peekCacheCount; i++) {
+        PeekCacheEntry *c = &g_peekCache[i];
+        if (c->size == size && c->mtime == mtime && strcmp(c->name, name) == 0) return c;
+    }
+    return NULL;
+}
+
+static void peekCacheStore(const char *name, uint64_t size, int64_t mtime,
+                           const char *map, int bots, bool loadable) {
+    PeekCacheEntry *c = NULL;
+    for (int i = 0; i < g_peekCacheCount; i++) {
+        if (strcmp(g_peekCache[i].name, name) == 0) { c = &g_peekCache[i]; break; }
+    }
+    if (!c) {
+        if (g_peekCacheCount >= LOADBROWSER_MAX_SESSIONS) return;
+        c = &g_peekCache[g_peekCacheCount++];
+    }
+    SDL_strlcpy(c->name, name, sizeof c->name);
+    c->size = size; c->mtime = mtime;
+    memcpy(c->map, map, 64);
+    c->bots = bots; c->loadable = loadable;
+}
+
 static void scanSessions(void) {
     g_sessionCount = 0;
     int n = 0;
@@ -1268,7 +1307,16 @@ static void scanSessions(void) {
             SDL_strlcpy(e->note, "no brainrec.btr", sizeof e->note);
         } else {
             e->sizeMB = (double)bi.size / 1.0e6;
-            if (btPeekSession(btr, e->map, &e->bots, false)) {
+            PeekCacheEntry *pc = peekCacheFind(entries[i], (uint64_t)bi.size, (int64_t)bi.modify_time);
+            bool ok;
+            if (pc) {
+                memcpy(e->map, pc->map, 64); e->bots = pc->bots; ok = pc->loadable;
+            } else {
+                ok = btPeekSession(btr, e->map, &e->bots, false);
+                peekCacheStore(entries[i], (uint64_t)bi.size, (int64_t)bi.modify_time,
+                               e->map, e->bots, ok);
+            }
+            if (ok) {
                 e->loadable = true;
                 int start = btParseDirTime(entries[i]);
                 if (start >= 0) {
