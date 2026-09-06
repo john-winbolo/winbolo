@@ -1353,6 +1353,13 @@ static void renderGameInfoContent(ClientSim *cs) {
             }
         }
     }
+
+    /* Classic mode and the allies-in-trees rule, read-only mirrors of the
+     * lobby's two checkboxes. */
+    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
+                clientSimGetClassicMode(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
+    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
+                clientSimGetAlliesInTrees(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
 }
 
 static void renderGameInfoPanel(ClientSim *cs) {
