@@ -80,6 +80,14 @@ typedef struct OverviewCamera {
     float scrollFromX, scrollFromY;   /* centre when the scroll was started */
     float scrollToX, scrollToY;       /* centre the scroll is aimed at */
     float scrollElapsedMs;
+
+    /* View pixels along each edge that something is drawn over the map — in
+       full screen the status column, the build strip and the newswire. The
+       calls that bring a point into the view work against what is left, so a
+       point they have finished with is somewhere the player can actually see
+       it rather than under a panel. Zero all round is a view with nothing on
+       top of it, which is what the pop-out is. */
+    float insetL, insetT, insetR, insetB;
 } OverviewCamera;
 
 /* 1x zoom, follow on, centred on the map. */
@@ -134,9 +142,18 @@ void overviewCameraCenterOnTank(OverviewCamera *cam, int viewW, int viewH,
 void overviewCameraFollowTick(OverviewCamera *cam, int viewW, int viewH,
                               float tankMapX, float tankMapY);
 
+/* The panels the host draws over the map, as view pixels off each edge. The
+ * calls below that bring a point into the view treat those strips as covered,
+ * so a point brought in lands on map the player can see. Set them once a
+ * frame, or never: a view with nothing drawn over it leaves them at zero. */
+void overviewCameraSetInsets(OverviewCamera *cam, float left, float top,
+                             float right, float bottom);
+
 /* Squares of map kept between the point and the edge of the view by the nudge
  * below. Two: half of one is the point's own square, and the rest is the tile
- * of ground behind it that stops it riding the edge it was pulled in over. */
+ * of ground behind it that stops it riding the edge it was pulled in over.
+ * Measured off the inset edge where there is one, so a panel and this margin
+ * add up rather than the margin being eaten by the panel. */
 #define OVERVIEW_EDGE_MARGIN 2.0f
 
 /* How long an animated scroll takes, whatever distance it covers. A short hop

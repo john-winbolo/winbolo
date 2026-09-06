@@ -74,6 +74,15 @@ SDL_Texture  *overviewViewGetTexture(const OverviewView *v);
 void          overviewViewGetSize(const OverviewView *v, int *outW, int *outH);
 OverviewCamera *overviewViewCamera(OverviewView *v);
 
+/* View pixels off each edge that the host draws its own panels over — the
+   status column, the build strip and the newswire in full screen. The view
+   treats those strips as covered when it brings something into the picture,
+   so a tank respawning behind a panel is scrolled into the clear rather than
+   left under it. A host with nothing over the map never calls this, and the
+   pop-out is such a host. */
+void          overviewViewSetHudInsets(OverviewView *v, float left, float top,
+                                       float right, float bottom);
+
 /* Wheel / drag / click / keyboard, read from the current ImGui context — so
    the host calls this inside its own frame, right after submitting the pan
    InvisibleButton over the image. Pointer motion over the map moves the shared

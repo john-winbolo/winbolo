@@ -413,6 +413,122 @@ static int camera_keeps_tank_on_screen(void) {
     return 0;
 }
 
+/* The same nudge with panels drawn over the edges of the view: on screen is
+ * not enough, the point has to land where none of them covers it. The full
+ * screen map is such a view — the status column down the right, the build
+ * strip on the left and the newswire along the bottom — and a tank that
+ * respawns behind one of them is what asks for the move. */
+static int camera_keeps_tank_clear_of_panels(void) {
+    const int   viewW   = 800;
+    const int   viewH   = 600;
+    const float insetL  = 60.0f;
+    const float insetR  = 120.0f;
+    const float insetB  = 80.0f;
+    /* Well clear of both map edges, so what is asserted is the nudge and never
+     * the map clamp underneath it. */
+    const float tankX   = 128.5f;
+    const float tankY   = 128.5f;
+
+    for (int z = 0; z < overviewCameraZoomCount(); z++) {
+        OverviewCamera cam;
+        overviewCameraInit(&cam);
+        cam.follow = false;
+        cam.zoomIndex = z;
+        overviewCameraSetInsets(&cam, insetL, 0.0f, insetR, insetB);
+
+        float tilePx = (float)OVERVIEW_TILE_PX * overviewCameraZoomScale(&cam);
+        float margin = OVERVIEW_EDGE_MARGIN * tilePx;
+        /* The band the tank is allowed to land in, in view pixels. */
+        float nearX  = insetL + margin;
+        float farX   = (float)viewW - insetR - margin;
+        float farY   = (float)viewH - insetB - margin;
+        if (nearX >= farX || margin >= farY) continue;   /* no band at this rung */
+
+        /* The centre that draws the tank at a given view pixel, from the
+         * transform overviewCameraWorldToScreen applies. */
+#define CENTRE_FOR_SX(px) (tankX + ((float)viewW * 0.5f - (px)) / tilePx)
+#define CENTRE_FOR_SY(px) (tankY + ((float)viewH * 0.5f - (px)) / tilePx)
+
+        /* Behind the status column: on screen, but under artwork. The centre
+         * comes right only as far as the column's inner edge and its margin. */
+        cam.cx = CENTRE_FOR_SX((float)viewW - insetR * 0.5f);
+        cam.cy = CENTRE_FOR_SY((float)viewH * 0.5f);
+        overviewCameraKeepOnScreen(&cam, viewW, viewH, tankX, tankY);
+
+        float sx = 0.0f, sy = 0.0f;
+        overviewCameraWorldToScreen(&cam, viewW, viewH, tankX, tankY, &sx, &sy);
+        UT_ASSERT_MSG(std::fabs(sx - farX) < 0.001f,
+                      "zoom index %d: a tank behind the status column drew at "
+                      "x %.4f, expected %.4f", z, (double)sx, (double)farX);
+
+        /* Behind the newswire, which is the bottom edge doing the same. */
+        cam.cx = CENTRE_FOR_SX((float)viewW * 0.5f);
+        cam.cy = CENTRE_FOR_SY((float)viewH - insetB * 0.5f);
+        overviewCameraKeepOnScreen(&cam, viewW, viewH, tankX, tankY);
+        overviewCameraWorldToScreen(&cam, viewW, viewH, tankX, tankY, &sx, &sy);
+        UT_ASSERT_MSG(std::fabs(sy - farY) < 0.001f,
+                      "zoom index %d: a tank behind the newswire drew at y "
+                      "%.4f, expected %.4f", z, (double)sy, (double)farY);
+
+        /* Behind the build strip, the left edge's version. */
+        cam.cx = CENTRE_FOR_SX(insetL * 0.5f);
+        cam.cy = CENTRE_FOR_SY((float)viewH * 0.5f);
+        overviewCameraKeepOnScreen(&cam, viewW, viewH, tankX, tankY);
+        overviewCameraWorldToScreen(&cam, viewW, viewH, tankX, tankY, &sx, &sy);
+        UT_ASSERT_MSG(std::fabs(sx - nearX) < 0.001f,
+                      "zoom index %d: a tank behind the build strip drew at x "
+                      "%.4f, expected %.4f", z, (double)sx, (double)nearX);
+
+        /* And a tank in the clear between them is left alone, panels or no. */
+        cam.cx = CENTRE_FOR_SX((nearX + farX) * 0.5f);
+        cam.cy = CENTRE_FOR_SY((margin + farY) * 0.5f);
+        float wasX = cam.cx;
+        float wasY = cam.cy;
+        overviewCameraKeepOnScreen(&cam, viewW, viewH, tankX, tankY);
+        UT_ASSERT_MSG(cam.cx == wasX && cam.cy == wasY,
+                      "zoom index %d: a tank clear of every panel moved the "
+                      "centre from (%.4f,%.4f) to (%.4f,%.4f)",
+                      z, (double)wasX, (double)wasY, (double)cam.cx,
+                      (double)cam.cy);
+
+#undef CENTRE_FOR_SX
+#undef CENTRE_FOR_SY
+    }
+
+    /* Panels wider than the view leave no band at all. The point goes in the
+     * middle of what they left rather than favouring one edge, which is what
+     * the same call does for a view too small to hold its margins. */
+    {
+        OverviewCamera cam;
+        overviewCameraInit(&cam);
+        cam.follow = false;
+        cam.zoomIndex = 0;
+        overviewCameraSetInsets(&cam, (float)viewW, 0.0f, (float)viewW, 0.0f);
+        cam.cx = 200.0f;
+        cam.cy = tankY;
+        overviewCameraKeepOnScreen(&cam, viewW, viewH, tankX, tankY);
+        UT_ASSERT_MSG(std::fabs(cam.cx - tankX) < 0.001f,
+                      "panels covering the whole view put the centre at %.4f, "
+                      "expected the tank at %.4f",
+                      (double)cam.cx, (double)tankX);
+    }
+
+    /* A negative inset is nothing to keep clear of, not an edge pushed
+     * outwards: the setter floors it, so this behaves as the plain nudge. */
+    {
+        OverviewCamera cam;
+        overviewCameraInit(&cam);
+        cam.follow = false;
+        overviewCameraSetInsets(&cam, -40.0f, -40.0f, -40.0f, -40.0f);
+        UT_ASSERT_MSG(cam.insetL == 0.0f && cam.insetT == 0.0f &&
+                          cam.insetR == 0.0f && cam.insetB == 0.0f,
+                      "a negative inset was kept: (%.4f,%.4f,%.4f,%.4f)",
+                      (double)cam.insetL, (double)cam.insetT,
+                      (double)cam.insetR, (double)cam.insetB);
+    }
+    return 0;
+}
+
 /* The point every scroll check brings on screen, and the centre every one of
  * them starts from: far enough off the point that it is outside the view at
  * every rung of the ladder, and near enough the middle of the map that neither
@@ -1378,6 +1494,7 @@ extern "C" int run_overview_camera(void) {
     rc = camera_zoom_anchors_cursor();      if (rc) return rc;
     rc = camera_follow_centres_on_tank();   if (rc) return rc;
     rc = camera_keeps_tank_on_screen();     if (rc) return rc;
+    rc = camera_keeps_tank_clear_of_panels(); if (rc) return rc;
     rc = camera_clamps_zoom_and_centre();   if (rc) return rc;
     rc = camera_visible_range_at_edges();   if (rc) return rc;
     rc = camera_set_zoom_scale();           if (rc) return rc;

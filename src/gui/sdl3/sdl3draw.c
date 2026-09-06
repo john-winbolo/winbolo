@@ -1990,13 +1990,35 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
   if (!gOverviewView) gOverviewView = overviewViewCreate();
   if (!gOverviewView) return;
 
+  /* What the panels cover, before the draw that has to work around it: a tank
+     respawning behind the newswire or under the status column is scrolled into
+     the clear, and only the view knows when that has happened. The layout is
+     arithmetic on the size alone, so it can be had this early; whether the
+     panels are drawn at all is settled below, and an edge is counted whole —
+     the strip a panel sits in rather than the artwork's own rect, which is
+     what keeps the sums to three numbers.
+
+     The newswire is counted where it is laid out, not where the slide has it:
+     it comes back up on the next message, and a tank parked in the strip it
+     covers would be behind it as soon as anyone said anything. */
+  OverviewHudLayout hud;
+  bool haveHud = overviewHudLayout(w, h, &hud);
+  if (haveHud) {
+    overviewViewSetHudInsets(gOverviewView,
+                             hud.buildX + hud.buildW,
+                             0.0f,
+                             (float)w - hud.columnX,
+                             (float)h - hud.newswireY);
+  } else {
+    overviewViewSetHudInsets(gOverviewView, 0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
   overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
                               gCrosshairTex, w, h, cs, true);
 
   /* Both offscreen passes belong here, before anything is drawn to the
      window: each of them swaps the render target. */
-  OverviewHudLayout hud;
-  bool drawHud = overviewHudLayout(w, h, &hud) &&
+  bool drawHud = haveHud &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
   if (drawHud) {
     Uint64 now = SDL_GetTicks();

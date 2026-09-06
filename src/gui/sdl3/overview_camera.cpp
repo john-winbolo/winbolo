@@ -99,7 +99,22 @@ void overviewCameraInit(OverviewCamera *cam) {
     cam->scrollToX = cam->cx;
     cam->scrollToY = cam->cy;
     cam->scrollElapsedMs = 0.0f;
+    cam->insetL = 0.0f;
+    cam->insetT = 0.0f;
+    cam->insetR = 0.0f;
+    cam->insetB = 0.0f;
     overviewCameraClamp(cam);
+}
+
+void overviewCameraSetInsets(OverviewCamera *cam, float left, float top,
+                             float right, float bottom) {
+    if (!cam) return;
+    /* A negative inset would push a point off the edge it is meant to be kept
+     * inside, and a host that has no panel on an edge passes zero for it. */
+    cam->insetL = (left   > 0.0f) ? left   : 0.0f;
+    cam->insetT = (top    > 0.0f) ? top    : 0.0f;
+    cam->insetR = (right  > 0.0f) ? right  : 0.0f;
+    cam->insetB = (bottom > 0.0f) ? bottom : 0.0f;
 }
 
 float overviewCameraZoomScale(const OverviewCamera *cam) {
@@ -266,28 +281,40 @@ bool overviewCameraCentreToShow(const OverviewCamera *cam, int viewW, int viewH,
     }
 
     float tilePx = overviewTilePx(cam);
-    float halfW  = (float)viewW / (2.0f * tilePx);
-    float halfH  = (float)viewH / (2.0f * tilePx);
 
-    /* The two edges of an axis ask for opposite things, and the window they
-     * leave between them is the view minus both margins. A window narrower
-     * than the margins it is being asked to keep has no centre that satisfies
-     * either edge, so the point goes in the middle — the nearest thing to what
-     * was asked, and the only answer that does not favour one edge. */
-    if (halfW <= OVERVIEW_EDGE_MARGIN) {
-        wantX = pointX;
+    /* The band of view pixels the point is allowed to land in: the view, less
+     * whatever the panels cover, less the margin off each of those edges. A
+     * point at pixel p sits at world pointX when the centre is
+     * pointX + (view/2 - p) / tilePx, so a band of pixels is a band of
+     * centres — the near pixel edge gives the far centre, which is why the two
+     * come out swapped. */
+    float nearX = cam->insetL + OVERVIEW_EDGE_MARGIN * tilePx;
+    float farX  = (float)viewW - cam->insetR - OVERVIEW_EDGE_MARGIN * tilePx;
+    float nearY = cam->insetT + OVERVIEW_EDGE_MARGIN * tilePx;
+    float farY  = (float)viewH - cam->insetB - OVERVIEW_EDGE_MARGIN * tilePx;
+
+    float midW = (float)viewW * 0.5f;
+    float midH = (float)viewH * 0.5f;
+
+    /* The two edges of an axis ask for opposite things. A band with nothing
+     * left in it — the panels and the margins between them covering the view —
+     * has no centre that satisfies either edge, so the point goes in the middle
+     * of what the panels left: the nearest thing to what was asked, and the
+     * only answer that does not favour one edge. */
+    if (nearX >= farX) {
+        wantX = pointX + (midW - (nearX + farX) * 0.5f) / tilePx;
     } else {
-        float lowest  = pointX - halfW + OVERVIEW_EDGE_MARGIN;
-        float highest = pointX + halfW - OVERVIEW_EDGE_MARGIN;
+        float lowest  = pointX + (midW - farX) / tilePx;
+        float highest = pointX + (midW - nearX) / tilePx;
         if (wantX < lowest)  wantX = lowest;
         if (wantX > highest) wantX = highest;
     }
 
-    if (halfH <= OVERVIEW_EDGE_MARGIN) {
-        wantY = pointY;
+    if (nearY >= farY) {
+        wantY = pointY + (midH - (nearY + farY) * 0.5f) / tilePx;
     } else {
-        float lowest  = pointY - halfH + OVERVIEW_EDGE_MARGIN;
-        float highest = pointY + halfH - OVERVIEW_EDGE_MARGIN;
+        float lowest  = pointY + (midH - farY) / tilePx;
+        float highest = pointY + (midH - nearY) / tilePx;
         if (wantY < lowest)  wantY = lowest;
         if (wantY > highest) wantY = highest;
     }

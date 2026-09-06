@@ -28,7 +28,11 @@
  *                over the wreck is the sim's doing, and this
  *                file draws the static that follows it — the
  *                map goes dark, then the snow comes up and
- *                holds until the tank is back.
+ *                holds until the tank is back. The respawn
+ *                takes that away and hands the map back from
+ *                the square the tank came back on: everything
+ *                else stays dark for a moment while a ring
+ *                closes onto the tank.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -105,6 +109,42 @@ extern "C" bool smoothScrollingEnabled;
  * being taken away is the picture, not the block. */
 #define OVERVIEW_DEATH_BLACK_FADE_MS 700    /* to reach full black */
 
+/* The respawn ring, and the other half of that answer. The blackout stops
+ * drawing on the frame the tank is back — the map cuts in, somewhere the
+ * player may not have been looking when they died — so a circle closes on the
+ * new square in the half second after it and says where the tank is.
+ *
+ * The radii are in map squares rather than view pixels, so the ring opens
+ * seven squares across at every rung of the zoom ladder. It closes to a little
+ * wider than the tank's own square, then opens slightly and shuts again as it
+ * fades out, which is what keeps it from ending on a cut. */
+#define OVERVIEW_RESPAWN_RING_START_SQ 3.5f   /* radius: seven squares across */
+#define OVERVIEW_RESPAWN_RING_END_SQ   0.6f   /* just outside the tank sprite */
+#define OVERVIEW_RESPAWN_RING_PULSE_SQ 0.85f  /* how far the pulse reopens */
+#define OVERVIEW_RESPAWN_RING_MS       550    /* the close */
+#define OVERVIEW_RESPAWN_RING_PULSE_MS 200    /* the pulse, and the fade with it */
+#define OVERVIEW_RESPAWN_RING_WEIGHT   6.0f   /* px of stroke, across the band */
+
+/* Sides of the drawn circle, from its radius: enough of them that a side is
+ * about this many pixels long, so the ring stays round when it opens at 4x
+ * zoom instead of turning into a polygon, and does not spend a hundred
+ * segments on the small one it ends as. The ends are a floor that keeps a
+ * tiny ring from going lumpy and a ceiling on the vertex array below. */
+#define OVERVIEW_RESPAWN_RING_SIDE_PX  4.0f
+#define OVERVIEW_RESPAWN_RING_MIN_SEG  24
+#define OVERVIEW_RESPAWN_RING_MAX_SEG  128
+
+/* The spotlight the ring arrives in: the map dark everywhere but a disc round
+ * the tank, lifting over the moment after. The lit disc is wider than the ring
+ * opens, so the ring is inside the light rather than crossing its edge, and it
+ * opens a little further as the dark goes. Radii in map squares, like the
+ * ring's. */
+#define OVERVIEW_RESPAWN_DIM_MS        600  /* dark at the cut, gone by here */
+#define OVERVIEW_RESPAWN_DIM_ALPHA     170  /* how dark, at the cut */
+#define OVERVIEW_RESPAWN_DIM_HOLE_SQ   4.5f /* lit radius at the cut */
+#define OVERVIEW_RESPAWN_DIM_OPEN_SQ   7.0f /* and where it has opened to */
+#define OVERVIEW_RESPAWN_DIM_FEATHER_SQ 2.5f /* squares of soft edge */
+
 /* The frame drawn round the picture while an item view is on. The weight is
  * taken from the view's height so it holds up on a small screen as well as a
  * desktop one, and capped so inset + weight never passes HUD_MARGIN (8): that
@@ -163,6 +203,18 @@ struct OverviewView {
      * fade is measured from, so one death is one fade however many frames the
      * view draws in it. */
     Uint64         blackoutTick;
+
+    /* The local tank's state as the last frame left it, and when the respawn
+     * ring started — 0 when none is running.
+     *
+     * aliveKnown is what keeps the first frame from reading as a respawn: the
+     * view is built the first time full screen draws, which can be in the
+     * middle of a game, and a tank that has simply always been alive would
+     * otherwise come up as one that had just come back. The first frame
+     * records what it finds and draws nothing. */
+    bool           aliveKnown;
+    bool           wasAlive;
+    Uint64         respawnTick;
 
     /* The item view as it stood last frame, and what the camera did about it.
      * Entering one saves the follow flag and turns following on, aimed at the
@@ -391,6 +443,252 @@ static void overviewViewDrawDeathBlackout(OverviewView *v, SDL_Renderer *r,
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(r, 0, 0, 0, alpha);
     SDL_RenderFillRect(r, &dst);
+    SDL_SetRenderDrawBlendMode(r, was);
+}
+
+/* A band between two circles, as one run of triangles: the ring is a narrow
+ * one in yellow, and the dim outside the spotlight is a pair of wide ones in
+ * black. The two alphas are the band's inner and outer edge, so a band can
+ * ramp from clear to solid across its width — which is the soft edge of the
+ * spotlight — or carry one alpha on both and come out flat.
+ *
+ * Not concentric one-pixel lines, which is how the item-view border below
+ * builds its weight out of rectangles. Lines a pixel apart leave hairlines
+ * through a band of any width, where the rasteriser steps a segment across a
+ * row, and closing those by overlapping the runs would blend the band onto
+ * itself at whatever alpha it is drawn at. Triangles cover the band once, and
+ * carry their own colour: SDL_RenderGeometry ignores the draw colour, so the
+ * fades ride on the vertices instead. */
+static void overviewViewDrawBand(SDL_Renderer *r, float cx, float cy,
+                                 float inner, float outer, int segments,
+                                 Uint8 red, Uint8 green, Uint8 blue,
+                                 Uint8 innerAlpha, Uint8 outerAlpha) {
+    SDL_Vertex verts[(OVERVIEW_RESPAWN_RING_MAX_SEG + 1) * 2];
+    int        indices[OVERVIEW_RESPAWN_RING_MAX_SEG * 6];
+
+    if (inner < 0.0f) inner = 0.0f;
+    if (outer <= inner || segments < 3) return;
+
+    SDL_FColor colourIn  = { (float)red   / 255.0f, (float)green / 255.0f,
+                             (float)blue  / 255.0f, (float)innerAlpha / 255.0f };
+    SDL_FColor colourOut = { colourIn.r, colourIn.g, colourIn.b,
+                             (float)outerAlpha / 255.0f };
+
+    /* Inner and outer vertex per step round the circle, the pair adjacent so
+     * a segment's four corners are four consecutive entries. */
+    for (int s = 0; s <= segments; s++) {
+        float a  = (float)s * (2.0f * SDL_PI_F / (float)segments);
+        float dx = SDL_cosf(a);
+        float dy = SDL_sinf(a);
+        SDL_Vertex *vi = &verts[s * 2];
+        SDL_Vertex *vo = &verts[s * 2 + 1];
+
+        vi->position.x = cx + dx * inner;
+        vi->position.y = cy + dy * inner;
+        vo->position.x = cx + dx * outer;
+        vo->position.y = cy + dy * outer;
+        vi->color = colourIn;
+        vo->color = colourOut;
+        vi->tex_coord.x = 0.0f;
+        vi->tex_coord.y = 0.0f;
+        vo->tex_coord.x = 0.0f;
+        vo->tex_coord.y = 0.0f;
+    }
+
+    /* Two triangles a segment, between this step's pair and the next one's. */
+    for (int s = 0; s < segments; s++) {
+        int i0 = s * 2;
+        indices[s * 6 + 0] = i0;
+        indices[s * 6 + 1] = i0 + 1;
+        indices[s * 6 + 2] = i0 + 2;
+        indices[s * 6 + 3] = i0 + 1;
+        indices[s * 6 + 4] = i0 + 3;
+        indices[s * 6 + 5] = i0 + 2;
+    }
+
+    SDL_RenderGeometry(r, NULL, verts, (segments + 1) * 2,
+                       indices, segments * 6);
+}
+
+/* Sides for a circle of this radius: see OVERVIEW_RESPAWN_RING_SIDE_PX. */
+static int overviewViewCircleSegments(float radiusPx) {
+    int segments = (int)(2.0f * SDL_PI_F * radiusPx /
+                         OVERVIEW_RESPAWN_RING_SIDE_PX);
+    if (segments < OVERVIEW_RESPAWN_RING_MIN_SEG) {
+        return OVERVIEW_RESPAWN_RING_MIN_SEG;
+    }
+    if (segments > OVERVIEW_RESPAWN_RING_MAX_SEG) {
+        return OVERVIEW_RESPAWN_RING_MAX_SEG;
+    }
+    return segments;
+}
+
+/* The spotlight: the map goes dark everywhere but a disc round the tank, and
+ * the dark lifts over the moment after. What it is for is the frame the map
+ * cuts back in — the tank is then the one lit thing on the picture, which is a
+ * harder cue to miss than any mark drawn on top of a map that is all equally
+ * bright.
+ *
+ * Three pieces: the disc itself, which is left alone; a band round it that
+ * ramps from clear to the full dim, so the edge of the light is soft rather
+ * than a stencil; and everything beyond that band at the full dim, which is
+ * one more band taken out past the corner of the view. The disc opens as the
+ * dark fades, so the light spreads from the tank outwards rather than the
+ * picture just getting brighter.
+ *
+ * The panels are not dimmed: they are drawn by the host after this offscreen
+ * is blitted, so what a player reads to find out how they died stays as it
+ * was. */
+static void overviewViewDrawRespawnDim(SDL_Renderer *r, float cx, float cy,
+                                       int viewW, int viewH, float zoomScale,
+                                       Uint64 elapsed) {
+    if (elapsed >= OVERVIEW_RESPAWN_DIM_MS) return;
+
+    float t = (float)elapsed / (float)OVERVIEW_RESPAWN_DIM_MS;
+    float u = 1.0f - t;
+
+    /* Squared, so the dark is deepest at the cut and most of it is gone by
+     * halfway — the cue lands, then the map is handed back. */
+    Uint8 alpha = (Uint8)((float)OVERVIEW_RESPAWN_DIM_ALPHA * u * u);
+    if (alpha == 0) return;
+
+    float tilePx  = (float)OVERVIEW_TILE_PX * zoomScale;
+    float hole    = (OVERVIEW_RESPAWN_DIM_HOLE_SQ +
+                     (OVERVIEW_RESPAWN_DIM_OPEN_SQ -
+                      OVERVIEW_RESPAWN_DIM_HOLE_SQ) * t) * tilePx;
+    float feather = OVERVIEW_RESPAWN_DIM_FEATHER_SQ * tilePx;
+
+    /* Far enough out to cover the corner of the view from wherever the tank
+     * is, with the slack a polygon needs: its flat sides fall inside the
+     * radius they are built at. */
+    float dx    = (cx > (float)viewW * 0.5f) ? cx : (float)viewW - cx;
+    float dy    = (cy > (float)viewH * 0.5f) ? cy : (float)viewH - cy;
+    float reach = SDL_sqrtf(dx * dx + dy * dy) * 1.5f + hole + feather;
+
+    int segments = overviewViewCircleSegments(hole + feather);
+
+    overviewViewDrawBand(r, cx, cy, hole, hole + feather, segments,
+                         0, 0, 0, 0, alpha);
+    overviewViewDrawBand(r, cx, cy, hole + feather, reach, segments,
+                         0, 0, 0, alpha, alpha);
+}
+
+/* The dead-to-alive edge, and what the camera does about it.
+ *
+ * The same edge the blackout ends on — both read clientSimIsMyTankAlive — so
+ * the ring it starts is on the picture from the first frame there is a map to
+ * draw it over. Dying again ends a ring still running: the next respawn is a
+ * fresh one, not the rest of the old.
+ *
+ * Answered here rather than where the ring is drawn because the other half of
+ * the answer is a camera move, and the camera is settled further down this
+ * frame: a scroll started now is advanced by the same frame's tick.
+ *
+ * Following brings the tank back by itself, so that scroll is for the free
+ * camera — a player who panned off and would otherwise come back with their
+ * tank behind the newswire, under the status column or off the picture
+ * altogether. It moves the least it can and counts the panels as covered, so a
+ * tank that came back somewhere already clear leaves the camera exactly where
+ * the player parked it. */
+static void overviewViewTickRespawn(OverviewView *v, int viewW, int viewH,
+                                    ClientSim *cs) {
+    bool alive = (cs != NULL) && clientSimIsMyTankAlive(cs);
+
+    /* The first frame the view sees only records what it found: see
+     * aliveKnown. */
+    if (!v->aliveKnown) {
+        v->aliveKnown = true;
+        v->wasAlive   = alive;
+        return;
+    }
+
+    bool respawned = alive && !v->wasAlive;
+    v->wasAlive = alive;
+    if (!alive) {
+        v->respawnTick = 0;
+        return;
+    }
+    if (!respawned) return;
+
+    v->respawnTick = SDL_GetTicks();
+
+    float tankX = 0.0f, tankY = 0.0f;
+    if (clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+        overviewCameraScrollToShow(&v->cam, viewW, viewH, tankX, tankY);
+    }
+}
+
+/* What that edge starts: the map cuts back on the respawn frame with the tank
+ * the one lit thing on it, and the light spreads while a ring closes onto the
+ * tank over the half second that follows.
+ *
+ * The centre is read fresh every frame rather than pinned where the tank came
+ * back, so a player who is already driving keeps the light and the ring on the
+ * tank instead of leaving them over the ground they spawned on. */
+static void overviewViewDrawRespawn(OverviewView *v, SDL_Renderer *r,
+                                    int viewW, int viewH, ClientSim *cs) {
+    if (v->respawnTick == 0 || cs == NULL) return;
+
+    /* The ring's two stages outlast the dim, so their end is the whole
+     * effect's. */
+    Uint64 elapsed = SDL_GetTicks() - v->respawnTick;
+    if (elapsed >= OVERVIEW_RESPAWN_RING_MS + OVERVIEW_RESPAWN_RING_PULSE_MS) {
+        v->respawnTick = 0;
+        return;
+    }
+
+    /* The tank's own sub-square position, so the light and the ring sit on the
+     * sprite and not on the corner of its square. Gone means there is nothing
+     * to mark — a disconnect, or the tank going in the frame this started. */
+    float tankX = 0.0f, tankY = 0.0f;
+    if (!clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) return;
+
+    float cx = 0.0f, cy = 0.0f;
+    overviewCameraWorldToScreen(&v->cam, viewW, viewH, tankX, tankY, &cx, &cy);
+    float zoomScale = overviewCameraZoomScale(&v->cam);
+
+    SDL_BlendMode was = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(r, &was);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    /* The dark first, so the ring is drawn into the light it leaves rather
+     * than through it. */
+    overviewViewDrawRespawnDim(r, cx, cy, viewW, viewH, zoomScale, elapsed);
+
+    float radiusSq = OVERVIEW_RESPAWN_RING_END_SQ;
+    Uint8 alpha    = 255;
+    if (elapsed < OVERVIEW_RESPAWN_RING_MS) {
+        /* The close, eased out: away quickly and settling onto the tank,
+         * rather than arriving at the speed it left. */
+        float t = (float)elapsed / (float)OVERVIEW_RESPAWN_RING_MS;
+        float u = 1.0f - t;
+        float e = 1.0f - u * u * u;
+        radiusSq = OVERVIEW_RESPAWN_RING_START_SQ +
+                   (OVERVIEW_RESPAWN_RING_END_SQ -
+                    OVERVIEW_RESPAWN_RING_START_SQ) * e;
+    } else if (elapsed < OVERVIEW_RESPAWN_RING_MS +
+                         OVERVIEW_RESPAWN_RING_PULSE_MS) {
+        /* The pulse: out and back on a half sine, so it opens and shuts
+         * without a corner at the top, and fades as it goes. */
+        float t = (float)(elapsed - OVERVIEW_RESPAWN_RING_MS) /
+                  (float)OVERVIEW_RESPAWN_RING_PULSE_MS;
+        float s = SDL_sinf(t * SDL_PI_F);
+        radiusSq = OVERVIEW_RESPAWN_RING_END_SQ +
+                   (OVERVIEW_RESPAWN_RING_PULSE_SQ -
+                    OVERVIEW_RESPAWN_RING_END_SQ) * s;
+        alpha = (Uint8)(255.0f * (1.0f - t));
+    }
+
+    float radiusPx = radiusSq * (float)OVERVIEW_TILE_PX * zoomScale;
+    if (radiusPx >= 1.0f) {
+        /* The yellow the item-view border is drawn in — the view's one
+         * accent — at one alpha across the band, so it fades flat. */
+        overviewViewDrawBand(r, cx, cy,
+                             radiusPx - OVERVIEW_RESPAWN_RING_WEIGHT * 0.5f,
+                             radiusPx + OVERVIEW_RESPAWN_RING_WEIGHT * 0.5f,
+                             overviewViewCircleSegments(radiusPx),
+                             255, 205, 40, alpha, alpha);
+    }
     SDL_SetRenderDrawBlendMode(r, was);
 }
 
@@ -705,6 +1003,12 @@ extern "C" OverviewCamera *overviewViewCamera(OverviewView *v) {
     return v ? &v->cam : NULL;
 }
 
+extern "C" void overviewViewSetHudInsets(OverviewView *v, float left, float top,
+                                         float right, float bottom) {
+    if (!v) return;
+    overviewCameraSetInsets(&v->cam, left, top, right, bottom);
+}
+
 extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             SDL_Texture *tiles, int sheetScale,
                                             SDL_Texture *crosshair,
@@ -776,6 +1080,14 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         v->wasInItemView = inItemView;
         v->wasViewKind   = viewKind;
         v->wasViewTarget = viewTarget;
+    }
+
+    /* The respawn, on the same terms and for the same reason: it can start a
+     * scroll, so it runs before the camera is settled. Outside the map test
+     * below — a tank coming back is worth answering on a frame with no map to
+     * draw, and the ring the tick starts is drawn on the frames that follow. */
+    if (ownsWindow) {
+        overviewViewTickRespawn(v, w, h, cs);
     }
 
     const OverviewMap *om = clientSimGetOverviewMap(cs);
@@ -861,6 +1173,18 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
      * afterwards and stays clear of it, so the player can still read what
      * they died with. */
     overviewViewDrawDeathBlackout(v, r, w, h, cs);
+
+    /* And the way back out of one, after the blackout because the two are ends
+     * of the same edge: the black stops being drawn on the frame the tank is
+     * alive again and the spotlight and its ring start on it, over a map that
+     * is fully back.
+     *
+     * Only where this view has replaced the classic one. Beside the pop-out
+     * the player has the 15x15 in front of them, which re-centres on the tank
+     * of its own accord, so there is nothing left to tell them. */
+    if (ownsWindow) {
+        overviewViewDrawRespawn(v, r, w, h, cs);
+    }
 
     SDL_SetRenderTarget(r, NULL);
 }
