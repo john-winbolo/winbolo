@@ -48,6 +48,7 @@
 #include "server_sim_internal.h"  /* serverSimBuildViewports, ViewportRect, viewKind */
 #include "client_sim.h"
 #include "client_connect_state.h"
+#include "client_net.h"          /* clientSimGetConnectState */
 #include "client_sim_internal.h"  /* clientSimAllyViewMask */
 #include "transport_udp.h"        /* the server's download-complete test hook */
 #include "threads.h"

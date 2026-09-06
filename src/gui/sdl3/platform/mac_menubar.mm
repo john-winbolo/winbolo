@@ -30,6 +30,12 @@ extern "C" bool sdl3ImguiIsNetInfoOpen(void);
 extern "C" bool sdl3ImguiIsGameInfoOpen(void);
 extern "C" bool sdl3ImguiIsSendMsgOpen(void);
 
+/* Map Overview: the desktop pop-out and its in-window twin. */
+extern "C" void sdl3ImguiShowMapOverview(bool open);
+extern "C" bool sdl3ImguiIsMapOverviewOpen(void);
+extern "C" void sdl3ImguiShowOverviewInWindow(bool active);
+extern "C" bool sdl3ImguiIsOverviewInWindowOpen(void);
+
 extern "C" void windowSmoothScrolling_toggle(void);
 extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
 extern "C" void windowShowGunsight_toggle(struct ClientSim *cs);
