@@ -69,7 +69,20 @@ void discoveryAbortBroadcastSearch(void) {
  * a full-length packet. */
 static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const struct in_addr *addr, DiscoveryServer *out, bool rich, size_t len) {
   memset(out, 0, sizeof(*out));
-  utilPtoCString((char *)info->mapname, out->mapName);
+  /* The map name arrives as a pascal string in a MAP_STR_SIZE field of a
+   * packet off the wire, so its length byte is whatever the sender wrote
+   * there — bound the copy by the destination rather than trusting it. */
+  {
+    unsigned int nameLen = (unsigned char)info->mapname[0];
+    if (nameLen > sizeof(out->mapName) - 1) {
+      nameLen = sizeof(out->mapName) - 1;
+    }
+    if (nameLen > sizeof(info->mapname) - 1) {
+      nameLen = sizeof(info->mapname) - 1;
+    }
+    memcpy(out->mapName, info->mapname + 1, nameLen);
+    out->mapName[nameLen] = '\0';
+  }
   out->password = (info->has_password != 0);
   out->mines = ((info->allow_mines & 0x80) != 0);
 

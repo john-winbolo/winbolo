@@ -4444,44 +4444,43 @@ void transportUdpServerDestroy(void) {
     memset(punchQueue, 0, sizeof(punchQueue));
 }
 
-/* Handle an old-protocol info request (server browser compatibility).
- * Builds an INFO_PACKET response from the current sim state. */
-static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
-                                    ServerSim *sim) {
+/* Fill an INFO_PACKET from the current sim state. The info-request reply
+ * and the tracker update both advertise the same server, so they share
+ * this builder and differ only in where the finished packet is sent.
+ * Layout and field semantics are documented in docs/info_packet_wire.md. */
+static void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
     GameSim *gs = serverSimGetGameSim(sim);
-    INFO_PACKET pkt;
     int i;
     BYTE numPlayers = 0, numHumans = 0, numBots = 0;
-    char consoleMsg[256];
 
-    memset(&pkt, 0, sizeof(pkt));
+    memset(pkt, 0, sizeof(*pkt));
 
     /* Header */
-    memcpy(pkt.h.signature, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE);
-    pkt.h.versionMajor = BOLO_VERSION_MAJOR;
-    pkt.h.versionMinor = BOLO_VERSION_MINOR;
-    pkt.h.versionRevision = BOLO_VERSION_REVISION;
-    pkt.h.type = BOLOPACKET_INFORESPONSE;
+    memcpy(pkt->h.signature, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE);
+    pkt->h.versionMajor = BOLO_VERSION_MAJOR;
+    pkt->h.versionMinor = BOLO_VERSION_MINOR;
+    pkt->h.versionRevision = BOLO_VERSION_REVISION;
+    pkt->h.type = BOLOPACKET_INFORESPONSE;
 
     /* Game ID — address zeroed (browser uses UDP source), port and timestamp set.
      * Tracker reads port raw for v1.1.8 (only ntohs for v1.1.1-3).
      * start_time is the only field the tracker byte-swaps on read. */
     if (udpServerPublicPort != 0) {
-        pkt.gameid.serveraddress.s_addr = inet_addr(udpServerPublicIp);
-        pkt.gameid.serverport = udpServerPublicPort;
+        pkt->gameid.serveraddress.s_addr = inet_addr(udpServerPublicIp);
+        pkt->gameid.serverport = udpServerPublicPort;
     } else {
-        pkt.gameid.serveraddress.s_addr = 0;
-        pkt.gameid.serverport = serverSimGetServerPort(sim);
+        pkt->gameid.serveraddress.s_addr = 0;
+        pkt->gameid.serverport = serverSimGetServerPort(sim);
     }
-    pkt.gameid.start_time = htonl(serverSimGetTimeCreated(sim));
+    pkt->gameid.start_time = htonl(serverSimGetTimeCreated(sim));
 
     /* Map name as Pascal string */
-    utilCtoPString((char *)serverSimGetMapName(sim), pkt.mapname);
+    utilCtoPString((char *)serverSimGetMapName(sim), pkt->mapname);
 
     /* Game settings */
-    pkt.gametype = (BYTE)gs->game;
-    pkt.allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
-    pkt.allow_AI = 0;  /* AI type not tracked in new sim — report as none */
+    pkt->gametype = (BYTE)gs->game;
+    pkt->allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
+    pkt->allow_AI = 0;  /* AI type not tracked in new sim — report as none */
     {
         BYTE flags = 0;
         if (serverSimIsAcceptingJoins(sim))              flags |= INFO_FLAG_ALLOW_NEW_PLAYERS;
@@ -4493,10 +4492,10 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
          * the cap accessor returns 0 when spectating is disabled. The live
          * spectator_count has no accessor yet, so it stays 0 below. */
         if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
-        pkt.flags = flags;
+        pkt->flags = flags;
     }
-    pkt.start_delay = serverSimGetStartDelay(sim);
-    pkt.time_limit = serverSimGetGameLength(sim);
+    pkt->start_delay = serverSimGetStartDelay(sim);
+    pkt->time_limit = serverSimGetGameLength(sim);
 
     /* Count connected players, classifying humans vs bots */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -4506,31 +4505,41 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
             else                              numHumans++;
         }
     }
-    pkt.num_players = numPlayers;
-    pkt.num_humans  = numHumans;
-    pkt.num_bots    = numBots;
-    pkt.max_players = serverSimGetMaxPlayers(sim);
+    pkt->num_players = numPlayers;
+    pkt->num_humans  = numHumans;
+    pkt->num_bots    = numBots;
+    pkt->max_players = serverSimGetMaxPlayers(sim);
 
     /* Neutral pills and bases */
-    pkt.free_pills = pillsGetNumNeutral(&gs->pb);
-    pkt.free_bases = basesGetNumNeutral(&gs->bs);
+    pkt->free_pills = pillsGetNumNeutral(&gs->pb);
+    pkt->free_bases = basesGetNumNeutral(&gs->bs);
 
-    pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
-    pkt.spectator_count = 0;
+    pkt->has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
+    pkt->spectator_count = 0;
 
     {
         const char *md5Hex = serverSimGetMapMd5Hex(sim);
         if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
-            memcpy(pkt.map_md5, md5Hex, 32);
+            memcpy(pkt->map_md5, md5Hex, 32);
         }
     }
 
-    pkt.view_policies = infoPacketPackViewPolicies(
+    pkt->view_policies = infoPacketPackViewPolicies(
         serverSimGetViewPolicy(sim, viewCategoryPill),
         serverSimGetViewPolicy(sim, viewCategoryBase),
         serverSimGetViewPolicy(sim, viewCategoryAlly),
         serverSimGetClassicMode(sim),
         serverSimGetAlliesInTrees(sim));
+}
+
+/* Handle an old-protocol info request (server browser compatibility).
+ * Replies to the requester with the current server advertisement. */
+static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
+                                    ServerSim *sim) {
+    INFO_PACKET pkt;
+    char consoleMsg[256];
+
+    buildInfoPacket(sim, &pkt);
 
     /* wire-only: tracker / external reply (no in-process audience) */
     srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
@@ -5116,12 +5125,9 @@ uint64_t transportUdpServerGetClientConnId(BYTE playerNum) {
 void transportUdpServerSendTrackerUpdate(ServerSim *sim,
                                          const char *trackerAddr,
                                          unsigned short trackerPort) {
-    GameSim *gs = serverSimGetGameSim(sim);
     INFO_PACKET pkt;
     struct sockaddr_in dest;
     struct in_addr trackerIp;
-    int i;
-    BYTE numPlayers = 0, numHumans = 0, numBots = 0;
 
     if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) {
         fprintf(stderr, "[TRACKER] Failed to resolve %s\n", trackerAddr);
@@ -5133,73 +5139,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     dest.sin_addr = trackerIp;
     dest.sin_port = htons(trackerPort);
 
-    memset(&pkt, 0, sizeof(pkt));
-
-    memcpy(pkt.h.signature, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE);
-    pkt.h.versionMajor = BOLO_VERSION_MAJOR;
-    pkt.h.versionMinor = BOLO_VERSION_MINOR;
-    pkt.h.versionRevision = BOLO_VERSION_REVISION;
-    pkt.h.type = BOLOPACKET_INFORESPONSE;
-
-    if (udpServerPublicPort != 0) {
-        pkt.gameid.serveraddress.s_addr = inet_addr(udpServerPublicIp);
-        pkt.gameid.serverport = udpServerPublicPort;
-    } else {
-        pkt.gameid.serveraddress.s_addr = 0;
-        pkt.gameid.serverport = serverSimGetServerPort(sim);
-    }
-    pkt.gameid.start_time = htonl(serverSimGetTimeCreated(sim));
-
-    utilCtoPString((char *)serverSimGetMapName(sim), pkt.mapname);
-
-    pkt.gametype = (BYTE)gs->game;
-    pkt.allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
-    pkt.allow_AI = 0;
-    {
-        BYTE flags = 0;
-        if (serverSimIsAcceptingJoins(sim))              flags |= INFO_FLAG_ALLOW_NEW_PLAYERS;
-        if (transportUdpServerGetLock() || !serverSimIsAcceptingJoins(sim)) flags |= INFO_FLAG_LOCKED;
-        if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
-        if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
-        if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
-        /* Advertise spectator support so finders can enable a Spectate action;
-         * the cap accessor returns 0 when spectating is disabled. The live
-         * spectator_count has no accessor yet, so it stays 0 below. */
-        if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
-        pkt.flags = flags;
-    }
-    pkt.start_delay = serverSimGetStartDelay(sim);
-    pkt.time_limit = serverSimGetGameLength(sim);
-
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsPlayerConnected(sim, i)) {
-            numPlayers++;
-            if (serverSimIsBot(sim, (BYTE)i)) numBots++;
-            else                              numHumans++;
-        }
-    }
-    pkt.num_players = numPlayers;
-    pkt.num_humans  = numHumans;
-    pkt.num_bots    = numBots;
-    pkt.max_players = serverSimGetMaxPlayers(sim);
-    pkt.free_pills = pillsGetNumNeutral(&gs->pb);
-    pkt.free_bases = basesGetNumNeutral(&gs->bs);
-    pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
-    pkt.spectator_count = 0;
-
-    {
-        const char *md5Hex = serverSimGetMapMd5Hex(sim);
-        if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
-            memcpy(pkt.map_md5, md5Hex, 32);
-        }
-    }
-
-    pkt.view_policies = infoPacketPackViewPolicies(
-        serverSimGetViewPolicy(sim, viewCategoryPill),
-        serverSimGetViewPolicy(sim, viewCategoryBase),
-        serverSimGetViewPolicy(sim, viewCategoryAlly),
-        serverSimGetClassicMode(sim),
-        serverSimGetAlliesInTrees(sim));
+    buildInfoPacket(sim, &pkt);
 
     srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
 }

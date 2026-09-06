@@ -566,7 +566,9 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
    *       normal incoming-message path. Never reaches a human's chat.
    *   messagedest != 0 → real player-to-player chat (unchanged). */
   if (value->sendmessage[0] != 0) {
-    char msg[255];
+    /* 255 characters plus the terminator: the pascal length byte can say
+     * 255, and the writers that fill this buffer are free to grow to it. */
+    char msg[256];
     GameSim *gs = clientSimGetGameSim(csPtr);
     utilPtoCString((char *) value->sendmessage, msg);
     if (*(value->messagedest) == 0) {

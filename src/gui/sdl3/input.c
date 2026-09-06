@@ -896,6 +896,20 @@ void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState) {
 }
 
 uint8_t inputConsumeGunsightAdj(void) {
+  /* The on-screen gunsight buttons are a second source for the same pending
+     adjustment the wheel and the gunsight keys feed through
+     inputBumpGunsight, so fold them in here rather than having each caller
+     read them separately. inputTouchGetGunsightChange is consuming, so only
+     take it when nothing is already pending — otherwise a wheel bump and a
+     button tap in the same tick would drop one of the two. */
+  if (lastGunsightAdj == 0 && uiModeIsTablet()) {
+    int gs = inputTouchGetGunsightChange();
+    if (gs > 0) {
+      lastGunsightAdj = 1;
+    } else if (gs < 0) {
+      lastGunsightAdj = 2;
+    }
+  }
   uint8_t val = lastGunsightAdj;
   lastGunsightAdj = 0;
   return val;
