@@ -3221,6 +3221,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_fx_viewport_cull.c
     tests/unit/test_view_policy_rects.c
     tests/unit/test_tree_hide.c
+    tests/unit/test_lgm_visibility.c
     tests/unit/test_view_state.c
     tests/unit/test_view_target_codec.c
     tests/unit/test_view_target_apply.c
@@ -3953,6 +3954,8 @@ set(_unit_test_names
     view_pill_pos_bot_advantage
     tree_hide_enemy
     tree_hide_ally_option
+    lgm_visibility_tank_in_trees
+    lgm_visibility_tank_visible
     view_state_key_grants_rect
     view_state_bad_claims_degrade
     view_state_invalidation

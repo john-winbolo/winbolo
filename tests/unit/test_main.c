@@ -458,6 +458,8 @@ static const UnitTestEntry s_tests[] = {
     { "view_pill_pos_bot_advantage",             run_view_pill_pos_bot_advantage             },
     { "tree_hide_enemy",                         run_tree_hide_enemy                         },
     { "tree_hide_ally_option",                   run_tree_hide_ally_option                   },
+    { "lgm_visibility_tank_in_trees",            run_lgm_visibility_tank_in_trees            },
+    { "lgm_visibility_tank_visible",             run_lgm_visibility_tank_visible             },
     { "view_state_key_grants_rect",              run_view_state_key_grants_rect              },
     { "view_state_bad_claims_degrade",           run_view_state_bad_claims_degrade           },
     { "view_state_invalidation",                 run_view_state_invalidation                 },

@@ -1000,6 +1000,10 @@ void clientApplySnapshot(ClientSim *csPtr,
         snap.onBoat = onBoat;
         snap.alive = (isDead == 0);
       }
+      /* Tree-hidden tank whose man is still on screen: the server zeroed the
+       * tank fields, so keep them out of interpolation and let the LGM below
+       * ride through on its own. */
+      snap.tankHidden = (tanks[i].hiddenFlags & TANK_HIDDEN_POSITION) != 0;
       snap.lgmMX = tanks[i].lgmMX;
       snap.lgmMY = tanks[i].lgmMY;
       snap.lgmPX = tanks[i].lgmPX;
@@ -1266,11 +1270,14 @@ void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
       playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
                     lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
     } else if (interpHasData(&cs->interpCtx, pn) &&
-               !interpIsAlive(&cs->interpCtx, pn)) {
-      /* Dead player: move tank off-screen but keep LGM visible — the LGM
-       * outlives its owner tank and the server still sends its position in
-       * every snapshot.  (An alive-but-stale player whose interp froze
-       * keeps its last drawn position; we do not move it.) */
+               (!interpIsAlive(&cs->interpCtx, pn) ||
+                interpTankHidden(&cs->interpCtx, pn))) {
+      /* Dead player, or a live one whose tank the server withheld because it
+       * is standing in trees: move the tank off-screen but keep the LGM
+       * visible — the LGM outlives its owner tank, and a man out on the map
+       * is seen on his own terms whatever his tank is doing.  (An
+       * alive-but-stale player whose interp froze keeps its last drawn
+       * position; we do not move it.) */
       BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
       interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
                    &lgmFrame);

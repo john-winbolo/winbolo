@@ -850,6 +850,13 @@ int run_view_pill_pos_bot_advantage(void);
 int run_tree_hide_enemy(void);
 int run_tree_hide_ally_option(void);
 
+/* Server-side LGM visibility (test_lgm_visibility.c): a man on the parachute,
+ * and a man standing on open ground, are sent whatever the owning tank is
+ * doing — so hiding a tank in trees must not take its man with it, and the
+ * entry that carries the man must still not carry the tank's position. */
+int run_lgm_visibility_tank_in_trees(void);
+int run_lgm_visibility_tank_visible(void);
+
 /* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
  * view a client is in, a viewPolicyKey category grants exactly the claimed
  * item's rect while it still qualifies, and every claim the server cannot

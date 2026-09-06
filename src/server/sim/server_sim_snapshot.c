@@ -937,32 +937,58 @@ void serverSimValidateViewTargets(ServerSim *sim) {
     }
 }
 
-/* A tank standing in trees is withheld from a recipient more than
- * MIN_TREEHIDE_DIST away on either axis: that recipient gets the same
- * 1-byte stub an out-of-view tank gets. Firing gives the position away
- * — the shot clears the trees the tank was hiding in — and an ally is
- * exempt while the server's allies-in-trees option is on. */
-static bool tankHiddenInTrees(ServerSim *sim, BYTE viewer, BYTE target,
-                              WORLD tx, WORLD ty) {
+/* The exemptions the tank hide and the man hide share: nothing at (tx,ty) is
+ * hidden from a recipient inside MIN_TREEHIDE_DIST on both axes, and an ally is
+ * exempt while the server's allies-in-trees option is on. A recipient with no
+ * tank of its own gets no tree hide at all. */
+static bool treeHideExempt(ServerSim *sim, BYTE viewer, BYTE target,
+                           WORLD tx, WORLD ty) {
     WORLD vx = 0, vy = 0;
     int dx, dy;
 
-    /* A recipient with no tank of its own gets no tree hide. */
-    if (!serverSimGetTankState(sim, viewer, &vx, &vy)) return false;
+    if (!serverSimGetTankState(sim, viewer, &vx, &vy)) return true;
 
     dx = (int)tx - (int)vx;
     if (dx < 0) dx = -dx;
     dy = (int)ty - (int)vy;
     if (dy < 0) dy = -dy;
-    if (dx < MIN_TREEHIDE_DIST && dy < MIN_TREEHIDE_DIST) return false;
+    if (dx < MIN_TREEHIDE_DIST && dy < MIN_TREEHIDE_DIST) return true;
 
-    if (serverSimGetAlliesInTrees(sim) &&
-        playersIsAllie(&sim->sim.plyrs, target, viewer)) {
-        return false;
-    }
+    return serverSimGetAlliesInTrees(sim) &&
+           playersIsAllie(&sim->sim.plyrs, target, viewer);
+}
+
+/* A tank standing in trees is withheld from a recipient more than
+ * MIN_TREEHIDE_DIST away on either axis. Firing gives the position away — the
+ * shot clears the trees the tank was hiding in. */
+static bool tankHiddenInTrees(ServerSim *sim, BYTE viewer, BYTE target,
+                              WORLD tx, WORLD ty) {
+    if (treeHideExempt(sim, viewer, target, tx, ty)) return false;
     if (tankJustFired(&sim->sim.tanks[target])) return false;
 
     return utilIsTankInTrees(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, tx, ty);
+}
+
+/* Whether a target's man is something this recipient may see. He is his own
+ * thing to hide, not part of the tank that sent him out: the parachute is
+ * always shown, a man standing anywhere but trees is always shown, and the
+ * tree rule that can hide him is measured on his own square and his own
+ * distance from the recipient. False when there is no man out to send. */
+static bool lgmVisibleToViewer(ServerSim *sim, BYTE viewer, BYTE target) {
+    WORLD lx, ly;
+
+    if (sim->sim.lgmen[target] == NULL) return false;
+    if (!lgmIsOut(&sim->sim.lgmen[target])) return false;
+    if (lgmGetFrame(&sim->sim.lgmen[target]) == LGM_HELICOPTER_FRAME) return true;
+
+    lx = (WORLD)((lgmGetMX(&sim->sim.lgmen[target]) << TANK_SHIFT_MAPSIZE) +
+                 (lgmGetPX(&sim->sim.lgmen[target]) << TANK_SHIFT_RIGHT2));
+    ly = (WORLD)((lgmGetMY(&sim->sim.lgmen[target]) << TANK_SHIFT_MAPSIZE) +
+                 (lgmGetPY(&sim->sim.lgmen[target]) << TANK_SHIFT_RIGHT2));
+
+    if (treeHideExempt(sim, viewer, target, lx, ly)) return true;
+
+    return !utilIsTankInTrees(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, lx, ly);
 }
 
 void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
@@ -1005,35 +1031,45 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     for (i = 0; i < MAX_TANKS && tankCount < maxTanks; i++) {
         TankSnapshot *ts;
         WORLD wx, wy;
+        bool tankWithheld = false;
 
         if (!sim->playerConnected[i]) continue;
         if (!serverSimGetTankState(sim, (BYTE)i, &wx, &wy)) continue;
 
         /* Always include the client's own tank; cull others by viewport.
-         * Also check LGM position — a parachuting LGM can be far from its
-         * tank (starts at a random spawn), so we need to send updates when
-         * the LGM is visible even if the tank is not.  Out-of-view tanks
-         * are emitted as 1-byte stubs (TANK_SNAPSHOT_HIDDEN_FLAG) rather
-         * than skipped, so the client can clear stale ghost positions for
-         * tanks that have driven off screen.  noCull bypasses this so
-         * recording paths capture every tank in full. */
+         * A tank and its man are culled apart — either one being visible is
+         * enough to send the entry — and the entry then carries only the half
+         * the recipient may see.  A slot with neither visible is emitted as a
+         * 1-byte stub (TANK_SNAPSHOT_HIDDEN_FLAG) rather than skipped, so the
+         * client can clear stale ghost positions for tanks that have driven
+         * off screen.  noCull bypasses all of this so recording paths capture
+         * every tank in full. */
         if (i != clientIdx && !noCull) {
-            bool inView = inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8);
-            if (!inView && sim->sim.lgmen[i] != NULL && lgmIsOut(&sim->sim.lgmen[i])) {
+            bool tankInView = inAnyViewport(viewports, numViewports, wx >> 8, wy >> 8);
+            bool manInView = false;
+
+            /* The man is culled on his own square, not his tank's: he can be a
+             * long way from it — parachuting in from a spawn, or off building
+             * — and whether the recipient may see him is his own question
+             * (lgmVisibleToViewer), decided before his square is tested
+             * against the rects. */
+            if (lgmVisibleToViewer(sim, clientIdx, (BYTE)i)) {
                 BYTE lgmMX = lgmGetMX(&sim->sim.lgmen[i]);
                 BYTE lgmMY = lgmGetMY(&sim->sim.lgmen[i]);
                 if (lgmMX != 0 || lgmMY != 0) {
-                    inView = inAnyViewport(viewports, numViewports, lgmMX, lgmMY);
+                    manInView = inAnyViewport(viewports, numViewports, lgmMX, lgmMY);
                 }
             }
-            if (!inView) {
-                ts = &tanksOut[tankCount];
-                memset(ts, 0, sizeof(*ts));
-                ts->playerNum = (uint8_t)(i | TANK_SNAPSHOT_HIDDEN_FLAG);
-                tankCount++;
-                continue;
+
+            /* Tree hide takes the tank away, not the man standing outside it:
+             * with the man still on screen the entry goes out carrying him,
+             * with the tank's own fields withheld below. */
+            if (tankInView && tankHiddenInTrees(sim, clientIdx, (BYTE)i, wx, wy)) {
+                tankInView = false;
+                tankWithheld = true;
             }
-            if (tankHiddenInTrees(sim, clientIdx, (BYTE)i, wx, wy)) {
+
+            if (!tankInView && !manInView) {
                 ts = &tanksOut[tankCount];
                 memset(ts, 0, sizeof(*ts));
                 ts->playerNum = (uint8_t)(i | TANK_SNAPSHOT_HIDDEN_FLAG);
@@ -1044,6 +1080,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
 
         ts = &tanksOut[tankCount];
         ts->playerNum = (uint8_t)i;
+        ts->hiddenFlags = 0;
         ts->worldX = wx;
         ts->worldY = wy;
         ts->angle = (uint16_t)(tankGetAngle(&sim->sim.tanks[i]) * 256.0f);
@@ -1086,6 +1123,19 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             ts->gunsightLen = 0;
             ts->deathWait = 0;
             ts->reload = 0;
+        }
+
+        /* Tree-hidden tank, man still on screen: the entry is here for the man
+         * alone, so the tank's own fields never reach the wire. A client that
+         * ignores the flag reads (0,0) rather than the hiding place, and one
+         * that honours it leaves the tank out of interpolation entirely. */
+        if (tankWithheld) {
+            ts->worldX = 0;
+            ts->worldY = 0;
+            ts->angle = 0;
+            ts->speed = 0;
+            ts->tankStatus = 0;
+            ts->hiddenFlags = TANK_HIDDEN_POSITION;
         }
         tankCount++;
     }
