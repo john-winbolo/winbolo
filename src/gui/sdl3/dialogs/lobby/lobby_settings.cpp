@@ -48,6 +48,19 @@ extern "C" {
  * panel (and the controller Settings tab) call it. */
 void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 
+/* Width for an InputInt that carries step buttons and still shows its
+ * number. ImGui lays the two buttons out inside the item width — a frame
+ * height each, with an inner spacing in front of each — and gives the field
+ * whatever is left, which a flat width leaves as almost nothing once the
+ * font is scaled up and the frames grow with it. So ask for the digits and
+ * add the buttons on rather than the other way round. `widest` is the
+ * longest value the box has to hold. */
+static float lobbyStepInputWidth(const char *widest) {
+    const ImGuiStyle &st = ImGui::GetStyle();
+    return ImGui::CalcTextSize(widest).x + st.FramePadding.x * 2.0f
+         + (ImGui::GetFrameHeight() + st.ItemInnerSpacing.x) * 2.0f;
+}
+
 /* Open state of the settings CollapsingHeader. File-scope rather than a
  * panel-local static because the lobby's post-game edge handler below
  * drives it from outside the panel. */
@@ -188,6 +201,10 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     ImGui::SetWindowFontScale(settingsOldScale * 0.85f);
 
     ImGui::Spacing();
+    /* Set by the Visibility button under the time limit below. The popup is
+     * opened after the columns close, next to the BeginPopupModal that
+     * answers it. */
+    bool openVisibility = false;
     ImGui::Columns(3, "##settingsCols", false);
 
     /* ── Game Type ──────────────────────────────────────────── */
@@ -320,7 +337,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 ? (int)(clientSimGetLobbyTimeLimit(cs) / (50 * 60))
                 : 30;
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(80.0f * s);
+            /* LOBBY_TIME_MINUTES_MAX is four digits. */
+            ImGui::SetNextItemWidth(lobbyStepInputWidth("0000"));
             if (ImGui::InputInt("##tmin", &mins, 1, 5,
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
                 if (mins < LOBBY_TIME_MINUTES_MIN) mins = LOBBY_TIME_MINUTES_MIN;
@@ -334,6 +352,14 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         }
         if (timeDisabled) ImGui::EndDisabled();
         if (timeLocked) lobbyRenderLockBadge();
+
+        /* Visibility, under the time limit and in the column the rest of
+         * the odds and ends sit in. Everything it edits is in a popup, so
+         * a button is all the room it takes on the form. Opened after the
+         * columns close, where the popup itself is declared. */
+        if (ImGui::Button(langGetText(STR_DLGLOBBY_VISIBILITY_LBL))) {
+            openVisibility = true;
+        }
 
         /* Password protection — host or admin only (NOT openHost;
          * we don't want random connected players to be able to lock
@@ -405,18 +431,18 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     ImGui::Columns(1);
 
     /* ── Visibility (pillboxes / bases / allied tanks) ─────────────
-     * A button opens the editor and a read-only icon summary sits under
-     * it, because the three rows took more room on the lobby surface
-     * than the rest of the form put together. The rows themselves are
-     * unchanged, they just live in the popup now: one per category, a
-     * 4-way combo plus a decay-seconds input that is only enabled while
-     * that row's combo reads Decay, each edit sending the 3-byte
-     * [policy][decay hi][decay lo] payload for that category's LST_* id. */
-    ImGui::Spacing();
-    if (ImGui::Button(langGetText(STR_DLGLOBBY_VISIBILITY_LBL))) {
+     * The editor behind the button under the time limit, because the three
+     * rows took more room on the lobby surface than the rest of the form
+     * put together. The rows themselves are unchanged, they just live
+     * in the popup now: one per category, a 4-way combo plus a
+     * decay-seconds input that is only enabled while that row's combo reads
+     * Decay, each edit sending the 3-byte [policy][decay hi][decay lo]
+     * payload for that category's LST_* id. What the rows are set to is on
+     * the lobby's header line, which the host reads along with everyone
+     * else, so the form carries no second copy. */
+    if (openVisibility) {
         ImGui::OpenPopup("###visibility");
     }
-    lobbyRenderVisibilitySummary(cs, s);
 
     /* Same ID scope as the OpenPopup above — BeginPopupModal only finds
      * a popup opened at its own scope. The title is composed so the
@@ -512,7 +538,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                  * interactive while the row is on Decay. */
                 ImGui::SameLine();
                 ImGui::BeginDisabled(policy != (int)viewPolicyDecay);
-                ImGui::SetNextItemWidth(80.0f * s);
+                /* VIEW_DECAY_MAX_SECS is three digits; the fourth is room
+                 * to type into before the setter clamps it back. */
+                ImGui::SetNextItemWidth(lobbyStepInputWidth("0000"));
                 if (ImGui::InputInt("##decay", &secs, 1, 5,
                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
                     sendView(row.lst, policy, secs);
@@ -612,13 +640,14 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 }
 
 /* ── Visibility summary ───────────────────────────────────────────
- * The three view policies on one line, read only: pill, base and allied
- * tank sprite, each followed by its policy word, with the seconds added
- * under Decay and the whole group dimmed under Off. Drawn under the
- * Visibility button for the host and on the lobby header line for
- * everyone, which is how a joiner or spectator — who never sees the
- * settings panel — finds out what the host chose. Hovering a group
- * names the category and its policy in full. */
+ * The three view policies plus the allies-in-trees rule on one line, read
+ * only: pill, base, allied tank and tank-in-forest sprite, each followed by
+ * what it is set to, with the seconds added under Decay and the whole group
+ * dimmed under Off. Drawn on the lobby header line, which is how a joiner
+ * or spectator — who never sees the settings panel — finds out what the
+ * host chose; the host reads the same line above the panel rather than a
+ * second copy inside it. Hovering a group names the category and its
+ * setting in full. */
 void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
     /* The header line draws before the player list, which is what
      * usually loads the icon cache, so load it here first. The call is
@@ -643,7 +672,19 @@ void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
         STR_DLGLOBBY_VIEW_OFF,
     };
 
+    /* Centring a sprite against its word takes two drops, not one: text is
+     * drawn at the cursor plus the line's text-base offset — which the lobby
+     * header line sets, because it carries framed items — while an image is
+     * drawn at the cursor itself, so the sprite starts that much high before
+     * either has been centred at all. On top of that whichever of the two is
+     * shorter takes half the difference in height, so the pair reads as one
+     * row however the font is scaled. */
+    ImGuiWindow *win = ImGui::GetCurrentWindow();
     const float iconSize = 16.0f * s;
+    const float textH    = ImGui::GetTextLineHeight();
+    const float imgDrop  = (textH > iconSize) ? (textH - iconSize) * 0.5f : 0.0f;
+    const float textDrop = (iconSize > textH) ? (iconSize - textH) * 0.5f : 0.0f;
+
     for (int i = 0; i < 3; i++) {
         const SummaryItem &it = items[i];
         if (i > 0) ImGui::SameLine(0, 12.0f * s);
@@ -669,27 +710,73 @@ void lobbyRenderVisibilitySummary(ClientSim *cs, float s) {
                                 ImGui::GetStyle().Alpha * 0.45f);
         }
         ImGui::BeginGroup();
+        const float baseY = ImGui::GetCursorPosY();
         SDL_Texture *tex = renderer ? it.tex(renderer) : nullptr;
         if (tex) {
+            ImGui::SetCursorPosY(baseY + win->DC.CurrLineTextBaseOffset + imgDrop);
             ImGui::Image((ImTextureID)tex, ImVec2(iconSize, iconSize));
-            ImGui::SameLine(0, 4.0f * s);
-            /* Centre the word against the taller sprite. */
-            float textOffset = (iconSize - ImGui::GetTextLineHeight()) * 0.5f;
-            if (textOffset > 0.0f) {
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + textOffset);
-            }
         } else {
             /* Sprite missing — the category's own label stands in for it
              * so the line still says which policy belongs to what. */
+            ImGui::SetCursorPosY(baseY + textDrop);
             ImGui::TextUnformatted(langGetText(it.label));
-            ImGui::SameLine(0, 4.0f * s);
         }
+        ImGui::SameLine(0, 4.0f * s);
+        ImGui::SetCursorPosY(baseY + textDrop);
         ImGui::TextUnformatted(valueText);
         ImGui::EndGroup();
         if (dim) ImGui::PopStyleVar();
 
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s: %s", langGetText(it.label), word);
+        }
+    }
+
+    /* Allies in trees closes the line. It reads yes or no rather than a
+     * policy word because it is a plain on/off rule, and its icon is an
+     * allied tank standing on a forest square — the same tank sprite the
+     * ally group above uses, so the pair reads as one subject. No is faint,
+     * the way an Off policy is faint above. */
+    {
+        bool trees = clientSimGetAlliesInTrees(cs);
+        const char *word = langGetText(trees ? STR_YES : STR_NO);
+        ImGui::SameLine(0, 12.0f * s);
+        if (!trees) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
+        ImGui::BeginGroup();
+        const float baseY = ImGui::GetCursorPosY();
+        SDL_Texture *forest = renderer ? lobbyGetForestTexture(renderer) : nullptr;
+        SDL_Texture *tank   = renderer ? lobbyGetTankGood04Texture(renderer) : nullptr;
+        if (forest && tank) {
+            /* The tank goes on at three quarters of the square, centred: a
+             * full-size one covers the tile it is standing in, which is the
+             * one thing this icon has to show it is not doing. */
+            ImGui::SetCursorPosY(baseY + win->DC.CurrLineTextBaseOffset + imgDrop);
+            ImVec2 at = ImGui::GetCursorScreenPos();
+            ImGui::Image((ImTextureID)forest, ImVec2(iconSize, iconSize));
+            float inset = iconSize * 0.125f;
+            ImGui::GetWindowDrawList()->AddImage(
+                (ImTextureID)tank,
+                ImVec2(at.x + inset, at.y + inset),
+                ImVec2(at.x + iconSize - inset, at.y + iconSize - inset),
+                ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 1.0f, 1.0f)));
+        } else {
+            /* Sprite missing — the label stands in for it, as above. */
+            ImGui::SetCursorPosY(baseY + textDrop);
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_ALLIES_TREES_CB));
+        }
+        ImGui::SameLine(0, 4.0f * s);
+        ImGui::SetCursorPosY(baseY + textDrop);
+        ImGui::TextUnformatted(word);
+        ImGui::EndGroup();
+        if (!trees) ImGui::PopStyleVar();
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s: %s",
+                              langGetText(STR_DLGLOBBY_ALLIES_TREES_CB), word);
         }
     }
 }

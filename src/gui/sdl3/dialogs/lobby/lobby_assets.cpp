@@ -190,6 +190,19 @@ SDL_Texture *lobbyGetBaseGoodTexture(SDL_Renderer *renderer) {
     return s_icons.baseGood;
 }
 
+/* A forest square — the backdrop the summary's allies-in-trees entry draws
+ * its tank on. forest.png rather than forest_single.png: both are a full
+ * tile of foliage, and the plain one is what a run of trees is drawn from. */
+SDL_Texture *lobbyGetForestTexture(SDL_Renderer *renderer) {
+    if (s_icons.forestAttempted) return s_icons.forest;
+    s_icons.forestAttempted = true;
+    s_icons.forest = loadLobbyPng(renderer, "svg/forest.png");
+    if (s_icons.forest) {
+        SDL_SetTextureScaleMode(s_icons.forest, SDL_SCALEMODE_LINEAR);
+    }
+    return s_icons.forest;
+}
+
 /* Two-path load for a white-mask icon: relative to the working directory
  * first, then relative to the executable, which is where an installed build
  * keeps its data/ tree. Same fallback the coloured icons above do inline. */
@@ -232,11 +245,13 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.tankGood04)  { SDL_DestroyTexture(s_icons.tankGood04);  s_icons.tankGood04  = nullptr; }
         if (s_icons.pillbox15)   { SDL_DestroyTexture(s_icons.pillbox15);   s_icons.pillbox15   = nullptr; }
         if (s_icons.baseGood)    { SDL_DestroyTexture(s_icons.baseGood);    s_icons.baseGood    = nullptr; }
+        if (s_icons.forest)      { SDL_DestroyTexture(s_icons.forest);      s_icons.forest      = nullptr; }
         s_icons.tankSelfAttempted  = false;
         s_icons.tankEvilAttempted  = false;
         s_icons.tankGoodAttempted  = false;
         s_icons.pillbox15Attempted = false;
         s_icons.baseGoodAttempted  = false;
+        s_icons.forestAttempted    = false;
     }
     s_icons.attempted = true;
     s_icons.renderer  = renderer;

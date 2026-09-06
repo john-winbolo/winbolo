@@ -183,6 +183,11 @@ typedef struct LobbyIconCache {
     SDL_Texture  *baseGood;
     bool          pillbox15Attempted;
     bool          baseGoodAttempted;
+
+    /* Forest tile, drawn under a shrunken ally tank as the allies-in-trees
+     * entry on the same summary. Lazily loaded and reloaded like the rest. */
+    SDL_Texture  *forest;
+    bool          forestAttempted;
 } LobbyIconCache;
 
 /* Map-preview state: the stashed compressed map bytes plus the per-start
@@ -432,6 +437,7 @@ SDL_Texture *lobbyGetTankEvil04Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetTankGood04Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetPillbox15Texture(SDL_Renderer *renderer);
 SDL_Texture *lobbyGetBaseGoodTexture(SDL_Renderer *renderer);
+SDL_Texture *lobbyGetForestTexture(SDL_Renderer *renderer);
 void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale);
 
 /* players */
