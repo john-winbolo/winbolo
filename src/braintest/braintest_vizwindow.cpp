@@ -194,6 +194,7 @@ static const VizMeta kVizMeta[] = {
     {"lgm_registry_hud", VCAT_LGM, true},    {"lgm_registry_map", VCAT_LGM, false},
     {"kill_lgm_engage", VCAT_LGM, false},    {"kill_lgm_predict", VCAT_LGM, false},
     {"kill_lgm_sim_path", VCAT_LGM, false},
+    {"builder_pool_shell_gate", VCAT_LGM, false},
     /* Tank combat */
     {"tank_hitbox", VCAT_TANKCBT, false},    {"tank_aim_marker", VCAT_TANKCBT, false},
     {"tank_combat_viz", VCAT_TANKCBT, false},{"ghost_tank", VCAT_TANKCBT, false},

@@ -3516,16 +3516,29 @@ void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my) {
   pf->lgm_block[my * MAP_SIZE + mx] = 1;
 }
 
-int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
-                                   WORLD sx, WORLD sy, WORLD dx, WORLD dy,
-                                   BYTE blessX, BYTE blessY,
-                                   int maxTicks, int stuckTicks) {
+/* The one LGM walk simulation. Everything below it is a wrapper.
+ *
+ * `pathX`/`pathY`, when non-NULL, receive the man's WORLD position at the END
+ * of each simulated tick — pathX[0] is where he stands after tick 1 — up to
+ * pathMax entries, and *pathN is how many were written. The walk itself is
+ * untouched by this: the same loop, the same aborts, the same return value, so
+ * a caller that asks for the path gets the positions behind the SAME number
+ * lgm_trip charges its cost on. A walk that ends early (unreachable, stuck,
+ * budget) still leaves *pathN steps of real path behind, which is what the
+ * shell gate wants — it only ever looks at the first ~63 of them. */
+static int lgmTravelTicksCore(BrainPathfinder *pf,
+                              WORLD sx, WORLD sy, WORLD dx, WORLD dy,
+                              BYTE blessX, BYTE blessY,
+                              int maxTicks, int stuckTicks,
+                              WORLD *pathX, WORLD *pathY,
+                              int pathMax, int *pathN) {
   WORLD x, y;
   BYTE localBlessX, localBlessY;
   BYTE bmx, bmy;
   int tick, sameCount;
   BYTE lastBmx, lastBmy;
 
+  if (pathN) *pathN = 0;
   if (!pf || !pf->map) return -1;
 
   x = sx;
@@ -3592,6 +3605,16 @@ int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
       }
     }
 
+    /* Record the man's position at the END of this tick, for callers that
+     * need WHERE he is and not just how long he takes. Written before the
+     * stuck/arrival exits below so a walk that ends here still hands back the
+     * steps it really made. */
+    if (pathX && pathY && pathN && *pathN < pathMax) {
+      pathX[*pathN] = x;
+      pathY[*pathN] = y;
+      (*pathN)++;
+    }
+
     /* Stuck detection */
     bmx = (BYTE)(x >> TANK_SHIFT_MAPSIZE);
     bmy = (BYTE)(y >> TANK_SHIFT_MAPSIZE);
@@ -3618,6 +3641,14 @@ int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
   return -1;
 }
 
+int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,
+                                   WORLD sx, WORLD sy, WORLD dx, WORLD dy,
+                                   BYTE blessX, BYTE blessY,
+                                   int maxTicks, int stuckTicks) {
+  return lgmTravelTicksCore(pf, sx, sy, dx, dy, blessX, blessY,
+                            maxTicks, stuckTicks, NULL, NULL, 0, NULL);
+}
+
 int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                       BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
                                       BYTE blessX, BYTE blessY,
@@ -3628,6 +3659,21 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
   WORLD dy = ((WORLD)dmy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
   return brainPathfinderLgmTravelTicks(pf, sx, sy, dx, dy,
                                         blessX, blessY, maxTicks, stuckTicks);
+}
+
+int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
+                                   BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
+                                   BYTE blessX, BYTE blessY,
+                                   int maxTicks, int stuckTicks,
+                                   WORLD *pathX, WORLD *pathY, int pathMax) {
+  WORLD sx = ((WORLD)smx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD sy = ((WORLD)smy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD dx = ((WORLD)dmx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  WORLD dy = ((WORLD)dmy << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE;
+  int n = 0;
+  lgmTravelTicksCore(pf, sx, sy, dx, dy, blessX, blessY,
+                     maxTicks, stuckTicks, pathX, pathY, pathMax, &n);
+  return n;
 }
 
 /* ------------------------------------------------------------------ */

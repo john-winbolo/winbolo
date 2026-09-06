@@ -651,6 +651,22 @@ function M.lgm_travel_ticks_map(smx, smy, dmx, dmy, bless_mx, bless_my, max_tick
   return cpf_lgm_travel_ticks_map(smx, smy, dmx, dmy, bless_mx, bless_my, max_ticks, stuck_ticks)
 end
 
+--- The SAME walk as lgm_travel_ticks_map, but handing back WHERE the man is
+--- on each tick instead of only how long he takes. `out` is a table the caller
+--- owns and reuses; it is filled as a flat pair list -- out[2i-1] = world x,
+--- out[2i] = world y at the END of walk tick i (ENGINE ticks) -- and the
+--- return value is how many pairs were written (0 if he cannot take a step).
+--- Entries past that count are stale and must not be read.
+---
+--- Because it is the same simulation, the positions belong to the trip whose
+--- length lgm_travel_ticks_map prices: the overlay drawn from them cannot
+--- disagree with the cost the pool charged.
+function M.lgm_walk_path(smx, smy, dmx, dmy, bless_mx, bless_my,
+                         max_ticks, stuck_ticks, out)
+  return cpf_lgm_walk_path(smx, smy, dmx, dmy, bless_mx, bless_my,
+                           max_ticks, stuck_ticks, out)
+end
+
 --- Mark the tiles the LGM cannot walk onto so the LGM travel sim treats them
 --- as walls. The bot's brain map (pf->map) is PURE TERRAIN — it carries no pill
 --- or base overlay — so the sim can't see live pills (engine manspeed 0) or

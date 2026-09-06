@@ -1370,10 +1370,46 @@ function M.update(state, world, info, now)
   order_rows(rows)
   bp.rows = rows
 
+  -- THE SHELL GATE. A HARD STOP at the moment of dispatch, not a score term,
+  -- and deliberately the LAST thing asked: it is the only test here that flies
+  -- a real object forward, so it is paid for exactly once -- on the row that
+  -- has already passed every other gate and is about to send the man out.
+  --
+  -- Refusing does not retire the row. The shell is gone in a handful of ticks
+  -- and the same row wins the next tick it is clear, which is the whole point:
+  -- "not this tick", never "not this job". A refused row falls through to the
+  -- next candidate, because a different target is a different walk and may be
+  -- perfectly clear of the same round.
   local winner = nil
   if can_send then
     for _, row in ipairs(rows) do
-      if not row.reject then winner = row; break end
+      if not row.reject then
+        local hit = danger.lgm_shell_gate(world, info, row.mx, row.my)
+        if hit then
+          row.shell_hit = hit
+          -- Every factor the refusal turned on is on the line: WHOSE shell,
+          -- HOW MANY engine ticks from now it lands, and WHICH of the three
+          -- endings it is (ends on our hull / runs out of life over open
+          -- ground / detonates on the wall or pill the man is standing on).
+          row.reject = string.format("shell_will_hit (shell from %s at +%dt, %s)",
+                                     hit.src, hit.t, tostring(hit.how))
+          -- Deny lines are edge-triggered on the reason STRING and `+%dt`
+          -- counts down every tick, so the key drops the countdown: one line
+          -- per shell that blocks this row, not one per tick.
+          row.reject_key = "shell_will_hit:" .. hit.src
+          if not bp.shell_hit then
+            hit.mx, hit.my = row.mx, row.my
+            bp.shell_hit = hit
+            -- The overlay draws the man's PREDICTED walk, so it has to be the
+            -- walk the gate actually simulated. Copied only in a debug build:
+            -- it is a ~126-number table and it buys nothing at play time.
+            if BRAIN_DEBUG_MODE then hit.walk = danger.lgm_shell_gate_walk(hit) end
+          end
+        else
+          winner = row
+          break
+        end
+      end
     end
   end
 
@@ -1570,6 +1606,50 @@ function M.panel_section(state)
 end
 
 -- -------------------------------------------------------------------------
+-- Map overlay for the SHELL GATE refusal — the picture of the arithmetic in
+-- danger.lgm_shell_gate, and nothing the gate did not compute:
+--
+--   * the man's PREDICTED walk, as the polyline of the exact per-tick
+--     positions the gate walked (cpf_lgm_walk_path), not a straight line to
+--     the target and not the route he would eventually take -- only the first
+--     LGM_SHELL_PREDICT_TICKS of it, because that is all the gate looked at;
+--   * a red ring of LGM_SHELL_KILL_RADIUS_WU (128 WU = half a tile) at the
+--     predicted IMPACT POINT, which is the engine's own blast radius, plus a
+--     line from it to where the man is predicted to be standing at that tick;
+--   * a label naming the shell's source and the tick offset, the same two
+--     facts the reject string carries.
+--
+-- Only drawn while the gate is actually refusing (it lives on bp.shell_hit,
+-- which is rebuilt each tick), and the walk polyline only in a debug build,
+-- because that is the only build that copies the walk.
+-- -------------------------------------------------------------------------
+function M.draw_shell_gate(state, info)
+  local bp = state._builder_pool
+  local hit = bp and bp.shell_hit
+  if not hit then return end
+  local ix, iy = hit.sx / 256.0, hit.sy / 256.0
+  local lx, ly = hit.lx / 256.0, hit.ly / 256.0
+  if hit.walk and hit.walk_n and hit.walk_n > 1 then
+    local px = hit.walk[1] / 256.0
+    local py = hit.walk[2] / 256.0
+    for i = 2, hit.walk_n do
+      local nx = hit.walk[i * 2 - 1] / 256.0
+      local ny = hit.walk[i * 2] / 256.0
+      viz.line("builder_pool_shell_gate", px, py, nx, ny, 255, 200, 90, 150)
+      px, py = nx, ny
+    end
+  end
+  -- The kill radius, at the impact point, in the engine's own units.
+  viz.circle("builder_pool_shell_gate", ix, iy,
+             (C.LGM_SHELL_KILL_RADIUS_WU or 128) / 256.0, 255, 70, 70, 230)
+  viz.line("builder_pool_shell_gate", ix, iy, lx, ly, 255, 70, 70, 200)
+  viz.text("builder_pool_shell_gate", ix, iy - 0.8,
+    string.format("shell %s ends %s at +%dt -> kills the man", tostring(hit.src),
+                  tostring(hit.how), hit.t or 0),
+    "center", 255, 90, 90, 240)
+end
+
+-- -------------------------------------------------------------------------
 -- Map overlay for the ACTIVE job: a line from the tank to the target, a ring
 -- on the target, and the ETA label. Matches the code exactly -- the ring is on
 -- the tile the job record names, the line starts at the tank (the man's start
@@ -1577,6 +1657,7 @@ end
 -- carries the same phase/eta the panel's active line shows.
 -- -------------------------------------------------------------------------
 function M.draw(state, info)
+  M.draw_shell_gate(state, info)
   local job = state._bp_job
   if not job then return end
   local r, g, bcol = 120, 220, 255            -- pale blue: the man's own errands

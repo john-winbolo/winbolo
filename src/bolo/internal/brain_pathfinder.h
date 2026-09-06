@@ -510,6 +510,24 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                       BYTE blessX, BYTE blessY,
                                       int maxTicks, int stuckTicks);
 
+/* Longest walk any caller may ask for the positions of. 128 engine ticks is
+ * twice a shell's maximum life (shellLifeTicks caps at 63 for a pillbox), and
+ * the only caller is the builder pool's shell gate, which asks for
+ * LGM_SHELL_PREDICT_TICKS (63) of them. Bounds the on-stack path buffer. */
+#define BRAIN_LGM_WALK_PATH_MAX 128
+
+/* The SAME walk, with the man's per-tick WORLD positions written out.
+ * pathX[i]/pathY[i] is where he stands at the end of tick i+1; returns how
+ * many entries were written (<= pathMax, and 0 if he could not take a step).
+ * The walk is identical to brainPathfinderLgmTravelTicksMap's — same speeds,
+ * same blessed-tile rule, same stuck/abort exits — so the positions belong to
+ * the same trip its tick count prices. */
+int brainPathfinderLgmWalkPathMap(BrainPathfinder *pf,
+                                   BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
+                                   BYTE blessX, BYTE blessY,
+                                   int maxTicks, int stuckTicks,
+                                   WORLD *pathX, WORLD *pathY, int pathMax);
+
 /* LGM-impassable overlay: clear all, then mark (mx,my) tiles the LGM can't
  * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */
 void brainPathfinderClearLgmBlock(BrainPathfinder *pf);

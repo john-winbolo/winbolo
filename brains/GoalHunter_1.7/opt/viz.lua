@@ -410,6 +410,9 @@ M.IDS = {
   builder_pool_leash = { short = "Builder pool: leash",
                          long  = "The leash circles around the tank, drawn only while a job is live. BLUE is BUILDER_POOL_LEASH (8 tiles), the reach of the FARM row. GREEN is BUILDER_POOL_REPAIR_LEASH (11 tiles), the reach of the rebuild/topup rows under BUILDER_POOL_REPAIR_LINEAR -- only drawn when the two differ, so preset=keel shows the single blue 8 it actually uses. These are the exact radii discover() measures against (MANHATTAN, so the true shape is a diamond): a pill outside the green one is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
 
+  builder_pool_shell_gate = { short = "Builder pool: shell gate",
+                       long  = "Why the pool refused to send the man THIS tick (danger.lgm_shell_gate). Amber polyline = the man's predicted walk, the exact per-tick positions the gate simulated (cpf_lgm_walk_path), cut off at LGM_SHELL_PREDICT_TICKS (63 ENGINE ticks, the longest a shell can live). Red circle = the predicted impact point with the engine's own LGM blast radius, MAP_SQUARE_MIDDLE (128 world units, half a tile); the red line runs from it to where the man is predicted to be standing on that tick, and the label names the shell's source and the tick offset -- the same two facts the `shell_will_hit` reject string carries. Nothing renders unless the gate is refusing right now, and the walk polyline needs a -brain-debug build (that is the only build that copies the walk)." },
+
   lgm_registry_hud = { short = "HUD: LGM registry",
                        long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },
 

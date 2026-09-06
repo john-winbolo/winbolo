@@ -3154,6 +3154,37 @@ M.BUILDER_POOL_TREE_RESERVE_EXTRA = 0  -- extra wood held back on top of the goa
                                        -- / the sea plan). 0 = trust those numbers
 M.BUILDER_POOL_PATH_DANGER = M.LGM_DANGER_MED   -- lgm_path_safe_enhanced threshold for the
                                                 -- trip: same tier the repair dispatch uses
+
+-- ── The shell gate (2026-09-06) ──────────────────────────────────────────
+-- A HARD STOP, not a score term: at the moment the pool would dispatch, every
+-- shell already in the air is flown forward tick by tick and the man is walked
+-- forward alongside it, and if the engine's own LGM kill rule fires at any
+-- tick the dispatch is refused FOR THAT TICK. The row stays a candidate --
+-- next tick the shell has moved on and the same row goes.
+--
+-- This is not the danger field and it is not the under-fire clock. Those two
+-- ask "is this a dangerous PLACE" and "have we been shot at LATELY"; this asks
+-- the one question that has an exact answer: is that particular round, on that
+-- particular heading, going to land on this particular man. See
+-- danger.lgm_shell_gate for the engine rules it mirrors (lgm.c:1264).
+M.BUILDER_POOL_SHELL_GATE = true
+-- ENGINE ticks, and the horizon for BOTH halves of the prediction -- the shell
+-- flight and the man's walk. 63 is the longest a shell can live
+-- (shells.c shellLifeTicks = 1 + 8 x range - 6, at a pillbox's
+-- PILLBOX_FIRE_DISTANCE of 8.5 tiles); a tank's own round lives 51. Past that
+-- there is nothing left to predict, because there is no shell left.
+M.LGM_SHELL_PREDICT_TICKS = 63
+-- The engine's LGM blast radius, in world units: lgm.c lgmDeathCheckAtPosition
+-- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
+-- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
+-- changing it makes the gate disagree with the engine.
+M.LGM_SHELL_KILL_RADIUS_WU = 128
+-- The engine's shell-vs-tank hit zone, in world units: tank.h:102
+-- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
+-- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --
+-- deciding that a round aimed at us ends on our hull -- so it is a mirror of
+-- an engine constant, not a tunable.
+M.TANK_HIT_RADIUS_WU = 112
 M.BUILDER_POOL_TREES_REBUILD = 4  -- = REPAIR_DEAD_MIN_TREES / LGM_COST_PILLREPAIR x 4
 M.BUILDER_POOL_TREES_TOPUP   = 1  -- one tree = PILL_REPAIR_AMOUNT(4) armour
 M.BUILDER_POOL_TREES_FARM    = 0  -- a farm trip SPENDS nothing, it brings wood home
@@ -3382,6 +3413,11 @@ M.PRESETS = {
     -- lgm_path_safe_enhanced still able to refuse the trip. This one flag
     -- restores all of it (the leash and the path gate are gated on it too).
     BUILDER_POOL_REPAIR_LINEAR = false,
+    -- 2026-09-06: at the moment of dispatch the pool now flies every shell in
+    -- the air forward 63 engine ticks, walks the man forward beside it, and
+    -- refuses the tick outright if the engine's LGM kill rule would fire.
+    -- KEEL sends the man regardless and finds out.
+    BUILDER_POOL_SHELL_GATE = false,
   },
 }
 

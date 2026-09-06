@@ -503,6 +503,30 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
       lua_pushinteger(L, info->objects[i].direction); lua_setfield(L, -2, "direction");
       lua_pushinteger(L, info->objects[i].info);      lua_setfield(L, -2, "info");
       lua_pushinteger(L, info->objects[i].speed);     lua_setfield(L, -2, "speed");
+      /* Shell extras. brain_data.c packs the three facts ObjectInfo has no
+       * field for onto idnum/speed (which are both dead for a shell), so the
+       * classic fields keep their historical values and a brain reads the
+       * good ones by name:
+       *   angle — the EXACT 8-bit bradian the shell flies on, not the
+       *           16-compass-point `direction` snap (+-11.25 deg);
+       *   owner — the firing player's number, NEUTRAL (0xFF) for a pillbox;
+       *   life  — remaining flight in ENGINE ticks (shells.h `length`); at
+       *           SHELL_SPEED 32 WU/tick that is 32 x life WU of flight left.
+       * Written for every object (0 on non-shells) because the element tables
+       * are reused across ticks — a stale `life` on a slot that now holds a
+       * tank would be a lie. */
+      if (info->objects[i].object == OBJECT_SHOT) {
+        lua_pushinteger(L, (info->objects[i].idnum >> 8) & 0xFF);
+        lua_setfield(L, -2, "angle");
+        lua_pushinteger(L, info->objects[i].idnum & 0xFF);
+        lua_setfield(L, -2, "owner");
+        lua_pushinteger(L, info->objects[i].speed);
+        lua_setfield(L, -2, "life");
+      } else {
+        lua_pushinteger(L, 0); lua_setfield(L, -2, "angle");
+        lua_pushinteger(L, 0); lua_setfield(L, -2, "owner");
+        lua_pushinteger(L, 0); lua_setfield(L, -2, "life");
+      }
       lua_pop(L, 1);
     }
     for (i = n; i < old_n; i++) {
@@ -2047,6 +2071,44 @@ static int l_cpf_lgm_travel_ticks_map(lua_State *L) {
   return 1;
 }
 
+/* cpf_lgm_walk_path(smx, smy, dmx, dmy, blessX, blessY, maxTicks, stuckTicks,
+ *                   out) -> n
+ *
+ * The LGM walk sim again, but handing back WHERE the man is on each of the
+ * first `maxTicks` ticks rather than only how long the trip takes. `out` is a
+ * caller-owned table the results are written into as a FLAT pair list —
+ * out[2i-1] = world x, out[2i] = world y after tick i — and n is how many
+ * pairs were written. The caller reuses one table, so a gate that runs every
+ * tick allocates nothing.
+ *
+ * Same walk as cpf_lgm_travel_ticks_map: the positions are the ones behind
+ * that call's tick count, not a second, differently-behaved simulation. */
+static int l_cpf_lgm_walk_path(lua_State *L) {
+  CPF_GET(L);
+  BYTE smx = (BYTE)luaL_checkinteger(L, 1);
+  BYTE smy = (BYTE)luaL_checkinteger(L, 2);
+  BYTE dmx = (BYTE)luaL_checkinteger(L, 3);
+  BYTE dmy = (BYTE)luaL_checkinteger(L, 4);
+  BYTE blessX = (BYTE)luaL_checkinteger(L, 5);
+  BYTE blessY = (BYTE)luaL_checkinteger(L, 6);
+  int maxTicks = (int)luaL_checkinteger(L, 7);
+  int stuckTicks = (int)luaL_checkinteger(L, 8);
+  WORLD px[BRAIN_LGM_WALK_PATH_MAX];
+  WORLD py[BRAIN_LGM_WALK_PATH_MAX];
+  int n, i;
+  luaL_checktype(L, 9, LUA_TTABLE);
+  if (maxTicks < 0) maxTicks = 0;
+  if (maxTicks > BRAIN_LGM_WALK_PATH_MAX) maxTicks = BRAIN_LGM_WALK_PATH_MAX;
+  n = brainPathfinderLgmWalkPathMap(pf, smx, smy, dmx, dmy, blessX, blessY,
+                                     maxTicks, stuckTicks, px, py, maxTicks);
+  for (i = 0; i < n; i++) {
+    lua_pushinteger(L, px[i]); lua_rawseti(L, 9, i * 2 + 1);
+    lua_pushinteger(L, py[i]); lua_rawseti(L, 9, i * 2 + 2);
+  }
+  lua_pushinteger(L, n);
+  return 1;
+}
+
 /* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
  * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
  * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
@@ -2278,6 +2340,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
+    { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
     { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
