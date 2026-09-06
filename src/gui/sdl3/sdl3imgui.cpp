@@ -675,11 +675,48 @@ static void popOutDestroy(PopOutWindow *pw) {
 static void popOutHide(PopOutWindow *pw) {
     if (!pw->window || !pw->open) return;
     pw->open = false;
+    /* A pop-out the player took full screen owns a macOS Space of its own,
+     * and hiding it there leaves that Space behind with nothing in it — the
+     * raise below then carries focus off to wherever the main window is,
+     * across an empty screen. Drop back to windowed first, and wait for it:
+     * the raise would otherwise race the transition. */
+    if (SDL_GetWindowFlags(pw->window) & SDL_WINDOW_FULLSCREEN) {
+        SDL_SetWindowFullscreen(pw->window, false);
+        SDL_SyncWindow(pw->window);
+    }
     SDL_HideWindow(pw->window);
     /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
      * where the OS does not auto-return key status to the main window), so
      * explicitly raise the main game window back to the front/focus. */
     if (s_window) SDL_RaiseWindow(s_window);
+}
+
+/* True while the window manager owns the pop-out's size and position — full
+ * screen or zoomed. Neither is geometry the player chose, so neither is
+ * remembered. */
+static bool popOutGeometryIsOsManaged(const PopOutWindow *pw) {
+    if (!pw->window) return false;
+    return (SDL_GetWindowFlags(pw->window) &
+            (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) != 0;
+}
+
+/* Whether a remembered overview rect can still be handed back. A rect saved
+ * from before the full screen guard in the resize handler is the display's
+ * own — as big as the display, at its origin, which on macOS is up under the
+ * menu bar — and handing that back strands the window with no title bar to
+ * grab and no close box to click. Both halves of that shape are what is
+ * tested, against the usable area rather than the full display: the part
+ * clear of the menu bar and the dock. A window the player has dragged
+ * part-way off the right or bottom edge is their own doing and is still
+ * remembered. A prefs file already carrying a bad rect recovers here. */
+static bool overviewSavedGeometryUsable(int x, int y, int w, int h) {
+    SDL_Point pt = { x, y };
+    SDL_DisplayID disp = SDL_GetDisplayForPoint(&pt);
+    if (!disp) return false;
+    SDL_Rect usable;
+    if (!SDL_GetDisplayUsableBounds(disp, &usable)) return false;
+    if (w > usable.w || h > usable.h) return false;
+    return x >= usable.x && y >= usable.y;
 }
 
 static bool popOutBeginFrame(PopOutWindow *pw) {
@@ -765,16 +802,25 @@ static void mapOverviewOpen(void) {
     int h = gameFrontOverviewH;
     if (w < 200) w = 640;
     if (h < 200) h = 640;
+    /* Only a remembered rect is checked: with no position saved there is
+       nothing to check it against, and the size alone cannot strand the
+       window. */
+    bool havePos = (gameFrontOverviewX >= 0 && gameFrontOverviewY >= 0);
+    if (havePos && !overviewSavedGeometryUsable(gameFrontOverviewX,
+                                                gameFrontOverviewY, w, h)) {
+        w = 640;
+        h = 640;
+        havePos = false;
+    }
     Uint32 flags = SDL_WINDOW_RESIZABLE |
                    (firstCreate ? SDL_WINDOW_HIDDEN : 0);
     if (!popOutCreate(&s_popMapOverview,
                       langGetText(STR_MENU_MAP_OVERVIEW), w, h, flags))
         return;
     if (firstCreate) {
-        if (gameFrontOverviewX >= 0 && gameFrontOverviewY >= 0) {
-            SDL_Point pt = { gameFrontOverviewX, gameFrontOverviewY };
-            if (SDL_GetDisplayForPoint(&pt))
-                SDL_SetWindowPosition(s_popMapOverview.window, pt.x, pt.y);
+        if (havePos) {
+            SDL_SetWindowPosition(s_popMapOverview.window,
+                                  gameFrontOverviewX, gameFrontOverviewY);
         }
         SDL_ShowWindow(s_popMapOverview.window);
         SDL_RaiseWindow(s_popMapOverview.window);
@@ -811,7 +857,13 @@ static void overviewInWindowSet(bool on) {
     if (on != sdl3DrawIsOverviewInWindow()) {
         sdl3DrawSetOverviewInWindow(on);  /* hands the OS pointer back on the way out */
     }
-    if (win) SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
+    if (win) {
+        SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
+        /* SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the
+           frame that follows reads the window geometry, so wait for the
+           transition here — the same reason windowFullScreenChoose syncs. */
+        SDL_SyncWindow(win);
+    }
 }
 
 /* The player asking for the mode, on or off, which is what the next game
@@ -837,6 +889,11 @@ static void overviewInWindowChoose(bool on) {
        next game reads. */
     if (on) mapOverviewHide();
     else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
+    /* The player's own choice, so it survives the run — the same save
+       windowFullScreenChoose makes for the same flag on the screens outside
+       a game. The auto-exit and the cleanup path call overviewInWindowSet
+       directly and deliberately never reach this. */
+    gameFrontSaveCurrentPrefs();
 }
 
 /* True while the info panels and Send Message are drawn in the main window
@@ -4245,7 +4302,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                         ev.window.data1 > 0 && ev.window.data2 > 0) {
                         pw->width  = ev.window.data1;
                         pw->height = ev.window.data2;
-                        if (pw == &s_popMapOverview) {
+                        /* The size the window manager gave a full screen or
+                           zoomed pop-out is not the size the player chose,
+                           and writing it down brings the window back filling
+                           the display with its title bar under the menu bar.
+                           The main window guards its own geometry the same
+                           way in the resize handler further down. The live
+                           surface size above still tracks either way: the
+                           window really is that big now. */
+                        if (pw == &s_popMapOverview &&
+                            !popOutGeometryIsOsManaged(pw)) {
                             gameFrontOverviewW = pw->width;
                             gameFrontOverviewH = pw->height;
                             gameFrontSaveWindowSettings();
@@ -4260,10 +4326,35 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                    sdl3DrawHandleEvent, which needs to see the main window
                    move. Only the overview remembers where it was put. */
                 if (ev.type == SDL_EVENT_WINDOW_MOVED &&
-                    ev.window.windowID == pwID && pw == &s_popMapOverview) {
+                    ev.window.windowID == pwID && pw == &s_popMapOverview &&
+                    !popOutGeometryIsOsManaged(pw)) {
                     gameFrontOverviewX = ev.window.data1;
                     gameFrontOverviewY = ev.window.data2;
                     gameFrontSaveWindowSettings();
+                }
+
+                /* Out here with the move above, and for the same reason: the
+                   main window's own full screen tracking further down has to
+                   see these too. Coming back out is where the player's rect
+                   is re-read from the window. The resize and move that arrive
+                   during a full screen transition can land before the window
+                   flags admit to it, so a display-sized rect can still slip
+                   past the guard above; taking the real windowed geometry
+                   here puts it right. */
+                if (ev.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN &&
+                    ev.window.windowID == pwID && pw == &s_popMapOverview) {
+                    int px = 0, py = 0, pww = 0, pwh = 0;
+                    SDL_GetWindowSize(pw->window, &pww, &pwh);
+                    SDL_GetWindowPosition(pw->window, &px, &py);
+                    if (pww > 0 && pwh > 0) {
+                        pw->width  = pww;
+                        pw->height = pwh;
+                        gameFrontOverviewW = pww;
+                        gameFrontOverviewH = pwh;
+                        gameFrontOverviewX = px;
+                        gameFrontOverviewY = py;
+                        gameFrontSaveWindowSettings();
+                    }
                 }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
@@ -4432,24 +4523,19 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
 
         /* Alt+Enter is the full screen key, the way it is everywhere else.
-         * In a game that means the full screen map — the same toggle the File
-         * menu item and the Settings switch drive, which carries the window
-         * full screen with it; outside one there is no map to show, so it is
-         * the plain app full screen flag. Read here rather than through the
-         * bindings because it is a window command, not a game action: it is
-         * not in keyItems, so no binding can shadow it and it works while an
-         * ImGui panel has the keyboard. After the Key Setup capture above, so
-         * a player binding a key to Alt or Enter still gets the keystroke. */
+         * Which of the two toggles that is lives in sdl3ImguiToggleFullScreen,
+         * shared with the macOS Window menu item. Read here rather than
+         * through the bindings because it is a window command, not a game
+         * action: it is not in keyItems, so no binding can shadow it and it
+         * works while an ImGui panel has the keyboard. After the Key Setup
+         * capture above, so a player binding a key to Alt or Enter still gets
+         * the keystroke. */
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & SDL_KMOD_ALT) != 0 &&
             (ev.key.scancode == SDL_SCANCODE_RETURN ||
              ev.key.scancode == SDL_SCANCODE_KP_ENTER)) {
-            if (cs != nullptr && clientSimIsRunning(cs)) {
-                sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
-            } else {
-                windowFullScreenChoose(!gameFrontFullScreen);
-            }
+            sdl3ImguiToggleFullScreen(cs);
             continue;
         }
 
@@ -4619,6 +4705,32 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSetQuitting();
         }
+        /* The main window can enter or leave full screen without the app
+           asking — the green button, Mission Control, a swipe. Track the flag
+           from what the window actually did, or it goes on claiming windowed
+           while the window is not and the next toggle computes the wrong
+           target. Leaving while the full screen map is up ends the mode as
+           well: the surface it fills has gone. That goes through
+           overviewInWindowChoose, not Set — the player reached for the green
+           button themselves, so it is their choice exactly as the menu item
+           would have been, and it hands the pop-out back and is remembered
+           the same way. The mode test keeps this from re-entering when the
+           app asked for the transition itself: by then the mode is already
+           off. Skipped on the tablet and the Deck, which are born full screen
+           — there the flag is not the player's preference to overwrite. */
+        if ((ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
+             ev.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) &&
+            ev.window.windowID == SDL_GetWindowID(s_window) &&
+            !uiModeIsTablet() && !uiModeIsSteamDeck()) {
+            bool nowFull = (ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN);
+            if (!nowFull && sdl3DrawIsOverviewInWindow()) {
+                overviewInWindowChoose(false);
+            } else if (nowFull != (bool)gameFrontFullScreen) {
+                gameFrontFullScreen = nowFull;
+                gameFrontSaveCurrentPrefs();
+            }
+        }
+
         /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
@@ -4837,6 +4949,7 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
     s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
                                   !classicModeActive());
+    s->fullScreenOn            = gameFrontFullScreen;
 
     int dispW = 99999, dispH = 99999;
     if (s_window) {
@@ -5816,6 +5929,17 @@ void sdl3ImguiShowOverviewInWindow(bool active) {
     }
 #endif
     (void)active;
+}
+/* The one full screen command, shared by Alt+Enter and the macOS Window menu
+ * so the two routes cannot drift. In a game it is the full screen map, which
+ * carries the window full screen with it; outside one there is no map to
+ * show, so it is the plain app full screen flag. */
+void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
+    if (cs != nullptr && clientSimIsRunning(cs)) {
+        sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+    } else {
+        windowFullScreenChoose(!gameFrontFullScreen);
+    }
 }
 bool sdl3ImguiIsOverviewInWindowOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)

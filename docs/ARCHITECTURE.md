@@ -1500,6 +1500,13 @@ set of intentional differences:
 - The dynamic per-player roster row in the in-window Players menu is
   not replicated natively. The Players Panel window owns that
   surface; the native menu has only the static action items.
+- Window > Enter Full Screen (⌃⌘F) has no in-window twin. It sits with
+  Minimize / Zoom / Bring All To Front, which are AppKit window
+  commands, by macOS convention. It is not a divergence in behaviour:
+  it calls `sdl3ImguiToggleFullScreen`, the same command Alt+Enter
+  makes, which in a game is the full screen map that File > Overview
+  in Window drives in both bars, and outside one is the app full
+  screen flag.
 
 Add new exceptions sparingly and only with a justification — every
 diverged item is a future asymmetric-UI bug.

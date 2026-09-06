@@ -107,6 +107,11 @@ void sdl3ImguiShowMapOverview(bool open);
 /* In-window Map Overview: the map fills the game window and the window goes
  * fullscreen. Desktop only, like the pop-out above. */
 void sdl3ImguiShowOverviewInWindow(bool active);
+/* The one full screen command. In a game it is the full screen map above,
+ * which carries the window full screen with it; outside one there is no map
+ * to show, so it is the plain app full screen flag. Alt+Enter and the macOS
+ * Window menu item both come through here so the two routes cannot drift. */
+void sdl3ImguiToggleFullScreen(struct ClientSim *cs);
 void sdl3ImguiShowPlayersPanel(bool open);
 void sdl3ImguiTogglePlayersPanel(void);
 

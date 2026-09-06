@@ -35,6 +35,10 @@ extern "C" void sdl3ImguiShowMapOverview(bool open);
 extern "C" bool sdl3ImguiIsMapOverviewOpen(void);
 extern "C" void sdl3ImguiShowOverviewInWindow(bool active);
 extern "C" bool sdl3ImguiIsOverviewInWindowOpen(void);
+/* Window > Enter Full Screen. The frontend decides which of the two toggles
+ * that is — the full screen map in a game, the app full screen flag outside
+ * one — so this item and Alt+Enter can never mean different things. */
+extern "C" void sdl3ImguiToggleFullScreen(struct ClientSim *cs);
 
 extern "C" void windowSmoothScrolling_toggle(void);
 extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
@@ -121,6 +125,7 @@ static NSMenuItem *s_gameInfoItem            = nil;
 static NSMenuItem *s_sendMsgItem             = nil;
 static NSMenuItem *s_mapOverviewItem         = nil;
 static NSMenuItem *s_overviewInWindowItem    = nil;
+static NSMenuItem *s_fullScreenItem          = nil;
 static NSMenuItem *s_winboloRequestAllianceItem = nil;
 static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
 static NSMenuItem *s_playersRequestAllianceItem = nil;
@@ -234,6 +239,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onShowNetInfo:(id)sender;
 - (void)onShowMapOverview:(id)sender;
 - (void)onToggleOverviewInWindow:(id)sender;
+- (void)onToggleFullScreen:(id)sender;
 - (void)onSmoothScrolling:(id)sender;
 - (void)onAutoScrolling:(id)sender;
 - (void)onShowGunsight:(id)sender;
@@ -316,6 +322,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onToggleOverviewInWindow:(id)sender {
     (void)sender;
     sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+}
+- (void)onToggleFullScreen:(id)sender {
+    (void)sender;
+    sdl3ImguiToggleFullScreen((struct ClientSim *)g_clientSim);
 }
 - (void)onSmoothScrolling:(id)sender {
     (void)sender;
@@ -1383,17 +1393,23 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
     [windowMenu addItem:[NSMenuItem separatorItem]];
 
-    /* Drives the app's own full screen flag, the same handler as the File
-       menu's item, rather than AppKit's toggleFullScreen: — two items in one
-       menu bar taking the window full screen by different routes would leave
-       the flag disagreeing with the window. */
+    /* Drives the app's own full screen command rather than AppKit's
+       toggleFullScreen: — two items in one menu bar taking the window full
+       screen by different routes would leave the flag disagreeing with the
+       window. Which of the two toggles it is belongs to the frontend, not to
+       the menu item: this is the same call Alt+Enter makes, so in a game it
+       is the full screen map and outside one the plain app full screen flag,
+       exactly as the in-window bar's File > Overview in Window behaves.
+       The title stays put and the state shows as a checkmark, the way every
+       other toggle in this bar reports itself. */
     NSMenuItem *fullScreenItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_ENTER_FULL_SCREEN)
-        action:@selector(onToggleOverviewInWindow:)
+        action:@selector(onToggleFullScreen:)
         keyEquivalent:@"f"];
     [fullScreenItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
     [fullScreenItem setTarget:g_bridge];
     [windowMenu addItem:fullScreenItem];
+    s_fullScreenItem = fullScreenItem;
 
     [windowMenu addItem:[NSMenuItem separatorItem]];
 
@@ -1468,6 +1484,7 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_gameInfoItem)              [s_gameInfoItem              setState:(s->gameInfoOpen          ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_mapOverviewItem)           [s_mapOverviewItem           setState:(s->mapOverviewOpen       ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_overviewInWindowItem)      [s_overviewInWindowItem      setState:(s->overviewInWindow      ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_fullScreenItem)            [s_fullScreenItem            setState:(s->fullScreenOn          ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_sendMsgItem)               [s_sendMsgItem               setState:(s->sendMsgOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
 
