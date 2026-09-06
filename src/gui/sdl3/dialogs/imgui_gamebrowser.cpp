@@ -135,12 +135,13 @@ struct ServerEntry {
                           * the flags/counts/md5 fields; gates the rich-only
                           * lines in the detail pane. */
     /* Server visibility rules. Defaults (pill always, base off, ally
-     * always, classic mode off) for a server whose advertisement
-     * doesn't carry them. */
+     * always, classic mode and allies in trees off) for a server whose
+     * advertisement doesn't carry them. */
     ViewPolicy pillView;
     ViewPolicy baseView;
     ViewPolicy allyView;
     bool classicMode;
+    bool alliesInTrees;
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -158,6 +159,10 @@ static std::string viewPolicyTag(const ServerEntry &e) {
     std::string out;
     if (e.classicMode) {
         out += "Classic";
+    }
+    if (e.alliesInTrees) {
+        if (!out.empty()) out += " ";
+        out += "Allies in trees";
     }
     for (const auto &c : cats) {
         if (c.value == c.def) continue;
@@ -221,6 +226,7 @@ struct PingResult {
     ViewPolicy baseView;
     ViewPolicy allyView;
     bool classicMode;
+    bool alliesInTrees;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -299,6 +305,7 @@ static PingResult pingServer(const PingWork &work) {
     res.baseView = viewPolicyOff;
     res.allyView = viewPolicyAlways;
     res.classicMode = false;
+    res.alliesInTrees = false;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -325,6 +332,7 @@ static PingResult pingServer(const PingWork &work) {
         res.baseView        = dpr.baseView;
         res.allyView        = dpr.allyView;
         res.classicMode     = dpr.classicMode;
+        res.alliesInTrees   = dpr.alliesInTrees;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -446,6 +454,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.baseView        = src->baseView;
     e.allyView        = src->allyView;
     e.classicMode     = src->classicMode;
+    e.alliesInTrees   = src->alliesInTrees;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
      * to minutes the same way the server does (ticks / (50 * 60)). */
@@ -756,6 +765,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.baseView = (ViewPolicy)w.baseView;
                         e.allyView = (ViewPolicy)w.allyView;
                         e.classicMode = w.classicMode;
+                        e.alliesInTrees = w.alliesInTrees;
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -868,6 +878,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].baseView        = pr.baseView;
                         servers[pr.index].allyView        = pr.allyView;
                         servers[pr.index].classicMode     = pr.classicMode;
+                        servers[pr.index].alliesInTrees   = pr.alliesInTrees;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }

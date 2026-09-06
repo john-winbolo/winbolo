@@ -97,7 +97,7 @@ typedef struct BOLO_PACK_ATTR {
                           /* when the map is random/unknown               */
   BYTE view_policies;     /* 2 bits per ViewCategory: pill = bits 0-1,    */
                           /* base = bits 2-3, ally = bits 4-5; bit 6 is   */
-                          /* classic mode, bit 7 spare                    */
+                          /* classic mode, bit 7 is allies in trees       */
 } INFO_PACKET;
 #pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 112, INFO_PACKET_must_be_112_bytes);
@@ -111,41 +111,47 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 112, INFO_PACKET_must_be_112_bytes);
  * accepts this length and reports the built-in view defaults for it. */
 #define INFO_PACKET_PRE_VIEWS_SIZE 111
 
-/* Pack the three per-category policies and the classic-mode flag into
- * INFO_PACKET.view_policies. Classic mode rides bit 6, beside the
- * policies it constrains. */
+/* Pack the three per-category policies, the classic-mode flag and the
+ * allies-in-trees flag into INFO_PACKET.view_policies. Classic mode
+ * rides bit 6 and allies in trees bit 7, beside the ally visibility
+ * they sit alongside. */
 static inline BYTE infoPacketPackViewPolicies(ViewPolicy pill,
                                               ViewPolicy base,
                                               ViewPolicy ally,
-                                              bool classic) {
+                                              bool classic,
+                                              bool alliesInTrees) {
   return (BYTE)(((unsigned)pill & 0x3u)
               | (((unsigned)base & 0x3u) << 2)
               | (((unsigned)ally & 0x3u) << 4)
-              | (classic ? 0x40u : 0u));
+              | (classic ? 0x40u : 0u)
+              | (alliesInTrees ? 0x80u : 0u));
 }
 
-/* Read the three policies and the classic-mode flag back out of a
- * received INFO_PACKET. A packet shorter than the full layout predates
- * the byte, so it reports the built-in defaults (pill always, base off,
- * ally always, classic mode off) instead of whatever the short read
- * left in the struct. */
+/* Read the three policies, the classic-mode flag and the allies-in-trees
+ * flag back out of a received INFO_PACKET. A packet shorter than the
+ * full layout predates the byte, so it reports the built-in defaults
+ * (pill always, base off, ally always, classic mode off, allies in
+ * trees off) instead of whatever the short read left in the struct. */
 static inline void infoPacketReadViewPolicies(const INFO_PACKET *info,
                                               size_t len,
                                               ViewPolicy *pill,
                                               ViewPolicy *base,
                                               ViewPolicy *ally,
-                                              bool *classic) {
+                                              bool *classic,
+                                              bool *alliesInTrees) {
   if (info == NULL || len < sizeof(INFO_PACKET)) {
     if (pill) *pill = viewPolicyAlways;
     if (base) *base = viewPolicyOff;
     if (ally) *ally = viewPolicyAlways;
     if (classic) *classic = false;
+    if (alliesInTrees) *alliesInTrees = false;
     return;
   }
   if (pill) *pill = (ViewPolicy)(info->view_policies & 0x3u);
   if (base) *base = (ViewPolicy)((info->view_policies >> 2) & 0x3u);
   if (ally) *ally = (ViewPolicy)((info->view_policies >> 4) & 0x3u);
   if (classic) *classic = (info->view_policies & 0x40u) != 0;
+  if (alliesInTrees) *alliesInTrees = (info->view_policies & 0x80u) != 0;
 }
 #endif
 
