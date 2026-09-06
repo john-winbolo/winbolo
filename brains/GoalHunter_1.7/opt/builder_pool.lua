@@ -249,7 +249,7 @@ function M.ally_capture_on(state, info, mx, my, pill_id, now)
   if not C.BUILDER_POOL_ALLY_CAPTURE_GUARD then return nil end
   local kinds = C.BUILDER_POOL_ALLY_CAPTURE_GOALS
                 or { capture_pill = true, pill_place = true }
-  local ttl = C.BUILDER_POOL_ALLY_CAPTURE_TTL or 350
+  local ttl = C.BUILDER_POOL_ALLY_CAPTURE_TTL or 175
   local self_pn = info and info.player_number
   local best = nil
   -- No max_age on the iterator: the TTL below is the age test, and it is a

@@ -3210,7 +3210,7 @@ M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 --             replaced wholesale by set_info, so "latest" is all there is.
 --   SILENCE   the ally stopped talking altogether (killed, kicked, removed).
 --             The block then expires TTL ticks after its last advert of ANY
---             kind. 50 ticks = 1 s throughout this file, so 350 = 7 s.
+--             kind. BRAIN ticks: 25 = 1 s (measured 2026-09-05: 1000 engine ticks = 500 thinks), so 175 = 7 s.
 --
 -- The age is measured against slot.last_tick (the ally's last message of any
 -- kind), NOT slot.state_tick (its last full /info state). /info state is
@@ -3220,7 +3220,7 @@ M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 -- still alive and talking"; whether its GOAL is current is answered by the
 -- move-on test, which needs no clock.
 M.BUILDER_POOL_ALLY_CAPTURE_GUARD = true   -- master switch; false = pre-2026-09-05
-M.BUILDER_POOL_ALLY_CAPTURE_TTL   = 350    -- brain ticks (50/s), i.e. 7 s of silence
+M.BUILDER_POOL_ALLY_CAPTURE_TTL   = 175    -- brain ticks (25/s: a brain thinks every 2nd engine tick), i.e. 7 s of silence
 M.BUILDER_POOL_ALLY_CAPTURE_GOALS = { capture_pill = true, pill_place = true }
 
 -- ── Job lifecycle ────────────────────────────────────────────────────────

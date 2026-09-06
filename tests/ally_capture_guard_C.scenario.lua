@@ -12,7 +12,7 @@
 -- so the adverts simply STOP.  Nothing tells our bot the ally is gone — the
 -- ally_state slot keeps the last slate it received, and no GoalHunter module
 -- ever deactivates a slot — so the ONLY thing that can end the block is the
--- silence expiry: BUILDER_POOL_ALLY_CAPTURE_TTL (350 brain ticks = 7 s at
+-- silence expiry: BUILDER_POOL_ALLY_CAPTURE_TTL (175 brain ticks = 7 s at
 -- 50 ticks/s) after the last message.
 --
 -- What must happen: BP_ALLY_CAPTURE ... BLOCKED, then a long quiet stretch, then

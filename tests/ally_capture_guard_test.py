@@ -21,7 +21,7 @@ THE AUTHOR'S RULE, in two halves that are deliberately different:
   MOVE-ON   the ally's LATEST slate names a different goal or a different pill
             -> the block ends THAT TICK, at any age.
   SILENCE   the ally stops talking altogether (killed, kicked, removed)
-            -> the block ends BUILDER_POOL_ALLY_CAPTURE_TTL (350 brain ticks =
+            -> the block ends BUILDER_POOL_ALLY_CAPTURE_TTL (175 brain ticks =
             7 s at 50 ticks/s) after its last message of any kind.
 
 FOUR ARENAS, ONE PIECE OF GROUND (tests/generate_ally_capture_guard_map.py
