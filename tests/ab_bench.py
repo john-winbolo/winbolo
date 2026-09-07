@@ -149,16 +149,24 @@ def bot_range(lo, hi):
     return str(lo) if lo == hi else f"{lo}-{hi}"
 
 
+# Per-side brain override (2026-09-07): --brain-a / --brain-b let one side run a
+# different brain TREE (e.g. brains/GoalHunter_1.6/opt/init.lua vs 1.7) -- the
+# -bot-init range syntax already carries a brain path per range. None = the
+# shared `brain` (the pre-existing one-tree behaviour).
+BRAIN_A = None
+BRAIN_B = None
+
+
 def bot_init(a_arg, b_arg, per_side, brain):
     """-bot-init value. An EMPTY init string means no [..] suffix at all --
     that bot runs plain stock constants."""
     A, B = side_players(per_side)
 
-    def spec(players, arg):
+    def spec(players, arg, br):
         r = bot_range(players[0], players[-1])
-        return f"{r}={brain}[{arg}]" if arg else f"{r}={brain}"
+        return f"{r}={br}[{arg}]" if arg else f"{r}={br}"
 
-    return f"{spec(A, a_arg)},{spec(B, b_arg)}"
+    return f"{spec(A, a_arg, BRAIN_A or brain)},{spec(B, b_arg, BRAIN_B or brain)}"
 
 
 def game_cmd(mapfile, seed, port, ticks, snap, final, a_arg, b_arg, per_side,
@@ -637,6 +645,10 @@ def main():
     ap = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=__doc__)
+    ap.add_argument("--brain-a", default=None,
+                    help="brain init.lua for side A (default: the shared brain)")
+    ap.add_argument("--brain-b", default=None,
+                    help="brain init.lua for side B (default: the shared brain)")
     ap.add_argument("--a", default="", help="side A's BRAIN_INIT_ARG (players "
                                             "0..N-1); empty = stock constants")
     ap.add_argument("--b", default="", help="side B's BRAIN_INIT_ARG (players "
@@ -666,6 +678,8 @@ def main():
                     help="300-tick -brain-debug run: show the [preset]/[cfg] "
                          "lines each side got, then delete the session")
     args = ap.parse_args()
+    global BRAIN_A, BRAIN_B
+    BRAIN_A, BRAIN_B = args.brain_a, args.brain_b
     PORT_BASE = args.port_base
     PORT_TOP = PORT_BASE + 60   # games take base+slot; the verify run uses the top port
 
