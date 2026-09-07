@@ -79,9 +79,12 @@
 #define DEFAULT_SCROLL_GUNDECREASE  40   /* SDL_SCANCODE_RETURN */
 #define DEFAULT_SCROLL_PILLVIEW     10   /* SDL_SCANCODE_G */
 
-/* Push to talk — Q is bound to nothing else, and it sits under the left hand
-   beside the movement keys (E/D/S/F), so it is reachable while driving. */
+/* Voice — both bound to nothing else, and both under the left hand. Q sits
+   beside the movement keys (E/D/S/F) because push to talk is held while
+   driving; Z is a corner away because the mute toggle is pressed once and
+   wants to be hard to hit by accident. */
 #define DEFAULT_PUSHTOTALK   20   /* SDL_SCANCODE_Q */
+#define DEFAULT_MUTEMIC      29   /* SDL_SCANCODE_Z */
 
 #define PREFERENCE_FILE "WinBolo.ini"
 

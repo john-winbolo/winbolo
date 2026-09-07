@@ -3115,8 +3115,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Push To Talk", def, buff, FILENAME_MAX);
   keys->kiPushToTalk = atoi(buff);
 
-  /* Mute microphone — unbound by default. */
-  prefsGetString("KEYS", "Mute Mic", "0", buff, FILENAME_MAX);
+  /* Mute microphone — Z, on the same terms as the key above: unbound
+     elsewhere, and only reaching a prefs file that does not already hold a
+     binding for it. */
+  intToStr(DEFAULT_MUTEMIC, def, sizeof(def));
+  prefsGetString("KEYS", "Mute Mic", def, buff, FILENAME_MAX);
   keys->kiMuteMic = atoi(buff);
 
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
