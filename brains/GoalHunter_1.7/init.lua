@@ -229,6 +229,31 @@ local MANUAL_BUILD_COLORS = {
   { 215, 60, 55 },    -- MINE  — danger red
 }
 
+-- ── Cause-of-death diagnostics (DEBUG ONLY) ──────────────────────────────
+-- File-level upvalues, deliberately NOT fields on `state`: nothing outside
+-- the two `if BRAIN_DEBUG_MODE` blocks that maintain them ever reads them,
+-- and keeping them off `state` guarantees they can't perturb any iteration
+-- over state or any decision. They exist solely to make the one-line DEATH
+-- print2 below say WHY the tank died.
+--
+-- The cause itself comes from the ENGINE, not from a guess: the server sends
+-- EVENT_TANK_KILLED with data = [killer, killed, deathCause, carriedPills]
+-- (gameEventDataSize == 4), so in Lua d[3] is LAST_DEATH_BY_DEEPSEA (1) or
+-- LAST_DEATH_BY_SHELL (2) and d[1] == 255 (NEUTRAL) means a pillbox fired it.
+-- The one gap is a mine kill: tankMineDamage never calls the tankKill
+-- callback, so no event is emitted and we fall back to "mine_or_other".
+-- ONE table, not nine locals: Brain.think is already within a couple of slots
+-- of Lua's hard 60-upvalue-per-function limit, and nine separate upvalues
+-- overflowed it ("function at line 1121 has more than 60 upvalues" -- the
+-- brain then failed to load at all). Fields, in order of use:
+--   evt_cause  engine cause byte from EVENT_TANK_KILLED
+--   evt_killer killer player from that event (255 = NEUTRAL = a pillbox)
+--   evt_tick   tick we saw that event
+--   alive_tick / alive_mx / alive_my / alive_armour  last ALIVE snapshot
+--   drop_tick  last tick armour went DOWN while alive
+--   reported   one DEATH line per death episode
+local _dbg_death = { reported = false }
+
 local AUTOSTART = true
 local ENABLE_LOGGING = false
 
@@ -1543,6 +1568,38 @@ function Brain.think(info)
       bit.rshift((info.tankx or 0), 8), bit.rshift((info.tanky or 0), 8)))
   end
 
+  -- ── Cause-of-death tracking (DEBUG ONLY, observation only) ─────────────
+  -- Two jobs, both pure reads: (1) latch the engine's own death cause out of
+  -- this tick's EVENT_TANK_KILLED addressed to us, and (2) keep the last
+  -- ALIVE tile/armour, because by the time info.dead is true the server has
+  -- already moved the tank to its respawn start, so info.tankx/y no longer
+  -- point at the place it died. Everything written here is a file-level
+  -- upvalue read only by the DEATH print2 below.
+  if BRAIN_DEBUG_MODE then
+    local _me = info.player_number
+    if info.events and _me ~= nil then
+      for _, _ev in ipairs(info.events) do
+        local _d = _ev.data
+        -- data = [killer, killed, deathCause, carriedPills]
+        if _ev.type == EVENT_TANK_KILLED and _d and _d[2] == _me then
+          _dbg_death.evt_cause  = _d[3]
+          _dbg_death.evt_killer = _d[1]
+          _dbg_death.evt_tick   = now
+        end
+      end
+    end
+    if not info.dead then
+      local _arm = info.armour or 0
+      if _dbg_death.alive_armour ~= nil and _arm < _dbg_death.alive_armour then
+        _dbg_death.drop_tick = now
+      end
+      _dbg_death.alive_tick   = now
+      _dbg_death.alive_mx     = bit.rshift((info.tankx or 0), 8)
+      _dbg_death.alive_my     = bit.rshift((info.tanky or 0), 8)
+      _dbg_death.alive_armour = _arm
+    end
+  end
+
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
   -- startup-mode block, etc.) is included in the per-section sum. The
@@ -1860,6 +1917,51 @@ function Brain.think(info)
   -- tick counter was already advanced above, so the debug panels keep tracking
   -- instead of freezing while we're dead.
   if info.dead then
+    -- One DEATH line per death episode (DEBUG ONLY). First statement in the
+    -- block on purpose: the resets below wipe state.goal, and the whole point
+    -- of the line is to name the goal we died pursuing.
+    if BRAIN_DEBUG_MODE and not _dbg_death.reported then
+      _dbg_death.reported = true
+      local _cause
+      -- Prefer the ENGINE's cause. The event and the dead flag normally land
+      -- in the same snapshot; a few ticks of slack covers a snapshot that
+      -- splits them, and stops a previous life's event being reused.
+      if _dbg_death.evt_tick ~= nil and (now - _dbg_death.evt_tick) <= 4 then
+        if _dbg_death.evt_cause == 1 then         -- LAST_DEATH_BY_DEEPSEA
+          _cause = "drowned"
+        elseif _dbg_death.evt_cause == 2 then     -- LAST_DEATH_BY_SHELL
+          -- killer 255 == NEUTRAL == a pillbox pulled the trigger.
+          _cause = (_dbg_death.evt_killer == 255) and "shell_pill" or "shell_tank"
+        else
+          _cause = "engine_cause_" .. tostring(_dbg_death.evt_cause)
+        end
+      else
+        -- No EVENT_TANK_KILLED addressed to us: tankMineDamage kills the tank
+        -- without going through the tankKill callback, so a mine death emits
+        -- no event and lands here.
+        _cause = "mine_or_other"
+      end
+      local _mx, _my = _dbg_death.alive_mx or 0, _dbg_death.alive_my or 0
+      -- ttype_peek, never ttype: a detector call from debug-only code would
+      -- prime terrain_prev and split the recorded brain from production.
+      local _terr = U.ttype_peek(_mx, _my)
+      local _tname = ({ [C.T_BUILDING]="building", [C.T_RIVER]="river",
+                        [C.T_SWAMP]="swamp",       [C.T_CRATER]="crater",
+                        [C.T_ROAD]="road",         [C.T_FOREST]="forest",
+                        [C.T_RUBBLE]="rubble",     [C.T_GRASS]="grass",
+                        [C.T_HALFBUILD]="halfbuild", [C.T_BOAT]="boat",
+                        [C.T_DEEPSEA]="deepsea",   [C.T_REFBASE]="refbase",
+                        [C.T_PILLBOX]="pillbox",   [C.T_UNKNOWN]="unknown",
+                      })[_terr] or ("t" .. tostring(_terr))
+      print2(string.format(
+        "DEATH t=%d cause=%s tile=(%d,%d) terrain=%s armour=%s last_hit_age=%d"
+        .. " goal=%s sub=%s killer=%s alive_t=%s",
+        now, _cause, _mx, _my, _tname, tostring(_dbg_death.alive_armour),
+        _dbg_death.drop_tick and (now - _dbg_death.drop_tick) or -1,
+        tostring(state.goal and state.goal.kind),
+        tostring(state.goal and state.goal.substate),
+        tostring(_dbg_death.evt_killer), tostring(_dbg_death.alive_tick)))
+    end
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
     -- roster, watchdog, broadcast latches, and the call registry) so we respawn
@@ -1900,11 +2002,18 @@ function Brain.think(info)
       if BRAIN_DEBUG_MODE then print2(string.format("DIJ_BLANK_ON_DEATH t=%d — all slates reset to INF while dead", now)) end
     end
     if BRAIN_DEBUG_MODE then print2("DEAD tick t=", now, " -- reset blitz/goal + tank tracks for respawn") end
+    -- The dead early-exit never reached the main think's print2.flush(), so
+    -- everything printed on a dead tick -- DEATH, DIJ_BLANK_ON_DEATH and the
+    -- DEAD tick line above -- sat in the buffer until the next set_tick threw
+    -- it away. That is why no death has ever shown up in a print2 log. Flush
+    -- here, on the dead path only, so the DEATH line actually lands on disk.
+    if BRAIN_DEBUG_MODE then print2.flush() end
     state._think_attempt = nil   -- reached an exit: this think was not killed
     return { holdkeys = 0, tapkeys = 0, build = nil,
              wantallies = info.allies, messagedest = 0, sendmessage = nil }
   end
   state._dij_blanked = nil   -- alive: re-arm the on-death slate blank for next death
+  if BRAIN_DEBUG_MODE then _dbg_death.reported = false end  -- alive: re-arm the one-shot DEATH line
 
   -- Diagnostic: log when Dijkstra newly reaches a base. State-tracked
   -- by base id so we only log the first time. Called after each

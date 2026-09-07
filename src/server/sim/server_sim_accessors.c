@@ -469,6 +469,24 @@ bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
     return true;
 }
 
+bool serverSimGetDeathCauses(const ServerSim *sim, BYTE slot,
+                             uint32_t out[DEATH_CAUSE_NUM]) {
+    int c;
+    if (out == NULL) {
+        return false;
+    }
+    for (c = 0; c < DEATH_CAUSE_NUM; c++) {
+        out[c] = 0;
+    }
+    if (sim == NULL || slot >= MAX_TANKS) {
+        return false;
+    }
+    for (c = 0; c < DEATH_CAUSE_NUM; c++) {
+        out[c] = sim->sim.deathCauseCount[slot][c];
+    }
+    return true;
+}
+
 tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
                                          BYTE selfPlayer,
                                          BYTE tankNum) {

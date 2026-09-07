@@ -185,10 +185,46 @@ def game_cmd(mapfile, seed, port, ticks, snap, final, a_arg, b_arg, per_side,
 # ---------------------------------------------------------------------------
 # measurement
 # ---------------------------------------------------------------------------
+# Per-cause death buckets, in the fixed order the engine writes them under
+# each tank's "deaths_by" object.  The first element of each pair is the JSON
+# key; the second is the short column/label name used in the table.  Explicit
+# list, never dict iteration, so the printed order never depends on hashing.
+#
+# "drowned_unforced" is a SUBSET of "drowned" (the drownings where no shell
+# came within the engine's near-shell ring in the second before the tank went
+# in -- the bot drove itself into the water), so the causes only sum to the
+# death total if you leave it out.  It is listed last and excluded from the
+# sum check for exactly that reason.
+CAUSE_KEYS = [
+    ("drowned",          "drown"),
+    ("shell_tank",       "shellT"),
+    ("shell_pill",       "shellP"),
+    ("mine",             "mine"),
+    ("other",            "other"),
+    ("drowned_unforced", "unforced"),
+]
+
+# The subset keys above: counted and printed, but never added into a total
+# that is meant to equal "deaths".
+CAUSE_SUBSET_KEYS = {"drowned_unforced"}
+
+
 def tally(d, per_side):
-    """bases/pills/deaths as [A, B] out of one snapshot-shaped dict."""
+    """bases/pills/deaths as [A, B] out of one snapshot-shaped dict.
+
+    "causes" is the same death total split by cause, or None when the
+    snapshot came from a binary that predates the per-cause counters (no
+    tank carries a "deaths_by" object).  A cause KEY that no tank carried is
+    dropped from the dict rather than left at zero -- "drowned_unforced" was
+    added after "drowned", so a snapshot written in between has the object but
+    not that key, and reporting it as 0-0 would read as "the change removed
+    every unforced drowning".
+    """
     A, B = side_players(per_side)
     own = {"pills": [0, 0], "bases": [0, 0], "deaths": [0, 0]}
+    causes = {k: [0, 0] for k, _ in CAUSE_KEYS}
+    saw_key = {k: False for k, _ in CAUSE_KEYS}
+    saw_causes = False
     for pb in d.get("pillboxes", []) or []:
         o = pb.get("owner", 255)
         if o in A:
@@ -205,10 +241,19 @@ def tally(d, per_side):
         pn, dth = tk.get("player"), tk.get("deaths")
         if dth is None:
             continue
-        if pn in A:
-            own["deaths"][0] += dth
-        elif pn in B:
-            own["deaths"][1] += dth
+        side = 0 if pn in A else (1 if pn in B else None)
+        if side is None:
+            continue
+        own["deaths"][side] += dth
+        by = tk.get("deaths_by")
+        if isinstance(by, dict):
+            saw_causes = True
+            for k, _ in CAUSE_KEYS:
+                if k in by:
+                    saw_key[k] = True
+                    causes[k][side] += by[k]
+    own["causes"] = ({k: v for k, v in causes.items() if saw_key[k]}
+                     if saw_causes else None)
     return own
 
 
@@ -291,6 +336,17 @@ def measure(snap, final, per_side):
     own = tally(end, per_side)
     end_tick = fin.get("tick", last.get("tick", 0))
     winner = fin.get("winner", last.get("winner"))
+    # Per-cause death split, flattened to "<cause>A"/"<cause>B" keys so the
+    # cached result files stay a flat dict.  Absent (not zero) when the game
+    # was played by a binary without the counters -- readers must treat a
+    # missing key as "unknown" and print "-", never 0.
+    cause_cells = {}
+    if own.get("causes"):
+        for k, _ in CAUSE_KEYS:
+            if k not in own["causes"]:
+                continue          # this binary did not write that key
+            cause_cells[k + "A"] = own["causes"][k][0]
+            cause_cells[k + "B"] = own["causes"][k][1]
     return {
         "outcome": side_of(winner, end.get("tanks"), per_side) or "none",
         "winner_raw": winner,
@@ -303,6 +359,7 @@ def measure(snap, final, per_side):
         "score": score_of(own),
         "score15": score_of(m15) if m15 else None,
         "rows": len(rows),
+        **cause_cells,
     }
 
 
@@ -389,11 +446,23 @@ def run_round(out, seeds, jobs, mapfile, ticks, a_arg, b_arg, per_side, force):
                 m15 = ("%+.1f" % m["score15"]) if m["score15"] is not None else "n/a"
                 print(f"  ok   s{seed}: {cell(m)}  score {m['score']:+.1f} "
                       f"(min15 {m15})  d {m['deathsA']}-{m['deathsB']}  "
+                      f"drown {cause_cell(m, 'drowned')}  "
+                      f"unforced {cause_cell(m, 'drowned_unforced')}  "
                       f"reason={m['reason']}  [{m['seconds']}s]", flush=True)
             except Exception as e:                       # noqa: BLE001
                 print(f"  ERROR handling s{seed}: {e!r}", flush=True)
                 fails += 1
     return fails
+
+
+def cause_cell(m, key):
+    """'<A>-<B>' for one death cause, or '-' when the result predates the
+    per-cause counters (an old cache entry, played on a binary that did not
+    write "deaths_by").  Never prints 0-0 for unknown."""
+    a, b = m.get(key + "A"), m.get(key + "B")
+    if a is None or b is None:
+        return "-"
+    return f"{a}-{b}"
 
 
 def load_all(out):
@@ -421,26 +490,60 @@ def table_text(res, a_arg, b_arg):
     out.append("  score is B minus A: positive = B ahead")
     out.append("  " + "seed".ljust(8) + "winner".ljust(9) + "end".ljust(8)
                + "bases".ljust(9) + "pills".ljust(9) + "deaths".ljust(10)
+               + "drown".ljust(9) + "unforced".ljust(10)
                + "score".ljust(8) + "min15".ljust(8) + "secs")
-    out.append("  " + "-" * 76)
+    out.append("  " + "-" * 95)
     scores, s15s, wins = [], [], {"A": 0, "B": 0, "none": 0}
+    # Per-cause totals across the sample. cause_n counts how many games
+    # actually carried the field, so a mixed cache (some rows from an older
+    # binary) is reported as a partial total rather than a silent zero.
+    # cause_n is per key, not global: a cache mixing games from before and
+    # after "drowned_unforced" was added has "drowned" on every row but
+    # "drowned_unforced" on only some, and a total built over both would be a
+    # silent undercount.
+    cause_tot = {k: [0, 0] for k, _ in CAUSE_KEYS}
+    cause_n = {k: 0 for k, _ in CAUSE_KEYS}
     for s in sorted(res):
         m = res[s]
         wins[m["outcome"] if m["outcome"] in wins else "none"] += 1
         scores.append(m["score"])
         if m.get("score15") is not None:
             s15s.append(m["score15"])
+        for k, _ in CAUSE_KEYS:
+            a, b = m.get(k + "A"), m.get(k + "B")
+            if a is None or b is None:
+                continue
+            cause_n[k] += 1
+            cause_tot[k][0] += a
+            cause_tot[k][1] += b
         out.append("  " + str(s).ljust(8)
                    + {"A": "WIN-A", "B": "WIN-B"}.get(m["outcome"], "none").ljust(9)
                    + (f"{m['end_min']:g}m").ljust(8)
                    + f"{m['basesA']}-{m['basesB']}".ljust(9)
                    + f"{m['pillsA']}-{m['pillsB']}".ljust(9)
                    + f"{m['deathsA']}-{m['deathsB']}".ljust(10)
+                   + cause_cell(m, "drowned").ljust(9)
+                   + cause_cell(m, "drowned_unforced").ljust(10)
                    + f"{m['score']:+.1f}".ljust(8)
                    + (f"{m['score15']:+.1f}" if m.get("score15") is not None
                       else "n/a").ljust(8)
                    + f"{m.get('seconds', 0):g}")
-    out.append("  " + "-" * 76)
+    out.append("  " + "-" * 95)
+    if any(cause_n.values()):
+        parts = []
+        for k, short in CAUSE_KEYS:
+            if not cause_n[k]:
+                parts.append(f"{short} -")
+                continue
+            a, b = cause_tot[k]
+            suffix = "" if cause_n[k] == len(res) else f"[{cause_n[k]}/{len(res)}]"
+            parts.append(f"{short} {a}-{b}{suffix}")
+        out.append("  deaths by cause A-B:  " + "   ".join(parts))
+        out.append("    (unforced is the subset of drown with no shell near "
+                   "the tank in the last second; the other four plus drown "
+                   "sum to deaths)")
+    else:
+        out.append("  deaths by cause A-B:  - (results predate the counters)")
     mean = sum(scores) / float(len(scores))
     m15line = ("   mean min15 %+.2f" % (sum(s15s) / float(len(s15s)))) if s15s else ""
     out.append(f"  {len(scores)} game(s)   mean score {mean:+.2f}{m15line}   "
