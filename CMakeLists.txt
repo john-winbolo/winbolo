@@ -3434,7 +3434,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
     # so they link into a binary that has neither, and test_overview_camera.cpp
     # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
-    # directly. The drawing half (overview_view.cpp) stays out.
+    # directly. The drawing half (overview_view.cpp) stays out. They keep the
+    # gui profile's public-only access rather than borrowing this target's T2;
+    # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
+    # meet to be added here, and when the exception lapses.
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp

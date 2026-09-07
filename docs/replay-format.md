@@ -27,7 +27,7 @@ Files are named `<timestamp>_<mapname>.wbv`, e.g.
 ## Header
 
 The decompressed `log.dat` begins with a plaintext header, immediately followed
-by the first `LOG_SNAPSHOT` record.
+by the first `LOG_EVENT_SNAPSHOT` record.
 
 | Field | Size | Notes                                                           |
 |---|---|-----------------------------------------------------------------|
@@ -57,7 +57,7 @@ opcode (`src/bolo/public/log.h`):
 | 2 | `LOG_NOEVENTS_LONG` | opcode + `count:u16` (big-endian) — advance up to 65535 ticks |
 | 3 | `LOG_EVENT` | opcode + `count:u8` + events |
 | 4 | `LOG_EVENT_LONG` | opcode + `count:u16` (big-endian) + events |
-| 5 | `LOG_SNAPSHOT` | opcode + snapshot body (see below) |
+| 5 | `LOG_EVENT_SNAPSHOT` | opcode + snapshot body (see below) |
 
 ## Events
 
@@ -86,8 +86,9 @@ Selected event types (see the `logitem` enum for the complete list):
 | 21 | `log_ChangeName` | player + Pascal name |
 | 22–24 | `log_Ally*` | alliance request / accept / leave |
 | 25–26 | `log_BaseSet*` | base owner / stock (shells, mines, armour) |
-| 27–31 | `log_Pill*` | pillbox owner / health / placement / in-tank |
-| 33–34 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
+| 27–30 | `log_Pill*` | pillbox owner / health / placement / in-tank |
+| 31 | `log_SaveMap` | the host saved the map mid-game |
+| 32–33 | `log_LostMan`, `log_KillPlayer` | man lost / player killed |
 | 53 | `log_GameSettings` | Pascal-form blob of every lobby setting (below) |
 
 ### `log_GameSettings` payload
@@ -117,8 +118,8 @@ know the current settings.
 
 ## Snapshot body
 
-A `LOG_SNAPSHOT` captures the full world state, used both for the initial frame
-and for periodic resyncs:
+A `LOG_EVENT_SNAPSHOT` captures the full world state, used both for the
+initial frame and for periodic resyncs:
 
 | Field | Size | Notes |
 |---|---|---|
@@ -164,6 +165,7 @@ no encryption (`blockKey = 0`). The Log Viewer reads all three versions.
 1. Open the ZIP, locate `log.dat`, begin DEFLATE decompression.
 2. Read and verify the `WBOLOMOV` magic, then the version byte.
 3. Read the header fields; seed the XOR key (0 for V2).
-4. Read the first `LOG_SNAPSHOT` and reconstruct the initial world.
-5. Loop on opcodes — `LOG_QUIT` stops; `LOG_NOEVENTS*` advances ticks;
-   `LOG_EVENT*` parses and applies events; `LOG_SNAPSHOT` reloads the world.
+4. Read the first `LOG_EVENT_SNAPSHOT` and reconstruct the initial world.
+5. Loop on opcodes — `LOG_QUIT` stops; `LOG_NOEVENTS` / `LOG_NOEVENTS_LONG`
+   advance ticks; `LOG_EVENT` / `LOG_EVENT_LONG` parse and apply events;
+   `LOG_EVENT_SNAPSHOT` reloads the world.
