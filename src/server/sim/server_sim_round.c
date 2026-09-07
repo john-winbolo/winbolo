@@ -1305,7 +1305,7 @@ void serverSimMapRotateRound(ServerSim *sim) {
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
-    BYTE tempBuf[65536];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
 
     if (sim->state != serverStateLobby) {

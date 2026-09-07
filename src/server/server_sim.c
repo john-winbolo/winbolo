@@ -436,7 +436,7 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
 
     /* Cache the initial map state for between-round resets */
     {
-        BYTE tempBuf[65536];
+        BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
         int len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
@@ -473,7 +473,7 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
 
     /* Cache the initial map state for between-round resets */
     {
-        BYTE tempBuf[65536];
+        BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
         int len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
@@ -493,7 +493,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
                                     gameType game, bool hiddenMines,
                                     int32_t startDelay, int32_t gameLen) {
     ServerSim *sim;
-    BYTE tempBuf[65536];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     char seedStr[64];
     int x, y;

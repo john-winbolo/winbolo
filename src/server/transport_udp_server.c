@@ -4743,7 +4743,7 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
      * RLE encoder has no internal output-bound check, and an
      * incompressible map can encode slightly larger than its 64KB
      * input. Validate the result fits the wire size before copying. */
-    BYTE scratchMap[131072];
+    BYTE scratchMap[MAP_COMPRESSED_MAX_SIZE];
 
     mapLen = serverSimGetCompressedMap(sim, scratchMap, (int)sizeof(scratchMap));
     if (mapLen <= 0) {

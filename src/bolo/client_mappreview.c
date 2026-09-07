@@ -99,9 +99,9 @@ MapPreview *clientMapPreviewLoadFromMapBytes(const BYTE *data, int len) {
   return mp;
 }
 
-/* Worst-case serialized size of a runtime compressed map. Mirrors the
- * 256 KiB scratch the random-map generator hands mapSaveCompressedMap. */
-#define CLIENT_MAP_COMPRESSED_MAX (256 * 1024)
+/* Worst-case serialized size of a runtime compressed map — the one bound the
+ * whole tree sizes to, derived in types.h. */
+#define CLIENT_MAP_COMPRESSED_MAX MAP_COMPRESSED_MAX_SIZE
 
 BYTE *clientMapConvertFileToCompressed(const BYTE *fileData, int fileLen, int *outLen) {
   MapPreview *mp;

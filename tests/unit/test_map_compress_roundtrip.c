@@ -467,3 +467,98 @@ int run_map_resync_base_crater_converges(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* The bound MAP_COMPRESSED_MAX_SIZE states has to be the encoder's actual
+ * worst case, not a guess, because every buffer in the tree is sized to it.
+ *
+ * The RLE expands rather than compresses on its worst input: a three-byte
+ * cycle of one literal followed by a two-byte run costs four output bytes,
+ * two for the one-byte literal frame and two for the run. This drives a map
+ * of exactly that shape through mapSaveCompressedMap and pins three things —
+ * that the expansion is real, that the constant covers it, and that a buffer
+ * sized to the uncompressed map does not.
+ *
+ * The last of those is the regression this guards: sizing a destination to
+ * the 64 KiB a map occupies in memory looks right and is not, and the
+ * compressor refuses on it silently rather than overrunning, so nothing
+ * downstream says why the map never arrived. */
+int run_map_compress_incompressible(void) {
+    static BYTE emap[6000] = E_MAP;
+    static BYTE dest[MAP_COMPRESSED_MAX_SIZE];
+    const int headerLen = SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS;
+    const int terrainLen = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+    map mp;
+    pillboxes pb;
+    bases bs;
+    starts ss;
+    int n, x, y;
+
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+    UT_ASSERT_MSG(mapLoadCompressedMap(&mp, &pb, &bs, &ss, emap, EMAP_LEN),
+                  "embedded Everard map failed to decode");
+
+    /* ABB ABB ABB ... laid down in the order the encoder walks the array,
+     * which is the flat mapItem order. Written straight into the array rather
+     * than through mapSetPos: this is a compressor input, not a playable map,
+     * and the point is the byte pattern. */
+    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+        for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+            int flat = (y * MAP_ARRAY_SIZE) + x;
+            mp->mapItem[y][x] = (BYTE)((flat % 3 == 0) ? GRASS : SWAMP);
+        }
+    }
+
+    /* Bigger than the terrain it came from — the case every 64 KiB buffer in
+     * the tree used to assume away. */
+    n = mapSaveCompressedMap(&mp, &pb, &bs, &ss, dest, (int)sizeof(dest));
+    UT_ASSERT_MSG(n > terrainLen,
+                  "the worst-case pattern encoded to %d bytes, which is not "
+                  "larger than the %d it started as — the encoder's expansion "
+                  "behaviour has changed and the bound needs re-deriving",
+                  n, terrainLen);
+
+    /* And inside the bound, which is what every caller is sized to. */
+    UT_ASSERT_MSG(n <= (int)sizeof(dest),
+                  "the worst-case pattern encoded to %d bytes, past the "
+                  "MAP_COMPRESSED_MAX_SIZE of %d that every buffer in the "
+                  "tree is sized to", n, (int)sizeof(dest));
+
+    /* The 4/3 derivation, checked rather than trusted: the terrain half must
+     * land on the bound the constant is built from. */
+    UT_ASSERT_MSG(n - headerLen <= ((terrainLen * 4) / 3) + 1,
+                  "the terrain encoded to %d bytes, past the 4/3 bound of %d "
+                  "that MAP_COMPRESSED_MAX_SIZE is derived from",
+                  n - headerLen, ((terrainLen * 4) / 3) + 1);
+
+    /* A buffer sized to the uncompressed map is refused, not overrun. This is
+     * the sizing bug itself: it is the obvious wrong number to pick.
+     *
+     * Refusing is not the same as writing nothing. The header goes down
+     * before the terrain is encoded, and the encoder fills what it was given
+     * before finding it has run out, so a refused call leaves the caller's
+     * buffer partly written and returns 0 to say the contents mean nothing.
+     * What it must never do is step past the capacity, so the slack after it
+     * is what gets checked. */
+    {
+        const int cap = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+        static BYTE tooSmall[(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE) + 1024];
+        const BYTE canary = 0xA5;
+        memset(tooSmall, canary, sizeof(tooSmall));
+        n = mapSaveCompressedMap(&mp, &pb, &bs, &ss, tooSmall, cap);
+        UT_ASSERT_MSG(n == 0,
+                      "a buffer the size of the uncompressed map (%d) took "
+                      "this map in %d bytes — it should have been refused",
+                      cap, n);
+        UT_ASSERT(assert_tail_untouched(tooSmall, cap, (int)sizeof(tooSmall),
+                                        canary, "refused at map size") == 0);
+    }
+
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    return 0;
+}

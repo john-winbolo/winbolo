@@ -214,6 +214,26 @@ struct tankObj {
 #define MAX_STARTS 16
 #define SIZEOF_STARTS 49
 
+/* Worst-case size of a map serialised by mapSaveCompressedMap, and therefore
+ * the size any buffer handed to it should be.
+ *
+ * The RLE it uses can expand rather than compress. Its worst input is a
+ * three-byte cycle of one literal byte followed by a two-byte run - ABB ABB
+ * ABB ... - which the encoder spends four output bytes on: two for the
+ * one-byte literal frame, two for the run. So the bound is 4/3 of the terrain
+ * array, measured against the encoder rather than estimated: a 64 KiB array
+ * of that shape encodes to 87382 bytes. The fixed bases/pills/starts header
+ * rides in front of it.
+ *
+ * This is not a theoretical shape. Terrain values are small integers, and a
+ * 256x256 array of randomly mixed ones encodes to about 1.05x - already past
+ * the 64 KiB a map occupies uncompressed. A buffer sized to the input is
+ * therefore too small for any map that does not actually compress, and
+ * mapSaveCompressedMap refuses on it: safe, but silent. */
+#define MAP_COMPRESSED_MAX_SIZE                       \
+    (SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS +    \
+     (((MAP_ARRAY_SIZE * MAP_ARRAY_SIZE) * 4) / 3) + 1)
+
 /* Typedefs */
 
 typedef struct {

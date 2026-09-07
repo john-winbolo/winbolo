@@ -1845,7 +1845,7 @@ static int runFastMode(void) {
 
   /* Cache compressed map for fast resets */
   {
-    BYTE tempMap[65536];
+    BYTE tempMap[MAP_COMPRESSED_MAX_SIZE];
     cachedCompressedMapLen = serverSimGetCompressedMap(fastServerSim, tempMap,
                                                        (int)sizeof(tempMap));
     if (cachedCompressedMapLen <= 0) {

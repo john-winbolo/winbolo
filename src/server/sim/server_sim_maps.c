@@ -43,7 +43,7 @@
 static void serverSimApplyMapChange(ServerSim *sim);
 
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
-    BYTE tempBuf[65536];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     char seedStr[64];
     char msg[128];
@@ -365,7 +365,7 @@ void serverSimMapDirDestroy(ServerSim *sim) {
 
 static bool serverSimApplyRandomMapConfig(ServerSim *sim,
                                           const MapGenConfig *cfg) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     int x, y;
 
@@ -425,7 +425,7 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
 }
 
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     char msg[256];
 
@@ -554,7 +554,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
 bool serverSimReloadCompressedInMemory(ServerSim *sim,
                                        const uint8_t *bytes, int len,
                                        const char *mapName) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int compressedLen;
     char msg[256];
 
@@ -703,9 +703,9 @@ bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
     int len;
     bool ok;
     if (sim == NULL || cs == NULL) return FALSE;
-    buf = (BYTE *)malloc(65536);
+    buf = (BYTE *)malloc(MAP_COMPRESSED_MAX_SIZE);
     if (buf == NULL) return FALSE;
-    len = serverSimGetCompressedMap(sim, buf, 65536);
+    len = serverSimGetCompressedMap(sim, buf, MAP_COMPRESSED_MAX_SIZE);
     if (len <= 0) {
         free(buf);
         return FALSE;
@@ -771,7 +771,7 @@ const char *serverSimGetPreviousMapName(const ServerSim *sim) {
 }
 
 bool serverSimRevertPreview(ServerSim *sim) {
-    BYTE tempBuf[131072];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
     if (!sim || !sim->previousMapData) {
         mpDiagLog("[srv] revertPreview REJECTED (no preview to revert)");

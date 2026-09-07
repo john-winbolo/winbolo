@@ -449,7 +449,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             int mapLen = 0;
             const BYTE *mapData = clientSimGetServerMapData(cs, &mapLen);
             const char *dataSource = (mapData && mapLen > 0) ? "udp" : "(udp returned null)";
-            BYTE spBuf[65536];
+            BYTE spBuf[MAP_COMPRESSED_MAX_SIZE];
             if ((!mapData || mapLen <= 0) &&
                 cs && !clientSimIsUdpTransport(cs)) {
                 /* Non-UDP transport (SP host OR MP-host's own client)

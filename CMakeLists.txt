@@ -4057,6 +4057,7 @@ set(_unit_test_names
     map_resync_stale_gen_rejected
     map_compress_roundtrip_stock
     map_compress_capacity_refuses
+    map_compress_incompressible
     map_compress_roundtrip_mutated
     map_checksum_ignores_mines
     map_resync_base_crater_converges

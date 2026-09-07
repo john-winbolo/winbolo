@@ -1213,6 +1213,7 @@ int run_map_resync_stale_gen_rejected(void);
  * given rather than write past it. */
 int run_map_compress_roundtrip_stock(void);
 int run_map_compress_capacity_refuses(void);
+int run_map_compress_incompressible(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
