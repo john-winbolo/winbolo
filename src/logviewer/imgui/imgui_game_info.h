@@ -36,6 +36,14 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
                          char *mapName, unsigned char gameType, int hiddenMines, unsigned char aiType,
                          int32_t startDelay, int32_t timeLimit, unsigned char *wbnKey, int32_t startTime);
 
+/* Set the lobby settings the recording carries: the raw log_GameSettings
+ * payload, whose layout is written out in docs/replay-format.md. A payload
+ * shorter than the fields the panel draws, or a length of 0, means the log
+ * records no settings and those rows are left out. Independent of
+ * lv_imgui_game_info_set — either may arrive first, and both are cleared by
+ * lv_imgui_game_info_clear. */
+void lv_imgui_game_info_set_settings(const unsigned char *payload, int len);
+
 #ifdef __cplusplus
 }
 #endif

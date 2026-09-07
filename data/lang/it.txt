@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Spara
 STR_DLGKEYSETUP_LAYMINE=Posiziona mina
 STR_DLGKEYSETUP_TANKVIEW=Vista tank
 STR_DLGKEYSETUP_PILLVIEW=Vista bunker
+STR_DLGKEYSETUP_BASEVIEW=Vista base
+STR_DLGKEYSETUP_ALLYVIEW=Vista tank alleati
 STR_DLGKEYSETUP_SCROLLUP=Su
 STR_DLGKEYSETUP_SCROLLDOWN=Giù
 STR_DLGKEYSETUP_SCROLLLEFT=Sinistra
@@ -1913,6 +1915,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=Gli account WinBolo.net possono essere modificati solo
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Invia i replay ai giocatori
 STR_LV_HIDE_LOBBY=Nascondi sala d'attesa
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibilità
+STR_DLGLOBBY_VIEW_PILL=Vista bunker
+STR_DLGLOBBY_VIEW_BASE=Vista base
+STR_DLGLOBBY_VIEW_ALLY=Vista tank alleati
+STR_DLGLOBBY_VIEW_ALWAYS=Sempre
+STR_DLGLOBBY_VIEW_KEY=Tasto
+STR_DLGLOBBY_VIEW_DECAY=Dissolvenza
+STR_DLGLOBBY_VIEW_OFF=Disattivato
+STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Modalità classica
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Imposta Vista bunker su Tasto, e Vista base e Vista tank\nalleati su Disattivato, e le mantiene così. Disattivandola,\nquelle tre restano dove la modalità classica le ha messe.\nNasconde anche la panoramica della mappa e la mappa a\nschermo intero sullo schermo di ogni giocatore. Il server\ninvia gli stessi dati in entrambi i casi, quindi è una\nregola di comodità, non una garanzia contro un client\nmodificato.
+STR_MENU_CLASSIC_MODE_TIP=Il server ha la modalità classica attiva, quindi questa vista è disattivata.
+STR_DLGLOBBY_ALLIES_TREES_CB=Vedi gli alleati negli alberi
+STR_DLGLOBBY_ALLIES_TREES_TIP=I tank alleati fermi negli alberi vengono disegnati sul\ntuo schermo invece di essere nascosti. La nebbia di\nguerra vale ancora, quindi li vedi solo dove vedi già.\nDisattivato è la regola classica, e la modalità classica\nlo disattiva.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skin
 STR_DLGSKIN_DEFAULT=Predefinito
@@ -1953,3 +1970,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Può essere pubblicata solo una skin nella propria 
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Questa skin ha grafica più dettagliata solo per alcuni sprite, quindi "Adatta allo zoom" genera le stesse tile di "Classico". "Dettaglio alto" usa la grafica più dettagliata dove la skin la possiede.
 STR_DLGSKIN_RECFILTER_LBL=Filtro consigliato:
 STR_DLGSKIN_RECOMMENDED_TAG=(consigliato)
+
+# Panoramica della mappa e la mappa a schermo intero
+STR_MENU_MAP_OVERVIEW=Panoramica della mappa
+STR_MENU_OVERVIEW_IN_WINDOW=Schermo intero
+STR_OVERVIEW_FOLLOWING=segue
+STR_OVERVIEW_FREE=libera
+STR_DLGKEYSETUP_OVERVIEWZOOM=Zoom mappa (tieni premuto)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Segui mappa (attiva/disattiva)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Zoom avanti mappa
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Zoom indietro mappa
+STR_DLGWELCOME_SWITCH_CLASSIC=Passa alla modalità classica
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Passa a schermo intero
+
+# Impostazioni Schermo e audio: schermo intero e i pannelli HUD della mappa
+STR_DLGSETTINGS_FULLSCREEN=Schermo intero
+STR_DLGSETTINGS_FULLSCREEN_TIP=Riempie tutto lo schermo invece di funzionare in una\nfinestra. Viene ricordato per la prossima volta.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Trasparenza del newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Quanto della mappa si vede attraverso il newswire in\nbasso nella vista a schermo intero. 0% è opaco, e il\ncursore si ferma al 90% così non può diventare invisibile.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Nascondi Newswire automaticamente
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Fa scendere il newswire fuori dallo schermo dopo un po'\nsenza nuovi messaggi, e lo fa risalire al messaggio\nsuccessivo. Disattivato lo mantiene sempre visibile\nper tutta la partita.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Trasparenza degli strumenti di costruzione
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Quanto della mappa si vede attraverso gli strumenti di\ncostruzione a sinistra della vista a schermo intero.\n0% è opaco, e il cursore si ferma al 90% così non\npossono diventare invisibili.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Trasparenza del pannello di stato
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Quanto della mappa si vede attraverso il pannello di\nstato a destra della vista a schermo intero - il\ncostruttore, uccisioni e morti, righe base/bunker/tank,\ne le barre delle scorte. 0% è opaco, e il cursore si\nferma al 90% così non può diventare invisibile.
+
+# Didascalia vista oggetto
+STR_ITEMVIEW_PILL=Vista bunker
+STR_ITEMVIEW_BASE=Vista base
+STR_ITEMVIEW_ALLY=Vista tank alleati
+STR_ITEMVIEW_ALLY_NAMED=Vista tank alleati — {player}
+
+# Etichetta di visibilità del browser server
+STR_DLGBROWSER_VIEWS_LBL=Viste:
+STR_DLGBROWSER_VIEWS_CLASSIC=Classica
+STR_DLGBROWSER_VIEWS_ALLYTREES=Alleati negli alberi

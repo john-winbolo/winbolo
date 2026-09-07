@@ -855,11 +855,19 @@ bool transportUdpServerTestPendingRemove(int slot);
  * client's connect state, or the producer skips the slot as still-downloading. */
 bool transportUdpServerTestDownloadComplete(int slot);
 /* Stage one terrain change for a slot as a real tick does: mutate the live
- * server map (so its checksum tracks the change) and enqueue an
+ * server map, write the tile into every slot's copy of the terrain (so the
+ * checksum each client is sent tracks the change), and enqueue an
  * EVENT_MAP_CHANGE into the slot's map-event hold queue, so it flows through
  * the real hold → tagged channelSend(CHANNEL_MAP) drain. Call between ticks. */
 bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
                                        uint8_t y, uint8_t terrain);
+/* How many map events a slot's queue has ever been given, and whether any of
+ * them was for a given square. Both read the queue the drain writes, so a test
+ * can tell "this client was sent that change" from "this client was not" —
+ * what the viewport cull turns on. The square lookup scans the whole ring, so
+ * it still answers for events already sent and acked. */
+uint32_t transportUdpServerTestMapQueueCount(int slot);
+bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y);
 /* Queue one whole game event on a slot's reliable game channel (CHANNEL_GAME),
  * as the real producer does — lets a test stage a distinguishable ch0 event
  * (e.g. one left unacked across game start). False on a bad slot/event or a
@@ -937,6 +945,22 @@ uint32_t transportUdpServerGetSpectatorControlSeq(int s);
  * per-recipient filters passed it) or held (filtered). Returns 0 for an
  * invalid slot. */
 uint32_t transportUdpServerGetClientControlSeq(int slot);
+
+/* Read how many map events have been dropped for a player slot because that
+ * client's reliable map-event queue was full. A non-zero value means the
+ * slot's copy of the terrain is deliberately stale for the dropped squares
+ * until the catch-up sweep pays them back. Counted per connection: the join
+ * that resets the slot's queue resets this too. Returns 0 for an invalid
+ * slot. */
+uint32_t transportUdpServerGetMapEventDrops(int slot);
+
+/* Read how many map-download re-asks have been refused for a player slot for
+ * arriving inside MAP_REASK_MIN_TICKS of the last one the server acted on. A
+ * re-ask restarts the whole download — recompress, re-accept, re-base, stream
+ * again — so this counts the times one client was stopped from driving that
+ * work in a loop. Counted per connection: the join that resets the slot
+ * resets this too. Returns 0 for an invalid slot. */
+uint32_t transportUdpServerGetMapReaskThrottled(int slot);
 
 /* True when spectator slot s is a live control-bus subscriber (lobby/countdown),
  * false when it is a delayed-ring reader or the slot is out of range. Lets a

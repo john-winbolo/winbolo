@@ -51,6 +51,9 @@ extern "C" {
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
  * existing callers compile unchanged. */
 #include "sdl3draw_status.h"
+/* Pure geometry — no SDL, no ImGui — so both the drawing side and the ImGui
+ * side can work from the same rectangles. */
+#include "overview_hud_layout.h"
 #include "gfx_settings.h"    /* GfxTextureFilter */
 
 /* Portable RECT when not compiling on Windows */
@@ -79,6 +82,49 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 
+/* In-window Map Overview mode: the overview fills the game window and the
+   classic 15x15 view and chrome are not drawn. */
+void sdl3DrawSetOverviewInWindow(bool active);
+bool sdl3DrawIsOverviewInWindow(void);
+struct OverviewView *sdl3DrawOverviewInWindowView(void);
+/* Where the overview was last blitted, in renderer coordinates — which are
+   ImGui's coordinates in every mode we ship. False when the mode is off or
+   nothing has been drawn yet. */
+bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
+                                     float *outW, float *outH);
+/* The HUD geometry the last in-window frame used, so the ImGui side can put
+   its hit-testing on the same rectangles the blit used. False when the mode
+   is off or no HUD was laid out. */
+bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out);
+
+/* How see-through each of the full screen map's three HUD panels is drawn:
+   the newswire along the bottom, the build items down the left edge and the
+   status column on the right. Each is a percentage — 0 solid, capped short of
+   invisible — and the setters clamp. Auto-hide is the newswire's own: on, it
+   drops off the bottom edge once no new message has arrived for a while; off,
+   it stays up. All four are player settings, loaded and saved with the rest in
+   gamefront.c. The cap is here so the settings sliders stop where the clamp
+   does. */
+#define OVERVIEW_HUD_TRANSPARENCY_MAX 90
+
+void sdl3DrawSetNewswireTransparency(int percent);
+int  sdl3DrawGetNewswireTransparency(void);
+void sdl3DrawSetNewswireAutoHide(bool on);
+bool sdl3DrawGetNewswireAutoHide(void);
+void sdl3DrawSetBuildPanelTransparency(int percent);
+int  sdl3DrawGetBuildPanelTransparency(void);
+void sdl3DrawSetStatusPanelTransparency(int percent);
+int  sdl3DrawGetStatusPanelTransparency(void);
+
+/* Which of the three panels the pointer is resting on. A panel named here
+   fades up to solid and holds there until it stops being named, so a panel
+   left see-through enough to play through can still be read by pointing at
+   it; one set solid has nowhere to fade and none of this shows on it. The
+   input half calls this while it is already hit-testing the same three rects
+   to keep clicks on the panels off the map. */
+void sdl3DrawSetHudPanelHover(bool overStatus, bool overBuild,
+                              bool overNewswire);
+
 /* Counter bumped every time the tile atlas is rebuilt. A caller that
  * builds its own sheet from tileLoaderBuildSheet can hold the value it
  * last saw and rebuild when it no longer matches — that is how a skin
@@ -104,6 +150,13 @@ void sdl3DrawGetGameRect(float *destX, float *destY,
  * before passing to SDL_RenderTexture. Returns 1 when the atlas has
  * not been loaded. */
 int sdl3DrawGetSheetScale(void);
+
+/* Build the gunsight crosshair from data/crosshairs_17x17.png — a 17x17
+ * sprite whose centre pixel (8,8) sits on the aim point. NULL when the
+ * asset is missing or the decode fails; the caller owns the texture and
+ * destroys it. A second window has to make its own copy: an SDL texture
+ * only works on the renderer that created it. */
+SDL_Texture *sdl3DrawCreateCrosshairTexture(SDL_Renderer *r);
 
 SDL_Texture *sdl3DrawGetManStatusTexture(bool *ready);
 bool sdl3DrawGetManStatusState(bool *isDead, TURNTYPE *angle);
@@ -205,7 +258,7 @@ void sdl3DrawCleanup(void);
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
-                        int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
+                        int32_t srtDelay, bool isItemView, int edgeX, int edgeY,
                         bool useCursor, BYTE cursorLeft, BYTE cursorTop);
 
 /*********************************************************
@@ -323,12 +376,25 @@ void sdl3DrawSetNetFailed(bool v);
 void sdl3DrawNetFailed(void);
 
 /*********************************************************
-*NAME:          sdl3DrawPillInView
+*NAME:          sdl3DrawItemInView
 *PURPOSE:
-*  Renders "Pillbox View" text at the bottom of the game
-*  area while the player is spectating a pillbox.
+*  Names the current item view at the bottom of the game
+*  area — "Pillbox View", "Base View", or "Allied Tank
+*  View" with the ally's player name. Draws nothing in the
+*  tank view.
 *********************************************************/
-void sdl3DrawPillInView(void);
+void sdl3DrawItemInView(ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3DrawGetItemViewLabel
+*PURPOSE:
+*  Fills out with the name of the current item view and
+*  returns true.  Returns false, writing nothing, in the
+*  tank view and for a NULL cs.  The one place the three
+*  view names are spelled: the classic corner label and the
+*  full screen map's caption both take their text from here.
+*********************************************************/
+bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen);
 
 /* sdl3DrawResetCachedText / sdl3DrawMessages / sdl3DrawKillsDeaths /
  * sdl3DrawTankLabel declared via sdl3draw_status.h (#included above). */

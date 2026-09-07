@@ -29,6 +29,7 @@
 #include <math.h>
 #include <SDL3/SDL.h>
 #include "client_sim.h"
+#include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
 #include "client_sim_internal.h"
 #include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
 #include "spectator_replay.h"          /* extract a seed's control-snapshot slice */
@@ -60,6 +61,7 @@
 #include "tankexp.h"
 #include "log.h"
 #include "screenbrainmap.h"
+#include "overview_map.h"
 #include "util.h"
 #include "netpacks.h"
 #include "transport.h"
@@ -228,6 +230,10 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
   cs->pendingAllianceRequestFrom = 0xFF;
+  /* No view state reported yet — the first display tick of the session sends
+   * one. The memset above would otherwise read as "tank view already sent". */
+  cs->lastSentViewKind = 0xFF;
+  cs->lastSentViewTarget = 0xFF;
   /* Default chat-send callback: route outbound chat through this cs's
    * own transport. Bots, SP host humans, and UDP-connected humans all
    * use the same path out of the box. Frontends that want different
@@ -306,6 +312,8 @@ bool clientSimCreate(ClientSim *cs) {
   }
   pillsCreate(&cs->sim.pb);
   screenBrainMapCreate(cs);
+  /* Not covered by the memset above: an unseen square is 0xFF, not 0. */
+  overviewMapReset(&cs->overview);
   
   /* Initialize brain state (now per-instance in the struct).
    * memset above already zeroed the scalar fields. */
@@ -323,6 +331,15 @@ bool clientSimCreate(ClientSim *cs) {
   /* Network state defaults (memset already zeroed pointers) */
   cs->networkGameType = netNone;
   cs->netStat = netRunning;
+
+  /* Visibility rules, until the server's own arrive with the lobby settings.
+   * The three a server starts with (server_sim.c), so a display tick before
+   * they land draws what the server is actually sending rather than a block
+   * round every allied base. The memset above would leave every category on
+   * viewPolicyAlways. */
+  cs->viewPolicy[viewCategoryPill] = viewPolicyAlways;
+  cs->viewPolicy[viewCategoryBase] = viewPolicyOff;
+  cs->viewPolicy[viewCategoryAlly] = viewPolicyAlways;
 
   /* Lobby state defaults (memset already zeroed, but be explicit) */
   memset(cs->lobbySlots, 0, sizeof(cs->lobbySlots));
@@ -692,7 +709,350 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
   }
 }
 
+/* Chebyshev distance in map squares — the shape of the proximity test, the
+ * same one the server stamps its own clocks on. */
+static bool viewDecayNearSquare(int aMX, int aMY, int bMX, int bMY) {
+  int dx; /* Squares apart across */
+  int dy; /* Squares apart down */
+
+  dx = aMX - bMX;
+  dy = aMY - bMY;
+  if (dx < 0) {
+    dx = -dx;
+  }
+  if (dy < 0) {
+    dy = -dy;
+  }
+  return dx <= VIEW_DECAY_NEAR_TILES && dy <= VIEW_DECAY_NEAR_TILES;
+}
+
+void clientSimResetViewDecay(ClientSim *cs) {
+  if (cs == NULL) {
+    return;
+  }
+  cs->viewDecayTick = 0;
+  memset(cs->pillNearTick, 0, sizeof(cs->pillNearTick));
+  memset(cs->baseNearTick, 0, sizeof(cs->baseNearTick));
+  memset(cs->allyNearTick, 0, sizeof(cs->allyNearTick));
+  /* Where the other tanks were last round says nothing about this one, and
+   * the timer that reads those stamps runs on the same clock. */
+  memset(cs->allyLastMapX, 0, sizeof(cs->allyLastMapX));
+  memset(cs->allyLastMapY, 0, sizeof(cs->allyLastMapY));
+  memset(cs->allySeenTick, 0, sizeof(cs->allySeenTick));
+  cs->allyViewStubTarget = 0;
+  cs->allyViewStubTick = 0;
+}
+
+void clientSimViewDecayTick(ClientSim *cs) {
+  GameSim *gs;      /* The client's own world */
+  uint32_t stamp;   /* What a fresh clock reads */
+  bool pillDecay;   /* Is this category on viewPolicyDecay */
+  bool baseDecay;   /* Is this category on viewPolicyDecay */
+  bool allyDecay;   /* Is this category on viewPolicyDecay */
+  BYTE mx;          /* Where our tank is */
+  BYTE my;          /* Where our tank is */
+  BYTE num;         /* Items of the kind being walked */
+  BYTE i;           /* Looping variable */
+
+  if (cs == NULL) {
+    return;
+  }
+
+  /* The clock runs whatever the player is doing, the way the server's tick
+   * does: a window has to be able to run out while its owner is dead or
+   * standing still, or dying would freeze what they can see. Advanced before
+   * it is read, so a stamp is never the 0 that means never. */
+  cs->viewDecayTick++;
+
+  pillDecay = (cs->viewPolicy[viewCategoryPill] == viewPolicyDecay);
+  baseDecay = (cs->viewPolicy[viewCategoryBase] == viewPolicyDecay);
+  allyDecay = (cs->viewPolicy[viewCategoryAlly] == viewPolicyDecay);
+  if (pillDecay == FALSE && baseDecay == FALSE && allyDecay == FALSE) {
+    return;
+  }
+
+  /* A tank waiting to respawn has no position to be near anything from — it
+   * reads as the map origin — so nothing is stamped while it is dead, which
+   * is what the server does with the same players. */
+  mx = 0;
+  my = 0;
+  if (clientSimGetMyTankMapPos(cs, &mx, &my) != TRUE) {
+    return;
+  }
+
+  gs = &cs->sim;
+  stamp = cs->viewDecayTick;
+
+  if (pillDecay == TRUE && gs->pb != NULL) {
+    num = pillsGetNumPills(&gs->pb);
+    for (i = 0; i < num; i++) {
+      if (viewDecayNearSquare(mx, my, gs->pb->item[i].x, gs->pb->item[i].y) ==
+          TRUE) {
+        cs->pillNearTick[i] = stamp;
+      }
+    }
+  }
+  if (baseDecay == TRUE && gs->bs != NULL) {
+    num = basesGetNumBases(&gs->bs);
+    for (i = 0; i < num; i++) {
+      if (viewDecayNearSquare(mx, my, gs->bs->item[i].x, gs->bs->item[i].y) ==
+          TRUE) {
+        cs->baseNearTick[i] = stamp;
+      }
+    }
+  }
+  if (allyDecay == TRUE) {
+    /* Everybody else's last known square, allied or not — the same square the
+     * ally view reads, and the only one the client has for a remote tank. */
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (i == cs->myPlayerNum) {
+        continue;
+      }
+      if (playersIsInUse(&gs->plyrs, i) != TRUE) {
+        continue;
+      }
+      /* A slot the server is not sending arrives as a hidden stub, which
+       * zeroes its players entry. (0,0) is not a square a live tank can be
+       * on, so it reads as "no position", not as the map origin, and a tank
+       * of ours parked near that corner would otherwise stamp every stubbed
+       * slot as though it were standing beside us. Skipped rather than
+       * stamped from allyLastMapX/Y: VIEW_DECAY_NEAR_TILES is well inside our
+       * own tank rect, so an ally that close is never stubbed in the first
+       * place, while an ally that died beside us has been moved to its
+       * restart square and the server has stopped stamping the old one. */
+      if (gs->plyrs->item[i].mapX == 0 && gs->plyrs->item[i].mapY == 0) {
+        continue;
+      }
+      if (viewDecayNearSquare(mx, my, gs->plyrs->item[i].mapX,
+                              gs->plyrs->item[i].mapY) == TRUE) {
+        cs->allyNearTick[i] = stamp;
+      }
+    }
+  }
+}
+
+/* How many clocks a category keeps, so a view target that has gone out of
+ * range is never used to index one. */
+static BYTE viewDecayCategoryCount(ViewCategory cat) {
+  switch (cat) {
+  case viewCategoryPill: return MAX_PILLS;
+  case viewCategoryBase: return MAX_BASES;
+  default:               return MAX_TANKS;
+  }
+}
+
+bool clientSimViewDecayExpired(const ClientSim *cs) {
+  OverviewViewInputs in;  /* The rules and clocks the window test reads */
+  ViewCategory cat;       /* Which category the camera is parked on */
+  const uint32_t *clocks; /* That category's clocks */
+  BYTE target;            /* The item being watched */
+
+  if (cs == NULL) {
+    return FALSE;
+  }
+  switch (cs->viewport.viewKind) {
+  case VIEW_KIND_PILL:
+    cat = viewCategoryPill;
+    clocks = cs->pillNearTick;
+    break;
+  case VIEW_KIND_BASE:
+    cat = viewCategoryBase;
+    clocks = cs->baseNearTick;
+    break;
+  case VIEW_KIND_ALLY:
+    cat = viewCategoryAlly;
+    clocks = cs->allyNearTick;
+    break;
+  default:
+    return FALSE; /* the tank view, and a kind this client does not know */
+  }
+
+  if (cs->viewPolicy[cat] != viewPolicyDecay) {
+    return FALSE;
+  }
+  target = cs->viewport.viewTarget;
+  if (target >= viewDecayCategoryCount(cat)) {
+    /* Nothing to read a clock from. The item-view upkeep is what drops a
+     * target this far gone; claiming it has expired here would only say the
+     * same thing in a worse place. */
+    return FALSE;
+  }
+
+  clientSimFillOverviewViewInputs(cs, &in);
+  return overviewViewDecayLive(&in, cat, clocks[target], NULL) == FALSE;
+}
+
+/* That category's clocks, or NULL for a category this client does not know. */
+static const uint32_t *clientSimViewDecayClocks(const ClientSim *cs,
+                                                ViewCategory cat) {
+  switch (cat) {
+  case viewCategoryPill: return cs->pillNearTick;
+  case viewCategoryBase: return cs->baseNearTick;
+  case viewCategoryAlly: return cs->allyNearTick;
+  default:               return NULL;
+  }
+}
+
+PlayerBitMap clientSimViewEligibleMask(const ClientSim *cs, ViewCategory cat) {
+  OverviewViewInputs in;  /* The rules and clocks the window test reads */
+  const uint32_t *clocks; /* That category's clocks */
+  PlayerBitMap mask;      /* Bits to return */
+  BYTE count;             /* Items the category keeps a clock for */
+  BYTE i;                 /* Looping variable */
+
+  count = viewDecayCategoryCount(cat);
+  mask = (PlayerBitMap)((((PlayerBitMap)1) << count) - 1);
+  clocks = (cs == NULL) ? NULL : clientSimViewDecayClocks(cs, cat);
+  if (cs == NULL || clocks == NULL || cs->viewPolicy[cat] != viewPolicyDecay) {
+    /* Every item, which is what leaves the other three policies cycling
+     * exactly as they did before there were any policies at all. */
+    return mask;
+  }
+
+  clientSimFillOverviewViewInputs(cs, &in);
+  for (i = 0; i < count; i++) {
+    if (overviewViewDecayLive(&in, cat, clocks[i], NULL) == FALSE) {
+      mask &= ~((PlayerBitMap)1 << i);
+    }
+  }
+  return mask;
+}
+
+void clientSimFillViewCycleInputs(const ClientSim *cs, ViewCycleInputs *in) {
+  int cat; /* Looping variable */
+
+  if (in == NULL) {
+    return;
+  }
+  viewCycleInputsDefaults(in);
+  if (cs == NULL) {
+    return;
+  }
+
+  in->allyViewable = clientSimAllyViewMask(cs);
+  for (cat = 0; cat < VIEW_CATEGORY_COUNT; cat++) {
+    in->eligible[cat] = clientSimViewEligibleMask(cs, (ViewCategory)cat);
+  }
+  in->allyLastMapX = cs->allyLastMapX;
+  in->allyLastMapY = cs->allyLastMapY;
+}
+
+bool clientSimAllyViewStubExpired(ClientSim *cs) {
+  BYTE target;     /* The ally being watched */
+  uint32_t since;  /* Tick the current stale run started */
+
+  if (cs == NULL) {
+    return FALSE;
+  }
+  if (cs->viewport.viewKind != VIEW_KIND_ALLY ||
+      cs->viewport.viewTarget >= MAX_TANKS) {
+    cs->allyViewStubTick = 0;
+    return FALSE;
+  }
+
+  target = cs->viewport.viewTarget;
+  if (cs->allyViewStubTick == 0 || cs->allyViewStubTarget != target) {
+    /* The view has just been entered, or moved to another ally: the grace
+     * starts over, because under viewPolicyKey the server has only now been
+     * told to send this one. */
+    cs->allyViewStubTarget = target;
+    cs->allyViewStubTick = cs->viewDecayTick;
+  }
+
+  /* The later of "we started watching" and "we last saw it" — a real update
+   * for the ally resets the grace wherever in the run it lands. */
+  since = cs->allyViewStubTick;
+  if (cs->allySeenTick[target] > since) {
+    since = cs->allySeenTick[target];
+  }
+  return (cs->viewDecayTick - since) > CLIENT_VIEW_ALLY_STUB_GRACE_TICKS;
+}
+
+bool clientSimAllyViewAwaitingFirstData(const ClientSim *cs) {
+  if (cs == NULL) {
+    return FALSE;
+  }
+  if (cs->viewport.viewKind != VIEW_KIND_ALLY ||
+      cs->viewport.viewTarget >= MAX_TANKS) {
+    return FALSE;
+  }
+  /* allySeenTick is stamped by every real tank record and cleared by
+   * clientSimResetViewDecay, so a zero stamp means nothing has arrived for
+   * that slot this round. */
+  return cs->allySeenTick[cs->viewport.viewTarget] == 0;
+}
+
+void clientSimFillOverviewViewInputs(const ClientSim *cs,
+                                     OverviewViewInputs *in) {
+  int cat; /* Looping variable */
+
+  if (in == NULL) {
+    return;
+  }
+  overviewViewInputsDefaults(in);
+  if (cs == NULL) {
+    return;
+  }
+
+  for (cat = 0; cat < VIEW_CATEGORY_COUNT; cat++) {
+    in->policy[cat] = cs->viewPolicy[cat];
+    in->decaySecs[cat] = cs->viewDecaySecs[cat];
+  }
+  in->pillNearTick = cs->pillNearTick;
+  in->baseNearTick = cs->baseNearTick;
+  in->allyNearTick = cs->allyNearTick;
+  in->nowTick = cs->viewDecayTick;
+  in->ticksPerSec = CLIENT_VIEW_DECAY_TICKS_SEC;
+  in->allyViewable = clientSimAllyViewMask(cs);
+  in->viewKind = cs->viewport.viewKind;
+  in->viewTarget = cs->viewport.viewTarget;
+}
+
+/* Feeds the overview its per-tick view of the world. Reads the local tank's
+ * map square, or reports that there isn't one. The two go together: a tank
+ * waiting to respawn is still in its slot, but its position is deliberately
+ * not read, because a dead tank reads as the map origin and stamping a block
+ * there would reveal map the player has never reached. The overview is told
+ * how far through its death wait it is rather than simply that it is gone: it
+ * holds the block on the square it remembers so the player watches the
+ * explosion where it happened. */
+static void overviewMapTick(ClientSim *cs) {
+  BYTE mx = 0, my = 0;
+  bool haveTank = clientSimIsMyTankAlive(cs) &&
+                  clientSimGetMyTankMapPos(cs, &mx, &my);
+  bool inSlot = !haveTank && MY_TANK(cs) != NULL;
+  int deathWait = inSlot ? tankGetDeathWait(&MY_TANK(cs)) : 0;
+  OverviewViewInputs in;
+
+  /* Armour goes over full the tick the tank takes the hit; the wait is written
+   * by the update after it. Reporting a full wait across that gap holds the
+   * block, where a wait of 0 would close it and reopen it a tick later. */
+  if (inSlot == TRUE && deathWait <= 0) {
+    deathWait = TANK_DEATH_WAIT;
+  }
+
+  /* A map install armed this: stamp the whole map dimmed before the live
+   * regions brighten over it, now that myPlayerNum is settled. */
+  if (cs->overviewSeedPending == TRUE) {
+    overviewMapSeedAll(&cs->overview, &cs->sim, cs->myPlayerNum);
+    cs->overviewSeedPending = FALSE;
+  }
+  clientSimFillOverviewViewInputs(cs, &in);
+  overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, &in, haveTank,
+                    deathWait, mx, my);
+}
+
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
+  if (cs == NULL) {
+    return;
+  }
+  /* Ahead of the overview, which reads the clocks this advances to decide
+   * which blocks it may draw and how bright. */
+  clientSimViewDecayTick(cs);
+  /* The overview memory is the one consumer that needs the no-tank tick:
+   * that is when a player who has left has their regions given a last stamp
+   * and a spectating player keeps seeing what they saw. */
+  overviewMapTick(cs);
   /* Master gate for the per-frame game-render pipeline.  Both
    * clientUiOnTick and basesTickMessageQueue assume the local tank
    * exists — clientUiOnTick reads MY_TANK at ~7 sites for scroll,
@@ -704,7 +1064,7 @@ void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
    * the lobby/menu rendering paths run elsewhere, gated by inLobby/
    * netStatus, so the user just sees the previous frame for a tick
    * or two rather than a NULL dereference. */
-  if (cs == NULL || cs->sim.tanks[cs->myPlayerNum] == NULL) {
+  if (cs->sim.tanks[cs->myPlayerNum] == NULL) {
     return;
   }
   /* Decay the render-only error offset one display-tick step. Display
@@ -1302,6 +1662,14 @@ int clientSimGetMyTankLastDeath(ClientSim *cs) {
   return tankGetLastTankDeath(&MY_TANK(cs));
 }
 
+bool clientSimIsMyTankDeathBlackout(ClientSim *cs) {
+  if (cs == NULL || MY_TANK(cs) == NULL || clientSimIsMyTankAlive(cs)) {
+    return false;
+  }
+  return overviewMapDeathBlackout(clientSimGetMyTankDeathWait(cs),
+                                  clientSimGetMyTankLastDeath(cs));
+}
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs) {
   return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);
@@ -1504,7 +1872,10 @@ bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out,
 
 bool clientSimIsRunning(const ClientSim *cs)              { return cs->running; }
 bool clientSimIsBot(const ClientSim *cs)                  { return cs->isBot; }
-bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.inPillView; }
+bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.viewKind == VIEW_KIND_PILL; }
+bool clientSimIsInItemView(const ClientSim *cs)           { return cs->viewport.viewKind != VIEW_KIND_TANK; }
+uint8_t clientSimGetViewKind(const ClientSim *cs)         { return cs->viewport.viewKind; }
+BYTE clientSimGetViewTarget(const ClientSim *cs)          { return cs->viewport.viewTarget; }
 bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
@@ -1541,8 +1912,8 @@ BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewpor
 BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
 int      clientSimGetSubPosX(const ClientSim *cs)           { return (int)cs->scroll.subPosX; }
 int      clientSimGetSubPosY(const ClientSim *cs)           { return (int)cs->scroll.subPosY; }
-BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.pillViewX; }
-BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.pillViewY; }
+BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.viewX; }
+BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.viewY; }
 BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
 BYTE     clientSimGetPendingBuildX(const ClientSim *cs)     { return cs->pendingBuildX; }
 BYTE     clientSimGetPendingBuildY(const ClientSim *cs)     { return cs->pendingBuildY; }
@@ -1696,6 +2067,13 @@ const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
   return cs->brainEvents;
 }
 
+const OverviewMap *clientSimGetOverviewMap(const ClientSim *cs) {
+  if (cs == NULL) {
+    return NULL;
+  }
+  return &cs->overview;
+}
+
 struct in_addr clientSimGetServerAddress(const ClientSim *cs) {
   return cs->serverAddress;
 }
@@ -1712,8 +2090,8 @@ struct ViewPort       *clientSimViewportMut(ClientSim *cs)     { return &cs->vie
 
 BYTE *clientSimGetXOffsetPtr(ClientSim *cs)          { return &cs->viewport.xOffset; }
 BYTE *clientSimGetYOffsetPtr(ClientSim *cs)          { return &cs->viewport.yOffset; }
-BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->viewport.pillViewX; }
-BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->viewport.pillViewY; }
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->viewport.viewX; }
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->viewport.viewY; }
 
 char *clientSimGetMapNameMutable(ClientSim *cs)      { return cs->mapName; }
 
@@ -1738,9 +2116,9 @@ void clientSimSetYOffset(ClientSim *cs, BYTE v)            { cs->viewport.yOffse
 void clientSimSetCursorPosX(ClientSim *cs, int v)          { cs->viewport.cursorPosX = v; }
 void clientSimSetCursorPosY(ClientSim *cs, int v)          { cs->viewport.cursorPosY = v; }
 void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v)   { cs->viewport.needRecalc = v; }
-void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->viewport.inPillView = v; }
-void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->viewport.pillViewX = v; }
-void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->viewport.pillViewY = v; }
+void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->viewport.viewKind = (uint8_t)(v ? VIEW_KIND_PILL : VIEW_KIND_TANK); }
+void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->viewport.viewX = v; }
+void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->viewport.viewY = v; }
 void clientSimSetView(ClientSim *cs, screen v)             { cs->viewport.view = v; }
 void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->viewport.mineView = v; }
 
@@ -1859,6 +2237,8 @@ void clientSimResetWorld(ClientSim *cs) {
 
   treeGrowReset(gs);
 
+  overviewMapReset(&cs->overview);
+
   /* Client-only round-scoped render/predict state (interp reset above
    * alongside the per-player clear). */
   cs->serverShellCount = 0;
@@ -1883,6 +2263,14 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->errY = 0.0f;
   cs->errAngle = 0.0f;
   cs->basePassableSmoothSnapshots = 0;
+
+  /* The server resets every client's view state on the round reset too, so
+   * report ours again once the next round is running, and start the decay
+   * clocks over — where the player drove last round earns them nothing in
+   * this one. */
+  viewportSetTankView(clientSimViewportMut(cs));
+  clientSimResetViewStateReport(cs);
+  clientSimResetViewDecay(cs);
 }
 
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,
@@ -1906,6 +2294,18 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
    * terrain either way, so the swapped-in map still renders in place. */
   if (initViewport) {
     viewportInit(clientSimViewportMut(cs));
+    /* viewportInit parks the camera back on the tank; say so to the server
+     * once the next display tick runs. The decay clocks go with it: the items
+     * they were counting for belong to the map being replaced. */
+    clientSimResetViewStateReport(cs);
+    clientSimResetViewDecay(cs);
+    /* New map, so nothing seen on the old one still means anything. The
+     * next overview tick seeds the memory from the map just installed —
+     * the whole map dimmed, live regions bright over it. The resync path
+     * keeps the memory instead: same map, and the player has not stopped
+     * having been where they have been. */
+    overviewMapReset(&cs->overview);
+    cs->overviewSeedPending = TRUE;
   }
 
   {
@@ -1967,6 +2367,28 @@ bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
+
+ViewPolicy clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat) {
+  if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
+    return viewPolicyAlways;
+  }
+  return cs->viewPolicy[cat];
+}
+
+bool clientSimGetClassicMode(const ClientSim *cs) {
+  return cs ? cs->classicMode : false;
+}
+
+bool clientSimGetAlliesInTrees(const ClientSim *cs) {
+  return cs ? cs->alliesInTrees : false;
+}
+
+uint16_t clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat) {
+  if (cs == NULL || (int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
+    return 0;
+  }
+  return cs->viewDecaySecs[cat];
+}
 
 uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {
   if (teamId >= 16) return 0;
@@ -2417,16 +2839,140 @@ void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {
 }
 
 bool clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
-  if (!cs || MY_TANK(cs) == NULL) return false;
+  if (!clientSimIsMyTankAlive(cs)) return false;
   if (mapX) *mapX = tankGetMX(&MY_TANK(cs));
   if (mapY) *mapY = tankGetMY(&MY_TANK(cs));
   return true;
+}
+
+bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
+  WORLD wx = 0, wy = 0;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  tankGetWorld(&MY_TANK(cs), &wx, &wy);
+  if (mapX) *mapX = (float)wx / (float)(1 << TANK_SHIFT_MAPSIZE);
+  if (mapY) *mapY = (float)wy / (float)(1 << TANK_SHIFT_MAPSIZE);
+  return true;
+}
+
+bool clientSimIsMyTankAlive(const ClientSim *cs) {
+  if (!cs || MY_TANK((ClientSim *)cs) == NULL) return false;
+  /* Over full armour is how a dead tank waiting on deathWait reads, the same
+   * test viewportCenterOnTank makes before it re-centres the main view. */
+  return tankGetArmour(&MY_TANK((ClientSim *)cs)) <= TANK_FULL_ARMOUR;
+}
+
+void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
+                                      screenLgm *lgms, screenBullets *sb) {
+  GameSim *gs; /* The client's own sim, source of the shell and explosion lists */
+
+  /* Nothing to walk the map for without a local tank: screenTanksPrepare
+   * dereferences it, and the two other builders are of no use on their own.
+   * The caller's lists are left as it created them — empty. */
+  if (cs == NULL || MY_TANK(cs) == NULL) {
+    return;
+  }
+
+  /* One rect over the whole map. With leftPos and top at 0 the relative BYTE
+   * positions the builders write out are the absolute map squares, which is
+   * what lets the caller test each entity against the square it stands on.
+   * The last row and column drop out of the LGM and explosion walks, whose
+   * far bound is exclusive, and nothing can ever be there: tanks and LGM
+   * destinations are held inside the mine border, and nothing a shell can
+   * reach and blow up on is further out. */
+  if (tks != NULL) {
+    screenTanksPrepare(cs, tks, &MY_TANK(cs), 0, MAP_ARRAY_LAST, 0,
+                       MAP_ARRAY_LAST);
+  }
+  if (lgms != NULL) {
+    screenLgmPrepare(cs, lgms, 0, MAP_ARRAY_LAST, 0, MAP_ARRAY_LAST);
+  }
+  if (sb != NULL) {
+    int si;              /* Looping variable */
+    BYTE myPlayer = cs->interpCtx.localPlayer;
+
+    gs = clientSimGetGameSim(cs);
+
+    /* Shells do not come from gs->shs. A client's shs list is not where the
+     * shells it can see live: other players' arrive as the forward-projected
+     * layer and the local player's own as client-side predictions, which is
+     * why the main view walks those two arrays rather than calling
+     * shellsCalcScreenBullets. Same two arrays here, minus the viewport
+     * bounds test — the caller wants the whole map and filters per square,
+     * and minus the offset subtraction, so the squares stay absolute like
+     * the rest of what this fills in. */
+    for (si = 0; si < clientSimGetProjectedShellCount(cs); si++) {
+      const ProjectedShell *ps = &clientSimGetProjectedShells(cs)[si];
+      WORLD sx = (WORLD)(int)ps->fx;
+      WORLD sy = (WORLD)(int)ps->fy;
+      WORLD conv;
+      BYTE spx, spy, sframe;
+
+      /* Ours come from the predicted array below. */
+      if (ps->owner == myPlayer) {
+        continue;
+      }
+      conv = sx;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      spx = (BYTE)conv;
+      conv = sy;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      spy = (BYTE)conv;
+      sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
+      screenBulletsAddItem(sb, (BYTE)(sx >> TANK_SHIFT_MAPSIZE),
+                           (BYTE)(sy >> TANK_SHIFT_MAPSIZE), spx, spy, sframe,
+                           (BYTE)sx, (BYTE)sy);
+    }
+
+    for (si = 0; si < clientSimGetPredictedShellCount(cs); si++) {
+      const PredictedShell *ps = &clientSimGetPredictedShells(cs)[si];
+      WORLD conv;
+      BYTE ppx, ppy, pframe;
+
+      /* An expired shell would draw a ghost frame beside its own explosion. */
+      if (ps->length <= SHELL_DEATH) {
+        continue;
+      }
+      conv = ps->x;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      ppx = (BYTE)conv;
+      conv = ps->y;
+      conv <<= TANK_SHIFT_MAPSIZE;
+      conv >>= TANK_SHIFT_PIXELSIZE;
+      ppy = (BYTE)conv;
+      pframe = (BYTE)(utilGetDir(ps->angle) + SHELL_START_EXPLODE + 1);
+      screenBulletsAddItem(sb, (BYTE)(ps->x >> TANK_SHIFT_MAPSIZE),
+                           (BYTE)(ps->y >> TANK_SHIFT_MAPSIZE), ppx, ppy,
+                           pframe, (BYTE)ps->x, (BYTE)ps->y);
+    }
+
+    explosionsCalcScreenBullets(&gs->expl, sb, 0, MAP_ARRAY_LAST, 0,
+                                MAP_ARRAY_LAST);
+    tkExplosionCalcScreenBullets(&gs->tankExplosions, sb, 0, MAP_ARRAY_LAST, 0,
+                                 MAP_ARRAY_LAST);
+  }
 }
 
 bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
   if (!cs || MY_TANK(cs) == NULL) return false;
   BYTE px, py;
   tankGetGunsight(&MY_TANK(cs), mapX, mapY, &px, &py);
+  return true;
+}
+
+bool clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
+                             BYTE *pixelX, BYTE *pixelY) {
+  if (!cs || MY_TANK(cs) == NULL) return false;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  if (!tankIsGunsightShow(&MY_TANK(cs))) return false;
+  /* tankGetGunsight reads the raw sim pose, not the render-smoothed one the
+   * main view feeds tankGetGunsightAt. That view also redraws the own hull at
+   * the smoothed pose, so the two agree there; a caller that draws the tank
+   * straight from screenTanksPrepare has no such fixup, and smoothing only the
+   * crosshair would put it out of step with the tank sprite beside it. */
+  tankGetGunsight(&MY_TANK(cs), mapX, mapY, pixelX, pixelY);
   return true;
 }
 
@@ -2462,9 +3008,141 @@ bool clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY) {
   return viewportGetCursor(clientSimViewport(cs), posX, posY);
 }
 
+PlayerBitMap clientSimAllyViewMask(const ClientSim *cs) {
+  PlayerBitMap mask;
+  BYTE playerNum;
+
+  mask = 0;
+  if (cs == NULL) {
+    return mask;
+  }
+  for (playerNum = 0; playerNum < MAX_TANKS; playerNum++) {
+    if (playerNum == cs->myPlayerNum) {
+      continue;
+    }
+    if (interpIsAlive(&cs->interpCtx, playerNum) == TRUE) {
+      mask |= (PlayerBitMap)1 << playerNum;
+    }
+  }
+  return mask;
+}
+
+/* The one body behind clientSimPillView / clientSimBaseView /
+ * clientSimAllyView. */
+static void clientSimItemView(ClientSim *cs, uint8_t kind, int horz, int vert) {
+  ViewCycleInputs in; /* What the cycling takes from this client */
+
+  clientSimFillViewCycleInputs(cs, &in);
+  viewportPanInView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
+                    clientSimGetScroll(cs), MY_TANK(cs), kind, &in, horz, vert);
+}
+
 void clientSimPillView(ClientSim *cs, int horz, int vert) {
-  viewportPanInPillView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
-                        clientSimGetScroll(cs), MY_TANK(cs), horz, vert);
+  clientSimItemView(cs, VIEW_KIND_PILL, horz, vert);
+}
+
+void clientSimBaseView(ClientSim *cs, int horz, int vert) {
+  clientSimItemView(cs, VIEW_KIND_BASE, horz, vert);
+}
+
+/* The direction byte a cycle request carries. Both zero is the plain "next"
+ * the ally key sends; the scroll keys set exactly one of the four. */
+static uint8_t clientSimViewCycleDirection(int horz, int vert) {
+  if (horz < 0) {
+    return VIEW_CYCLE_LEFT;
+  }
+  if (horz > 0) {
+    return VIEW_CYCLE_RIGHT;
+  }
+  if (vert < 0) {
+    return VIEW_CYCLE_UP;
+  }
+  if (vert > 0) {
+    return VIEW_CYCLE_DOWN;
+  }
+  return VIEW_CYCLE_NEXT;
+}
+
+void clientSimAllyView(ClientSim *cs, int horz, int vert) {
+  uint8_t from; /* The ally we are stepping away from */
+
+  if (cs == NULL) {
+    return;
+  }
+  if (!cs->hasTransport) {
+    /* No server to ask, so pick here. Every real game has a transport, the
+     * in-process host included, which leaves the tools and tests on this
+     * path. */
+    clientSimItemView(cs, VIEW_KIND_ALLY, horz, vert);
+    return;
+  }
+
+  /* Which ally to watch is the server's answer. Our own idea of who is
+   * watchable is just the players we have happened to be sent this round,
+   * which under viewPolicyKey is exactly the allies the policy is holding
+   * back — so choosing here can only ever reach the ones already on screen.
+   * The answer arrives as CTRL_VIEW_TARGET. */
+  from = (cs->viewport.viewKind == VIEW_KIND_ALLY)
+             ? (uint8_t)cs->viewport.viewTarget
+             : (uint8_t)VIEW_CYCLE_FROM_NONE;
+  clientSimNetSendViewCycle(cs, VIEW_KIND_ALLY,
+                            clientSimViewCycleDirection(horz, vert), from);
+}
+
+void clientSimStepView(ClientSim *cs, int horz, int vert) {
+  uint8_t kind = clientSimGetViewKind(cs);
+
+  if (kind == VIEW_KIND_TANK) {
+    return;
+  }
+  if (kind == VIEW_KIND_ALLY) {
+    /* The scroll keys step between allies for the same reason the ally key
+     * enters the view: the server is the one that knows who is watchable.
+     * Pill and base stepping stays here — the client holds every pill and
+     * base position from the map. */
+    clientSimAllyView(cs, horz, vert);
+    return;
+  }
+  clientSimItemView(cs, kind, horz, vert);
+}
+
+void clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target, BYTE mapX,
+                                  BYTE mapY) {
+  if (cs == NULL) {
+    return;
+  }
+  viewportEnterAllyView(clientSimViewportMut(cs), clientSimGetScroll(cs),
+                        target, mapX, mapY);
+}
+
+void clientSimSyncViewState(ClientSim *cs) {
+  uint8_t kind;
+  uint8_t target;
+
+  if (cs == NULL || !cs->hasTransport) {
+    /* Nothing to report through — leave the last-sent pair alone so the
+     * report still goes out once a transport is bound. */
+    return;
+  }
+  kind = cs->viewport.viewKind;
+  target = cs->viewport.viewTarget;
+  if (kind == VIEW_KIND_TANK) {
+    target = 0;
+  }
+  if (kind == cs->lastSentViewKind && target == cs->lastSentViewTarget) {
+    return;
+  }
+  clientSimNetSendViewState(cs, kind, target);
+  cs->lastSentViewKind = kind;
+  cs->lastSentViewTarget = target;
+}
+
+void clientSimResetViewStateReport(ClientSim *cs) {
+  if (cs == NULL) {
+    return;
+  }
+  cs->lastSentViewKind = 0xFF;
+  cs->lastSentViewTarget = 0xFF;
 }
 
 void clientSimRecalc(ClientSim *cs) {
@@ -2498,8 +3176,8 @@ bool clientSimTankIsDead(ClientSim *cs) {
 }
 
 bool clientSimTankScroll(ClientSim *cs) {
-  /* Don't scroll the view while in pill view — the view is locked on the pill */
-  if (clientSimIsInPillView(cs) == TRUE) {
+  /* Don't scroll the view while watching an item — the view is locked on it */
+  if (clientSimIsInItemView(cs) == TRUE) {
     return FALSE;
   }
 
@@ -2564,7 +3242,7 @@ baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum) {
 }
 
 BYTE clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my) {
-  return pillsGetPillNum(&clientSimGetGameSim(cs)->pb, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my), FALSE, FALSE);
+  return pillsGetViewPillNum(&clientSimGetGameSim(cs)->pb, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my), FALSE, FALSE);
 }
 
 BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {

@@ -612,6 +612,112 @@ int run_command_codec_rating_posted(void) {
     return 0;
 }
 
+/* CMD_VIEW_STATE — kind + target, a fixed two-byte body. Both bytes must
+ * survive the round trip, including values the dispatcher will later degrade
+ * (the codec carries whatever the client sent), and the decoder must refuse a
+ * packet that is not exactly the fixed length. */
+int run_command_codec_view_state(void) {
+    ClientCommand in, out;
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t outLen = 0;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_VIEW_STATE;
+    in.cmdSeq = 60;
+    in.u.viewState.kind   = VIEW_KIND_PILL;
+    in.u.viewState.target = 5;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VIEW_STATE");
+    UT_ASSERT(out.type == CMD_VIEW_STATE);
+    UT_ASSERT(out.cmdSeq == 60);
+    UT_ASSERT(out.u.viewState.kind   == VIEW_KIND_PILL);
+    UT_ASSERT(out.u.viewState.target == 5);
+
+    /* Out-of-range values are the dispatcher's business, not the codec's. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_VIEW_STATE;
+    in.cmdSeq = 61;
+    in.u.viewState.kind   = 200;
+    in.u.viewState.target = 0xFF;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VIEW_STATE out of range");
+    UT_ASSERT(out.cmdSeq == 61);
+    UT_ASSERT(out.u.viewState.kind   == 200);
+    UT_ASSERT(out.u.viewState.target == 0xFF);
+
+    /* Fixed length: one byte short and one byte long are both refused. */
+    UT_ASSERT(commandCodecEncode(&in, buf, sizeof(buf), &outLen) == true);
+    UT_ASSERT_MSG(outLen == PACKET_HEADER_SIZE + 4 + 2, "wire len = %zu", outLen);
+    {
+        ClientCommand sink;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen - 1, &sink) == false,
+                      "decoder must reject a short VIEW_STATE packet");
+        buf[outLen] = 0;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen + 1, &sink) == false,
+                      "decoder must reject an over-long VIEW_STATE packet");
+    }
+
+    return 0;
+}
+
+/* CMD_VIEW_CYCLE — kind + direction + from, a fixed three-byte body. All
+ * three bytes must survive the round trip, including the 0xFF "watching
+ * nothing" from and values the dispatcher will later reject (the codec
+ * carries whatever the client sent), and the decoder must refuse a packet
+ * that is not exactly the fixed length. */
+int run_command_codec_view_cycle(void) {
+    ClientCommand in, out;
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t outLen = 0;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_VIEW_CYCLE;
+    in.cmdSeq = 70;
+    in.u.viewCycle.kind      = VIEW_KIND_ALLY;
+    in.u.viewCycle.direction = VIEW_CYCLE_RIGHT;
+    in.u.viewCycle.from      = 3;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VIEW_CYCLE");
+    UT_ASSERT(out.type == CMD_VIEW_CYCLE);
+    UT_ASSERT(out.cmdSeq == 70);
+    UT_ASSERT(out.u.viewCycle.kind      == VIEW_KIND_ALLY);
+    UT_ASSERT(out.u.viewCycle.direction == VIEW_CYCLE_RIGHT);
+    UT_ASSERT(out.u.viewCycle.from      == 3);
+
+    /* Out-of-range values are the dispatcher's business, not the codec's;
+     * from == 0xFF is the sender watching nothing yet. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_VIEW_CYCLE;
+    in.cmdSeq = 71;
+    in.u.viewCycle.kind      = 200;
+    in.u.viewCycle.direction = 99;
+    in.u.viewCycle.from      = VIEW_CYCLE_FROM_NONE;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_VIEW_CYCLE out of range");
+    UT_ASSERT(out.cmdSeq == 71);
+    UT_ASSERT(out.u.viewCycle.kind      == 200);
+    UT_ASSERT(out.u.viewCycle.direction == 99);
+    UT_ASSERT(out.u.viewCycle.from      == VIEW_CYCLE_FROM_NONE);
+
+    /* Fixed length: one byte short and one byte long are both refused. */
+    UT_ASSERT(commandCodecEncode(&in, buf, sizeof(buf), &outLen) == true);
+    UT_ASSERT_MSG(outLen == PACKET_HEADER_SIZE + 4 + 3, "wire len = %zu", outLen);
+    {
+        ClientCommand sink;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen - 1, &sink) == false,
+                      "decoder must reject a short VIEW_CYCLE packet");
+        buf[outLen] = 0;
+        memset(&sink, 0, sizeof(sink));
+        UT_ASSERT_MSG(commandCodecDecode(buf, outLen + 1, &sink) == false,
+                      "decoder must reject an over-long VIEW_CYCLE packet");
+    }
+
+    return 0;
+}
+
 /* Focused check on the 4-byte cmdSeq slot the codec wrapper owns,
  * independent of any variant body. Catches off-by-four errors in the
  * wire-offset arithmetic that the per-variant suite would mask if

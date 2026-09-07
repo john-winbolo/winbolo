@@ -91,6 +91,12 @@ static const LangEntry langTable[] = {
     {235,  "Lay Mine"},
     {236,  "Tank View"},
     {237,  "Pill View"},
+    {2003, "Base View"},
+    {2004, "Allied Tank View"},
+    {1993, "Map Zoom (hold)"},
+    {2005, "Map Follow (toggle)"},
+    {2006, "Map Zoom In"},
+    {2007, "Map Zoom Out"},
     {238,  "Up"},
     {240,  "Down"},
     {241,  "Left"},
@@ -288,6 +294,8 @@ static const LangEntry langTable[] = {
     {539,  "File"},
     {540,  "New"},
     {541,  "Save Map"},
+    {1987, "Map Overview"},
+    {1990, "Full Screen"},
     {542,  "Exit"},
     {543,  "Edit"},
     {544,  "Frame Rate"},
@@ -336,6 +344,11 @@ static const LangEntry langTable[] = {
     {587,  "Leave Game"},
     {588,  "(no settings)"},
     {589,  "Brain Settings"},
+
+    /* Map overview pop-out */
+    {1988, "following"},
+    {1989, "free"},
+
     {590,  "Tutorial"},
     {591,  "Play Tutorial"},
     {592,  "Show on main menu"},
@@ -1230,6 +1243,11 @@ static const LangEntry langTable[] = {
     {1270, "Don't auto-show news in future"},
     {1271, "Comments: {number}"},
 
+    /* Welcome screen full screen button. The label names where the button
+     * takes you, so it is picked from the window's current state. */
+    {1991, "Switch to Classic"},
+    {1992, "Switch to Full Screen"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveSegments() when uiModeIsTablet() is true. */
@@ -1378,6 +1396,45 @@ static const LangEntry langTable[] = {
     {1382, "Single player"},
     {1383, "Internet"},
     {1384, "Test in progress"},
+    /* Lobby visibility block */
+    {1994, "Visibility"},
+    {1995, "Pill View"},
+    {1996, "Base View"},
+    {1997, "Allied Tank View"},
+    {1998, "Always"},
+    {1999, "Key"},
+    {2000, "Decay"},
+    {2001, "Off"},
+    {2002, "secs"},
+    {2008, "Classic mode"},
+    {2009, "Sets Pill View to Key, and Base View and Allied Tank\nView to Off, and holds them there. Turning it off\nagain leaves those three where classic mode put them.\nIt also hides the Map Overview and the Full Screen\nmap on each player's own screen. The server sends the\nsame data either way, so this is a convenience rule,\nnot a guarantee about a modified client."},
+    {2010, "The server has classic mode on, so this view is turned off."},
+    {2011, "See allies in trees"},
+    {2012, "Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off."},
+    /* Settings > Display & Sound > Full Screen */
+    {2013, "Full Screen"},
+    {2014, "Newswire transparency"},
+    {2015, "How much of the map shows through the newswire along\nthe bottom of the full screen view. 0% is solid, and\nthe slider stops at 90% so it cannot be made invisible."},
+    {2016, "Auto-hide the newswire"},
+    {2017, "Drop the newswire off the bottom of the screen after\nno new messages have been received for a while, and\nslide it back up on the next message. Off keeps it on\nscreen the whole game."},
+    {2018, "Builder tools transparency"},
+    {2019, "How much of the map shows through the builder tools\ndown the left of the full screen view. 0% is solid,\nand the slider stops at 90% so they cannot be made\ninvisible."},
+    {2020, "Status panel transparency"},
+    {2021, "How much of the map shows through the status panel\ndown the right of the full screen view - the LGM,\nkills and deaths, the base, pillbox and tank rows,\nand the stock bars. 0% is solid, and the slider stops\nat 90% so it cannot be made invisible."},
+    {2022, "Fill the whole screen instead of running in a window.\nRemembered for next time."},
+
+    /* Item view caption — the corner label and the full screen map's
+     * caption both come through sdl3DrawGetItemViewLabel. */
+    {2023, "Pillbox View"},
+    {2024, "Base View"},
+    {2025, "Allied Tank View"},
+    {2026, "Allied Tank View \xE2\x80\x94 {player}"},
+
+    /* Server browser visibility tag. Short by design: the tag packs the
+     * whole rule set onto one line of the detail pane. */
+    {2027, "Views:"},
+    {2028, "Classic"},
+    {2029, "Allies in trees"},
     {1388, "Choose Map"},
 
     /* Pre-flight version-mismatch error (client-side, surfaced by the
@@ -1879,54 +1936,54 @@ static const LangEntry langTable[] = {
     {1986, "(recommended)"},
 
     /* Voice section of the Display/Sound settings tab */
-    {1987, "Voice"},
-    {1988, "Test microphone"},
-    {1989, "Mic gain"},
-    {1990, "Input level"},
-    {1991, "Enable voice"},
-    {1992, "Mode"},
-    {1993, "Off"},
-    {1994, "Push to talk"},
-    {1995, "Open mic"},
-    {1996, "Push-to-talk key"},
-    {1997, "Transmitting"},
-    {1998, "Not transmitting"},
-    {1999, "Voice volume"},
+    {2030, "Voice"},
+    {2031, "Test microphone"},
+    {2032, "Mic gain"},
+    {2033, "Input level"},
+    {2034, "Enable voice"},
+    {2035, "Mode"},
+    {2036, "Off"},
+    {2037, "Push to talk"},
+    {2038, "Open mic"},
+    {2039, "Push-to-talk key"},
+    {2040, "Transmitting"},
+    {2041, "Not transmitting"},
+    {2042, "Voice volume"},
 
     /* Key setup — push to talk binding */
-    {2000, "Push to talk"},
+    {2043, "Push to talk"},
 
     /* Players panel — microphone state icon */
-    {2001, "Talking — click to mute"},
-    {2002, "Has a microphone — click to mute"},
-    {2003, "Their microphone is off — click to mute"},
-    {2004, "No microphone — click to mute"},
-    {2005, "Muted by you — click to unmute"},
-    {2006, "Your microphone — click to mute"},
-    {2007, "You have no microphone"},
-    {2008, "Your microphone is off — click to unmute"},
+    {2044, "Talking — click to mute"},
+    {2045, "Has a microphone — click to mute"},
+    {2046, "Their microphone is off — click to mute"},
+    {2047, "No microphone — click to mute"},
+    {2048, "Muted by you — click to unmute"},
+    {2049, "Your microphone — click to mute"},
+    {2050, "You have no microphone"},
+    {2051, "Your microphone is off — click to unmute"},
 
     /* Voice settings — tank-label microphone icons */
-    {2009, "Show microphone icons over tanks"},
+    {2052, "Show microphone icons over tanks"},
 
     /* Voice settings — acoustic echo cancellation */
-    {2010, "Echo cancellation"},
+    {2053, "Echo cancellation"},
 
     /* Voice settings — microphone test progress */
-    {2011, "Recording..."},
-    {2012, "Playing back..."},
+    {2054, "Recording..."},
+    {2055, "Playing back..."},
 
     /* Voice settings — echo canceller could not be created */
-    {2013, "Unavailable on this system"},
+    {2056, "Unavailable on this system"},
 
     /* Voice settings — the platform cancels echo itself, so Speex does not */
-    {2014, "Handled by the system"},
+    {2057, "Handled by the system"},
 
     /* Players menu — open the players panel */
-    {2015, "Players Panel"},
+    {2058, "Players Panel"},
 
     /* Key setup — self-mute binding */
-    {2016, "Mute microphone"},
+    {2059, "Mute microphone"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

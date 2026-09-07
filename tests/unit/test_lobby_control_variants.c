@@ -94,6 +94,14 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.lobbyAllowNewPlayers     = false;
     in.u.lobbySettings.lobbyWbnAvailable        = true;
     in.u.lobbySettings.hostSlot                 = 3;
+    in.u.lobbySettings.viewPolicy[viewCategoryPill]    = viewPolicyKey;
+    in.u.lobbySettings.viewPolicy[viewCategoryBase]    = viewPolicyDecay;
+    in.u.lobbySettings.viewPolicy[viewCategoryAlly]    = viewPolicyOff;
+    in.u.lobbySettings.viewDecaySecs[viewCategoryPill] = 45;
+    in.u.lobbySettings.viewDecaySecs[viewCategoryBase] = 600;
+    in.u.lobbySettings.viewDecaySecs[viewCategoryAlly] = 5;
+    in.u.lobbySettings.lobbyClassicMode                = true;
+    in.u.lobbySettings.lobbyAlliesInTrees              = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -122,6 +130,59 @@ int run_lobby_settings_codec_and_apply(void) {
                   "lobbyWbnAvailable did not survive codec round-trip");
     UT_ASSERT_MSG(out.u.lobbySettings.hostSlot == 3,
                   "hostSlot did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.viewPolicy[viewCategoryPill] == viewPolicyKey &&
+                  out.u.lobbySettings.viewPolicy[viewCategoryBase] == viewPolicyDecay &&
+                  out.u.lobbySettings.viewPolicy[viewCategoryAlly] == viewPolicyOff,
+                  "view policies did not survive codec round-trip (got %d/%d/%d)",
+                  (int)out.u.lobbySettings.viewPolicy[viewCategoryPill],
+                  (int)out.u.lobbySettings.viewPolicy[viewCategoryBase],
+                  (int)out.u.lobbySettings.viewPolicy[viewCategoryAlly]);
+    UT_ASSERT_MSG(out.u.lobbySettings.viewDecaySecs[viewCategoryPill] == 45 &&
+                  out.u.lobbySettings.viewDecaySecs[viewCategoryBase] == 600 &&
+                  out.u.lobbySettings.viewDecaySecs[viewCategoryAlly] == 5,
+                  "view decay seconds did not survive codec round-trip (got %u/%u/%u)",
+                  (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryPill],
+                  (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryBase],
+                  (unsigned)out.u.lobbySettings.viewDecaySecs[viewCategoryAlly]);
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyClassicMode == true,
+                  "lobbyClassicMode did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyAlliesInTrees == true,
+                  "lobbyAlliesInTrees did not survive codec round-trip");
+
+    /* A sender that stops before the view tail (the payload shape from
+     * before these fields existed) must still decode, leaving the view
+     * fields at their zero-init values rather than reading past the
+     * buffer. Encode a full event, then hand the decoder a body length
+     * that is eleven bytes shorter (3 policies + 3 u16 decay values +
+     * classic mode + allies in trees). */
+    {
+        uint8_t buf[MAX_CONTROL_PACKET];
+        size_t encLen = 0;
+        ControlEncodeFn enc = transportControlCodecEncoder(CTRL_LOBBY_SETTINGS);
+        UT_ASSERT(enc != NULL);
+        UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &encLen) == ENCODE_OK);
+        ControlDecodeFn dec = transportControlCodecDecoder(buf[2]);
+        UT_ASSERT(dec != NULL);
+
+        ControlEvent shortOut;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 11;
+        UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
+                      "short lobby-settings payload failed to decode");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
+                      "short payload lost a field that was still present");
+        for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+            UT_ASSERT_MSG(shortOut.u.lobbySettings.viewPolicy[vc] == viewPolicyAlways,
+                          "short payload view policy %d = %d, want 0",
+                          vc, (int)shortOut.u.lobbySettings.viewPolicy[vc]);
+            UT_ASSERT_MSG(shortOut.u.lobbySettings.viewDecaySecs[vc] == 0,
+                          "short payload view decay %d = %u, want 0",
+                          vc, (unsigned)shortOut.u.lobbySettings.viewDecaySecs[vc]);
+        }
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyClassicMode == false,
+                      "short payload must leave classic mode off");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyAlliesInTrees == false,
+                      "short payload must leave allies in trees off");
+    }
 
     ClientSim *cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
@@ -144,6 +205,16 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(cs->lobbyAllowNewPlayers     == false);
     UT_ASSERT(cs->lobbyWbnAvailable        == true);
     UT_ASSERT(cs->lobbyHostSlot            == 3);
+    UT_ASSERT(clientSimGetViewPolicy(cs, viewCategoryPill) == viewPolicyKey);
+    UT_ASSERT(clientSimGetViewPolicy(cs, viewCategoryBase) == viewPolicyDecay);
+    UT_ASSERT(clientSimGetViewPolicy(cs, viewCategoryAlly) == viewPolicyOff);
+    UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryPill) == 45);
+    UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryBase) == 600);
+    UT_ASSERT(clientSimGetViewDecaySecs(cs, viewCategoryAlly) == 5);
+    UT_ASSERT_MSG(clientSimGetClassicMode(cs) == true,
+                  "classic mode did not reach the client mirror");
+    UT_ASSERT_MSG(clientSimGetAlliesInTrees(cs) == true,
+                  "allies in trees did not reach the client mirror");
     clientSimDestroy(cs);
     return 0;
 }

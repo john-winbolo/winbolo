@@ -29,6 +29,7 @@
 #include <math.h>
 #include "global.h"
 #include "client_sim.h"
+#include "client_command.h"  /* VIEW_KIND_* — which view a view key drives */
 #include "client_render.h"
 #include "../gamefront.h"
 #include "../tiles.h"
@@ -62,19 +63,21 @@ static int smoothScrollAccumY = 0;
 
 static BYTE scrollKeyCount = 0;
 
-/* Pill view auto-repeat: minimum wall-clock gap between pill advances while a
- * key is held. Each advance jumps a whole pill, so these are deliberately slow
- * compared with map scrolling. Wall-clock based so they're independent of how
- * often inputGetKeys/inputScroll are polled. The pill-view toggle key cycles a
- * bit faster than directional stepping. */
-#define PILLVIEW_CYCLE_INTERVAL_MS 165
-#define PILLVIEW_STEP_INTERVAL_MS  250
-static Uint32 pillViewCycleMs = 0;
-static Uint32 pillViewStepMs  = 0;
-/* Previous physical state of the pill-view key, for edge detection. Entering
- * pill view requires a fresh key-down edge so a key still held after the
- * player hit Tank View can't immediately re-enter and trap them. */
+/* Item view auto-repeat: minimum wall-clock gap between advances while a key
+ * is held. Each advance jumps a whole pill, base or allied tank, so these are
+ * deliberately slow compared with map scrolling. Wall-clock based so they're
+ * independent of how often inputGetKeys/inputScroll are polled. The view keys
+ * cycle a bit faster than directional stepping. */
+#define ITEMVIEW_CYCLE_INTERVAL_MS 165
+#define ITEMVIEW_STEP_INTERVAL_MS  250
+static Uint32 itemViewCycleMs = 0;
+static Uint32 itemViewStepMs  = 0;
+/* Previous physical state of each view key, for edge detection. Entering a
+ * view requires a fresh key-down edge so a key still held after the player
+ * hit Tank View can't immediately re-enter and trap them. */
 static bool   pillViewKeyWasDown = FALSE;
+static bool   baseViewKeyWasDown = FALSE;
+static bool   allyViewKeyWasDown = FALSE;
 
 /* TRUE when pill view was entered via the controller view button: that mode
  * cycles pills on each press and snaps back to tank view on the first driving
@@ -98,15 +101,14 @@ static bool mineKeyEventsActive = FALSE; /* TRUE once we've seen any event for t
 /*********************************************************
 *NAME:          appHasFocus
 *PURPOSE:
-*  Returns true if the SDL3 window currently has
-*  keyboard focus.
+*  Returns true if keyboard focus is on one of the windows
+*  the player drives the game from: the main window or the
+*  Map Overview pop-out.  The Send Message pop-out and the
+*  info pop-outs are not in that set, so typing in them
+*  never steers the tank.
 *********************************************************/
 static bool appHasFocus(void) {
-  SDL_Window *sdlWin = sdl3DrawGetWindow();
-  if (sdlWin && (SDL_GetWindowFlags(sdlWin) & SDL_WINDOW_INPUT_FOCUS)) {
-    return true;
-  }
-  return false;
+  return sdl3ImguiGameInputWindowHasFocus();
 }
 
 /* Returns non-zero if the key at the given SDL_Scancode is currently held */
@@ -119,6 +121,18 @@ static bool keyDown(int sc) {
 }
 
 #define KEY_DOWN(sc) keyDown(sc)
+
+/* True while the full screen map has the scroll keys. It is the only map on
+   screen there, so it is what they scroll (overviewViewHandleInput) — leaving
+   them wired here as well would drag the hidden classic view off the tank and
+   latch the manual-scroll override, so the player drops back to a view sitting
+   somewhere they never scrolled it to. The item views are unaffected: they
+   take the keys before either map sees them, and stepping between items is
+   still what they do there. The gamepad stick is unaffected too — it drives
+   the build cursor as well, and neither of those has moved. */
+static bool overviewOwnsScrollKeys(void) {
+  return sdl3DrawIsOverviewInWindow();
+}
 
 /*********************************************************
 *NAME:          pushToTalkPoll
@@ -188,8 +202,8 @@ static void muteMicPoll(keyItems *setKeys, bool active) {
 *********************************************************/
 bool inputSetup(void) {
   scrollKeyCount = 0;
-  pillViewCycleMs = 0;
-  pillViewStepMs = 0;
+  itemViewCycleMs = 0;
+  itemViewStepMs = 0;
   smoothScrollAccumX = 0;
   smoothScrollAccumY = 0;
   buildCursorReset();
@@ -197,54 +211,89 @@ bool inputSetup(void) {
 }
 
 /*********************************************************
-*NAME:          pillViewInputStep
+*NAME:          itemViewInputStep
 *PURPOSE:
-*  Handles the pill-view toggle key (enter / cycle to next
-*  pill) and, while in pill view, directional pill stepping
-*  via the scroll keys. Both auto-repeat while a key is held,
-*  with the first action firing immediately and subsequent
-*  ones gated to PILLVIEW_STEP_INTERVAL_MS so it doesn't race
-*  through the pills. Returns TRUE if in pill view after
+*  Handles the three view keys (pillbox, base and allied
+*  tank): each enters its own view and, held, cycles through
+*  the items of that kind. While in any of them the scroll
+*  keys step to the nearest item in the pressed direction.
+*  Both auto-repeat while a key is held, with the first
+*  action firing immediately and subsequent ones held to
+*  ITEMVIEW_STEP_INTERVAL_MS so it doesn't race through the
+*  items. A category the server has turned off is inert: its
+*  key does nothing. Returns TRUE if in an item view after
 *  processing (caller then suppresses map scrolling).
 *********************************************************/
-static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
-  bool inPill = clientSimIsInPillView(cs);
-  Uint32 now  = SDL_GetTicks();
+static bool itemViewInputStep(ClientSim *cs, keyItems *setKeys) {
+  Uint32 now = SDL_GetTicks();
+  /* One row per view key: the scancode it is bound to, the view it drives,
+   * the visibility category the server can turn off, the call that enters or
+   * cycles that view, and where its held state lives. */
+  const struct {
+    int          scancode;
+    uint8_t      kind;
+    ViewCategory category;
+    void       (*enterView)(ClientSim *, int, int);
+    bool        *wasDown;
+  } viewKeys[] = {
+    { setKeys->kiPillView, VIEW_KIND_PILL, viewCategoryPill,
+      clientSimPillView, &pillViewKeyWasDown },
+    { setKeys->kiBaseView, VIEW_KIND_BASE, viewCategoryBase,
+      clientSimBaseView, &baseViewKeyWasDown },
+    { setKeys->kiAllyView, VIEW_KIND_ALLY, viewCategoryAlly,
+      clientSimAllyView, &allyViewKeyWasDown },
+  };
+  bool anyViewKeyDown = FALSE;
+  int i;
 
-  /* Pill-view toggle key. While already in pill view, holding it auto-cycles
-   * through the pills on the cadence (a fresh press also steps immediately).
-   * When NOT in pill view, only a fresh key-down edge enters — a key still
+  /* View keys. While already in that key's own view, holding it auto-cycles
+   * through the items on the cadence (a fresh press also steps immediately).
+   * When NOT in that view, only a fresh key-down edge enters — a key still
    * held after the player pressed Tank View must not re-enter, otherwise the
-   * held key fights the exit and traps them in pill view until the pill dies.
-   * Exit is the Tank View key (handled elsewhere). */
-  bool pillKeyDown = KEY_DOWN(setKeys->kiPillView);
-  bool keyEdge = pillKeyDown && !pillViewKeyWasDown;
-  pillViewKeyWasDown = pillKeyDown;
-  if (!pillKeyDown) {
-    pillViewCycleMs = 0;
-  } else if (inPill) {
-    if (keyEdge || pillViewCycleMs == 0 ||
-        (now - pillViewCycleMs) >= PILLVIEW_CYCLE_INTERVAL_MS) {
-      pillViewCycleMs = now;
-      clientSimPillView(cs, 0, 0);
-      inPill = clientSimIsInPillView(cs);
+   * held key fights the exit and traps them there until the item goes away.
+   * A press while in another item view switches kind. Exit is the Tank View
+   * key (handled elsewhere). */
+  for (i = 0; i < (int)(sizeof(viewKeys) / sizeof(viewKeys[0])); i++) {
+    if (clientSimGetViewPolicy(cs, viewKeys[i].category) == viewPolicyOff) {
+      *viewKeys[i].wasDown = FALSE;
+      continue;
     }
-  } else if (keyEdge) {
-    pillViewCycleMs = now;
-    clientSimPillView(cs, 0, 0);
-    inPill = clientSimIsInPillView(cs);
+    bool keyIsDown = KEY_DOWN(viewKeys[i].scancode);
+    bool keyEdge = keyIsDown && !*viewKeys[i].wasDown;
+    *viewKeys[i].wasDown = keyIsDown;
+    if (!keyIsDown) {
+      continue;
+    }
+    anyViewKeyDown = TRUE;
+    if (clientSimGetViewKind(cs) == viewKeys[i].kind) {
+      if (keyEdge || itemViewCycleMs == 0 ||
+          (now - itemViewCycleMs) >= ITEMVIEW_CYCLE_INTERVAL_MS) {
+        itemViewCycleMs = now;
+        viewKeys[i].enterView(cs, 0, 0);
+      }
+    } else if (keyEdge) {
+      itemViewCycleMs = now;
+      viewKeys[i].enterView(cs, 0, 0);
+    }
+  }
+  /* One cycle timer for all three: pressing a different key is always an
+     edge, so it starts its own cadence. Rearm once no view key is held. */
+  if (!anyViewKeyDown) {
+    itemViewCycleMs = 0;
   }
 
-  /* Scroll-based pill stepping is disabled in build mode: the stick / scroll
-   * then drives the build cursor instead, and shouldn't also jump pills.
+  bool inView = clientSimIsInItemView(cs);
+
+  /* Scroll-based item stepping is disabled in build mode: the stick / scroll
+   * then drives the build cursor instead, and shouldn't also jump items.
    * (Building is a tank-view activity; this only matters in the edge case of
-   * being in pill view with build mode on.) */
+   * being in an item view with build mode on.) */
   bool buildActive = buildCursorIsActive();
 
-  /* Gamepad right stick steps pills too while in pill view (its normal map
+  /* Gamepad right stick steps items too while in an item view (its normal map
      scroll is suppressed here). */
   bool padUp = false, padDown = false, padLeft = false, padRight = false;
-  if (inPill && !buildActive && inputGamepadIsConnected()) {
+  if (inView && !buildActive && inputGamepadIsConnected()) {
     float gdx = 0.0f, gdy = 0.0f;
     if (inputGamepadGetScrollDirection(&gdx, &gdy)) {
       const float th = 0.5f;
@@ -253,25 +302,25 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     }
   }
 
-  /* Directional pill stepping — only in pill view (and not while building),
-   * on the slower step cadence (computed from inPill so it can't fire on the
-   * entering press). */
-  bool stepUp    = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
-  bool stepDown  = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
-  bool stepLeft  = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
-  bool stepRight = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
+  /* Directional item stepping — only in an item view (and not while
+   * building), on the slower step cadence. Read from inView, so it follows
+   * the view the keys above just left us in. */
+  bool stepUp    = inView && !buildActive && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
+  bool stepDown  = inView && !buildActive && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
+  bool stepLeft  = inView && !buildActive && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
+  bool stepRight = inView && !buildActive && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
   if (!stepUp && !stepDown && !stepLeft && !stepRight) {
-    pillViewStepMs = 0;
-  } else if (pillViewStepMs == 0 ||
-             (now - pillViewStepMs) >= PILLVIEW_STEP_INTERVAL_MS) {
-    pillViewStepMs = now;
+    itemViewStepMs = 0;
+  } else if (itemViewStepMs == 0 ||
+             (now - itemViewStepMs) >= ITEMVIEW_STEP_INTERVAL_MS) {
+    itemViewStepMs = now;
     if (stepUp)    { clientRenderFrame(cs, up); }
     if (stepDown)  { clientRenderFrame(cs, down); }
     if (stepLeft)  { clientRenderFrame(cs, left); }
     if (stepRight) { clientRenderFrame(cs, right); }
   }
 
-  return clientSimIsInPillView(cs);
+  return clientSimIsInItemView(cs);
 }
 
 /*********************************************************
@@ -359,7 +408,7 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      through the legacy step-scroll path instead, so feeding them here too
      would double-scroll.  The gamepad stick below is analog and always
      uses this smooth path regardless of the preference. */
-  if (smoothScrollingEnabled) {
+  if (smoothScrollingEnabled && !overviewOwnsScrollKeys()) {
     if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
     if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
     if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
@@ -476,10 +525,12 @@ void inputResetHeldKeys(void) {
   mineKeyPhysicalDown = FALSE;
   mineKeyEventsActive = FALSE;
   pillViewKeyWasDown = FALSE;
+  baseViewKeyWasDown = FALSE;
+  allyViewKeyWasDown = FALSE;
   s_controllerPillView = false;
   scrollKeyCount = 0;
-  pillViewCycleMs = 0;
-  pillViewStepMs = 0;
+  itemViewCycleMs = 0;
+  itemViewStepMs = 0;
   smoothScrollAccumX = 0;
   smoothScrollAccumY = 0;
   lastGunsightAdj = 0;
@@ -723,10 +774,13 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
       }
     }
 
-    if (inputGamepadIsViewToggleEdge()) {
+    if (inputGamepadIsViewToggleEdge() &&
+        clientSimGetViewPolicy(cs, viewCategoryPill) != viewPolicyOff) {
       /* Enter pill view, or advance to the next pill if already in it. Unlike
        * the old toggle, repeated presses cycle pills rather than returning to
-       * tank view — driving (forward/turn) does that, handled above. */
+       * tank view — driving (forward/turn) does that, handled above. The
+       * button is inert while the server has pill view off, matching the
+       * pill view key. */
       clientSimPillView(cs, 0, 0);
       s_controllerPillView = true;
     }
@@ -752,9 +806,9 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     }
   }
 
-  /* Pill view consumes the scroll keys (and the pill-view toggle key) to
-   * step between pills; map scrolling is suppressed while it is active. */
-  if (pillViewInputStep(cs, setKeys)) {
+  /* An item view consumes the scroll keys (and the view keys) to step between
+   * items; map scrolling is suppressed while one is active. */
+  if (itemViewInputStep(cs, setKeys)) {
     smoothScrollAccumX = 0;
     smoothScrollAccumY = 0;
     sdl3DrawSetDragOffset(0, 0);
@@ -766,7 +820,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
        smoothScrollingEnabled; when that is off, the scroll keys fall
        through to the legacy step-scroll below. */
     smoothScrollTick(cs, setKeys);
-    if (!smoothScrollingEnabled) {
+    if (!smoothScrollingEnabled && !overviewOwnsScrollKeys()) {
       scrollKeyCount++;
       if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
         scrollKeyCount = 0;
@@ -819,9 +873,9 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   pushToTalkPoll(setKeys, TRUE);
   muteMicPoll(setKeys, TRUE);
 
-  /* Pill view consumes the scroll keys (and the pill-view toggle key) to
-   * step between pills; map scrolling is suppressed while it is active. */
-  if (pillViewInputStep(cs, setKeys)) {
+  /* An item view consumes the scroll keys (and the view keys) to step between
+   * items; map scrolling is suppressed while one is active. */
+  if (itemViewInputStep(cs, setKeys)) {
     smoothScrollAccumX = 0;
     smoothScrollAccumY = 0;
     sdl3DrawSetDragOffset(0, 0);
@@ -834,7 +888,7 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
      smoothScrollingEnabled; when off, the scroll keys fall through to the
      legacy step-scroll below. */
   smoothScrollTick(cs, setKeys);
-  if (smoothScrollingEnabled) {
+  if (smoothScrollingEnabled || overviewOwnsScrollKeys()) {
     return;
   }
 

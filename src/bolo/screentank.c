@@ -226,7 +226,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 *********************************************************/
 void screenTanksGetItem(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *playerNum, char *playerName) {
   itemNum--;
-  if (itemNum <= (*value).numTanksScreen) {
+  if (itemNum < (*value).numTanksScreen) {
     *mx = (*value).pos[itemNum].mx;
     *my = (*value).pos[itemNum].my;
     *px = (*value).pos[itemNum].px;

@@ -96,6 +96,7 @@ extern ClientSim *humanSim;
 /* Forward declarations */
 void sdl3MessageHandler(const char *message, const char *title);
 static SDL_Rect getDefaultDisplayBounds(void);
+static void windowEnsureOnScreen(SDL_Window *win);
 
 /* -------------------------------------------------------
  * Globals declared by winbolo.h (extern in sdl3imgui.cpp)
@@ -528,20 +529,30 @@ int main(int argc, char *argv[]) {
         /* All modes resizable - resizing auto-switches to Custom */
         SDL_SetWindowResizable(sdlWin, true);
 
-        /* Get the monitor where the dialog/splash was shown.
-           First try the saved dialog position, then fall back to the
-           window's current position (it's the same SDL window from
-           the dialog phase), then the primary display. */
+        /* Get the monitor the window is about to occupy. The saved window
+           position comes first, because that is where the window is placed
+           below and its display may be a different shape from the one the
+           dialog was on. Then the dialog/splash position, then the window's
+           current display (it's the same SDL window from the dialog phase),
+           then the primary display. */
         SDL_Rect usable;
         usable = getDefaultDisplayBounds();
         {
           SDL_DisplayID dispID = 0;
-          SDL_Point dialogPt = { gameFrontDialogX, gameFrontDialogY };
-          if (dialogPt.x >= 0 && dialogPt.y >= 0) {
-            dispID = SDL_GetDisplayForPoint(&dialogPt);
+          int prefX, prefY;
+          windowGetSavedPosition(&prefX, &prefY);
+          if (prefX >= 0 && prefY >= 0) {
+            SDL_Point savedPt = { prefX, prefY };
+            dispID = SDL_GetDisplayForPoint(&savedPt);
           }
           if (!dispID) {
-            /* Dialog position unknown — use the window's current display */
+            SDL_Point dialogPt = { gameFrontDialogX, gameFrontDialogY };
+            if (dialogPt.x >= 0 && dialogPt.y >= 0) {
+              dispID = SDL_GetDisplayForPoint(&dialogPt);
+            }
+          }
+          if (!dispID) {
+            /* No saved or dialog position — use the window's current display */
             dispID = SDL_GetDisplayForWindow(sdlWin);
           }
           if (dispID) {
@@ -579,8 +590,11 @@ int main(int argc, char *argv[]) {
         }
 
         /* Big Picture / Gamepad UI: leave the window maximised (set at
-           creation) — don't size or reposition it from saved desktop prefs. */
-        if (!steam_is_big_picture()) {
+           creation) — don't size or reposition it from saved desktop prefs.
+           Full screen mode is the same story: the window has been full screen
+           since the menus and stays that way into the game, so sizing and
+           positioning it from the windowed prefs would only fight that. */
+        if (!steam_is_big_picture() && !gameFrontFullScreen) {
           SDL_SetWindowSize(sdlWin, targetW, targetH);
 
           /* Restore saved window position from preferences, but ensure it's on this monitor */
@@ -601,9 +615,23 @@ int main(int argc, char *argv[]) {
               SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
             }
           }
+          /* Backstop for both branches: the clamp above works off the dialog's
+             monitor and off the client area, so it can still leave the title
+             bar off-screen once the window lands on another display. */
+          windowEnsureOnScreen(sdlWin);
         }
         SDL_ShowWindow(sdlWin);
         SDL_RaiseWindow(sdlWin);
+        /* The switch to full screen happened back in the dialog phase, where
+           each dialog runs its own event loop, so the game's
+           SDL_EVENT_WINDOW_RESIZED handler never saw it — and the sizing
+           above is skipped, so nothing else triggers a rebuild either. That
+           leaves the render target, tiles, fonts and status atlas sized for
+           the old windowed surface. Rebuilding them against the live render
+           output size fixes that, and is a no-op once the zoom matches. */
+        if (gameFrontFullScreen) {
+          sdl3DrawReconfigureZoom(0);
+        }
       }
       guiMessageSetHandler(sdl3MessageHandler);
 
@@ -1228,6 +1256,45 @@ static SDL_Rect getDefaultDisplayBounds(void) {
     return bounds;
 }
 
+/* Nudge a window so its frame — title bar included — sits inside the usable
+   area of the display it is actually on. SDL positions the client area, so a
+   position that looks valid can still leave the caption above the screen with
+   no way to drag the window back. Safe to call after any move or resize. */
+static void windowEnsureOnScreen(SDL_Window *win) {
+  if (!win) return;
+
+  int x, y, w, h;
+  SDL_GetWindowPosition(win, &x, &y);
+  SDL_GetWindowSize(win, &w, &h);
+
+  /* Bounds of the display the window is on now, not of the one a saved
+     coordinate came from — that monitor may be a different shape, or gone. */
+  SDL_Rect usable;
+  SDL_DisplayID dispID = SDL_GetDisplayForWindow(win);
+  if (!dispID || !SDL_GetDisplayUsableBounds(dispID, &usable)) {
+    usable = getDefaultDisplayBounds();
+  }
+
+  /* The frame the window manager draws around the client area. Some backends
+     can't report it; zero borders then clamp the client area alone. */
+  int top = 0, left = 0, bottom = 0, right = 0;
+  if (!SDL_GetWindowBordersSize(win, &top, &left, &bottom, &right)) {
+    top = 0; left = 0; bottom = 0; right = 0;
+  }
+
+  int newX = x, newY = y;
+  if (newX + w + right > usable.x + usable.w) newX = usable.x + usable.w - w - right;
+  if (newY + h + bottom > usable.y + usable.h) newY = usable.y + usable.h - h - bottom;
+  /* Floors applied last, so a window bigger than the display loses its right
+     and bottom edges rather than its caption. */
+  if (newX < usable.x + left) newX = usable.x + left;
+  if (newY < usable.y + top) newY = usable.y + top;
+
+  if (newX != x || newY != y) {
+    SDL_SetWindowPosition(win, newX, newY);
+  }
+}
+
 void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
                                      int *outW, int *outH, int *outX, int *outY) {
   int contentH = actualH - MENU_BAR_HEIGHT;
@@ -1248,9 +1315,11 @@ void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int a
 /* Update saved position from current window */
 void windowSaveCurrentPosition(void) {
   SDL_Window *win = sdl3DrawGetWindow();
-  if (win) {
-    SDL_GetWindowPosition(win, &s_windowX, &s_windowY);
-  }
+  if (!win) return;
+  /* A fullscreen window's position is the display's, not the player's, so the
+     remembered position has to survive going fullscreen and coming back. */
+  if (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) return;
+  SDL_GetWindowPosition(win, &s_windowX, &s_windowY);
 }
 
 /* Cardinal content widths.
@@ -1305,7 +1374,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
      BUT: don't save if the current size is actually a cardinal size (bug recovery). */
   if (zoomFactor == ZOOM_FACTOR_CUSTOM) {
     SDL_Window *win = sdl3DrawGetWindow();
-    if (win) {
+    /* A fullscreen size and origin belong to the display, not to the player,
+       so they must never overwrite the remembered windowed geometry. */
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
       int savW, savH, savX, savY;
       SDL_GetWindowPosition(win, &savX, &savY);
       SDL_GetWindowSize(win, &savW, &savH);
@@ -1328,7 +1399,9 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     if (fromDragResize) {
       /* Use current window size (user just dragged to this size) */
       SDL_Window *win = sdl3DrawGetWindow();
-      if (win) {
+      /* Fullscreen geometry isn't the player's — see the custom-mode capture
+         above. */
+      if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
         int curX, curY;
         SDL_GetWindowSize(win, &targetW, &targetH);
         SDL_GetWindowPosition(win, &curX, &curY);
@@ -1427,6 +1500,7 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
           SDL_SetWindowSize(win, restoreW, restoreH);
           if (s_customWinX != SDL_WINDOWPOS_CENTERED) {
             SDL_SetWindowPosition(win, s_customWinX, s_customWinY);
+            windowEnsureOnScreen(win);
           }
         }
       } else {
@@ -1496,6 +1570,23 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 
 void windowLetterboxBarsGray_toggle(void) {
   letterboxBarsGray = !letterboxBarsGray;
+  gameFrontSaveCurrentPrefs();
+}
+
+/* Turn app full screen on or off from the screens outside a game. In a game
+   the File-menu item drives the in-window map view instead, which carries the
+   flag with it, so there is only ever one path per surface.
+   SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the caller
+   re-enters its dialog immediately, which reads and writes the window
+   position; without the wait the compositor can apply the transition on top
+   of that and clobber both. */
+void windowFullScreenChoose(bool on) {
+  gameFrontFullScreen = on;
+  SDL_Window *win = sdl3DrawGetWindow();
+  if (win) {
+    SDL_SetWindowFullscreen(win, on);
+    SDL_SyncWindow(win);
+  }
   gameFrontSaveCurrentPrefs();
 }
 
@@ -1841,33 +1932,39 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (drawBusy == FALSE) {
     BYTE cursorX = 0, cursorY = 0;
-    bool showCursor;
-
-    /* Refresh cursor cell every frame: the autoscroll sub-tile offset
-     * changes per tick, so the visually-rendered tile under a stationary
-     * mouse changes too. cursorPos re-derives the cell from the cached
-     * mouse pixel + current subPos and stores it in the viewport's
-     * cursorPosX/Y, which clientSimGetCursorPos then reads.
-     *
-     * Note this tracks where the POINTER is, which is not the same thing
-     * as the build selection — that is the build cursor's latched map tile
-     * (see buildCursorResolveReticle below), which only hand movement
-     * moves. The two part company as soon as the view scrolls. */
-    {
-      BYTE cx = 0, cy = 0;
-      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
-        clientSimSetCursorPos(cs, cx, cy);
-      } else {
-        clientSimSetCursorPos(cs, 0, 0);
-      }
-    }
-    showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
-
-    /* Resolve the reticle from the shared build cursor so what is drawn and
-       what a build click dispatches to are the same square by construction. */
+    bool showCursor = false;
     bool cursorFaint = false;
-    showCursor = buildCursorResolveReticle(cs, showCursor, cursorX, cursorY,
-                                           &cursorX, &cursorY, &cursorFaint);
+
+    /* None of the classic pointer plumbing applies while the overview owns
+     * the window: the 15x15 cell mapping corresponds to nothing on screen,
+     * and the overview drives the shared build cursor from absolute map
+     * coordinates of its own. */
+    if (!sdl3DrawIsOverviewInWindow()) {
+      /* Refresh cursor cell every frame: the autoscroll sub-tile offset
+       * changes per tick, so the visually-rendered tile under a stationary
+       * mouse changes too. cursorPos re-derives the cell from the cached
+       * mouse pixel + current subPos and stores it in the viewport's
+       * cursorPosX/Y, which clientSimGetCursorPos then reads.
+       *
+       * Note this tracks where the POINTER is, which is not the same thing
+       * as the build selection — that is the build cursor's latched map tile
+       * (see buildCursorResolveReticle below), which only hand movement
+       * moves. The two part company as soon as the view scrolls. */
+      {
+        BYTE cx = 0, cy = 0;
+        if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+          clientSimSetCursorPos(cs, cx, cy);
+        } else {
+          clientSimSetCursorPos(cs, 0, 0);
+        }
+      }
+      showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+
+      /* Resolve the reticle from the shared build cursor so what is drawn and
+         what a build click dispatches to are the same square by construction. */
+      showCursor = buildCursorResolveReticle(cs, showCursor, cursorX, cursorY,
+                                             &cursorX, &cursorY, &cursorFaint);
+    }
     sdl3DrawSetCursorFaint(cursorFaint);
 
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);

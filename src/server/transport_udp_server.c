@@ -394,6 +394,35 @@ typedef struct {
     uint32_t lobbyMapSize;
 } SpectatorConn;
 
+/* Bounds on the catch-up sweep that keeps a culled slot's copy of the terrain
+ * (mapEventQueues below carries its output). One slot sweeps per
+ * MAP_SWEEP_STRIDE sim ticks — the sim advances two ticks a frame, so each
+ * slot comes up every five frames — and a sweep queues at most
+ * MAP_SWEEP_MAX_EVENTS squares, well under RELIABLE_EVENT_BUFFER_SIZE so the
+ * catch-up can never crowd out live changes. A screen's worth of stale ground
+ * clears in a handful of sweeps. */
+#define MAP_SWEEP_STRIDE      5
+#define MAP_SWEEP_MAX_EVENTS 64
+
+/* Minimum interval between map-download re-asks from one client.
+ *
+ * A re-ask is the most expensive thing one small datagram can ask this server
+ * to do: it recompresses that slot's whole copy of the terrain, re-sends
+ * JOIN_ACCEPT and re-bases the bulk channel, then streams the map again. The
+ * first READY of a download is not a re-ask and is never held off — this
+ * bounds only the restart path.
+ *
+ * It has to sit *under* the honest client's fastest re-ask, not outside it.
+ * A client whose stream head was consumed before its buffers existed sees no
+ * progress while the server thinks it is streaming, so its watchdog re-asks on
+ * the short MAP_DL_READY_RESEND_TICKS threshold (~1s) and every one of those
+ * lands here on the restart path. Holding those off would drop half of a
+ * recovery the client only gets MAP_DL_MAX_RESTARTS attempts at — the wedge
+ * this path exists to clear. Half a second serves every one of them and still
+ * takes a client that asks in a tight loop from hundreds of restarts a second
+ * down to two. */
+#define MAP_REASK_MIN_TICKS 25  /* 0.5s at 50 Hz, between re-asks */
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -431,9 +460,10 @@ static struct {
     ClientEventQueue mapEventQueues[MAX_TANKS];
 
     /* Cumulative count of EVENT_MAP_CHANGE events dropped per slot because the
-     * map-event queue was full (client too far behind on its acks). A dropped
-     * terrain change is a permanent desync the client recovers from with a map
-     * resync request — this counter says how often recovery is being leaned on. */
+     * map-event queue was full (client too far behind on its acks). A drop
+     * leaves the slot's copy of the terrain unwritten, so the catch-up sweep
+     * sees the square as still owed and re-sends it once the client can view
+     * it — this counter says how often that recovery is being leaned on. */
     uint32_t mapEventQueueDrops[MAX_TANKS];
 
     /* Per-client map generation, tagged onto every map-change event sent on
@@ -470,6 +500,14 @@ static struct {
     bool                    roundLogReqSeen[MAX_TANKS];
     uint32_t                roundLogLastReqTick[MAX_TANKS];
     uint8_t                 roundLogServed[MAX_TANKS];
+    /* Per-client map-download re-ask bookkeeping, the same shape as the
+     * round-log limits above. mapReaskSeen + mapReaskLastTick hold the minimum
+     * interval whatever the answer was; mapReaskThrottled counts the re-asks
+     * refused for arriving inside it and is what the tests read. Cleared at
+     * join and at disconnect, so a slot never inherits the last occupant's. */
+    bool                    mapReaskSeen[MAX_TANKS];
+    uint32_t                mapReaskLastTick[MAX_TANKS];
+    uint32_t                mapReaskThrottled[MAX_TANKS];
     /* Suppress immediate-send-on-enqueue during the sync-replay burst
      * fired by serverSimRegisterSubscriber, so one carrier datagram
      * packs all replayed events instead of one per event.  Set/cleared
@@ -573,6 +611,14 @@ static void udpServerResetRoundLogLimits(int idx) {
     udpServer.roundLogReqSeen[idx]     = false;
     udpServer.roundLogLastReqTick[idx] = 0;
     udpServer.roundLogServed[idx]      = 0;
+}
+
+/* Clear one slot's map-download re-ask limit. Same reason as the round-log
+ * reset above: the interval belongs to the connection, not to the slot. */
+static void udpServerResetMapReaskLimit(int idx) {
+    udpServer.mapReaskSeen[idx]      = false;
+    udpServer.mapReaskLastTick[idx]  = 0;
+    udpServer.mapReaskThrottled[idx] = 0;
 }
 
 /* Runtime network impairment (delay/jitter/loss/burst) on the server's
@@ -1118,6 +1164,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
+    case CTRL_VIEW_TARGET:      return "VIEW_TARGET";
     default:                    return "<unknown>";
     }
 }
@@ -1261,6 +1308,16 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         mpDiagLog("[srv] deliver FILTER slot=%d type=COMMAND_REJECTED "
                   "origSlot=%d clientPlayerNum=%d",
                   idx, (int)evt->u.commandRejected.origSlot,
+                  (int)client->playerNum);
+        return;
+    }
+    if (evt->type == CTRL_VIEW_TARGET &&
+        evt->u.viewTarget.origSlot != client->playerNum) {
+        /* The answer belongs to the slot that asked; drop it for everyone
+         * else so no other client learns where that ally is. */
+        mpDiagLog("[srv] deliver FILTER slot=%d type=VIEW_TARGET "
+                  "origSlot=%d clientPlayerNum=%d",
+                  idx, (int)evt->u.viewTarget.origSlot,
                   (int)client->playerNum);
         return;
     }
@@ -1785,7 +1842,8 @@ static void serverAcceptSpectator(ServerSim *sim,
     if (udpServer.compressedMapSize == 0 &&
         (serverSimGetState(sim) == serverStateLobby ||
          serverSimGetState(sim) == serverStateCountdown)) {
-        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap,
+                                               (int)sizeof(udpServer.compressedMap));
         if (mapLen > 0) {
             udpServer.compressedMapSize = (uint32_t)mapLen;
         }
@@ -3203,6 +3261,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* Accept the player */
     udpServer.clients[slot].connected = true;
+    /* This transport now owns the slot, so it owns that slot's copy of the
+     * terrain too: the drain below sends it only the changes inside its
+     * viewports and writes the copy as it sends. Cleared again by
+     * serverDisconnectClient (and by the reject path just below). */
+    serverSimSetShadowCulled(sim, (BYTE)slot, true);
     udpServer.clients[slot].connId = serverNextConnId();
     udpServer.clients[slot].nameStickySuffix = false;
     udpServer.clients[slot].addr = *fromAddr;
@@ -3227,6 +3290,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.mapEventQueues[slot].nextSeq = 1;
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
+    /* The drop count belongs to this connection, so a client taking over the
+     * slot does not inherit the previous occupant's drops. */
+    udpServer.mapEventQueueDrops[slot] = 0;
     udpServer.mapGen[slot] = 0;
 
     /* Bring up this slot's parallel channel mux alongside the queues. */
@@ -3235,6 +3301,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     bulkSenderInit(&udpServer.bulkSend[slot]);
     bulkReceiverInit(&udpServer.bulkRecvUp[slot]);
     udpServerResetRoundLogLimits(slot);
+    udpServerResetMapReaskLimit(slot);
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -3265,13 +3332,31 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                 "join accept: slot=%d clientType=%u clientHints=0x%02x",
                 slot, (unsigned)clientType, (unsigned)clientHints);
 
-    /* Compress current map state for the joining player.
-     * Done after serverSimAddPlayer so rejoin ownership is included. */
+    /* Joining a game already in progress downloads the map the round started
+     * on, not the map as it stands now, so arriving (or leaving and rejoining)
+     * shows nothing about what has happened since. The add above seeded this
+     * slot's copy from the live map — correct for an in-process client, which
+     * takes every change — so restart it from the round-start terrain here and
+     * the blob below carries that. The joiner is paid the differences by the
+     * catch-up sweep as its viewports cover the ground. A lobby or countdown
+     * joiner keeps the current map: nothing has changed it yet, and there is no
+     * running sweep to settle a difference with. */
+    if (serverSimGetState(sim) == serverStateRunning) {
+        serverSimShadowSeedRoundStart(sim, (BYTE)slot);
+    }
+
+    /* Compress this slot's copy of the map for the joining player.
+     * Done after addPlayerInternal so rejoin ownership is included — the
+     * copy the blob is taken from is the one the slot's snapshot checksum is
+     * taken over, so the two always describe the same tiles. */
     {
-        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        int mapLen = serverSimGetCompressedMapFor(sim, (BYTE)slot,
+                                                  udpServer.compressedMap,
+                                                  (int)sizeof(udpServer.compressedMap));
         if (mapLen <= 0) {
             serverSimRemovePlayer(sim, (BYTE)slot);
             udpServer.clients[slot].connected = false;
+            serverSimSetShadowCulled(sim, (BYTE)slot, false);
             serverSendJoinReject(fromAddr, NETERR_MAPSERIALIZE, 0, NULL);
             return;
         }
@@ -3352,9 +3437,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
         /* Publish a lobby-slot update for the new player so existing
          * clients pick up the joiner's team/ready/ping fields (the
-         * CTRL_PLAYER_JOIN already fanned out from serverSimAddPlayer
-         * carries name/country/clientType, but not the lobby-slot
-         * extras). */
+         * CTRL_PLAYER_JOIN already fanned out from
+         * fillAndPublishPlayerJoin carries name/country/clientType, but
+         * not the lobby-slot extras). */
         serverSimPublishLobbySlot(sim, (BYTE)slot);
         /* Dismiss any pending balance proposal — player composition changed */
         if (serverSimGetBalanceProposal(sim)->pending) {
@@ -3970,6 +4055,11 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* Reset control-sync state so a re-using slot starts fresh. */
     udpServer.controlSyncInProgress[idx] = false;
 
+    /* Hand the slot's copy of the terrain back to the tick: nothing is being
+     * sent map events on this slot any more, and a bot or the host player can
+     * take it next, which is a client that gets every change. */
+    serverSimSetShadowCulled(sim, (BYTE)idx, false);
+
     /* Reset the channel mux so a re-using slot starts fresh. */
     channelMuxInit(&udpServer.channelMux[idx]);
     udpServer.channelFramesRx[idx] = 0;
@@ -3977,6 +4067,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     bulkSenderReset(&udpServer.bulkSend[idx]);
     bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
     udpServerResetRoundLogLimits(idx);
+    udpServerResetMapReaskLimit(idx);
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -4339,6 +4430,10 @@ bool transportUdpServerCreate(unsigned short port,
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
         udpServer.controlSyncInProgress[i] = false;
+        /* No slot is this transport's until someone joins it. The sim can
+         * outlive an earlier server on the same process, so start from a
+         * clean mask rather than whatever that server left behind. */
+        serverSimSetShadowCulled(sim, (BYTE)i, false);
     }
 
     netImpairInit(&srvImpairIn);
@@ -4441,6 +4536,10 @@ void transportUdpServerDestroy(void) {
             udpServer.clients[i].nameStickySuffix = false;
             udpServer.clients[i].claimPending = false;
             udpServer.clients[i].claimDesiredName[0] = '\0';
+            /* The sim can be ticked on without this transport (a host that
+             * drops back to single player), so give every copy back to the
+             * tick as the server goes down. */
+            serverSimSetShadowCulled(activeSim, (BYTE)i, false);
             serverCleanupMapDownload(i);
         }
     }
@@ -4530,6 +4629,13 @@ static void buildInfoPacket(ServerSim *sim, INFO_PACKET *pkt) {
             memcpy(pkt->map_md5, md5Hex, 32);
         }
     }
+
+    pkt->view_policies = infoPacketPackViewPolicies(
+        serverSimGetViewPolicy(sim, viewCategoryPill),
+        serverSimGetViewPolicy(sim, viewCategoryBase),
+        serverSimGetViewPolicy(sim, viewCategoryAlly),
+        serverSimGetClassicMode(sim),
+        serverSimGetAlliesInTrees(sim));
 }
 
 /* Handle an old-protocol info request (server browser compatibility).
@@ -4668,6 +4774,7 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
 
         /* New round, fresh round-log request budget for every slot. */
         udpServerResetRoundLogLimits(i);
+        udpServerResetMapReaskLimit(i);
 
         /* A round-log transfer is a lobby/game-over affair and must not bleed
          * into the round starting now: CHANNEL_BULK is deliberately not
@@ -4743,9 +4850,9 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
      * RLE encoder has no internal output-bound check, and an
      * incompressible map can encode slightly larger than its 64KB
      * input. Validate the result fits the wire size before copying. */
-    BYTE scratchMap[131072];
+    BYTE scratchMap[MAP_COMPRESSED_MAX_SIZE];
 
-    mapLen = serverSimGetCompressedMap(sim, scratchMap);
+    mapLen = serverSimGetCompressedMap(sim, scratchMap, (int)sizeof(scratchMap));
     if (mapLen <= 0) {
         fprintf(stderr, "[UDP SERVER] Map change: failed to compress new map\n");
         return;
@@ -5506,12 +5613,54 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->xferBegun) {
                     dl->readySeen = TRUE;
+                } else if (udpServer.mapReaskSeen[clientIdx] &&
+                           (uint32_t)(udpServer.tickCount -
+                                      udpServer.mapReaskLastTick[clientIdx]) <
+                               MAP_REASK_MIN_TICKS) {
+                    /* Inside the interval: drop it. The client's own watchdog
+                     * asks again after its resend window, and that ask lands
+                     * outside this one. Nothing is sent back — a re-ask has no
+                     * reply of its own, and answering would hand back a second
+                     * datagram for the one that was refused. */
+                    udpServer.mapReaskThrottled[clientIdx]++;
+                    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                        "MAP_DL_READY re-ask slot=%d inside the %d-tick "
+                        "interval -> throttled (%u so far)",
+                        clientIdx, MAP_REASK_MIN_TICKS,
+                        (unsigned)udpServer.mapReaskThrottled[clientIdx]);
                 } else {
+                    /* Stamp for every re-ask the server acts on, so the
+                     * interval measures from the last restart it actually
+                     * paid for. */
+                    udpServer.mapReaskSeen[clientIdx] = true;
+                    udpServer.mapReaskLastTick[clientIdx] = udpServer.tickCount;
+                    /* Restart from this slot's own copy of the terrain rather
+                     * than from whatever the shared staging buffer happens to
+                     * hold: serverInitMapDownload copies staging, and staging
+                     * carries the blob of whichever slot joined or resynced
+                     * last. So recompress this slot's copy into staging, then
+                     * re-send JOIN_ACCEPT so the size the client expects
+                     * matches the blob it is about to be sent — the client
+                     * drops a stream whose header size disagrees with the size
+                     * its accept carried, so a restart off another slot's blob
+                     * leaves it stuck on "Downloading map" instead of
+                     * recovering it. Staging, then accept, then re-arm, the
+                     * same order transportUdpServerOnLobbyMapChange uses. A
+                     * compress that will not fit the wire size leaves staging's
+                     * size alone and restarts exactly as before. */
+                    int mapLen = serverSimGetCompressedMapFor(
+                        sim, (BYTE)clientIdx, udpServer.compressedMap,
+                        (int)sizeof(udpServer.compressedMap));
                     WB_LOG_INFO(WB_LOG_CAT_NET,
                         "MAP_DL_READY re-ask slot=%d (kind=%d begun=%d "
                         "complete=%d) -> restarting download",
                         clientIdx, (int)dl->xferKind, (int)dl->xferBegun,
                         (int)dl->downloadComplete);
+                    if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
+                        udpServer.compressedMapSize = (uint32_t)mapLen;
+                        serverSendJoinAccept(clientIdx, sim,
+                                             &udpServer.clients[clientIdx].addr);
+                    }
                     serverRebaseBulkAndRearmDownload(clientIdx);
                     dl->readySeen = TRUE;
                 }
@@ -5547,12 +5696,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                      * bulk channel retransmits its own unacked segments, so
                      * there is nothing to re-poke. */
                 } else {
-                    /* Idle slot: refresh the live blob into this slot's copy,
-                     * cut the map-event queue so the blob and the queue can't
-                     * both carry the same change, then arm a resync transfer.
+                    /* Idle slot: compress this slot's copy of the terrain into
+                     * its download buffer — the client is asking for the map
+                     * it was given, not some other slot's — cut the map-event
+                     * queue so the blob and the queue can't both carry the
+                     * same change, then arm a resync transfer.
                      * It begins on CHANNEL_BULK once the channel is idle
                      * (serverServiceMapTransfer) and rides the snapshot trailer. */
-                    int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+                    int mapLen = serverSimGetCompressedMapFor(
+                        sim, (BYTE)clientIdx, udpServer.compressedMap,
+                        (int)sizeof(udpServer.compressedMap));
                     if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
                         udpServer.compressedMapSize = (uint32_t)mapLen;
                         if (dl->compressedMap != NULL) free(dl->compressedMap);
@@ -5583,17 +5736,36 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         dl->xferEndSeq = 0;
 
                         /* Self-check: the blob the client will install must
-                         * round-trip back to this server's live terrain. If it
-                         * doesn't, the client can never match the live checksum
-                         * and loops resync requests until it self-kicks — so
-                         * decode the blob into scratch structures and compare
-                         * tile-for-tile against the live map. Resyncs are
-                         * infrequent; the cost is acceptable for the diagnosis. */
+                         * round-trip back to this slot's copy of the terrain
+                         * and its record of the pill squares — the same two the
+                         * snapshot header's checksum is stamped from. If it
+                         * doesn't, the client can never match that checksum and
+                         * loops resync requests until it self-kicks, so decode
+                         * the blob into scratch structures and compare
+                         * tile-for-tile against that copy. The pill list
+                         * follows the same rule as the terrain: the check is
+                         * against what the client was actually given, not
+                         * against the live state, because comparing against the
+                         * live map would report a difference on every resync
+                         * from a culled slot, whose copy lags the live map by
+                         * design. The live map and pill list are used only for
+                         * a slot with no records bound. Resyncs are infrequent;
+                         * the cost is acceptable for the diagnosis. */
                         {
-                            map *live = &serverSimGetGameSim(sim)->mp;
-                            uint16_t liveSum = mapCalcChecksum(live,
+                            map *known = sim->clientKnownMap[clientIdx] != NULL
+                                             ? &sim->clientKnownMap[clientIdx]
+                                             : &serverSimGetGameSim(sim)->mp;
+                            struct pillsObj slotPills;
+                            pillboxes slotPb = &slotPills;
+                            bool useSlotPills =
+                                serverSimGetPillsForSlot(sim, (BYTE)clientIdx,
+                                                         &slotPills);
+                            pillboxes *knownPb = useSlotPills
+                                             ? &slotPb
+                                             : &serverSimGetGameSim(sim)->pb;
+                            uint16_t knownSum = mapCalcChecksum(known,
                                                    &serverSimGetGameSim(sim)->bs,
-                                                   &serverSimGetGameSim(sim)->pb);
+                                                   knownPb);
                             map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
                             mapCreate(&rtMap);
                             pillsCreate(&rtPb);
@@ -5602,47 +5774,46 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             if (mapLoadCompressedMap(&rtMap, &rtPb, &rtBs, &rtSs,
                                                      udpServer.compressedMap, mapLen)) {
                                 uint16_t rtSum = mapCalcChecksum(&rtMap, &rtBs, &rtPb);
-                                if (rtSum != liveSum) {
+                                if (rtSum != knownSum) {
                                     /* Dedupe: an unconverged divergence repeats on every
                                      * resync request and floods the log. Dump full per-tile
-                                     * detail only when the (live,blob) checksum pair changes;
+                                     * detail only when the (copy,blob) checksum pair changes;
                                      * identical repeats get one concise line. The state is
                                      * process-wide and this runs on the single drain thread. */
                                     static uint32_t s_lastResyncDiffSig = 0xFFFFFFFFu;
-                                    uint32_t sig = ((uint32_t)liveSum << 16) | (uint32_t)rtSum;
+                                    uint32_t sig = ((uint32_t)knownSum << 16) | (uint32_t)rtSum;
                                     const char *mapName = serverSimGetMapName(sim);
                                     if (sig == s_lastResyncDiffSig) {
                                         WB_LOG_WARN(WB_LOG_CAT_NET,
                                             "map resync still not converging on '%s' "
-                                            "(live sum=%u blob sum=%u, client %d gen=%u) - detail suppressed",
-                                            mapName, (unsigned)liveSum, (unsigned)rtSum,
+                                            "(client copy sum=%u blob sum=%u, client %d gen=%u) - detail suppressed",
+                                            mapName, (unsigned)knownSum, (unsigned)rtSum,
                                             clientIdx, (unsigned)reqGen);
                                     } else {
                                         bases *liveBs = &serverSimGetGameSim(sim)->bs;
-                                        pillboxes *livePb = &serverSimGetGameSim(sim)->pb;
                                         int diffs = 0, realDiffs = 0, shown = 0, xx, yy;
                                         s_lastResyncDiffSig = sig;
                                         for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
                                             for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
-                                                BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
+                                                BYTE kv = mapGetPos(known, (BYTE)xx, (BYTE)yy);
                                                 BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
-                                                if (lv != rv) {
+                                                if (kv != rv) {
                                                     /* Terrain under a base/pill is folded to ROAD
                                                      * by the checksum (it is not authoritative), so
                                                      * such a tile can never be the real cause of
                                                      * non-convergence — flag it benign. */
                                                     bool onBase = (basesExistPos(liveBs, (BYTE)xx, (BYTE)yy) ||
                                                                    basesExistPos(&rtBs, (BYTE)xx, (BYTE)yy));
-                                                    bool onPill = (pillsExistPos(livePb, (BYTE)xx, (BYTE)yy) ||
+                                                    bool onPill = (pillsExistPos(knownPb, (BYTE)xx, (BYTE)yy) ||
                                                                    pillsExistPos(&rtPb, (BYTE)xx, (BYTE)yy));
                                                     diffs++;
                                                     if (!onBase && !onPill) { realDiffs++; }
                                                     if (shown < 8) {
                                                         WB_LOG_WARN(WB_LOG_CAT_NET,
                                                             "map resync blob diff @(%d,%d) "
-                                                            "live=%s(%u) roundtrip=%s(%u) [%s] map='%s'",
+                                                            "clientcopy=%s(%u) roundtrip=%s(%u) [%s] map='%s'",
                                                             xx, yy,
-                                                            resyncTerrainName(lv), (unsigned)lv,
+                                                            resyncTerrainName(kv), (unsigned)kv,
                                                             resyncTerrainName(rv), (unsigned)rv,
                                                             onBase ? "base" : (onPill ? "pill" : "REAL"),
                                                             mapName);
@@ -5654,9 +5825,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                         WB_LOG_WARN(WB_LOG_CAT_NET,
                                             "map resync blob does NOT round-trip on '%s': "
                                             "%d differing tile(s) (%d genuine, %d under base/pill fixup) "
-                                            "(live sum=%u blob sum=%u) - %s",
+                                            "(client copy sum=%u blob sum=%u) - %s",
                                             mapName, diffs, realDiffs, diffs - realDiffs,
-                                            (unsigned)liveSum, (unsigned)rtSum,
+                                            (unsigned)knownSum, (unsigned)rtSum,
                                             realDiffs ? "client cannot converge"
                                                       : "benign structure fixup only");
                                     }
@@ -5671,8 +5842,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             basesDestroy(&rtBs);
                             startsDestroy(&rtSs);
                             fprintf(stderr,
-                                    "[UDP SERVER] Client %d map resync gen=%u (%d bytes) livesum=%u\n",
-                                    clientIdx, reqGen, mapLen, (unsigned)liveSum);
+                                    "[UDP SERVER] Client %d map resync gen=%u (%d bytes) clientcopysum=%u\n",
+                                    clientIdx, reqGen, mapLen, (unsigned)knownSum);
                         }
                     } else {
                         fprintf(stderr,
@@ -6503,8 +6674,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     if (!udpServer.running) return;
 
     /* Once-per-second map-event-drop summary. A dropped EVENT_MAP_CHANGE
-     * silently desyncs a client's terrain until it requests a map resync, so
-     * surface how often the drop guard is firing. Mirrors the [netimpair]
+     * leaves that square owed until a sweep re-sends it, so surface how often
+     * the drop guard is firing. Mirrors the [netimpair]
      * once-per-second pattern; only emitted when at least one slot has dropped
      * something, to keep clean logs quiet. */
     {
@@ -6530,14 +6701,29 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         }
     }
 
-    if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
+    /* A tick with nothing to say still has sweep work to do while any slot is
+     * culled — that slot's copy is behind by whatever it has not been sent,
+     * and the sweep is the only thing that pays it back. */
+    if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0 &&
+        serverSimGetShadowCulledMask(sim) == 0) return;
 
     for (c = 0; c < MAX_TANKS; c++) {
         WORLD cwx = 0, cwy = 0;
         BYTE clientMX = 0, clientMY = 0;
         bool hasPos;
+        bool culled;
 
         if (!udpServer.clients[c].connected) continue;
+
+        culled = serverSimIsShadowCulled(sim, (BYTE)c);
+
+        /* The recipient's visibility set: its tank screen plus a screen for
+         * each allied pillbox, base and tank its view policies allow. Built
+         * once per client here because both the map-event cull below and the
+         * best-effort fx cull further down want the same rects. */
+        ViewportRect fxViewports[MAX_VIEWPORTS];
+        int fxViewportCount = serverSimBuildViewports(sim, (BYTE)c, fxViewports,
+                                                      MAX_VIEWPORTS);
 
         /* Always enqueue map events, even during map download. The map
          * snapshot was taken when the client joined, so any map changes
@@ -6548,24 +6734,74 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * desync because map events during download are lost. */
         {
             ClientEventQueue *mq = &udpServer.mapEventQueues[c];
+            uint32_t dropped = 0;
             for (i = 0; i < (int)serverSimGetMapEventCount(sim); i++) {
+                const GameEvent *mev = &serverSimGetMapEvents(sim)[i];
+                /* Ground this client cannot see: not sent, and its copy of the
+                 * terrain deliberately left holding the old square. That
+                 * staleness is the record of what is owed, and the sweep below
+                 * pays it if the client ever gets a view of the square. */
+                if (culled && !inAnyViewport(fxViewports, fxViewportCount,
+                                             mev->data[0], mev->data[1])) {
+                    continue;
+                }
                 if (!eventQueueHasSpace(mq)) {
-                    int dropped = (int)serverSimGetMapEventCount(sim) - i;
-                    udpServer.mapEventQueueDrops[c] += (uint32_t)dropped;
-                    fprintf(stderr, "[UDP SERVER] Map event queue full for client %d, dropping %d events\n",
-                            c, dropped);
-                    break;
+                    dropped++;
+                    continue;
                 }
                 uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
-                mq->buffer[idx].event = serverSimGetMapEvents(sim)[i];
+                mq->buffer[idx].event = *mev;
                 mq->buffer[idx].seq = mq->nextSeq;
                 mq->nextSeq++;
+                /* Queued, so this client is owed nothing more for the square:
+                 * write it into that slot's copy. Tied to the enqueue on
+                 * purpose — a drop above leaves the copy stale and the sweep
+                 * heals it. */
+                if (culled) {
+                    serverSimShadowApplySlot(sim, (BYTE)c, mev->data[0],
+                                             mev->data[1], mev->data[2]);
+                }
+            }
+            if (dropped > 0) {
+                udpServer.mapEventQueueDrops[c] += dropped;
+                fprintf(stderr, "[UDP SERVER] Map event queue full for client %d, dropping %u events\n",
+                        c, (unsigned)dropped);
             }
         }
 
         /* Game events (sounds, kills, etc.) only matter once the client
          * is in-game with a loaded map — skip if still downloading. */
         if (!udpServer.mapDownload[c].downloadComplete) continue;
+
+        /* Catch-up sweep: compare this slot's copy of the terrain against the
+         * live map inside the rects above and queue whatever it is behind on.
+         * One slot per tick on a stride keeps the per-tick cost flat. Held off
+         * while a resync is in flight — that transfer carries the slot's copy
+         * whole, and its queue cut would throw the corrections away anyway. */
+        if (culled && !udpServer.mapDownload[c].resyncInProgress &&
+            (serverSimGetTick(sim) % MAP_SWEEP_STRIDE) ==
+                (uint32_t)(c % MAP_SWEEP_STRIDE)) {
+            ClientEventQueue *mq = &udpServer.mapEventQueues[c];
+            GameEvent sweep[MAP_SWEEP_MAX_EVENTS];
+            uint32_t depth = mq->nextSeq - mq->ackedSeq;
+            int space = (depth >= (uint32_t)RELIABLE_EVENT_BUFFER_SIZE)
+                            ? 0
+                            : (int)((uint32_t)RELIABLE_EVENT_BUFFER_SIZE - depth);
+            int want = (space < MAP_SWEEP_MAX_EVENTS) ? space : MAP_SWEEP_MAX_EVENTS;
+            int got, k;
+            /* Asking for no more than the queue holds is what makes the sweep's
+             * write-through safe: every event it returns is queued below. */
+            if (want > 0) {
+                got = serverSimShadowSweep(sim, (BYTE)c, fxViewports,
+                                           fxViewportCount, sweep, want);
+                for (k = 0; k < got; k++) {
+                    uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
+                    mq->buffer[idx].event = sweep[k];
+                    mq->buffer[idx].seq = mq->nextSeq;
+                    mq->nextSeq++;
+                }
+            }
+        }
 
         hasPos = serverSimGetTankState(sim, (BYTE)c, &cwx, &cwy);
         if (hasPos) {
@@ -6597,9 +6833,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         }
 
         /* Best-effort fx (sounds/explosions) are culled to the recipient's
-         * tank + owned/allied pillbox viewports, matching the snapshot cull. */
-        ViewportRect fxViewports[MAX_VIEWPORTS];
-        int fxViewportCount = serverSimBuildViewports(sim, (BYTE)c, fxViewports, MAX_VIEWPORTS);
+         * tank + owned/allied pillbox viewports, matching the snapshot cull —
+         * fxViewports is the set built at the top of this client's pass. */
 
         /* Pass 1: find best (closest) sound event per type for this client */
         #define MAX_SOUND_TYPES 32
@@ -6695,6 +6930,14 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                             continue;
                         }
                     }
+                }
+                /* A pill this recipient cannot see keeps the square it was last
+                 * given, rewritten into its own copy of the event rather than
+                 * dropped — the event is the only carrier for that pill's
+                 * armour, owner and in-tank flag between full syncs. */
+                if (evType == EVENT_PILL_UPDATE) {
+                    serverSimFogPillUpdateEvent(sim, (BYTE)c, &evToSend,
+                                                fxViewports, fxViewportCount);
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &evToSend);
@@ -7280,10 +7523,21 @@ bool transportUdpServerTestDownloadComplete(int slot) {
     return udpServer.mapDownload[slot].downloadComplete;
 }
 
+uint32_t transportUdpServerGetMapEventDrops(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    return udpServer.mapEventQueueDrops[slot];
+}
+
+uint32_t transportUdpServerGetMapReaskThrottled(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    return udpServer.mapReaskThrottled[slot];
+}
+
 /* Test-only: stage one terrain change for a slot exactly as a real sim tick
- * does — mutate the live server map AND enqueue an EVENT_MAP_CHANGE into the
- * slot's map-event hold queue (mirroring simMapChangeCallback →
- * transportUdpServerDrainEvents). Mutating the map keeps its snapshot checksum
+ * does — mutate the live server map, write the tile into every slot's copy of
+ * the terrain, AND enqueue an EVENT_MAP_CHANGE into the slot's map-event hold
+ * queue (mirroring simMapChangeCallback → serverSimShadowTick →
+ * transportUdpServerDrainEvents). Mutating both keeps the snapshot checksum
  * in step with the change the client applies, so the client doesn't see a
  * spurious terrain divergence and self-trigger a resync. The event then flows
  * through the real hold → channel drain → tagged channelSend(CHANNEL_MAP) path,
@@ -7291,6 +7545,31 @@ bool transportUdpServerTestDownloadComplete(int slot) {
  * directly. Call between ticks: the map-change callback is dormant then, so the
  * server-side mapSetPos won't double-enqueue. Returns false if the slot is
  * invalid or its hold queue is full. */
+uint32_t transportUdpServerTestMapQueueCount(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    /* Seq 1 is the first event a slot is ever assigned (the join resets both
+     * ends of the queue to 1), so nextSeq - 1 is how many it has been given. */
+    return udpServer.mapEventQueues[slot].nextSeq - 1u;
+}
+
+bool transportUdpServerTestMapQueueHasSquare(int slot, uint8_t x, uint8_t y) {
+    const ClientEventQueue *mq;
+    uint32_t i;
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    mq = &udpServer.mapEventQueues[slot];
+    /* The whole ring, not just the unacked window: an entry stays put until
+     * its slot is reused 2048 events later, so a queue that has carried fewer
+     * than that still holds every event it was ever given. */
+    for (i = 0; i < (uint32_t)RELIABLE_EVENT_BUFFER_SIZE; i++) {
+        if (mq->buffer[i].seq == 0 || mq->buffer[i].seq >= mq->nextSeq) continue;
+        if (mq->buffer[i].event.type != EVENT_MAP_CHANGE) continue;
+        if (mq->buffer[i].event.data[0] == x && mq->buffer[i].event.data[1] == y) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
                                        uint8_t y, uint8_t terrain) {
     ClientEventQueue *mq;
@@ -7300,6 +7579,15 @@ bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
     if (!eventQueueHasSpace(mq)) return false;
     if (sim != NULL) {
         mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, FALSE, TRUE);
+        /* A real tick also writes the change into every slot's copy of the
+         * terrain (serverSimShadowTick over the tick's map events). Nothing
+         * runs that here — the map-change callback is dormant between ticks,
+         * so no map event is recorded — so apply it directly, or the slot's
+         * snapshot checksum would describe the pre-change map and the client
+         * would see a spurious divergence. Every slot takes the write, not
+         * just this one, so a caller staging changes for a single client (what
+         * every test using this does) leaves no slot mid-way. */
+        serverSimShadowApply(sim, x, y, terrain);
     }
     idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
     mq->buffer[idx].event.type = EVENT_MAP_CHANGE;
@@ -7596,6 +7884,7 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
         udpServer.controlSyncInProgress[i] = false;
+        serverSimSetShadowCulled(sim, (BYTE)i, false);
     }
     netImpairInit(&srvImpairIn);
     netImpairInit(&srvImpairOut);

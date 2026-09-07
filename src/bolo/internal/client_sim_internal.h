@@ -11,10 +11,14 @@
  * files that need direct field access must include this
  * header instead and use the implementation-internal view.
  *
- * Allowed includers: src/bolo/client_sim.c,
- * src/bolo/client_sim_control.c, src/bolo/client_snapshot.c,
- * src/bolo/transport_udp_client.c, src/bolo/viewport.c,
- * src/bolo/client_net.c.
+ * Allowed includers, all inside src/bolo/ — the client sim's own
+ * translation units (client_sim.c, client_sim_control.c,
+ * client_snapshot.c, client_net.c, client_ui_events.c,
+ * client_render.c, viewport.c) and the sim sources that reach a
+ * ClientSim while running (bases.c, brain_data.c, bot_manager.c,
+ * lgm.c, pillbox.c, players.c, screenlgm.c, sounddist.c, tank.c,
+ * transport_udp_client.c) — plus src/server/transport_udp_server.c,
+ * a co-owner of the sim, for the wire caps declared here.
  * All other callers must include client_sim.h and use the
  * public accessor API.
  *********************************************************/
@@ -35,6 +39,7 @@
 #include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
 #include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
+#include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT — server view-rule mirror */
 #include "ping_display.h"  /* PingDisplay — per-slot ping readout smoothing */
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
@@ -70,9 +75,17 @@ struct ViewPort {
     BYTE        yOffset;
     screen      view;
     screenMines mineView;
-    bool        inPillView;
-    BYTE        pillViewX;
-    BYTE        pillViewY;
+    /* What the camera is parked on. viewKind is a ViewStateKind
+     * (client_command.h): VIEW_KIND_TANK follows the local tank, the other
+     * three watch one item. viewTarget is the pill or base index (0-based,
+     * the same numbering the server's CMD_VIEW_STATE expects) or the ally's
+     * player number, and is 0 in tank view. viewX/viewY are the map square
+     * the item view is centred on; a pill or base view keeps them fixed,
+     * an ally view rewrites them each display tick as the ally drives. */
+    uint8_t     viewKind;
+    BYTE        viewTarget;
+    BYTE        viewX;
+    BYTE        viewY;
     int         cursorPosX;
     int         cursorPosY;
     bool        needRecalc;
@@ -225,6 +238,19 @@ struct ClientSim {
     /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
     BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
 
+    /* Overview fog memory — the whole map seeded dimmed when it lands, then
+     * what this player has seen live over it. Maintained every display tick
+     * whether or not the overview is shown. Distinct from brainMap above:
+     * that one is the brains' terrain fog and is revealed by map changes
+     * anywhere; this one only ever rewrites what is inside a live region. */
+    OverviewMap overview;
+    /* A fresh map wants the memory seeded, but the install can run before
+     * the local slot is settled (clientSimConnectLocal installs at step 5,
+     * the slot funnel is step 7) and the seed draws pills, bases and mines
+     * from the local player's point of view. The install arms this instead;
+     * the next overview tick seeds with myPlayerNum settled. */
+    bool overviewSeedPending;
+
     /* Per-instance message state (was messages.c globals) */
     MessageState messages;
 
@@ -299,6 +325,45 @@ struct ClientSim {
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
+    /* Server visibility rules, indexed by ViewCategory. Raw mirror of the
+     * lobby-settings event; until one lands these hold the same three a
+     * server starts with (clientSimCreate), so what the overview draws
+     * before the settings arrive matches what the server is sending. */
+    ViewPolicy       viewPolicy[VIEW_CATEGORY_COUNT];
+    uint16_t         viewDecaySecs[VIEW_CATEGORY_COUNT];
+    bool             classicMode;   /* server is running classic mode; raw
+                                     * mirror of the lobby-settings event,
+                                     * false until the first one lands */
+    bool             alliesInTrees; /* server sends allies standing in trees
+                                     * to their allies; raw mirror of the
+                                     * lobby-settings event, false until the
+                                     * first one lands */
+    /* The client's own copy of the proximity clocks a viewPolicyDecay
+     * category runs on, for the local player as the viewer. The server keeps
+     * the same clocks and they are what decides which rects it sends; these
+     * are display only — what the overview may draw a block round, and how
+     * bright, with the data that has already arrived. Same convention as the
+     * server's: 0 means the player has never been near that item, so a stamp
+     * is never 0. Cleared with the rest of the per-round view state. */
+    uint32_t         viewDecayTick;              /* display ticks this round */
+    uint32_t         pillNearTick[MAX_PILLS];
+    uint32_t         baseNearTick[MAX_BASES];
+    uint32_t         allyNearTick[MAX_TANKS];
+    /* The last map square each remote tank was seen on, and the display tick
+     * that sighting landed. A tank outside our viewport arrives as a hidden
+     * stub, which zeroes its players entry so the renderer stops drawing a
+     * ghost — this is the separate record the ally view centres on instead of
+     * the map origin, and the tick is how long the slot has been out of
+     * sight. Both are 0 for a slot never seen this round, and both are
+     * cleared with the rest of the per-round view state. */
+    BYTE             allyLastMapX[MAX_TANKS];
+    BYTE             allyLastMapY[MAX_TANKS];
+    uint32_t         allySeenTick[MAX_TANKS];
+    /* The ally the stale-view timer belongs to, and the display tick the
+     * current run of watching it started. A tick of 0 means no run is being
+     * timed. */
+    BYTE             allyViewStubTarget;
+    uint32_t         allyViewStubTick;
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
     bool             lobbyAvailable;    /* Server runs a lobby (CTRL_LOBBY_SETTINGS
                                          * inLobby). False on -nolobby/-maprotate;
@@ -609,6 +674,14 @@ struct ClientSim {
     ControlObserverCb transportObserverCb;
     void             *transportObserverCtx;
 
+    /* Last view state reported to the server with CMD_VIEW_STATE.
+     * clientSimSyncViewState compares the viewport against these each
+     * display tick and only sends when they differ. Both start at 0xFF —
+     * no kind or target has that value, so the first tick of a session (and
+     * of every round, which resets them) always reports. */
+    uint8_t lastSentViewKind;
+    uint8_t lastSentViewTarget;
+
     /* Pending alliance request from another player. 0xFF when none.
      * Set by the CTRL_ALLIANCE_REQUEST arm when toPlayer == myPlayerNum;
      * frontends poll via clientSimGetPendingAllianceRequest and clear
@@ -629,6 +702,91 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+
+/* One bit per player slot: the remote tanks this client currently believes
+ * are alive. The client holds no tanks[] object for anyone but itself, so a
+ * remote tank's armour is only ever seen through the interpolation context —
+ * this turns that into the "is it alive" input the ally-view helpers in
+ * players.c take. The local slot is never set. */
+PlayerBitMap            clientSimAllyViewMask(const ClientSim *cs);
+
+/* ── Decay view clocks ───────────────────────────────────────────────
+ * The clocks above run on the display tick, which is the 20ms game tick, so a
+ * decay window in seconds converts at GAME_NUMGAMETICKS_SEC. The server's own
+ * clocks run on its 10ms tick and convert at GAME_NUMTOTALTICKS_SEC; both come
+ * out as the same stretch of real time. */
+#define CLIENT_VIEW_DECAY_TICKS_SEC GAME_NUMGAMETICKS_SEC
+
+/* Advances the clock and re-stamps every item the local tank is within
+ * VIEW_DECAY_NEAR_TILES of, for the categories on viewPolicyDecay. Proximity
+ * and nothing else: alliance, armour and the rest are the region build's
+ * business, and an item can change hands long after the player drove past it.
+ * A tank slot whose players entry has been zeroed by a hidden stub has no
+ * position to measure from and is skipped, not read as the map origin.
+ * Runs once per display tick, before the overview reads the clocks. */
+void                    clientSimViewDecayTick(ClientSim *cs);
+
+/* Clears the clocks back to "never been near anything", along with the
+ * last-seen record the ally view leans on. Called wherever the round's view
+ * state is reset. */
+void                    clientSimResetViewDecay(ClientSim *cs);
+
+/* TRUE when the camera is parked on an item whose category is on
+ * viewPolicyDecay and whose clock has run out. The server has already stopped
+ * sending that item's squares, so the view has nothing left to show. */
+bool                    clientSimViewDecayExpired(const ClientSim *cs);
+
+/* One bit per item of a category: that item may be picked while cycling. All
+ * of them under viewPolicyAlways, viewPolicyKey and viewPolicyOff, so those
+ * three cycle exactly as they always have; under viewPolicyDecay the items
+ * whose clocks have run out drop out, because the server has stopped sending
+ * their squares and parking on one would show nothing. This is the one place
+ * the per-item decay question is asked for cycling. */
+PlayerBitMap            clientSimViewEligibleMask(const ClientSim *cs,
+                                                  ViewCategory cat);
+
+/* Fills the masks and remembered squares the item-view cycling takes. The
+ * split is the same one OverviewViewInputs uses: ClientSim knows the rules
+ * and the clocks, viewport.c knows what to do with them, and neither has to
+ * know the other's layout. */
+void                    clientSimFillViewCycleInputs(const ClientSim *cs,
+                                                     ViewCycleInputs *in);
+
+/* How long the ally view sits on a target it has stopped receiving before it
+ * gives up on it. Under viewPolicyKey the server only starts sending an
+ * ally's rect once the claim arrives, so entering the view always costs about
+ * a round trip of stale ground; two seconds is well clear of that and short
+ * enough that an ally who died while out of sight does not strand the camera.
+ * The client is never told that directly — while a claim is valid the server
+ * grants the rect, so a run of stubs this long means the rect is gone. */
+#define CLIENT_VIEW_ALLY_STUB_GRACE_TICKS (2 * CLIENT_VIEW_DECAY_TICKS_SEC)
+
+/* TRUE when the ally view has gone that long without a real update for the
+ * tank it is watching. Advances the timer, so it belongs on the per-tick
+ * upkeep path and nowhere else. */
+bool                    clientSimAllyViewStubExpired(ClientSim *cs);
+
+/* TRUE while an ally view is still waiting on the first real record for the
+ * ally it is watching. Between applying the server's CTRL_VIEW_TARGET answer
+ * and that ally's first snapshot the client holds no data for them at all, so
+ * the ordinary "is this still watchable" test cannot pass yet and the per-tick
+ * upkeep has to leave the view alone. FALSE once anything has arrived for that
+ * slot this round, and in every view but the ally one. */
+bool                    clientSimAllyViewAwaitingFirstData(const ClientSim *cs);
+
+/* Park the camera on the ally the server named in its CTRL_VIEW_TARGET
+ * answer. The entry point in viewport.c that does the work is private to that
+ * file, so the control dispatcher comes through here rather than reaching
+ * into the viewport itself. */
+void                    clientSimApplyAllyViewTarget(ClientSim *cs, BYTE target,
+                                                     BYTE mapX, BYTE mapY);
+
+/* Fills the view rules, clocks and camera state the overview's region build
+ * takes. Declared here rather than reached through overview_map.h so this
+ * header stays clear of the overview module. */
+struct OverviewViewInputs;
+void                    clientSimFillOverviewViewInputs(const ClientSim *cs,
+                                                        struct OverviewViewInputs *in);
 
 /* ── Render-only error smoothing ─────────────────────────────────────
  * Reconciliation corrections are deposited into the per-axis render

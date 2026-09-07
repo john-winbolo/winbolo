@@ -34,7 +34,6 @@
 #include "client_sim_internal.h"
 #include "tank.h"
 #include "bases.h"
-#include "pillbox.h"
 #include "messages.h"
 #include "scroll.h"
 #include "frontend.h"
@@ -95,7 +94,7 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     /* Same shift math as tankGetScreenMX/MY. */
     rmx = (BYTE)(((WORLD)(rwx - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
     rmy = (BYTE)(((WORLD)(rwy - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
-    if (clientSimIsInPillView(csPtr) == FALSE) {
+    if (clientSimIsInItemView(csPtr) == FALSE) {
       int oldXOffset = clientSimGetXOffset(csPtr);
       int oldYOffset = clientSimGetYOffset(csPtr);
       if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), rmx, rmy, TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr), rwx, rwy) == TRUE) {
@@ -120,7 +119,7 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
   }
 
   /* Follow the death fireball when the tank is dead */
-  if (clientSimIsInPillView(csPtr) == FALSE && clientSimTankIsDead(csPtr)) {
+  if (clientSimIsInItemView(csPtr) == FALSE && clientSimTankIsDead(csPtr)) {
     BYTE expMX, expMY;
     if (tkExplosionGetOwnPosition(&clientSimGetGameSim(csPtr)->tankExplosions, clientSimGetMyPlayerNum(csPtr), &expMX, &expMY)) {
       scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), expMX, expMY);
@@ -128,12 +127,52 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     }
   }
 
-  /* Check we are still allowed to be in pillbox view */
-  if (clientSimIsInPillView(csPtr) == TRUE) {
-    if (pillsCheckView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr)) == FALSE) {
+  /* Check we are still allowed to be watching what we are watching — the pill
+   * is alive and ours, the base has not been captured or gone neutral, the
+   * ally is alive, still allied and still here. An ally view also re-centres
+   * on its target as it drives.
+   *
+   * Under a decay policy there is a second way to lose the view: the clock on
+   * the item runs out. The server stops sending its squares at the same
+   * moment, so staying parked there would only show ground going stale. The
+   * upkeep call comes first and always runs — it is what follows a moving
+   * ally, not just a test. */
+  if (clientSimIsInItemView(csPtr) == TRUE) {
+    ViewCycleInputs cycleIn;
+    bool stillWatchable;
+    bool awaitingAlly;
+
+    awaitingAlly = clientSimAllyViewAwaitingFirstData(csPtr);
+    clientSimFillViewCycleInputs(csPtr, &cycleIn);
+    stillWatchable = viewportUpdateItemView(clientSimViewportMut(csPtr),
+                                            clientSimGetGameSim(csPtr),
+                                            clientSimGetScroll(csPtr),
+                                            &cycleIn);
+    /* An ally the server has just picked has not been streamed yet, so
+     * playersCanAllyView cannot pass for it and the view would close on the
+     * tick after it opened. Hold the drop off until the first real record for
+     * that ally arrives; if none ever does, the stub grace below is what ends
+     * the view. Once a record has arrived the ordinary rule applies again, so
+     * an ally who dies, leaves or breaks the alliance returns the camera to
+     * the tank at once. Pill and base views drop the moment their item stops
+     * qualifying, and a run-out decay clock still ends any of the three. */
+    if ((stillWatchable == FALSE && awaitingAlly == FALSE) ||
+        clientSimViewDecayExpired(csPtr) == TRUE) {
       clientSimTankView(csPtr);
     }
   }
+
+  /* An ally view has a third way to end: the tank has arrived as a hidden
+   * stub for longer than the grace, which means the server has stopped
+   * granting its rect and there is nothing left to follow. The timer runs
+   * whatever the camera is doing and clears itself outside an ally view, so
+   * a later entry starts a fresh grace. */
+  if (clientSimAllyViewStubExpired(csPtr) == TRUE) {
+    clientSimTankView(csPtr);
+  }
+
+  /* Tell the server which view we are in, if it has changed. */
+  clientSimSyncViewState(csPtr);
 
   /* Update tank status bars — the server runs tankDeath/tankUpdate with
    * isServer=TRUE so frontEndUpdateTankStatusBars is not called from game

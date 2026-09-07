@@ -80,6 +80,12 @@ STR_DLGKEYSETUP_SHOOT=Shoot
 STR_DLGKEYSETUP_LAYMINE=Lay Mine
 STR_DLGKEYSETUP_TANKVIEW=Tank View
 STR_DLGKEYSETUP_PILLVIEW=Pill View
+STR_DLGKEYSETUP_BASEVIEW=Base View
+STR_DLGKEYSETUP_ALLYVIEW=Allied Tank View
+STR_DLGKEYSETUP_OVERVIEWZOOM=Map Zoom (hold)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Map Follow (toggle)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Map Zoom In
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Map Zoom Out
 STR_DLGKEYSETUP_SCROLLUP=Up
 STR_DLGKEYSETUP_SCROLLDOWN=Down
 STR_DLGKEYSETUP_SCROLLLEFT=Left
@@ -337,6 +343,8 @@ STR_DLGSETTINGS_GAME=Game
 STR_MENU_FILE=File
 STR_MENU_NEW=New
 STR_MENU_SAVE_MAP=Save Map
+STR_MENU_MAP_OVERVIEW=Map Overview
+STR_MENU_OVERVIEW_IN_WINDOW=Full Screen
 STR_MENU_EXIT=Exit
 STR_MENU_EDIT=Edit
 STR_MENU_FRAME_RATE=Frame Rate
@@ -386,6 +394,10 @@ STR_MENU_ABOUT=About
 STR_MENU_LEAVE_GAME=Leave Game
 STR_BRAINSETTINGS_NONE=(no settings)
 STR_BRAINSETTINGS_TITLE=Brain Settings
+
+# Map overview pop-out
+STR_OVERVIEW_FOLLOWING=following
+STR_OVERVIEW_FREE=free
 
 # Settings panel additions (pre-game)
 STR_DLGSETTINGS_TUTORIAL=Tutorial
@@ -785,6 +797,8 @@ STR_DLGWELCOME_LOCAL=Local
 STR_DLGWELCOME_MAPEDITOR=Map Editor
 STR_DLGWELCOME_LOGVIEWER=Log Viewer
 STR_DLGWELCOME_INTERNET=Internet
+STR_DLGWELCOME_SWITCH_CLASSIC=Switch to Classic
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Switch to Full Screen
 
 # Map Chooser dialog
 STR_MAPCHOOSER_EVERARD=Everard Island (Inbuilt)
@@ -1468,6 +1482,45 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 
 # Connectivity badge
 STR_DLGLOBBY_CONN_TEST_TIP=Test in progress
+
+# Visibility block (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Visibility
+STR_DLGLOBBY_VIEW_PILL=Pill View
+STR_DLGLOBBY_VIEW_BASE=Base View
+STR_DLGLOBBY_VIEW_ALLY=Allied Tank View
+STR_DLGLOBBY_VIEW_ALWAYS=Always
+STR_DLGLOBBY_VIEW_KEY=Key
+STR_DLGLOBBY_VIEW_DECAY=Decay
+STR_DLGLOBBY_VIEW_OFF=Off
+STR_DLGLOBBY_VIEW_DECAY_SECS=secs
+STR_DLGLOBBY_CLASSIC_MODE_CB=Classic mode
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Sets Pill View to Key, and Base View and Allied Tank\nView to Off, and holds them there. Turning it off\nagain leaves those three where classic mode put them.\nIt also hides the Map Overview and the Full Screen\nmap on each player's own screen. The server sends the\nsame data either way, so this is a convenience rule,\nnot a guarantee about a modified client.
+STR_MENU_CLASSIC_MODE_TIP=The server has classic mode on, so this view is turned off.
+STR_DLGLOBBY_ALLIES_TREES_CB=See allies in trees
+STR_DLGLOBBY_ALLIES_TREES_TIP=Allied tanks standing in trees are drawn on your\nscreen instead of being hidden. Fog of war still\napplies, so you only see them where you can see\nanyway. Off is the classic rule, and classic mode\nforces it off.
+
+# Settings > Display & Sound > Full Screen
+STR_DLGSETTINGS_FULLSCREEN=Full Screen
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Newswire transparency
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=How much of the map shows through the newswire along\nthe bottom of the full screen view. 0% is solid, and\nthe slider stops at 90% so it cannot be made invisible.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Auto-hide the newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Drop the newswire off the bottom of the screen after\nno new messages have been received for a while, and\nslide it back up on the next message. Off keeps it on\nscreen the whole game.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Builder tools transparency
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=How much of the map shows through the builder tools\ndown the left of the full screen view. 0% is solid,\nand the slider stops at 90% so they cannot be made\ninvisible.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Status panel transparency
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=How much of the map shows through the status panel\ndown the right of the full screen view - the LGM,\nkills and deaths, the base, pillbox and tank rows,\nand the stock bars. 0% is solid, and the slider stops\nat 90% so it cannot be made invisible.
+STR_DLGSETTINGS_FULLSCREEN_TIP=Fill the whole screen instead of running in a window.\nRemembered for next time.
+
+# Item view caption — the corner label and the full screen map's caption
+STR_ITEMVIEW_PILL=Pillbox View
+STR_ITEMVIEW_BASE=Base View
+STR_ITEMVIEW_ALLY=Allied Tank View
+STR_ITEMVIEW_ALLY_NAMED=Allied Tank View — {player}
+
+# Server browser visibility tag in the detail pane
+STR_DLGBROWSER_VIEWS_LBL=Views:
+STR_DLGBROWSER_VIEWS_CLASSIC=Classic
+STR_DLGBROWSER_VIEWS_ALLYTREES=Allies in trees
 
 # Gamepad rebinding (Configure Keys → Controller section)
 STR_GP_SECTION=Controller

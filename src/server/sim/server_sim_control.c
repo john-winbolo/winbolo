@@ -170,6 +170,12 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
     evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
+    for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
+        evt->u.lobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
+        evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
+    }
+    evt->u.lobbySettings.lobbyClassicMode = sim->classicMode;
+    evt->u.lobbySettings.lobbyAlliesInTrees = sim->alliesInTrees;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {

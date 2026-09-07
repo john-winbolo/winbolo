@@ -746,30 +746,28 @@ static bool isStatusSprite(const char *name) {
     return strncmp(name, prefix, sizeof(prefix) - 1) == 0;
 }
 
-/* Turn the key colour into transparency on a converted RGBA32 sheet.
+/* Force every status-pane icon slot of an RGBA32 sheet fully opaque.
  * `density` is the multiple the sheet is drawn at, which is what turns a
  * gTileMap[] slot into a rect on these pixels.
  *
- * The status pane's icon slots come out fully opaque.  A whole-sheet BMP
- * draws those icons in green on black — the built-in sheet and the 1.x
- * skins both do — so keying them would erase the icons themselves and
- * leave the player an empty status bar.  The black they sit on costs
- * nothing: sdl3DrawSetBasesStatusClear fills the whole bases panel with
- * opaque black before any icon is drawn over it. */
-static void applySheetKey(SDL_Surface *rgba, int density) {
+ * The status icons are the one part of the art that carries the key colour as
+ * a colour: a whole-sheet BMP draws them in green on black — the built-in
+ * sheet and the 1.x skins both do — and data/svg/status_*.png stores that same
+ * green as the key, alpha and all.  Keying them would erase the icons
+ * themselves and leave the player an empty status bar.  The black they sit on
+ * costs nothing: sdl3DrawSetBasesStatusClear fills the whole bases panel with
+ * opaque black before any icon is drawn over it.
+ *
+ * The alpha matters even though the icons are blitted with SDL_BLENDMODE_NONE,
+ * which takes its colour from the RGB alone: that blit copies the alpha
+ * through to whatever it is drawing into, and the full screen map's status
+ * column then blends that frame over the map at the transparency the player
+ * set.  Green left at alpha 0 is green the column drops, so the friendly
+ * bases, pills and tanks would go from the panel the moment it stopped being
+ * solid. */
+static void makeStatusSlotsOpaque(SDL_Surface *rgba, int density) {
     if (!rgba || !rgba->pixels) return;
     if (density < 1) density = 1;
-
-    /* Alpha only.  The RGB of a keyed pixel is left where it is, so putting
-       a status slot's alpha back below restores its art exactly. */
-    for (int y = 0; y < rgba->h; y++) {
-        unsigned char *row = (unsigned char *)rgba->pixels +
-                             (size_t)y * (size_t)rgba->pitch;
-        for (int x = 0; x < rgba->w; x++) {
-            unsigned char *p = row + (size_t)x * 4;
-            if (tileLoaderIsSheetKeyColor(p[0], p[1], p[2])) p[3] = 0;
-        }
-    }
 
     for (int i = 0; gTileMap[i].name != NULL; i++) {
         if (!isStatusSprite(gTileMap[i].name)) continue;
@@ -796,6 +794,29 @@ static void applySheetKey(SDL_Surface *rgba, int density) {
             }
         }
     }
+}
+
+/* Turn the key colour into transparency on a converted RGBA32 sheet, then put
+ * the status slots back opaque.  `density` is the multiple the sheet is drawn
+ * at.  Doing it here as well as on the built sheet is what keeps a status
+ * slot's colour: the per-sprite crop out of a whole sheet averages by alpha
+ * when it has to scale, and a keyed-out pixel would take no colour into the
+ * average. */
+static void applySheetKey(SDL_Surface *rgba, int density) {
+    if (!rgba || !rgba->pixels) return;
+
+    /* Alpha only.  The RGB of a keyed pixel is left where it is, so putting
+       a status slot's alpha back restores its art exactly. */
+    for (int y = 0; y < rgba->h; y++) {
+        unsigned char *row = (unsigned char *)rgba->pixels +
+                             (size_t)y * (size_t)rgba->pitch;
+        for (int x = 0; x < rgba->w; x++) {
+            unsigned char *p = row + (size_t)x * 4;
+            if (tileLoaderIsSheetKeyColor(p[0], p[1], p[2])) p[3] = 0;
+        }
+    }
+
+    makeStatusSlotsOpaque(rgba, density);
 }
 
 /* Convert a freshly loaded sheet BMP to RGBA32.  Nothing is made
@@ -1077,6 +1098,13 @@ SDL_Surface *tileLoaderBuildSheetFor(struct SkinSource *skin, int tileSize,
             bmpCount++;
         }
     }
+
+    /* Every sprite is in, so seal the status slots.  applySheetKey only sees
+       the sheets it keys, and the per-sprite art above never goes through it:
+       data/svg/status_*.png draws its icons in the key colour and marks that
+       colour transparent, and a skin's own status PNG or SVG may do the
+       same. */
+    makeStatusSlotsOpaque(sheet, scale);
 
     /* A skin with InGameRotate=1 draws one north-facing frame per tank group
        and leaves the other fifteen to be turned from it.  Filling them into

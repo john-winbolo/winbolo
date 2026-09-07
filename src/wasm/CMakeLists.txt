@@ -232,6 +232,10 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
+    ${SRC_ROOT}/gui/sdl3/overview_camera.cpp
+    ${SRC_ROOT}/gui/sdl3/overview_fog.cpp
+    ${SRC_ROOT}/gui/sdl3/overview_hud_layout.cpp
+    ${SRC_ROOT}/gui/sdl3/overview_view.cpp
     ${SRC_ROOT}/gui/sdl3/wbn_map_source.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
@@ -242,6 +246,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/gfx_settings.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw.c
     ${SRC_ROOT}/gui/sdl3/sdl3draw_status.c
+    ${SRC_ROOT}/gui/sdl3/tank_label.c
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
     ${SRC_ROOT}/gui/sdl3/input.c
     ${SRC_ROOT}/gui/sdl3/input_touch.c

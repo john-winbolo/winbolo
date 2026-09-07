@@ -30,6 +30,14 @@ typedef struct {
   char country[8];                           /* "country" — may be "" */
   int  gameType;                             /* "game_type" */
   int  ai;                                   /* "ai" (0..3) */
+  int  pillView;                             /* "pillview" ViewPolicy; absent = always */
+  int  baseView;                             /* "baseview" ViewPolicy; absent = off */
+  int  allyView;                             /* "allyview" ViewPolicy; absent = always */
+  bool classicMode;                          /* "classicmode"; absent = off */
+  bool alliesInTrees;                        /* "alliesintrees"; absent = off */
+  int  pillViewDecay;                        /* "pillviewdecay" secs; absent = 30 */
+  int  baseViewDecay;                        /* "baseviewdecay" secs; absent = 30 */
+  int  allyViewDecay;                        /* "allyviewdecay" secs; absent = 30 */
   bool mines;                                /* "mines" */
   bool password;                             /* "password" */
   bool randomMap;                            /* "random_map" */

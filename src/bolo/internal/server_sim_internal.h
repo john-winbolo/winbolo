@@ -28,6 +28,7 @@
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
+#include "view_policy.h"    /* ViewPolicy / ViewCategory — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 #include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
@@ -142,6 +143,22 @@ struct ServerSim {
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+    /* Per-category visibility rules, indexed by ViewCategory. Set from
+     * the CLI / hosting prefs at startup and from the lobby via
+     * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW; broadcast in the
+     * lobby-settings event. decaySecs only matters for viewPolicyDecay
+     * but is carried for every category so the lobby UI can keep the
+     * host's value while they flip between modes. */
+    ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
+    uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
+    bool     classicMode;          /* host asked for the classic Bolo view.
+                                    * Setting it forces pill view to key and
+                                    * base and ally view to off, and blocks
+                                    * lobby edits to those three while on. */
+    bool     alliesInTrees;        /* allied tanks standing in trees are sent
+                                    * to their allies instead of being
+                                    * withheld; off is the classic
+                                    * behaviour. */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     BYTE     maxSpectators;        /* 0 = spectating disabled */
@@ -181,6 +198,10 @@ struct ServerSim {
         bool     autoLockOnGameStart;
         bool     ranked;
         uint16_t serverLocks;
+        ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
+        uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
+        bool       classicMode;
+        bool       alliesInTrees;
     } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running
@@ -306,6 +327,54 @@ struct ServerSim {
     GameEvent    mapEvents[MAX_MAP_EVENTS];
     uint16_t     mapEventCount;
 
+    /* What each connected client's copy of the terrain looks like: every
+     * tile the server has actually sent it. Identical to the real map for a
+     * slot that is handed every map event, and behind it by whatever a culled
+     * slot has not been sent yet; the CRC in that client's snapshot header
+     * and its resync blob read this copy, so the two ends agree about the
+     * map the client was really given. The handle array holds
+     * &clientKnownMapObj[i] so the bolo_map.c entry points, which all take a
+     * `map *`, can be called against a slot's copy. */
+    struct mapObj clientKnownMapObj[MAX_TANKS];
+    map           clientKnownMap[MAX_TANKS];
+
+    /* The terrain as it stood when the current map was installed — sim create,
+     * a map load, a lobby map change, the round reset — which for a running
+     * game is the terrain the round started on. A player joining a running
+     * game over the wire is handed this instead of the live map, so arriving
+     * (or rejoining) tells it nothing about what has happened since; it learns
+     * the differences from the catch-up sweep as its viewports cover them.
+     * roundStartMap holds &roundStartMapObj once a map has been copied in, and
+     * is NULL until then. */
+    struct mapObj roundStartMapObj;
+    map           roundStartMap;
+
+    /* The pill squares each client has actually been sent — the position half
+     * of the copy above, kept because mapCalcChecksum folds the tile under
+     * every pill, so the checksum a client can compute depends on the pill
+     * list it holds as much as on its terrain. Seeded, captured and written
+     * alongside the terrain copy so the two can never describe different
+     * moments. Valid[slot] false means the slot has not been seeded and a
+     * reader falls back to the live list. */
+    BYTE clientKnownPillX[MAX_TANKS][MAX_PILLS];
+    BYTE clientKnownPillY[MAX_TANKS][MAX_PILLS];
+    bool clientKnownPillValid[MAX_TANKS];
+
+    /* The pill squares as they stood when the current map was installed — the
+     * counterpart of roundStartMapObj, and what a player joining a running
+     * game is handed with the round-start terrain. */
+    BYTE roundStartPillX[MAX_PILLS];
+    BYTE roundStartPillY[MAX_PILLS];
+    BYTE roundStartPillCount;
+    bool roundStartPillsValid;
+
+    /* Bit i set: slot i's copy is written by the UDP transport rather than by
+     * the tick, because that transport only sends it the changes inside its
+     * viewports. The transport sets the bit when it takes the slot and clears
+     * it when the slot goes; every other slot — the local host player, bots,
+     * anything in-process — keeps its bit clear and takes every change. */
+    uint16_t      shadowCulledSlots;
+
     /* Previous pill/base state for change detection */
     PillSnapshot prevPills[MAX_SNAPSHOT_PILLS];
     BaseSnapshot prevBases[MAX_SNAPSHOT_BASES];
@@ -321,6 +390,24 @@ struct ServerSim {
      * snapshot build manages its own full-sync cadence; a scalar here let the
      * first client built each interval consume it and starve the rest. */
     uint32_t     lastFullSyncTick[MAX_TANKS];
+
+    /* viewPolicyDecay: last sim tick the player's tank was within
+     * VIEW_DECAY_NEAR_TILES of the item. 0 = never (not viewable). */
+    uint32_t     pillNearTick[MAX_TANKS][MAX_PILLS];
+    uint32_t     baseNearTick[MAX_TANKS][MAX_BASES];
+    uint32_t     allyNearTick[MAX_TANKS][MAX_TANKS];
+
+    /* What each player last reported viewing (CMD_VIEW_STATE). Only
+     * consulted when a category's policy is viewPolicyKey. */
+    uint8_t      viewKind[MAX_TANKS];     /* 0=tank, 1=pill, 2=base, 3=ally */
+    uint8_t      viewTarget[MAX_TANKS];
+
+    /* Last map square the builder saw this player's tank at; keeps a dead
+     * or tankless player's view anchored instead of falling back to the
+     * whole map. */
+    uint8_t      lastTankMX[MAX_TANKS];
+    uint8_t      lastTankMY[MAX_TANKS];
+    bool         lastTankValid[MAX_TANKS];
 
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
@@ -441,20 +528,162 @@ struct ServerSim {
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
 
-/* Per-recipient visibility region: the client's tank screen plus each of its
- * owned/allied (not-in-tank) pillbox screens. Shared by the snapshot cull and
- * the best-effort game-event cull. */
-#define MAX_VIEWPORTS (1 + MAX_SNAPSHOT_PILLS)
+BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
+
+/* Per-recipient visibility region: the client's tank screen plus a screen for
+ * each allied pillbox, base and tank the view policies let through. Shared by
+ * the snapshot cull and the best-effort game-event cull. Sized for the worst
+ * case — the tank plus every pill, base and other tank at once. */
+#define MAX_VIEWPORTS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)
 
 typedef struct {
     int minMX, maxMX, minMY, maxMY;
 } ViewportRect;
 
-/* Fill `out` (capacity maxOut) with clientIdx's tank + owned/allied pillbox
- * viewports; falls back to one full-map [0..255] rect when the player has no
- * tank and no placed pills. Returns the count (always >= 1). */
+/* Fill `out` (capacity maxOut) with clientIdx's tank screen plus one screen
+ * per allied pillbox, base and tank that its category's ViewPolicy allows.
+ * A client with no tank gets a screen at its last known position instead.
+ * While a viewPolicyKey category is granting the item the client reports
+ * watching, that item's screen is the only one it gets: key is one view at a
+ * time, so the tank screen (and the last-known one behind it) is left out for
+ * as long as it lasts. Returns the count, which can be 0 (a slot that never
+ * had a tank, with every category off). */
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
+
+/* Per-client copies of the terrain (clientKnownMap above). Seed points a
+ * slot's handle at its storage and copies the live map into it; SeedAll does
+ * every slot. Called wherever the real map is installed or replaced — sim
+ * create, map load, lobby map change, round reset — and for one slot when a
+ * player joins, so the copy a client is given always starts as the map the
+ * server holds. */
+void serverSimShadowSeed(ServerSim *sim, BYTE slot);
+void serverSimShadowSeedAll(ServerSim *sim);
+
+/* The same for one slot's record of the pill squares (clientKnownPillX/Y
+ * above). Called from serverSimShadowSeed, so every point that seeds a slot's
+ * terrain seeds its pill squares in the same breath. */
+void serverSimPillShadowSeed(ServerSim *sim, BYTE slot);
+
+/* The round-start copy of the terrain (roundStartMap above). Capture copies the
+ * live map into it; it is called from serverSimShadowSeedAll, so every point
+ * that installs a map takes a fresh copy and nothing else has to remember to.
+ * SeedRoundStart starts one slot's copy from it instead of from the live map —
+ * what the UDP join does for a slot joining a running game, so the blob
+ * compressed from that copy carries the round-start terrain. With nothing
+ * captured yet it falls back to the live-map seed, so a slot can never be
+ * handed an empty map. */
+void serverSimShadowCaptureRoundStart(ServerSim *sim);
+void serverSimShadowSeedRoundStart(ServerSim *sim, BYTE slot);
+
+/* The pill squares the round started on (roundStartPillX/Y above), captured and
+ * handed out with the round-start terrain by the two calls above. With nothing
+ * captured yet SeedRoundStart falls back to the live-list seed, so a slot can
+ * never be handed empty squares. */
+void serverSimPillShadowCaptureRoundStart(ServerSim *sim);
+void serverSimPillShadowSeedRoundStart(ServerSim *sim, BYTE slot);
+
+/* Write this tick's map changes into the copies the tick owns. Called once per
+ * running frame from the tick core, after both half-steps have finished
+ * filling mapEvents and before any transport drains them, so in-process
+ * clients and bots track the same way UDP clients do. Culled slots are skipped
+ * — the UDP drain writes those, one tile per event it actually queues. Apply
+ * writes one tile into every slot's copy regardless of culling; it is what the
+ * transport's test-only map-event injector calls, which stages a change
+ * without a tick to carry it. ApplySlot writes the one slot. */
+void serverSimShadowApply(ServerSim *sim, BYTE x, BYTE y, BYTE terrain);
+void serverSimShadowApplySlot(ServerSim *sim, BYTE slot, BYTE x, BYTE y,
+                              BYTE terrain);
+void serverSimShadowTick(ServerSim *sim);
+
+/* Write this tick's pill squares into the records the tick owns. Called from
+ * serverSimShadowTick, so the pill squares and the terrain are written at the
+ * same point in the frame. */
+void serverSimPillShadowTick(ServerSim *sim);
+
+/* Which slots the tick skips (shadowCulledSlots above). The UDP transport owns
+ * this: it marks a slot on join and unmarks it on disconnect. Nothing else
+ * should set it — an unmarked slot is one whose client is handed every map
+ * change, which is what every in-process client is. */
+void serverSimSetShadowCulled(ServerSim *sim, BYTE slot, bool culled);
+bool serverSimIsShadowCulled(const ServerSim *sim, BYTE slot);
+uint16_t serverSimGetShadowCulledMask(const ServerSim *sim);
+
+/* Diff a culled slot's copy of the terrain against the live map inside `vps`
+ * and describe the difference as up to maxOut synthesized EVENT_MAP_CHANGE
+ * events (data[0..2] = mx, my, live terrain). Every emitted tile is written
+ * into the slot's copy before returning, so the caller must queue all of them
+ * — that write-through is the record of what was sent, and it also means a
+ * tile covered by two overlapping rects is only emitted once. Squares outside
+ * the rects are left alone however stale they are: that staleness is the
+ * standing record of what the client is still owed, and a later sweep with
+ * rects over it is what pays it. Returns the number of events written. */
+int  serverSimShadowSweep(ServerSim *sim, BYTE slot, const ViewportRect *vps,
+                          int numVps, GameEvent *out, int maxOut);
+
+/* Fill `out` with the live pill list, with each pill's square replaced by the
+ * one that slot has actually been sent. Everything else — owner, armour,
+ * inTank and the rest — is the live record and is public. Returns false, and
+ * writes nothing, for a slot with no record yet; the caller then reads the
+ * live list. */
+bool serverSimGetPillsForSlot(ServerSim *sim, BYTE slot, struct pillsObj *out);
+
+/* Is pill `pillIdx`'s square something this recipient is being shown? True
+ * when the pill stands inside one of the rects the caller built for it. An
+ * advantage brain is exempt, and so is a slot with no record yet — that slot's
+ * checksum and blob read the live list, so its square has to go out real. */
+bool serverSimPillPosVisible(ServerSim *sim, BYTE slot, BYTE pillIdx,
+                             const ViewportRect *vps, int numVps);
+
+/* Reshape one EVENT_PILL_UPDATE for a recipient. It is the only carrier for a
+ * pill's armour, owner and in-tank flag between full syncs, so it is rewritten
+ * and never dropped: the real square with the position-current bit set when the
+ * recipient can see the pill, otherwise the square it already holds with the
+ * bit clear. */
+void serverSimFogPillUpdateEvent(ServerSim *sim, BYTE slot, GameEvent *ev,
+                                 const ViewportRect *vps, int numVps);
+
+/* serverSimGetCompressedMap over one slot's copy of the terrain and its record
+ * of the pill squares, with the live bases and starts. The blob a client
+ * downloads on join or resync comes from here, so it carries the terrain and
+ * the pill list that client's snapshot checksum is computed over. Returns the
+ * compressed length, or 0 if the blob does not fit outputCap bytes — nothing is
+ * written past that capacity. */
+int  serverSimGetCompressedMapFor(ServerSim *sim, BYTE slot, BYTE *output,
+                                  int outputCap);
+
+/* Stamp the proximity clocks the viewPolicyDecay categories read: for every
+ * connected player with a live tank, every pill/base/tank within
+ * VIEW_DECAY_NEAR_TILES map squares of it. Only categories set to
+ * viewPolicyDecay are walked. Called once per running half-step from the tick
+ * core in server_sim_tick.c. */
+void serverSimUpdateViewDecay(ServerSim *sim);
+
+/* Re-check every connected player's reported view (viewKind/viewTarget) and
+ * reset it to VIEW_KIND_TANK when the claimed target no longer earns a view:
+ * the category is viewPolicyOff, the target is out of range or no longer
+ * qualifies (allied / alive / not carried), or — under viewPolicyDecay — the
+ * viewer's proximity clock for it has expired. There is no server→client
+ * event: the rect simply stops being built and the client exits the view on
+ * its own. Called once per running half-step alongside
+ * serverSimUpdateViewDecay. */
+void serverSimValidateViewTargets(ServerSim *sim);
+
+/* Pick the ally `clientIdx` should watch, stepping away from `from` (the ally
+ * it is watching now, or VIEW_CYCLE_FROM_NONE) in `direction`, a
+ * ViewCycleDirection. Only allies that recipient may watch right now are
+ * offered — the same rule serverSimValidateViewTargets keeps a view on — so an
+ * ally that is dead, not allied, absent, in a switched-off category or, under
+ * viewPolicyDecay, past its proximity window can never be chosen. On success
+ * writes the ally's player number to *outTarget and its current map square to
+ * *outMapX / *outMapY and returns true. Returns false, writing nothing, when
+ * there is nothing to watch; that is a normal answer, not an error. Takes
+ * clientIdx explicitly because the players.c ally helpers read the watcher
+ * from sim->viewPlayer, a single per-GameSim field: driving them per
+ * recipient would mean overwriting that field for each one. */
+bool serverSimPickAlly(ServerSim *sim, BYTE clientIdx, uint8_t direction,
+                       uint8_t from, BYTE *outTarget, BYTE *outMapX,
+                       BYTE *outMapY);
 
 /* Fill `out` with base `baseIdx0`'s (0-based) current shells/mines/armour as an
  * EVENT_BASE_STOCK (data[0]=baseIdx0, data[1]=armour, data[2]=shells,

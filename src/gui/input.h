@@ -30,6 +30,14 @@
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
 
+/* The declarations below are defined in input.c, so a C++ includer that
+   forgot to wrap this header would give them C++ linkage and fail to
+   link. The two includes above stay outside the guard: other includers
+   already pull them in inside an extern "C" of their own. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct ClientSim;
 
 /* Typestructure that holds the keys */
@@ -45,6 +53,12 @@ typedef struct {
   int kiGunDecrease; /* Decrease gunsight length */
   int kiTankView;    /* Center on tank */
   int kiPillView;    /* Pill view */
+  int kiOverviewZoom; /* Held, the wheel zooms the map overview instead of
+                         moving the gunsight */
+  int kiOverviewFollow;  /* Toggles the map overview between following the
+                            tank and a free camera */
+  int kiOverviewZoomIn;  /* Map overview zoom in */
+  int kiOverviewZoomOut; /* Map overview zoom out */
   int kiScrollUp;    /* Scroll up */
   int kiScrollDown;  /* Scroll down */
   int kiScrollLeft;  /* Scroll left */
@@ -159,5 +173,9 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu);
 *  isMenu  - True if we are in a menu
 *********************************************************/
 void inputScroll(struct ClientSim *cs, keyItems *setKeys, bool isMenu);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -172,6 +172,11 @@ bool interpGetPosition(const InterpContext *ctx, BYTE playerNum,
     return FALSE;
   }
 
+  /* Position withheld: the entry was sent for the man, not the tank. */
+  if (p->curr.tankHidden) {
+    return FALSE;
+  }
+
   /* If too many missed ticks, freeze at last known position */
   if (p->missedTicks > INTERP_MAX_MISSED_TICKS) {
     return FALSE;
@@ -191,8 +196,12 @@ bool interpGetPosition(const InterpContext *ctx, BYTE playerNum,
    * teleport back to the respawn point. Output curr directly instead of
    * tweening from the stale death position (a one-frame flash at the death
    * spot). Placed before the missedTicks block so a missed-tick respawn can't
-   * extrapolate a bogus death->respawn velocity either. */
-  if (!p->prev.alive) {
+   * extrapolate a bogus death->respawn velocity either.
+   *
+   * A tank stepping out of trees is the same shape: prev's position was
+   * withheld and holds zeros, so tweening from it would streak the tank in
+   * from the corner of the map. */
+  if (!p->prev.alive || p->prev.tankHidden) {
     *outX = p->curr.worldX;
     *outY = p->curr.worldY;
     *outAngle = p->curr.angle;
@@ -281,6 +290,21 @@ bool interpIsAlive(const InterpContext *ctx, BYTE playerNum) {
   return p->curr.alive;
 }
 
+bool interpTankHidden(const InterpContext *ctx, BYTE playerNum) {
+  const InterpPlayer *p;
+  if (playerNum >= MAX_TANKS) {
+    return FALSE;
+  }
+  p = &ctx->players[playerNum];
+  if (!p->hasData) {
+    return FALSE;
+  }
+  if (p->hasPending) {
+    return p->pending.tankHidden;
+  }
+  return p->curr.tankHidden;
+}
+
 /* Above this a snapshot inter-arrival interval is treated as garbage/stale
  * and the smooth path bows out (a real interval is ~20ms; loss stretches it,
  * but past this the discrete freeze owns the motion). */
@@ -318,6 +342,9 @@ bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
     return FALSE;
   }
   if (!p->pending.alive) {
+    return FALSE;
+  }
+  if (p->pending.tankHidden || p->curr.tankHidden) {
     return FALSE;
   }
 
@@ -385,8 +412,11 @@ bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
     }
     /* Respawn snap one snapshot deeper: prev is the stale death sample, curr
      * is the alive endpoint of this segment.  Output curr directly (including
-     * over the clamp-to-prev case below) so the death spot is never shown. */
-    if (!p->prev.alive) {
+     * over the clamp-to-prev case below) so the death spot is never shown.
+     * A prev whose position was withheld holds zeros and is handled the same
+     * way, so a tank stepping out of trees does not slide in from the corner
+     * of the map. */
+    if (!p->prev.alive || p->prev.tankHidden) {
       *outX = p->curr.worldX;
       *outY = p->curr.worldY;
       *outAngle = p->curr.angle;

@@ -499,13 +499,15 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 *  compressed data length
 *
 *ARGUMENTS:
-*  value    - Pointer to the map data structure
-*  ss       - Pointer to the starts structure
-*  bs       - Pointer to the bases structure
-*  pb       - Pointer to the pillbox structure
-*  output   - Pointer to the data buffer
+*  value     - Pointer to the map data structure
+*  ss        - Pointer to the starts structure
+*  bs        - Pointer to the bases structure
+*  pb        - Pointer to the pillbox structure
+*  output    - Pointer to the data buffer
+*  outputCap - Size of the output buffer in bytes. Nothing is written past
+*              it; a map that does not fit returns 0 instead.
 *********************************************************/
-int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *output);
+int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *output, int outputCap);
 
 /*********************************************************
 *NAME:          mapCenter

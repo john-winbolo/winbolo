@@ -52,6 +52,7 @@
     FGROUP(TANK_PRESENT_TURNRAMP, U8, firstLeft)             \
     FGROUP(TANK_PRESENT_TURNRAMP, U8, firstRight)            \
     FGROUP(TANK_PRESENT_PING,  U16, pingMs)                  \
-    FGROUP(TANK_PRESENT_FLAGS, U8, clientFlags)
+    FGROUP(TANK_PRESENT_FLAGS, U8, clientFlags)              \
+    FGROUP(TANK_PRESENT_HIDDEN, U8, hiddenFlags)
 
 #endif /* WINBOLO_WIRE_MESSAGES_H */

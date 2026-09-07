@@ -82,23 +82,30 @@ static const uint8_t kAngryStartMap[] = {
     0x04, 0xFF, 0xFF, 0xFF,
 };
 
-static const char *kTempPath = "data/maps/.test_field_clamps.map";
+/* Each case owns its own scratch file. CTest runs the three as separate
+ * processes in parallel, so a shared name would have one case removing the
+ * file another was still reading — an intermittent failure that looks like a
+ * clamp bug and is not one. */
+#define TEMP_PATH_EVIL        "data/maps/.test_field_clamps_evil.map"
+#define TEMP_PATH_PASSTHROUGH "data/maps/.test_field_clamps_passthrough.map"
+#define TEMP_PATH_ANGRY       "data/maps/.test_field_clamps_angry.map"
 
-static bool write_blob(const void *bytes, size_t len) {
+static bool write_blob(const char *path, const void *bytes, size_t len) {
     SDL_CreateDirectory("data/maps");
-    FILE *fp = fopen(kTempPath, "wb");
+    FILE *fp = fopen(path, "wb");
     if (!fp) return false;
     size_t w = fwrite(bytes, 1, len, fp);
     fclose(fp);
     return w == len;
 }
 
-static bool load_and_inspect(const void *blob, size_t blobLen,
+static bool load_and_inspect(const char *path,
+                              const void *blob, size_t blobLen,
                               pillbox *outPill,
                               base    *outBase,
                               start   *outStart,
                               bool wantPill, bool wantBase, bool wantStart) {
-    if (!write_blob(blob, blobLen)) return false;
+    if (!write_blob(path, blob, blobLen)) return false;
 
     map mp = NULL;
     pillboxes pb = NULL;
@@ -109,7 +116,7 @@ static bool load_and_inspect(const void *blob, size_t blobLen,
     basesCreate(&bs);
     startsCreate(&ss);
 
-    bool ok = mapRead((char *)kTempPath, &mp, &pb, &bs, &ss);
+    bool ok = mapRead((char *)path, &mp, &pb, &bs, &ss);
     if (ok) {
         if (wantPill)  pillsGetPill(&pb, outPill, 1);
         if (wantBase)  basesGetBase(&bs, outBase, 1);
@@ -128,7 +135,7 @@ int run_map_field_clamps_evil(void) {
     base    b; memset(&b, 0, sizeof(b));
     start   s; memset(&s, 0, sizeof(s));
 
-    UT_ASSERT_MSG(load_and_inspect(kEvilMap, sizeof(kEvilMap),
+    UT_ASSERT_MSG(load_and_inspect(TEMP_PATH_EVIL, kEvilMap, sizeof(kEvilMap),
                                     &p, &b, &s, true, true, true),
                   "mapRead must accept a malformed-but-decodable map");
 
@@ -155,7 +162,7 @@ int run_map_field_clamps_evil(void) {
     UT_ASSERT_MSG(s.dir == 0,
                   "start dir 200 must clamp to 0, got %d", s.dir);
 
-    SDL_RemovePath(kTempPath);
+    SDL_RemovePath(TEMP_PATH_EVIL);
     return 0;
 }
 
@@ -164,7 +171,8 @@ int run_map_field_clamps_passthrough(void) {
     base    b; memset(&b, 0, sizeof(b));
     start   s; memset(&s, 0, sizeof(s));
 
-    UT_ASSERT(load_and_inspect(kLegitMap, sizeof(kLegitMap),
+    UT_ASSERT(load_and_inspect(TEMP_PATH_PASSTHROUGH, kLegitMap,
+                                sizeof(kLegitMap),
                                 &p, &b, &s, true, true, true));
 
     /* Maxed-but-legitimate values must survive unchanged. */
@@ -178,14 +186,15 @@ int run_map_field_clamps_passthrough(void) {
     UT_ASSERT_MSG(s.dir == 15,
                   "legitimate start dir=15 must pass, got %d", s.dir);
 
-    SDL_RemovePath(kTempPath);
+    SDL_RemovePath(TEMP_PATH_PASSTHROUGH);
     return 0;
 }
 
 int run_map_field_clamps_angry_start(void) {
     pillbox p; memset(&p, 0, sizeof(p));
 
-    UT_ASSERT(load_and_inspect(kAngryStartMap, sizeof(kAngryStartMap),
+    UT_ASSERT(load_and_inspect(TEMP_PATH_ANGRY, kAngryStartMap,
+                                sizeof(kAngryStartMap),
                                 &p, NULL, NULL, true, false, false));
 
     /* speed = PILLBOX_MAX_FIRERATE is the legitimate "starts angry"
@@ -195,6 +204,6 @@ int run_map_field_clamps_angry_start(void) {
                   "angry-start pill speed=%d must pass through, got %d",
                   PILLBOX_MAX_FIRERATE, p.speed);
 
-    SDL_RemovePath(kTempPath);
+    SDL_RemovePath(TEMP_PATH_ANGRY);
     return 0;
 }

@@ -505,14 +505,35 @@ void lv_drawGameViewSetup(int zoomFactor) {
   int   dz      = (int)(density + 0.5f);
   if (dz < 1) dz = 1;
 
+  /* A full screen or maximized window is not ours to resize, so the two
+     halves of the normal path are both wrong there: fit the zoom to the
+     window instead of the window to the zoom, and leave the saved size
+     unwritten — it would be the display's size, not the size the player
+     had, and teardown would stretch the window to the whole display on the
+     way back to a normal window. Teardown skips the restore when the saved
+     size is 0. */
+  SDL_WindowFlags wflags = SDL_GetWindowFlags(window);
+  bool windowFixed = (wflags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) != 0;
+  if (windowFixed) {
+    int winW = 0, winH = 0;
+    SDL_GetWindowSize(window, &winW, &winH);
+    int fit  = winW / GV_SCREEN_W;
+    int fitH = winH / GV_SCREEN_H;
+    if (fitH < fit) fit = fitH;
+    if (fit < 1) fit = 1;
+    if (zoomFactor > fit) zoomFactor = fit;
+  }
+
   s_displayZoom = zoomFactor;
   s_zoom        = zoomFactor * dz;
   zoomFactor    = s_zoom;   /* everything below this point is in pixels */
 
-  SDL_GetWindowSize(window, &s_savedWindowW, &s_savedWindowH);
-  /* The window is sized in points, so it takes the display zoom. */
-  SDL_SetWindowSize(window, GV_SCREEN_W * s_displayZoom,
-                            GV_SCREEN_H * s_displayZoom);
+  if (!windowFixed) {
+    SDL_GetWindowSize(window, &s_savedWindowW, &s_savedWindowH);
+    /* The window is sized in points, so it takes the display zoom. */
+    SDL_SetWindowSize(window, GV_SCREEN_W * s_displayZoom,
+                              GV_SCREEN_H * s_displayZoom);
+  }
 
   /* Resize the logviewer's screen buffer to match mapView's read
    * pattern. Saved here and restored on teardown so the normal

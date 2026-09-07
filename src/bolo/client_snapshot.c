@@ -192,10 +192,14 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
 
     /* Client-side display actions (pill/tank view toggle) */
     if (testkey(*tapKeys, KEY_TankView) || testkey(*holdKeys, KEY_TankView)) {
-      csPtr->viewport.inPillView = FALSE;
+      viewportSetTankView(&csPtr->viewport);
       clientSimCenterTank(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
+      /* No pill-policy test here, unlike the human input path in input.c: a
+       * brain that asks for pill view while the category is viewPolicyOff
+       * moves its own camera and learns nothing by it, because the server
+       * grants no rect for a category it has turned off. Cosmetic only. */
       clientSimPillView(csPtr, 0, 0);
     }
 
@@ -459,6 +463,16 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
+            /* Before the fields below, so the in-tank flag this reads is the
+             * one we held: a pill that was in a tank and is not any more,
+             * arriving without its square, has been put down somewhere we were
+             * never told about. */
+            pillsUpdatePosState(&csPtr->sim.pb, idx,
+                                pillPosCurrentFromByte(events[i].data[4]),
+                                pillInTankFromByte(events[i].data[4]));
+            /* The square is written as sent — for a pill we cannot see it is
+             * the one the server has us holding, which is what the checksum is
+             * taken over. The bit says whether the pill is on it now. */
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
@@ -938,11 +952,11 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
             tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
-            /* Dying drops pill view back to the tank: the death static is
-             * suppressed while in pill view, so without this you'd watch the
-             * pill through your own death instead of seeing the static. */
+            /* Dying drops any item view back to the tank: the death static is
+             * suppressed while watching an item, so without this you'd watch
+             * the pill through your own death instead of seeing the static. */
             if (isHuman) {
-              csPtr->viewport.inPillView = FALSE;
+              viewportSetTankView(&csPtr->viewport);
             }
             /* Death is a hard transition — drop any render offset. */
             csPtr->errX = 0.0f;
@@ -953,7 +967,7 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* dead→alive: recenter view on respawn */
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
-              csPtr->viewport.inPillView = FALSE;
+              viewportSetTankView(&csPtr->viewport);
               clientSimCenterTank(csPtr);
             }
             /* Respawn teleports the tank — snap, don't slide. */
@@ -1029,12 +1043,27 @@ void clientApplySnapshot(ClientSim *csPtr,
         snap.onBoat = onBoat;
         snap.alive = (isDead == 0);
       }
+      /* Tree-hidden tank whose man is still on screen: the server zeroed the
+       * tank fields, so keep them out of interpolation and let the LGM below
+       * ride through on its own. */
+      snap.tankHidden = (tanks[i].hiddenFlags & TANK_HIDDEN_POSITION) != 0;
       snap.lgmMX = tanks[i].lgmMX;
       snap.lgmMY = tanks[i].lgmMY;
       snap.lgmPX = tanks[i].lgmPX;
       snap.lgmPY = tanks[i].lgmPY;
       snap.lgmFrame = tanks[i].lgmFrame > 0 ? tanks[i].lgmFrame - 1 : 0;
       interpUpdate(&csPtr->interpCtx, pn, &snap, hdr->serverTick, arrivalMs);
+
+      /* Remember the square this tank was really on, and when. The hidden
+       * stub above zeroes the players entry, so once a slot goes out of view
+       * this is the only position left for an ally view to centre on, and
+       * how long ago it was stamped is what tells that view the server has
+       * stopped granting the slot's rect. */
+      if (pn < MAX_TANKS) {
+        csPtr->allyLastMapX[pn] = (BYTE)(tanks[i].worldX >> TANK_SHIFT_MAPSIZE);
+        csPtr->allyLastMapY[pn] = (BYTE)(tanks[i].worldY >> TANK_SHIFT_MAPSIZE);
+        csPtr->allySeenTick[pn] = csPtr->viewDecayTick;
+      }
 
       /* Auto-register player if not yet known */
       if (csPtr->sim.plyrs != NULL && playersIsInUse(&csPtr->sim.plyrs, pn) == FALSE) {
@@ -1144,6 +1173,15 @@ void clientApplySnapshot(ClientSim *csPtr,
   /* Apply pill snapshots */
   if (pillSnaps != NULL && csPtr->sim.pb != NULL) {
     for (i = 0; i < pillCount && i < MAX_PILLS; i++) {
+      /* Before the fields below, so the in-tank flag this reads is the one we
+       * held: a pill that was in a tank and is not any more, arriving without
+       * its square, has been put down somewhere we were never told about. */
+      pillsUpdatePosState(&csPtr->sim.pb, (BYTE)i,
+                          pillPosCurrentFromByte(pillSnaps[i].armourInTank),
+                          pillInTankFromByte(pillSnaps[i].armourInTank));
+      /* The square is written as sent — for a pill we cannot see it is the one
+       * the server has us holding, which is what the checksum is taken over.
+       * The bit says whether the pill is on it now. */
       (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
       (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
       (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
@@ -1275,11 +1313,14 @@ void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
       playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
                     lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
     } else if (interpHasData(&cs->interpCtx, pn) &&
-               !interpIsAlive(&cs->interpCtx, pn)) {
-      /* Dead player: move tank off-screen but keep LGM visible — the LGM
-       * outlives its owner tank and the server still sends its position in
-       * every snapshot.  (An alive-but-stale player whose interp froze
-       * keeps its last drawn position; we do not move it.) */
+               (!interpIsAlive(&cs->interpCtx, pn) ||
+                interpTankHidden(&cs->interpCtx, pn))) {
+      /* Dead player, or a live one whose tank the server withheld because it
+       * is standing in trees: move the tank off-screen but keep the LGM
+       * visible — the LGM outlives its owner tank, and a man out on the map
+       * is seen on his own terms whatever his tank is doing.  (An
+       * alive-but-stale player whose interp froze keeps its last drawn
+       * position; we do not move it.) */
       BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
       interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
                    &lgmFrame);

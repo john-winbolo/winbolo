@@ -44,6 +44,7 @@ extern "C" {
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
 #include "upload_policy.h"  /* UploadPolicy — map-upload combo */
+#include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
 #include "playername_validate.h"
 #include "../bg_game.h"
 #include "../skin_source.h"
@@ -136,6 +137,7 @@ extern "C" {
   void windowLabelOwnTank_toggle(struct ClientSim *cs);
   void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
   void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
+  void windowFullScreenChoose(bool on);
   bool clientSimSetPlayerName(struct ClientSim *cs, char *value);
 
 #if defined(__IPHONEOS__)
@@ -760,6 +762,23 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
 #endif
 
 #if !BOLO_MOBILE
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_FULLSCREEN));
+#if !defined(__EMSCRIPTEN__)
+    /* ---- Full screen ---- */
+    if (!uiModeIsTablet() && !uiModeIsSteamDeck() && !uiShouldUseControllerMode()) {
+        /* Read the window itself rather than the preference, so the tick still
+           tells the truth after an OS-driven full screen change. */
+        bool fs = (SDL_GetWindowFlags(sdl3DrawGetWindow()) & SDL_WINDOW_FULLSCREEN) != 0;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_FULLSCREEN), &fs)) {
+            /* Checkbox has already flipped fs to what the player asked for.
+               Moving the window here would do it inside a live frame, so only
+               record the request; each shell applies it once the frame ends. */
+            ctx->pendingFullScreen = fs ? 1 : 0;
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_FULLSCREEN_TIP));
+    }
+#endif
+
     /* ---- Letterbox bars ---- */
     {
         bool lb = (bool)letterboxBarsGray;
@@ -770,6 +789,52 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                          "instead of black (when your monitor's aspect "
                          "ratio differs from the game).");
     }
+
+#if !defined(__EMSCRIPTEN__)
+    /* ---- The full screen map's HUD panels ---- These follow the map view
+       they belong to, which is desktop and Deck only.  Each slider is applied
+       as it moves so the panel changes under it, and written to the
+       preferences once it is let go. */
+    if (!uiModeIsTablet()) {
+        int trans = sdl3DrawGetNewswireTransparency();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY),
+                             &trans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                             "%d%%")) {
+            sdl3DrawSetNewswireTransparency(trans);
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP));
+        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+        bool autoHide = sdl3DrawGetNewswireAutoHide();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE),
+                            &autoHide)) {
+            sdl3DrawSetNewswireAutoHide(autoHide);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP));
+
+        int buildTrans = sdl3DrawGetBuildPanelTransparency();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY),
+                             &buildTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                             "%d%%")) {
+            sdl3DrawSetBuildPanelTransparency(buildTrans);
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP));
+        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+
+        int statusTrans = sdl3DrawGetStatusPanelTransparency();
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY),
+                             &statusTrans, 0, OVERVIEW_HUD_TRANSPARENCY_MAX,
+                             "%d%%")) {
+            sdl3DrawSetStatusPanelTransparency(statusTrans);
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP));
+        if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
+    }
+#endif
 #endif
 
     /* ---- Skin ---- */
@@ -1645,6 +1710,42 @@ static void SDLCALL hostingLogDirDialogCallback(void *userdata,
     }
 }
 
+/* One visibility row: the category label, a 4-way policy combo, and — only
+ * while that combo reads Decay — the decay-seconds box.  The combo index is
+ * the ViewPolicy value, the enum being in display order.  An edit comes back
+ * in *policy / *secs with the matching flag set, so the caller pushes just
+ * the field the host touched through that category's setter. */
+static void hostingViewRow(const char *id, langid label, int *policy,
+                           int *secs, bool *policyEdited, bool *secsEdited) {
+    const char *modes[4] = {
+        langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+        langGetText(STR_DLGLOBBY_VIEW_KEY),
+        langGetText(STR_DLGLOBBY_VIEW_DECAY),
+        langGetText(STR_DLGLOBBY_VIEW_OFF)
+    };
+    *policyEdited = false;
+    *secsEdited   = false;
+
+    ImGui::PushID(id);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(langGetText(label));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    if (ImGui::Combo("##policy", policy, modes, 4)) {
+        *policyEdited = true;
+    }
+    if (*policy == (int)viewPolicyDecay) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+        if (ImGui::InputInt("##decay", secs, 1, 5)) {
+            *secsEdited = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+    }
+    ImGui::PopID();
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
@@ -1806,6 +1907,58 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         }
     }
 
+    /* ---- Visibility ----
+     * The pill / base / allied-tank view rules a game hosted from here
+     * starts with; the host can still change them from the lobby once the
+     * game is up, and this dialog has no path into a running game.  The
+     * setters persist to prefs and clamp the seconds, so the values go
+     * through them untouched. */
+    {
+        int policy, secs;
+        bool policyEdited, secsEdited;
+
+        ImGui::SeparatorText(langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
+
+        policy = gameFrontViewPillPolicy;
+        secs   = gameFrontViewPillDecaySecs;
+        hostingViewRow("viewpill", STR_DLGLOBBY_VIEW_PILL, &policy, &secs,
+                       &policyEdited, &secsEdited);
+        if (policyEdited) gameFrontSetViewPillPolicy(policy);
+        if (secsEdited)   gameFrontSetViewPillDecaySecs(secs);
+
+        policy = gameFrontViewBasePolicy;
+        secs   = gameFrontViewBaseDecaySecs;
+        hostingViewRow("viewbase", STR_DLGLOBBY_VIEW_BASE, &policy, &secs,
+                       &policyEdited, &secsEdited);
+        if (policyEdited) gameFrontSetViewBasePolicy(policy);
+        if (secsEdited)   gameFrontSetViewBaseDecaySecs(secs);
+
+        policy = gameFrontViewAllyPolicy;
+        secs   = gameFrontViewAllyDecaySecs;
+        hostingViewRow("viewally", STR_DLGLOBBY_VIEW_ALLY, &policy, &secs,
+                       &policyEdited, &secsEdited);
+        if (policyEdited) gameFrontSetViewAllyPolicy(policy);
+        if (secsEdited)   gameFrontSetViewAllyDecaySecs(secs);
+
+        bool classic = gameFrontClassicMode;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
+                            &classic)) {
+            gameFrontSetClassicMode(classic);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_TIP));
+        }
+
+        bool trees = gameFrontAlliesInTrees;
+        if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
+                            &trees)) {
+            gameFrontSetAlliesInTrees(trees);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_ALLIES_TREES_TIP));
+        }
+    }
+
     ImGui::Spacing();
     ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_HOSTING_APPLYNOTE));
 }
@@ -1881,6 +2034,9 @@ extern "C" void imguiSettingsShow(void) {
     bool running = true;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
+    /* Full screen pick from the Display tab, applied after Present alongside
+       key setup: -1 = nothing pending, 0 = leave full screen, 1 = enter it. */
+    signed char pendingFullScreen = -1;
 #endif
 
     /* When the language picker reports a CJK-region change it sets
@@ -1991,6 +2147,7 @@ extern "C" void imguiSettingsShow(void) {
         ctx.cs = nullptr;
         ctx.inGame = false;
         ctx.pendingZoom = 255;
+        ctx.pendingFullScreen = -1;
 
         /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
            actions where the pad is hidden from SDL) step through the visible
@@ -2148,6 +2305,9 @@ extern "C" void imguiSettingsShow(void) {
         /* The shared Controls tab requests key setup via the flag; honour it
            through the existing showKeySetup teardown below. */
         if (ctx.wantKeySetup) showKeySetup = true;
+        /* The Display tab's full screen tick rides the same teardown: the
+           window changes size, so the context has to be rebuilt for it. */
+        if (ctx.pendingFullScreen >= 0) pendingFullScreen = ctx.pendingFullScreen;
 #endif
 
         ImGui::EndChild(); /* ##settingsScroll */
@@ -2218,8 +2378,16 @@ extern "C" void imguiSettingsShow(void) {
         }
 
 #if !BOLO_MOBILE
-        if (showKeySetup) {
+        /* Two things need the dialog's ImGui context torn down and rebuilt
+           between Present and the next NewFrame: running key setup, which owns
+           the context while it is up, and a full screen change, which lands the
+           dialog on a differently sized surface.  Both rebuild from the live
+           window size below, so they share one block. */
+        if (showKeySetup || pendingFullScreen >= 0) {
+            bool        doKeySetup   = showKeySetup;
+            signed char doFullScreen = pendingFullScreen;
             showKeySetup = false;
+            pendingFullScreen = -1;
 
             /* Tear down current ImGui context */
             ImGui_ImplSDLRenderer3_Shutdown();
@@ -2227,7 +2395,11 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::DestroyContext();
 
             /* Run the key setup dialog (blocking) */
-            imguiKeySetupShow();
+            if (doKeySetup) imguiKeySetupShow();
+
+            /* Move the window before the size is read back; the SyncWindow
+               inside makes the new size readable straight away. */
+            if (doFullScreen >= 0) windowFullScreenChoose(doFullScreen != 0);
 
             /* Re-create ImGui context for the settings loop */
             SDL_GetWindowSize(window, &screenW, &screenH);
@@ -2258,6 +2430,13 @@ extern "C" void imguiSettingsShow(void) {
             /* The shared name buffer is file-scope; re-seed it for the
                rebuilt context alongside the language/atlas resync. */
             imguiSettingsSeedPlayerName();
+
+            /* Which tab is open lived in the context we just destroyed, so the
+               tab bar would come back on the first one.  s_pgActiveTab is file
+               scope and survived; force the bar back to it so the player lands
+               where they left off — on Display for a full screen tick, on
+               Controls coming back out of key setup. */
+            s_pgForceTab = s_pgActiveTab;
 
             dialogSetWindowSize(window, 1024, 768);
             dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));
