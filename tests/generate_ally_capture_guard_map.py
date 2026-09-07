@@ -96,7 +96,7 @@ MAP_SIZE = 256
 PILLS_MAX_HEALTH = 15
 
 LEASH = 8                        # C.BUILDER_POOL_LEASH (MANHATTAN)
-ALLY_CAPTURE_TTL = 175           # C.BUILDER_POOL_ALLY_CAPTURE_TTL (brain ticks)
+ALLY_CAPTURE_TTL = 350           # C.BUILDER_POOL_ALLY_CAPTURE_TTL (brain ticks, 50/s = 7 s)
 
 CORPSE = (126, 126)              # 0 armour: the pill the whole test is about
 FIELD_R = LEASH                  # diamond radius, so every tile is in leash
