@@ -1021,6 +1021,26 @@ const char *voiceBackendGetPlaybackDevice(void) {
 }
 
 /*********************************************************
+*NAME:          voiceBackendDevicesChanged
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Always false: nothing here to follow.
+*
+*  The browser owns the device on both sides and swaps it
+*  underneath the page without telling it, so there is no
+*  change to hand back and nothing for the caller to
+*  re-apply.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceBackendDevicesChanged(void) {
+    return false;
+}
+
+/*********************************************************
 *NAME:          voiceBackendNowMs
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026

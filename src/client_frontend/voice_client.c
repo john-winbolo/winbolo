@@ -1042,6 +1042,35 @@ const char *voiceGetPlaybackDevice(void) {
 }
 
 /*********************************************************
+*NAME:          applyWantedDevices
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Puts the chosen devices back in force after the set of
+*  devices has moved, so a headset that has just been
+*  unplugged is left behind and one that has just come back
+*  is picked up again.
+*
+*  Costs nothing when the choice is already in force: the
+*  backend returns early for a name it is already on.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+static void applyWantedDevices(void) {
+    /* The backend refuses a name that is not plugged in, so a refusal is the
+     * device having gone: fall back to the system default and leave the
+     * wanted name alone, so the headset reclaims it when it returns. */
+    if (!voiceBackendSetRecordingDevice(wantedRecordingDevice)) {
+        voiceBackendSetRecordingDevice("");
+    }
+    if (!voiceBackendSetPlaybackDevice(wantedPlaybackDevice)) {
+        voiceBackendSetPlaybackDevice("");
+    }
+}
+
+/*********************************************************
 *NAME:          ensureSpeaker
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -1409,6 +1438,13 @@ void voiceTick(struct ClientSim *cs) {
 
     if (!isInitialised) {
         return;
+    }
+
+    /* Before anything is played: a device that has just gone takes its
+     * streams with it, and a talker's frames belong on the one that is open
+     * now rather than on the one that went away. */
+    if (voiceBackendDevicesChanged()) {
+        applyWantedDevices();
     }
 
     if (cs != NULL) {

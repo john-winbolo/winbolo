@@ -72,6 +72,11 @@ static int recordingDeviceListCount = 0;
 static char playbackDeviceList[VOICE_DEVICE_LIST_MAX][VOICE_DEVICE_NAME_MAX];
 static int playbackDeviceListCount = 0;
 
+/* Set by the event watch below when a device appears or disappears, read and
+ * cleared by voiceBackendDevicesChanged.  Atomic because the watch runs on
+ * whichever thread pushed the event and the read is on the main one. */
+static SDL_AtomicInt s_devicesChanged;
+
 /*********************************************************
 *NAME:          voiceOpenChatDevice
 *AUTHOR:        John Morrison
@@ -246,6 +251,40 @@ static bool voiceDevicePresent(bool recording, const char *name) {
 }
 
 /*********************************************************
+*NAME:          voiceDeviceEventWatch
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Notes that the set of audio devices moved, for the next
+*  tick to act on.
+*
+*  It raises a flag and does nothing else, and that is the
+*  point.  A watch runs on whichever thread pushed the event,
+*  which for device hotplug is SDL's own and not the main
+*  thread, while every other line in this file assumes the
+*  main thread and takes no lock of its own - see the file
+*  header.  Closing and reopening a stream from in here would
+*  be doing that work on the wrong thread.
+*
+*ARGUMENTS:
+*  userdata - unused
+*  event    - the event being pushed
+*********************************************************/
+static bool SDLCALL voiceDeviceEventWatch(void *userdata, SDL_Event *event) {
+    (void)userdata;
+
+    if (event->type == SDL_EVENT_AUDIO_DEVICE_ADDED ||
+        event->type == SDL_EVENT_AUDIO_DEVICE_REMOVED) {
+        SDL_SetAtomicInt(&s_devicesChanged, 1);
+    }
+
+    /* A watch's answer is ignored - it cannot drop the event - but the
+     * signature calls for one. */
+    return true;
+}
+
+/*********************************************************
 *NAME:          voiceBackendInit
 *AUTHOR:        John Morrison
 *CREATION DATE: 2026
@@ -266,6 +305,20 @@ bool voiceBackendInit(void) {
         fprintf(stderr, "Voice error: init audio: %s\n", SDL_GetError());
         fflush(stderr);
         return false;
+    }
+
+    /* Follow devices coming and going.  Not worth failing init over: without
+     * the watch voice still runs, it just stays on whatever it opened with
+     * until the game is restarted.
+     *
+     * SDL announces every device it already knows about as it starts up, so
+     * the flag can be set before the first tick ever runs.  That costs
+     * nothing - re-applying a name that is already the choice does no work -
+     * and needs no suppressing. */
+    if (!SDL_AddEventWatch(voiceDeviceEventWatch, NULL)) {
+        fprintf(stderr, "Voice error: watch audio devices: %s\n",
+                SDL_GetError());
+        fflush(stderr);
     }
 
     SDL_zero(spec);
@@ -305,6 +358,10 @@ bool voiceBackendInit(void) {
 *  (none)
 *********************************************************/
 void voiceBackendShutdown(void) {
+    /* Removing a watch that was never added does nothing, so this needs no
+     * guard for the init that failed or never ran. */
+    SDL_RemoveEventWatch(voiceDeviceEventWatch, NULL);
+
     if (captureStream) {
         SDL_DestroyAudioStream(captureStream);
         captureStream = NULL;
@@ -864,6 +921,26 @@ const char *voiceBackendGetRecordingDevice(void) {
 *********************************************************/
 const char *voiceBackendGetPlaybackDevice(void) {
     return playbackDeviceName;
+}
+
+/*********************************************************
+*NAME:          voiceBackendDevicesChanged
+*AUTHOR:        John Morrison
+*CREATION DATE: 2026
+*LAST MODIFIED: 2026
+*PURPOSE:
+*  Whether a device appeared or disappeared since the last
+*  call, clearing the flag as it answers.
+*
+*  Read and cleared in the one operation, because the watch
+*  that raises it runs on another thread: a separate read and
+*  clear would drop a device that moved between the two.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceBackendDevicesChanged(void) {
+    return SDL_SetAtomicInt(&s_devicesChanged, 0) != 0;
 }
 
 /*********************************************************

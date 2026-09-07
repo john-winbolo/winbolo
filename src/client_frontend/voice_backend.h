@@ -344,6 +344,26 @@ const char *voiceBackendGetRecordingDevice(void);
 const char *voiceBackendGetPlaybackDevice(void);
 
 /*********************************************************
+*NAME:          voiceBackendDevicesChanged
+*PURPOSE:
+*  Whether an audio device has appeared or disappeared since
+*  this was last asked.
+*
+*  Reading it clears it, so exactly one caller may ask - that
+*  caller is voiceTick, which re-applies the chosen devices
+*  when the answer is true. A second asker would swallow the
+*  change before the first saw it.
+*
+*  A backend with no way to tell answers false for the life
+*  of the process, which leaves the device choice fixed for
+*  the run: what was opened at startup stays open.
+*
+*ARGUMENTS:
+*  (none)
+*********************************************************/
+bool voiceBackendDevicesChanged(void);
+
+/*********************************************************
 *NAME:          voiceBackendNowMs
 *PURPOSE:
 *  Monotonic milliseconds since some fixed point in this
