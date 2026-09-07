@@ -1267,9 +1267,26 @@ int run_overview_reveal(void) {
     const OverviewMap *om = clientSimGetOverviewMap(f.cs);
     UT_ASSERT_MSG(om != NULL, "clientSimGetOverviewMap returned NULL");
 
+    /* Point the tank east before the inputs are read. The facing field is a
+     * 0-15 index and the beam reads it as one, so this is where the units are
+     * checked: the same heading is 64 in BRADIANS and 4 as an index, and north
+     * is the one heading the two agree on. The angle is set on the tank the
+     * fill reads, position untouched, so nothing else in the case moves. */
+    WORLD tankWX = 0;
+    WORLD tankWY = 0;
+    tankGetWorld(&f.gs->tanks[f.me], &tankWX, &tankWY);
+    tankSetWorld(f.gs, &f.gs->tanks[f.me], tankWX, tankWY, BRADIANS_EAST,
+                 false);
+
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(f.cs, &in);
+    UT_ASSERT_MSG(in.facing <= 15,
+                  "facing came back as %u, outside the 0-15 index the field "
+                  "holds", (unsigned)in.facing);
+    UT_ASSERT_MSG(in.facing == 4,
+                  "a tank pointing east filled facing %u, expected the index 4",
+                  (unsigned)in.facing);
     OverviewRect tankBlock = overviewTestBlock(f.tankMX, f.tankMY,
                                                OVERVIEW_TANK_HALF);
     int n = overviewMapBuildRegions(f.gs, f.me, &in, NULL, &tankBlock, expect,

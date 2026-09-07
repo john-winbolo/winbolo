@@ -1028,7 +1028,12 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->manualHold = sc->autoScrollOverRide;
   in->viewSubX = sc->subPosX;
   in->viewSubY = sc->subPosY;
-  in->facing = tankGetTravelAngel(&MY_TANK((ClientSim *)cs));
+  /* tankGetTravelAngel reads as a direction number but hands back BRADIANS,
+   * already snapped to the nearest sixteenth. Dividing by the step between two
+   * of those sixteenths gives the 0-15 index this field holds - the rounding is
+   * already done, so there is none left to do here. */
+  in->facing =
+      (BYTE)(tankGetTravelAngel(&MY_TANK((ClientSim *)cs)) / BRADIANS_GAP);
   /* Those readings only say where the player is looking while a live tank is
    * being followed: an item view has taken the camera off the tank, and a dead
    * one leaves the offsets wherever the view stopped. */
