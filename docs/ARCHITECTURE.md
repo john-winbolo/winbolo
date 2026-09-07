@@ -151,14 +151,15 @@ because the broken client did not run the same code path.
 
 4. **Do not introduce new T2 exceptions casually.** The four
    exceptions that exist today (`mapeditor`, `braintest`, `gym`,
-   `tests/unit/`) each carry a documented scope and expiry condition — see the
-   "Privileged exceptions" section below. `src/server/`,
+   `tests/unit/`) each carry a documented scope and a written note
+   of what they rest on — see the "Privileged exceptions" section
+   below. `src/server/`,
    `src/headless/`, `src/wasm/`, `src/android/`, and `src/ios/`
    all run the sim and all participate in this bug class. A new
    exception requires the same justification structure: bounded
-   scope, written expiry condition, and a reason the asymmetric-
-   runtime bug class doesn't apply. The default answer is still
-   "add a T1 accessor".
+   scope, a written note of what it rests on, and a reason the
+   asymmetric-runtime bug class doesn't apply. The default answer
+   is still "add a T1 accessor".
 
 5. **Do not include T3 from non-renderer binaries.** `src/gui/`,
    the mobile renderers (`src/android/`, `src/ios/`, `src/wasm/`),
@@ -1852,7 +1853,17 @@ no-op stub returning failure. Same pattern as
 
 Four non-bolo directories are permitted to include T2 headers
 today. Each has its own CMake profile in `cmake/bolo_lib.cmake`,
-a scoped justification, and a written expiry condition.
+a scoped justification, and a written note of what it rests on.
+
+Nothing here is time-limited, and nothing removes itself. Each
+exception was granted because some fact about that directory is
+true — it never ticks a sim, it is not shipped, it has one
+consumer — and the **Rests on** line names that fact. If the fact
+stops being true the reason for the exception has gone with it,
+and the directory goes back under the ordinary rule. Whoever
+makes that change is the one who has to notice: the build will
+not complain, so a stale entry here is a lie about the codebase
+rather than a broken compile.
 
 ### `src/mapeditor/`
 
@@ -1877,10 +1888,11 @@ their own. They belong here and not in `tools/`, which is a
 public-only directory — see the `tests/`, `tools/` row in "Who
 may include what".
 
-**Expires** the moment anyone adds in-editor playtest, live
-preview against a running sim, or any other path that ticks the
-world from the editor. At that point mapeditor joins the T1+T3+T4
-group and the map-data access moves behind T1 accessors.
+**Rests on** the editor never ticking the world. Remove this the
+moment anyone adds in-editor playtest, live preview against a
+running sim, or any other path that runs the sim from the editor:
+at that point mapeditor joins the T1+T3+T4 group and the map-data
+access moves behind T1 accessors.
 
 ### `src/braintest/`
 
@@ -1893,8 +1905,9 @@ and no production code path depends on them.
 Scope: brain introspection (`bot_manager.h`, `brain_pathfinder.h`,
 `brain_overlay.h`, `braincore.h`, `control_event.h`).
 
-**Expires** the moment a second consumer needs the same access —
-at which point the right answer is to deep-copy the introspected
+**Rests on** BrainTest being the only consumer of these getters.
+Remove this the moment a second one needs the same access — at
+which point the right answer is to deep-copy the introspected
 state into POD types on a public header.
 
 ### `src/gym/`
@@ -1908,10 +1921,11 @@ Scope: `GameSim` layout (`game_sim.h`) and the per-substruct
 headers (`players.h`, `tank.h`, `shells.h`, `lgm.h`, etc.) used
 for observation and reward extraction.
 
-**Expires** the moment gym ships in any player-facing
-distribution. At that point the observation builder migrates
-onto the snapshot APIs the GUI clients already use, and gym
-drops back to the standard public-only access.
+**Rests on** gym not being shipped to players. Remove this the
+moment it ships in any player-facing distribution: at that point
+the observation builder migrates onto the snapshot APIs the GUI
+clients already use, and gym drops back to the standard
+public-only access.
 
 ### `tests/unit/`
 
@@ -1940,12 +1954,20 @@ view and render internals (`viewport.h`, `overview_map.h`,
 brain headers (`bot_manager.h`, `braincore.h`,
 `brain_pathfinder.h`).
 
-**Expires** if the binary ever ships in a player-facing
-distribution, or gains a consumer beyond CTest — at that point it
-is a runtime peer like any other and the bug class applies to it.
-Short of that the scope narrows rather than ends: every T2 include
-a new T1 accessor makes unnecessary should go, and the target
-keeps only what still has no other way to be observed.
+**Rests on** the binary not being a runtime peer: not shipped in a
+player-facing distribution, and no consumer beyond CTest. Remove
+this if either stops being true — at that point it is a peer like
+any other and the bug class applies to it.
+
+**Kept honest by** review of the scope list, not by that condition,
+which is not expected to fire. The list above is the part that can
+rot: it reached its present size by being appended to, a header at
+a time, while the sentence describing it stayed still. So it is
+read at each release — every T2 include a new T1 accessor has made
+unnecessary comes off, and nothing goes on without a line saying
+what it observes that T1 cannot. A list that grows across two
+releases with nothing coming off means the review has stopped, and
+the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
 same target, and it is not a T2 grant. Three `src/gui/sdl3` files —
@@ -1970,20 +1992,22 @@ put pixel, zoom and panel-layout concerns onto the sim purely to buy
 testability. Keeping them in the renderer and linking three leaf
 files is the smaller distortion of the two.
 
-**Expires** per file, the moment that file stops meeting the rule.
-One that gains an ImGui or renderer include has left the category,
-and the answer is to split the geometry back out — the link break is
-the signal, not a build problem to route around by widening the test
-binary. A fourth file joins only on the same test: leaf geometry, or
-it does not go in.
+**Rests on** each of the three still meeting that rule, so it is
+checked per file rather than for the group. One that gains an ImGui
+or renderer include has left the category, and the answer is to
+split the geometry back out — the link break is the signal, not a
+build problem to route around by widening the test binary. A fourth
+file joins only on the same test: leaf geometry, or it does not go
+in.
 
 ### Adding a new exception
 
 A new exception requires the same structure: a directory with its
 own CMake profile, a documented scope (which T2 headers and why),
-and a written expiry condition (the change of circumstance that
-brings the asymmetric-runtime bug class back into scope). Without
-that, the default answer is "add a T1 accessor".
+and a written note of what it rests on — the fact about that
+directory which makes the asymmetric-runtime bug class not apply,
+stated so that when the fact changes the exception goes with it.
+Without that, the default answer is "add a T1 accessor".
 
 ## Per-file T2 grants
 

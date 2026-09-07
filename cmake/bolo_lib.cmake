@@ -11,9 +11,10 @@
 #                  and (transitionally) the flat src/bolo/ directory.
 #   mapeditor    - the standalone map editor binary. Privileged T2 access to
 #                  bolo's internal map-data layouts; never runs the sim. The
-#                  exception expires the moment anyone adds in-editor
+#                  exception rests on the editor never ticking the
+#                  world; remove it the moment anyone adds in-editor
 #                  playtest, live preview against a running sim, or any
-#                  other path that ticks the world from the editor — at
+#                  other path that runs the sim from the editor — at
 #                  that point mapeditor joins the T1+T3+T4 group and the
 #                  map-data access moves behind T1 accessors.
 #   braintest    - the BrainTest debug visualiser binary. Privileged
@@ -23,9 +24,10 @@
 #                  asymmetric-runtime bug class doesn't apply: BrainTest
 #                  is a dev tool, not shipped to players, and is the
 #                  only consumer of these introspection getters. The
-#                  exception expires the moment a second consumer needs
-#                  the same access — at which point the right answer is
-#                  to deep-copy the introspected state into a POD on a
+#                  exception rests on it staying the only consumer;
+#                  remove it the moment a second one needs the same
+#                  access — at which point the right answer is to
+#                  deep-copy the introspected state into a POD on a
 #                  public header.
 #   gym          - the winbolo_gym ML training harness. Privileged
 #                  access to GameSim layout (game_sim.h) and the
@@ -35,7 +37,8 @@
 #                  rollouts. The asymmetric-runtime bug class
 #                  doesn't apply: gym is an offline training tool,
 #                  not shipped to players in this form. The
-#                  exception expires the moment gym ships in any
+#                  exception rests on gym not being shipped;
+#                  remove it the moment gym ships in any
 #                  player-facing distribution — at which point
 #                  the observation builder migrates onto the
 #                  snapshot APIs that the GUI clients already use,
@@ -53,11 +56,11 @@
 #                  apply: the tests are not shipped to players,
 #                  have a single consumer (CTest), and aren't a
 #                  runtime peer of the GUI / server / mobile /
-#                  wasm clients. The exception expires if the
-#                  binary ever ships in a player-facing
-#                  distribution or gains a consumer beyond CTest —
-#                  at that point it is a runtime peer like any
-#                  other. Short of that the scope narrows rather
+#                  wasm clients. The exception rests on that
+#                  staying true; remove it if the binary ever
+#                  ships in a player-facing distribution or gains
+#                  a consumer beyond CTest — at that point it is a
+#                  runtime peer like any other. Short of that the scope narrows rather
 #                  than ends: every T2 include a new T1 accessor
 #                  makes unnecessary should go.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
