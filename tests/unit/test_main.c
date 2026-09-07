@@ -547,6 +547,7 @@ static const UnitTestEntry s_tests[] = {
     { "join_rate_limit",                         run_join_rate_limit                         },
     { "cookie_handshake",                        run_cookie_handshake                        },
     { "map_amp_gate",                            run_map_amp_gate                            },
+    { "map_reask_throttle",                            run_map_reask_throttle                            },
     { "map_resync_cut_and_deliver_once",         run_map_resync_cut_and_deliver_once         },
     { "map_resync_duplicate_request_no_recut",   run_map_resync_duplicate_request_no_recut   },
     { "map_resync_send_gate_holds",              run_map_resync_send_gate_holds              },

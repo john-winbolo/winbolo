@@ -901,6 +901,14 @@ uint32_t transportUdpServerGetClientControlSeq(int slot);
  * slot. */
 uint32_t transportUdpServerGetMapEventDrops(int slot);
 
+/* Read how many map-download re-asks have been refused for a player slot for
+ * arriving inside MAP_REASK_MIN_TICKS of the last one the server acted on. A
+ * re-ask restarts the whole download — recompress, re-accept, re-base, stream
+ * again — so this counts the times one client was stopped from driving that
+ * work in a loop. Counted per connection: the join that resets the slot
+ * resets this too. Returns 0 for an invalid slot. */
+uint32_t transportUdpServerGetMapReaskThrottled(int slot);
+
 /* True when spectator slot s is a live control-bus subscriber (lobby/countdown),
  * false when it is a delayed-ring reader or the slot is out of range. Lets a
  * test observe the live↔delayed cutover. */

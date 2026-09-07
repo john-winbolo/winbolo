@@ -3265,6 +3265,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_join_rate_limit.c
     tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
+    tests/unit/test_map_reask_throttle.c
     tests/unit/test_map_resync.c
     tests/unit/test_map_compress_roundtrip.c
     tests/unit/test_map_shadow.c
@@ -4051,6 +4052,7 @@ set(_unit_test_names
     join_rate_limit
     cookie_handshake
     map_amp_gate
+    map_reask_throttle
     map_resync_cut_and_deliver_once
     map_resync_duplicate_request_no_recut
     map_resync_send_gate_holds

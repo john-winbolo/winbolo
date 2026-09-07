@@ -1196,6 +1196,12 @@ int run_cookie_handshake(void);
  * the map stream flow — the cookie is the sole amplification gate. */
 int run_map_amp_gate(void);
 
+/* The map-download re-ask interval (test_map_reask_throttle.c): a re-ask
+ * recompresses the slot's terrain, re-sends JOIN_ACCEPT and restarts the
+ * stream, so a joined client must not be able to drive that in a loop. The
+ * first READY of a download is the arming ask and is never held off. */
+int run_map_reask_throttle(void);
+
 /* Map-desync resync queue logic (test_map_resync.c): the resync cut empties
  * the slot's map-event queue (ackedSeq == nextSeq); baked-in changes are not
  * re-sent and a post-cut change delivers exactly once; a duplicate request

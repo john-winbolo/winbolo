@@ -402,6 +402,25 @@ typedef struct {
 #define MAP_SWEEP_STRIDE      5
 #define MAP_SWEEP_MAX_EVENTS 64
 
+/* Minimum interval between map-download re-asks from one client.
+ *
+ * A re-ask is the most expensive thing one small datagram can ask this server
+ * to do: it recompresses that slot's whole copy of the terrain, re-sends
+ * JOIN_ACCEPT and re-bases the bulk channel, then streams the map again. The
+ * first READY of a download is not a re-ask and is never held off — this
+ * bounds only the restart path.
+ *
+ * It has to sit *under* the honest client's fastest re-ask, not outside it.
+ * A client whose stream head was consumed before its buffers existed sees no
+ * progress while the server thinks it is streaming, so its watchdog re-asks on
+ * the short MAP_DL_READY_RESEND_TICKS threshold (~1s) and every one of those
+ * lands here on the restart path. Holding those off would drop half of a
+ * recovery the client only gets MAP_DL_MAX_RESTARTS attempts at — the wedge
+ * this path exists to clear. Half a second serves every one of them and still
+ * takes a client that asks in a tight loop from hundreds of restarts a second
+ * down to two. */
+#define MAP_REASK_MIN_TICKS 25  /* 0.5s at 50 Hz, between re-asks */
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -479,6 +498,14 @@ static struct {
     bool                    roundLogReqSeen[MAX_TANKS];
     uint32_t                roundLogLastReqTick[MAX_TANKS];
     uint8_t                 roundLogServed[MAX_TANKS];
+    /* Per-client map-download re-ask bookkeeping, the same shape as the
+     * round-log limits above. mapReaskSeen + mapReaskLastTick hold the minimum
+     * interval whatever the answer was; mapReaskThrottled counts the re-asks
+     * refused for arriving inside it and is what the tests read. Cleared at
+     * join and at disconnect, so a slot never inherits the last occupant's. */
+    bool                    mapReaskSeen[MAX_TANKS];
+    uint32_t                mapReaskLastTick[MAX_TANKS];
+    uint32_t                mapReaskThrottled[MAX_TANKS];
     /* Suppress immediate-send-on-enqueue during the sync-replay burst
      * fired by serverSimRegisterSubscriber, so one carrier datagram
      * packs all replayed events instead of one per event.  Set/cleared
@@ -550,6 +577,14 @@ static void udpServerResetRoundLogLimits(int idx) {
     udpServer.roundLogReqSeen[idx]     = false;
     udpServer.roundLogLastReqTick[idx] = 0;
     udpServer.roundLogServed[idx]      = 0;
+}
+
+/* Clear one slot's map-download re-ask limit. Same reason as the round-log
+ * reset above: the interval belongs to the connection, not to the slot. */
+static void udpServerResetMapReaskLimit(int idx) {
+    udpServer.mapReaskSeen[idx]      = false;
+    udpServer.mapReaskLastTick[idx]  = 0;
+    udpServer.mapReaskThrottled[idx] = 0;
 }
 
 /* Runtime network impairment (delay/jitter/loss/burst) on the server's
@@ -3217,6 +3252,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     bulkSenderInit(&udpServer.bulkSend[slot]);
     bulkReceiverInit(&udpServer.bulkRecvUp[slot]);
     udpServerResetRoundLogLimits(slot);
+    udpServerResetMapReaskLimit(slot);
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -3962,6 +3998,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     bulkSenderReset(&udpServer.bulkSend[idx]);
     bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
     udpServerResetRoundLogLimits(idx);
+    udpServerResetMapReaskLimit(idx);
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -4668,6 +4705,7 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
 
         /* New round, fresh round-log request budget for every slot. */
         udpServerResetRoundLogLimits(i);
+        udpServerResetMapReaskLimit(i);
 
         /* A round-log transfer is a lobby/game-over affair and must not bleed
          * into the round starting now: CHANNEL_BULK is deliberately not
@@ -5456,7 +5494,27 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 if (dl->xferKind == MAP_XFER_DOWNLOAD && !dl->xferBegun) {
                     dl->readySeen = TRUE;
+                } else if (udpServer.mapReaskSeen[clientIdx] &&
+                           (uint32_t)(udpServer.tickCount -
+                                      udpServer.mapReaskLastTick[clientIdx]) <
+                               MAP_REASK_MIN_TICKS) {
+                    /* Inside the interval: drop it. The client's own watchdog
+                     * asks again after its resend window, and that ask lands
+                     * outside this one. Nothing is sent back — a re-ask has no
+                     * reply of its own, and answering would hand back a second
+                     * datagram for the one that was refused. */
+                    udpServer.mapReaskThrottled[clientIdx]++;
+                    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                        "MAP_DL_READY re-ask slot=%d inside the %d-tick "
+                        "interval -> throttled (%u so far)",
+                        clientIdx, MAP_REASK_MIN_TICKS,
+                        (unsigned)udpServer.mapReaskThrottled[clientIdx]);
                 } else {
+                    /* Stamp for every re-ask the server acts on, so the
+                     * interval measures from the last restart it actually
+                     * paid for. */
+                    udpServer.mapReaskSeen[clientIdx] = true;
+                    udpServer.mapReaskLastTick[clientIdx] = udpServer.tickCount;
                     /* Restart from this slot's own copy of the terrain rather
                      * than from whatever the shared staging buffer happens to
                      * hold: serverInitMapDownload copies staging, and staging
@@ -7096,6 +7154,11 @@ bool transportUdpServerTestDownloadComplete(int slot) {
 uint32_t transportUdpServerGetMapEventDrops(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return 0;
     return udpServer.mapEventQueueDrops[slot];
+}
+
+uint32_t transportUdpServerGetMapReaskThrottled(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return 0;
+    return udpServer.mapReaskThrottled[slot];
 }
 
 /* Test-only: stage one terrain change for a slot exactly as a real sim tick
