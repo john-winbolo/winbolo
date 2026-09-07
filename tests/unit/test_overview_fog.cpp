@@ -52,7 +52,7 @@ static int fogGuardIntact(void) {
 /* A live square is clear, ground well past the ramp is fully fogged, and the
  * region's own edge — the square the fade starts from — is clear too. */
 static int fog_live_is_clear_and_far_is_fogged(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1);
 
@@ -73,7 +73,7 @@ static int fog_live_is_clear_and_far_is_fogged(void) {
  * for, since a step from clear to full in one square is the hard edge it
  * replaces. */
 static int fog_ramps_out_of_the_region(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1);
 
@@ -112,7 +112,7 @@ static int fog_ramps_out_of_the_region(void) {
  * from an edge, so it is darker — which is what stops the lit area coming to
  * a square point at every corner. */
 static int fog_corners_are_rounded(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1);
 
@@ -129,8 +129,8 @@ static int fog_corners_are_rounded(void) {
  * brightest answer has to win. A square another region has live must come out
  * clear however deep in this one's ramp it sits. */
 static int fog_overlapping_regions_take_the_brightest(void) {
-    OverviewRect live[2] = { { 100, 100, 120, 120, 255 },
-                             { 118, 118, 130, 130, 255 } };
+    OverviewRect live[2] = { { 100, 100, 120, 120, 255, 0 },
+                             { 118, 118, 130, 130, 255, 0 } };
 
     fogBuild(live, ARRAY_LEN(live));
 
@@ -143,8 +143,8 @@ static int fog_overlapping_regions_take_the_brightest(void) {
 
     /* Between two regions, near either one is brighter than midway between
      * them: each square takes its distance from whichever is closer. */
-    OverviewRect pair[2] = { { 100, 100, 120, 120, 255 },
-                             { 124, 100, 140, 120, 255 } };
+    OverviewRect pair[2] = { { 100, 100, 120, 120, 255, 0 },
+                             { 124, 100, 140, 120, 255, 0 } };
     fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(121, 110) == fogAt(123, 110),
@@ -163,10 +163,10 @@ static int fog_overlapping_regions_take_the_brightest(void) {
  * the end of the mask getting there. */
 static int fog_regions_clamp_to_the_map(void) {
     static const OverviewRect kCorners[] = {
-        {   0,   0,  10,  10, 255 },
-        { 245, 245, 255, 255, 255 },
-        {   0, 245,  10, 255, 255 },
-        { 245,   0, 255,  10, 255 }
+        {   0,   0,  10,  10, 255, 0 },
+        { 245, 245, 255, 255, 255, 0 },
+        {   0, 245,  10, 255, 255, 0 },
+        { 245,   0, 255,  10, 255, 0 }
     };
 
     for (int i = 0; i < ARRAY_LEN(kCorners); i++) {
@@ -189,7 +189,7 @@ static int fog_regions_clamp_to_the_map(void) {
 /* No regions at all is a real state — a dead tank holding no block and no
  * pill to see through — and fogs the whole map rather than clearing it. */
 static int fog_no_regions_fogs_the_map(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 0);
     UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
@@ -209,7 +209,7 @@ static int fog_no_regions_fogs_the_map(void) {
 /* A region at full alpha is one the player holds outright, and carries the
  * ramp byte for byte — the mask a region that cannot fade has always drawn. */
 static int fog_full_alpha_carries_the_plain_ramp(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1);
 
@@ -235,7 +235,7 @@ static int fog_full_alpha_carries_the_plain_ramp(void) {
  * and has to leave the map exactly as it found it, ramp included — the block
  * is gone rather than sitting there at one byte under full fog. */
 static int fog_faded_out_region_is_not_there(void) {
-    OverviewRect live = { 100, 100, 120, 120, 0 };
+    OverviewRect live = { 100, 100, 120, 120, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -252,7 +252,7 @@ static int fog_faded_out_region_is_not_there(void) {
  * the same part-way value, the ramp still climbs out of that value rather than
  * out of clear, and a region still at full alpha over the top wins. */
 static int fog_mid_fade_dims_the_whole_block(void) {
-    OverviewRect live = { 100, 100, 120, 120, 128 };
+    OverviewRect live = { 100, 100, 120, 120, 128, 0 };
 
     fogBuild(&live, 1);
 
@@ -283,8 +283,8 @@ static int fog_mid_fade_dims_the_whole_block(void) {
                   (unsigned)OVERVIEW_FOG_ALPHA);
 
     /* A pill going dark under the tank's block must not dim it. */
-    OverviewRect pair[2] = { { 100, 100, 120, 120, 128 },
-                             { 110, 110, 114, 114, 255 } };
+    OverviewRect pair[2] = { { 100, 100, 120, 120, 128, 0 },
+                             { 110, 110, 114, 114, 255, 0 } };
     fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(112, 112) == 0,
@@ -297,13 +297,40 @@ static int fog_mid_fade_dims_the_whole_block(void) {
     return fogGuardIntact();
 }
 
+/* Half alpha lifts a square half as far out of the fog as full alpha does.
+ * This is the whole of what puts the halo at half fog: it carries alpha 128
+ * and the builder needs nothing of its own to read it that way. Full alpha is
+ * checked in the same case, so a change that moved the halo would have to move
+ * the block the map has always drawn with it to pass. */
+static int fog_half_alpha_lifts_half_way(void) {
+    OverviewRect full = { 100, 100, 120, 120, 255, 0 };
+    OverviewRect half = { 100, 100, 120, 120, 128, 0 };
+
+    fogBuild(&full, 1);
+    BYTE fullFog = fogAt(110, 110);
+    UT_ASSERT_MSG(fullFog == 0,
+                  "a full-alpha region's interior carries %u fog, expected "
+                  "clear", (unsigned)fullFog);
+
+    fogBuild(&half, 1);
+    BYTE halfFog = fogAt(110, 110);
+
+    int fullLift = OVERVIEW_FOG_ALPHA - (int)fullFog;
+    int halfLift = OVERVIEW_FOG_ALPHA - (int)halfFog;
+    UT_ASSERT_MSG(halfLift * 2 >= fullLift - 2 && halfLift * 2 <= fullLift + 2,
+                  "alpha 128 lifts a square %d out of the fog where alpha 255 "
+                  "lifts it %d, expected half of it to within rounding",
+                  halfLift, fullLift);
+    return fogGuardIntact();
+}
+
 /* A decay window only ever runs one way, so the block only ever gets darker:
  * dropping alpha a step must never brighten a square. */
 static int fog_lower_alpha_never_brightens(void) {
     BYTE prev = 0;
 
     for (int a = 255; a >= 0; a--) {
-        OverviewRect live = { 100, 100, 120, 120, (BYTE)a };
+        OverviewRect live = { 100, 100, 120, 120, (BYTE)a, 0 };
 
         fogBuild(&live, 1);
 
@@ -331,6 +358,7 @@ extern "C" int run_overview_fog(void) {
     rc = fog_full_alpha_carries_the_plain_ramp();    if (rc) return rc;
     rc = fog_faded_out_region_is_not_there();        if (rc) return rc;
     rc = fog_mid_fade_dims_the_whole_block();        if (rc) return rc;
+    rc = fog_half_alpha_lifts_half_way();            if (rc) return rc;
     rc = fog_lower_alpha_never_brightens();          if (rc) return rc;
     return 0;
 }

@@ -153,13 +153,15 @@ int run_overview_regions(void) {
 
     /* Tank alone, well clear of every edge: one 29x29 rect on it. */
     tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "tank with no pills gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
 
     /* Over the left and bottom edges the block is trimmed, not wrapped. */
     tank = overviewTestBlock(3, 250, OVERVIEW_TANK_HALF);
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "corner tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 0, 236, 17, 255);
 
@@ -167,17 +169,20 @@ int run_overview_regions(void) {
      * at nothing left it is the single square the tank is on, and no rect at
      * all means no region. */
     tank = overviewTestBlock(100, 100, 4);
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a narrowed block gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 96, 96, 104, 104);
 
     tank = overviewTestBlock(100, 100, 0);
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a single-square block gave %d regions, expected 1",
                   n);
     ASSERT_RECT(out[0], 100, 100, 100, 100);
 
-    n = overviewMapBuildRegions(gs, 0, &in, NULL, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, NULL, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "a block that has gone gave %d regions, expected 0",
                   n);
 
@@ -192,43 +197,50 @@ int run_overview_regions(void) {
     gs->pb->item[0].y = 50;
 
     tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "tank + own pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* An allied owner views the same as an own one. */
     gs->pb->item[0].owner = 1;
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "allied pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* A pill the player cannot view through contributes nothing: owned by
      * someone hostile, or dead, or carried in a tank. */
     gs->pb->item[0].owner = 2;
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "enemy pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].owner = 0;
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "dead pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].armour = PILLBOX_15;
     gs->pb->item[0].inTank = TRUE;
-    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "carried pill gave %d regions, expected 1", n);
 
     /* No tank: a viewable pill still gives the player its block, and it is
      * the only rect. */
     gs->pb->item[0].inTank = FALSE;
-    n = overviewMapBuildRegions(gs, 0, &in, NULL, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, NULL, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "pill without a tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 193, 43, 207, 57);
 
     /* No tank and nothing to view through: no live squares at all. */
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, &in, NULL, out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, NULL, out,
+                                OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "no tank and no viewable pill gave %d regions", n);
 
     /* A full map of viewable pills plus the tank wants more rects than a
@@ -252,7 +264,7 @@ int run_overview_regions(void) {
         out[maxOut].bottom = -1;
 
         tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
-        n = overviewMapBuildRegions(gs, 0, &in, &tank, out, maxOut);
+        n = overviewMapBuildRegions(gs, 0, &in, NULL, &tank, out, maxOut);
         UT_ASSERT_MSG(n == maxOut, "capped build returned %d, expected %d", n,
                       maxOut);
         ASSERT_RECT(out[maxOut], -1, -1, -1, -1);
@@ -422,6 +434,77 @@ int run_overview_regions(void) {
         fog.facing = 0; /* north, into the top edge */
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 3);
         ASSERT_RECT(om->live[0], 0, 0, 10, 5);
+
+        /* Halo is the lens with a wider block of ground under it. Two rects:
+         * the halo first, round the tank, at half brightness and granting no
+         * sight, then the lens at the view, whole. The order decides what a
+         * square both cover ends up with, because the stamp assigns the flags
+         * rather than merging them and the lens goes last. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentHalo;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 96;
+        fog.viewTop = 96;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 2, "Halo gave %d regions, expected 2",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 86, 86, 114, 114);
+        ASSERT_RECT(om->live[1], 96, 96, 110, 110);
+        UT_ASSERT_MSG(om->live[0].alpha == OVERVIEW_HALO_ALPHA &&
+                          om->live[0].terrainOnly == 1,
+                      "the halo came out at alpha %u terrainOnly %u, expected "
+                      "%u and 1", (unsigned)om->live[0].alpha,
+                      (unsigned)om->live[0].terrainOnly,
+                      (unsigned)OVERVIEW_HALO_ALPHA);
+        UT_ASSERT_MSG(om->live[1].alpha == 255 &&
+                          om->live[1].terrainOnly == 0,
+                      "the lens inside the halo came out at alpha %u "
+                      "terrainOnly %u, expected 255 and 0",
+                      (unsigned)om->live[1].alpha,
+                      (unsigned)om->live[1].terrainOnly);
+
+        /* A square both cover is live and in sight, so what is standing on it
+         * is drawn; one only the halo covers is live ground with nothing
+         * moving shown on it. */
+        UT_ASSERT_MSG((om->flags[100][100] &
+                       (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                          (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
+                      "a square in both blocks carries flags 0x%02X, expected "
+                      "live and sight", (unsigned)om->flags[100][100]);
+        UT_ASSERT_MSG(overviewEntityIsVisible(om, 100, 100) == true,
+                      "an enemy inside the lens would not be drawn");
+        UT_ASSERT_MSG((om->flags[88][88] & OVERVIEW_F_LIVE) != 0 &&
+                          (om->flags[88][88] & OVERVIEW_F_SIGHT) == 0,
+                      "a square only the halo covers carries flags 0x%02X, "
+                      "expected live without sight",
+                      (unsigned)om->flags[88][88]);
+        UT_ASSERT_MSG(overviewEntityIsVisible(om, 88, 88) == false,
+                      "an enemy in the halo but outside the lens would be "
+                      "drawn");
+
+        /* Under every other experiment the two bits go together over the whole
+         * map, which is what keeps the plain live assertions elsewhere in this
+         * file saying the same thing about entities as they always did. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        {
+            int x; /* Looping variable */
+            int y; /* Looping variable */
+
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    BYTE flags = om->flags[x][y];
+
+                    UT_ASSERT_MSG(((flags & OVERVIEW_F_LIVE) != 0) ==
+                                      ((flags & OVERVIEW_F_SIGHT) != 0),
+                                  "square %d,%d carries flags 0x%02X under "
+                                  "Envelope, where live and sight go together",
+                                  x, y, (unsigned)flags);
+                }
+            }
+        }
 
         free(om);
     }
@@ -700,7 +783,7 @@ int run_overview_reveal(void) {
     clientSimFillOverviewViewInputs(f.cs, &in);
     OverviewRect tankBlock = overviewTestBlock(f.tankMX, f.tankMY,
                                                OVERVIEW_TANK_HALF);
-    int n = overviewMapBuildRegions(f.gs, f.me, &in, &tankBlock, expect,
+    int n = overviewMapBuildRegions(f.gs, f.me, &in, NULL, &tankBlock, expect,
                                     OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "expected the tank block and one pill block, got %d",
                   n);
@@ -2059,7 +2142,7 @@ int run_overview_loopback(void) {
     clientSimFillOverviewViewInputs(h.cs, &in);
     OverviewRect tankBlock = overviewTestBlock(tankMX, tankMY,
                                                OVERVIEW_TANK_HALF);
-    int n = overviewMapBuildRegions(gs, me, &in, &tankBlock, expect,
+    int n = overviewMapBuildRegions(gs, me, &in, NULL, &tankBlock, expect,
                                     OVERVIEW_MAX_REGIONS);
     if (n < 1) {
         loopbackHarnessStop(&h);

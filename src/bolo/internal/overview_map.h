@@ -150,20 +150,20 @@ void overviewMapReset(OverviewMap *om);
 void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
                         BYTE myPlayerNum);
 
-/* Pure geometry. Writes the tank rect first when there is one, then the
- * pillboxes in ascending pill index, then the bases in ascending base index,
- * then the allied tanks in ascending player number. Returns the number
- * written, never more than maxOut. The ordering is contractual — the farewell
- * stamp in overviewMapUpdate replays it to pair a stale rect with the region
- * that produced it.
+/* Pure geometry. Writes the halo rect first when there is one, then the tank
+ * rect when there is one, then the pillboxes in ascending pill index, then the
+ * bases in ascending base index, then the allied tanks in ascending player
+ * number. Returns the number written, never more than maxOut. The ordering is
+ * contractual — the farewell stamp in overviewMapUpdate replays it to pair a
+ * stale rect with the region that produced it.
  *
  * Which items of a category earn a rect is the policy in `in`: every one that
  * qualifies under viewPolicyAlways, only the one the player is watching under
  * viewPolicyKey, the ones whose proximity clock has not run out under
  * viewPolicyDecay, and none at all under viewPolicyOff. While a viewPolicyKey
- * category is granting the watched item its rect there is no tank rect at all,
- * whatever tankRect holds: key is one view at a time, and the item's block
- * replaces the tank's rather than joining it. Qualifying is the same
+ * category is granting the watched item its rect there is no tank rect and no
+ * halo, whatever tankRect and haloRect hold: key is one view at a time, and the
+ * item's block replaces the tank's rather than joining it. Qualifying is the same
  * test the item views make — pillsCanView, basesCanView, playersCanAllyView —
  * so an enemy, dead, carried, neutral or un-allied item never appears whatever
  * the policy says. Each rect carries the alpha the fade wants: 255 outright,
@@ -172,11 +172,16 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
  * tankRect is the block round the player's own tank, already placed and sized
  * by the caller — the fog experiment decides where it goes and how wide it is,
  * so the choice is made once, in overviewMapUpdate, and this only copies what
- * it is handed. NULL means no tank rect at all. Every watched item's block —
- * a pill, a base, an allied tank — is always OVERVIEW_PILL_HALF round the item,
- * the size its own view shows, whatever the tank's block is doing. */
+ * it is handed. NULL means no tank rect at all. haloRect is the wider block of
+ * ground Halo puts under it, terrain-only and at its own alpha, and is NULL
+ * under every other experiment. Both are copied as they are handed over, so
+ * where they go and what they grant is settled before the call. Every watched
+ * item's block — a pill, a base, an allied tank — is always OVERVIEW_PILL_HALF
+ * round the item, the size its own view shows, whatever the tank's block is
+ * doing. */
 int  overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
                              const OverviewViewInputs *in,
+                             const OverviewRect *haloRect,
                              const OverviewRect *tankRect,
                              OverviewRect *out, int maxOut);
 
