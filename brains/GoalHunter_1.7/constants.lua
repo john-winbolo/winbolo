@@ -233,7 +233,10 @@ M.TANK_FULL_SHELLS = 40
 M.ARMOUR_CRITICAL  = 5    -- flee immediately
 M.ARMOUR_LOW       = 15   -- seek resupply
 M.ARMOUR_MODERATE  = 25   -- conditionally force PPT when standoff is hot
-M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
+M.SHELLS_LOW       = 19   -- seek resupply (~15 to kill a pill/base). 2026-09-06: 20 -> 19
+                          -- (Andrew): a tank at exactly 20 shells is "plenty good to stay out
+                          -- fighting", so 20 is no longer low -- no refuel candidate, no deficit
+                          -- bonus, no urgency discount. KEEL value 20 lives in PRESETS.keel.
 
 -- Ammo-deprivation: if a tank sits below AMMO_DEPRIVED_SHELLS for this long
 -- during normal (non-opening) play it's flagged state.ammo_deprived ??? a lost
@@ -860,7 +863,36 @@ M.REFUEL_MIN_MINES         = 0     -- mines below this still count as a refuel n
 M.REFUEL_MINE_FREE         = 5     -- mines up to here add no staying-cost
 M.REFUEL_MINE_HOARD_BASE   = 1.3   -- exponential base for the per-extra-mine cost past FREE
 M.REFUEL_MINE_HOARD_WEIGHT = 8     -- scale on the exponential mine-hoard cost term
+-- 2026-09-06. The mine-hoard staying-cost above is an EVICTION lever, not a
+-- toll on resupply: it exists to stop a tank parking on a pad purely to load
+-- mines. With this flag on it is WAIVED (charged 0) while the tank is still
+-- below a target (armour < armour_target or shells < shell_target) AND the base
+-- it is parked on still holds at least REFUEL_MIN_STOCK of that same supply --
+-- i.e. while the base can still give the tank something it actually came for.
+-- At both targets, or on a base that has run dry of everything the tank still
+-- needs (a base with nothing left but mines), the term applies in full and
+-- still evicts. Incident 20260905_231835 bot2 t=67674: 35 armour, 20 shells,
+-- 23 mines standing on base #4 priced refuel at 48 + 891.6 = 939.6, defend_pill
+-- took it at 187, and the tank left the pad short of BOTH targets purely
+-- because of the mines it was carrying -- then off the pad the same base
+-- priced 48 again, so it hopped straight back.
+M.REFUEL_MINE_HOARD_NEEDS_SUPPLY = true  -- waive the mine-hoard surcharge while the base can still supply a resource we're short of
 M.ANGRY_PILL_AT_BASE_PENALTY = 200 -- added to pool-1 cost when an angry hostile pill is in fire range of the base
+-- 2026-09-06. Refuel CANDIDACY, not refuel pricing. Before this flag a refuel
+-- row only existed while the tank was at/below a low watermark (ARMOUR_LOW 15 /
+-- SHELLS_LOW 20). Once a tank was off the pad and above both lines the row
+-- vanished, so the only way back to a base was to fall to 20 shells first --
+-- and the top-off ramp below (REFUEL_FULL_COST_MULT) only ever ran for a tank
+-- that was ALREADY holding a refuel_at_base goal (build_eval_queue keeps pool 1
+-- alive for the active goal, and the goal finishes at armour_target /
+-- shell_target, not at the low line). With this on, refuel is a candidate
+-- anywhere below the dynamic full targets and the ramp prices it: at 30/40
+-- shells that is base x2.75, which normally loses to real work -- which is the
+-- point. The author's rule: "20 is a good number to be 'you're full enough, go
+-- do stuff unless it's worth the cost to keep recharging'".
+M.REFUEL_TOPOFF_CANDIDATE  = false -- refuel is a candidate below FULL, not only below LOW (false = low-only, the KEEL rule).
+                                   -- Benched 2026-09-06 (6-4 for ON, neutral) and switched back OFF the same day:
+                                   -- Andrew prefers the low-line rule with SHELLS_LOW 19. Switch kept for cfg= benches.
 -- Critical-armour flee: when true, injects a cost=40 flee_to_base candidate
 -- into pool 1 so the tank retreats to a safe base. When false (default),
 -- relies on the normal pool-1 refuel candidate ??? REFUEL_DEFICIT_BONUS
@@ -3418,6 +3450,23 @@ M.PRESETS = {
     -- refuses the tick outright if the engine's LGM kill rule would fire.
     -- KEEL sends the man regardless and finds out.
     BUILDER_POOL_SHELL_GATE = false,
+    -- 2026-09-06: refuel is now a CANDIDATE anywhere below the full targets,
+    -- priced by the existing top-off ramp (base x2.75 at 30/40 shells). KEEL
+    -- only ever offered a refuel row when the tank was at/below ARMOUR_LOW or
+    -- SHELLS_LOW, so a tank that left a base above both lines could not go
+    -- back for a top-off until it had burned down to 20 shells.
+    REFUEL_TOPOFF_CANDIDATE = false,
+    -- 2026-09-06: SHELLS_LOW 20 -> 19 (Andrew: "SHELLS_LOW=19 is really what I
+    -- want"). KEEL treats exactly 20 shells as low; the new default does not.
+    SHELLS_LOW = 20,
+    -- 2026-09-06: the pool-1 mine-hoard staying-cost is now WAIVED while the
+    -- tank is still below a target and the base under it still holds
+    -- REFUEL_MIN_STOCK of that supply. KEEL charges it whenever the tank is
+    -- parked on the base and carries more than REFUEL_MINE_FREE mines, so a
+    -- 35-armour/20-shell tank with 23 mines priced its own base at 48 + 891.6
+    -- and was driven off it before it had refuelled (20260905_231835 bot2
+    -- t=67674).
+    REFUEL_MINE_HOARD_NEEDS_SUPPLY = false,
   },
 }
 

@@ -930,12 +930,58 @@ local function refuel_shape(info, state, now)
   -- low enough to outbid attack goals at 250-500 and read as "NEED TO
   -- REFUEL" when nothing was actually low (20260703_221238 t=24898).
   local mult = 1.0 + (fill * fill) * (C.REFUEL_FULL_COST_MULT - 1.0) * scarcity
-  local mines_over = math.max(0, (info.mines or 0) - (C.REFUEL_MINE_FREE or 5))
-  local mine_cost = 0.0
+  -- ── Mine-hoard staying-cost (additive, at-this-base only) ──────────────
+  -- The exponential itself is unchanged: WEIGHT x (BASE^(mines-FREE) - 1).
+  --
+  -- What is new (2026-09-06, C.REFUEL_MINE_HOARD_NEEDS_SUPPLY) is WHEN it is
+  -- charged. The term is an EVICTION lever — "don't sit on a pad just to load
+  -- mines" — so it is waived while the tank still has a real reason to be on
+  -- the pad: below one of its targets AND parked on a base that still holds
+  -- REFUEL_MIN_STOCK of that same supply. At both targets, or on a base that
+  -- has run dry of everything we still need (nothing left but mines), it is
+  -- charged in full and still evicts, exactly as before.
+  --
+  -- UNITS: info.base.armour is the engine's per-tick "closest base" item,
+  -- which is the raw base armour DIVIDED BY FIVE (bases.c
+  -- basesGetBrainBaseItem: armour/5, so a full 90 reads 18); shells are raw.
+  -- perception.lua writes those same two numbers into obs_armour/obs_shells
+  -- for the base we're standing on, so comparing them against REFUEL_MIN_STOCK
+  -- here reads the base exactly the way nearest_resupply_base's low_stock
+  -- reject reads it, and the waiver can never contradict the reject.
+  local mines_carried = info.mines or 0
+  local mine_free  = C.REFUEL_MINE_FREE or 5
+  local mines_over = math.max(0, mines_carried - mine_free)
+  local mine_raw = 0.0
   if mines_over > 0 then
-    mine_cost = (C.REFUEL_MINE_HOARD_WEIGHT or 0)
-                * ((C.REFUEL_MINE_HOARD_BASE or 1.3) ^ mines_over - 1.0)
+    mine_raw = (C.REFUEL_MINE_HOARD_WEIGHT or 0)
+               * ((C.REFUEL_MINE_HOARD_BASE or 1.3) ^ mines_over - 1.0)
   end
+  local _b        = info.base
+  local b_arm     = _b and (_b.armour or 0) or 0
+  local b_sh      = _b and (_b.shells or 0) or 0
+  local min_stock = C.REFUEL_MIN_STOCK or 5
+  local need_arm  = arm < arm_target
+  local need_sh   = sh  < sh_target
+  local mine_waived = false
+  if C.REFUEL_MINE_HOARD_NEEDS_SUPPLY and mines_over > 0 then
+    mine_waived = (need_arm and b_arm >= min_stock)
+               or (need_sh  and b_sh  >= min_stock)
+  end
+  local mine_cost = mine_waived and 0.0 or mine_raw
+  -- Every input to the decision, carried out for the debug line and the panel.
+  -- Plain numbers only: the strings are built at the print sites so nothing
+  -- formats on a tick nobody is looking.
+  local mine_d = {
+    carried = mines_carried, free = mine_free, over = mines_over,
+    raw = mine_raw, waived = mine_waived,
+    knob = C.REFUEL_MINE_HOARD_NEEDS_SUPPLY and true or false,
+    weight = C.REFUEL_MINE_HOARD_WEIGHT or 0,
+    expbase = C.REFUEL_MINE_HOARD_BASE or 1.3,
+    arm = arm, arm_target = arm_target, need_arm = need_arm,
+    sh = sh, sh_target = sh_target, need_sh = need_sh,
+    has_base = _b and true or false, b_arm = b_arm, b_sh = b_sh,
+    min_stock = min_stock,
+  }
   local urgency = math.max(C.REFUEL_URGENCY_MIN,
                            math.min(math.min(1.0, arm / C.ARMOUR_LOW),
                                     math.min(1.0, sh  / C.SHELLS_LOW)))
@@ -946,7 +992,72 @@ local function refuel_shape(info, state, now)
     local need = math.max(1.0 - urgency, C.REFUEL_CRITICAL_NEED_MIN or 0)
     urgency = 1.0 - need
   end
-  return bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def
+  return bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def, mine_d
+end
+
+-- Mine-hoard chip text, shared by the REFUEL_SHAPE debug line and the pool-viz
+-- term breakdown so the two can never disagree. `md` is refuel_shape's
+-- mine-detail table. Returns:
+--   head — the short value that goes inside mines{...}. The panel's formula
+--          parser DROPS a term whose braced value reaches 32 characters, so
+--          this stays tiny and the derivation lives in `why`.
+--   why  — the whole thing, hand-computable: the exponential written out with
+--          its constants, whether it was charged, and every number the
+--          waive decision looked at.
+local function mine_chip(md)
+  local head = md.waived
+    and string.format("0 of %.1f waived", md.raw)
+    or  string.format("%.1f", md.raw)
+  local why = string.format(
+    "%.1f = %g[MINE_HOARD_WEIGHT] x (%g[MINE_HOARD_BASE]^(%d mines - %d[MINE_FREE]) - 1)"
+    .. "; %s: arm %d/%d (%s), sh %d/%d (%s); base under us arm=%s sh=%s,"
+    .. " MIN_STOCK=%d",
+    md.raw, md.weight, md.expbase, md.carried, md.free,
+    (not md.knob) and "CHARGED (NEEDS_SUPPLY off)"
+      or (md.waived and "WAIVED (below a target this base can still supply)"
+                    or "CHARGED (this base supplies nothing we still need)"),
+    md.arm, md.arm_target, md.need_arm and "below" or "at",
+    md.sh, md.sh_target, md.need_sh and "below" or "at",
+    md.has_base and tostring(md.b_arm) or "none",
+    md.has_base and tostring(md.b_sh) or "none",
+    md.min_stock)
+  return head, why
+end
+
+-- Is refuel a CANDIDATE this tick? Two ways in, and they mean different things:
+--
+--   LOW      — at/below either watermark (ARMOUR_LOW 15 / SHELLS_LOW 20).
+--              The original rule, and the only one before 2026-09-06.
+--   TOP-OFF  — C.REFUEL_TOPOFF_CANDIDATE: anywhere BELOW the dynamic full
+--              targets (state.armour_target / state.shell_target, plus
+--              REFUEL_MIN_MINES). The author's rule: "20 shells is a good
+--              number to be 'you're full enough, go do stuff unless it's
+--              worth the cost to keep recharging'" — i.e. topping off past
+--              the low line is a real option that has to WIN, not an option
+--              that does not exist. The existing quadratic ramp in
+--              refuel_shape prices it (fill 0 at the low line, 1 at target),
+--              so off the pad a 30/40-shell tank prices refuel at base x2.75
+--              and normally loses. Nothing about the PRICING changes: below
+--              the low lines fill is 0 and the mult is 1.0, exactly as before.
+--
+-- Only CANDIDACY moves. has_shells (the pool gate for pill takes), the
+-- critical-armour flee injection (gated on `critical`, an emergency) and the
+-- refuel goal's own completion (armour_target/shell_target in init.lua) are
+-- all untouched.
+--
+-- Sets state._refuel_topoff_only so the debug lines can say `topoff=on` for a
+-- row that exists ONLY because of the flag.
+local function refuel_need(state, info)
+  local low = (info.armour or 99) <= C.ARMOUR_LOW
+           or (info.shells or 99) <= C.SHELLS_LOW
+  local topoff = false
+  if C.REFUEL_TOPOFF_CANDIDATE and not low then
+    topoff = (info.armour or 99) < (state.armour_target or C.TANK_FULL_ARMOUR)
+          or (info.shells or 99) < (state.shell_target or C.TANK_FULL_SHELLS)
+          or (info.mines or 99) < (C.REFUEL_MIN_MINES or 0)
+  end
+  state._refuel_topoff_only = topoff
+  return (low or topoff), low, topoff
 end
 
 -- =========================================================================
@@ -956,7 +1067,7 @@ end
 -- =========================================================================
 
 local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
-  local needs_resupply = (info.armour <= C.ARMOUR_LOW or info.shells <= C.SHELLS_LOW)
+  local needs_resupply = refuel_need(state, info)
   if not needs_resupply then return nil end
   -- Block depleted bases
   if info.base then
@@ -1033,8 +1144,11 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
     cost = cost,
     goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d%s",
-           bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells, hyst_str) or "",
+    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s%s",
+           bid, base.mx, base.my, bscore, urgency, cost,
+           info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
+           info.shells, state.shell_target or C.TANK_FULL_SHELLS,
+           state._refuel_topoff_only and " topoff=on" or "", hyst_str) or "",
     cands = bcands,
   }
 end
@@ -9152,8 +9266,12 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Check preconditions that would skip entire pools
-  local needs_resupply = (info.armour <= C.ARMOUR_LOW or info.shells <= C.SHELLS_LOW)
+  -- Check preconditions that would skip entire pools.
+  -- needs_resupply is the REFUEL CANDIDACY test (see refuel_need): the low
+  -- watermarks, plus below-full when REFUEL_TOPOFF_CANDIDATE is on.
+  -- has_shells is NOT part of that and keeps the raw SHELLS_LOW line — it
+  -- gates offence (pill takes), which is a different question.
+  local needs_resupply = refuel_need(state, info)
   local has_shells = info.shells > C.SHELLS_LOW
   local perc = state.perc
 
@@ -9717,8 +9835,10 @@ local function get_formula_inner(e)
       local _fm = e._fill_mult or 1
       local _lgm = e._lgm_wait_floor
       _shape_head = string.format(
-        " × ur{%.2f} - def{%.0f} × fill{%.2f}%s",
-        _u, _db, _fm,
+        " × ur{%.2f} - def{%.0f} × mult{%.2f fill %.2f sh %d/%d arm %d/%d} scar{%.2f}%s",
+        _u, _db, _fm, e._fill or 0,
+        e._sh or 0, e._sh_target or 0, e._arm or 0, e._arm_target or 0,
+        e._scarcity or 1,
         _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
       local _arm     = e._arm or 0
       local _sh      = e._sh or 0
@@ -9740,14 +9860,23 @@ local function get_formula_inner(e)
         _arm_def, _sh_def, math.max(_arm_def, _sh_def), C.REFUEL_DEFICIT_BONUS, _db)
       local _d_fill  = (_fm > 1.0)
         and string.format(
-          "fill=%.2f (above LOW) → 1 + %.2f² x (%.2f[FULL_MULT]-1) = %.2f",
-          _fill, _fill, C.REFUEL_FULL_COST_MULT, _fm)
+          "fill=%.2f = min((sh %d-%d)/(%d-%d), (arm %d-%d)/(%d-%d)) → "
+          .. "1 + %.2f² x (%.2f[FULL_MULT]-1) x %.2f[scarcity] = %.2f",
+          _fill,
+          _sh, C.SHELLS_LOW, e._sh_target or 0, C.SHELLS_LOW,
+          _arm, C.ARMOUR_LOW, e._arm_target or 0, C.ARMOUR_LOW,
+          _fill, C.REFUEL_FULL_COST_MULT, e._scarcity or 1, _fm)
         or  "fill=0 (at/below LOW thresholds) → 1.00"
+      local _d_scar  = string.format(
+          "scarcity=%.2f = 1 + %.2f[RATIO_K] x max(0, team/friendly_bases - 1)"
+          .. " + %.2f[LOCAL_K] x allies within %d tiles, capped at %.2f",
+          e._scarcity or 1, C.REFUEL_SHARE_RATIO_K or 0, C.REFUEL_SHARE_LOCAL_K or 0,
+          C.REFUEL_SHARE_LOCAL_TILES or 20, C.REFUEL_SHARE_SCARCITY_CAP or 8.0)
       local _d_lgm   = _lgm
         and string.format("LGM returning, at this base → floor=%.0f (cost capped)", _lgm)
         or  "no LGM-wait active → no floor"
-      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|lgm:%s",
-        _d_urgency, _d_def, _d_fill, _d_lgm)
+      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
+        _d_urgency, _d_def, _d_fill, _d_scar, _d_lgm)
     end
 
     local _danger_pen = C.REFUEL_DANGER_PENALTY or (1 / 0.75)
@@ -9758,13 +9887,18 @@ local function get_formula_inner(e)
         "|danger:danger_val>0 (exposed base) → multiply final cost by %.2f[REFUEL_DANGER_PENALTY]",
         _danger_pen)
       or ""
-    local _mine_token = (e._mine_cost and e._mine_cost > 0)
-      and string.format(" + mine{%.0f}", e._mine_cost) or ""
-    local _mine_detail = (e._mine_cost and e._mine_cost > 0)
-      and string.format(
-        "|mine:hoard surcharge %.0f (mines past %d[REFUEL_MINE_FREE]) — applied ONLY at the base you're parked on, to push a mine-stuffed tank to dump",
-        e._mine_cost, C.REFUEL_MINE_FREE)
-      or ""
+    -- Mine-hoard chip. Shown whenever there IS a hoard at this base, charged or
+    -- waived, so a 0 that was waived can never be mistaken for "no mines".
+    -- Same text the REFUEL_SHAPE debug line prints (mine_chip is shared).
+    local _mine_token, _mine_detail = "", ""
+    if e._mine_d and e._mine_d.over > 0 then
+      local _mh, _mw = mine_chip(e._mine_d)
+      _mine_token  = string.format(" + mines{%s}", _mh)
+      _mine_detail = "|mines:" .. _mw
+        .. ". Charged ONLY at the base you're parked on, to push a mine-stuffed"
+        .. " tank off the pad; waived while that base can still hand it a"
+        .. " resource it is short of (C.REFUEL_MINE_HOARD_NEEDS_SUPPLY)."
+    end
     local _hop_token = (e._hop and e._hop > 0)
       and string.format(" + hop{%.0f}", e._hop) or ""
     local _hop_detail = (e._hop and e._hop > 0)
@@ -13131,6 +13265,7 @@ function M.finalize_pools(state, world, info)
   -- causes — (a) no partial at all (build_eval_queue didn't queue refuel this
   -- cycle, e.g. needs_refuel was false), (b) candidates existed but ALL got
   -- reject-flagged (lists each id:reason), (c) a winner was chosen.
+  refuel_need(state, info)   -- keep the topoff tag current (see goal_selection)
   if pr1 and pr1.best_obj then
     local base = pr1.best_obj
     local bid = pr1.best_id
@@ -13202,8 +13337,11 @@ function M.finalize_pools(state, world, info)
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
-             bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells) or "",
+      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s",
+             bid, base.mx, base.my, bscore, urgency, cost,
+             info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
+             info.shells, state.shell_target or C.TANK_FULL_SHELLS,
+             state._refuel_topoff_only and " topoff=on" or "") or "",
       cands = disp_cands,
     }
   else
@@ -14644,7 +14782,13 @@ local function goal_selection(state, world, info, quiet)
     -- already baked the multiplicative urgency into pool_cache[1].cost,
     -- so we recompute it here purely for the breakdown display.
     local _ref_bonus, _ref_mult, _ref_fill, _ref_scarcity, _ref_mine_cost,
-          _ref_urgency, _ref_arm_def, _ref_sh_def = refuel_shape(info, state, now)
+          _ref_urgency, _ref_arm_def, _ref_sh_def, _ref_mine_d = refuel_shape(info, state, now)
+    -- Refresh the top-off tag. build_eval_queue (its other writer) only rebuilds
+    -- when the cost cache goes stale, up to 100 ticks apart, so the tag on the
+    -- REFUEL_SHAPE / row-desc lines would otherwise describe a tank state that
+    -- is no longer true. Unconditional, not debug-gated: nothing decides on it,
+    -- but prod and the recorded brain must still set it the same way.
+    refuel_need(state, info)
     -- Stash on every pool-1 cache entry so the panel sees the same shape
     -- it'd see if it called the live computation itself. _lgm_wait_floor
     -- starts as nil and only gets set on the at-this-base entry below.
@@ -14660,8 +14804,13 @@ local function goal_selection(state, world, info, quiet)
           -- Mine-hoard surcharge only applies to the base we're parked on (see
           -- the cost path below) — show 0 on every other base so the panel matches.
           e._mine_cost      = (e._mx == tmx and e._my == tmy) and _ref_mine_cost or 0
+          -- The waive decision only means anything at the base we're parked
+          -- on, which is the only row that can be charged the surcharge.
+          e._mine_d         = (e._mx == tmx and e._my == tmy) and _ref_mine_d or nil
           e._arm            = info.armour
           e._sh             = info.shells
+          e._arm_target     = state.armour_target or C.TANK_FULL_ARMOUR
+          e._sh_target      = state.shell_target  or C.TANK_FULL_SHELLS
           e._arm_def        = _ref_arm_def
           e._sh_def         = _ref_sh_def
           e._lgm_wait_floor = nil
@@ -14784,6 +14933,14 @@ local function goal_selection(state, world, info, quiet)
           -- a mine-heavy tank refuse to refuel; the surcharge is exponential and
           -- uncapped, so on remote candidates it dwarfs the real cost).
           local final_cost = base_cost * mult + (at_this_base and _ref_mine_cost or 0)
+          -- Every factor behind the multiplier, on one line: the ramp is the
+          -- whole mechanism that decides whether a top-off beats real work, and
+          -- `x2.75` on its own is not something you can check by hand.
+          -- The mine chip is printed whenever there is a hoard to price at THIS
+          -- base, charged or waived, so a reader can always see the surcharge
+          -- that was (or was not) added and why. Built outside the debug gate is
+          -- pointless work, so it is built here — nothing decides on it.
+          local _mine_seg = ""
           -- LGM-wait floor: clamp cost down when waiting for LGM.
           -- Floor scales with threat at the base: safe spots clamp lower so
           -- sitting still is cheaper when there's no reason to move. Linear
@@ -16284,10 +16441,15 @@ function M.get_pool_breakdown_json(state)
     local li = state._last_info
     if li and li.armour then
       -- Same shared shape the real cost path uses (scarcity + mine surcharge).
-      local bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def =
+      local bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def, mine_d =
         refuel_shape(li, state, state.tick or 0)
+      -- The surcharge is only ever charged at the base under the tank, so only
+      -- that row gets the mines chip — same rule the cost path applies.
+      local _ltmx = li.tankx and bit.rshift(li.tankx, 8) or nil
+      local _ltmy = li.tanky and bit.rshift(li.tanky, 8) or nil
       for _, e in pairs(cache) do
         if e._p == 1 then
+          local _here = (_ltmx ~= nil and e._mx == _ltmx and e._my == _ltmy)
           e._urgency     = urgency
           e._base_floor  = C.REFUEL_BASE_COST
           e._defic_bonus = bonus
@@ -16295,6 +16457,7 @@ function M.get_pool_breakdown_json(state)
           e._fill        = fill
           e._scarcity    = scarcity
           e._mine_cost   = mine_cost
+          e._mine_d      = _here and mine_d or nil
           e._arm         = li.armour
           e._sh          = li.shells or 0
           e._arm_def     = arm_def
