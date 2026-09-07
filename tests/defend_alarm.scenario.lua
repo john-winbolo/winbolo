@@ -34,6 +34,21 @@
 --   D   KEEL CONTROL.   Arena A exactly, run with cfg=DEFEND_ALARM_MODE=false.
 --                       Nothing here changes; the difference is entirely in the
 --                       brain's token string.
+--   W   WELL DEFENDED.  Arena A's shooter and our far observer, plus FOUR more
+--                       parked tanks: two ALLIES sitting 6 tiles from the pill
+--                       and two filler FOES sitting 18 tiles away on the
+--                       shooter's strip.  Teams are 3v3, so R = ceil(3/3) = 1
+--                       and the pill is held (foes 1 <= allies 2 x 1).
+--                       Conditions 1-3 all hold -- an enemy is visible at the
+--                       pill, it is shelling it, and we are 16 tiles out -- so
+--                       the ONLY thing that can reject the row is condition 4,
+--                       and the bot must never take defend_pill.
+--   WC  THE CONTROL.    Identical in every respect except WHERE the two allies
+--                       park: 14 and 18 tiles from the pill instead of 6 and
+--                       5.7.  allies_near is then 0, the pill is not held and
+--                       the alarm must fire exactly as it does in arena A.
+--                       (Parking only ONE ally near would NOT be a control: at
+--                       R=1 a single ally still covers a single foe.)
 --
 -- OWNERSHIP.  The map's pill and our base belong to slot 0 (the -bots tank);
 -- the far-side base belongs to the foe, which is what puts the front line
@@ -60,6 +75,30 @@ local FOE_WALL = { 126, 122 }
 
 local SHOOTER_BRAIN = "../tests/brains/shell_pill_then_flee.lua"
 local WALLER_BRAIN  = "../tests/brains/park_and_wall.lua"
+local PARK_BRAIN    = "../tests/brains/park_at.lua"
+
+-- Arenas W / WC: the extra tanks, in SPAWN ORDER.  Each entry is
+--   { name, brain, team, start index, BRAIN_INIT_ARG }
+-- and the start indices are the pond list in generate_defend_alarm_map.py
+-- (5..10).  The two arenas differ in exactly one thing: whether the allies'
+-- park destinations are the near pair or the far pair.
+local W_EXTRA = {
+  { "AllyA", PARK_BRAIN, 0,  5, "132,126" },   -- 6.0 tiles from the pill
+  { "AllyB", PARK_BRAIN, 0,  6, "130,122" },   -- 5.7 tiles
+  { "FoeB",  PARK_BRAIN, 1,  9, "114,140" },   -- 18.4 tiles, team filler
+  { "FoeC",  PARK_BRAIN, 1, 10, "138,140" },   -- 18.4 tiles, team filler
+}
+local WC_EXTRA = {
+  { "AllyA", PARK_BRAIN, 0,  7, "114,112" },   -- 18.4 tiles -- NOT counted
+  { "AllyB", PARK_BRAIN, 0,  8, "114,118" },   -- 14.4 tiles -- NOT counted
+  { "FoeB",  PARK_BRAIN, 1,  9, "114,140" },
+  { "FoeC",  PARK_BRAIN, 1, 10, "138,140" },
+}
+local function extras()
+  if VARIANT == "W"  then return W_EXTRA end
+  if VARIANT == "WC" then return WC_EXTRA end
+  return nil
+end
 
 -- Sim ticks after the first hp drop at which arena A removes the shooter.
 -- 200 sim ticks = 100 brain ticks = about four GOAL_REPLAN_INTERVALs, so the
@@ -85,6 +124,13 @@ local last_wall   = nil
 local first_hit_t = nil
 local despawned   = false
 local settiled    = false
+-- on_choose_start fires DURING spawn_bot with the NEW slot as `p`, so this is
+-- where a per-tank pond is both chosen and remembered.  `next_start` stages
+-- the pond for the one spawn about to happen (arenas W/WC); `start_of` is the
+-- memory that survives a respawn.
+local start_of    = {}
+local next_start  = nil
+local extra_slots = {}
 
 local function trace(fmt, ...)
   local f = io.open(TRACE, "a")
@@ -144,8 +190,23 @@ end
 -- side of the moat and 12 tiles from the pill.  Anybody who is not us is the
 -- foe; there are only ever two tanks here.
 function on_choose_start(g, p)
-  if p == our_player then return our_start() end
-  return foe_start()
+  -- Remembered first, so a RESPAWN puts a tank back on its own pond.  Arena
+  -- A's shooter sits inside PILL_FIRE_RANGE and does get killed, and in
+  -- arenas W/WC a wrong pond would silently move a counted body.
+  if start_of[p] ~= nil then return start_of[p] end
+  local s
+  if p == our_player then
+    s = our_start()
+  elseif next_start ~= nil then
+    -- Arenas W/WC: the extras are spawned in a fixed order and each one's
+    -- pond is staged in `next_start` immediately before its spawn_bot call.
+    s = next_start
+    next_start = nil
+  else
+    s = foe_start()
+  end
+  start_of[p] = s
+  return s
 end
 
 function on_tick(g, tick)
@@ -160,6 +221,33 @@ function on_tick(g, tick)
       g.message("DEFEND_ALARM " .. VARIANT .. " foe slot=" .. tostring(s))
       trace("spawn %d %d", tick, s)
       -- A fresh join can shuffle pill ownership; re-assert it.
+      own_everything(g, our_player)
+    end
+    -- Arenas W/WC: the four parked bodies the well-defended count is about.
+    -- Spawned AFTER the shooter and in list order, each with its pond staged
+    -- in next_start for the on_choose_start that spawn_bot will fire.
+    local ex = extras()
+    if ex then
+      for i = 1, #ex do
+        local name, brain, team, pond, arg = ex[i][1], ex[i][2], ex[i][3],
+                                             ex[i][4], ex[i][5]
+        next_start = pond
+        local es, eerr = g.spawn_bot(name, brain, team, nil, arg)
+        next_start = nil
+        if es == nil then
+          g.message("DEFEND_ALARM spawn_bot(" .. name .. ") failed: "
+                    .. tostring(eerr))
+        else
+          g.set_team(es, team)
+          extra_slots[#extra_slots + 1] = { slot = es, name = name,
+                                            team = team, dest = arg }
+          trace("extra %d %d %d %d", tick, es, team, pond)
+          g.message("DEFEND_ALARM " .. VARIANT .. " " .. name .. " slot="
+                    .. tostring(es) .. " team=" .. tostring(team)
+                    .. " -> " .. arg)
+        end
+      end
+      -- Five joins in one tick is five chances for the pill to change hands.
       own_everything(g, our_player)
     end
   end
@@ -195,6 +283,22 @@ function on_tick(g, tick)
       if last_foe ~= k then
         trace("foe %d %d %d %d", tick, foe_player, ft.mx, ft.my)
         last_foe = k
+      end
+    end
+  end
+
+  -- Arenas W/WC: every parked body's tile, on every change.  This is the
+  -- ENGINE's word for where the allies actually ended up, which is what the
+  -- test checks the brain's allies_near count against -- the brain's own
+  -- opinion of the count would be checking the code against itself.
+  for i = 1, #extra_slots do
+    local e = extra_slots[i]
+    local et = g.tank(e.slot)
+    if et then
+      local k = et.mx * 256 + et.my
+      if e.last ~= k then
+        trace("xpos %d %d %d %d %d", tick, e.slot, e.team, et.mx, et.my)
+        e.last = k
       end
     end
   end

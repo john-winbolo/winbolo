@@ -113,6 +113,50 @@ FOE_BUILD_SPOT = (126, 120)         # builder brakes here, 6 tiles from P
 FOE_WALL = (126, 122)               # the tile its LGM walls, 4 tiles from P
 OUR_BASE_FOE = (126, 133)           # hostile base (owner set by the sidecar)
 
+# ── Arena W / WC: the WELL-DEFENDED count (starts 5..10) ──────────────────
+# Alarm mode's condition 4 rejects a pill that is ALREADY HELD:
+#   R = ceil(their_team / our_team); held when foes_near <= allies_near * R,
+# both counted within DEFEND_WELL_DEFENDED_RADIUS (10) euclidean tiles of the
+# pill, the bidder itself excluded.  So the arena needs, on top of arena A's
+# shooter, four more bodies:
+#
+#   * TWO ALLIED tanks parked close to P.  They must be inside the pill's own
+#     15x15 view rect (+-7 tiles), not merely inside the 10-tile well-defended
+#     radius -- our observer sits 16 tiles west and can only see them THROUGH
+#     that rect, exactly as arena A's shooter is only visible through it.  6
+#     and 5.7 tiles out, which is inside 7 and inside 10 with room to spare.
+#   * TWO ENEMY tanks parked FAR from P (18 tiles, on the shooter's strip
+#     across the moat).  Their only job is the arithmetic: with 3 a side,
+#     R = ceil(3/3) = 1, so the printed reject reads `foes 1 <= allies 2 x 1`
+#     and the ratio in it came from real team sizes.  Far enough out that they
+#     can never be counted in foes_near themselves.
+#
+# WC is the CONTROL and changes exactly one thing: the two allies park FAR
+# instead (14 and 18 tiles out), so allies_near is 0, the pill is NOT held and
+# the alarm must fire normally.  Note that "remove one of the two" is NOT a
+# control -- with R=1 a single ally still covers a single foe (1 <= 1 x 1) and
+# the pill would still be held.  Zero allies near is the only way to flip it
+# with one shooter, which is why the two park spots move rather than one tank
+# disappearing.
+#
+# Each park spot is a straight single-axis drive from its own pond (see
+# tests/brains/park_at.lua), and no route crosses another pond -- a tank that
+# drove over a one-tile deep-sea pond would drown mid-arena.
+ALLY_NEAR_A_START = (134, 126)      # pond; drives WEST to...
+ALLY_NEAR_A = (132, 126)            #   6.0 tiles E of P
+ALLY_NEAR_B_START = (130, 110)      # pond; drives SOUTH to...
+ALLY_NEAR_B = (130, 122)            #   5.7 tiles NE of P
+ALLY_FAR_A_START = (112, 112)       # pond; drives EAST to...
+ALLY_FAR_A = (114, 112)             #   18.4 tiles from P (WC control)
+ALLY_FAR_B_START = (112, 118)       # pond; drives EAST to...
+ALLY_FAR_B = (114, 118)             #   14.4 tiles from P (WC control)
+FOE_FILL_A_START = (112, 140)       # pond on the strip; drives EAST to...
+FOE_FILL_A = (114, 140)             #   18.4 tiles from P
+FOE_FILL_B_START = (140, 140)       # pond on the strip; drives WEST to...
+FOE_FILL_B = (138, 140)             #   18.4 tiles from P
+
+WELL_DEFENDED_RADIUS = 10           # C.DEFEND_WELL_DEFENDED_RADIUS
+
 PILLS_MAX_HEALTH = 15
 
 # Knob values the arena is built around; the test asserts the brain's own
@@ -128,6 +172,34 @@ ALARM_MIN_COST = 50
 ALARM_DIJ_STOP_TILES = 9
 PILL_VIEW_HALF = 7                  # the team-pill view rect is 15x15
 
+# Start ponds, in START-RECORD ORDER: the scenario sidecar picks a start by
+# INDEX (on_choose_start returns 1-based), so this list and the `starts` tuple
+# written into the map below are the same order, and both are indexed by the
+# names in the comment on each line.
+PONDS = [
+    (OUR_FAR, 4),            # 1  ours, far   -- facing east
+    (OUR_NEAR, 4),           # 2  ours, near  -- facing east
+    (FOE_SOUTH, 0),          # 3  shooter     -- facing north
+    (FOE_NORTH, 8),          # 4  builder     -- facing south
+    (ALLY_NEAR_A_START, 12), # 5  ally near A -- facing west
+    (ALLY_NEAR_B_START, 8),  # 6  ally near B -- facing south
+    (ALLY_FAR_A_START, 4),   # 7  ally far  A -- facing east
+    (ALLY_FAR_B_START, 4),   # 8  ally far  B -- facing east
+    (FOE_FILL_A_START, 4),   # 9  foe filler A -- facing east
+    (FOE_FILL_B_START, 12),  # 10 foe filler B -- facing west
+]
+ALL_PONDS = [sq for sq, _dr in PONDS]
+# Which pond each parked tank drives off, and the tile it stops on.  The
+# scenario hands the destination to tests/brains/park_at.lua as BRAIN_INIT_ARG.
+PARK_ROUTES = {
+    "ally_near_a": (ALLY_NEAR_A_START, ALLY_NEAR_A),
+    "ally_near_b": (ALLY_NEAR_B_START, ALLY_NEAR_B),
+    "ally_far_a":  (ALLY_FAR_A_START, ALLY_FAR_A),
+    "ally_far_b":  (ALLY_FAR_B_START, ALLY_FAR_B),
+    "foe_fill_a":  (FOE_FILL_A_START, FOE_FILL_A),
+    "foe_fill_b":  (FOE_FILL_B_START, FOE_FILL_B),
+}
+
 
 def edist(a, b):
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
@@ -139,8 +211,8 @@ def make_map():
         for yy in range(y0, y1 + 1):
             for xx in range(x0, x1 + 1):
                 t[yy][xx] = GRASS
-    # Dig the four start ponds back out to the deep-sea background.
-    for (px, py) in (OUR_FAR, OUR_NEAR, FOE_SOUTH, FOE_NORTH):
+    # Dig the start ponds back out to the deep-sea background.
+    for (px, py) in ALL_PONDS:
         t[py][px] = DEEP_SEA
     return t
 
@@ -157,10 +229,11 @@ def main():
     assert (min(xs) + max(xs)) // 2 == 126, (min(xs), max(xs))
     assert (min(ys) + max(ys)) // 2 == 126, (min(ys), max(ys))
 
-    for name, sq in (("our_far", OUR_FAR), ("our_near", OUR_NEAR),
-                     ("foe_south", FOE_SOUTH), ("foe_north", FOE_NORTH)):
+    for i, (sq, _dr) in enumerate(PONDS, start=1):
         assert terrain[sq[1]][sq[0]] is DEEP_SEA, (
-            f"{name} start must be deep sea (starts.c startsIsValidSquare)")
+            f"start {i} at {sq} must be deep sea "
+            f"(starts.c startsIsValidSquare)")
+    assert len(set(ALL_PONDS)) == len(ALL_PONDS), "two starts share a pond"
     for name, sq in (("pill", OUR_PILL), ("standoff", FOE_STANDOFF),
                      ("build_spot", FOE_BUILD_SPOT), ("wall", FOE_WALL),
                      ("foe_base", OUR_BASE_FOE)):
@@ -199,6 +272,52 @@ def main():
         f"ring of the stamp so the arena also proves the radius is "
         f"{ALARM_BUILD_RADIUS} and not smaller")
 
+    # ── Arena W / WC: the well-defended count ─────────────────────────────
+    # The two NEAR allies have to be inside BOTH the well-defended radius (or
+    # they are not counted) and the pill's 15x15 view rect (or our far-away
+    # observer never sees them, and the arena would be measuring visibility
+    # rather than the rule).
+    for name, sq in (("ally_near_a", ALLY_NEAR_A), ("ally_near_b", ALLY_NEAR_B)):
+        d = edist(sq, OUR_PILL)
+        assert d <= WELL_DEFENDED_RADIUS, (
+            f"{name} parks {d:.1f} tiles from the pill -- outside "
+            f"DEFEND_WELL_DEFENDED_RADIUS {WELL_DEFENDED_RADIUS}, so it would "
+            f"not be counted as a defender at all")
+        assert d <= PILL_VIEW_HALF, (
+            f"{name} parks {d:.1f} tiles from the pill -- outside the pill's "
+            f"15x15 view rect, so the observer 16 tiles west would never SEE "
+            f"it and allies_near would stay 0 for the wrong reason")
+    # The FAR allies (the WC control) and the two filler foes must be well
+    # outside the radius, or the control would be held too and prove nothing.
+    for name, sq in (("ally_far_a", ALLY_FAR_A), ("ally_far_b", ALLY_FAR_B),
+                     ("foe_fill_a", FOE_FILL_A), ("foe_fill_b", FOE_FILL_B)):
+        d = edist(sq, OUR_PILL)
+        assert d > WELL_DEFENDED_RADIUS + 3, (
+            f"{name} parks {d:.1f} tiles from the pill -- too close to "
+            f"DEFEND_WELL_DEFENDED_RADIUS {WELL_DEFENDED_RADIUS} to be safely "
+            f"uncounted")
+    # Every park route is a straight single-axis drive over solid ground that
+    # never crosses another pond: park_at.lua does no pathfinding, and a tank
+    # driven over a one-tile deep-sea pond drowns mid-arena.
+    ponds = set(ALL_PONDS)
+    for name, (start, dest) in PARK_ROUTES.items():
+        assert start[0] == dest[0] or start[1] == dest[1], (
+            f"{name}'s route {start}->{dest} is not single-axis; "
+            f"park_at.lua drives Y then X and would cut a corner")
+        if start[0] == dest[0]:
+            leg = [(start[0], yy) for yy in
+                   range(min(start[1], dest[1]), max(start[1], dest[1]) + 1)]
+        else:
+            leg = [(xx, start[1]) for xx in
+                   range(min(start[0], dest[0]), max(start[0], dest[0]) + 1)]
+        # Skip the START square itself -- it IS a pond by construction; every
+        # OTHER tile the tank rolls over has to be solid ground.
+        for sq in [s for s in leg if s != start]:
+            assert terrain[sq[1]][sq[0]] is not DEEP_SEA, (
+                f"{name}'s route crosses deep sea at {sq} -- it would drown")
+            assert sq not in ponds, (
+                f"{name}'s route crosses another start pond at {sq}")
+
     # ...and the moat really does separate the two sides.
     for yy in range(MOAT_Y[0], MOAT_Y[1] + 1):
         for xx in range(min(FIELD[0], STRIP[0]), max(FIELD[1], STRIP[1]) + 1):
@@ -209,10 +328,7 @@ def main():
     pills = [(OUR_PILL[0], OUR_PILL[1], 0, PILLS_MAX_HEALTH, 50)]
     bases = [(OUR_BASE[0], OUR_BASE[1], 0, 90, 90, 90),
              (OUR_BASE_FOE[0], OUR_BASE_FOE[1], 0, 90, 90, 90)]
-    starts = [(OUR_FAR[0], OUR_FAR[1], 4),        # 1: ours far,  facing east
-              (OUR_NEAR[0], OUR_NEAR[1], 4),      # 2: ours near, facing east
-              (FOE_SOUTH[0], FOE_SOUTH[1], 0),    # 3: shooter,   facing north
-              (FOE_NORTH[0], FOE_NORTH[1], 8)]    # 4: builder,   facing south
+    starts = [(sq[0], sq[1], dr) for sq, dr in PONDS]
 
     with open(output, 'wb') as f:
         f.write(b'BMAPBOLO')
@@ -241,6 +357,18 @@ def main():
     print(f"  builder start {FOE_NORTH}, brake {FOE_BUILD_SPOT} "
           f"({d_build_tank:.1f} tiles), walls {FOE_WALL} ({d_wall:.1f} tiles, "
           f"the outer ring of the {ALARM_BUILD_RADIUS}-tile stamp)")
+    print(f"  arena W  allies park {ALLY_NEAR_A} "
+          f"({edist(ALLY_NEAR_A, OUR_PILL):.1f} tiles) and {ALLY_NEAR_B} "
+          f"({edist(ALLY_NEAR_B, OUR_PILL):.1f} tiles) -- both inside "
+          f"DEFEND_WELL_DEFENDED_RADIUS {WELL_DEFENDED_RADIUS} and inside the "
+          f"pill's 15x15 view rect")
+    print(f"  arena WC the same allies park {ALLY_FAR_A} "
+          f"({edist(ALLY_FAR_A, OUR_PILL):.1f} tiles) and {ALLY_FAR_B} "
+          f"({edist(ALLY_FAR_B, OUR_PILL):.1f} tiles) -- allies_near 0, so "
+          f"the pill is NOT held and the alarm must fire")
+    print(f"  filler foes park {FOE_FILL_A} and {FOE_FILL_B} "
+          f"({edist(FOE_FILL_A, OUR_PILL):.1f} tiles) -- teams 3v3, "
+          f"R = ceil(3/3) = 1")
 
 
 if __name__ == '__main__':

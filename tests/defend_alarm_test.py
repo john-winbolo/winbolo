@@ -14,7 +14,15 @@ holds for that pill.  The alarm is on ONLY while ALL of:
      inside DEFEND_ALARM_BUILD_RADIUS (4) of it inside that window WITH a
      HOSTILE LGM seen in the same stamp ("if we know the LGM is an enemy,
      that's sufficient" -- no ally build claim is consulted);
-  3. AND we are MORE than DEFEND_ALARM_MIN_DIST (9) tiles from the pill.
+  3. AND we are MORE than DEFEND_ALARM_MIN_DIST (9) tiles from the pill;
+  4. AND the pill is not already WELL DEFENDED (C.DEFEND_ALARM_WELL_DEFENDED,
+     added 2026-09-07).  Andrew: "Let's just reject the ones that are
+     well_defended / No need to raise that alarm if it's well_defended."  The
+     KEEL evaluator's own gate: R = ceil(their_team / our_team), held when
+     foes_near <= allies_near * R, both counted within
+     DEFEND_WELL_DEFENDED_RADIUS (10) euclidean tiles of the pill, the bidder
+     excluded, allies = allied tanks at the pill PLUS allies whose broadcast
+     goal is a defend/repair response aimed there.
 
 The moment any condition stops holding the row goes back to REJECTED and a bot
 standing on that goal DROPS it -- no hysteresis, no commitment, no grace.  The
@@ -25,7 +33,7 @@ cost while it holds is
 where the Dijkstra half is the path to the pill priced only as far as the first
 tile within DEFEND_ALARM_DIJ_STOP_TILES (9) of it.
 
-FIVE RUNS.  tests/generate_defend_alarm_map.py builds the ground (its docstring
+SEVEN RUNS.  tests/generate_defend_alarm_map.py builds the ground (its docstring
 carries the geometry and, in particular, WHY every enemy position is 6 tiles
 from the pill and not 11); tests/defend_alarm.scenario.lua drives the arenas
 and writes the engine-side trace each one is checked against.
@@ -74,13 +82,30 @@ and writes the engine-side trace each one is checked against.
      one DEFEND_ALARM_* line anywhere.  This is what makes A-C evidence about
      the new rule rather than about a brain that would have defended anyway.
 
+  W  WELL DEFENDED (condition 4).  Arena A's shooter and our far observer, plus
+     four more parked tanks: two ALLIES sitting 6 and 5.7 tiles from the pill
+     and two filler FOES sitting 18 tiles away across the moat, making the
+     teams 3v3 so R = ceil(3/3) = 1.  Conditions 1-3 all hold -- an enemy is
+     visible at the pill, it is shelling it, and we are 16 tiles out -- so
+     condition 4 is the only thing that can reject the row.  Every rejected row
+     must read alarm_off:well_defended(foes 1 <= allies 2 x 1), its arithmetic
+     must close, its ally count must match the ENGINE's own tank positions, the
+     alarm must never come ON and defend_pill must never become the goal.
+
+  WC THE CONTROL for W.  The same six-tank 3v3 game with exactly one thing
+     changed: the two allies park 14 and 18 tiles out instead of 6 and 5.7.
+     allies_near is then 0, the pill is not held, and the alarm must fire just
+     as it does in arena A -- with not one well_defended reject anywhere.
+     Note that removing ONE of the two near allies would NOT be a control: at
+     R=1 a single ally still covers a single foe (1 <= 1 x 1).
+
 WHAT IS READ FROM WHERE.  The brain's own reasoning comes from print2 (the
 DEFEND_ALARM_ON / OFF / WATCH lines and FINAL_SCORES).  Everything those lines
 are checked AGAINST -- when the pill was hit, when the shooter was removed, when
 the wall tile changed, where our tank was -- comes from the scenario sidecar's
 engine-side trace, which knows nothing about goals.lua.
 
-Usage: python defend_alarm_test.py [--variant A|B|B2|C|D|all] [--ticks N]
+Usage: python defend_alarm_test.py [--variant A|B|B2|C|D|W|WC|all] [--ticks N]
                                    [--build DIR]
 Exit 0 on PASS, 1 on FAIL.
 """
@@ -103,13 +128,19 @@ MAP = HERE / "defend_alarm.map"
 sys.path.insert(0, str(HERE))
 import generate_defend_alarm_map as G   # noqa: E402
 
-VARIANTS = ["A", "B", "B2", "C", "D"]
+VARIANTS = ["A", "B", "B2", "C", "D", "W", "WC"]
 # Ports 50340+ -- 50124, 50291-50294, 50300+ and 50320+ are taken by other
 # tests in this directory and two servers on one port is a silent hang.
-PORTS = {"A": 50340, "B": 50341, "B2": 50342, "C": 50343, "D": 50344}
+# W/WC sit at 50440+ rather than 50345 so a future arena can be slotted in
+# beside the originals without renumbering these.
+PORTS = {"A": 50340, "B": 50341, "B2": 50342, "C": 50343, "D": 50344,
+         "W": 50440, "WC": 50441}
 # ENGINE ticks.  The brain thinks once per 20 ms frame and the sim advances two
 # engine ticks per frame, so these are ~half as many brain ticks.
-TICKS = {"A": 2600, "B": 2600, "B2": 2600, "C": 2000, "D": 2000}
+# W/WC get more than A: four extra tanks have to join, drive off their ponds
+# and park before the count they exist to produce is even true.
+TICKS = {"A": 2600, "B": 2600, "B2": 2600, "C": 2000, "D": 2000,
+         "W": 3000, "WC": 3000}
 
 # Knobs the assertions are written against, imported from the generator so one
 # edit moves the arena and the arithmetic together.
@@ -142,6 +173,8 @@ TOKENS = {
     "B2": ";".join([NO_CAPTURE, NO_REPOS]),
     "C":  ";".join([NO_CAPTURE, NO_REPOS]),
     "D":  ";".join([NO_CAPTURE, NO_REPOS, KEEL_ALARM_OFF]),
+    "W":  ";".join([NO_CAPTURE, NO_REPOS]),
+    "WC": ";".join([NO_CAPTURE, NO_REPOS]),
 }
 ARG_MAX = 127                       # BotInitSlot.arg, luabrainshandler.h
 
@@ -156,9 +189,17 @@ ON_RE = re.compile(
 # goals.lua, the pool's side of a rejected row
 #   DEFEND_ALARM_OFF t=700 pill#3@(126,126) REJECT alarm_off:no_trigger
 #     enemy=#1@6.0t trigger=(dmg 0 in 250t, build none) dist=16.0 (min 9)
+# The reason is matched non-greedily up to the ` enemy=` anchor rather than as
+# one \S+ token: condition 4's reason carries its own arithmetic and reads
+# `well_defended(foes 1 <= allies 2 x 1)`, spaces and all.  (The whitespace-free
+# rule the line's own comment states is about the `enemy=` field, which has no
+# such anchor after it.)
 ROW_OFF_RE = re.compile(
-    r"DEFEND_ALARM_OFF t=(\d+) pill#(\S+)@\((\d+),(\d+)\) REJECT (\S+) "
+    r"DEFEND_ALARM_OFF t=(\d+) pill#(\S+)@\((\d+),(\d+)\) REJECT (.+?) "
     r"enemy=(\S+) trigger=\((.*?)\) dist=([\d.]+) \(min (\d+)\)")
+# Condition 4's reason, so the test can re-derive foes <= allies x R and check
+# the ally count against the ENGINE's word for where the allies were.
+WD_RE = re.compile(r"well_defended\(foes (\d+) <= allies (\d+) x (\d+)\)")
 # init.lua, the goal-validity hook DROPPING a live goal
 #   DEFEND_ALARM_OFF t=931 pill@(126,126) reason=no_enemy_near -- alarm ...
 HOOK_OFF_RE = re.compile(
@@ -726,8 +767,199 @@ def arena_D(text, trace):
     return 0
 
 
+def wd_engine_allies(trace, sim_tick):
+    """How many TEAM-0 extras the ENGINE had within DEFEND_WELL_DEFENDED_RADIUS
+    of the pill at `sim_tick`.
+
+    Read off the sidecar's `xpos` rows (tick, slot, team, mx, my), which are
+    emitted on every tile change and know nothing about goals.lua.  This is what
+    the brain's own allies_near number is checked against -- comparing the
+    brain's count to the brain's count would be checking the code against
+    itself.  Our observer is not among the extras and is 16 tiles out anyway;
+    the engine excludes the bidder from its own object list regardless
+    (players.c playersGetBrainTanksInRect skips myPlayerNum)."""
+    pos = {}
+    for kind, r in trace:
+        if kind != "xpos" or r[0] > sim_tick:
+            continue
+        pos[r[1]] = (r[2], r[3], r[4])       # team, mx, my
+    n = 0
+    for team, mx, my in pos.values():
+        if team != 0:
+            continue
+        if G.edist((mx, my), OUR_PILL) <= G.WELL_DEFENDED_RADIUS:
+            n += 1
+    return n
+
+
+def arena_W(text, trace):
+    """WELL DEFENDED -- the pill is already held, so no alarm is raised.
+
+    Conditions 1-3 all hold (arena A's shooter is visible at the pill and
+    shelling it, and we are 16 tiles away), so condition 4 is the only thing
+    that can reject the row.  Two allies sit 6 tiles from the pill, teams are
+    3v3 so R = ceil(3/3) = 1, and 1 foe <= 2 allies x 1 means held."""
+    ons = [m for m in (ON_RE.search(li) for li in text.splitlines()) if m]
+    rowoffs = [m for m in (ROW_OFF_RE.search(li) for li in text.splitlines())
+               if m]
+    goals = [(int(t), g) for (t, g) in TICK_RE.findall(text)]
+
+    hp_rows = [r for k, r in trace if k == "hp"]
+    dropped = [r for i, r in enumerate(hp_rows)
+               if i > 0 and r[1] < hp_rows[i - 1][1]]
+    extras = [r for k, r in trace if k == "extra"]
+    near_end = wd_engine_allies(trace, 10 ** 9)
+    print(f"  engine: {len(extras)} extra tank(s) spawned, "
+          f"{len(dropped)} hit(s) on the pill, "
+          f"{near_end} team-0 extra(s) parked within "
+          f"{G.WELL_DEFENDED_RADIUS} tiles of it")
+    wd_offs = [m for m in rowoffs if m.group(5).startswith(
+        "alarm_off:well_defended")]
+    print(f"  brain: {len(ons)} ALARM_ON, {len(rowoffs)} row-REJECT line(s), "
+          f"{len(wd_offs)} of them well_defended")
+
+    # ── W0: the arena actually assembled ─────────────────────────────────
+    if len(extras) != 4:
+        print(f"FAIL (W): the scenario spawned {len(extras)} extra tank(s), "
+              f"not 4 -- without both allies AND both filler foes the count "
+              f"and the team ratio are not what this arena is about. "
+              f"extra rows: {extras}")
+        return 1
+    if near_end != 2:
+        print(f"FAIL (W): the engine had {near_end} allied extra(s) parked "
+              f"within {G.WELL_DEFENDED_RADIUS} tiles of the pill, not 2. "
+              f"They must have failed to reach their park tiles -- check the "
+              f"xpos rows in the trace.")
+        return 1
+    if not dropped:
+        print("FAIL (W): the pill was never hit, so trigger 2a never armed "
+              "and the row would have been rejected no_trigger long before "
+              "condition 4 was ever reached.")
+        return 1
+
+    # ── W1: the reject, with its arithmetic re-derived ───────────────────
+    # Scoped to rows where the brain itself was outside MIN_DIST: inside it,
+    # condition 3 rejects FIRST and correctly, and the bot is free to drive
+    # wherever it likes.
+    far_wd = [m for m in wd_offs if float(m.group(8)) > MIN_DIST]
+    if not far_wd:
+        reasons = sorted({m.group(5) for m in rowoffs})
+        print(f"FAIL (W1): with two allies parked at the pill and an enemy "
+              f"shelling it, no row was rejected well_defended while we were "
+              f"outside {MIN_DIST} tiles. Reasons seen: {reasons}")
+        return 1
+    for m in far_wd:
+        wd = WD_RE.search(m.group(5))
+        if not wd:
+            print(f"FAIL (W1): a well_defended reject did not carry its "
+                  f"numbers: {m.group(0)[:200]}")
+            return 1
+        foes, allies, ratio = (int(wd.group(1)), int(wd.group(2)),
+                               int(wd.group(3)))
+        if not (foes <= allies * ratio):
+            print(f"FAIL (W1): the row claims well_defended but its own "
+                  f"numbers say otherwise: foes {foes} > allies {allies} x "
+                  f"R {ratio}. Line: {m.group(0)[:200]}")
+            return 1
+        if ratio != 1:
+            print(f"FAIL (W1): teams are 3v3 so R must be ceil(3/3) = 1, but "
+                  f"the row printed R={ratio}. Either a filler foe never "
+                  f"joined or a tank died and left the teams uneven. "
+                  f"Line: {m.group(0)[:200]}")
+            return 1
+        eng = wd_engine_allies(trace, int(m.group(1)) * 2)
+        if allies != eng:
+            print(f"FAIL (W1): at brain t={m.group(1)} the brain counted "
+                  f"{allies} ally/allies at the pill but the ENGINE had "
+                  f"{eng} parked within {G.WELL_DEFENDED_RADIUS} tiles. "
+                  f"Line: {m.group(0)[:200]}")
+            return 1
+    m0 = far_wd[0]
+    print(f"  W1 OK: {len(far_wd)} row(s) rejected {m0.group(5)} while we were "
+          f"{m0.group(8)} tiles out (> {MIN_DIST}) with enemy {m0.group(6)} in "
+          f"the ring and trigger ({m0.group(7)}) armed -- every one re-derives, "
+          f"and its ally count matches the engine's own tank positions")
+
+    # ── W2: and so the alarm never fires, and we never take the goal ─────
+    if ons:
+        print(f"FAIL (W2): the pill was held and the alarm still came ON "
+              f"{len(ons)} time(s). First: {ons[0].group(0)[:200]}")
+        return 1
+    took = [(t, g) for (t, g) in goals if g == "defend_pill"]
+    if took:
+        print(f"FAIL (W2): the row was rejected every time and the bot still "
+              f"took defend_pill, first at brain t={took[0][0]} "
+              f"({len(took)} tick(s))")
+        return 1
+    print(f"  W2 OK: not one ALARM_ON in {len(rowoffs)} rejected row(s), and "
+          f"defend_pill was never the goal on any of "
+          f"{len(goals)} TICK_COST line(s)")
+    return 0
+
+
+def arena_WC(text, trace):
+    """THE CONTROL -- the same 3v3 game with the two allies parked FAR away.
+
+    allies_near is 0, so the pill is not held and the alarm has to fire exactly
+    as it does in arena A.  Without this, arena W only says "the alarm did not
+    fire in a six-tank game"."""
+    ons = [m for m in (ON_RE.search(li) for li in text.splitlines()) if m]
+    rowoffs = [m for m in (ROW_OFF_RE.search(li) for li in text.splitlines())
+               if m]
+    hp_rows = [r for k, r in trace if k == "hp"]
+    dropped = [r for i, r in enumerate(hp_rows)
+               if i > 0 and r[1] < hp_rows[i - 1][1]]
+    extras = [r for k, r in trace if k == "extra"]
+    near_end = wd_engine_allies(trace, 10 ** 9)
+    wd_offs = [m for m in rowoffs if m.group(5).startswith(
+        "alarm_off:well_defended")]
+    print(f"  engine: {len(extras)} extra tank(s) spawned, "
+          f"{len(dropped)} hit(s) on the pill, "
+          f"{near_end} team-0 extra(s) within {G.WELL_DEFENDED_RADIUS} tiles "
+          f"of it")
+    print(f"  brain: {len(ons)} ALARM_ON, {len(rowoffs)} row-REJECT line(s), "
+          f"{len(wd_offs)} of them well_defended")
+
+    if len(extras) != 4:
+        print(f"FAIL (WC): the scenario spawned {len(extras)} extra tank(s), "
+              f"not 4, so this is not the same game as arena W with one thing "
+              f"changed. extra rows: {extras}")
+        return 1
+    if near_end != 0:
+        print(f"FAIL (WC): the control needs ZERO allies within "
+              f"{G.WELL_DEFENDED_RADIUS} tiles of the pill and the engine had "
+              f"{near_end}. The allies parked on the wrong tiles.")
+        return 1
+    if not dropped:
+        print("FAIL (WC): the pill was never hit, so the alarm could not have "
+              "fired for reasons that have nothing to do with condition 4.")
+        return 1
+    if wd_offs:
+        print(f"FAIL (WC): no ally is within {G.WELL_DEFENDED_RADIUS} tiles of "
+              f"the pill and {len(wd_offs)} row(s) were still rejected "
+              f"well_defended. First: {wd_offs[0].group(0)[:200]}")
+        return 1
+    if not ons:
+        print(f"FAIL (WC): with the allies parked far away the pill is not "
+              f"held, so the alarm should fire exactly as in arena A -- and it "
+              f"never did. Rejects seen: "
+              f"{sorted({m.group(5) for m in rowoffs})}")
+        return 1
+    for m in ons:
+        ok, msg, _f = check_on_line(m)
+        if not ok:
+            print(f"FAIL (WC): the ALARM_ON line does not add up -- {msg}")
+            return 1
+    f0 = check_on_line(ons[0])[2]
+    print(f"  WC OK: move the same two allies out to 14 and 18 tiles and the "
+          f"pill stops being held -- the alarm came ON at brain t={f0['t']} "
+          f"(cost {f0['cost']:.0f}, {len(ons)} such line(s), all re-derive) "
+          f"and NOT ONE row was rejected well_defended")
+    return 0
+
+
 CHECKS = {"A": arena_A, "B": arena_B, "B2": arena_B2, "C": arena_C,
-          "D": arena_D}
+          "D": arena_D, "W": arena_W, "WC": arena_WC}
 
 
 def main():
