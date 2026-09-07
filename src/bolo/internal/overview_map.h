@@ -57,14 +57,23 @@ typedef enum {
  * read one source; an index outside the enum gives a placeholder string rather
  * than a read off the end of the table.
  *
- * Frontends reach all six through the int-typed clientSim mirrors rather than
- * this header, which they may not include. */
+ * Frontends reach all of these through the int-typed clientSim mirrors rather
+ * than this header, which they may not include. */
 FogExperiment overviewFogExperimentGet(void);
 void          overviewFogExperimentSet(FogExperiment e);
 bool          overviewLineOfSightGet(void);
 void          overviewLineOfSightSet(bool on);
 const char   *overviewFogExperimentName(FogExperiment e);
 const char   *overviewFogExperimentBlurb(FogExperiment e);
+
+/* Whether the map overview draws its live regions as coloured outlines. The
+ * fog ramps out of a region over three squares, so where a rect actually ends
+ * cannot be read off the picture and two rects at different alphas read as one
+ * patch of fog; drawing the rects themselves says which block each experiment
+ * is building and where it sits. Process-global and not saved, like the two
+ * above: off every launch. */
+bool          overviewFogShowRegionsGet(void);
+void          overviewFogShowRegionsSet(bool on);
 
 #define OVERVIEW_HEADLIGHT_LEAD 5   /* squares the block is pushed along the facing */
 

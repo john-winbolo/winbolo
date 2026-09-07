@@ -1063,6 +1063,14 @@ void         clientSimSetFogLineOfSight(bool on);
 const char  *clientSimFogExperimentName(int e);
 const char  *clientSimFogExperimentBlurb(int e);
 
+/* Whether the map overview draws its live regions as coloured outlines. The
+   fog fades out of a region rather than stopping at its edge, so the picture
+   alone does not say which squares a block covers; the outlines do. A playtest
+   aid over the drawing and nothing else — no region moves for it. Process-
+   global and not saved, like the two above. */
+bool         clientSimGetFogShowRegions(void);
+void         clientSimSetFogShowRegions(bool on);
+
 /* The centre of the block of live squares round the player's own tank, in map
    squares and including the sub-square part, for a camera that has to follow
    the block rather than the tank. Which centre that is follows the experiment:

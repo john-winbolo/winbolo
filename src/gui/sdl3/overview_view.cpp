@@ -155,6 +155,15 @@ extern "C" bool smoothScrollingEnabled;
 #define OVERVIEW_ITEM_BORDER_MIN   2
 #define OVERVIEW_ITEM_BORDER_MAX   6      /* inset + weight stays inside HUD_MARGIN (8) */
 
+/* The outlines drawn round the live regions while the player has asked to see
+ * them. The weight comes off the view's height the way the item border's does,
+ * so the lines hold up at every window size and zoom, and is capped lower:
+ * these run across the map rather than round the picture, and a heavy line
+ * would cover the squares it is there to mark. */
+#define OVERVIEW_REGION_LINE_DIV   240    /* view height per px of weight */
+#define OVERVIEW_REGION_LINE_MIN   2
+#define OVERVIEW_REGION_LINE_MAX   3
+
 struct OverviewView {
     OverviewCamera cam;
 
@@ -733,6 +742,80 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
     SDL_RenderFillRects(r, runs, 4);
 }
 
+/* The live regions, drawn as outlines over the map. The fog ramps out of a
+ * region over three squares and a terrain-only block sits at its own alpha, so
+ * two blocks one inside the other read as one soft patch of fog rather than as
+ * two regions; the outlines say which squares each block actually covers. A
+ * playtest aid over the drawing alone — nothing about the regions moves for it.
+ *
+ * Colour says what a rect is. The build emits the halo first when there is one,
+ * and that is the only terrain-only rect it makes; the block round the player's
+ * own tank comes next when the build made one, and the pills, bases and allied
+ * tanks after it. Watching an item closes both blocks round the tank, so
+ * whether there is a tank block at all is read from the map's own record of
+ * what it built rather than from a fixed position on the list.
+ *
+ * Magenta for the ground-only block Halo puts under the lens, white for the
+ * block the player sees things moving in, and a dimmer cyan for a watched pill,
+ * base or allied tank. All three read against grass and water, and none of them
+ * is the item view border's yellow.
+ *
+ * Rectangle fills only — no texture and no font — so it is valid on either
+ * host's renderer, and every colour is at alpha 255, so whatever blend mode the
+ * entity pass left behind gives the same result. */
+static void overviewViewDrawRegionOutlines(SDL_Renderer *r,
+                                           const OverviewCamera *cam,
+                                           int viewW, int viewH,
+                                           const OverviewMap *om) {
+    int weight = (int)SDL_roundf((float)viewH / (float)OVERVIEW_REGION_LINE_DIV);
+    if (weight < OVERVIEW_REGION_LINE_MIN) weight = OVERVIEW_REGION_LINE_MIN;
+    if (weight > OVERVIEW_REGION_LINE_MAX) weight = OVERVIEW_REGION_LINE_MAX;
+
+    bool haveHalo = (om->liveCount > 0 && om->live[0].terrainOnly != 0);
+    int  tankIdx  = om->tankWasLive ? (haveHalo ? 1 : 0) : -1;
+
+    for (int i = 0; i < om->liveCount; i++) {
+        const OverviewRect *rect = &om->live[i];
+        Uint8 cr, cg, cb;
+
+        if (rect->terrainOnly != 0) {
+            cr = 255; cg = 80;  cb = 220;
+        } else if (i == tankIdx) {
+            cr = 255; cg = 255; cb = 255;
+        } else {
+            cr = 110; cg = 195; cb = 210;
+        }
+
+        /* The rect is inclusive on all four edges, so the far corner in world
+         * terms is one square past the last one it covers. */
+        float x0, y0, x1, y1;
+        overviewCameraWorldToScreen(cam, viewW, viewH, (float)rect->left,
+                                    (float)rect->top, &x0, &y0);
+        overviewCameraWorldToScreen(cam, viewW, viewH, (float)(rect->right + 1),
+                                    (float)(rect->bottom + 1), &x1, &y1);
+        float bw = x1 - x0;
+        float bh = y1 - y0;
+        if (bw <= 0.0f || bh <= 0.0f) continue;
+
+        /* A block small enough for the opposite runs to meet is filled solid
+         * instead, rather than asking SDL to draw sides of negative height. */
+        float wt   = (float)weight;
+        float half = (bw < bh ? bw : bh) * 0.5f;
+        if (wt > half) wt = half;
+
+        /* The top and bottom runs span the full width and the sides fit between
+         * them, so the corners are covered and the outline closes. */
+        SDL_FRect runs[4] = {
+            { x0,           y0,           bw, wt },
+            { x0,           y0 + bh - wt, bw, wt },
+            { x0,           y0 + wt,      wt, bh - 2.0f * wt },
+            { x0 + bw - wt, y0 + wt,      wt, bh - 2.0f * wt },
+        };
+        SDL_SetRenderDrawColor(r, cr, cg, cb, 255);
+        SDL_RenderFillRects(r, runs, 4);
+    }
+}
+
 /* Copies the entries the player is allowed to see into a second set of lists.
  * The builders work over the whole map — wider than anything the server culls
  * to — so this is where sight is enforced: an entity is kept only when the
@@ -1170,6 +1253,14 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * neither wants dimming. */
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
                                  w, h, om, cs);
+
+        /* And the live regions over both passes, when the player has asked for
+         * them: an outline that the ground and the sprites were drawn on top of
+         * would not mark anything. Before the item view border, so that frame
+         * still reads as the outermost thing in the picture. */
+        if (clientSimGetFogShowRegions()) {
+            overviewViewDrawRegionOutlines(r, &v->cam, w, h, om);
+        }
     }
 
     /* Only where this view has replaced the classic one: beside the pop-out

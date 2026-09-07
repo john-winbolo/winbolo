@@ -85,11 +85,16 @@
  * saved - every launch starts on Envelope with line of sight off. */
 static FogExperiment g_fogExperiment  = fogExperimentEnvelope;
 static bool          g_fogLineOfSight = FALSE;
+/* Whether the live regions are drawn as outlines over the map, so the block an
+ * experiment builds can be seen through the fog ramp that softens its edge. */
+static bool          g_fogShowRegions = FALSE;
 
 FogExperiment overviewFogExperimentGet(void) { return g_fogExperiment; }
 void overviewFogExperimentSet(FogExperiment e) { g_fogExperiment = e; }
 bool overviewLineOfSightGet(void) { return g_fogLineOfSight; }
 void overviewLineOfSightSet(bool on) { g_fogLineOfSight = on; }
+bool overviewFogShowRegionsGet(void) { return g_fogShowRegions; }
+void overviewFogShowRegionsSet(bool on) { g_fogShowRegions = on; }
 
 /* What each experiment is called and what it does, in enum order. Plain
  * English rather than lang.h ids for the same reason the keys that switch

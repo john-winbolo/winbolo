@@ -4611,22 +4611,38 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
 
         /* Backtick steps the map overview's fog experiment on, Shift+backtick
-         * turns line of sight on and off. Read here rather than through the
+         * turns line of sight on and off, and the primary modifier draws the
+         * live regions as outlines. Read here rather than through the
          * bindings because they switch a playtest rather than drive the tank —
          * but backtick is a key a player may well have bound, so the binding
          * wins and the experiment keys do without it. After the Key Setup
-         * capture above, so binding the key still gets the keystroke. */
+         * capture above, so binding the key still gets the keystroke.
+         *
+         * The primary modifier is the one exception to the no-modifier rule:
+         * the other two of Ctrl, Cmd and Alt still hand the keystroke on. On
+         * non-macOS the primary is Ctrl, so the press also reaches the Cmd+key
+         * shortcut switch above, which has no backtick case and falls through
+         * to here. */
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             ev.key.scancode == SDL_SCANCODE_GRAVE &&
-            (ev.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+            (ev.key.mod & ((SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI) &
+                           ~KMOD_PRIMARY)) == 0 &&
             cs != nullptr && clientSimIsRunning(cs) &&
             !ImGui::GetIO().WantTextInput) {
             keyItems keys;
             windowGetKeys(&keys);
             if (!keyIsClaimedByGame(&keys, SDL_SCANCODE_GRAVE)) {
                 char line[96];
-                if ((ev.key.mod & SDL_KMOD_SHIFT) != 0) {
+                if ((ev.key.mod & KMOD_PRIMARY) != 0) {
+                    bool on = !clientSimGetFogShowRegions();
+                    clientSimSetFogShowRegions(on);
+                    SDL_snprintf(line, sizeof(line), "Fog regions: %s",
+                                 on ? "on" : "off");
+                    fogReadoutShow(line,
+                                   on ? "Live blocks drawn as outlines"
+                                      : "Outlines hidden");
+                } else if ((ev.key.mod & SDL_KMOD_SHIFT) != 0) {
                     bool on = !clientSimGetFogLineOfSight();
                     clientSimSetFogLineOfSight(on);
                     SDL_snprintf(line, sizeof(line), "Line of sight: %s",

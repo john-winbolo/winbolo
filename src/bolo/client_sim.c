@@ -2879,6 +2879,14 @@ void clientSimSetFogLineOfSight(bool on) {
   overviewLineOfSightSet(on);
 }
 
+bool clientSimGetFogShowRegions(void) {
+  return overviewFogShowRegionsGet();
+}
+
+void clientSimSetFogShowRegions(bool on) {
+  overviewFogShowRegionsSet(on);
+}
+
 const char *clientSimFogExperimentName(int e) {
   return overviewFogExperimentName((FogExperiment)e);
 }
