@@ -20,10 +20,15 @@
  *                live region and full fog outside one.
  *
  *                The renderer hands the whole mask to the GPU
- *                as a 256x256 texture stretched over the map
- *                and samples it nearest, so each texel covers
- *                its own square and the boundary lands where
- *                the region puts it at every zoom.
+ *                as a square texture stretched over the map and
+ *                samples it nearest, so the boundary lands where
+ *                the mask puts it at every zoom. There are
+ *                OVERVIEW_FOG_SUB texels to a square along each
+ *                axis: the regions and the per-square passes fill
+ *                a square's texels all alike, and only the
+ *                Headlights beam is worked out texel by texel,
+ *                which is what turns its edge from a staircase of
+ *                whole squares into a straight line.
  *
  *                Pure state in, bytes out — no SDL, so it
  *                compiles into the unit-test binary the way
@@ -40,7 +45,7 @@
 #endif
 
 #include "types.h"          /* BYTE, MAP_ARRAY_SIZE */
-#include "overview_types.h" /* OverviewRect */
+#include "overview_types.h" /* OverviewRect, OverviewBeam, overviewBeamLights */
 
 /* Fog over ground the player is not looking at, as an alpha blended over the
  * terrain. 145 leaves 110/255 of the colour through, which is the multiply
@@ -54,9 +59,23 @@
  * remembered ground outside every region. */
 #define OVERVIEW_FOG_RAMP 0
 
-/* Row-major — mask[y * MAP_ARRAY_SIZE + x] — because that is the order a
- * texture's rows want it in. */
-#define OVERVIEW_FOG_MASK_BYTES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
+/* Texels to a map square along each axis. Raise it to 8 here alone if 4 still
+ * reads as steps along the Headlights beam; everything below is worked out
+ * from it, and the memory goes up with its square. */
+#define OVERVIEW_FOG_SUB 4
+
+/* The mask is square and row-major — mask[ty * OVERVIEW_FOG_MASK_SIDE + tx] —
+ * because that is the order a texture's rows want it in. Map square x owns the
+ * OVERVIEW_FOG_SUB texels from x * OVERVIEW_FOG_SUB, and the same in y.
+ *
+ * At a sub of 4 that is 1024x1024, so a megabyte of mask, and four megabytes
+ * more written into the texture on each upload. */
+#define OVERVIEW_FOG_MASK_SIDE  (MAP_ARRAY_SIZE * OVERVIEW_FOG_SUB)
+#define OVERVIEW_FOG_MASK_BYTES (OVERVIEW_FOG_MASK_SIDE * OVERVIEW_FOG_MASK_SIDE)
+
+/* One byte per map square, row-major over the map — the shape lift and dark
+ * are handed in, which stays per-square whatever the mask's resolution is. */
+#define OVERVIEW_FOG_SQUARE_BYTES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,22 +91,38 @@ extern "C" {
  * as if the region were not in the list. No live regions at all is a legitimate
  * call and fogs the whole map.
  *
- * lift is one byte per square, row-major over the map the way the mask is, and
- * lifts each square out of the fog on its own account after the regions have
- * had their say: 255 leaves it as clear as a live square, 0 leaves it as the
- * regions left it, and the brightest answer wins, so no square a region holds
- * is ever darkened by one. It is what draws the ground an Afterimage block has
- * left and has not finished fading; NULL is no such ground, and gives the mask
- * the regions alone produce.
+ * The regions, lift and dark are all per-square: a region's edges land on
+ * square boundaries, and the two arrays carry one byte a square. Each of them
+ * writes every texel of the square it is about, so all three draw exactly what
+ * they drew when the mask was one byte to a square. The beam is the one thing
+ * asked about texel by texel.
  *
- * dark works the other way round: one byte per square, row-major again, and the
- * darkest answer wins, so a square it names is fogged whatever a region or a
- * lift has said about it. It is what covers ground inside a region the player
- * cannot see into - behind a building, with line of sight on - and NULL is no
- * such ground. With both lift and dark NULL the mask is the one the regions
- * alone produce, byte for byte. */
+ * lift is OVERVIEW_FOG_SQUARE_BYTES, row-major over the map, and lifts each
+ * square out of the fog on its own account after the regions have had their
+ * say: 255 leaves it as clear as a live square, 0 leaves it as the regions left
+ * it, and the brightest answer wins, so no square a region holds is ever
+ * darkened by one. It is what draws the ground an Afterimage block has left and
+ * has not finished fading; NULL is no such ground, and gives the mask the
+ * regions alone produce.
+ *
+ * dark works the other way round: OVERVIEW_FOG_SQUARE_BYTES, row-major again,
+ * and the darkest answer wins, so a square it names is fogged whatever a region
+ * or a lift has said about it. It is what covers ground inside a region the
+ * player cannot see into - behind a building, with line of sight on - and NULL
+ * is no such ground.
+ *
+ * beam is the Headlights beam the map's latest update built, and NULL or one
+ * with active false is no beam. Where there is one, every texel inside its
+ * block that the beam does not light is pushed to full fog - the same thing
+ * dark does for a square, at texel resolution, and it only ever darkens.
+ * Nothing outside the block is touched by it, so the per-texel work is at most
+ * the block's own 29x29 squares.
+ *
+ * With lift and dark NULL and no beam the mask is the one the regions alone
+ * produce, byte for byte. */
 void overviewFogBuildMask(const OverviewRect *live, int liveCount,
-                          const BYTE *lift, const BYTE *dark, BYTE *mask);
+                          const BYTE *lift, const BYTE *dark,
+                          const OverviewBeam *beam, BYTE *mask);
 
 #ifdef __cplusplus
 }

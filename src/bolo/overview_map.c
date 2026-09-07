@@ -182,44 +182,27 @@ bool overviewFogBlockFollowsView(FogExperiment e) {
          e == fogExperimentAfterimage;
 }
 
-bool overviewHeadlightSees(int dx, int dy, BYTE facing) {
-  int     idx; /* The facing, brought inside the table */
-  int     fx;  /* Where the tank points, in 256ths of a square */
-  int     fy;
-  int     dot; /* How much of the way to the square runs along the facing */
-  int64_t lhs; /* That, squared and scaled to compare against the cosine */
-  int64_t rhs; /* The cosine's share of the two lengths it came from */
+/* The beam a facing points, with no block and no origin - which is everything
+ * overviewBeamLights reads. Shared by the whole-square question below and by
+ * the record overviewMapUpdate leaves on the map, so the two cannot point
+ * different ways. */
+static OverviewBeam overviewBeamFromFacing(BYTE facing) {
+  OverviewBeam b; /* Beam to return */
+  int idx;        /* The facing, brought inside the table */
 
-  /* The near squares, read as a square block rather than a circle, so there is
-   * no rounding to argue about at the diagonals. The tank's own square is
-   * inside it, so the reticle is never dropped. */
-  if (dx >= -OVERVIEW_HEADLIGHT_NEAR && dx <= OVERVIEW_HEADLIGHT_NEAR &&
-      dy >= -OVERVIEW_HEADLIGHT_NEAR && dy <= OVERVIEW_HEADLIGHT_NEAR) {
-    return TRUE;
-  }
-
+  memset(&b, 0, sizeof(b));
   idx = (int)(facing & 15);
-  fx = kForwardX[idx];
-  fy = kForwardY[idx];
-  dot = dx * fx + dy * fy;
-  if (dot <= 0) {
-    return FALSE; /* the rear half, whatever the angle works out to */
-  }
+  b.active = TRUE;
+  b.dirX = kForwardX[idx];
+  b.dirY = kForwardY[idx];
+  return b;
+}
 
-  /* The angle between the square and the facing, as a dot product against the
-   * lengths it came from and squared so there is no square root:
-   *
-   *   dot^2 * ONE >= COS2 * |d|^2 * |f|^2
-   *
-   * The facing table is in 256ths of a square, so |f|^2 is about 65536 and the
-   * right-hand side reaches eleven figures over the widest block - past what a
-   * 32-bit int holds - which is why both sides are widened before they are
-   * multiplied. Whole numbers rather than floats, so every machine draws the
-   * same beam. */
-  lhs = (int64_t)dot * (int64_t)dot * (int64_t)OVERVIEW_HEADLIGHT_COS2_ONE;
-  rhs = (int64_t)OVERVIEW_HEADLIGHT_COS2 * (int64_t)(dx * dx + dy * dy) *
-        (int64_t)(fx * fx + fy * fy);
-  return (lhs >= rhs) ? TRUE : FALSE;
+bool overviewHeadlightSees(int dx, int dy, BYTE facing) {
+  OverviewBeam beam; /* The shape the facing gives */
+
+  beam = overviewBeamFromFacing(facing);
+  return overviewBeamLights(&beam, (float)dx, (float)dy) ? TRUE : FALSE;
 }
 
 /* Zeroes every square of the rect the Headlights blocks do not hold live,
@@ -507,6 +490,7 @@ void overviewMapReset(OverviewMap *om) {
   memset(om->fade, 0, sizeof(om->fade));
   om->fadeSpan = 0;
   om->hiddenActive = FALSE;
+  memset(&om->beam, 0, sizeof(om->beam));
   memset(om->live, 0, sizeof(om->live));
   om->liveCount = 0;
   memset(om->prevLive, 0, sizeof(om->prevLive));
@@ -1114,6 +1098,21 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
   om->hiddenActive = (ownBlocks > 0);
+
+  /* The beam the stamp below is about to mask those blocks with, left on the
+   * map for the frontend: the fog samples it several times across each square
+   * to draw a straight edge, where the per-square flags can only say yes or no.
+   * The tank's block is the last of the own blocks - the halo is written first
+   * when there is one - so that is the extent the mask covers. Zeroed whole,
+   * so a frontend can compare it byte for byte to decide the beam has not
+   * moved. */
+  memset(&om->beam, 0, sizeof(om->beam));
+  if (ownBlocks > 0 && overviewIsHeadlights(in->experiment) == TRUE) {
+    om->beam = overviewBeamFromFacing(in->facing);
+    om->beam.originX = useMX;
+    om->beam.originY = useMY;
+    om->beam.block = om->live[ownBlocks - 1];
+  }
 
   for (i = 0; i < om->liveCount; i++) {
     visPtr = NULL;

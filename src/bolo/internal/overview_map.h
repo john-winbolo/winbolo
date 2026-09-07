@@ -92,25 +92,17 @@ void          overviewFogShowRegionsSet(bool on);
 #define OVERVIEW_AFTERIMAGE_SECS 3  /* seconds a square takes to fade back to
                                        fog after the block leaves it */
 
-/* How far round the tank the Headlights blocks stay live whichever way it is
- * pointing, as a half-width: 2 is the 5x5 the tank sits in the middle of. */
-#define OVERVIEW_HEADLIGHT_NEAR 2
-
-/* Half the angle of the Headlights beam, so the beam itself is twice this
- * across. It is held as the square of the cosine rather than as the angle:
- * the test compares a dot product against the lengths it came from, and
- * squaring both sides is what keeps that in whole numbers. 9330 out of 10000
- * is cos(15 degrees) squared, which makes the beam 30 degrees wide, and it is
- * the one number to change to widen or narrow it - cos(half-angle) squared,
- * scaled by OVERVIEW_HEADLIGHT_COS2_ONE and rounded. */
-#define OVERVIEW_HEADLIGHT_COS2_ONE 10000
-#define OVERVIEW_HEADLIGHT_COS2     9330
-
 /* Whether a square inside one of the Headlights blocks is one the player sees:
  * (dx, dy) squares from the tank, with the tank pointing down a 0-15 facing.
  * The near squares are seen whichever way it points and the rest of the block
  * only inside the beam, so the picture is a small patch round the tank with a
- * wedge out of it along the facing. */
+ * wedge out of it along the facing.
+ *
+ * The shape itself is overviewBeamLights in public/overview_types.h, which the
+ * fog mask asks at points inside a square as well; this is the whole-square
+ * question the map memory puts to it, with the facing turned into the vector
+ * the beam carries. OVERVIEW_HEADLIGHT_NEAR and the cosine constants live
+ * there with it. */
 bool overviewHeadlightSees(int dx, int dy, BYTE facing);
 
 /* Whether this experiment places the block round the tank from the classic

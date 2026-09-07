@@ -175,13 +175,14 @@ struct OverviewView {
     int            targetW;
     int            targetH;
 
-    /* The fog overlay: one texel per map square, stretched over the whole map
-     * and filtered, so the fade out of a live region is smooth at every zoom
-     * rather than stepping a square at a time. Bound to a renderer the same
-     * way the offscreen above is. The mask is rebuilt only when the live
-     * regions move — the tank crossing a square, or a pill's view coming and
-     * going — so fogLive/fogLiveCount hold the set it was last built from and
-     * fogValid says whether they mean anything yet. */
+    /* The fog overlay: OVERVIEW_FOG_SUB texels to a map square along each axis,
+     * stretched over the whole map, so the Headlights beam's edge is sampled
+     * several times across each square and comes out as a line rather than a
+     * staircase. Bound to a renderer the same way the offscreen above is. The
+     * mask is rebuilt only when the live regions move — the tank crossing a
+     * square, or a pill's view coming and going — so fogLive/fogLiveCount hold
+     * the set it was last built from and fogValid says whether they mean
+     * anything yet. */
     SDL_Texture   *fog;
     SDL_Renderer  *fogRenderer;
     OverviewRect   fogLive[OVERVIEW_MAX_REGIONS];
@@ -197,7 +198,7 @@ struct OverviewView {
      * other experiment rebuilds the mask exactly when the regions move, as it
      * always has; the span is what catches the tick a fade stops, where the
      * regions can sit still while what the mask was built from has gone. */
-    BYTE           fogLift[OVERVIEW_FOG_MASK_BYTES];
+    BYTE           fogLift[OVERVIEW_FOG_SQUARE_BYTES];
     unsigned       fogGeneration;
     BYTE           fogFadeSpan;
 
@@ -208,8 +209,15 @@ struct OverviewView {
      * hidden squares moves as the tank moves and turns without a single rect
      * moving — plus whether the map hid anything at all, which catches the tick
      * the toggle is dropped and the rects sit still. */
-    BYTE           fogDark[OVERVIEW_FOG_MASK_BYTES];
+    BYTE           fogDark[OVERVIEW_FOG_SQUARE_BYTES];
     bool           fogHiddenActive;
+
+    /* The Headlights beam the mask was last built from. It moves as the tank
+     * drives and turns without a single rect moving, so without it the beam
+     * would freeze whenever the rects happened to sit still — the same reason
+     * fogFadeSpan and fogHiddenActive are kept. Compared byte for byte, which
+     * the map's own zeroing of the beam makes sound. */
+    OverviewBeam   fogBeam;
 
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
@@ -367,15 +375,15 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
 
     v->fog = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA8888,
                                SDL_TEXTUREACCESS_STREAMING,
-                               MAP_ARRAY_SIZE, MAP_ARRAY_SIZE);
+                               OVERVIEW_FOG_MASK_SIDE, OVERVIEW_FOG_MASK_SIDE);
     if (!v->fog) return false;
 
     SDL_SetTextureBlendMode(v->fog, SDL_BLENDMODE_BLEND);
-    /* One texel per square blown up to whole tiles. Linear filtering would
-     * shade between neighbouring texels and blur every boundary the mask draws
-     * by half a square, so a square would come out part lit whatever byte it
-     * was given; nearest keeps the edge where the mask puts it. The view target
-     * above is set the same way. */
+    /* OVERVIEW_FOG_SUB texels per square along each axis, blown up to whole
+     * tiles. Linear filtering would shade between neighbouring texels and blur
+     * every boundary the mask draws by half a texel, so a texel would come out
+     * part lit whatever byte it was given; nearest keeps the edge where the
+     * mask puts it. The view target above is set the same way. */
     SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
     /* Black fog — src is white, so this alone picks the colour a future tint
      * would change. */
@@ -397,7 +405,15 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
  * A square the map has marked hidden goes the other way and is handed over at
  * full fog: it sits inside the block, so the regions would otherwise leave it
  * clear. That scratch is filled the same transposed way, and only when the map
- * says it hid something this update. */
+ * says it hid something this update.
+ *
+ * Under a Headlights beam the flag has two causes — something in the way, and
+ * the square lying outside the beam — and only the first belongs in the
+ * per-square pass. The beam is handed to the builder instead, which samples it
+ * across each square and draws a straight edge where a square-at-a-time answer
+ * drew a staircase, so a square the beam alone put the flag on is left out of
+ * dark and the builder covers it. That is the accepted mismatch: the fog can
+ * light part of a square the map memory calls hidden whole. */
 static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
     void       *pixels = NULL;
     int         pitch  = 0;
@@ -415,24 +431,35 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
     }
 
     if (om->hiddenActive) {
+        const OverviewBeam *beam = om->beam.active ? &om->beam : NULL;
+
         for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
             BYTE *row = v->fogDark + (size_t)y * MAP_ARRAY_SIZE;
             for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-                row[x] = ((om->flags[x][y] & OVERVIEW_F_HIDDEN) != 0)
-                             ? (BYTE)OVERVIEW_FOG_ALPHA
-                             : (BYTE)0;
+                bool hidden = (om->flags[x][y] & OVERVIEW_F_HIDDEN) != 0;
+
+                if (hidden && beam != NULL &&
+                    x >= beam->block.left && x <= beam->block.right &&
+                    y >= beam->block.top  && y <= beam->block.bottom &&
+                    !overviewBeamLights(beam,
+                                        (float)(x - (int)beam->originX),
+                                        (float)(y - (int)beam->originY))) {
+                    hidden = false;
+                }
+                row[x] = hidden ? (BYTE)OVERVIEW_FOG_ALPHA : (BYTE)0;
             }
         }
         dark = v->fogDark;
     }
 
-    overviewFogBuildMask(om->live, om->liveCount, lift, dark, v->fogMask);
+    overviewFogBuildMask(om->live, om->liveCount, lift, dark,
+                         om->beam.active ? &om->beam : NULL, v->fogMask);
     if (!SDL_LockTexture(v->fog, NULL, &pixels, &pitch)) return;
 
-    for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+    for (int y = 0; y < OVERVIEW_FOG_MASK_SIDE; y++) {
         Uint32     *row = (Uint32 *)((Uint8 *)pixels + (size_t)y * (size_t)pitch);
-        const BYTE *src = v->fogMask + (size_t)y * MAP_ARRAY_SIZE;
-        for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+        const BYTE *src = v->fogMask + (size_t)y * OVERVIEW_FOG_MASK_SIDE;
+        for (int x = 0; x < OVERVIEW_FOG_MASK_SIDE; x++) {
             row[x] = 0xFFFFFF00u | (Uint32)src[x];
         }
     }
@@ -441,11 +468,12 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
 
 /* The fog over the terrain the pass above just drew.
  *
- * The texture covers the whole map, one texel to a square, so it goes down as
- * a single blit of the map's own rect: texel i then spans exactly square i, and
- * sampled nearest that square carries that texel's byte and none of its
- * neighbours'. The rect's origin is rounded the way the terrain's is, and its
- * size is a whole number of tiles, so the two stay registered at every zoom.
+ * The texture covers the whole map, OVERVIEW_FOG_SUB texels to a square along
+ * each axis, so it goes down as a single blit of the map's own rect: a square's
+ * texels then span exactly that square, and sampled nearest each of them
+ * carries its own byte and none of its neighbours'. The rect's origin is
+ * rounded the way the terrain's is, and its size is a whole number of tiles, so
+ * the two stay registered at every zoom.
  *
  * The mask comes from the live regions rather than the per-square LIVE flag —
  * the sim writes the flag from those same rects, so they say the same thing,
@@ -470,12 +498,19 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
      * behind a building, or outside the Headlights beam, changes as the tank
      * drives and turns without any rect moving, and the tick either is switched
      * off the rects can sit exactly still while what the mask was built from
-     * has gone. */
+     * has gone.
+     *
+     * The beam itself is compared as well, because the mask now samples it
+     * across each square rather than reading the map's per-square answer: a
+     * tank turning on the spot moves the beam's edge without moving a rect, and
+     * without this the beam would freeze until something else forced a
+     * rebuild. */
     if (!v->fogValid || v->fogLiveCount != om->liveCount ||
         om->fadeSpan != v->fogFadeSpan ||
         (om->fadeSpan != 0 && om->generation != v->fogGeneration) ||
         om->hiddenActive != v->fogHiddenActive ||
         (om->hiddenActive && om->generation != v->fogGeneration) ||
+        SDL_memcmp(&v->fogBeam, &om->beam, sizeof(v->fogBeam)) != 0 ||
         SDL_memcmp(v->fogLive, om->live,
                    sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
         overviewViewUploadFog(v, om);
@@ -484,6 +519,7 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
         v->fogGeneration = om->generation;
         v->fogFadeSpan = om->fadeSpan;
         v->fogHiddenActive = om->hiddenActive;
+        v->fogBeam = om->beam;
         v->fogValid = true;
     }
 
