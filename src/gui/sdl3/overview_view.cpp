@@ -234,6 +234,9 @@ struct OverviewView {
      * itself when the font (reopened on zoom change) or the renderer
      * changes. */
     TankLabelCache labelCache;
+    /* The pill and base numbers, on this view's renderer for the same reason
+     * the tank names are: the pop-out has its own. */
+    ItemLabelCache itemLabelCache;
 };
 
 /* (Re)create the offscreen when the host asks for a size — or a renderer —
@@ -851,6 +854,7 @@ static void overviewViewDrawEntities(OverviewView *v,
     ov.pillFont          = sdl3DrawGetLabelFont();
     ov.baseFont          = sdl3DrawGetTinyFont();
     ov.itemLabelMinScale = OVERVIEW_LABEL_MIN_ZOOM;
+    ov.itemLabelCache    = &v->itemLabelCache;
 
     ov.clipLeft   = 0.0f;
     ov.clipTop    = 0.0f;
@@ -875,6 +879,7 @@ extern "C" OverviewView *overviewViewCreate(void) {
 extern "C" void overviewViewDestroy(OverviewView *v) {
     if (!v) return;
     tankLabelCacheFlush(&v->labelCache);
+    itemLabelCacheFlush(&v->itemLabelCache);
     if (v->fog) {
         SDL_DestroyTexture(v->fog);
         v->fog = NULL;
