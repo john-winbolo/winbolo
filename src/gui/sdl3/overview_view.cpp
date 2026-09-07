@@ -1112,7 +1112,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
 
         bool inItemView = ownsWindow && cs != NULL && clientSimIsInItemView(cs);
 
-        /* Three claims on the centre, in the order they win.
+        /* Four claims on the centre, in the order they win.
          *
          * A scroll in flight is the player being taken somewhere, so it has
          * the frame to itself — anything else moving the centre would leave
@@ -1120,21 +1120,34 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * watching, the same way the tank view centres on the tank, so an ally
          * stays in the middle of the picture instead of riding the edge they
          * were scrolled in over. With follow off — the player has panned away
-         * — nothing moves. Under that, the tank view follows the tank.
+         * — nothing moves. Under that, a fog experiment that places the live
+         * block from the classic view is followed on the block: it is what the
+         * player is driving, and following the tank instead would leave the
+         * block riding the edge of the picture. Under that again, the tank
+         * view follows the tank, which is what Envelope always does and what
+         * the others fall back to with no block to follow.
          *
          * A tank waiting to respawn has a position but is not anywhere the
          * player is, so follow mode holds the centre it already had. The
          * sub-square read is what lets follow glide with the tank rather
          * than stepping a whole square at a time; with Smooth Scrolling off
          * the position is snapped back to its square's centre, so follow
-         * steps the way the classic view's scroll does. */
+         * steps the way the classic view's scroll does. The block follow reads
+         * and snaps the same way. */
         float tankX = 0.0f, tankY = 0.0f;
+        float lensX = 0.0f, lensY = 0.0f;
         if (overviewCameraScrollTick(&v->cam, dtMs)) {
             /* The scroll has the centre this frame. */
         } else if (inItemView) {
             overviewCameraFollowTick(&v->cam, w, h,
                                      (float)clientSimGetPillViewX(cs) + 0.5f,
                                      (float)clientSimGetPillViewY(cs) + 0.5f);
+        } else if (clientSimGetFogViewCentreF(cs, &lensX, &lensY)) {
+            if (!smoothScrollingEnabled) {
+                lensX = SDL_floorf(lensX) + 0.5f;
+                lensY = SDL_floorf(lensY) + 0.5f;
+            }
+            overviewCameraFollowTick(&v->cam, w, h, lensX, lensY);
         } else if (clientSimIsMyTankAlive(cs) &&
                    clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
             if (!smoothScrollingEnabled) {
@@ -1452,13 +1465,17 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * Not while an item view has them: there the scroll keys step between
      * pills, bases or allied tanks, which is still their job with the classic
      * view hidden. Not while a text box has the keyboard either, or typing a
-     * message would pan the map behind it.
+     * message would pan the map behind it. Not under any fog experiment but
+     * Envelope (0) either: those place the live block from the classic view,
+     * so the scroll keys are what drags the block and the classic scroll wants
+     * them back.
      *
      * Panning clears follow, the way a drag does, so a held key wins over the
      * tank exactly as manual scrolling wins over auto-scroll in the classic
      * view. Home hands the map back to the tank. */
     if (!io.WantTextInput) {
-        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs);
+        bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs) &&
+                                clientSimGetFogExperiment() == 0;
         float dx = 0.0f, dy = 0.0f;
         if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;

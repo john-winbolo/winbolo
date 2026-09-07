@@ -45,6 +45,10 @@
  * pillbox, a base and an allied tank all take the pill block. */
 #define OVERVIEW_TANK_HALF   (MAIN_SCREEN_SIZE_X - 1)   /* 14 -> 29x29 */
 #define OVERVIEW_PILL_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
+/* The classic view's own visible block, which is what the fog experiments
+ * narrow the tank's region down to. Same number as the item block and a
+ * different thing, so tuning one never moves the other. */
+#define OVERVIEW_LENS_HALF   (MAIN_SCREEN_SIZE_X / 2)   /* 7  -> 15x15 */
 #define OVERVIEW_MAX_REGIONS (1 + MAX_PILLS + MAX_BASES + MAX_TANKS)
 
 /* Inclusive on all four edges, clamped to 0..255. alpha is 255 for a region
@@ -68,6 +72,8 @@ typedef struct OverviewMap {
      * without it there is no position to hold the block still at. */
     BYTE         lastTankMX, lastTankMY;                 /* where the tank last had a live block */
     bool         haveLastTank;                           /* whether the two above mean anything yet */
+    BYTE         lastViewLeft, lastViewTop;              /* where the classic view was when the tank last had a block */
+    bool         haveLastView;                           /* whether the two above mean anything yet */
     bool         pillWasLive[MAX_PILLS];                 /* pill i had a region last update */
     bool         baseWasLive[MAX_BASES];                 /* base i had a region last update */
     bool         allyWasLive[MAX_TANKS];                 /* player i's tank had a region last update */

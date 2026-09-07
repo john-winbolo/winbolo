@@ -2887,6 +2887,28 @@ const char *clientSimFogExperimentBlurb(int e) {
   return overviewFogExperimentBlurb((FogExperiment)e);
 }
 
+/* Read from the same struct the overview places the block from, so the two
+ * cannot disagree about where it is. The sub-square part is the fraction of a
+ * square the classic view has scrolled past its offset, the same reading the
+ * classic renderer folds in as a drag offset, so it adds to the position. */
+bool clientSimGetFogViewCentreF(const ClientSim *cs, float *outX, float *outY) {
+  OverviewViewInputs in; /* Where the block is this tick */
+
+  if (cs == NULL || outX == NULL || outY == NULL) {
+    return FALSE;
+  }
+  clientSimFillOverviewViewInputs(cs, &in);
+  if (in.experiment == (uint8_t)fogExperimentEnvelope || in.viewValid == FALSE) {
+    return FALSE;
+  }
+
+  *outX = (float)in.viewLeft + (float)OVERVIEW_LENS_HALF + 0.5f +
+          (float)in.viewSubX / 256.0f;
+  *outY = (float)in.viewTop + (float)OVERVIEW_LENS_HALF + 0.5f +
+          (float)in.viewSubY / 256.0f;
+  return TRUE;
+}
+
 void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {
   cs->scroll.autoScrollOverRide = value;
 }

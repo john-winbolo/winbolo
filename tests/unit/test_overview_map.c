@@ -7,7 +7,12 @@
  * pins the shape of that set — a 29x29 block on the tank and a 15x15 block on
  * each viewable pill, trimmed at the map edges, the tank rect always first and
  * pills after it in index order, and never more rects than the caller asked
- * for. overviewMapDeathBlackout is where the overview goes black inside a
+ * for. Where the tank's own block goes is the fog experiment's to decide and
+ * overviewMapUpdate's to place, so the last cases there run through the update:
+ * Envelope puts the 29x29 on the tank as it always has, and the lens puts a
+ * 15x15 at the classic view instead, falling back to the tank when there is no
+ * view to read and holding the view a dying tank last had.
+ * overviewMapDeathBlackout is where the overview goes black inside a
  * death wait: from the tick the classic view cuts to static through to the
  * respawn, never dropping once it is up, and a drowning given longer to watch
  * than a shell.
@@ -56,6 +61,7 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "global.h"
@@ -87,6 +93,35 @@
                   "rect {%d,%d,%d,%d}, expected {%d,%d,%d,%d}",                \
                   (r).left, (r).top, (r).right, (r).bottom, (l), (t), (rt), (b))
 
+/* An inclusive block round a centre, trimmed at the map edges: both the tank
+ * rect a caller hands overviewMapBuildRegions and, restated, something for the
+ * assertions to check the built regions against that is not the code under
+ * test. Zeroed whole so a rect handed in comes back out comparable byte for
+ * byte. run_overview_regions is what pins the two together. */
+static OverviewRect overviewTestBlock(int cx, int cy, int half) {
+    OverviewRect r; /* Rect to return */
+
+    memset(&r, 0, sizeof(r));
+    r.alpha = 255;
+    r.left = cx - half;
+    r.top = cy - half;
+    r.right = cx + half;
+    r.bottom = cy + half;
+    if (r.left < 0) {
+        r.left = 0;
+    }
+    if (r.top < 0) {
+        r.top = 0;
+    }
+    if (r.right > MAP_ARRAY_SIZE - 1) {
+        r.right = MAP_ARRAY_SIZE - 1;
+    }
+    if (r.bottom > MAP_ARRAY_SIZE - 1) {
+        r.bottom = MAP_ARRAY_SIZE - 1;
+    }
+    return r;
+}
+
 int run_overview_regions(void) {
     ServerSim *sim = ut_make_running_sim("Over");
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
@@ -104,6 +139,7 @@ int run_overview_regions(void) {
     gs->pb->numPills = 0;
 
     OverviewRect out[OVERVIEW_MAX_REGIONS + 1];
+    OverviewRect tank; /* The block the caller hands the build */
     int n;
 
     /* The rules a server ships with, which is what every case here is about:
@@ -113,33 +149,32 @@ int run_overview_regions(void) {
     overviewViewInputsDefaults(&in);
 
     /* Tank alone, well clear of every edge: one 29x29 rect on it. */
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "tank with no pills gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
 
     /* Over the left and bottom edges the block is trimmed, not wrapped. */
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 3, 250, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(3, 250, OVERVIEW_TANK_HALF);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "corner tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 0, 236, 17, 255);
 
-    /* A narrower half-width is the same rect drawn smaller, centred where it
-     * was; at nothing left it is the single square the tank is on, and a
-     * negative one means no rect at all. */
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 4, out,
-                                OVERVIEW_MAX_REGIONS);
+    /* A narrower block is the same rect drawn smaller, centred where it was;
+     * at nothing left it is the single square the tank is on, and no rect at
+     * all means no region. */
+    tank = overviewTestBlock(100, 100, 4);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a narrowed block gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 96, 96, 104, 104);
 
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, 0, out,
-                                OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(100, 100, 0);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "a single-square block gave %d regions, expected 1",
                   n);
     ASSERT_RECT(out[0], 100, 100, 100, 100);
 
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, -1, out,
-                                OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "a block that has gone gave %d regions, expected 0",
                   n);
 
@@ -153,50 +188,44 @@ int run_overview_regions(void) {
     gs->pb->item[0].x = 200;
     gs->pb->item[0].y = 50;
 
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "tank + own pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[0], 86, 86, 114, 114);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* An allied owner views the same as an own one. */
     gs->pb->item[0].owner = 1;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "allied pill gave %d regions, expected 2", n);
     ASSERT_RECT(out[1], 193, 43, 207, 57);
 
     /* A pill the player cannot view through contributes nothing: owned by
      * someone hostile, or dead, or carried in a tank. */
     gs->pb->item[0].owner = 2;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "enemy pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].owner = 0;
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "dead pill gave %d regions, expected 1", n);
 
     gs->pb->item[0].armour = PILLBOX_15;
     gs->pb->item[0].inTank = TRUE;
-    n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, &tank, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "carried pill gave %d regions, expected 1", n);
 
     /* No tank: a viewable pill still gives the player its block, and it is
      * the only rect. */
     gs->pb->item[0].inTank = FALSE;
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 1, "pill without a tank gave %d regions, expected 1", n);
     ASSERT_RECT(out[0], 193, 43, 207, 57);
 
     /* No tank and nothing to view through: no live squares at all. */
     gs->pb->item[0].armour = 0;
-    n = overviewMapBuildRegions(gs, 0, &in, FALSE, 100, 100, OVERVIEW_TANK_HALF,
-                                out, OVERVIEW_MAX_REGIONS);
+    n = overviewMapBuildRegions(gs, 0, &in, NULL, out, OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 0, "no tank and no viewable pill gave %d regions", n);
 
     /* A full map of viewable pills plus the tank wants more rects than a
@@ -219,11 +248,100 @@ int run_overview_regions(void) {
         out[maxOut].right = -1;
         out[maxOut].bottom = -1;
 
-        n = overviewMapBuildRegions(gs, 0, &in, TRUE, 100, 100,
-                                    OVERVIEW_TANK_HALF, out, maxOut);
+        tank = overviewTestBlock(100, 100, OVERVIEW_TANK_HALF);
+        n = overviewMapBuildRegions(gs, 0, &in, &tank, out, maxOut);
         UT_ASSERT_MSG(n == maxOut, "capped build returned %d, expected %d", n,
                       maxOut);
         ASSERT_RECT(out[maxOut], -1, -1, -1, -1);
+    }
+
+    /* Which block the tank gets is the fog experiment's, and overviewMapUpdate
+     * is the only thing that places it, so these run through it. The memory is
+     * a hundred kilobytes and more, too much to put on the stack. */
+    {
+        OverviewMap *om;        /* The memory the update writes */
+        OverviewViewInputs fog; /* Inputs carrying the experiment and the view */
+
+        om = (OverviewMap *)calloc(1, sizeof(OverviewMap));
+        UT_ASSERT_MSG(om != NULL, "no memory for an OverviewMap");
+        gs->pb->numPills = 0;
+
+        /* Envelope with the view fields zeroed, which is what a caller that
+         * keeps no view state passes: the 29x29 on the tank, where it has
+         * always been. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "Envelope gave %d regions, expected 1", om->liveCount);
+        ASSERT_RECT(om->live[0], 86, 86, 114, 114);
+
+        /* Lens with a classic view to place from: the 15x15 sits at the view,
+         * not at the tank, which is a hundred squares off it. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 40;
+        fog.viewTop = 60;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1, "Lens gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+
+        /* Lens with no view to read - a dead tank, or an item view just left -
+         * puts the same 15x15 round the tank instead. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentLens;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "Lens without a view gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 93, 93, 107, 107);
+
+        /* A lens over an edge is trimmed to the map, the way the Envelope
+         * block over the corner above is, and so is the fallback round a tank
+         * standing near one. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 250;
+        fog.viewTop = 0;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "a lens at the edge gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 250, 0, 255, 14);
+
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentLens;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
+        ASSERT_RECT(om->live[0], 0, 243, 10, 255);
+
+        /* A tank that dies holds its block where the player was looking. The
+         * dead tank reports no view of its own, so the block has to come from
+         * what was recorded on the last update it was alive for - at the
+         * wreck it would be the 15x15 round 100,100. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentLens;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 40;
+        fog.viewTop = 60;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        fog.viewValid = FALSE;
+        fog.viewLeft = 0;
+        fog.viewTop = 0;
+        overviewMapUpdate(om, gs, 0, &fog, FALSE, TANK_DEATH_WAIT, 0, 0);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "a dead tank gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+
+        free(om);
     }
 
     /* Where the blackout sits in the death wait: the player watches their own
@@ -385,32 +503,6 @@ static int overviewAwayFromEdge(BYTE mapCoord) {
     return (mapCoord < MAP_ARRAY_SIZE / 2) ? 1 : -1;
 }
 
-/* The inclusive block overviewMapBuildRegions builds round a centre, restated
- * so the assertions have something to check against that is not the code under
- * test. run_overview_regions is what pins the two together. */
-static OverviewRect overviewTestBlock(int cx, int cy, int half) {
-    OverviewRect r; /* Rect to return */
-
-    r.alpha = 255;
-    r.left = cx - half;
-    r.top = cy - half;
-    r.right = cx + half;
-    r.bottom = cy + half;
-    if (r.left < 0) {
-        r.left = 0;
-    }
-    if (r.top < 0) {
-        r.top = 0;
-    }
-    if (r.right > MAP_ARRAY_SIZE - 1) {
-        r.right = MAP_ARRAY_SIZE - 1;
-    }
-    if (r.bottom > MAP_ARRAY_SIZE - 1) {
-        r.bottom = MAP_ARRAY_SIZE - 1;
-    }
-    return r;
-}
-
 /* TRUE when the square falls inside any of the rects. */
 static bool overviewInAnyRect(const OverviewRect *r, int count, int x, int y) {
     int i; /* Looping variable */
@@ -524,8 +616,9 @@ int run_overview_reveal(void) {
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(f.cs, &in);
-    int n = overviewMapBuildRegions(f.gs, f.me, &in, TRUE, f.tankMX, f.tankMY,
-                                    OVERVIEW_TANK_HALF, expect,
+    OverviewRect tankBlock = overviewTestBlock(f.tankMX, f.tankMY,
+                                               OVERVIEW_TANK_HALF);
+    int n = overviewMapBuildRegions(f.gs, f.me, &in, &tankBlock, expect,
                                     OVERVIEW_MAX_REGIONS);
     UT_ASSERT_MSG(n == 2, "expected the tank block and one pill block, got %d",
                   n);
@@ -1882,8 +1975,9 @@ int run_overview_loopback(void) {
     OverviewRect expect[OVERVIEW_MAX_REGIONS];
     OverviewViewInputs in;
     clientSimFillOverviewViewInputs(h.cs, &in);
-    int n = overviewMapBuildRegions(gs, me, &in, TRUE, tankMX, tankMY,
-                                    OVERVIEW_TANK_HALF, expect,
+    OverviewRect tankBlock = overviewTestBlock(tankMX, tankMY,
+                                               OVERVIEW_TANK_HALF);
+    int n = overviewMapBuildRegions(gs, me, &in, &tankBlock, expect,
                                     OVERVIEW_MAX_REGIONS);
     if (n < 1) {
         loopbackHarnessStop(&h);

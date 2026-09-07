@@ -950,9 +950,13 @@ int run_viewport_calc_square_pure(void);
 int run_viewport_calc_pill_square_moved(void);
 
 /* Overview region geometry (test_overview_map.c): overviewMapBuildRegions
- * gives the tank a 29x29 block and every viewable pillbox a 15x15 one,
- * trimmed at the map edges, tank rect first and pills in index order, and
- * never writes more rects than the caller allowed for; and
+ * writes the tank's block, which it is handed, first, gives every viewable
+ * pillbox a 15x15 one trimmed at the map edges, keeps the pills in index
+ * order and never writes more rects than the caller allowed for; where that
+ * block goes is the fog experiment's to decide, and is covered through
+ * overviewMapUpdate — the 29x29 on the tank under Envelope, the 15x15 at the
+ * classic view under the lens, the same 15x15 round the tank with no view to
+ * read, and the view a dying tank last had; and
  * overviewMapDeathBlackout puts the overview's blackout in the stretch of a
  * death wait running from the tick the classic view cuts to static through to
  * the respawn. */

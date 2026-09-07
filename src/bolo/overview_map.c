@@ -124,6 +124,23 @@ const char *overviewFogExperimentBlurb(FogExperiment e) {
   return kFogExperimentBlurbs[(int)e];
 }
 
+/* Brings an inclusive rect back inside the map. Shared so a block placed by
+ * its corner is trimmed exactly the way one built round a centre is. */
+static void overviewRectTrimToMap(OverviewRect *r) {
+  if (r->left < 0) {
+    r->left = 0;
+  }
+  if (r->top < 0) {
+    r->top = 0;
+  }
+  if (r->right > MAP_ARRAY_SIZE - 1) {
+    r->right = MAP_ARRAY_SIZE - 1;
+  }
+  if (r->bottom > MAP_ARRAY_SIZE - 1) {
+    r->bottom = MAP_ARRAY_SIZE - 1;
+  }
+}
+
 /* An inclusive square block centred on (cx,cy), trimmed to the map, live
  * outright. The centre and half-width are ints so a block over the top or left
  * edge clamps instead of wrapping through zero. Zeroed first so the whole
@@ -139,19 +156,38 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
   r.top = cy - half;
   r.right = cx + half;
   r.bottom = cy + half;
-  if (r.left < 0) {
-    r.left = 0;
-  }
-  if (r.top < 0) {
-    r.top = 0;
-  }
-  if (r.right > MAP_ARRAY_SIZE - 1) {
-    r.right = MAP_ARRAY_SIZE - 1;
-  }
-  if (r.bottom > MAP_ARRAY_SIZE - 1) {
-    r.bottom = MAP_ARRAY_SIZE - 1;
-  }
+  overviewRectTrimToMap(&r);
   return r;
+}
+
+/* The block of squares round the player's own tank, which is the one thing the
+ * fog experiment picks between. Envelope is the whole scroll envelope centred
+ * on the tank, the block the map has always drawn. Every other experiment is
+ * the classic view's own 15x15 placed where that view is sitting: it keeps
+ * scrolling whether or not it is on screen, so its first visible square says
+ * where the player is looking, and autoscroll and the scroll keys move the
+ * block by moving it. With no reading to place it from - a dead tank, or an
+ * item view just left - the same 15x15 goes round the tank instead. The rect
+ * comes out live outright either way, so it is the same kind of rect the tank
+ * has always had. */
+static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
+                              BYTE tankMY, OverviewRect *out) {
+  if (in->experiment == (uint8_t)fogExperimentEnvelope) {
+    *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_TANK_HALF);
+    return;
+  }
+  if (in->viewValid == FALSE) {
+    *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_LENS_HALF);
+    return;
+  }
+
+  memset(out, 0, sizeof(*out));
+  out->alpha = 255;
+  out->left = (int)in->viewLeft;
+  out->top = (int)in->viewTop;
+  out->right = out->left + 2 * OVERVIEW_LENS_HALF;
+  out->bottom = out->top + 2 * OVERVIEW_LENS_HALF;
+  overviewRectTrimToMap(out);
 }
 
 /* Rewrites every square of an inclusive rect from the current sim state.
@@ -268,6 +304,9 @@ void overviewMapReset(OverviewMap *om) {
   om->lastTankMX = 0;
   om->lastTankMY = 0;
   om->haveLastTank = FALSE;
+  om->lastViewLeft = 0;
+  om->lastViewTop = 0;
+  om->haveLastView = FALSE;
   memset(om->pillWasLive, 0, sizeof(om->pillWasLive));
   memset(om->baseWasLive, 0, sizeof(om->baseWasLive));
   memset(om->allyWasLive, 0, sizeof(om->allyWasLive));
@@ -453,9 +492,9 @@ static bool overviewKeyViewLive(struct GameSim *sim, BYTE myPlayerNum,
 }
 
 int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
-                            const OverviewViewInputs *in, bool haveTank,
-                            BYTE tankMX, BYTE tankMY, int tankHalf,
-                            OverviewRect *out, int maxOut) {
+                            const OverviewViewInputs *in,
+                            const OverviewRect *tankRect, OverviewRect *out,
+                            int maxOut) {
   int count;     /* Rects written so far */
   BYTE alpha;    /* How bright the item under test is */
   BYTE numPills; /* Pills on the map */
@@ -467,9 +506,9 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
     return 0;
   }
 
-  if (haveTank == TRUE && tankHalf >= 0 && count < maxOut &&
+  if (tankRect != NULL && count < maxOut &&
       overviewKeyViewLive(sim, myPlayerNum, in) == FALSE) {
-    out[count] = overviewRectAround((int)tankMX, (int)tankMY, tankHalf);
+    out[count] = *tankRect;
     count++;
   }
 
@@ -521,9 +560,11 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY) {
   bool tankLive; /* Is there a tank region this update */
-  BYTE useMX;    /* Centre of that region */
-  BYTE useMY;    /* Centre of that region */
-  int tankHalf;  /* Half-width of that region */
+  BYTE useMX;    /* Square that region is placed from */
+  BYTE useMY;    /* Square that region is placed from */
+  OverviewRect tankRect;   /* The region itself, once placed */
+  OverviewViewInputs held; /* in, with the view a dead tank last had */
+  const OverviewViewInputs *blockIn; /* Which of the two places the block */
   bool changed;  /* Did anything move this update */
   BYTE alpha;    /* Where the predicates report brightness; only whether
                     there is a region at all is wanted here */
@@ -547,20 +588,38 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * what stops a dead player watching the square that killed them is the
    * blackout the view draws over the lot, not the block shrinking underneath
    * it. A tank that has really gone has no block at all, which is what
-   * releases it and lets the farewell stamp below run. */
+   * releases it and lets the farewell stamp below run.
+   *
+   * Where the classic view was sitting is recorded alongside the square, for
+   * the same reason: a dead tank leaves that view wherever it stopped and
+   * reports nothing, so an experiment that places the block from the view has
+   * to be handed the last readings taken while the tank was alive. The block
+   * then holds where the player was looking rather than snapping to the wreck.
+   */
   tankLive = haveTank;
   useMX = tankMX;
   useMY = tankMY;
-  tankHalf = OVERVIEW_TANK_HALF;
+  blockIn = in;
   if (haveTank == TRUE) {
     om->lastTankMX = tankMX;
     om->lastTankMY = tankMY;
     om->haveLastTank = TRUE;
+    if (in->viewValid == TRUE) {
+      om->lastViewLeft = in->viewLeft;
+      om->lastViewTop = in->viewTop;
+      om->haveLastView = TRUE;
+    }
   } else if (tankDeathWait > 0 && om->haveLastTank == TRUE) {
     tankLive = TRUE;
     useMX = om->lastTankMX;
     useMY = om->lastTankMY;
+    held = *in;
+    held.viewLeft = om->lastViewLeft;
+    held.viewTop = om->lastViewTop;
+    held.viewValid = om->haveLastView;
+    blockIn = &held;
   }
+  overviewTankBlock(blockIn, useMX, useMY, &tankRect);
 
   /* Watching an item under viewPolicyKey closes the block round the tank, so
    * the map shows the one thing being watched. Asked here as well so
@@ -573,9 +632,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   memcpy(om->prevLive, om->live, sizeof(om->prevLive));
   om->prevLiveCount = om->liveCount;
 
-  om->liveCount = overviewMapBuildRegions(sim, myPlayerNum, in, tankLive, useMX,
-                                          useMY, tankHalf, om->live,
-                                          OVERVIEW_MAX_REGIONS);
+  om->liveCount = overviewMapBuildRegions(
+      sim, myPlayerNum, in, (tankLive == TRUE) ? &tankRect : NULL, om->live,
+      OVERVIEW_MAX_REGIONS);
   changed = overviewRegionsDiffer(om->live, om->liveCount, om->prevLive,
                                   om->prevLiveCount);
 

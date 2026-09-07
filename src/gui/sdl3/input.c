@@ -126,9 +126,17 @@ static bool keyDown(int sc) {
    somewhere they never scrolled it to. The item views are unaffected: they
    take the keys before either map sees them, and stepping between items is
    still what they do there. The gamepad stick is unaffected too — it drives
-   the build cursor as well, and neither of those has moved. */
+   the build cursor as well, and neither of those has moved.
+
+   Only under the Envelope fog experiment (0), where the block of squares the
+   map draws live covers everywhere the classic view could scroll to, so where
+   that view actually sits makes no difference to the picture. Every other
+   experiment places the block from the classic view, and dragging the hidden
+   view off the tank is then exactly what the player wants the keys to do — so
+   they go back to the classic scroll, latching the manual override until
+   autoscroll takes the block back. */
 static bool overviewOwnsScrollKeys(void) {
-  return sdl3DrawIsOverviewInWindow();
+  return sdl3DrawIsOverviewInWindow() && clientSimGetFogExperiment() == 0;
 }
 
 /*********************************************************

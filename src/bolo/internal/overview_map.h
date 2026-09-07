@@ -141,7 +141,7 @@ void overviewMapReset(OverviewMap *om);
 void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
                         BYTE myPlayerNum);
 
-/* Pure geometry. Writes the tank rect first when haveTank is true, then the
+/* Pure geometry. Writes the tank rect first when there is one, then the
  * pillboxes in ascending pill index, then the bases in ascending base index,
  * then the allied tanks in ascending player number. Returns the number
  * written, never more than maxOut. The ordering is contractual — the farewell
@@ -153,21 +153,23 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
  * viewPolicyKey, the ones whose proximity clock has not run out under
  * viewPolicyDecay, and none at all under viewPolicyOff. While a viewPolicyKey
  * category is granting the watched item its rect there is no tank rect at all,
- * whatever haveTank says: key is one view at a time, and the item's block
+ * whatever tankRect holds: key is one view at a time, and the item's block
  * replaces the tank's rather than joining it. Qualifying is the same
  * test the item views make — pillsCanView, basesCanView, playersCanAllyView —
  * so an enemy, dead, carried, neutral or un-allied item never appears whatever
  * the policy says. Each rect carries the alpha the fade wants: 255 outright,
  * ramping to 0 over the last VIEW_DECAY_FADE_SECS of a decay window.
  *
- * tankHalf is the half-width of the tank's block, OVERVIEW_TANK_HALF for a
- * living tank and for a dead one still in its slot. Every watched item's block
- * — a pill, a base, an allied tank — is always OVERVIEW_PILL_HALF, the size
- * its own view shows; the wider block is the player's own tank's alone. */
+ * tankRect is the block round the player's own tank, already placed and sized
+ * by the caller — the fog experiment decides where it goes and how wide it is,
+ * so the choice is made once, in overviewMapUpdate, and this only copies what
+ * it is handed. NULL means no tank rect at all. Every watched item's block —
+ * a pill, a base, an allied tank — is always OVERVIEW_PILL_HALF round the item,
+ * the size its own view shows, whatever the tank's block is doing. */
 int  overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
                              const OverviewViewInputs *in,
-                             bool haveTank, BYTE tankMX, BYTE tankMY,
-                             int tankHalf, OverviewRect *out, int maxOut);
+                             const OverviewRect *tankRect,
+                             OverviewRect *out, int maxOut);
 
 /* Whether the overview should be black this tick: from the tick the classic
  * main view cuts to static through to the respawn, and nothing outside a
@@ -188,9 +190,11 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  *
  * tankDeathWait is the ticks left on the death wait of a tank that is still in
  * its slot but dead, and 0 for a tank that is alive or gone. Such a tank keeps
- * its block live, at full size, on the square it last held - the caller has no
- * position to give for a dead tank - so the player watches the explosion where
- * it happened rather than the ground round it greying out the moment they die.
+ * its block live and whole, where it last had one - the caller has no position
+ * or classic view to give for a dead tank, so both are taken from what was
+ * recorded on the last update it was alive for - and the player watches the
+ * explosion where it happened rather than the ground round it greying out the
+ * moment they die.
  * The view's blackout is what takes the picture away from there; the memory
  * keeps stamping underneath it. A tank that has really gone drops its block
  * outright. */

@@ -131,11 +131,20 @@ static ServerSim *vpMakeWorld(GameSim **outGs) {
     return sim;
 }
 
-/* The build every case makes: our tank whole, at the square above. */
+/* The build every case makes: our tank whole, at the square above. The caller
+ * places the tank rect now, so the block is spelled out here rather than named
+ * by a half-width. */
 static int vpBuild(GameSim *gs, const OverviewViewInputs *in,
                    OverviewRect *out) {
-    return overviewMapBuildRegions(gs, 0, in, TRUE, VP_TANK_MX, VP_TANK_MY,
-                                   OVERVIEW_TANK_HALF, out,
+    OverviewRect tank; /* The 29x29 the tank has always had */
+
+    memset(&tank, 0, sizeof(tank));
+    tank.alpha  = 255;
+    tank.left   = VP_TANK_MX - OVERVIEW_TANK_HALF;
+    tank.top    = VP_TANK_MY - OVERVIEW_TANK_HALF;
+    tank.right  = VP_TANK_MX + OVERVIEW_TANK_HALF;
+    tank.bottom = VP_TANK_MY + OVERVIEW_TANK_HALF;
+    return overviewMapBuildRegions(gs, 0, in, &tank, out,
                                    OVERVIEW_MAX_REGIONS);
 }
 

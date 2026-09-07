@@ -1063,6 +1063,15 @@ void         clientSimSetFogLineOfSight(bool on);
 const char  *clientSimFogExperimentName(int e);
 const char  *clientSimFogExperimentBlurb(int e);
 
+/* The centre of the block of live squares round the player's own tank, in map
+   squares and including the sub-square part, for a camera that has to follow
+   the block rather than the tank. False — leaving the outputs alone — under
+   Envelope, where the block is centred on the tank and the tank position is
+   what to follow, and whenever there is no live tank view to place a block
+   from. */
+bool         clientSimGetFogViewCentreF(const ClientSim *cs, float *outX,
+                                        float *outY);
+
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank
  * is destroyed / not yet spawned.
