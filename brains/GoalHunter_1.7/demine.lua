@@ -356,7 +356,7 @@ function M.update(state, world, info)
   if not rx then return end
   state._trepair_job = { mx = rx, my = ry, start = now, tree_cost = rcost }
   print2(string.format("TREPAIR_JOB t=%d tile@(%d,%d) tt=%d cost=%d during %s%s trees=%d",
-    now, rx, ry, U.ttype(rx, ry), rcost or -1, g.kind,
+    now, rx, ry, U.ttype_peek(rx, ry), rcost or -1, g.kind,
     g.substate and ("/" .. tostring(g.substate)) or "",
     info.trees or 0))
 end
@@ -433,7 +433,7 @@ function M.draw_overlay(state, world, info)
         viz.line("trepair_scan", info.man_x / 256.0, info.man_y / 256.0, rcx, rcy, 120, 255, 160, 220)
       end
       viz.text("trepair_scan", rcx, rcy - 0.75,
-        string.format("REPAIR tt=%d cost=%d age=%d", U.ttype(j.mx, j.my),
+        string.format("REPAIR tt=%d cost=%d age=%d", U.ttype_peek(j.mx, j.my),
                       j.tree_cost or 0, now - (j.start or now)),
         "center", 120, 255, 160, 255)
     end

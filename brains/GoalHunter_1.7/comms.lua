@@ -144,17 +144,25 @@ function M.process_message(sender, text, tick, state)
   -- squad.update expires it when the take ends (pill gone, we left the take,
   -- commander gone, BLITZ_SUICIDER_MAX_TICKS) and reset_blitz_state wipes it on
   -- death, after which the bot reverts to whatever it was before.
-  local bsu_pill, bsu_pn = text:match("^/info bsu (%d+) (%d+)$")
+  -- The optional trailing letter is WHY the commander designated us: "c" = a
+  -- CONTESTED take (BLITZ_CONTESTED_ALL_SUICIDERS — a hostile tank was within
+  -- BLITZ_CONTESTED_RANGE of the pill, so BLITZ_CONTESTED_SUICIDERS of the
+  -- party go in as suiciders); absent = the BLITZ_MIN_SUICIDERS top-up. It
+  -- changes nothing about the designation itself, only how it is REPORTED
+  -- ([role] line, DECISION suicider row), so an old two-token bsu still works.
+  local bsu_pill, bsu_pn, bsu_why = text:match("^/info bsu (%d+) (%d+)%s*(%a*)$")
   if bsu_pill then
     local for_us = state and tonumber(bsu_pn) == (state.player_number or -1)
     -- "noblitz" (BRAIN_INIT_ARG): we are in no blitz, so a designation aimed at
     -- us is ignored outright — we never joined the take it belongs to.
     if for_us and state.blitz_disabled then for_us = false end
     if for_us then
-      state.blitz_suicider = { pill = tonumber(bsu_pill), by = sender, since = tick }
+      state.blitz_suicider = { pill = tonumber(bsu_pill), by = sender, since = tick,
+                               why = (bsu_why == "c") and "contested" or nil }
     end
-    print2(string.format("BLITZ_RX bsu from p%s pill=%s -> p%s%s t=%d",
+    print2(string.format("BLITZ_RX bsu from p%s pill=%s -> p%s why=%s%s t=%d",
       tostring(sender), bsu_pill, bsu_pn,
+      (bsu_why == "c") and "contested" or "quota",
       (for_us and " (US)") or (state and state.blitz_disabled and tonumber(bsu_pn) == (state.player_number or -1) and " (US, IGNORED noblitz)") or "",
       tick))
     return

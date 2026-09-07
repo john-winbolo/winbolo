@@ -14,6 +14,18 @@ local viz = require("viz")
 local opt = require("optimize")
 local threat = require("threat")
 local print2 = require("print2")
+-- attack.lua owns the attack_tank heat-pill decision (selection, shots_needed
+-- from the engine's speed-halving ladder, volley termination). Required LAZILY
+-- on first use rather than at the top of this file: a new top-level require
+-- changes the order modules are first loaded in, and the whole point of the
+-- ATTACK_TANK_HEAT_PILL knob is that turning it off leaves everything else
+-- exactly as it was. attack.lua's require closure never reaches steering.lua,
+-- so there is no cycle either way.
+local _attack
+local function attack_mod()
+  if not _attack then _attack = require("attack") end
+  return _attack
+end
 
 local M = {}
 
@@ -2432,7 +2444,7 @@ local function attack_pill_steer(state, world, info, goal)
     print2(string.format("HARDLINE_DRV t=%d tank=(%d,%d) inboat=%s spd=%d dir=%d look=(%d,%d) mdir=%d corr=%d next=(%s,%s) nextT=%s keys=%d taps=%d",
       state.tick or 0, tmx, tmy, tostring(info.inboat), info.speed or -1, info.direction or -1,
       lookx, looky, move_dir, mcorr, tostring(nx), tostring(ny),
-      (nx and nx >= 0) and tostring(U.ttype(nx, ny)) or "?", keys, taps))
+      (nx and nx >= 0) and tostring(U.ttype_peek(nx, ny)) or "?", keys, taps))
     return keys, taps
   end
 
@@ -2668,6 +2680,24 @@ local function tank_combat_steer(state, world, info, goal)
       arm = info.armour, sh = info.shells })
     if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
+  end
+
+  -- ── HEAT A FRIENDLY PILL (C.ATTACK_TANK_HEAT_PILL, default OFF in keel) ──
+  -- Placed AFTER both disengage returns above on purpose: on any tick the
+  -- existing code has decided we must break off (pillbox crossfire, or the
+  -- armour/shells flee check) we never reach here, so a heat volley can
+  -- neither start nor continue while we are under fire in a way that demands
+  -- evasion. attack.lua does all the deciding; this just forwards the keys.
+  if C.ATTACK_TANK_HEAT_PILL then
+    local hk, ht = attack_mod().heat_pill_steer(state, world, info, goal, target,
+                                          now, tmx, tmy, shot_path_clear)
+    if hk then
+      keys = bit.bor(keys, hk)
+      taps = bit.bor(taps, ht)
+      log.reason("steer", { mode = "tank_combat_heat_pill",
+        pill = goal._heat_pid, shots = goal._heat_shots })
+      return keys, taps
+    end
   end
 
   if dist_tiles > C.TANK_COMBAT_ENGAGE_RANGE then
@@ -3070,7 +3100,55 @@ local function tank_combat_steer(state, world, info, goal)
   return keys, taps
 end
 
-function M.steer(state, world, info, goal)
+-- U-turn side choice, terrain-aware (C.UTURN_SIDE_AVOID_SEA, OFF by default).
+-- Returns true when rotating the nose toward `side` (+1 = right / increasing
+-- brads, -1 = left) sweeps it across deep sea within one tile at any point of
+-- the half turn. The u-turn latch picks its side from the shorter angle alone
+-- and has no idea what is under the nose: on 20260905_231835 bot3 the shorter
+-- way round swept the nose south, straight over the sea tile it then drove
+-- into. Sampled every UTURN_SWEEP_STEP_BRAD of the 128-brad half turn, each
+-- sample a one-tile ray in CLIFF_SCAN_STEP_WU hops with the same corner-cut
+-- rule the brake ray uses. Only ever called when the flag is on AND a u-turn
+-- is committing this tick, so the ~64 terrain lookups are rare.
+local UTURN_SWEEP_STEP_BRAD = 16    -- 22.5 deg between sampled headings
+local UTURN_SWEEP_MAX_BRAD  = 128   -- a half turn: the most a u-turn sweeps
+local UTURN_SWEEP_RAY_WU    = 256   -- one tile of nose clearance per sample
+local function uturn_sweep_hits_sea(info, side)
+  local step = C.CLIFF_SCAN_STEP_WU or 64
+  local b = UTURN_SWEEP_STEP_BRAD
+  while b <= UTURN_SWEEP_MAX_BRAD do
+    local dirv   = (info.direction + side * b) % 256
+    local s2, c2 = U.bsin(dirv), U.bcos(dirv)
+    local lx = bit.rshift(info.tankx, 8)
+    local ly = bit.rshift(info.tanky, 8)
+    local d  = step
+    while d <= UTURN_SWEEP_RAY_WU do
+      local ax = bit.rshift(info.tankx + __idiv(s2 * d, 128), 8)
+      local ay = bit.rshift(info.tanky - __idiv(c2 * d, 128), 8)
+      if ax ~= lx or ay ~= ly then
+        if ax ~= lx and ay ~= ly then
+          if (U.in_map(lx, ay) and U.ttype(lx, ay) == C.T_DEEPSEA)
+             or (U.in_map(ax, ly) and U.ttype(ax, ly) == C.T_DEEPSEA) then
+            return true
+          end
+        end
+        lx, ly = ax, ay
+        if not U.in_map(ax, ay) or U.ttype(ax, ay) == C.T_DEEPSEA then
+          return true
+        end
+      end
+      d = d + step
+    end
+    b = b + UTURN_SWEEP_STEP_BRAD
+  end
+  return false
+end
+
+-- The whole of steering lives in steer_core; M.steer (bottom of this file) is
+-- a thin wrapper around it so there is ONE place every key leaves the module,
+-- whichever of the many `return`s inside produced it. See the
+-- C.CLIFF_STOP_MASK_ALL_GOALS block down there.
+local function steer_core(state, world, info, goal)
   local _t_steer_start = BRAIN_PROFILE and clock_us() or 0
   local _t_phase = _t_steer_start
   -- Mark "steer" as the current main so cpf.path_to / cost_to wrappers
@@ -3180,6 +3258,7 @@ function M.steer(state, world, info, goal)
     -- not brake for water merely sitting beside the ray.
     local scan_wu = math.max(256, math.ceil(look_wu / 256) * 256)
     local trigger_d, trigger_mx, trigger_my
+    local trigger_corner = false   -- the trigger tile was a corner-cut tile
     local last_mx = bit.rshift(info.tankx, 8)
     local last_my = bit.rshift(info.tanky, 8)
     local d = C.CLIFF_SCAN_STEP_WU
@@ -3190,9 +3269,33 @@ function M.steer(state, world, info, goal)
       local amy = bit.rshift(info.tanky - __idiv(cdir * d, 128), 8)
       -- Only look up a tile when the ray has actually moved into a new one.
       if amx ~= last_mx or amy ~= last_my then
+        -- CORNER CUT (C.CLIFF_RAY_CORNER_CHECK): a single CLIFF_SCAN_STEP_WU
+        -- hop can change BOTH axes, and then the ray crossed two tiles we
+        -- never looked up: (last_mx, amy) and (amx, last_my). That is how
+        -- bot3 drowned on 20260905_231835 t=71330 -- tank at (36104,36093),
+        -- i.e. 8 wu inside column 141 and 3 wu above row 141, heading
+        -- 134-135, so the FIRST sample jumped (141,140) -> (140,141) and
+        -- stepped clean over (141,141) = deep sea, 3 wu in front of it. No
+        -- brake fired; navigate ran instead and returned KEY_FASTER.
+        -- This test can only ADD trigger tiles: it never suppresses a brake
+        -- that fires today, never issues a turn key of its own and never
+        -- sets KEY_FASTER. The side choice still belongs to the free_dist
+        -- comparison below, which is deliberately NOT corner-tested -- both
+        -- probe rays would report the same adjacent deep corner and collapse
+        -- the comparison to its "ties turn right" branch.
+        local hit_mx, hit_my
+        if C.CLIFF_RAY_CORNER_CHECK and amx ~= last_mx and amy ~= last_my then
+          if U.in_map(last_mx, amy) and U.ttype(last_mx, amy) == C.T_DEEPSEA then
+            hit_mx, hit_my = last_mx, amy
+          elseif U.in_map(amx, last_my) and U.ttype(amx, last_my) == C.T_DEEPSEA then
+            hit_mx, hit_my = amx, last_my
+          end
+        end
         last_mx, last_my = amx, amy
-        if U.ttype(amx, amy) == C.T_DEEPSEA then
-          trigger_d, trigger_mx, trigger_my = d, amx, amy
+        if hit_mx or U.ttype(amx, amy) == C.T_DEEPSEA then
+          trigger_d = d
+          trigger_mx, trigger_my = hit_mx or amx, hit_my or amy
+          trigger_corner = (hit_mx ~= nil)
           break
         end
         -- Pale yellow square for scanned-clear tiles + small label so
@@ -3229,7 +3332,18 @@ function M.steer(state, world, info, goal)
         mode = "global_cliff_brake", goal_kind = goal.kind,
         tile_mx = trigger_mx, tile_my = trigger_my,
         dist_wu = trigger_d, speed = info.speed,
+        corner = trigger_corner,
       })
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "CLIFF_BRAKE t=%d goal=%s tile_mx/my=(%d,%d) dist_wu=%d corner=%s"
+          .. " corner_chk=%s dir=%d spd=%d tank=(%d,%d) scan_wu=%d",
+          state.tick or 0, tostring(goal.kind), trigger_mx, trigger_my,
+          trigger_d, tostring(trigger_corner),
+          tostring(C.CLIFF_RAY_CORNER_CHECK and true or false),
+          info.direction or -1, info.speed or -1,
+          bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), scan_wu))
+      end
       if BRAIN_PROFILE then
         opt(string.format("  steer/cliff_safety done %.2f ms",
                           (clock_us() - _t_phase) / 1000))
@@ -3238,6 +3352,23 @@ function M.steer(state, world, info, goal)
       -- cautious guard tagged the creep earlier this tick, clear it so init's
       -- TAKE_CRAWL leaves THIS KEY_SLOWER intact instead of sailing into the water.
       state._cautious_lookahead_held = nil
+      -- STICKY (C.CLIFF_BRAKE_STICKY, see the constants block): this guard is
+      -- re-decided from scratch every tick off the heading ray, so while the
+      -- tank turns the ray jitters off the sea tile and navigate re-issues
+      -- KEY_FASTER on the miss ticks -- forward creep with a brake that
+      -- "fired". Remember the tile for a few ticks; M.steer's exit point then
+      -- keeps the throttle off whatever the ray sees. Turn keys are untouched,
+      -- so the evasive turn below still runs and the tank keeps rotating out.
+      local sticky_n = C.CLIFF_BRAKE_STICKY and (C.CLIFF_BRAKE_STICKY_TICKS or 8) or 0
+      if sticky_n > 0 then
+        if BRAIN_DEBUG_MODE and not state._cliff_sticky_left then
+          print2(string.format("CLIFF_STICKY t=%d tile=(%d,%d) left=%d",
+                               state.tick or 0, trigger_mx, trigger_my, sticky_n))
+        end
+        state._cliff_sticky_left = sticky_n
+        state._cliff_sticky_mx   = trigger_mx
+        state._cliff_sticky_my   = trigger_my
+      end
       -- EVASIVE TURN: brake AND steer away. Braking alone returned early with
       -- no turn key, so on every brake tick the tank held its heading; at
       -- creep speed (20260831_222819 bot2, speed 8-12 hugging the row
@@ -3913,7 +4044,8 @@ function M.steer(state, world, info, goal)
     if goal.kind == "rescue_lgm" then
       local rtmx, rtmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
       local dnx, dny = cpf.dijkstra_next_step(cpf.KIND_NORMAL, rtmx, rtmy,
-                         nav_mx, nav_my, state._nav_avoid_tiles, C.NAV_AVOID_PENALTY)
+                         nav_mx, nav_my, state._nav_avoid_tiles,
+                         C.NAV_AVOID_PENALTY, info.inboat and 1 or 0)
       if dnx and not (dnx == rtmx and dny == rtmy) then
         nx, ny = dnx, dny
         -- Mirror the bookkeeping cpf_path_to does so path_lookahead and the
@@ -4032,7 +4164,7 @@ function M.steer(state, world, info, goal)
       -- Fires here (in the nav overlay block) so it doesn't get skipped by
       -- later early returns.
       if pf.next_mx and pf.next_mx >= 0 then
-        local ntt = U.ttype(pf.next_mx, pf.next_my)
+        local ntt = U.ttype_peek(pf.next_mx, pf.next_my)
         if ntt == C.T_BUILDING or ntt == C.T_HALFBUILD then
           local wdist_wall = U.wdist(info.tankx, info.tanky,
                                      U.m2w(pf.next_mx), U.m2w(pf.next_my))
@@ -4322,7 +4454,27 @@ function M.steer(state, world, info, goal)
       if held then
         turn_corr = ut.side * 128          -- keep turning the latched way
       elseif abs_c > (C.UTURN_COMMIT_BRAD or 96) then
-        ut = { side = (correction > 0) and 1 or -1 }
+        local side = (correction > 0) and 1 or -1
+        -- C.UTURN_SIDE_AVOID_SEA (OFF by default): prefer the side whose
+        -- sweep crosses no deep sea. Both sides clear, or both fouled, keeps
+        -- today's shorter-angle choice.
+        if C.UTURN_SIDE_AVOID_SEA and not info.inboat then
+          local r_sea = uturn_sweep_hits_sea(info,  1)
+          local l_sea = uturn_sweep_hits_sea(info, -1)
+          local pick  = side
+          if r_sea ~= l_sea then pick = l_sea and 1 or -1 end
+          if BRAIN_DEBUG_MODE then
+            print2(string.format(
+              "UTURN_SIDE_SEA t=%d goal=%s corr=%d tile_mx/my=(%d,%d)"
+              .. " left_sea=%s right_sea=%s shorter=%d picked=%d flag=%s",
+              state.tick or 0, tostring(goal.kind), correction,
+              bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8),
+              tostring(l_sea), tostring(r_sea), side, pick,
+              tostring(C.UTURN_SIDE_AVOID_SEA)))
+          end
+          side = pick
+        end
+        ut = { side = side }
       else
         ut = nil
       end
@@ -4529,8 +4681,27 @@ function M.steer(state, world, info, goal)
         turn_base_cap = (under_fire or race_mode) and  64 or 48
       end
       turn_factor    = 1.0 - math.min((abs_corr - ramp_start) / 70.0, 1.0)
-      turn_capped    = math.max(6, math.floor(turn_factor * turn_base_cap))
+      -- The floor keeps a hard-turning tank creeping forward rather than
+      -- pivoting on the spot. On the 20260905_231835 bot3 drowning the nav
+      -- target was a ~172 deg u-turn, turn_factor rounded to 0, and this
+      -- floor still handed back speed 6 -- forward, into the sea 3 wu away.
+      -- With C.TURN_CAP_UTURN_PIVOT the floor drops to 0 while the u-turn
+      -- latch is committed THIS tick, so a committed u-turn pivots in place
+      -- and only rolls again once the heading error is out of the ramp.
+      local turn_floor = 6
+      local uturn_pivot = C.TURN_CAP_UTURN_PIVOT
+                          and state._uturn and state._uturn.t == state.tick
+      if uturn_pivot then turn_floor = 0 end
+      turn_capped    = math.max(turn_floor, math.floor(turn_factor * turn_base_cap))
       turn_max_speed = turn_capped
+      if BRAIN_DEBUG_MODE and uturn_pivot then
+        print2(string.format(
+          "UTURN_PIVOT t=%d goal=%s corr=%d side=%d factor=%.2f base_cap=%d"
+          .. " turn_capped=%d (floor 6->0) flag=%s",
+          state.tick or 0, tostring(goal.kind), abs_corr,
+          state._uturn.side or 0, turn_factor, turn_base_cap, turn_capped,
+          tostring(C.TURN_CAP_UTURN_PIVOT)))
+      end
     end
 
     -- Plow-mode debug viz: two live lines below the tank (state + decision).
@@ -5264,6 +5435,137 @@ function M.steer(state, world, info, goal)
     opt(string.format("  steer/nav-dispatch/setup done %.2f ms", _setup_us / 1000))
     opt(string.format("  steer/nav-apply done %.2f ms",
                       (clock_us() - _t_nav_apply_start) / 1000))
+  end
+  return keys, taps
+end
+
+-- =========================================================================
+-- M.steer — the single choke point where keys leave the steering module.
+-- =========================================================================
+-- STOPPED-TANK DEEP-SEA MASK (C.CLIFF_STOP_MASK_ALL_GOALS).
+--
+-- The global cliff brake above only runs at info.speed >= CLIFF_MIN_SPEED, so
+-- once it has braked the tank to a standstill the guard stops running, the
+-- normal navigate branch takes over and its single KEY_FASTER tick drives the
+-- tank in. That is the second half of the 20260905_231835 bot3 drowning: at
+-- t=71329 the tank was stopped at (141,140) with deep sea at (141,141) 3 wu
+-- ahead, keys=FASTER|TURNLEFT, and it moved 6 wu south into the water. Tanks
+-- have no reverse gear (tank.c tankAccel clamps speed at 0), so this was a
+-- drive-in, not a slide.
+--
+-- The same mask already existed, but scoped to attack_tank only (it is still
+-- there, inside steer_core, and still runs regardless of this flag). Here it
+-- covers EVERY goal, at the one place all the returns funnel through.
+--
+-- It only ever clears KEY_FASTER and sets KEY_SLOWER. It never issues a turn
+-- key, so it cannot steer the tank anywhere; the turn keys steer_core chose
+-- pass through untouched and the tank keeps rotating out of trouble on the
+-- spot. Boats are exempt: deep sea is where they belong.
+function M.steer(state, world, info, goal)
+  -- Close out an attack_tank heat volley whose goal was replaced under it (a
+  -- replan, or the enemy tank dying). Runs BEFORE steer_core so the retry latch
+  -- is stamped before tank_combat_steer could pick the same pill again this
+  -- same tick. The state._heat_active guard means keel -- where no volley ever
+  -- starts -- does not even load attack.lua from here.
+  if state._heat_active then
+    attack_mod().heat_pill_reap(state, world, info, goal, state.tick or 0)
+  end
+  local keys, taps = steer_core(state, world, info, goal)
+  if C.CLIFF_STOP_MASK_ALL_GOALS and keys and not info.inboat then
+    local sdir = U.bsin(info.direction)
+    local cdir = U.bcos(info.direction)
+    local tmx  = bit.rshift(info.tankx, 8)
+    local tmy  = bit.rshift(info.tanky, 8)
+    local amx  = bit.rshift(info.tankx + sdir * 2, 8)   -- 1 tile ahead only
+    local amy  = bit.rshift(info.tanky - cdir * 2, 8)
+    -- Same corner-cut rule as the brake ray: when the one-tile step changes
+    -- BOTH axes the tank drives across two tiles nobody looked at, and on the
+    -- staircase shoreline one of them is the sea tile.
+    local hit_mx, hit_my, corner
+    if amx ~= tmx and amy ~= tmy then
+      if U.in_map(tmx, amy) and U.ttype(tmx, amy) == C.T_DEEPSEA then
+        hit_mx, hit_my, corner = tmx, amy, true
+      elseif U.in_map(amx, tmy) and U.ttype(amx, tmy) == C.T_DEEPSEA then
+        hit_mx, hit_my, corner = amx, tmy, true
+      end
+    end
+    if not hit_mx and U.in_map(amx, amy) and U.ttype(amx, amy) == C.T_DEEPSEA then
+      hit_mx, hit_my, corner = amx, amy, false
+    end
+    if hit_mx then
+      local before = keys
+      keys = bit.bor(bit.band(keys, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+      -- STICKY (C.CLIFF_BRAKE_STICKY): this mask is decided from the same
+      -- jittering heading as the brake ray, so it too goes quiet on the ticks
+      -- the one-tile step lands elsewhere. Latch on the tile it named.
+      local sticky_n = C.CLIFF_BRAKE_STICKY and (C.CLIFF_BRAKE_STICKY_TICKS or 8) or 0
+      if sticky_n > 0 then
+        if BRAIN_DEBUG_MODE and not state._cliff_sticky_left then
+          print2(string.format("CLIFF_STICKY t=%d tile=(%d,%d) left=%d",
+                               state.tick or 0, hit_mx, hit_my, sticky_n))
+        end
+        state._cliff_sticky_left = sticky_n
+        state._cliff_sticky_mx   = hit_mx
+        state._cliff_sticky_my   = hit_my
+      end
+      if before ~= keys then
+        log.reason("steer", {
+          mode = "cliff_stop_mask", goal_kind = goal and goal.kind,
+          tile_mx = hit_mx, tile_my = hit_my, corner = corner,
+          speed = info.speed,
+        })
+      end
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "CLIFF_STOP_MASK t=%d goal=%s tile_mx/my=(%d,%d) corner=%s"
+          .. " ahead_mx/my=(%d,%d) dir=%d spd=%d keys=%d->%d flag=%s",
+          state.tick or 0, tostring(goal and goal.kind), hit_mx, hit_my,
+          tostring(corner), amx, amy, info.direction or -1, info.speed or -1,
+          before, keys, tostring(C.CLIFF_STOP_MASK_ALL_GOALS)))
+        viz.rect("cliff_safety", hit_mx + 0.1, hit_my + 0.1,
+                 hit_mx + 0.9, hit_my + 0.9, 255, 60, 60, 200)
+      end
+    end
+  end
+
+  -- ── STICKY CLIFF BRAKE (C.CLIFF_BRAKE_STICKY) ─────────────────────────
+  -- Either guard above naming a deep-sea tile latches state._cliff_sticky_left
+  -- for C.CLIFF_BRAKE_STICKY_TICKS brain ticks. While the latch holds, the
+  -- throttle is off HERE, at the single point every key leaves this module,
+  -- whatever this tick's ray happened to see. It only ever clears KEY_FASTER
+  -- and sets KEY_SLOWER -- it never issues a turn key, so the turn steer_core
+  -- chose passes through and the tank keeps rotating away from the water.
+  --
+  -- Two exits: a boat (deep sea is where it belongs) and escape_water (the
+  -- goal whose whole job is driving OUT of water -- the same exemption the
+  -- brake ray itself has). Both drop the latch rather than merely skipping it,
+  -- so it cannot re-apply a tick later.
+  if C.CLIFF_BRAKE_STICKY then
+    if info.inboat or (goal and goal.kind == "escape_water") then
+      if state._cliff_sticky_left then
+        if BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "CLIFF_STICKY t=%d tile=(%d,%d) left=0 released=%s",
+            state.tick or 0, state._cliff_sticky_mx or -1,
+            state._cliff_sticky_my or -1,
+            info.inboat and "boat" or "escape_water"))
+        end
+        state._cliff_sticky_left = nil
+      end
+    elseif state._cliff_sticky_left and state._cliff_sticky_left > 0 then
+      if keys then
+        keys = bit.bor(bit.band(keys, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+      end
+      state._cliff_sticky_left = state._cliff_sticky_left - 1
+      if state._cliff_sticky_left <= 0 then
+        state._cliff_sticky_left = nil
+        if BRAIN_DEBUG_MODE then
+          print2(string.format("CLIFF_STICKY t=%d tile=(%d,%d) left=0",
+                               state.tick or 0, state._cliff_sticky_mx or -1,
+                               state._cliff_sticky_my or -1))
+        end
+      end
+    end
   end
   return keys, taps
 end

@@ -495,10 +495,36 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         owner = SHELLS_BRAIN_FRIENDLY;
       else
         owner = SHELLS_BRAIN_HOSTILE;
+      /* THE THREE SHELL FACTS THE CLASSIC ObjectInfo HAS NO ROOM FOR.
+       *
+       * ObjectInfo (public/brain.h) is the 1998 brain API: object / x / y /
+       * idnum / direction / info / speed. For a shell `direction` is the
+       * utilGet16Dir SNAP of the true angle — 16 compass points, so up to
+       * +-11.25 degrees of error, which over a shell's full 2016-WU flight is
+       * ~400 WU (a tile and a half) of lateral drift. `idnum` and `speed` are
+       * both dead for a shell (0 and 0). The snapshot the server sent us
+       * (ShellSnapshot, input_packet.h) carries all three of the things the
+       * struct drops: the exact 8-bit angle, the owner's player number, and
+       * `length`, the shell's REMAINING LIFE in engine ticks.
+       *
+       * So carry them on the two dead fields and leave `direction` exactly as
+       * it has always been — nothing that reads it changes behaviour:
+       *
+       *   idnum = (exact angle << 8) | owner player number  (NEUTRAL = 0xFF)
+       *   speed = remaining life, engine ticks (0..63)
+       *
+       * braincore.c unpacks these into ob.angle / ob.owner / ob.life on the
+       * Lua object table, which is where a brain should read them.
+       *
+       * The shell idnum is no longer always 0, but shells are still exempt
+       * from brainDataAddObject's identity dedup (it is keyed on the object
+       * TYPE), so two shells from the same pill still both arrive. */
       brainDataAddObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
-                         s->worldX, s->worldY, 0,
+                         s->worldX, s->worldY,
+                         (unsigned short)(((unsigned short)s->angle << 8)
+                                          | (unsigned short)s->owner),
                          utilGet16Dir((TURNTYPE)s->angle),
-                         owner, 0);
+                         owner, s->length);
     }
   }
 
@@ -748,8 +774,9 @@ void brainDataAddObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy
   /* Dedup identifiable objects (tanks / LGMs / pills / bases): with the
    * team-pill-view sweep the same entity can sit inside the tank view
    * rect AND one or more pill view rects — add it exactly once. Shells
-   * are exempt: their idnum is always 0 (not an identity) and each shell
-   * source runs a single pass per tick. */
+   * are exempt: their idnum is not an identity (for a snapshot shell it
+   * packs angle+owner, see the bot branch of brainDataGetInfo) and each
+   * shell source runs a single pass per tick. */
   if (object != SHELLS_BRAIN_OBJECT_TYPE) {
     unsigned short i;
     for (i = 0; i < *numObjects; i++) {

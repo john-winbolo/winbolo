@@ -167,8 +167,14 @@ M.IDS = {
                         long  = "Numeric ID labels overlaid on every pill/base tile" },
   defend_pill_viz   = { short = "Defend pill tiers",
                         long  = "Per team pill: ring + label colored by the defend threat tier that priced it (red=siege, orange=setup tell, yellow=sighting, blue=worn/damaged-quiet, grey=quiet undamaged, green=HEAT bid, cyan=ARRIVED REPAIR bid (the pill is damaged, the shelling stopped REPAIR_QUIET_TICKS ago and the LGM has wood), steel blue=ARRIVED WATCH hold, pale green=well-defended clamp, dark=arrived no-bid) with the pool cost. Quiet/worn pills are priced by the DEFEND_QUIET_DMG_COST curve on hits taken (0 hits ~1500, easing to the 250 floor as the pill gets chewed up), not by base+travel. On the ACTIVE defend goal's pill: the Euclidean DEFEND_ARRIVE_RADIUS circle where the travel phase hands off to the heat gate. Mirrors eval_defend_pill's actual tiers/radius." },
+  defend_alarm_viz  = { short = "Defend ALARM state",
+                        long  = "ALARM MODE only (C.DEFEND_ALARM_MODE). Per team pill: the DEFEND_ALARM_ENEMY_TILES (11) condition-1 ring and the DEFEND_ALARM_MIN_DIST (9) condition-3 ring, plus a label saying whether the alarm is ON (with its cost) or which condition rejected it (no_enemy_near / no_trigger / too_close / no_path). WATCHED pills -- those with a hostile tank visible inside the 11-tile ring right now -- also get their DEFEND_ALARM_BUILD_RADIUS (4) build STAMP drawn tile by tile, the same precomputed offset disc perception.lua sweeps for walls and hostile pills, with the tile of the newest detected build marked. Draws nothing at all in keel mode, where there is no alarm.",
+                        default_on = false },
   heat_pill_viz     = { short = "Heat pill action",
                         long  = "While executing a heat win: line tank->pill, circle on the pill, and fired-count label (heat_pill_position/aim/shoot -> heat_done). Matches defend_pill_steer's sequence." },
+  attack_heat_pill_viz = { short = "attack_tank heat pill",
+                        long  = "C.ATTACK_TANK_HEAT_PILL only. While an attack_tank fight is paused to heat a FRIENDLY pill: orange circle on the chosen pill, the tank->pill shot ray, and a hits/needed + hp + anger label. shots_needed counts the engine's speed HALVINGS (100->50->25->12->6, src/bolo/pillbox.c:504-511), progress counts the pill's observed armour drop, not key presses.",
+                        default_on = false },
 
   -- Pathfinder / nav.
   pf_destination    = { short = "Pathfinder destination",
@@ -296,9 +302,11 @@ M.IDS = {
   pill_portfolio     = { short = "Pill portfolio table",
                          long  = "Far-left HUD: one row per friendly pillbox, colored by reposition category (back/front/aggressive/in-use), with a legend below. Categories use the influence/front-line ('3') definition." },
   pill_best_spots_back  = { short = "Best BACK pill spots",
-                            long  = "Map overlay: top evaluated placement spots for a BACK pill, as bold filled orange squares (most opaque = best). Pairs with the '3' influence view. Fed by the place_pill_strategic candidate scan." },
+                            long  = "Map overlay: top evaluated placement spots for a BACK pill, as bold filled orange squares (most opaque = best). Pairs with the '3' influence view. Fed by the place_pill_strategic candidate scan. ON makes place_pill_strategic run that scan on ticks it would otherwise return from (goals.lua's `viz_only` gate), which is a different brain. Default OFF so unattended -braindebug hosts (winbolods recording) play the production game.",
+                            default_on = false },
   pill_best_spots_aggro = { short = "Best AGGRO pill spots",
-                            long  = "Map overlay: top evaluated placement spots for an AGGRESSIVE pill, as bold filled red squares (most opaque = best). Pairs with the '3' influence view." },
+                            long  = "Map overlay: top evaluated placement spots for an AGGRESSIVE pill, as bold filled red squares (most opaque = best). Pairs with the '3' influence view. Same `viz_only` scan as pill_best_spots_back, and default OFF for the same reason.",
+                            default_on = false },
   demine_scan = { short = "De-mine scan",
                   long  = "Auto mine-clear (demine.lua): the crosshair-reach ring the scan searches, a red inner 'no-blast' ring (min distance), and every considered mine tile — GREEN chosen, YELLOW candidate with its cost number, RED rejected with the reason (not our ground / cooldown / too close / out of reach / our LGM near / shot blocked). Cost = dist x (1 + BEHIND_MULT x angleoff/128), so mines near the heading win. While a kill_mine goal is active: a red target ring, a line from the tank, and live 'KILL MINE d=Nt sl=N age=N' (gunsight length + ticks since push)." },
   trepair_scan = { short = "Terrain-repair scan",
@@ -408,7 +416,10 @@ M.IDS = {
                        long  = "The side-quest the LGM is currently out on (builder_pool.lua): a line from the TANK to the target tile, a ring on the target, and a '<type> <phase> eta=Nt' label. The line starts at the tank because the tank is both ends of the trip -- that round trip is what BUILDER_POOL_TRIP_W is charged on. Colour is the phase: pale blue outbound, green working (he is standing on the tile), amber returning. Nothing renders when no job is live." },
 
   builder_pool_leash = { short = "Builder pool: leash",
-                         long  = "The BUILDER_POOL_LEASH circle (radius 8 tiles by default) around the tank, drawn only while a job is live. This is the exact radius discover() uses to decide which friendly pills are side-quest candidates -- a pill outside it is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
+                         long  = "The leash circles around the tank, drawn only while a job is live. BLUE is BUILDER_POOL_LEASH (8 tiles), the reach of the FARM row. GREEN is BUILDER_POOL_REPAIR_LEASH (11 tiles), the reach of the rebuild/topup rows under BUILDER_POOL_REPAIR_LINEAR -- only drawn when the two differ, so preset=keel shows the single blue 8 it actually uses. These are the exact radii discover() measures against (MANHATTAN, so the true shape is a diamond): a pill outside the green one is an out_of_leash REJECT row on the BUILDER strip and belongs to the repair_pill tank goal instead." },
+
+  builder_pool_shell_gate = { short = "Builder pool: shell gate",
+                       long  = "Why the pool refused to send the man THIS tick (danger.lgm_shell_gate). Amber polyline = the man's predicted walk, the exact per-tick positions the gate simulated (cpf_lgm_walk_path), cut off at LGM_SHELL_PREDICT_TICKS (63 ENGINE ticks, the longest a shell can live). Red circle = the predicted impact point with the engine's own LGM blast radius, MAP_SQUARE_MIDDLE (128 world units, half a tile); the red line runs from it to where the man is predicted to be standing on that tick, and the label names the shell's source and the tick offset -- the same two facts the `shell_will_hit` reject string carries. Nothing renders unless the gate is refusing right now, and the walk polyline needs a -brain-debug build (that is the only build that copies the walk)." },
 
   lgm_registry_hud = { short = "HUD: LGM registry",
                        long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },

@@ -738,6 +738,27 @@ void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
 uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot);
 
 /*********************************************************
+ *NAME:          serverSimGetDeathCauses
+ *PURPOSE:
+ *  Copies the slot's per-cause death tally into out,
+ *  indexed by DEATH_CAUSE_* (out must hold DEATH_CAUSE_NUM
+ *  entries). Zeroes out and returns false for an
+ *  out-of-range slot.
+ *
+ *  DEATH_CAUSE_DROWNED_UNFORCED is a sub-classification of
+ *  a drowning, not a sixth independent cause, so the sum
+ *  that equals the slot's death count is
+ *  OTHER + DROWNED + DROWNED_UNFORCED + SHELL_TANK +
+ *  SHELL_PILL + MINE -- i.e. every entry, with the two
+ *  drowning slots being mutually exclusive.
+ *
+ *  Observation only: the counters are written next to
+ *  numDeaths++ in tankDeath and read nowhere inside the sim.
+ *********************************************************/
+bool serverSimGetDeathCauses(const ServerSim *sim, BYTE slot,
+                             uint32_t out[DEATH_CAUSE_NUM]);
+
+/*********************************************************
  *NAME:          serverSimSetUserLogFileName
  *PURPOSE:
  *  Copies name into the user log file buffer. NULL or

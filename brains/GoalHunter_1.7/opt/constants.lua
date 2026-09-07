@@ -233,7 +233,10 @@ M.TANK_FULL_SHELLS = 40
 M.ARMOUR_CRITICAL  = 5    -- flee immediately
 M.ARMOUR_LOW       = 15   -- seek resupply
 M.ARMOUR_MODERATE  = 25   -- conditionally force PPT when standoff is hot
-M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
+M.SHELLS_LOW       = 19   -- seek resupply (~15 to kill a pill/base). 2026-09-06: 20 -> 19
+                          -- (Andrew): a tank at exactly 20 shells is "plenty good to stay out
+                          -- fighting", so 20 is no longer low -- no refuel candidate, no deficit
+                          -- bonus, no urgency discount. KEEL value 20 lives in PRESETS.keel.
 
 -- Ammo-deprivation: if a tank sits below AMMO_DEPRIVED_SHELLS for this long
 -- during normal (non-opening) play it's flagged state.ammo_deprived ??? a lost
@@ -860,7 +863,36 @@ M.REFUEL_MIN_MINES         = 0     -- mines below this still count as a refuel n
 M.REFUEL_MINE_FREE         = 5     -- mines up to here add no staying-cost
 M.REFUEL_MINE_HOARD_BASE   = 1.3   -- exponential base for the per-extra-mine cost past FREE
 M.REFUEL_MINE_HOARD_WEIGHT = 8     -- scale on the exponential mine-hoard cost term
+-- 2026-09-06. The mine-hoard staying-cost above is an EVICTION lever, not a
+-- toll on resupply: it exists to stop a tank parking on a pad purely to load
+-- mines. With this flag on it is WAIVED (charged 0) while the tank is still
+-- below a target (armour < armour_target or shells < shell_target) AND the base
+-- it is parked on still holds at least REFUEL_MIN_STOCK of that same supply --
+-- i.e. while the base can still give the tank something it actually came for.
+-- At both targets, or on a base that has run dry of everything the tank still
+-- needs (a base with nothing left but mines), the term applies in full and
+-- still evicts. Incident 20260905_231835 bot2 t=67674: 35 armour, 20 shells,
+-- 23 mines standing on base #4 priced refuel at 48 + 891.6 = 939.6, defend_pill
+-- took it at 187, and the tank left the pad short of BOTH targets purely
+-- because of the mines it was carrying -- then off the pad the same base
+-- priced 48 again, so it hopped straight back.
+M.REFUEL_MINE_HOARD_NEEDS_SUPPLY = true  -- waive the mine-hoard surcharge while the base can still supply a resource we're short of
 M.ANGRY_PILL_AT_BASE_PENALTY = 200 -- added to pool-1 cost when an angry hostile pill is in fire range of the base
+-- 2026-09-06. Refuel CANDIDACY, not refuel pricing. Before this flag a refuel
+-- row only existed while the tank was at/below a low watermark (ARMOUR_LOW 15 /
+-- SHELLS_LOW 20). Once a tank was off the pad and above both lines the row
+-- vanished, so the only way back to a base was to fall to 20 shells first --
+-- and the top-off ramp below (REFUEL_FULL_COST_MULT) only ever ran for a tank
+-- that was ALREADY holding a refuel_at_base goal (build_eval_queue keeps pool 1
+-- alive for the active goal, and the goal finishes at armour_target /
+-- shell_target, not at the low line). With this on, refuel is a candidate
+-- anywhere below the dynamic full targets and the ramp prices it: at 30/40
+-- shells that is base x2.75, which normally loses to real work -- which is the
+-- point. The author's rule: "20 is a good number to be 'you're full enough, go
+-- do stuff unless it's worth the cost to keep recharging'".
+M.REFUEL_TOPOFF_CANDIDATE  = false -- refuel is a candidate below FULL, not only below LOW (false = low-only, the KEEL rule).
+                                   -- Benched 2026-09-06 (6-4 for ON, neutral) and switched back OFF the same day:
+                                   -- Andrew prefers the low-line rule with SHELLS_LOW 19. Switch kept for cfg= benches.
 -- Critical-armour flee: when true, injects a cost=40 flee_to_base candidate
 -- into pool 1 so the tank retreats to a safe base. When false (default),
 -- relies on the normal pool-1 refuel candidate ??? REFUEL_DEFICIT_BONUS
@@ -1179,6 +1211,64 @@ M.CLIFF_MIN_SPEED       = 1      -- any motion: cliff brake + evade whenever the
 M.CLIFF_EVADE_BRADS     = 32     -- evasive turn: compare clear runway on rays rotated +-this (32 brads = 45 deg) and turn toward the freer side while braking
 M.CLIFF_STOP_MARGIN_WU  = 64     -- a quarter tile: the travel between the sample that sees water and the brake biting
 M.CLIFF_LOOK_MAX_WU     = 1280   -- 5 tiles: scan-cost bound (was 768)
+-- CLIFF_MIN_SPEED note (2026-09-06): 1 is already the lowest value that still
+-- means "moving". The remaining case is a tank at a dead stop, which the gate
+-- skips entirely -- that is what CLIFF_STOP_MASK_ALL_GOALS below covers. 0 is
+-- a benchable alternative (`cfg=CLIFF_MIN_SPEED=0`: it is a plain number, so
+-- the per-bot override accepts it) that would run the whole brake+evade block
+-- on a stopped tank as well; not proposed as a default, since a stopped tank
+-- has no momentum problem and the evade would turn it every tick.
+
+-- ── the 20260905_231835 bot3 drowning (t=71330) ───────────────────────────
+-- Tank at world (36104,36093) = tile (141,140), i.e. 8 wu inside column 141
+-- and 3 wu above row 141, with deep sea at (141,141) and headings wobbling
+-- 133-135. Four things had to line up; these four knobs are the four halves
+-- of the fix, the first two ON (they are the fix) and the last two OFF (they
+-- are proposals, benchable, today's behaviour is the default).
+--
+-- 1. The brake ray corner-cut the killer tile. Its 64 wu samples only look up
+--    the tile the sample LANDS in; at dir >= 134 the first sample jumped
+--    (141,140) -> (140,141) and never tested (141,141) or (140,140), the two
+--    tiles it cut across. It fired at dir <= 133 and missed at 134-135, so
+--    the brake flickered on and off with the 2-brad wobble.
+M.CLIFF_RAY_CORNER_CHECK = true   -- brake ray also tests the two tiles a both-axes sample hop cut across (KEEL: false)
+-- 2. Once braked to a standstill the guard stops running (CLIFF_MIN_SPEED)
+--    and navigate's single KEY_FASTER tick drove the tank in -- 6 wu south,
+--    forward, no reverse gear involved. The attack_tank branch already had a
+--    one-tile deep-sea mask; this generalises it to every goal at the single
+--    choke point in M.steer. Clears KEY_FASTER, sets KEY_SLOWER, never turns.
+M.CLIFF_STOP_MASK_ALL_GOALS = true  -- stopped/slow tank cannot accelerate into adjacent deep sea, any goal (KEEL: false)
+-- 3. PROPOSAL (default OFF = today's behaviour). The turn-cap ramp floors at
+--    `math.max(6, ...)`, so even a 172-degree u-turn keeps rolling at speed 6
+--    instead of pivoting. ON drops that floor to 0 while the u-turn latch is
+--    committed, i.e. every committed u-turn becomes a pivot in place. This is
+--    a behaviour change on every map, not just shorelines -- bench it.
+M.TURN_CAP_UTURN_PIVOT = false    -- committed u-turn: turn-cap floor 6 -> 0 (pivot in place)
+-- 4. PROPOSAL (default OFF = today's behaviour). The u-turn latch picks its
+--    side from the shorter angle with no terrain awareness; here the shorter
+--    way round swept the nose south over the sea. ON prefers the side whose
+--    half-turn sweep crosses no deep sea within a tile; a tie (both clear or
+--    both fouled) keeps today's shorter-angle choice.
+M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep sea under the nose
+
+-- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).
+--    Both guards above are decided FRESH every tick off a heading ray. While
+--    the tank is turning, sub-tile jitter moves the ray by a couple of brads
+--    and it misses the sea tile it hit last tick -- and on that tick navigate
+--    runs normally and returns KEY_FASTER. Net result is forward creep at the
+--    water's edge with a brake that "fired": 20260906_184924_1_drown13 bot0
+--    t=29523 drowned with FULL armour and nobody near it, having braked on
+--    only 5 of the last 23 ticks.
+--    ON: when either guard names a deep-sea tile, remember it for
+--    CLIFF_BRAKE_STICKY_TICKS brain ticks and clear KEY_FASTER / set
+--    KEY_SLOWER at the single key exit point on EVERY one of those ticks,
+--    whatever the ray sees. Turn keys pass through untouched, so the tank
+--    keeps rotating away while it cannot accelerate. Boats are exempt (deep
+--    sea is where they belong) and so is escape_water, which is how we
+--    recover FROM water -- the same exemption the brake itself has.
+--    It never issues a turn key and never sets KEY_FASTER.
+M.CLIFF_BRAKE_STICKY       = true  -- latch "no forward throttle" after a cliff guard fires (KEEL: false)
+M.CLIFF_BRAKE_STICKY_TICKS = 8     -- brain ticks (20 ms each) the latch holds
 
 -- -------------------------------------------------------------------------
 -- Shell trajectory prediction
@@ -1321,6 +1411,24 @@ M.DIJKSTRA_SHORT_BUDGET         = 500   -- hard node-expansion cap per tick for 
                                         -- (10 ticks ?? 500 = 5000 nodes ??? 10-tile radius)
 M.DIJKSTRA_SHORT_MAX_COST       = 0     -- 0 = unlimited; expansion budget limits coverage, not cost cap
 M.DIJKSTRA_SHORT_RESTART_DIST   = 2     -- tank-moved threshold for short-range restart
+-- ON-FOOT DEEP-SEA RULE IN THE DIJKSTRA NEXT-STEP FALLBACKS (2026-09-06
+-- drowning analysis, fix (a)). brainPathfinderDijkstraNextStep's two
+-- 8-neighbour fallbacks -- the live-obstacle veer and the "tank drifted off
+-- the traced chain" descent -- picked a neighbour by min(g_land, g_boat) with
+-- no on-foot passability test and no diagonal-corner rule, while the A*
+-- expansion (brain_pathfinder.c:1514) and the Dijkstra edge builder (:2024)
+-- both refuse a deep-sea step and a deep-sea corner cut for a boatless tank.
+-- That is why `nav next=` named a deep sea tile on 14 of the 28 recorded
+-- drownings. ON: both fallbacks apply the same rule, the traced chain step is
+-- vetoed the same way (the trace enters on whichever boat layer is cheaper at
+-- the DESTINATION, so it too can hand a boatless tank a boat-route step). A
+-- tank in a boat is untouched, and so is the layer the g comes from: reading
+-- the LAND layer only was tried and broke the sea-pill harvest, because a boat
+-- tile's land-layer node is never reached and a boatless tank could then never
+-- be routed onto a boat (tests/sea_pills_test.py variant B). The rule is about
+-- what a tank may ENTER, not about which layer priced it. Plumbed to the C
+-- pathfinder in cpathfinder.lua's M.configure as "nextstep_foot_sea_rule".
+M.PF_NEXTSTEP_FOOT_SEA_RULE     = true  -- boatless tank is never handed a deep-sea next step (KEEL: false)
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -1672,6 +1780,54 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45??)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11??) aim tolerance for opportunistic shot
+-- ── attack_tank: heat a FRIENDLY pill mid-fight (2026-09-06) ──────────────
+-- While fighting enemy tank E, a friendly pill CLOSER to E than we are is a
+-- second gun already in position -- but only if it is angry. The engine's
+-- pill "anger" IS its reload period `speed`: PILLBOX_ATTACK_NORMAL 100 =
+-- calm, PILLBOX_MAX_FIRERATE 6 = angriest (src/bolo/internal/pillbox.h:46-48).
+-- It is NOT additive -- every damaging shell HALVES it (speed /= 2, clamped
+-- up to 6; src/bolo/pillbox.c:504-511), so the ladder from calm is
+--     100 -> 50 -> 25 -> 12 -> 6   = exactly HEAT_MAX_HITS (4) hits (attack.lua).
+-- The server damages a pill on ANY shell that lands on its tile, with no
+-- ownership test (src/bolo/shells.c:658-661), so OUR shell angers our OWN
+-- pill and costs it 1 armour -- hence HEAT_MIN_HP. The pill cools by +1 speed
+-- per PILLBOX_COOLDOWN_TIME (32) ticks (src/bolo/pillbox.c:347-355), i.e.
+-- 6 -> 100 in 94 x 32 = 3008 ticks (which is what PILL_ANGER_DECAY models);
+-- across a 4-shot volley (3 x TANK_RELOAD_TIME 13 = 39 engine ticks,
+-- src/bolo/internal/tank.h:161) it recovers 1-2 points that the next hit
+-- halves straight off again, so cool-down never adds a shot to the count.
+-- The brain cannot read `speed`; it uses world.lua's anger PROXY, which adds
+-- PILL_ANGER_BUMP per observed armour drop -- one bump == one halving -- so
+--     shots_needed = HEAT_MAX_HITS - round(anger / PILL_ANGER_BUMP), then capped
+-- by the pill's health via attack.lua heat_allowed_shots (see MIN_HP below).
+M.ATTACK_TANK_HEAT_PILL         = true  -- master: heat a friendly pill during attack_tank
+M.ATTACK_TANK_HEAT_MIN_HP       = 5     -- health floor of the volley cap: a pill at or below this
+                                        -- affords no heat shells at all. The cap scales linearly to
+                                        -- PILLS_MAX_HEALTH (15 -> all 4 halvings): hp 15/13/10/7/6
+                                        -- buy 4/3/2/1/0 shells. See attack.lua heat_allowed_shots.
+                                        -- (The ladder length 4 is NOT a knob -- it is the engine's,
+                                        -- HEAT_MAX_HITS in attack.lua.)
+M.ATTACK_TANK_HEAT_MAX_FRAC     = 0.75  -- skip a pill already at >= this fraction of max anger
+-- Which health cap limits the volley. Two values, so the proportional rule can
+-- be benched on its own against the rule it replaced:
+--   "proportional" (default) allow = round(4 x (hp - MIN_HP) / (15 - MIN_HP)),
+--                            so hp 15/13/10/7/6 buy 4/3/2/1/0 shells; a volley
+--                            cut short by it exits `hp_cap`.
+--   "floor"                  no proportional cap: the volley runs to
+--                            shots_needed, limited only by "a shot must not
+--                            take the pill below MIN_HP" (allow = hp - MIN_HP,
+--                            so hp 6 buys 1); it exits `hp_floor`, and entry
+--                            refuses only a pill ALREADY under MIN_HP.
+-- No PRESETS.keel entry: the master ATTACK_TANK_HEAT_PILL is false there, so
+-- keel never reads this.
+M.ATTACK_TANK_HEAT_CAP_MODE     = "proportional"
+M.ATTACK_TANK_HEAT_MAX_MISSES   = 2     -- spare shells allowed for misses before abandoning the volley
+M.ATTACK_TANK_HEAT_RETRY_TICKS  = 150   -- don't re-enter on the same pill within this many ticks
+M.ATTACK_TANK_HEAT_MAX_TICKS    = 150   -- hard ceiling on one volley (aim + fire). Rotating onto the
+                                        -- pill is the slow part: a measured volley spent 39 of its 42
+                                        -- brain ticks taking aim_corr from +10 to +1, and a drifting
+                                        -- tank can hover just outside the +-1 fire gate forever. Bounds
+                                        -- "standing next to our own pill instead of fighting".
 -- Stuck-fire: when aimed at enemy but shot_path_clear keeps rejecting
 -- (wall in the way), fire anyway after this many ticks. Shells will
 -- chip the wall until LOS opens up, so two tanks dug in on opposite
@@ -2025,6 +2181,62 @@ M.DEFEND_READY_MAX_MULT = 2.5
 -- repair_pill) and the pill's bid becomes the heat-up action alone.
 M.DEFEND_ARRIVE_RADIUS       = 10
 M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill to anger it".
+
+-- =========================================================================
+-- DEFEND "ALARM MODE" (2026-09-06, Andrew's redesign of the MAIN defend_pill
+-- evaluator).  DEFEND_ALARM_MODE=true replaces the whole urgency ladder above
+-- (siege / setup / sight / quiet / cover / late / ready / welldef / tb AND the
+-- ARRIVED heat-watch-repair rungs) with one flat rule:
+--
+--   defend_pill stays VISIBLE in the pool, but is REJECTED unless an ALARM
+--   holds for that pill.  The alarm is on ONLY while ALL THREE hold:
+--     1. a hostile tank is VISIBLE RIGHT NOW (this tick's perception, not a
+--        remembered sighting and not a ghost) within DEFEND_ALARM_ENEMY_TILES
+--        of the pill;
+--     2. AND one of
+--        (a) the pill took damage FROM AN ENEMY inside the last
+--            DEFEND_ALARM_WINDOW_TICKS, or
+--        (b) a wall went up / a hostile pill appeared inside
+--            DEFEND_ALARM_BUILD_RADIUS of the pill inside the same window,
+--            with a HOSTILE LGM seen inside that same stamp in the window
+--            (the OBJECT_HOSTILE bit is the whole attribution -- Andrew,
+--            2026-09-06: "if we know the LGM is an enemy, that's sufficient");
+--     3. AND we are MORE than DEFEND_ALARM_MIN_DIST tiles from the pill.
+--   The instant any condition stops holding the row goes back to REJECTED and
+--   a bot standing on that goal DROPS it (init.lua's goal-validity hook) --
+--   no hysteresis, no commitment, no arrived ladder.
+--
+--   Cost while the alarm holds:
+--     max(DEFEND_ALARM_MIN_COST,
+--         DEFEND_ALARM_BASE_COST - hits x DEFEND_ALARM_HIT_DISCOUNT)
+--     + the Dijkstra cost along the path to the pill, STOPPED at the first
+--       path tile within DEFEND_ALARM_DIJ_STOP_TILES of the pill.
+--
+-- Every distance here is EUCLIDEAN tiles, matching the metric the old
+-- evaluator uses for its own radii (arrival handoff, live-enemy, well-defended)
+-- rather than the Chebyshev one perception uses for its _enemy_near stamps.
+--
+-- Only DEFEND_ALARM_MODE has a PRESETS.keel entry: with it false NOTHING in
+-- this block is read, so the other knobs are inert and need no keel value.
+-- =========================================================================
+M.DEFEND_ALARM_MODE           = true
+M.DEFEND_ALARM_ENEMY_TILES    = 11   -- cond 1: hostile tank visible THIS TICK within this
+                                     -- euclidean tile radius of the pill.  Hard precondition:
+                                     -- the tick nothing hostile is visible in the ring the
+                                     -- alarm is off (reject `alarm_off:no_enemy_near`).
+M.DEFEND_ALARM_WINDOW_TICKS   = 250  -- 5 s at 50 brain ticks/s (one think per 20 ms frame).
+                                     -- Applies to the TRIGGERS only (2a damage, 2b build).
+M.DEFEND_ALARM_BUILD_RADIUS   = 4    -- cond 2b: stamp radius around a watched pill, in
+                                     -- euclidean tiles.  The offset list is computed ONCE at
+                                     -- module load (perception.lua ALARM_STAMP), never per tick.
+M.DEFEND_ALARM_MIN_DIST       = 9    -- cond 3: we must be MORE than this many tiles from the
+                                     -- pill.  Inside it there is nothing to travel to
+                                     -- (reject `alarm_off:too_close`).
+M.DEFEND_ALARM_BASE_COST      = 100  -- flat cost of an alarmed defend trip before the discount
+M.DEFEND_ALARM_HIT_DISCOUNT   = 10   -- subtracted per enemy hit counted in the window
+M.DEFEND_ALARM_MIN_COST       = 50   -- floor the discount can never go below
+M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once the traced path
+                                     -- is within this many euclidean tiles of the pill
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -2399,7 +2611,7 @@ M.SQUAD_REFUEL_OK_SHELLS = 10  -- ...and this (i.e. it was topping off, not desp
 M.SQUAD_HELP_RANGE       = 30  -- tiles; only answer a commander whose pill is within this
 M.SQUAD_CMD_RACE_TOL     = 3   -- ticks; two blitz calls on one pill opened within this of each other count as a same-tick race (broken by lower player id); otherwise first-to-the-take keeps command
 M.SQUAD_BLITZ_AIM_TOL    = 8   -- brad; a blitz soldier must be facing the pill within this before it reports rdy=1 (so on GO it can fire/charge immediately, not spin to aim)
-M.SQUAD_MAX_SIZE         = 1   -- max SOLDIERS per squad; with the commander that's 2 tanks total per blitz. A full squad recruits no more. DEFAULT ONLY: it seeds squad.lua's runtime party MAX (= this + 1, tanks including the commander); a per-bot "blitz=MIN[/MAX]" BRAIN_INIT_ARG token replaces it, so read squad.blitz_max()/squad.blitz_soldier_cap(), never this constant
+M.SQUAD_MAX_SIZE         = 3   -- max SOLDIERS per squad; with the commander that's 4 tanks total per blitz. A full squad recruits no more. 2026-09-05: raised 1 -> 3 (default party 2..2 -> 2..4). Bigger calls were only reachable through a per-bot "blitz=2/4" token (the Survival scenario's WAVE_BLITZ_MAX), and they worked much better than 2-tank takes: the party MIN is unchanged at 2, so a call still GOes with two tanks, it just no longer turns away a third and fourth joiner. DEFAULT ONLY: it seeds squad.lua's runtime party MAX (= this + 1, tanks including the commander); a per-bot "blitz=MIN[/MAX]" BRAIN_INIT_ARG token replaces it, so read squad.blitz_max()/squad.blitz_soldier_cap(), never this constant
 M.SQUAD_BLITZ_COST       = 30  -- flat attack_pill cost a squad soldier assigns its commander's blitz pill: low enough to win normal goals, high enough that attack_tank/flee/refuel can still preempt
 M.SQUAD_BLITZ_BUCKET     = 5   -- a blitz standoff is picked at random from clear-LOS spots scoring within this of the best
 M.SQUAD_BLITZ_GO_EARLY_READY = 2   -- commander fires GO as soon as this many TOTAL blitzers are ready (in position + aimed), without waiting for the rest or the READY_TIMEOUT. Counts the commander as 1 (same convention as BLITZ_MIN_READY_TO_CHARGE), so 2 = commander + 1 ready soldier already goes; a still-approaching extra joins on the broadcast GO. DEFAULT ONLY: together with BLITZ_MIN_READY_TO_CHARGE (max of the two, both 2) it seeds squad.lua's ONE runtime party MIN, which a per-bot "blitz=" token replaces; the code reads squad.blitz_min().
@@ -2412,6 +2624,9 @@ M.SQUAD_BLITZ_CLASH_TILES = 2   -- two standoffs within this EUCLIDEAN distance 
 M.SQUAD_BLITZ_PREEMPT_TANK_TILES = 10  -- a committed blitz only yields to attack_tank when the hostile tank is within this many tiles of us (close enough to actually threaten); farther tanks don't break the blitz
 M.BLITZ_MIN_SUICIDERS = 0  -- at GO the commander designates random SOLDIERS as temporary pill_suiciders until at least this many members of the blitz are suiciders, counting those already suiciders by token or slate (and counting the commander itself); never a bot that already is one, and the commander designates ITSELF only when the soldiers cannot cover the minimum. 0 = never designate = today's behaviour. DEFAULT ONLY: a per-bot "blitzsuiciders=N" BRAIN_INIT_ARG token replaces it, so read squad.blitz_min_suiciders()
 M.BLITZ_SUICIDER_MAX_TICKS = 1600  -- ticks (~32s) hard backstop on a blitz-designated suicider: 2 x SQUAD_BLITZ_READY_TIMEOUT (550) plus a ~500-tick charge window. The designation normally ends when the blitz does (pill dead/taken, take abandoned, commander gone, death); this is the "nothing ever told us" floor so a bot can't stay a suicider for the rest of the game
+M.BLITZ_CONTESTED_RANGE = 9  -- EUCLIDEAN tiles: the take of a pill is CONTESTED when a live hostile TANK is seen this close to that pill. Only REAL sightings count (perception's enemy_tanks, which is hostile-only) -- never a ghost, which is a guess at where an unseen tank went and is no basis for rewriting the whole party's role. 9 is a bit over tank gun range, so "an enemy that can already shoot at the take, plus slack"
+M.BLITZ_CONTESTED_ALL_SUICIDERS = false  -- master ON/OFF switch for the whole CONTESTED-TAKE rule (see BLITZ_CONTESTED_RANGE). The rule: on a contested take the commander designates BLITZ_CONTESTED_SUICIDERS of the party temporary pill_suiciders at GO, regardless of BLITZ_MIN_SUICIDERS, and re-checks on its replans while the take is live in case an enemy arrives later. The idea was that a contested take is the one that usually gets undone -- the defender's LGM walks back out and repairs the pill while our survivors reload -- and a suicider is the role that hunts that LGM instead of backing off. OFF BY DEFAULT since 2026-09-05: ten-seed benches against stock KEEL said the rule costs games even in its one-suicider form -- 2v2 DH-Oil Rig KEEL 7-3, 6v6 Easter KEEL 6-3 (9 played). (The first form designated EVERY blitzer, which is where the name comes from; cutting it to one did not rescue it.) MECHANISM KEPT, not deleted: opt in per bot with `cfg=BLITZ_CONTESTED_ALL_SUICIDERS=true`, which is how tests/blitz_contested_test.py still exercises it, and how the next bench can re-test it without a rebuild. Precedence is unchanged: permanent "suicider"/"nosuicider" token > blitz temp designation > harasser slate; a "noblitz" bot is in no blitz so it is never designated
+M.BLITZ_CONTESTED_SUICIDERS = 1  -- how many members of a CONTESTED take become suiciders, for ANY party of 2 or more (party COUNTS THE COMMANDER). Picked exactly like the BLITZ_MIN_SUICIDERS quota: SOLDIERS first, uniformly at random with the brain's seeded RNG (so a -brain-lua-seed run designates the same tank every time), and the commander designates ITSELF only when the soldiers cannot cover the number. Members that are ALREADY suiciders (permanent token, harasser slate, or a designation queued this same tick) COUNT toward it, so a party whose only soldier is already a suicider designates nobody new. A party of 1 (a solo take, no blitz call) designates nothing at all. 2026-09-05 evening: bench said all-suiciders loses; one per take. The designation is a once-per-take latch -- a party that GROWS after the designation designates nothing more.
 M.BLITZ_ABORT_BUILD_ON_READY = true  -- if a soldier JOINS while the commander is mid build_walls (laying its guard pills/shield), abandon the remaining blocks and rally NOW (build_walls -> blitz_wait, unshielded charge route). The joiner's simultaneous overwhelm replaces the shield as protection ??? same routing as if the joiner had answered before the in-position decision. Off = finish the shield first, then rally (original behavior).
 M.BLITZ_MIN_READY_TO_CHARGE = 2  -- (used with BLITZ_ABORT_BUILD_ON_READY) DEFAULT ONLY, see SQUAD_BLITZ_GO_EARLY_READY: minimum READY blitzers ??? total tanks in position and aimed (rdy=1) ??? required before the commander abandons the build and charges. The commander itself always counts as 1 (it's at its standoff). 2 = commander + one ready soldier; a still-approaching 3rd is left to keep closing and joins the charge when it arrives. Default 2 = original abort-on-join behavior.
 -- Outbound /info batching: several internal-channel messages are packed into the
@@ -3024,6 +3239,51 @@ M.BUILDER_POOL_GRASS_TICKS_PER_TILE = 16   -- = REPAIR_DEAD_GRASS_TICKS_PER_TILE
 M.BUILDER_POOL_LGM_MAX_TICKS   = 2000      -- walk-sim budget (matches every other caller)
 M.BUILDER_POOL_LGM_STUCK_TICKS = 150
 
+-- ── The RETURN leg: where the tank will BE, not where it is (2026-09-06) ──
+-- M.lgm_trip used to charge `2 x outbound`: the man walks out, and the walk
+-- home is a mirror image of the walk out, as if the tank had waited on the
+-- spot. It does not wait. It is a tank with a goal, and by the time the man
+-- has finished building it can be a dozen tiles away -- so the mirrored return
+-- leg is the wrong number in the one direction that matters: a forest AHEAD of
+-- the tank and a forest BEHIND it price identically, and the pool picks the
+-- one the tank is driving away from as often as not.
+--
+-- With this on, the return leg is walked to where the tank is predicted to be
+-- after (outbound + LGM_BUILD_TIME) ticks, and
+--     trip = outbound + LGM_BUILD_TIME + back
+-- replaces 2 x outbound + LGM_BUILD_TIME.
+--
+-- ALONG THE ROUTE, NOT ALONG A STRAIGHT LINE (Andrew, 2026-09-06). The first
+-- version extrapolated heading x speed, which is wrong for the case the change
+-- exists to fix: a tank that is going somewhere TURNS, and a straight line off
+-- its instantaneous heading walks it into the scenery. The bot already has the
+-- answer -- state.pf.path_chain, the committed route steering is driving this
+-- very tick -- so the prediction walks THAT, at the engine's per-terrain speed
+-- caps, and stops at the horizon or at the route's end. Nothing is re-searched:
+-- no A*, no Dijkstra, no second trace. See builder_pool.route_forecast for the
+-- engine citations (bolo_map.h MAP_SPEED_T*, tank.c:2028 and :1614-1621,
+-- server_sim_tick.c:319/766, luabrainshandler.c:1216) that establish
+-- C.MAP_SPEED as world units per BRAIN tick, needing no conversion.
+--
+-- Fallbacks all land on the tank's CURRENT tile, which makes back == out --
+-- the old number -- so a fallback costs information and never a candidate:
+-- no usable route, a predicted tile the man cannot stand on, or a return walk
+-- the sim cannot complete. The row prints which one happened (predsrc{} and
+-- the pred computation segment).
+--
+-- HORIZON: 400 brain ticks, 8 s at the engine's 50 ticks/s. Approved by
+-- Andrew 2026-09-06. It binds rarely by design -- an 11-tile repair round trip
+-- is ~370 ticks -- so its job is to stop a very long errand extrapolating a
+-- route the tank will have replanned twice over, not to trim ordinary ones.
+M.BUILDER_POOL_RETURN_PREDICT = true
+M.BUILDER_POOL_RETURN_PREDICT_MAX_TICKS = 400
+-- How far the tank may be from the nearest point of state.pf.path_chain before
+-- the chain is treated as somebody else's plan and the prediction falls back.
+-- The chain's own first point is where the SEARCH started, which the tank has
+-- since driven away from, so a snap is needed; 2 tiles is tight enough that a
+-- chain left over from an abandoned goal cannot be mistaken for a live one.
+M.BUILDER_POOL_RETURN_PREDICT_ROUTE_SNAP = 2
+
 -- ── Value: the front-distance clock ──────────────────────────────────────
 -- A dead pill AT the contact line is ticking -- the enemy is right there and
 -- will drive over it. One deep in our own rear can wait all game. The
@@ -3059,6 +3319,28 @@ M.BUILDER_POOL_VALUE_FARM      = 15   -- opportunistic wood, at a full woodpile.
 -- strictly better at that job: it picks forest the TANK is going to drive past.
 M.BUILDER_POOL_FARM_LOW_TREES  = 12
 M.BUILDER_POOL_FARM_URGENCY    = 12
+-- ── Four-wedge farm discovery (2026-09-06) ───────────────────────────────
+-- Discovery used to offer exactly ONE farm row: the nearest forest tile in the
+-- whole (2 x LEASH + 1)^2 square. The engine's LGM does not pathfind -- the
+-- walk sim (brain_pathfinder.c lgmTravelTicksCore) replays a STRAIGHT LINE
+-- with a crude slide and reports "stuck" when it cannot get through -- so the
+-- nearest forest is routinely the WRONG one: put a building or a strip of
+-- water between the tank and it and the single row reads `unreachable`, or
+-- walks a slow scraping path, while a clear forest one tile further out in
+-- another direction is never a candidate at all.
+--
+-- So the scan is split into FOUR 90-degree wedges centred on N, E, S and W
+-- (boundaries on the 45-degree diagonals) and the nearest forest in EACH wedge
+-- becomes its own row. Up to four rows, competing on the EXISTING farm score
+-- -- no new term, no new weight: the trip cost the rows already pay is what
+-- prices a blocked walk out of the running, and now there is something for it
+-- to lose to.
+--
+-- 4 = four wedges. 1 = the pre-2026-09-06 single nearest tile, byte for byte
+-- (the scan order, the distance metric and the tile-key tie-break are all
+-- unchanged; with one bucket every tile lands in it and the same tile wins).
+-- Any other value is read as 1.
+M.BUILDER_POOL_FARM_SECTORS    = 4
 M.BUILDER_POOL_TOPUP_PER_HP    = 6    -- + this per point of missing armour on a top-up, so
                                       -- a 4/15 pill outbids a 14/15 one
 M.BUILDER_POOL_TOPUP_MIN_MISSING = 4  -- don't walk out for less than one tree's worth
@@ -3074,6 +3356,95 @@ M.BUILDER_POOL_TRIP_W   = 0.5
 M.BUILDER_POOL_DANGER_W = 1.5   -- threat.at() at the target tile
 M.BUILDER_POOL_MIN_SCORE = 20   -- below this the errand is not worth the man's time at all
                                 -- (keeps the farm row from firing on every quiet tick)
+
+-- ── Repair rows: damage, and TIME. Nothing else. (Andrew, 2026-09-05) ─────
+-- The author's rule for repairing pills, verbatim: "it should linearly scale
+-- so closer gets priority, but damage is the most important, up to 11 tiles.
+-- The danger on the tile should not matter. The time to get there is what it
+-- should count for 'distance' (close with lots of swamp in between will be
+-- slower to repair than far but all road) -- it should easily beat any harvest
+-- trees, unless you don't have enough trees to repair of course."
+--
+-- So a rebuild/topup row is priced by TWO numbers and no others:
+--
+--   score = REPAIR_HP_W x missing_hp - REPAIR_TRIP_W x round_trip_ticks
+--
+-- missing_hp = PILLS_MAX_HEALTH - hp, so a corpse is a flat 15 and the row
+-- ranges 120 (the 4-hp minimum top-up) .. 450 (a corpse). No base constant, no
+-- front-line clock, no threat term:
+--   * the FRONT CLOCK is gone because damage already IS the urgency the clock
+--     was standing in for, and mixing the two made a lightly-worn pill on the
+--     line outbid a corpse in the rear;
+--   * the DANGER term is gone by explicit instruction. The tile's threat does
+--     not change how much the pill is worth or how long the walk takes.
+-- Trip is the SIMULATED LGM WALK (brainPathfinderLgmTravelTicks), out and back
+-- plus LGM_BUILD_TIME, which is the whole point of the rule: swamp/crater at 4
+-- wu/tick is 64 ticks a tile against road/grass at 16 wu/tick = 16 ticks a
+-- tile, so "4 tiles through swamp" (272t out) prices ABOVE "8 tiles on road"
+-- (128t out) exactly as the author asked.
+--
+-- REPAIR_TRIP_W is half the old TRIP_W: at 0.25 an 11-tile road round trip
+-- (~372t) costs 93, so a corpse at the leash edge (450 - 93 = 357) still beats
+-- a 4-hp top-up under the tank's tracks (120). Damage first, distance second.
+--
+-- FARM: unchanged formula, and the crossover lands on the tree gate by itself.
+-- A top-up is only affordable when trees - reserve >= 1, i.e. trees >= 5 with
+-- the default base reserve of 4; at 5 trees the farm row is worth
+-- 15 + 12 x (12 - 5) = 99, under the 120 a 4-hp top-up is worth before its
+-- trip is charged. Every tree count at which a repair can be paid for is a
+-- tree count at which the repair outranks farming. Below it the tree_reserve
+-- gate refuses the repair and the farm row is what runs -- which is the
+-- author's "unless you don't have enough trees to repair of course".
+M.BUILDER_POOL_REPAIR_LINEAR = true   -- false = the pre-2026-09-05 formula
+                                      -- (VALUE_REBUILD/TOPUP + front clock -
+                                      -- TRIP_W x trip - DANGER_W x threat)
+M.BUILDER_POOL_REPAIR_HP_W   = 30     -- score per point of missing armour
+M.BUILDER_POOL_REPAIR_TRIP_W = 0.25   -- score per tick of simulated round trip
+-- Repair reach. 11 tiles (MANHATTAN, same measure as BUILDER_POOL_LEASH), for
+-- rebuild and topup rows only -- the farm row keeps the 8-tile leash, because
+-- opportunistic wood was never worth a longer walk. The walk-sim budget covers
+-- it with room to spare: the slowest ground the LGM can cross is swamp/crater/
+-- rubble at 4 wu/tick, i.e. 256/4 = 64 ticks a tile, so the worst 11-tile
+-- straight-line trip is 11 x 64 = 704 ticks against a
+-- BUILDER_POOL_LGM_MAX_TICKS budget of 2000 (which is charged ONE WAY -- see
+-- M.lgm_trip). No raise needed.
+M.BUILDER_POOL_REPAIR_LEASH  = 11
+
+-- ── A SEEDED ROW COMPETES; the goal's own pill gets a nudge (2026-09-06) ──
+-- The incident (20260905_231835_2_oilrig_2v2_repair_seed1, bot2, t=67922).
+-- The tank held defend_pill on pill #5 at (139,142), 14/15 hp, and the goal's
+-- own repair order seeded the pool with a ONE-hp top-up of it. That seeded row
+-- scored 30 x 1 - 0.25 x 254 = -34, i.e. under MIN_SCORE and not worth the
+-- walk -- but it sorted FIRST by construction, and its feeder goal also made
+-- the pool read `mode_owned (suppressed/defend_pill)` for every other row. Ten
+-- tiles away pill #13 at (123,139) was on 10/15 under fire, worth ~87, and it
+-- never competed: `BP_DENY ... reason=under_fire(2t) ... score=-34`.
+--
+-- SEEDED_COMPETES makes the seeded row an ordinary row on the SCORE side: the
+-- same formula, the same MIN_SCORE bar, the same ordering. It keeps exactly
+-- the three waivers the seed is FOR (the mode gate, the leash and the tree
+-- reserve, all three answered by the goal that seeded it) and loses the one
+-- thing that was never justified -- sorting ahead of a better job, and closing
+-- the pool to it. Closing it took two forms and both go: `goal.repair` stops
+-- removing defend_pill from BUILDER_POOL_TRAVEL_GOALS, and the feeder goal's
+-- own `reserve_eta = 0` ("my seeded job is pending, nobody else may take the
+-- man", builder.lua) stops being charged to the rows it is competing against.
+-- Either one alone still refused the 5-hp repair: with the mode gate opened
+-- the first run of tests/seeded_repair_test arena A read
+-- `BP_DENY ... reason=reserve(0 < trip 346) ... score=74`.
+--
+-- GOAL_PILL_BONUS is the tie-breaker that survives that change (Andrew, "20%
+-- score boost"): the row whose pill IS the tank goal's target (defend_pill /
+-- repair_pill, matched on goal.target_id) has its finished score MULTIPLIED by
+-- this. The tank is parked there, the man is going home to that tile, and the
+-- goal already decided that pill matters -- but it is now a 20% thumb on the
+-- scale rather than an unconditional first place. It multiplies the whole
+-- score, so a row that is already negative gets MORE negative, which is the
+-- right direction: 1.2 x "not worth the walk" is still not worth the walk.
+M.BUILDER_POOL_SEEDED_COMPETES = true   -- false = seeded sorts first, mode gate
+                                        -- closes the pool behind it (pre-2026-09-06)
+M.BUILDER_POOL_GOAL_PILL_BONUS = 1.2    -- x score for the tank goal's own pill;
+                                        -- 1.0 = no bonus (the chip is not printed)
 
 -- ── Eligibility ──────────────────────────────────────────────────────────
 -- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
@@ -3098,6 +3469,37 @@ M.BUILDER_POOL_TREE_RESERVE_EXTRA = 0  -- extra wood held back on top of the goa
                                        -- / the sea plan). 0 = trust those numbers
 M.BUILDER_POOL_PATH_DANGER = M.LGM_DANGER_MED   -- lgm_path_safe_enhanced threshold for the
                                                 -- trip: same tier the repair dispatch uses
+
+-- ── The shell gate (2026-09-06) ──────────────────────────────────────────
+-- A HARD STOP, not a score term: at the moment the pool would dispatch, every
+-- shell already in the air is flown forward tick by tick and the man is walked
+-- forward alongside it, and if the engine's own LGM kill rule fires at any
+-- tick the dispatch is refused FOR THAT TICK. The row stays a candidate --
+-- next tick the shell has moved on and the same row goes.
+--
+-- This is not the danger field and it is not the under-fire clock. Those two
+-- ask "is this a dangerous PLACE" and "have we been shot at LATELY"; this asks
+-- the one question that has an exact answer: is that particular round, on that
+-- particular heading, going to land on this particular man. See
+-- danger.lgm_shell_gate for the engine rules it mirrors (lgm.c:1264).
+M.BUILDER_POOL_SHELL_GATE = true
+-- ENGINE ticks, and the horizon for BOTH halves of the prediction -- the shell
+-- flight and the man's walk. 63 is the longest a shell can live
+-- (shells.c shellLifeTicks = 1 + 8 x range - 6, at a pillbox's
+-- PILLBOX_FIRE_DISTANCE of 8.5 tiles); a tank's own round lives 51. Past that
+-- there is nothing left to predict, because there is no shell left.
+M.LGM_SHELL_PREDICT_TICKS = 63
+-- The engine's LGM blast radius, in world units: lgm.c lgmDeathCheckAtPosition
+-- kills the man when the explosion is within MAP_SQUARE_MIDDLE of him (on a
+-- tile that is not solid). global.h MAP_SQUARE_MIDDLE = 128. Not a tunable --
+-- changing it makes the gate disagree with the engine.
+M.LGM_SHELL_KILL_RADIUS_WU = 128
+-- The engine's shell-vs-tank hit zone, in world units: tank.h:102
+-- TANK_HIT_RADIUS = 112 ("one-tile mid-radius (128) - 16 wu"), tested as a
+-- CIRCLE by tankIsTankHitAtPosition. The shell gate uses it for one thing --
+-- deciding that a round aimed at us ends on our hull -- so it is a mirror of
+-- an engine constant, not a tunable.
+M.TANK_HIT_RADIUS_WU = 112
 M.BUILDER_POOL_TREES_REBUILD = 4  -- = REPAIR_DEAD_MIN_TREES / LGM_COST_PILLREPAIR x 4
 M.BUILDER_POOL_TREES_TOPUP   = 1  -- one tree = PILL_REPAIR_AMOUNT(4) armour
 M.BUILDER_POOL_TREES_FARM    = 0  -- a farm trip SPENDS nothing, it brings wood home
@@ -3166,8 +3568,12 @@ M.BUILDER_POOL_SUBSTATE_CLASS = {
 -- Goal kinds that map to builder mode "suppressed" and carry NO substate, but
 -- whose suppression is about keeping the man aboard for THIS goal rather than
 -- about being in a fight. A defender parked and watching is the plan's
--- "defend-watch" travel class. A defender with goal.repair set is excluded --
--- that one is a pool FEEDER (it seeds the job directly), not a side-quest.
+-- "defend-watch" travel class. A defender with goal.repair set was excluded --
+-- that one is a pool FEEDER (it seeds the job directly), not a side-quest --
+-- but under BUILDER_POOL_SEEDED_COMPETES it is NOT, because excluding it also
+-- shut every OTHER row out of the pool behind a `mode_owned` the seed itself
+-- had caused. The seeded row waives the mode gate on its own account; it no
+-- longer imposes one on its neighbours.
 M.BUILDER_POOL_TRAVEL_GOALS = { defend_pill = true }
 -- Builder modes that are "idle-ish": no goal has spoken for the man, so the
 -- pool may spend him freely. Everything else that is not "suppressed" is a
@@ -3189,6 +3595,39 @@ M.BUILDER_POOL_IDLE_MODES = {
 M.BUILDER_POOL_CLAIM_MAX_AGE = M.SQUAD_ALLY_MAX_AGE or 1750  -- claim expiry (heartbeat gap)
 M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 
+-- ── Ally CAPTURE guard (2026-09-05) ──────────────────────────────────────
+-- The bpj claim above says "my man is fixing that pill". It says nothing about
+-- the OTHER way an ally can be spoken for by a corpse: driving over to SCOOP
+-- it. Rebuilding a dead pill an ally is on its way to collect makes it a live
+-- friendly pill -- undriveable -- so the kill and the trip are both wasted, and
+-- our four trees bought the team nothing it did not already have.
+--
+-- Allies already advertise that intent on the /info state slate as
+-- `goal=capture_pill|pill_place` plus `target=<pill id>` (or `mx`/`my` when the
+-- goal carries no object id -- see the _need_mxmy gate in init.lua's broadcast
+-- block). This guard reads that advert and refuses the rebuild.
+--
+-- TWO ways the block ends, and they are deliberately different:
+--   MOVE-ON   the ally's LATEST advert names a different goal or a different
+--             pill. Ends the block THAT TICK, whatever its age -- the slate is
+--             replaced wholesale by set_info, so "latest" is all there is.
+--   SILENCE   the ally stopped talking altogether (killed, kicked, removed).
+--             The block then expires TTL ticks after its last advert of ANY
+--             kind. BRAIN ticks: 25 = 1 s (measured 2026-09-05: 1000 engine ticks = 500 thinks), so 175 = 7 s.
+--
+-- The age is measured against slot.last_tick (the ally's last message of any
+-- kind), NOT slot.state_tick (its last full /info state). /info state is
+-- event-driven plus a 30 s heartbeat, so a 7 s budget on state_tick would
+-- expire mid-drive on an ally whose goal simply has not changed -- which is
+-- precisely the ally we must keep blocking. Freshness here means "is this ally
+-- still alive and talking"; whether its GOAL is current is answered by the
+-- move-on test, which needs no clock.
+M.BUILDER_POOL_ALLY_CAPTURE_GUARD = true   -- master switch; false = pre-2026-09-05
+M.BUILDER_POOL_ALLY_CAPTURE_TTL   = 350    -- brain ticks = 7 s of silence (Andrew's spec). A brain thinks once per 20 ms
+                                           -- frame = 50/s (the server sim tick is a 10 ms half-step, 100/s; brain tick =
+                                           -- sim tick / 2). 2026-09-06: was 175 (= 3.5 s) from a wrong 25/s assumption.
+M.BUILDER_POOL_ALLY_CAPTURE_GOALS = { capture_pill = true, pill_place = true }
+
 -- ── Job lifecycle ────────────────────────────────────────────────────────
 M.BUILDER_POOL_JOB_MAX_TICKS = 900   -- the man never came back (18 s): drop the job record
                                      -- so a lost LGM cannot hold the claim forever
@@ -3199,8 +3638,13 @@ M.BUILDER_POOL_ABORT_GRACE   = 30    -- ticks after dispatch before an abort may
 -- Section 15 in the pool_grid JSON. NOT a new pool: the 1..10 grid numbering
 -- and the 11..14 strips are untouched, so old recordings still load.
 M.BUILDER_POOL_PANEL_IDX  = 15
-M.BUILDER_POOL_PANEL_ROWS = 8    -- cap on side-quest rows rendered (always-show rule
+M.BUILDER_POOL_PANEL_ROWS = 12   -- cap on side-quest rows rendered (always-show rule
                                  -- keeps rejects visible; this only bounds a huge map)
+                                 -- 2026-09-06: 8 -> 12. BUILDER_POOL_FARM_SECTORS
+                                 -- can now put FOUR farm rows in the pool beside the
+                                 -- repair rows, and at 8 the tail was silently dropped
+                                 -- from the panel. DISPLAY ONLY -- no decision reads
+                                 -- this, so it gets no keel entry.
 
 -- =========================================================================
 -- Lua garbage collector
@@ -3247,5 +3691,150 @@ M.BUILDER_POOL_PANEL_ROWS = 8    -- cap on side-quest rows rendered (always-show
 -- accident rather than on purpose.
 M.GC_PAUSE   = 200
 M.GC_STEPMUL = 400
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- PRESETS — named bundles of constant overrides, applied per bot
+-- ══════════════════════════════════════════════════════════════════════════
+-- A bot given the BRAIN_INIT_ARG token "preset=NAME" has every entry of
+-- M.PRESETS[NAME] written into ITS OWN copy of this table before any other
+-- module requires it (init.lua, right after `require("constants")`), so
+-- module-level captures like squad.lua's BLITZ_MAX see the preset value.
+-- Explicit "cfg=NAME=VALUE" tokens are applied AFTER the preset whatever
+-- order they appear in, so a cfg= always wins.
+--
+-- The point is A/B play: two sides of the same game, same brain, same build,
+-- one running today's constants and one running the older behaviour --
+--   -bot-init "0-1=<brain>[preset=keel],2-3=<brain>[]"
+-- (see tests/ab_bench.py).
+--
+-- ── RULE (2026-09-05) ─────────────────────────────────────────────────────
+-- EVERY behaviour change from now on adds its PRE-CHANGE value to `keel`, in
+-- the same commit that changes the constant, with a dated one-line comment.
+-- That is the whole contract: `preset=keel` must always reproduce the KEEL
+-- baseline (tag b29c6225 in winbolo2) behaviour, so a bench never has to
+-- rebuild an old brain to have something to compare against. A change that
+-- forgets its entry here silently makes the baseline drift, and every bench
+-- result taken afterwards is measuring less than it says it is.
+--
+-- Only PLAIN VALUES belong here (numbers, booleans, strings): the override
+-- refuses to write a table or a function, and refuses a value whose type does
+-- not match the constant it replaces.
+M.PRESETS = {
+  keel = {
+    -- 2026-09-06: while on attack_tank, the bot now interrupts the fight to
+    -- put the exact number of shells needed into a FRIENDLY pill that sits
+    -- closer to the enemy tank than we do (in gun range, clear LOS, >= 5 HP,
+    -- under 75% anger), maxing its heat so it reloads at PILLBOX_MAX_FIRERATE
+    -- and fights the tank alongside us. KEEL never shoots its own pills, so
+    -- attack_tank goes straight from the disengage checks to close/engage.
+    ATTACK_TANK_HEAT_PILL         = false,
+    -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
+    -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
+    -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
+    -- hit it or built beside it in the last 5 s, and we are more than 9 tiles
+    -- away; the cost is a flat 100 - 10/hit (floor 50) plus the Dijkstra path
+    -- stopped 9 tiles out.  KEEL is the whole old urgency ladder --
+    -- siege/setup/sight/quiet tiers, coverage, lateness, readiness, the
+    -- well-defended clamp, the two-tier floor, the tiebreaker AND the ARRIVED
+    -- heat / watch / repair rungs.  This one flag restores all of it; every
+    -- other DEFEND_ALARM_* knob is unread while it is false.
+    DEFEND_ALARM_MODE             = false,
+    -- 2026-09-05: raised to 3, i.e. the default blitz party went 2..2 -> 2..4.
+    SQUAD_MAX_SIZE                = 1,
+    -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
+    -- no longer needs one -- the bench sent it back and its DEFAULT is now
+    -- false, which is already the KEEL value. A knob whose default equals its
+    -- keel value is not a change any more.
+    -- 2026-09-05: the builder pool and the tank's repair filter now refuse to
+    -- rebuild a dead pill an ALLY has advertised as its capture_pill /
+    -- pill_place target. KEEL rebuilt it and made the ally's scoop impossible.
+    BUILDER_POOL_ALLY_CAPTURE_GUARD = false,
+    -- 2026-09-05: repair rows (rebuild/topup) are now priced
+    -- HP_W(30) x missing - TRIP_W(0.25) x round_trip and nothing else -- no
+    -- front clock, no threat term, no path-safety gate -- and reach 11 tiles
+    -- instead of 8. KEEL is the old VALUE_REBUILD/TOPUP + front clock -
+    -- 0.5 x trip - 1.5 x threat formula at the 8-tile leash, with
+    -- lgm_path_safe_enhanced still able to refuse the trip. This one flag
+    -- restores all of it (the leash and the path gate are gated on it too).
+    BUILDER_POOL_REPAIR_LINEAR = false,
+    -- 2026-09-06: at the moment of dispatch the pool now flies every shell in
+    -- the air forward 63 engine ticks, walks the man forward beside it, and
+    -- refuses the tick outright if the engine's LGM kill rule would fire.
+    -- KEEL sends the man regardless and finds out.
+    BUILDER_POOL_SHELL_GATE = false,
+    -- 2026-09-06: refuel is now a CANDIDATE anywhere below the full targets,
+    -- priced by the existing top-off ramp (base x2.75 at 30/40 shells). KEEL
+    -- only ever offered a refuel row when the tank was at/below ARMOUR_LOW or
+    -- SHELLS_LOW, so a tank that left a base above both lines could not go
+    -- back for a top-off until it had burned down to 20 shells.
+    REFUEL_TOPOFF_CANDIDATE = false,
+    -- 2026-09-06: SHELLS_LOW 20 -> 19 (Andrew: "SHELLS_LOW=19 is really what I
+    -- want"). KEEL treats exactly 20 shells as low; the new default does not.
+    SHELLS_LOW = 20,
+    -- 2026-09-06: farm discovery now splits the leash square into four
+    -- 90-degree wedges (N/E/S/W) and offers the nearest forest in EACH as its
+    -- own row, so a nearer forest the LGM cannot straight-line to loses to a
+    -- clear one in another direction. KEEL offered exactly ONE farm row, the
+    -- nearest forest anywhere in the square, take it or leave it.
+    BUILDER_POOL_FARM_SECTORS = 1,
+    -- 2026-09-06: the LGM's return leg is now walked to where the TANK is
+    -- predicted to be after outbound + LGM_BUILD_TIME ticks, marched along its
+    -- own committed route (state.pf.path_chain) at the engine's per-terrain
+    -- speed caps, so trip = out + build + back. KEEL charged 2 x out: the walk
+    -- home mirrored the walk out, as if the tank had stood still, which priced
+    -- a forest ahead of a moving tank exactly like one behind it.
+    BUILDER_POOL_RETURN_PREDICT = false,
+    -- 2026-09-06: the global cliff brake's heading ray now also tests the two
+    -- tiles a 64 wu sample hop cut across when it changed BOTH axes. KEEL only
+    -- looked up the tile each sample landed in, so on the DH-Oil Rig staircase
+    -- the ray stepped clean over the deep tile 3 wu in front of the tank
+    -- (20260905_231835 bot3 t=71330) and no brake fired.
+    CLIFF_RAY_CORNER_CHECK = false,
+    -- 2026-09-06: a stopped or crawling tank can no longer accelerate into a
+    -- deep-sea tile directly ahead (or diagonally corner-cut) whatever its
+    -- goal -- M.steer clears KEY_FASTER and sets KEY_SLOWER. KEEL had that
+    -- mask on attack_tank only (that one is unconditional and still runs), so
+    -- every other goal's navigate branch could drive a braked tank in.
+    CLIFF_STOP_MASK_ALL_GOALS = false,
+    -- 2026-09-06: a cliff guard that names a deep-sea tile now latches "no
+    -- forward throttle" for CLIFF_BRAKE_STICKY_TICKS brain ticks, applied at
+    -- M.steer's single key exit point. KEEL re-decides the brake from scratch
+    -- every tick off the heading ray, so on the ticks the ray's sub-tile
+    -- jitter missed the sea tile navigate re-issued KEY_FASTER and the tank
+    -- crept forward between brakes -- 20260906_184924_1_drown13 bot0 t=29523
+    -- drowned at full armour with nobody near it after braking on 5 of its
+    -- last 23 ticks.
+    CLIFF_BRAKE_STICKY = false,
+    -- 2026-09-06: the Dijkstra next-step fallbacks (and the traced-chain step)
+    -- now refuse to hand a boatless tank a deep-sea tile, applying the same
+    -- on-foot deep-sea / diagonal-corner rule the A* and the edge builder
+    -- already use, and reading the LAND layer's g only. KEEL picks by
+    -- min(g_land, g_boat) with no passability test at all, which is why
+    -- `nav next=` named deep sea on 14 of the 28 recorded drownings.
+    PF_NEXTSTEP_FOOT_SEA_RULE = false,
+    -- 2026-09-06: the pool-1 mine-hoard staying-cost is now WAIVED while the
+    -- tank is still below a target and the base under it still holds
+    -- REFUEL_MIN_STOCK of that supply. KEEL charges it whenever the tank is
+    -- parked on the base and carries more than REFUEL_MINE_FREE mines, so a
+    -- 35-armour/20-shell tank with 23 mines priced its own base at 48 + 891.6
+    -- and was driven off it before it had refuelled (20260905_231835 bot2
+    -- t=67674).
+    REFUEL_MINE_HOARD_NEEDS_SUPPLY = false,
+    -- 2026-09-06: a SEEDED builder-pool row (the tank goal's own repair order)
+    -- is now scored, bars-checked and ORDERED like every other row, and its
+    -- feeder goal no longer makes the pool `mode_owned` -- nor charges them its
+    -- own reserve_eta=0 -- for the rows it is competing against. KEEL sorts the
+    -- seeded row first whatever it scores
+    -- and closes the pool behind it -- which is how a 1-hp top-up worth -34
+    -- kept a 5-hp repair worth ~87 off the man for good (20260905_231835 bot2
+    -- t=67922).
+    BUILDER_POOL_SEEDED_COMPETES = false,
+    -- 2026-09-06: the row whose pill is the TANK goal's own target
+    -- (defend_pill / repair_pill target_id) has its score multiplied by 1.2.
+    -- KEEL has no such bonus -- under KEEL that pill was first by seeding
+    -- instead, so 1.0 is the value that reproduces it.
+    BUILDER_POOL_GOAL_PILL_BONUS = 1.0,
+  },
+}
 
 return M

@@ -25,6 +25,137 @@ end
 -- block and would otherwise redirect back to itself indefinitely.
 
 local C       = require("constants")
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- PER-BOT CONSTANT OVERRIDES — must run HERE, before any other require
+-- ══════════════════════════════════════════════════════════════════════════
+-- Two BRAIN_INIT_ARG tokens write straight into this bot's constants table:
+--
+--   "preset=NAME"       -> apply every entry of C.PRESETS[NAME] (see
+--                          constants.lua; `keel` is the pre-change value of
+--                          every behaviour knob changed since the KEEL tag).
+--   "cfg=NAME=VALUE"    -> set C.NAME for THIS bot. Repeatable. VALUE is read
+--                          as a number if it looks like one, as a boolean for
+--                          "true"/"false", and as a plain string otherwise.
+--
+-- Presets are applied FIRST and every cfg= afterwards, so an explicit cfg=
+-- always wins no matter where in the token list it sits.
+--
+-- WHY IT IS UP HERE AND NOT IN THE TICK-1 TOKEN BLOCK (search BRAIN_INIT_ARG,
+-- ~line 1250) where every other token is parsed: several modules CAPTURE a
+-- constant at require time and never look at C again --
+--   squad.lua      BLITZ_MIN / BLITZ_MAX / BLITZ_MIN_SUICIDERS
+--   goals.lua      REFUEL_MULT, TAKE_COVER_REJECT_COST
+--   threat.lua     PRED_DISK_SIZE / PRED_DISK_R (a precomputed disk)
+--   logger.lua     MAX_ENTRIES
+--   pill_portfolio FRONT_NEAR_RADIUS
+--   (and every module's TAG, from C.BRAIN_NAME)
+-- -- so an override applied on the first think is already too late for them:
+-- `cfg=SQUAD_MAX_SIZE=1` set at tick 1 would leave squad.lua's BLITZ_MAX on
+-- the value it read at require time and do nothing at all. Running here, in
+-- the gap between `require("constants")` and the first module that requires
+-- it, is what makes the override mean the same thing for every reader.
+-- Each bot has its own lua_State, so this table is this bot's alone.
+--
+-- The other tokens stay where they are: they call setters (squad.set_*,
+-- PP.set_targets, goals.set_refuel_mult) that are read live every tick, so
+-- they have no such ordering problem, and they need `state`, which does not
+-- exist yet up here.
+--
+-- Nothing can be PRINTED from here: this runs at chunk load, long before the
+-- session's print2 file exists. Warnings and the per-override log lines latch
+-- into _INIT_CFG_LOG / _INIT_CFG_WARN and are emitted in the captured-tick
+-- window with the rest of the [portfolio]/[blitz]/[refuel] config lines.
+local _INIT_CFG_LOG  = {}     -- {"[cfg] NAME=VALUE (init_arg)", ...}
+local _INIT_CFG_WARN = nil    -- one string, same shape as state._cfg_warn
+
+local function _cfg_warn_add(fmt, ...)
+  _INIT_CFG_WARN = (_INIT_CFG_WARN or "") .. string.format(fmt, ...) .. " "
+end
+
+-- Write one NAME=VALUE into C, refusing anything that would not survive the
+-- rest of the brain: a constant that does not exist (a typo silently doing
+-- nothing is the worst outcome for a bench), a table/function constant, and a
+-- type change -- `cfg=SOME_FLAG=0` is a particular trap, since 0 is TRUE in
+-- Lua and would turn a flag ON while reading as "off".
+local function _cfg_set(name, value, source)
+  local cur = C[name]
+  if cur == nil then
+    _cfg_warn_add("[cfg] UNKNOWN CONSTANT '%s' (%s) -- no such name in constants.lua; IGNORED.",
+                  tostring(name), source)
+    return false
+  end
+  if type(cur) == "table" or type(cur) == "function" then
+    _cfg_warn_add("[cfg] '%s' is a %s (%s) -- only numbers, booleans and strings can be overridden; IGNORED.",
+                  tostring(name), type(cur), source)
+    return false
+  end
+  if type(value) ~= type(cur) then
+    _cfg_warn_add("[cfg] '%s'=%s (%s) is a %s but the constant is a %s; IGNORED.",
+                  tostring(name), tostring(value), source, type(value), type(cur))
+    return false
+  end
+  C[name] = value
+  _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] = string.format("[cfg] %s=%s (%s)",
+                                                    name, tostring(value), source)
+  return true
+end
+
+do
+  local a = rawget(_G, "BRAIN_INIT_ARG")
+  if type(a) == "string" and a ~= "" then
+    -- Same token split as the tick-1 block: ',' or ';'. A scenario's
+    -- spawn_bot init string uses ';' and so must a command-line [..] suffix
+    -- (the CLI parser eats commas).
+    local presets, cfgs = {}, {}
+    for tok in a:gmatch("[^,;]+") do
+      tok = tok:gsub("%s", "")
+      local pname = tok:match("^preset=(.+)$")
+      local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
+      if pname then
+        presets[#presets + 1] = pname
+      elseif cname then
+        cfgs[#cfgs + 1] = { cname, cval }
+      elseif tok:sub(1, 4) == "cfg=" then
+        _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
+      end
+      -- Everything else is one of the tick-1 tokens; not our business.
+    end
+    -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
+    for _, pname in ipairs(presets) do
+      local tbl = C.PRESETS and C.PRESETS[pname]
+      if type(tbl) ~= "table" then
+        local known = {}
+        if C.PRESETS then for k in pairs(C.PRESETS) do known[#known + 1] = k end end
+        table.sort(known)
+        _cfg_warn_add("[preset] UNKNOWN PRESET '%s' -- known: %s; IGNORED.",
+                      tostring(pname), table.concat(known, " "))
+      else
+        -- Sorted so the log reads the same on every run (pairs() order is not
+        -- reproducible, and these lines are compared between runs).
+        local keys = {}
+        for k in pairs(tbl) do keys[#keys + 1] = k end
+        table.sort(keys)
+        local n = 0
+        for _, k in ipairs(keys) do
+          if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
+        end
+        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+          string.format("[preset] %s applied (%d values)", pname, n)
+      end
+    end
+    for _, kv in ipairs(cfgs) do
+      local name, raw = kv[1], kv[2]
+      local v
+      if raw == "true" then v = true
+      elseif raw == "false" then v = false
+      elseif tonumber(raw) then v = tonumber(raw)
+      else v = raw end
+      _cfg_set(name, v, "init_arg")
+    end
+  end
+end
+
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
 -- TAG-prefixed brain chatter (goal shifts, stuck warnings, command
 -- echoes) is wrapped in `if BRAIN_DEBUG_MODE then print(...) end` at
@@ -97,6 +228,31 @@ local MANUAL_BUILD_COLORS = {
   { 230, 195, 60 },   -- PILL  — amber pillbox
   { 215, 60, 55 },    -- MINE  — danger red
 }
+
+-- ── Cause-of-death diagnostics (DEBUG ONLY) ──────────────────────────────
+-- File-level upvalues, deliberately NOT fields on `state`: nothing outside
+-- the two `if BRAIN_DEBUG_MODE` blocks that maintain them ever reads them,
+-- and keeping them off `state` guarantees they can't perturb any iteration
+-- over state or any decision. They exist solely to make the one-line DEATH
+-- print2 below say WHY the tank died.
+--
+-- The cause itself comes from the ENGINE, not from a guess: the server sends
+-- EVENT_TANK_KILLED with data = [killer, killed, deathCause, carriedPills]
+-- (gameEventDataSize == 4), so in Lua d[3] is LAST_DEATH_BY_DEEPSEA (1) or
+-- LAST_DEATH_BY_SHELL (2) and d[1] == 255 (NEUTRAL) means a pillbox fired it.
+-- The one gap is a mine kill: tankMineDamage never calls the tankKill
+-- callback, so no event is emitted and we fall back to "mine_or_other".
+-- ONE table, not nine locals: Brain.think is already within a couple of slots
+-- of Lua's hard 60-upvalue-per-function limit, and nine separate upvalues
+-- overflowed it ("function at line 1121 has more than 60 upvalues" -- the
+-- brain then failed to load at all). Fields, in order of use:
+--   evt_cause  engine cause byte from EVENT_TANK_KILLED
+--   evt_killer killer player from that event (255 = NEUTRAL = a pillbox)
+--   evt_tick   tick we saw that event
+--   alive_tick / alive_mx / alive_my / alive_armour  last ALIVE snapshot
+--   drop_tick  last tick armour went DOWN while alive
+--   reported   one DEATH line per death episode
+local _dbg_death = { reported = false }
 
 local AUTOSTART = true
 local ENABLE_LOGGING = false
@@ -1412,6 +1568,38 @@ function Brain.think(info)
       bit.rshift((info.tankx or 0), 8), bit.rshift((info.tanky or 0), 8)))
   end
 
+  -- ── Cause-of-death tracking (DEBUG ONLY, observation only) ─────────────
+  -- Two jobs, both pure reads: (1) latch the engine's own death cause out of
+  -- this tick's EVENT_TANK_KILLED addressed to us, and (2) keep the last
+  -- ALIVE tile/armour, because by the time info.dead is true the server has
+  -- already moved the tank to its respawn start, so info.tankx/y no longer
+  -- point at the place it died. Everything written here is a file-level
+  -- upvalue read only by the DEATH print2 below.
+  if BRAIN_DEBUG_MODE then
+    local _me = info.player_number
+    if info.events and _me ~= nil then
+      for _, _ev in ipairs(info.events) do
+        local _d = _ev.data
+        -- data = [killer, killed, deathCause, carriedPills]
+        if _ev.type == EVENT_TANK_KILLED and _d and _d[2] == _me then
+          _dbg_death.evt_cause  = _d[3]
+          _dbg_death.evt_killer = _d[1]
+          _dbg_death.evt_tick   = now
+        end
+      end
+    end
+    if not info.dead then
+      local _arm = info.armour or 0
+      if _dbg_death.alive_armour ~= nil and _arm < _dbg_death.alive_armour then
+        _dbg_death.drop_tick = now
+      end
+      _dbg_death.alive_tick   = now
+      _dbg_death.alive_mx     = bit.rshift((info.tankx or 0), 8)
+      _dbg_death.alive_my     = bit.rshift((info.tanky or 0), 8)
+      _dbg_death.alive_armour = _arm
+    end
+  end
+
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
   -- startup-mode block, etc.) is included in the per-section sum. The
@@ -1630,6 +1818,12 @@ function Brain.think(info)
       if state.ally_claim_dead_off then
         print2("[claims] claims_dead=off (init_arg) — pool 4 ignores allies' capture_pill claims on dead pills (no ally_claimed reject); pool 6 + refuel unchanged")
       end
+      -- The preset/cfg overrides, which were applied at CHUNK LOAD (see the
+      -- block right after require("constants")) and could not print there.
+      -- One line per override so a bench can grep a side's log and see
+      -- exactly which constants that side was running.
+      for _i = 1, #_INIT_CFG_LOG do print2(_INIT_CFG_LOG[_i]) end
+      if _INIT_CFG_WARN then print2(_INIT_CFG_WARN) end
       if state._cfg_warn then print2(state._cfg_warn) end
     end
     -- Raw engine-object dump: EXACTLY what the engine handed the brain this tick
@@ -1723,6 +1917,51 @@ function Brain.think(info)
   -- tick counter was already advanced above, so the debug panels keep tracking
   -- instead of freezing while we're dead.
   if info.dead then
+    -- One DEATH line per death episode (DEBUG ONLY). First statement in the
+    -- block on purpose: the resets below wipe state.goal, and the whole point
+    -- of the line is to name the goal we died pursuing.
+    if BRAIN_DEBUG_MODE and not _dbg_death.reported then
+      _dbg_death.reported = true
+      local _cause
+      -- Prefer the ENGINE's cause. The event and the dead flag normally land
+      -- in the same snapshot; a few ticks of slack covers a snapshot that
+      -- splits them, and stops a previous life's event being reused.
+      if _dbg_death.evt_tick ~= nil and (now - _dbg_death.evt_tick) <= 4 then
+        if _dbg_death.evt_cause == 1 then         -- LAST_DEATH_BY_DEEPSEA
+          _cause = "drowned"
+        elseif _dbg_death.evt_cause == 2 then     -- LAST_DEATH_BY_SHELL
+          -- killer 255 == NEUTRAL == a pillbox pulled the trigger.
+          _cause = (_dbg_death.evt_killer == 255) and "shell_pill" or "shell_tank"
+        else
+          _cause = "engine_cause_" .. tostring(_dbg_death.evt_cause)
+        end
+      else
+        -- No EVENT_TANK_KILLED addressed to us: tankMineDamage kills the tank
+        -- without going through the tankKill callback, so a mine death emits
+        -- no event and lands here.
+        _cause = "mine_or_other"
+      end
+      local _mx, _my = _dbg_death.alive_mx or 0, _dbg_death.alive_my or 0
+      -- ttype_peek, never ttype: a detector call from debug-only code would
+      -- prime terrain_prev and split the recorded brain from production.
+      local _terr = U.ttype_peek(_mx, _my)
+      local _tname = ({ [C.T_BUILDING]="building", [C.T_RIVER]="river",
+                        [C.T_SWAMP]="swamp",       [C.T_CRATER]="crater",
+                        [C.T_ROAD]="road",         [C.T_FOREST]="forest",
+                        [C.T_RUBBLE]="rubble",     [C.T_GRASS]="grass",
+                        [C.T_HALFBUILD]="halfbuild", [C.T_BOAT]="boat",
+                        [C.T_DEEPSEA]="deepsea",   [C.T_REFBASE]="refbase",
+                        [C.T_PILLBOX]="pillbox",   [C.T_UNKNOWN]="unknown",
+                      })[_terr] or ("t" .. tostring(_terr))
+      print2(string.format(
+        "DEATH t=%d cause=%s tile=(%d,%d) terrain=%s armour=%s last_hit_age=%d"
+        .. " goal=%s sub=%s killer=%s alive_t=%s",
+        now, _cause, _mx, _my, _tname, tostring(_dbg_death.alive_armour),
+        _dbg_death.drop_tick and (now - _dbg_death.drop_tick) or -1,
+        tostring(state.goal and state.goal.kind),
+        tostring(state.goal and state.goal.substate),
+        tostring(_dbg_death.evt_killer), tostring(_dbg_death.alive_tick)))
+    end
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
     -- roster, watchdog, broadcast latches, and the call registry) so we respawn
@@ -1763,11 +2002,18 @@ function Brain.think(info)
       if BRAIN_DEBUG_MODE then print2(string.format("DIJ_BLANK_ON_DEATH t=%d — all slates reset to INF while dead", now)) end
     end
     if BRAIN_DEBUG_MODE then print2("DEAD tick t=", now, " -- reset blitz/goal + tank tracks for respawn") end
+    -- The dead early-exit never reached the main think's print2.flush(), so
+    -- everything printed on a dead tick -- DEATH, DIJ_BLANK_ON_DEATH and the
+    -- DEAD tick line above -- sat in the buffer until the next set_tick threw
+    -- it away. That is why no death has ever shown up in a print2 log. Flush
+    -- here, on the dead path only, so the DEATH line actually lands on disk.
+    if BRAIN_DEBUG_MODE then print2.flush() end
     state._think_attempt = nil   -- reached an exit: this think was not killed
     return { holdkeys = 0, tapkeys = 0, build = nil,
              wantallies = info.allies, messagedest = 0, sendmessage = nil }
   end
   state._dij_blanked = nil   -- alive: re-arm the on-death slate blank for next death
+  if BRAIN_DEBUG_MODE then _dbg_death.reported = false end  -- alive: re-arm the one-shot DEATH line
 
   -- Diagnostic: log when Dijkstra newly reaches a base. State-tracked
   -- by base id so we only log the first time. Called after each
@@ -2129,7 +2375,7 @@ function Brain.think(info)
     -- wipe. Default off; flip it on in the V window.
     if viz.is_on("stop_predict_live") and info.tankx then
       local _tmx, _tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
-      local _tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(_tmx, _tmy)]) or 16
+      local _tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype_peek(_tmx, _tmy)]) or 16
       local _ang = info.tank_angle or info.direction or 0
       local _espeed = (info.speed or 0) / 4  -- info.speed is engine speed ×4; model wants engine units
       local _psx, _psy, _trace = cpf.predict_stop(info.tankx, info.tanky, _ang, _espeed, _tcap, true)
@@ -4808,6 +5054,27 @@ function Brain.think(info)
       local p = W.pill_at(world, pmx, pmy)
       if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
          or p.health == 0 then goal_valid = false end
+      -- ALARM MODE (2026-09-06, C.DEFEND_ALARM_MODE): the alarm is a
+      -- PRECONDITION, not a bid.  The tick any of its three conditions stops
+      -- holding -- no hostile tank visible within 11 tiles of the pill RIGHT
+      -- NOW, no enemy damage/build trigger inside the 5 s window, or we have
+      -- closed to within 9 tiles -- the goal dies HERE, with no hysteresis,
+      -- no commitment and no grace period, and the invalid-goal path below
+      -- forces the immediate replan.  Asked through the SAME
+      -- goals.defend_alarm_status the pool row prints its reject reason from,
+      -- so the panel and the drop can never be different statements.
+      if goal_valid and C.DEFEND_ALARM_MODE and p then
+        local _al_on, _al_why = goals.defend_alarm_status(
+          state, world, info, p, now,
+          bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8))
+        if not _al_on then
+          goal_valid = false
+          print2(string.format(
+            "DEFEND_ALARM_OFF t=%d pill@(%d,%d) reason=%s"
+            .. " -- alarm condition lapsed, dropping the defend goal",
+            now, pmx, pmy, tostring(_al_why)))
+        end
+      end
     elseif gk == "repair_pill" then
       local p = W.pill_at(world, gmx, gmy)
       -- Abort if our LGM is dead — no one to do the repair (the eval already
@@ -7633,7 +7900,7 @@ function Brain.think(info)
     end
     -- Water-ahead LGM suppression indicator
     if state.pf and state.pf.next_mx and state.pf.next_mx >= 0 then
-      local ntt = U.ttype(state.pf.next_mx, state.pf.next_my)
+      local ntt = U.ttype_peek(state.pf.next_mx, state.pf.next_my)
       if ntt == C.T_RIVER or ntt == C.T_DEEPSEA or ntt == C.T_BOAT then
         viz.hud_text("hud_lgm_blocked", 10, 80, "LGM blocked: water ahead", "bottomleft", 255, 200, 50)
       end
@@ -8346,6 +8613,78 @@ function Brain.think(info)
     end
   end
 
+  -- ALARM MODE overlay (2026-09-06): the shape of the actual algorithm, not a
+  -- decoration -- condition 1's DEFEND_ALARM_ENEMY_TILES ring, condition 3's
+  -- DEFEND_ALARM_MIN_DIST ring, the WATCH LIST membership, the
+  -- DEFEND_ALARM_BUILD_RADIUS stamp perception.lua actually sweeps, and the
+  -- newest build it found.  Purely a reader: no terrain is touched (the stamp
+  -- geometry is arithmetic), so this cannot move the recorded brain off the
+  -- production one.  Draws nothing in keel mode, where there is no alarm.
+  -- (one line: lua_strip deletes the LINE that opens an `if BRAIN_DEBUG_MODE`
+  -- block, so a wrapped condition leaves a dangling `and ... then` in opt/.)
+  if BRAIN_DEBUG_MODE and C.DEFEND_ALARM_MODE and viz.is_on("defend_alarm_viz") then
+    local ALARM_COLS = {
+      alarm     = { 255,  60,  60 },
+      alarm_off = { 120, 120, 120 },
+      dead      = {  60,  60,  60 },
+    }
+    local by_tile = {}
+    for _, r in ipairs((state.defend_breakdown and state.defend_breakdown.rows) or {}) do
+      by_tile[r.my * 256 + r.mx] = r
+    end
+    local er   = C.DEFEND_ALARM_ENEMY_TILES or 11
+    local mind = C.DEFEND_ALARM_MIN_DIST or 9
+    local br   = C.DEFEND_ALARM_BUILD_RADIUS or 4
+    local win  = C.DEFEND_ALARM_WINDOW_TICKS or 250
+    for _, p in pairs(world.pills) do
+      if (p.owner == "friendly" or p.owner == "allied")
+         and not (p.in_tank or p.carrier or p._synth_carry) then
+        local row = by_tile[p.my * 256 + p.mx]
+        local cc  = ALARM_COLS[(row and row.tier) or "alarm_off"]
+                    or ALARM_COLS.alarm_off
+        -- Condition 1 ring (enemy must be visible INSIDE this right now) and
+        -- condition 3 ring (we must be OUTSIDE this).
+        viz.circle("defend_alarm_viz", p.mx + 0.5, p.my + 0.5, er,
+                   cc[1], cc[2], cc[3], 110)
+        viz.circle("defend_alarm_viz", p.mx + 0.5, p.my + 0.5, mind,
+                   90, 160, 255, 90)
+        local watched = p._alarm_watch_tick == now
+        if watched then
+          -- The build stamp, tile by tile: the same euclidean disc
+          -- perception.lua's precomputed offset list sweeps.
+          for dy = -br, br do
+            for dx = -br, br do
+              if dx * dx + dy * dy <= br * br then
+                viz.rect("defend_alarm_viz", p.mx + dx + 0.15, p.my + dy + 0.15,
+                         p.mx + dx + 0.85, p.my + dy + 0.85,
+                         255, 190, 0, 45, false)
+              end
+            end
+          end
+        end
+        local b = p._alarm_build
+        if b and (now - (b.t or 0)) <= win then
+          viz.rect("defend_alarm_viz", b.mx + 0.05, b.my + 0.05,
+                   b.mx + 0.95, b.my + 0.95, 255, 80, 255, 200, false)
+          viz.text("defend_alarm_viz", b.mx + 0.5, b.my + 1.1,
+                   string.format("%s %dt", tostring(b.what), now - b.t),
+                   "center", 255, 80, 255, 255)
+        end
+        local lbl
+        if row and row.tier == "alarm" then
+          lbl = string.format("ALARM %.0f", row.cost or 0)
+        elseif row and row.reject then
+          lbl = tostring(row.reject)
+        else
+          lbl = "(no row yet)"
+        end
+        viz.text("defend_alarm_viz", p.mx + 0.5, p.my - 0.9,
+                 lbl .. (watched and " [watched]" or ""),
+                 "center", cc[1], cc[2], cc[3], 255)
+      end
+    end
+  end
+
   -- Debugger: end trace capture
   if dbg.is_tracing() then
     dbg.end_trace(Brain.think)
@@ -9033,11 +9372,18 @@ function Brain.think(info)
         -- Blitz suicider designations queued by squad.blitz_designate_suiciders
         -- at GO. One per tick, oldest first, and dropped from the queue only
         -- once the send actually goes out (try_send is batched and can refuse).
+        -- The optional trailing letter is WHY: "c" = contested take (every
+        -- blitzer is designated), absent = the ordinary BLITZ_MIN_SUICIDERS
+        -- quota top-up. It only feeds the receiver's [role] line / DECISION
+        -- breakdown; an older peer that ignores it still reads the pill and pn.
         local _d = state._blitz_su_send[1]
-        if try_send(string.format("/info bsu %d %d", _d.pill, _d.pn), 0) then
+        local _msg = (_d.why == "contested")
+                     and string.format("/info bsu %d %d c", _d.pill, _d.pn)
+                     or  string.format("/info bsu %d %d", _d.pill, _d.pn)
+        if try_send(_msg, 0) then
           table.remove(state._blitz_su_send, 1)
-          print2(string.format("BLITZ_TX bsu t=%d pill=%d -> p%d (%s)",
-                 now, _d.pill, _d.pn, squad.blitz_suiciders_label()))
+          print2(string.format("BLITZ_TX bsu t=%d pill=%d -> p%d why=%s (%s)",
+                 now, _d.pill, _d.pn, tostring(_d.why or "quota"), squad.blitz_suiciders_label()))
         end
       elseif state._blitz_rebroadcast and cur_call then
         if try_send("/info bco " .. cur_call, 0) then

@@ -956,12 +956,58 @@ local function refuel_shape(info, state, now)
   -- low enough to outbid attack goals at 250-500 and read as "NEED TO
   -- REFUEL" when nothing was actually low (20260703_221238 t=24898).
   local mult = 1.0 + (fill * fill) * (C.REFUEL_FULL_COST_MULT - 1.0) * scarcity
-  local mines_over = math.max(0, (info.mines or 0) - (C.REFUEL_MINE_FREE or 5))
-  local mine_cost = 0.0
+  -- ── Mine-hoard staying-cost (additive, at-this-base only) ──────────────
+  -- The exponential itself is unchanged: WEIGHT x (BASE^(mines-FREE) - 1).
+  --
+  -- What is new (2026-09-06, C.REFUEL_MINE_HOARD_NEEDS_SUPPLY) is WHEN it is
+  -- charged. The term is an EVICTION lever — "don't sit on a pad just to load
+  -- mines" — so it is waived while the tank still has a real reason to be on
+  -- the pad: below one of its targets AND parked on a base that still holds
+  -- REFUEL_MIN_STOCK of that same supply. At both targets, or on a base that
+  -- has run dry of everything we still need (nothing left but mines), it is
+  -- charged in full and still evicts, exactly as before.
+  --
+  -- UNITS: info.base.armour is the engine's per-tick "closest base" item,
+  -- which is the raw base armour DIVIDED BY FIVE (bases.c
+  -- basesGetBrainBaseItem: armour/5, so a full 90 reads 18); shells are raw.
+  -- perception.lua writes those same two numbers into obs_armour/obs_shells
+  -- for the base we're standing on, so comparing them against REFUEL_MIN_STOCK
+  -- here reads the base exactly the way nearest_resupply_base's low_stock
+  -- reject reads it, and the waiver can never contradict the reject.
+  local mines_carried = info.mines or 0
+  local mine_free  = C.REFUEL_MINE_FREE or 5
+  local mines_over = math.max(0, mines_carried - mine_free)
+  local mine_raw = 0.0
   if mines_over > 0 then
-    mine_cost = (C.REFUEL_MINE_HOARD_WEIGHT or 0)
-                * ((C.REFUEL_MINE_HOARD_BASE or 1.3) ^ mines_over - 1.0)
+    mine_raw = (C.REFUEL_MINE_HOARD_WEIGHT or 0)
+               * ((C.REFUEL_MINE_HOARD_BASE or 1.3) ^ mines_over - 1.0)
   end
+  local _b        = info.base
+  local b_arm     = _b and (_b.armour or 0) or 0
+  local b_sh      = _b and (_b.shells or 0) or 0
+  local min_stock = C.REFUEL_MIN_STOCK or 5
+  local need_arm  = arm < arm_target
+  local need_sh   = sh  < sh_target
+  local mine_waived = false
+  if C.REFUEL_MINE_HOARD_NEEDS_SUPPLY and mines_over > 0 then
+    mine_waived = (need_arm and b_arm >= min_stock)
+               or (need_sh  and b_sh  >= min_stock)
+  end
+  local mine_cost = mine_waived and 0.0 or mine_raw
+  -- Every input to the decision, carried out for the debug line and the panel.
+  -- Plain numbers only: the strings are built at the print sites so nothing
+  -- formats on a tick nobody is looking.
+  local mine_d = {
+    carried = mines_carried, free = mine_free, over = mines_over,
+    raw = mine_raw, waived = mine_waived,
+    knob = C.REFUEL_MINE_HOARD_NEEDS_SUPPLY and true or false,
+    weight = C.REFUEL_MINE_HOARD_WEIGHT or 0,
+    expbase = C.REFUEL_MINE_HOARD_BASE or 1.3,
+    arm = arm, arm_target = arm_target, need_arm = need_arm,
+    sh = sh, sh_target = sh_target, need_sh = need_sh,
+    has_base = _b and true or false, b_arm = b_arm, b_sh = b_sh,
+    min_stock = min_stock,
+  }
   local urgency = math.max(C.REFUEL_URGENCY_MIN,
                            math.min(math.min(1.0, arm / C.ARMOUR_LOW),
                                     math.min(1.0, sh  / C.SHELLS_LOW)))
@@ -972,7 +1018,72 @@ local function refuel_shape(info, state, now)
     local need = math.max(1.0 - urgency, C.REFUEL_CRITICAL_NEED_MIN or 0)
     urgency = 1.0 - need
   end
-  return bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def
+  return bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def, mine_d
+end
+
+-- Mine-hoard chip text, shared by the REFUEL_SHAPE debug line and the pool-viz
+-- term breakdown so the two can never disagree. `md` is refuel_shape's
+-- mine-detail table. Returns:
+--   head — the short value that goes inside mines{...}. The panel's formula
+--          parser DROPS a term whose braced value reaches 32 characters, so
+--          this stays tiny and the derivation lives in `why`.
+--   why  — the whole thing, hand-computable: the exponential written out with
+--          its constants, whether it was charged, and every number the
+--          waive decision looked at.
+local function mine_chip(md)
+  local head = md.waived
+    and string.format("0 of %.1f waived", md.raw)
+    or  string.format("%.1f", md.raw)
+  local why = string.format(
+    "%.1f = %g[MINE_HOARD_WEIGHT] x (%g[MINE_HOARD_BASE]^(%d mines - %d[MINE_FREE]) - 1)"
+    .. "; %s: arm %d/%d (%s), sh %d/%d (%s); base under us arm=%s sh=%s,"
+    .. " MIN_STOCK=%d",
+    md.raw, md.weight, md.expbase, md.carried, md.free,
+    (not md.knob) and "CHARGED (NEEDS_SUPPLY off)"
+      or (md.waived and "WAIVED (below a target this base can still supply)"
+                    or "CHARGED (this base supplies nothing we still need)"),
+    md.arm, md.arm_target, md.need_arm and "below" or "at",
+    md.sh, md.sh_target, md.need_sh and "below" or "at",
+    md.has_base and tostring(md.b_arm) or "none",
+    md.has_base and tostring(md.b_sh) or "none",
+    md.min_stock)
+  return head, why
+end
+
+-- Is refuel a CANDIDATE this tick? Two ways in, and they mean different things:
+--
+--   LOW      — at/below either watermark (ARMOUR_LOW 15 / SHELLS_LOW 20).
+--              The original rule, and the only one before 2026-09-06.
+--   TOP-OFF  — C.REFUEL_TOPOFF_CANDIDATE: anywhere BELOW the dynamic full
+--              targets (state.armour_target / state.shell_target, plus
+--              REFUEL_MIN_MINES). The author's rule: "20 shells is a good
+--              number to be 'you're full enough, go do stuff unless it's
+--              worth the cost to keep recharging'" — i.e. topping off past
+--              the low line is a real option that has to WIN, not an option
+--              that does not exist. The existing quadratic ramp in
+--              refuel_shape prices it (fill 0 at the low line, 1 at target),
+--              so off the pad a 30/40-shell tank prices refuel at base x2.75
+--              and normally loses. Nothing about the PRICING changes: below
+--              the low lines fill is 0 and the mult is 1.0, exactly as before.
+--
+-- Only CANDIDACY moves. has_shells (the pool gate for pill takes), the
+-- critical-armour flee injection (gated on `critical`, an emergency) and the
+-- refuel goal's own completion (armour_target/shell_target in init.lua) are
+-- all untouched.
+--
+-- Sets state._refuel_topoff_only so the debug lines can say `topoff=on` for a
+-- row that exists ONLY because of the flag.
+local function refuel_need(state, info)
+  local low = (info.armour or 99) <= C.ARMOUR_LOW
+           or (info.shells or 99) <= C.SHELLS_LOW
+  local topoff = false
+  if C.REFUEL_TOPOFF_CANDIDATE and not low then
+    topoff = (info.armour or 99) < (state.armour_target or C.TANK_FULL_ARMOUR)
+          or (info.shells or 99) < (state.shell_target or C.TANK_FULL_SHELLS)
+          or (info.mines or 99) < (C.REFUEL_MIN_MINES or 0)
+  end
+  state._refuel_topoff_only = topoff
+  return (low or topoff), low, topoff
 end
 
 -- =========================================================================
@@ -982,7 +1093,7 @@ end
 -- =========================================================================
 
 local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
-  local needs_resupply = (info.armour <= C.ARMOUR_LOW or info.shells <= C.SHELLS_LOW)
+  local needs_resupply = refuel_need(state, info)
   if not needs_resupply then return nil end
   -- Block depleted bases
   if info.base then
@@ -1059,8 +1170,11 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
     cost = cost,
     goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d%s",
-           bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells, hyst_str) or "",
+    desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s%s",
+           bid, base.mx, base.my, bscore, urgency, cost,
+           info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
+           info.shells, state.shell_target or C.TANK_FULL_SHELLS,
+           state._refuel_topoff_only and " topoff=on" or "", hyst_str) or "",
     cands = bcands,
   }
 end
@@ -2510,6 +2624,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- In DEBUG only, still run the scan to feed the best-spot overlays even when
   -- we can't place — gated on an overlay being on, so a live game (where
   -- BRAIN_DEBUG_MODE is false) never pays for this and just returns here.
+  --
+  -- BOTH those overlays MUST declare `default_on = false` in viz.lua. An
+  -- unattended -braindebug host (winbolods recording) pushes no _BT_VIZ_*
+  -- toggles, so viz.is_on() falls back to the declared default and a toggle
+  -- with no default reads as ON — which ran this scan in every recorded game
+  -- and in no production game. That is a different brain, and it broke
+  -- production-vs-recorded identity from tick 17701 on the seed-1 Oil Rig
+  -- 2v2 (found 2026-09-06; tests/prod_recorded_identity_test.py guards it).
   local viz_only = BRAIN_DEBUG_MODE
                    and (vizmod.is_on("pill_best_spots_back") or vizmod.is_on("pill_best_spots_aggro"))
   if only then
@@ -4620,6 +4742,518 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   return cost, bd
 end
 
+-- =========================================================================
+-- ALARM MODE (C.DEFEND_ALARM_MODE, 2026-09-06) — Andrew's redesign of the
+-- MAIN defend_pill evaluator.  Everything above (the siege/setup/sight/quiet
+-- tier ladder, coverage, lateness, readiness, the well-defended clamp, the
+-- two-tier floor, the flat-cost tiebreaker AND the ARRIVED heat / watch /
+-- repair rungs) is the KEEL path and is untouched: with DEFEND_ALARM_MODE
+-- false not one line below here runs, no new terrain is read and no new state
+-- is written, so `preset=keel` reproduces today's evaluator exactly.
+--
+-- THE RULE (Andrew, verbatim intent).  defend_pill stays VISIBLE in the goal
+-- pool but is REJECTED, with the failing condition as the reject reason,
+-- unless an ALARM holds for that pill.  The alarm is on ONLY while ALL of:
+--
+--   1. an enemy is within DEFEND_ALARM_ENEMY_TILES (11) of the pill.  A LIVE
+--      sighting: a hostile tank the engine is showing us THIS TICK
+--      (state.perc.enemy_tanks, which holds real sightings only — ghosts are
+--      a separate list and deliberately do not count).  Not a remembered
+--      sighting, not a windowed one.  The tick nothing hostile is visible in
+--      the ring, the alarm is off.
+--   2. AND one of
+--      (a) the pill took damage FROM AN ENEMY within DEFEND_ALARM_WINDOW_TICKS
+--          (250 = 5 s at 50 brain ticks/s).  Counted from perception's
+--          per-pill enemy-hit ring (_alarm_hits): every hit its attribution
+--          pass classified `tank` (hostile tank) or `epill` (hostile pillbox).
+--          A `npill` stray is a NEUTRAL pillbox and is not an enemy.
+--      (b) OR an enemy pill or a wall was built inside
+--          DEFEND_ALARM_BUILD_RADIUS (4) of the pill inside the same window,
+--          with a HOSTILE LGM seen inside that same stamp in the window.  The
+--          OBJECT_HOSTILE bit is the whole attribution — Andrew, 2026-09-06:
+--          "If we know the LGM is an enemy, that's sufficient."  No ally
+--          build-claim lookup gates it (the debug line still prints what the
+--          allies were claiming, for the reader).
+--          The watch list and the stamp are perception.lua's (see its
+--          ALARM_STAMP block): the offsets are computed ONCE at module load,
+--          never per tick.
+--   3. AND we are MORE than DEFEND_ALARM_MIN_DIST (9) tiles from the pill.
+--
+-- No hysteresis and no commitment may keep an alarm alive: the moment a
+-- condition stops holding the row goes back to REJECTED, and a bot standing on
+-- that defend goal DROPS it — init.lua's goal-validity hook re-asks
+-- M.defend_alarm_status every tick and invalidates the goal, which forces the
+-- immediate replan.  (The pool's normal hysteresis for switching TO the goal
+-- is untouched: that is about picking it, not about holding it past its
+-- precondition.)
+--
+-- COST while the alarm holds:
+--     max(DEFEND_ALARM_MIN_COST,
+--         DEFEND_ALARM_BASE_COST - hits x DEFEND_ALARM_HIT_DISCOUNT)
+--   + the Dijkstra cost along the path to the pill, STOPPED once the path is
+--     within DEFEND_ALARM_DIJ_STOP_TILES (9) tiles of it.  No path at all ->
+--     the row rejects `no_path`.
+--
+-- WHAT NO LONGER HAPPENS.  Alarm mode has no ARRIVED branch, so defend_pill
+-- never sets goal.heat, goal.watch or goal.repair.  The heat-up action, the
+-- watch hold and the defend->repair handoff are all gone with the ladder:
+-- builder_pool.repair_feeder's `defend_repair` seed (builder_pool.lua ~1682,
+-- which fires on `g.kind == "defend_pill" and g.repair`) can therefore never
+-- fire in alarm mode.  Nothing there needed changing — the flag is simply
+-- never set — and repair_pill still seeds the man exactly as before.  This is
+-- consistent by construction: condition 3 drops the alarm at 9 tiles, so an
+-- alarm-mode defender never arrives at the pill in the first place.
+-- =========================================================================
+local ALARM_R_NO_ENEMY  = "no_enemy_near"
+local ALARM_R_NO_TRIG   = "no_trigger"
+local ALARM_R_TOO_CLOSE = "too_close"
+local ALARM_R_NO_PATH   = "no_path"
+
+-- Enemy-attributed hits on this pill inside the window, from perception's
+-- ring.  Returns (count, newest_tick, newest_src).
+local function defend_alarm_hits(p, now)
+  local win  = C.DEFEND_ALARM_WINDOW_TICKS or 250
+  local ring = p._alarm_hits
+  local n, newest, src = 0, nil, nil
+  if ring then
+    for i = 1, #ring do
+      local e = ring[i]
+      local age = now - (e.t or 0)
+      if age >= 0 and age <= win then
+        n = n + 1
+        if newest == nil or e.t > newest then newest, src = e.t, e.src end
+      end
+    end
+  end
+  return n, newest, src
+end
+
+-- Condition 1: the nearest hostile tank VISIBLE THIS TICK inside the ring.
+-- Euclidean, the metric the rest of this evaluator uses for its own radii.
+-- Deterministic: nearest wins, ties break to the lower tank id.
+local function defend_alarm_enemy(state, p)
+  local r  = C.DEFEND_ALARM_ENEMY_TILES or 11
+  local r2 = r * r
+  local best, best_d2 = nil, nil
+  for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+    local dx, dy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
+    local d2 = dx * dx + dy * dy
+    if d2 <= r2 then
+      if best_d2 == nil or d2 < best_d2
+         or (d2 == best_d2 and (et.id or 0) < (best.id or 0)) then
+        best, best_d2 = et, d2
+      end
+    end
+  end
+  if not best then return nil, nil end
+  return best, math.sqrt(best_d2)
+end
+
+-- M.defend_alarm_status — is the alarm ON for this pill, and if not, which
+-- condition failed?  ONE implementation, called from two places: this pool's
+-- evaluator (at replan cadence) and init.lua's goal-validity hook (every
+-- tick), so the row the panel shows and the drop the bot performs can never
+-- disagree.
+--
+-- Returns (on, reason, reason_key, a):
+--   reason      full text for the row, e.g. "too_close(6.1<=9)"
+--   reason_key  the bare condition name for the reject chip (<= 24 chars once
+--               prefixed "alarm_off:", which is the pool grid's chip cap)
+--   a           the evidence table every chip and print2 below reads
+function M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
+  local win = C.DEFEND_ALARM_WINDOW_TICKS or 250
+  local a = { win = win }
+  -- Distance is computed UP FRONT even though it is condition 3: every row,
+  -- including the ones rejected on condition 1 or 2, prints an al_dist chip,
+  -- and a chip that appears only on some rejects is a chip the reader cannot
+  -- trust.  Computing it early changes no outcome — the reasons are still
+  -- returned in condition order.
+  a.min_dist = C.DEFEND_ALARM_MIN_DIST or 9
+  a.dist = U.edist(tmx or 0, tmy or 0, p.mx, p.my)
+  -- Condition 1 — live sighting, this tick.
+  local et, ed = defend_alarm_enemy(state, p)
+  a.enemy, a.enemy_d = et, ed
+  if not et then
+    return false, ALARM_R_NO_ENEMY, ALARM_R_NO_ENEMY, a
+  end
+  -- Condition 2 — a trigger inside the window.
+  local nh, hit_t, hit_src = defend_alarm_hits(p, now)
+  a.hits, a.hit_tick, a.hit_src = nh, hit_t, hit_src
+  a.hit_age = hit_t and (now - hit_t) or nil
+  local b = p._alarm_build
+  if b and (now - (b.t or 0)) <= win then
+    a.build = b
+    a.build_age = now - (b.t or 0)
+  end
+  a.lgm_tick = p._alarm_lgm_tick
+  a.lgm_age  = a.lgm_tick and (now - a.lgm_tick) or nil
+  a.lgm_fresh = (a.lgm_age ~= nil) and (a.lgm_age <= win) or false
+  a.trig_damage = nh > 0
+  a.trig_build  = (a.build ~= nil) and a.lgm_fresh
+  if not (a.trig_damage or a.trig_build) then
+    return false, ALARM_R_NO_TRIG, ALARM_R_NO_TRIG, a
+  end
+  -- Condition 3 — we must be MORE than MIN_DIST tiles away.
+  if a.dist <= a.min_dist then
+    return false, string.format("too_close(%.1f<=%d)", a.dist, a.min_dist),
+           ALARM_R_TOO_CLOSE, a
+  end
+  return true, nil, nil, a
+end
+
+-- Cheapest reachable tile inside the stop disc — the FALLBACK for the partial
+-- Dijkstra below, used only when the traced path is unusable.  Same stride-2
+-- sample of the disc that defend_travel_cost uses for the keel path, so the
+-- two numbers are comparable when a bench puts them side by side.
+local function defend_alarm_disc_min(p, bf, stop)
+  local best, bx, by = math.huge, nil, nil
+  for dy = -stop, stop, 2 do
+    for dx = -stop, stop, 2 do
+      if dx * dx + dy * dy <= stop * stop then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, p.mx + dx, p.my + dy, bf)
+        if c and c < 1e29 and c < best then
+          best, bx, by = c, p.mx + dx, p.my + dy
+        end
+      end
+    end
+  end
+  if bx == nil then return nil end
+  return best, bx, by
+end
+
+-- The PARTIAL Dijkstra: walk the traced path from the tank toward the pill,
+-- summing per-tile costs, and STOP at the first tile whose distance to the
+-- pill is <= DEFEND_ALARM_DIJ_STOP_TILES.  Because a Dijkstra slate's cost IS
+-- the running sum from the source, "the sum up to tile T" is exactly the
+-- slate's cost AT T — no per-step arithmetic is needed or possible.
+--
+-- The pill's own tile is impassable (a live pillbox blocks the cost surface),
+-- so the trace destination is its cheapest reachable neighbour: that is "the
+-- path to the pill" as far as any path can be, and the stop rule cuts it 9
+-- tiles out anyway.
+--
+-- The C trace caps at 64 waypoints (braincore.c l_cpf_dijkstra_trace_path*)
+-- and keeps the SOURCE end, so a very long path can be truncated before it
+-- ever enters the stop disc.  That case falls back to the cheapest reachable
+-- tile in the same disc (the stride-2 sample defend_travel_cost uses) and SAYS
+-- so in the chip, rather than silently pricing the whole trip.
+--
+-- Returns (cost, method, stop_i, nsteps, smx, smy) or nil when nothing in the
+-- disc is reachable.
+local function defend_alarm_travel(p, boat)
+  local bf    = boat and 1 or 0
+  local stop  = C.DEFEND_ALARM_DIJ_STOP_TILES or 9
+  local stop2 = stop * stop
+  -- Trace destination: cheapest reachable neighbour of the pill.
+  local nb_c, nb_x, nb_y = math.huge, nil, nil
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, p.mx + dx, p.my + dy, bf)
+        if c and c < nb_c then nb_c, nb_x, nb_y = c, p.mx + dx, p.my + dy end
+      end
+    end
+  end
+  if nb_x and nb_c < 1e29 then
+    local path = cpf.dijkstra_trace_path_by_kind(KIND_NORMAL, nb_x, nb_y)
+    if path and #path >= 2 then
+      local nsteps = math.floor(#path / 2)
+      for i = 1, nsteps do
+        local tx, ty = path[2 * i - 1], path[2 * i]
+        local dx, dy = tx - p.mx, ty - p.my
+        if dx * dx + dy * dy <= stop2 then
+          local c = cpf.smart_cost_dij_only(KIND_NORMAL, tx, ty, bf)
+          if c and c < 1e29 then
+            return c, "path", i, nsteps, tx, ty
+          end
+          -- The traced tile is on the slate by construction, so this is a
+          -- boat/land-node mismatch; fall through to the disc sample.
+          break
+        end
+      end
+      -- Path never entered the disc: the 64-waypoint cap cut it short.
+      local c, cx, cy = defend_alarm_disc_min(p, bf, stop)
+      if c then return c, "trunc_disc", nil, nsteps, cx, cy end
+      return nil
+    end
+  end
+  local c, cx, cy = defend_alarm_disc_min(p, bf, stop)
+  if c then return c, "disc", nil, nil, cx, cy end
+  return nil
+end
+
+-- Selection-layer preview for the alarm rows.  Same arithmetic as
+-- eval_defend_pill's own sel_preview closure (phase weight with its distance
+-- falloff, then the influence multiplier), lifted to a function because alarm
+-- mode is a separate evaluator; a clicked alarm row must reconcile with the
+-- WINNERS view exactly as a keel row does.
+local function defend_alarm_sel_preview(state, tmx, tmy, mx, my, cost)
+  if not cost or cost >= math.huge then return "" end
+  local pw = (C.PHASE_WEIGHTS and C.PHASE_WEIGHTS[state.phase]
+              and C.PHASE_WEIGHTS[state.phase].defend_pill) or 1.0
+  local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
+  local pw_falloff = (type(_fot) == "table" and (_fot.defend_pill or _fot.default))
+                     or (type(_fot) == "number" and _fot) or 40
+  if pw ~= 1.0 then
+    local gd = U.mdist(tmx or 0, tmy or 0, mx, my)
+    pw = 1.0 + (pw - 1.0) * (1 - math.min(1.0, gd / pw_falloff))
+  end
+  local im = 1.0
+  if state.phase ~= "opening" then
+    local inf = cpf.influence_at(mx, my) or 0
+    if inf < -50 then im = 2.0 elseif inf > 50 then im = 0.5 end
+  end
+  return string.format(
+    " ->sel{%.0f xph%.2f xinf%.1f} (+switch/commit at selection)",
+    cost * pw * im, pw, im)
+end
+
+-- The EVIDENCE chips, shared by the alarmed row, every rejected row and the
+-- winner desc so the three can never drift apart.
+local function defend_alarm_evidence(a)
+  local en = a.enemy
+    and string.format(" al_enemy{#%s @%.1ft}", tostring(a.enemy.id or "?"),
+                      a.enemy_d or 0)
+    or  string.format(" al_enemy{none in %dt}", C.DEFEND_ALARM_ENEMY_TILES or 11)
+  local tr
+  if a.trig_build then
+    tr = string.format(" al_trig{bld (%d,%d) %s %dt}",
+                       a.build.mx, a.build.my, a.build.what, a.lgm_age or -1)
+  elseif a.trig_damage then
+    tr = string.format(" al_trig{dmg %dx %s %dt}", a.hits or 0,
+                       tostring(a.hit_src or "?"), a.hit_age or -1)
+  else
+    tr = string.format(" al_trig{none dmg%d bld%s}", a.hits or 0,
+                       a.build and (a.lgm_fresh and "Y" or "nolgm") or "N")
+  end
+  return en .. tr .. string.format(" al_dist{%.1f>%d}", a.dist or 0,
+                                   a.min_dist or 9)
+end
+
+-- The per-term "How computed" segments.  Andrew's standing rule: EVERY factor
+-- in the score has to appear, so the final number is hand-computable from the
+-- panel alone.
+local function defend_alarm_detail(a, bd, p, hp)
+  local segs = {
+    string.format("al_base:DEFEND_ALARM_BASE_COST — the flat price of an alarmed defend trip, before the damage discount"),
+    string.format("al_hits:%d enemy-attributed hit(s) on this pill inside the last %d ticks (%d s), from perception's per-pill ring: hits classified `tank` (hostile tank fire) or `epill` (hostile pillbox stray). A `npill` stray is a NEUTRAL pillbox and is not counted.",
+                  a.hits or 0, a.win or 250, math.floor((a.win or 250) / 50)),
+    string.format("al_disc:DEFEND_ALARM_HIT_DISCOUNT — subtracted once per counted hit: %d - %d x %d = %d",
+                  C.DEFEND_ALARM_BASE_COST or 100,
+                  a.hits or 0, C.DEFEND_ALARM_HIT_DISCOUNT or 10,
+                  (bd and bd.net_raw) or 0),
+    string.format("al_net:base - hits x discount, before the floor"),
+    string.format("al_floor:DEFEND_ALARM_MIN_COST — the discount can never take the trip below this. %s",
+                  (bd and bd.floored) and "IT BIT: the raw net was lower and was clamped up."
+                                       or "Not binding here (the raw net is at or above it)."),
+    string.format("al_dij:%s", (bd and bd.dij_why) or "-"),
+    string.format("al_enemy:condition 1 — a hostile tank the engine is showing us THIS TICK within %d euclidean tiles of the pill. Not a remembered sighting and not a ghost. %s",
+                  C.DEFEND_ALARM_ENEMY_TILES or 11,
+                  a.enemy and string.format("Nearest is tank #%s at %.1f tiles.",
+                                            tostring(a.enemy.id or "?"), a.enemy_d or 0)
+                          or "Nothing hostile is visible in the ring, so the alarm is OFF."),
+    string.format("al_trig:condition 2 — (a) an enemy hit the pill inside the last %d ticks [%d hit(s)%s], OR (b) a wall/hostile pill went up inside %d tiles of it in that window WITH a hostile LGM seen in the same stamp [%s]. The OBJECT_HOSTILE bit on the LGM is the whole attribution; no ally build claim is consulted.",
+                  a.win or 250, a.hits or 0,
+                  a.hit_age and string.format(", newest %dt ago (%s)", a.hit_age,
+                                              tostring(a.hit_src or "?")) or "",
+                  C.DEFEND_ALARM_BUILD_RADIUS or 4,
+                  a.build and string.format("build (%d,%d) %s %dt ago, hostile LGM %s",
+                                            a.build.mx, a.build.my, a.build.what,
+                                            a.build_age or -1,
+                                            a.lgm_fresh
+                                              and string.format("seen %dt ago", a.lgm_age or -1)
+                                              or "NOT seen in the window")
+                          or "no build seen in the stamp"),
+    string.format("al_dist:condition 3 — we must be MORE than DEFEND_ALARM_MIN_DIST (%d) tiles from the pill. We are %.1f. Inside that radius there is nothing left to travel to, so the alarm drops and the goal with it.",
+                  a.min_dist or 9, a.dist or 0),
+    string.format("state:pill hp=%d/%d, hits taken %d; watch=%s",
+                  hp, C.PILLS_MAX_HEALTH or 15,
+                  math.max(0, (C.PILLS_MAX_HEALTH or 15) - hp),
+                  p._alarm_watch_tick and "on the alarm watch list" or "not watched"),
+  }
+  return table.concat(segs, "|")
+end
+
+-- eval_defend_pill_alarm — the ALARM MODE pool.  Every built team pill still
+-- gets a row (so the panel never goes blank and a reject is visible with its
+-- reason); only alarmed pills bid.
+local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
+  local now  = state.tick or 0
+  local rows = BRAIN_POOL_VIZ and {} or nil
+  local best, best_id, best_cost, best_bd, best_a = nil, nil, math.huge, nil, nil
+  -- BY ID, not pairs order: the pool must be identical on every machine and
+  -- every replay, and a tie between two equally-priced pills must not depend
+  -- on the hash order of world.pills.
+  local ids = {}
+  for id in pairs(world.pills) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local p = world.pills[id]
+    if p and (p.owner == "friendly" or p.owner == "allied")
+       and not (p.in_tank or p.carrier or p._synth_carry) then
+      local hp = p.health or 0
+      local reject_key, reject_txt, a = nil, nil, nil
+      if hp == 0 then
+        reject_key, reject_txt = "dead", "dead"
+        a = { dist = U.edist(tmx or 0, tmy or 0, p.mx, p.my),
+              min_dist = C.DEFEND_ALARM_MIN_DIST or 9,
+              win = C.DEFEND_ALARM_WINDOW_TICKS or 250, hits = 0 }
+      else
+        local on, why, key
+        on, why, key, a = M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
+        if not on then
+          reject_key = "alarm_off:" .. key
+          reject_txt = "alarm_off:" .. why
+        end
+      end
+      local cost, bd = nil, nil
+      if not reject_key then
+        bd = {}
+        local base = C.DEFEND_ALARM_BASE_COST or 100
+        local disc = C.DEFEND_ALARM_HIT_DISCOUNT or 10
+        local flr  = C.DEFEND_ALARM_MIN_COST or 50
+        bd.net_raw = base - (a.hits or 0) * disc
+        bd.net = bd.net_raw
+        if bd.net < flr then bd.net = flr; bd.floored = true end
+        local tcost, method, stop_i, nsteps, smx, smy =
+              defend_alarm_travel(p, boat)
+        if tcost == nil then
+          reject_key, reject_txt = "alarm_off:" .. ALARM_R_NO_PATH,
+                                   "alarm_off:" .. ALARM_R_NO_PATH
+          bd = nil
+        else
+          bd.dij, bd.dij_method = tcost, method
+          bd.dij_stop_i, bd.dij_steps = stop_i, nsteps
+          bd.dij_mx, bd.dij_my = smx, smy
+          if method == "path" then
+            bd.dij_chip = string.format("%.0f stop%dt %d/%d", tcost,
+                                        C.DEFEND_ALARM_DIJ_STOP_TILES or 9,
+                                        stop_i or 0, nsteps or 0)
+            -- The long "How computed" prose is for the panel only; building it
+            -- on a production tick that will never render a row is pure waste.
+            bd.dij_why = rows and string.format(
+              "the Dijkstra path to the pill, priced only as far as the stop ring: the slate's running cost AT the first traced tile (%d,%d) whose distance to the pill is <= DEFEND_ALARM_DIJ_STOP_TILES (%d). That is step %d of the %d-step trace; the remaining %d step(s) are NOT charged. A slate cost IS the running sum from the tank, so no per-step arithmetic is possible or needed.",
+              smx or 0, smy or 0, C.DEFEND_ALARM_DIJ_STOP_TILES or 9,
+              stop_i or 0, nsteps or 0, math.max(0, (nsteps or 0) - (stop_i or 0)))
+          else
+            bd.dij_chip = string.format("%.0f disc%dt", tcost,
+                                        C.DEFEND_ALARM_DIJ_STOP_TILES or 9)
+            bd.dij_why = rows and string.format(
+              "FALLBACK (%s): the cheapest reachable tile in the %d-tile stop disc around the pill (stride-2 sample, at (%d,%d)). Used because %s.",
+              method, C.DEFEND_ALARM_DIJ_STOP_TILES or 9, smx or 0, smy or 0,
+              (method == "trunc_disc")
+                and string.format("the C trace caps at 64 waypoints and this %d-step path was cut off before it reached the stop ring", nsteps or 0)
+                or "no Dijkstra slate has traced a path to the pill's neighbours yet")
+          end
+          cost = bd.net + tcost
+          bd.cost = cost
+          if cost < best_cost then
+            best, best_id, best_cost, best_bd, best_a = p, id, cost, bd, a
+          end
+          print2(string.format(
+            "DEFEND_ALARM_ON t=%d pill#%s@(%d,%d) cost=%.0f = net{%.0f = %d - %dx%d%s} + dij{%.0f %s}"
+            .. " enemy=#%s@%.1ft trigger=%s dist=%.1f",
+            now, tostring(id), p.mx, p.my, cost, bd.net, base, a.hits or 0, disc,
+            bd.floored and string.format(" floored to %d", flr) or "",
+            tcost, bd.dij_chip,
+            tostring(a.enemy and a.enemy.id or "?"), a.enemy_d or 0,
+            a.trig_build
+              and string.format("build(%d,%d) %s lgm=%dt", a.build.mx, a.build.my,
+                                a.build.what, a.lgm_age or -1)
+              or string.format("damage %d hits in %dt", a.hits or 0, a.win or 250),
+            a.dist or 0))
+        end
+      end
+      -- Every REJECTED row says so out loud, once per replan per pill, with
+      -- the failing condition and the numbers behind all three.  The
+      -- goal-validity hook in init.lua prints its own DEFEND_ALARM_OFF when it
+      -- DROPS a live goal; this one is the pool's side of the same statement,
+      -- and it is what makes "the row was rejected for reason X" checkable
+      -- from the log instead of only from the panel.
+      if reject_key and hp > 0 then
+        print2(string.format(
+          "DEFEND_ALARM_OFF t=%d pill#%s@(%d,%d) REJECT %s"
+          .. " enemy=%s trigger=(dmg %d in %dt%s, build %s) dist=%.1f (min %d)",
+          now, tostring(id), p.mx, p.my, tostring(reject_txt),
+          -- One whitespace-free token either way: this line is parsed by
+          -- tests/defend_alarm_test.py, and a field that sometimes contains
+          -- spaces is a field no regex can read.
+          a.enemy and string.format("#%s@%.1ft", tostring(a.enemy.id or "?"),
+                                    a.enemy_d or 0)
+                  or string.format("NONE<=%dt", C.DEFEND_ALARM_ENEMY_TILES or 11),
+          a.hits or 0, a.win or 250,
+          a.hit_age and string.format(" newest %dt %s", a.hit_age,
+                                      tostring(a.hit_src or "?")) or "",
+          a.build and string.format("(%d,%d) %s %dt lgm=%s", a.build.mx,
+                                    a.build.my, a.build.what, a.build_age or -1,
+                                    a.lgm_fresh
+                                      and string.format("%dt", a.lgm_age or -1)
+                                      or "NOT SEEN")
+                  or "none",
+          a.dist or 0, a.min_dist or 9))
+      end
+      if rows then
+        local formula
+        if reject_key then
+          formula = string.format("REJECT %s%s||%s", reject_txt,
+                                  (hp > 0) and defend_alarm_evidence(a) or "",
+                                  (hp > 0) and defend_alarm_detail(a, nil, p, hp)
+                                    or "state:hp=0 — rebuild/capture territory, not defend")
+        else
+          formula = string.format(
+            "ALARM al_base{%d} - al_hits{%d}*al_disc{%d} = al_net{%.0f}%s + al_dij{%s} = %.0f%s%s||%s",
+            C.DEFEND_ALARM_BASE_COST or 100, a.hits or 0,
+            C.DEFEND_ALARM_HIT_DISCOUNT or 10, bd.net_raw,
+            bd.floored and string.format(" al_floor{%d}", C.DEFEND_ALARM_MIN_COST or 50) or "",
+            bd.dij_chip, cost,
+            defend_alarm_evidence(a),
+            defend_alarm_sel_preview(state, tmx, tmy, p.mx, p.my, cost),
+            defend_alarm_detail(a, bd, p, hp))
+        end
+        rows[#rows + 1] = {
+          id = id, mx = p.mx, my = p.my,
+          cost = reject_key and 1e30 or cost,
+          formula = formula,
+          stale = 0,
+          -- The chip is capped at 24 chars by the renderer, which every
+          -- reason key here fits inside once prefixed.
+          reject = reject_key,
+          reject_remaining = 0,
+          tier = reject_key and ((hp == 0) and "dead" or "alarm_off") or "alarm",
+        }
+      end
+    end
+  end
+
+  state.defend_breakdown = rows and { tick = now, rows = rows } or nil
+  if not best then return nil end
+
+  local best_desc = ""
+  if BRAIN_POOL_VIZ then
+    best_desc = string.format(
+      "defend#%s@(%d,%d) ALARM al_base{%d} - al_hits{%d}*al_disc{%d} = al_net{%.0f}%s + al_dij{%s} = %.0f%s",
+      tostring(best_id), best.mx, best.my,
+      C.DEFEND_ALARM_BASE_COST or 100, best_a.hits or 0,
+      C.DEFEND_ALARM_HIT_DISCOUNT or 10, best_bd.net_raw,
+      best_bd.floored and string.format(" al_floor{%d}", C.DEFEND_ALARM_MIN_COST or 50) or "",
+      best_bd.dij_chip, best_cost, defend_alarm_evidence(best_a))
+  end
+  -- Alarm mode is a TRAVEL-AND-FIGHT goal and nothing else: no heat, no watch,
+  -- no repair handoff (see the block comment above).  The destination is the
+  -- pill itself; condition 3 drops the alarm at MIN_DIST, so the tank is
+  -- released before it ever grinds against the impassable pill tile.
+  return {
+    cost = best_cost,
+    goal = { kind = "defend_pill", mx = best.mx, my = best.my,
+             wx = U.m2w(best.mx), wy = U.m2w(best.my),
+             target_id = best_id,
+             alarm = true,
+             pill_mx = best.mx, pill_my = best.my },
+    desc = best_desc,
+    cands = rows,
+  }
+end
+
 -- eval_defend_pill — internal scoring pool over ALL BUILT team pills
 -- (own "friendly" pills AND teammates' "allied" pills).
 -- The legacy implementation (single perc.pill_under_attack target, silent
@@ -4640,6 +5274,12 @@ end
 -- travel is O(1) dij-slate lookups per pill (defend_travel_cost — the
 -- standoff-disc price, not the walk-right-up-to-it price).
 local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
+  -- ALARM MODE (2026-09-06) replaces this whole evaluator.  One branch, taken
+  -- before anything below runs, so with the knob false (PRESETS.keel) the keel
+  -- path is bit-for-bit what it was.
+  if C.DEFEND_ALARM_MODE then
+    return eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
+  end
   local now = state.tick or 0
   local rows = BRAIN_POOL_VIZ and {} or nil
 
@@ -6594,6 +7234,13 @@ local function filter_repair_pill(obj, state, info)
       return false
     end
   end
+  -- The OTHER ally interest in a corpse -- "I am driving over to scoop it" --
+  -- is NOT filtered out here, deliberately. It is priced at INF with the reason
+  -- on the row instead (search ally_capturing in the pool-5 block below), for
+  -- the always-show rule the sibling builder_can split states in full: a row
+  -- that reads `REJECT ally_capturing (p3, 42t)` is how the guard is checked
+  -- against the BUILDER strip's matching row. INF cannot win a competition, so
+  -- the refusal is just as hard as a `return false` here would be.
   if C.REPAIR_FIX_ENABLED and obj.health == 0 then
     print2(string.format("REPAIR_DEAD_FILTER t=%d pill@(%d,%d) dead trees=%d/%d %s", state and state.tick or 0, obj.mx, obj.my, info.trees or 0, C.REPAIR_DEAD_MIN_TREES or 4, ((info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4)) and "REJECT(low_trees)" or "enqueue"))
     if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
@@ -9525,8 +10172,12 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Check preconditions that would skip entire pools
-  local needs_resupply = (info.armour <= C.ARMOUR_LOW or info.shells <= C.SHELLS_LOW)
+  -- Check preconditions that would skip entire pools.
+  -- needs_resupply is the REFUEL CANDIDACY test (see refuel_need): the low
+  -- watermarks, plus below-full when REFUEL_TOPOFF_CANDIDATE is on.
+  -- has_shells is NOT part of that and keeps the raw SHELLS_LOW line — it
+  -- gates offence (pill takes), which is a different question.
+  local needs_resupply = refuel_need(state, info)
   local has_shells = info.shells > C.SHELLS_LOW
   local perc = state.perc
 
@@ -10104,8 +10755,10 @@ local function get_formula_inner(e)
       local _fm = e._fill_mult or 1
       local _lgm = e._lgm_wait_floor
       _shape_head = string.format(
-        " × ur{%.2f} - def{%.0f} × fill{%.2f}%s",
-        _u, _db, _fm,
+        " × ur{%.2f} - def{%.0f} × mult{%.2f fill %.2f sh %d/%d arm %d/%d} scar{%.2f}%s",
+        _u, _db, _fm, e._fill or 0,
+        e._sh or 0, e._sh_target or 0, e._arm or 0, e._arm_target or 0,
+        e._scarcity or 1,
         _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
       local _arm     = e._arm or 0
       local _sh      = e._sh or 0
@@ -10127,14 +10780,23 @@ local function get_formula_inner(e)
         _arm_def, _sh_def, math.max(_arm_def, _sh_def), C.REFUEL_DEFICIT_BONUS, _db)
       local _d_fill  = (_fm > 1.0)
         and string.format(
-          "fill=%.2f (above LOW) → 1 + %.2f² x (%.2f[FULL_MULT]-1) = %.2f",
-          _fill, _fill, C.REFUEL_FULL_COST_MULT, _fm)
+          "fill=%.2f = min((sh %d-%d)/(%d-%d), (arm %d-%d)/(%d-%d)) → "
+          .. "1 + %.2f² x (%.2f[FULL_MULT]-1) x %.2f[scarcity] = %.2f",
+          _fill,
+          _sh, C.SHELLS_LOW, e._sh_target or 0, C.SHELLS_LOW,
+          _arm, C.ARMOUR_LOW, e._arm_target or 0, C.ARMOUR_LOW,
+          _fill, C.REFUEL_FULL_COST_MULT, e._scarcity or 1, _fm)
         or  "fill=0 (at/below LOW thresholds) → 1.00"
+      local _d_scar  = string.format(
+          "scarcity=%.2f = 1 + %.2f[RATIO_K] x max(0, team/friendly_bases - 1)"
+          .. " + %.2f[LOCAL_K] x allies within %d tiles, capped at %.2f",
+          e._scarcity or 1, C.REFUEL_SHARE_RATIO_K or 0, C.REFUEL_SHARE_LOCAL_K or 0,
+          C.REFUEL_SHARE_LOCAL_TILES or 20, C.REFUEL_SHARE_SCARCITY_CAP or 8.0)
       local _d_lgm   = _lgm
         and string.format("LGM returning, at this base → floor=%.0f (cost capped)", _lgm)
         or  "no LGM-wait active → no floor"
-      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|lgm:%s",
-        _d_urgency, _d_def, _d_fill, _d_lgm)
+      _shape_detail = string.format("|urgency:%s|deficit:%s|fill:%s|scarcity:%s|lgm:%s",
+        _d_urgency, _d_def, _d_fill, _d_scar, _d_lgm)
     end
 
     local _danger_pen = C.REFUEL_DANGER_PENALTY or (1 / 0.75)
@@ -10145,13 +10807,18 @@ local function get_formula_inner(e)
         "|danger:danger_val>0 (exposed base) → multiply final cost by %.2f[REFUEL_DANGER_PENALTY]",
         _danger_pen)
       or ""
-    local _mine_token = (e._mine_cost and e._mine_cost > 0)
-      and string.format(" + mine{%.0f}", e._mine_cost) or ""
-    local _mine_detail = (e._mine_cost and e._mine_cost > 0)
-      and string.format(
-        "|mine:hoard surcharge %.0f (mines past %d[REFUEL_MINE_FREE]) — applied ONLY at the base you're parked on, to push a mine-stuffed tank to dump",
-        e._mine_cost, C.REFUEL_MINE_FREE)
-      or ""
+    -- Mine-hoard chip. Shown whenever there IS a hoard at this base, charged or
+    -- waived, so a 0 that was waived can never be mistaken for "no mines".
+    -- Same text the REFUEL_SHAPE debug line prints (mine_chip is shared).
+    local _mine_token, _mine_detail = "", ""
+    if e._mine_d and e._mine_d.over > 0 then
+      local _mh, _mw = mine_chip(e._mine_d)
+      _mine_token  = string.format(" + mines{%s}", _mh)
+      _mine_detail = "|mines:" .. _mw
+        .. ". Charged ONLY at the base you're parked on, to push a mine-stuffed"
+        .. " tank off the pad; waived while that base can still hand it a"
+        .. " resource it is short of (C.REFUEL_MINE_HOARD_NEEDS_SUPPLY)."
+    end
     local _hop_token = (e._hop and e._hop > 0)
       and string.format(" + hop{%.0f}", e._hop) or ""
     local _hop_detail = (e._hop and e._hop > 0)
@@ -11992,8 +12659,10 @@ function M.step_eval_queue(state, world, info)
         local _bc_eta = bpool.builder_can_repair(state, world, info, obj)
         if _bc_eta then
           c = 1e30
+          -- The REPAIR leash, which is what builder_can_repair actually
+          -- measured against (11 under BUILDER_POOL_REPAIR_LINEAR, 8 without).
           entry_skipped_builder = string.format("builder_can (leash %d, eta %d)",
-                                                C.BUILDER_POOL_LEASH or 8, _bc_eta)
+                                                bpool.repair_leash(), _bc_eta)
           -- Edge-triggered on the pill: a committed relocate that finally gets
           -- close enough should produce ONE line saying the hand-off happened,
           -- not one per re-eval for the rest of the game.
@@ -12009,6 +12678,40 @@ function M.step_eval_queue(state, world, info)
           end
         elseif state._rsplit_seen then
           state._rsplit_seen[id] = nil
+        end
+      end
+
+      -- ALLY CAPTURE GUARD (2026-09-05). A dead friendly pill an ALLY has
+      -- advertised as its capture_pill / pill_place target is that ally's
+      -- pickup: rebuilding it in place makes it a live friendly pill, which is
+      -- undriveable, so the scoop and the kill that produced the corpse are
+      -- both wasted. filter_repair_pill's own dead-pill rule already covers the
+      -- case where WE could take the corpse (capture outranks rebuild); this is
+      -- the same rule for a teammate, and it is the only thing that covers the
+      -- corner where capture rejects for us (blocked / stale tile) but the ally
+      -- can still drive over. Reason and expiry: builder_pool.ally_capture_on.
+      -- INF + the chip rather than a filter drop, for the always-show rule.
+      if pool_idx == 5 and (obj.health or 0) == 0
+         and C.BUILDER_POOL_ALLY_CAPTURE_GUARD and not entry_skipped_builder then
+        local _acap = bpool.ally_capture_on(state, info, obj.mx, obj.my, id, now)
+        if _acap then
+          c = 1e30
+          entry_skipped_builder = string.format("ally_capturing (p%d, %dt)",
+                                                _acap.pn, _acap.age)
+          -- Edge-triggered on the pill, like REPAIR_SPLIT above: one line when
+          -- the block starts, not one per re-eval for as long as it lasts.
+          state._racap_seen = state._racap_seen or {}
+          if state._racap_seen[id] ~= _acap.pn then
+            state._racap_seen[id] = _acap.pn
+            print2(string.format(
+              "REPAIR_ALLY_CAPTURE t=%d pill#%s@(%d,%d) hp=0 REJECT %s"
+              .. " -- p%d advertised %s on it, and a rebuilt pill cannot be"
+              .. " picked up", now, tostring(id), obj.mx, obj.my,
+              entry_skipped_builder, _acap.pn,
+              ally_state.get_key(_acap.pn, "goal")))
+          end
+        elseif state._racap_seen then
+          state._racap_seen[id] = nil
         end
       end
 
@@ -12763,7 +13466,7 @@ local function sync_ally_claimed_rejects(state, info, panel_refresh)
       end
       if blitz_open then
         -- Squad cap: a blitz is at most a commander + SQUAD_MAX_SIZE soldiers
-        -- (2 tanks total). If the squad on this pill is already full and we're
+        -- (4 tanks total by default). If the squad on this pill is already full and we're
         -- not part of it, REJECT (blitz_full) rather than offering it as a
         -- joinable candidate — stops a 3rd tank piling onto a full take. The
         -- count is role-agnostic (any ally broadcasting attack_pill/capture_pill
@@ -13597,9 +14300,10 @@ function M.finalize_pools(state, world, info)
   -- causes — (a) no partial at all (build_eval_queue didn't queue refuel this
   -- cycle, e.g. needs_refuel was false), (b) candidates existed but ALL got
   -- reject-flagged (lists each id:reason), (c) a winner was chosen.
+  refuel_need(state, info)   -- keep the topoff tag current (see goal_selection)
   if BRAIN_DEBUG_MODE then
     if not pr1 then
-      print2(string.format("REFUEL_FINALIZE t=%d NO PARTIAL %s — refuel not queued this cycle (needs_refuel false / queue not built)", state.tick or 0, M.refuel_mult_label()))
+      print2(string.format("REFUEL_FINALIZE t=%d NO PARTIAL %s topoff=%s — refuel not queued this cycle (needs_refuel false / queue not built)", state.tick or 0, M.refuel_mult_label(), state._refuel_topoff_only and "on" or "off"))
     else
       local nc = pr1.candidates and #pr1.candidates or 0
       local nrej, nscored, nunscored = 0, 0, 0
@@ -13616,7 +14320,7 @@ function M.finalize_pools(state, world, info)
           end
         end
       end
-      print2(string.format("REFUEL_FINALIZE t=%d candidates=%d scored=%d rejected=%d UNSCORED=%d winner=%s cost=%s %s | scored=[%s] unscored=[%s]%s", state.tick or 0, nc, nscored, nrej, nunscored, tostring(pr1.best_id or "NONE"), pr1.best_obj and string.format("%.0f", pr1.best_cost or -1) or "NONE", M.refuel_mult_label(), table.concat(sc_list, ","), table.concat(un_list, ","), (#rej_list > 0) and (" rejects=[" .. table.concat(rej_list, ",") .. "]") or ""))
+      print2(string.format("REFUEL_FINALIZE t=%d candidates=%d scored=%d rejected=%d UNSCORED=%d winner=%s cost=%s %s topoff=%s | scored=[%s] unscored=[%s]%s", state.tick or 0, nc, nscored, nrej, nunscored, tostring(pr1.best_id or "NONE"), pr1.best_obj and string.format("%.0f", pr1.best_cost or -1) or "NONE", M.refuel_mult_label(), state._refuel_topoff_only and "on" or "off", table.concat(sc_list, ","), table.concat(un_list, ","), (#rej_list > 0) and (" rejects=[" .. table.concat(rej_list, ",") .. "]") or ""))
     end
   end
   if pr1 and pr1.best_obj then
@@ -13690,8 +14394,11 @@ function M.finalize_pools(state, world, info)
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
-      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
-             bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells) or "",
+      desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d/%d sh=%d/%d%s",
+             bid, base.mx, base.my, bscore, urgency, cost,
+             info.armour, state.armour_target or C.TANK_FULL_ARMOUR,
+             info.shells, state.shell_target or C.TANK_FULL_SHELLS,
+             state._refuel_topoff_only and " topoff=on" or "") or "",
       cands = disp_cands,
     }
   else
@@ -15238,7 +15945,13 @@ local function goal_selection(state, world, info, quiet)
     -- already baked the multiplicative urgency into pool_cache[1].cost,
     -- so we recompute it here purely for the breakdown display.
     local _ref_bonus, _ref_mult, _ref_fill, _ref_scarcity, _ref_mine_cost,
-          _ref_urgency, _ref_arm_def, _ref_sh_def = refuel_shape(info, state, now)
+          _ref_urgency, _ref_arm_def, _ref_sh_def, _ref_mine_d = refuel_shape(info, state, now)
+    -- Refresh the top-off tag. build_eval_queue (its other writer) only rebuilds
+    -- when the cost cache goes stale, up to 100 ticks apart, so the tag on the
+    -- REFUEL_SHAPE / row-desc lines would otherwise describe a tank state that
+    -- is no longer true. Unconditional, not debug-gated: nothing decides on it,
+    -- but prod and the recorded brain must still set it the same way.
+    refuel_need(state, info)
     -- Stash on every pool-1 cache entry so the panel sees the same shape
     -- it'd see if it called the live computation itself. _lgm_wait_floor
     -- starts as nil and only gets set on the at-this-base entry below.
@@ -15254,8 +15967,13 @@ local function goal_selection(state, world, info, quiet)
           -- Mine-hoard surcharge only applies to the base we're parked on (see
           -- the cost path below) — show 0 on every other base so the panel matches.
           e._mine_cost      = (e._mx == tmx and e._my == tmy) and _ref_mine_cost or 0
+          -- The waive decision only means anything at the base we're parked
+          -- on, which is the only row that can be charged the surcharge.
+          e._mine_d         = (e._mx == tmx and e._my == tmy) and _ref_mine_d or nil
           e._arm            = info.armour
           e._sh             = info.shells
+          e._arm_target     = state.armour_target or C.TANK_FULL_ARMOUR
+          e._sh_target      = state.shell_target  or C.TANK_FULL_SHELLS
           e._arm_def        = _ref_arm_def
           e._sh_def         = _ref_sh_def
           e._lgm_wait_floor = nil
@@ -15384,6 +16102,33 @@ local function goal_selection(state, world, info, quiet)
           -- a mine-heavy tank refuse to refuel; the surcharge is exponential and
           -- uncapped, so on remote candidates it dwarfs the real cost).
           local final_cost = base_cost * mult + (at_this_base and _ref_mine_cost or 0)
+          -- Every factor behind the multiplier, on one line: the ramp is the
+          -- whole mechanism that decides whether a top-off beats real work, and
+          -- `x2.75` on its own is not something you can check by hand.
+          -- The mine chip is printed whenever there is a hoard to price at THIS
+          -- base, charged or waived, so a reader can always see the surcharge
+          -- that was (or was not) added and why. Built outside the debug gate is
+          -- pointless work, so it is built here — nothing decides on it.
+          local _mine_seg = ""
+          if BRAIN_DEBUG_MODE then
+            if at_this_base and _ref_mine_d and _ref_mine_d.over > 0 then
+              local _mh, _mw = mine_chip(_ref_mine_d)
+              _mine_seg = string.format(" + mines{%s} [%s]", _mh, _mw)
+            end
+            print2(string.format(
+              "REFUEL_SHAPE t=%d base=(%d,%d) cached=%.1f - defic{%.1f} = %.1f x mult{%.3f}"
+              .. " [fill{%.3f} = (sh %d-%d)/(%d-%d) & (arm %d-%d)/(%d-%d), min;"
+              .. " 1 + fill^2 x (%.2f[FULL_MULT]-1) x scar{%.2f}]%s = %.1f topoff=%s",
+              now, entry.goal.mx or -1, entry.goal.my or -1,
+              entry.cost or 0, bonus, base_cost, mult,
+              _ref_fill,
+              info.shells or -1, C.SHELLS_LOW, state.shell_target or -1, C.SHELLS_LOW,
+              info.armour or -1, C.ARMOUR_LOW, state.armour_target or -1, C.ARMOUR_LOW,
+              C.REFUEL_FULL_COST_MULT, _ref_scarcity,
+              _mine_seg,
+              final_cost,
+              state._refuel_topoff_only and "on" or "off"))
+          end
           -- LGM-wait floor: clamp cost down when waiting for LGM.
           -- Floor scales with threat at the base: safe spots clamp lower so
           -- sitting still is cheaper when there's no reason to move. Linear
@@ -17082,14 +17827,34 @@ function M.warm_ready(state)
 end
 
 function M.get_pool_breakdown_json(state)
-  -- Run the ally-claimed REJECT sync every tick the grid is read so
-  -- the displayed _reject flags track live ally_state without waiting
-  -- for the next replan cycle.
+  -- THIS FUNCTION IS A REPORT. IT MUST NOT ADVANCE BRAIN STATE.
+  --
+  -- The host calls it once per bot per tick while recording (winbolods
+  -- -brain-debug, BrainTest's pool panel) and NEVER in a production game.
+  -- Anything it mutates is therefore state the recorded brain has and the
+  -- production brain does not -- a different brain, on the recorder's
+  -- schedule rather than the replan's.
+  --
+  -- It used to open with a refresh of the panel's reject flags:
+  --
+  --     sync_ally_claimed_rejects(state, nil, true)
+  --     apply_blitz_target(state, state._last_info)
+  --     apply_blitz_join_discount(state, state._last_info, state.world)
+  --     apply_blitz_capture_defer(state, state._last_info)
+  --
+  -- "so the displayed _reject flags track live ally_state without waiting for
+  -- the next replan cycle".  All four write cost_cache / pool state that
+  -- goal_selection then reads, and M.finalize_pools already runs the same four
+  -- on the real per-tick path -- so these were a SECOND application on a
+  -- different clock.  On seed 1 that repriced attack_pill at brain tick 15561
+  -- and the recorded bot 1 stayed on attack_pill where production switched to
+  -- defend_pill (found 2026-09-06; -bd-nopool, which skips this call, made the
+  -- recorded game byte-identical to production again).
+  --
+  -- Dropping them also makes the panel HONEST: it now shows the reject flags
+  -- the brain actually decided on at the last replan, not a fresher set the
+  -- brain never used.
   if state.player_number then _SELF_PN = state.player_number end
-  sync_ally_claimed_rejects(state, nil, true)
-  apply_blitz_target(state, state._last_info)
-  apply_blitz_join_discount(state, state._last_info, state.world)
-  apply_blitz_capture_defer(state, state._last_info)
   if not BRAIN_POOL_VIZ then
     return string.format(
       '{"phase":"%s","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"off","label":"Pool viz","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"BRAIN_POOL_VIZ is off","stale":-1,"active":false,"imminent":false,"reject":null}]}]}',
@@ -17112,10 +17877,15 @@ function M.get_pool_breakdown_json(state)
     local li = state._last_info
     if li and li.armour then
       -- Same shared shape the real cost path uses (scarcity + mine surcharge).
-      local bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def =
+      local bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def, mine_d =
         refuel_shape(li, state, state.tick or 0)
+      -- The surcharge is only ever charged at the base under the tank, so only
+      -- that row gets the mines chip — same rule the cost path applies.
+      local _ltmx = li.tankx and bit.rshift(li.tankx, 8) or nil
+      local _ltmy = li.tanky and bit.rshift(li.tanky, 8) or nil
       for _, e in pairs(cache) do
         if e._p == 1 then
+          local _here = (_ltmx ~= nil and e._mx == _ltmx and e._my == _ltmy)
           e._urgency     = urgency
           e._base_floor  = C.REFUEL_BASE_COST
           e._defic_bonus = bonus
@@ -17123,6 +17893,7 @@ function M.get_pool_breakdown_json(state)
           e._fill        = fill
           e._scarcity    = scarcity
           e._mine_cost   = mine_cost
+          e._mine_d      = _here and mine_d or nil
           e._arm         = li.armour
           e._sh          = li.shells or 0
           e._arm_def     = arm_def
@@ -17604,8 +18375,11 @@ function M.get_pool_breakdown_json(state)
         detail_map[#detail_map + 1] = string.format(
           "suicider:pill_suicider role (source=%s%s) -> this goal kind (%s) costs x%.1f (attack_pill and the refuel group are exempt; defend_pill x%.1f, everything else x%.1f)",
           tostring(state.suicider_src or "?"),
-          _sui_bs and string.format(", TEMPORARY for blitz pill #%s designated by p%s",
-                                    tostring(_sui_bs.pill), tostring(_sui_bs.by)) or "",
+          _sui_bs and string.format(", TEMPORARY for blitz pill #%s designated by p%s, %s",
+                                    tostring(_sui_bs.pill), tostring(_sui_bs.by),
+                                    (_sui_bs.why == "contested")
+                                      and "contested{yes -- a hostile tank was within BLITZ_CONTESTED_RANGE of that pill, so BLITZ_CONTESTED_SUICIDERS of the blitz were designated}"
+                                      or  "contested{no -- BLITZ_MIN_SUICIDERS quota top-up}") or "",
           tostring(w.kind or (gc and gc.kind) or pname), suicider_mult,
           C.PILL_SUICIDER_DEFEND_MULT or 1.0, C.PILL_SUICIDER_OTHER_MULT or 1.0)
       end

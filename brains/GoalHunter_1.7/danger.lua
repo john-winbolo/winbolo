@@ -306,6 +306,272 @@ function M.shells_incoming_near(info, px, py, radius)
   return will_hit, detail
 end
 
+-- =========================================================================
+-- lgm_shell_gate — the HARD STOP on sending the man into a shell already in
+-- the air (2026-09-06, author's rule, verbatim):
+--
+--   "if we know we can predict shells for at most 63 ticks, let's do that,
+--    and if any shell will kill our builder (predict the builder for 63 ticks
+--    also) then we should HARD STOP sending it out right then. shells and
+--    builder are very predictable so this is worth doing. I realize a tank can
+--    impact reality quicker than 63 ticks but it's a good start."
+--
+-- WHY 63, AND IN WHAT UNIT. shells.c shellLifeTicks is
+-- `1 + 8 x range_tiles - 6` ENGINE ticks; a pillbox fires at
+-- PILLBOX_FIRE_DISTANCE 8.5 tiles, so 1 + 68 - 6 = 63 is the longest a shell
+-- can possibly live, and a tank's own shot lives 51. EVERY tick count in this
+-- function is an ENGINE tick -- the shell moves SHELL_SPEED (32 WU) per engine
+-- tick and the LGM walk sim counts engine ticks too. The brain thinks every
+-- SECOND engine tick, so `now` (a brain tick) never appears in here.
+--
+-- WHAT ACTUALLY KILLS THE MAN (src/bolo/lgm.c lgmDeathCheckAtPosition:1264,
+-- reached from shells.c only when a shell EXPLODES -- lines 368 and 452, the
+-- collision path and the end-of-life path). Given the explosion at (wx,wy):
+--
+--   solid = the explosion tile is BUILDING / HALFBUILDING / has a pillbox /
+--           has a base;
+--   not solid -> the man dies if euclidean dist(man, explosion) <=
+--           MAP_SQUARE_MIDDLE (128 WU, half a tile);
+--   solid    -> he dies only if his TILE is the explosion tile (he can stand
+--           on a base or on the pill he is working on; he can never stand in
+--           a wall).
+--
+-- A SHELL FLYING THROUGH THE MAN DOES NOT TOUCH HIM. That single fact is the
+-- shape of this whole function: the question is not "does the shell cross his
+-- path" (it usually does, and answering that would refuse every dispatch on a
+-- shelled lane forever) -- it is "does the shell END where he is standing".
+-- So each shell is flown forward and its ENDING is what gets tested, and a
+-- shell has exactly three ways to end (shells.c shellsUpdate/shellsCalcCollision):
+--
+--   1. it reaches a solid tile -- a wall, or a LIVE pillbox. The engine
+--      recentres the explosion on that tile, so only a man standing ON that
+--      tile dies. Stop tracking.
+--   2. it reaches OUR TANK's hull (within TANK_HIT_RADIUS, tank.h:102 = 112 WU)
+--      and we did not fire it -- a shell never hits its own owner. It explodes
+--      where it is, over open ground, so the 128-WU rule applies. This is the
+--      case that matters most: a round aimed at the tank, landing on the hull,
+--      with the man who has just stepped off it standing 60 WU away. Stop.
+--   3. it runs out of life -- ob.life ticks from now, exactly -- and explodes
+--      where it happens to be. 128-WU rule.
+--
+-- The tank is assumed to hold its ground for the window, which is the same
+-- assumption the man's walk already makes (it starts from where the tank is
+-- now). A tank that drives off makes the gate pessimistic, never blind.
+--
+-- Bases are deliberately NOT treated as stoppers even though the engine can
+-- explode a shell on one (basesCanHit depends on the shell's owner, which
+-- would have to be resolved against team state here). Flying on THROUGH a base
+-- tile can only ever add a refusal, never miss one, so the error is on the
+-- safe side.
+--
+-- WHAT THE BRAIN CAN SEE OF A SHELL (brain_data.c, bot branch):
+--   ob.x, ob.y     world position this tick
+--   ob.angle       the EXACT 8-bit bradian heading (ob.direction is the old
+--                  16-compass-point snap, +-11.25 deg, and is NOT used here)
+--   ob.life        remaining flight in engine ticks
+--   ob.owner       firing player number, 0xFF for a pillbox
+--   ob.info        HOSTILE / NEUTRAL bits; 0 = friendly
+-- Friendly shells are propagated too: a shell is a shell, and our own round
+-- landing on the man kills him exactly like anyone else's.
+--
+-- WHERE THE MAN WILL BE: cpf_lgm_walk_path, which is the SAME simulation
+-- lgm_trip prices the trip with (brain_pathfinder.c lgmTravelTicksCore), asked
+-- for its first LGM_SHELL_PREDICT_TICKS positions. He starts at the tank's
+-- TILE CENTRE, like every other lgm_trip call, and leaves on dispatch+1 -- the
+-- one-tick offset is at most 16 WU of walk against a 128 WU kill radius, so
+-- tick t of the walk is read as tick t of the shell. The window covers the
+-- WHOLE errand where the errand fits in it -- out, the LGM_BUILD_TIME stand on
+-- the target, and the walk home -- see man_at.
+--
+-- WHAT IT STILL CANNOT SEE, and the author already said so: "a tank can impact
+-- reality quicker than 63 ticks but it's a good start." Only shells ALREADY IN
+-- THE AIR are propagated. A pillbox that reloads while the man is out fires a
+-- round this gate was never shown, and the tank is assumed to hold its ground.
+-- The gate is a filter on what is knowable now, not a guarantee.
+-- =========================================================================
+
+-- Reused across calls: the walk path comes back as a flat pair list
+-- (x1,y1,x2,y2,...) written into this table by the C sim, so a gate that runs
+-- every tick a dispatch is possible allocates nothing.
+local WALK = {}
+
+-- Where the man is at engine tick `t` of the errand, from the walk WALK holds.
+--
+-- THE WHOLE ERRAND, not just the walk out. A short trip fits inside the
+-- window twice over -- one tile of grass is 16 ticks each way and the build is
+-- LGM_BUILD_TIME (20), so an errand next door is 52 of the 63 ticks -- and
+-- modelling him as STANDING on the target for the rest of the window is simply
+-- wrong about where he will be. It is also the half that gets him killed: the
+-- first arena run of this feature lost the man on his way HOME, to a round the
+-- gate had not been asked about because its model had him parked at the pill.
+--
+--   t in [1, nw]                  outbound, WALK[t]
+--   t in (nw, nw + dwell]         standing on the target, WALK[nw]
+--   t after that                  the same steps in reverse, back to the tank
+--   nw == 0 (adjacent target, or a first tile he cannot enter)  the tank tile
+local function man_at(nw, dwell, t, home_x, home_y)
+  if nw < 1 then return home_x, home_y end
+  local i
+  if t <= nw then
+    i = t
+  elseif t <= nw + dwell then
+    i = nw
+  else
+    i = nw - (t - nw - dwell)
+    if i < 1 then return home_x, home_y end     -- home, and staying there
+  end
+  return WALK[i * 2 - 1], WALK[i * 2]
+end
+
+-- Shell class name for the reason string / the deny key. There is no shell
+-- IDENTITY in the brain API (idnum carries angle+owner, not a serial), so the
+-- best a reason line can name is who fired it.
+local function shell_src(ob)
+  local owner = ob.owner or 0
+  if owner == 255 then return "pill" end
+  return "p" .. owner
+end
+
+-- Is (mx,my) a tile a shell explodes ON, in the engine's sense? Two of
+-- shellsCalcCollision's three terrain-ish stoppers:
+--   * impassable terrain -- BUILDING / HALFBUILDING (mapIsPassable);
+--   * a LIVE pillbox -- pillsIsPillHit requires armour > 0 and inTank == FALSE,
+--     so a CORPSE does not stop a shell (which is exactly the tile the man is
+--     usually walking to) and neither does one riding in somebody's tank.
+-- Bases are left out on purpose -- see the header. Owner does not enter into
+-- the pill test: pillsIsPillHit stops a shell on ANY live pill, including its
+-- own owner's.
+local function shell_stops_on(world, mx, my)
+  local tt = U.ttype(mx, my)
+  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end
+  local lst = world and world.pill_at and world.pill_at[my * 256 + mx]
+  if lst then
+    for i = 1, #lst do
+      local p = lst[i].pill
+      if p and (p.health or 0) > 0 and not p.in_tank then return true end
+    end
+  end
+  return false
+end
+
+-- M.lgm_shell_gate(world, info, dest_mx, dest_my)
+--   -> nil                 nothing in the air can reach him
+--   -> hit (table)         REFUSE. Fields, all of which the reason line and
+--                          the overlay are built from:
+--        t       ENGINE ticks from now at which it lands
+--        sx, sy  the shell's world position then (the impact point)
+--        lx, ly  the man's predicted world position then
+--        src     "p3" (a player) / "pill" (a NEUTRAL pillbox)
+--        how     which of the three endings: "wall" (a wall or live pill),
+--                "tank" (our hull), "expiry" (out of life), or the
+--                should-not-happen "unknown_life"
+--        solid   true when it was the same-tile rule that fired ("wall")
+--        walk_n  how many walk steps were simulated
+function M.lgm_shell_gate(world, info, dest_mx, dest_my)
+  if not C.BUILDER_POOL_SHELL_GATE then return nil end
+  local objs = info.objects
+  if not objs then return nil end
+
+  -- Cheapest possible bail: no shell anywhere in view, no walk sim at all.
+  -- ipairs, not `#objs`: the object array is a PERSISTENT table the host
+  -- overwrites in place and nils the tail of, so its length operator has no
+  -- guaranteed answer -- ipairs stops at the first nil, which is the count.
+  local any = false
+  for _, ob in ipairs(objs) do
+    if ob.type == OBJECT_SHOT then any = true; break end
+  end
+  if not any then return nil end
+
+  local N = C.LGM_SHELL_PREDICT_TICKS or 63
+  local KILL = C.LGM_SHELL_KILL_RADIUS_WU or 128
+  local KILL2 = KILL * KILL
+  local TANK_HIT2 = (C.TANK_HIT_RADIUS_WU or 112) ^ 2
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
+
+  -- The man's walk, same sim and same blessed destination as M.lgm_trip.
+  local nw = cpf_lgm_walk_path(tmx, tmy, dest_mx, dest_my, dest_mx, dest_my,
+                               N, C.BUILDER_POOL_LGM_STUCK_TICKS or 150, WALK)
+  local dwell = C.LGM_BUILD_TIME or 20
+  -- No step at all (adjacent target, blocked first tile): he is still a man
+  -- standing on the tank's tile, which is a position worth testing.
+  local home_x = tmx * 256 + 128
+  local home_y = tmy * 256 + 128
+
+  for _, ob in ipairs(objs) do
+    if ob.type == OBJECT_SHOT then
+      -- The shell's own clock. `life` is the engine's `length` -- the exact
+      -- number of ticks it has left -- so the expiry is a KNOWN tick, not a
+      -- range of guesses. A shell we somehow have no life for is treated as
+      -- able to expire on ANY tick of the window instead: pessimistic, never
+      -- blind. (It should not happen; a snapshot shell always has length >= 1.)
+      local life = ob.life or 0
+      local known_life = life > 0
+      -- The tick it explodes of its own accord, or nil when that is past the
+      -- horizon (it cannot be, at N = 63: shellLifeTicks caps there. Written
+      -- so that lowering LGM_SHELL_PREDICT_TICKS cannot invent an expiry at
+      -- the edge of the window for a shell that is still flying).
+      local expires_at = (known_life and life <= N) and life or nil
+      if not known_life or life > N then life = N end
+      local ours = (ob.owner == info.player_number)
+      local vx =  U.bsin_f(ob.angle or 0) * C.SHELL_SPEED
+      local vy = -U.bcos_f(ob.angle or 0) * C.SHELL_SPEED
+      local sx, sy = ob.x + 0.0, ob.y + 0.0
+      for t = 1, life do
+        sx = sx + vx
+        sy = sy + vy
+        if sx < 0x100 or sx > 0xFEFF or sy < 0x100 or sy > 0xFEFF then break end
+        local smx = bit.rshift(math.floor(sx), 8)
+        local smy = bit.rshift(math.floor(sy), 8)
+        local lx, ly = man_at(nw, dwell, t, home_x, home_y)
+        -- (1) a wall or a live pill: the engine recentres the explosion on
+        -- that tile, so only a man standing ON it dies.
+        if shell_stops_on(world, smx, smy) then
+          if bit.rshift(lx, 8) == smx and bit.rshift(ly, 8) == smy then
+            return { t = t, sx = smx * 256 + 128, sy = smy * 256 + 128,
+                     lx = lx, ly = ly, src = shell_src(ob), how = "wall",
+                     solid = true, walk_n = nw }
+          end
+          break
+        end
+        local dx = sx - lx
+        local dy = sy - ly
+        local near_man = (dx * dx + dy * dy) <= KILL2
+        -- (2) our own hull. A shell never hits the tank that fired it, so our
+        -- own rounds fly straight through.
+        if not ours then
+          local hx = sx - info.tankx
+          local hy = sy - info.tanky
+          if hx * hx + hy * hy < TANK_HIT2 then
+            if near_man then
+              return { t = t, sx = sx, sy = sy, lx = lx, ly = ly,
+                       src = shell_src(ob), how = "tank", solid = false,
+                       walk_n = nw }
+            end
+            break
+          end
+        end
+        -- (3) end of life, over open ground.
+        if near_man and (not known_life or t == expires_at) then
+          return { t = t, sx = sx, sy = sy, lx = lx, ly = ly,
+                   src = shell_src(ob), how = known_life and "expiry" or "unknown_life",
+                   solid = false, walk_n = nw }
+        end
+      end
+    end
+  end
+  return nil
+end
+
+-- Snapshot of the walk the last gate call simulated, for the overlay. Copied
+-- ONLY when the gate actually refuses (rare), so the common path stays free.
+function M.lgm_shell_gate_walk(hit)
+  local out = {}
+  local n = hit and hit.walk_n or 0
+  for i = 1, n * 2 do out[i] = WALK[i] end
+  return out, n
+end
+
 -- -------------------------------------------------------------------------
 -- Public: call once per tick (after world.update, before build decisions)
 -- -------------------------------------------------------------------------

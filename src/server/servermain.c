@@ -1185,6 +1185,35 @@ static void serverEmitFinalJson(ServerSim *sim, const char *dest,
     cJSON_AddNumberToObject(t, "kills",
                             (double)serverSimGetPlayerKills(sim, i));
     cJSON_AddNumberToObject(t, "deaths", (double)ti.deaths);
+    /* Per-cause split of the same death count, so a bench can tell a
+     * drowning from a shell without replaying the game. The five entries
+     * sum to "deaths". */
+    {
+      uint32_t causes[DEATH_CAUSE_NUM];
+      cJSON *dc = cJSON_AddObjectToObject(t, "deaths_by");
+      serverSimGetDeathCauses(sim, i, causes);
+      if (dc != NULL) {
+        /* "drowned" stays the TOTAL number of drownings so readers written
+         * before the split keep working; "drowned_unforced" is the subset
+         * of those in which no shell came near the tank in the last second
+         * (the bot drove itself in).  Summing every key would therefore
+         * double-count -- the independent causes are drowned + shell_tank +
+         * shell_pill + mine + other, and those sum to "deaths". */
+        cJSON_AddNumberToObject(dc, "drowned",
+                                (double)(causes[DEATH_CAUSE_DROWNED] +
+                                         causes[DEATH_CAUSE_DROWNED_UNFORCED]));
+        cJSON_AddNumberToObject(dc, "drowned_unforced",
+                                (double)causes[DEATH_CAUSE_DROWNED_UNFORCED]);
+        cJSON_AddNumberToObject(dc, "shell_tank",
+                                (double)causes[DEATH_CAUSE_SHELL_TANK]);
+        cJSON_AddNumberToObject(dc, "shell_pill",
+                                (double)causes[DEATH_CAUSE_SHELL_PILL]);
+        cJSON_AddNumberToObject(dc, "mine",
+                                (double)causes[DEATH_CAUSE_MINE]);
+        cJSON_AddNumberToObject(dc, "other",
+                                (double)causes[DEATH_CAUSE_OTHER]);
+      }
+    }
     if (ti.has_tank) {
       cJSON_AddNumberToObject(t, "x", (double)ti.world_x / 256.0);
       cJSON_AddNumberToObject(t, "y", (double)ti.world_y / 256.0);

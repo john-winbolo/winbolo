@@ -304,6 +304,26 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 	position = *value;
 
+	/* --- near-shell memory, observation only -------------------------------
+	 * Age every tank's "a shell was near me" countdown by one game tick.
+	 * shellsUpdate is called exactly once per game tick from
+	 * serverSimTick's world-systems block, so this is the tick clock -- no
+	 * wall clock, no allocation, and the loop order is the caller's compacted
+	 * tank array, so it is order-independent (each tank only touches its own
+	 * counter).  Server only: the client never reads the counter, and its
+	 * prediction re-runs ticks, which would age it more than once.
+	 *
+	 * The drowning site in tankUpdate reads this to split
+	 * DEATH_CAUSE_DROWNED from DEATH_CAUSE_DROWNED_UNFORCED.  Nothing else
+	 * in the sim reads it. */
+	if (sim->isServer) {
+		for (count = 0; count < numTanks; count++) {
+			if (tk[count] != NULL && tk[count]->shellNearFrames > 0) {
+				tk[count]->shellNearFrames--;
+			}
+		}
+	}
+
 	/* In the old dual-context architecture, single-player ran game logic
 	 * on the client side so isServer was forced FALSE.  In the new
 	 * server-authoritative architecture the server sim passes isServer=TRUE
@@ -329,6 +349,34 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			shellAdvance1Tick(&newX, &newY,
 			                  &position->xAcc, &position->yAcc,
 			                  position->xStep, position->yStep);
+			/* Observation only: re-arm the near-shell memory of every tank
+			 * this shell passed close to.  Done before the collision test so
+			 * a shell that is about to impact still counts.  A tank's OWN
+			 * shell is skipped -- a bot fires constantly and its outgoing
+			 * shell sits inside the ring for the first few frames, which
+			 * would mark every self-inflicted drowning as "forced".  An
+			 * ally's shell is left counting: erring towards "forced" makes
+			 * DEATH_CAUSE_DROWNED_UNFORCED a conservative lower bound on
+			 * drownings the bot caused itself. */
+			if (sim->isServer) {
+				for (count = 0; count < numTanks; count++) {
+					int32_t nearDX;
+					int32_t nearDY;
+					if (tk[count] == NULL) {
+						continue;
+					}
+					if (gameSimGetTankPlayer(sim, &tk[count]) == position->owner) {
+						continue;
+					}
+					nearDX = (int32_t)newX - (int32_t)tk[count]->x;
+					nearDY = (int32_t)newY - (int32_t)tk[count]->y;
+					if (nearDX > -TANK_SHELL_NEAR_WU && nearDX < TANK_SHELL_NEAR_WU &&
+					    nearDY > -TANK_SHELL_NEAR_WU && nearDY < TANK_SHELL_NEAR_WU &&
+					    (nearDX * nearDX + nearDY * nearDY) < TANK_SHELL_NEAR_WU_SQUARED) {
+						tk[count]->shellNearFrames = TANK_SHELL_NEAR_MEMORY_FRAMES;
+					}
+				}
+			}
 			/* Check for colision */
 			uint8_t shellOutcome = SHELL_OUTCOME_IMPACT;
 			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks, position->compensationTicks, &shellOutcome)) == TRUE)
