@@ -41,6 +41,44 @@ end
 -- SRC_RANK ranks the classes so the worst evidence in the window wins.
 local SRC_RANK = { tank = 3, epill = 2, npill = 1 }
 
+-- =========================================================================
+-- ALARM MODE (2026-09-06) — the build STAMP, computed ONCE here at module
+-- load and never rebuilt.  Andrew's mechanism, verbatim: condition 1 puts a
+-- pill on a WATCH LIST, and "every tile within 4 tiles of a watched pill is
+-- covered by a precomputed stamp ... and watched for builds".
+--
+-- Flat {dx1,dy1,dx2,dy2,...} so the per-tick sweep is one numeric loop with
+-- no table allocation.  EUCLIDEAN disc (dx^2+dy^2 <= R^2), matching the metric
+-- the defend evaluator uses everywhere else — 49 tiles at R=4.
+--
+-- Only read while C.DEFEND_ALARM_MODE is true; building it costs one loop at
+-- require time either way, and nothing downstream sees it when the knob is off.
+-- =========================================================================
+local ALARM_STAMP = {}
+local ALARM_STAMP_N = 0
+do
+  local R = C.DEFEND_ALARM_BUILD_RADIUS or 4
+  for dy = -R, R do
+    for dx = -R, R do
+      if dx * dx + dy * dy <= R * R then
+        ALARM_STAMP[ALARM_STAMP_N + 1] = dx
+        ALARM_STAMP[ALARM_STAMP_N + 2] = dy
+        ALARM_STAMP_N = ALARM_STAMP_N + 2
+      end
+    end
+  end
+end
+-- Snapshot sentinel for "a deployed HOSTILE pill stands on this tile".  Kept
+-- out of the 0..13 terrain range so one number per tile carries both facts.
+local ALARM_HOSTILE_PILL = 100
+-- Terrain values that mean SOMEBODY BUILT HERE.  T_BUILDING is a finished
+-- wall, T_HALFBUILD is one going up (the LGM's first pass) — trigger 2b fires
+-- on either, because the point is to catch the build while it is happening.
+local ALARM_BUILT_TT = { [C.T_BUILDING] = "wall", [C.T_HALFBUILD] = "halfwall" }
+-- Cap on the per-pill enemy-hit ring.  A 15-hp pill cannot absorb more than
+-- 15 hits before it dies, so this can never truncate a live count.
+local ALARM_HIT_RING = 24
+
 -- Classify ONE visible shell by its muzzle. A shell flies in a straight line,
 -- so walk its direction BACKWARDS and see whether a live hostile/neutral
 -- pillbox centre sits on (or within PILL_SRC_ORIGIN_SLOP_WU of) that back-ray,
@@ -730,6 +768,158 @@ function M.update(state, world, info)
     end
   end
 
+  -- ----- ALARM MODE watch list + build stamp (2026-09-06) -----
+  -- Andrew's mechanism for defend_pill's alarm, verbatim: "condition 1 puts
+  -- the pill on a WATCH LIST; every tile within 4 tiles of a watched pill is
+  -- covered by a precomputed STAMP and watched for builds."
+  --
+  -- Runs EVERY tick (the evaluator runs only at replan cadence, and a wall can
+  -- go up and be finished between two replans) -- but its EXPENSIVE half, the
+  -- terrain sweep, is gated: see "The terrain sweep's gate" below.  The watch
+  -- test and the hostile-LGM scan are both info.objects walks and always run;
+  -- only the 49 U.ttype calls are conditional.  Writes three fields onto the
+  -- pill record, all read back by goals.defend_alarm_status:
+  --   _alarm_watch_tick  last tick a hostile tank was VISIBLE within
+  --                      DEFEND_ALARM_ENEMY_TILES.  Condition 1 itself is
+  --                      re-asked live by the evaluator; this is the watch
+  --                      list's own bookkeeping.
+  --   _alarm_lgm_tick    last tick a HOSTILE LGM (OBJECT_BUILDMAN with
+  --                      OBJECT_HOSTILE, classified in the enemy-LGM pass
+  --                      above) stood inside the stamp.  The hostile bit is
+  --                      the WHOLE attribution for trigger 2b — Andrew,
+  --                      2026-09-06: "if we know the LGM is an enemy, that's
+  --                      sufficient."  No ally build-claim lookup gates it.
+  --                      Doubles as the terrain sweep's gate.
+  --   _alarm_build       the newest build seen inside the stamp:
+  --                      { t, mx, my, what }.
+  --
+  -- The stamp snapshot (_alarm_terr) is PRIMED, not diffed, on the first
+  -- watched tick and after any gap in watching: we only claim to know what a
+  -- tile looked like while we were actually watching it, so a wall that went
+  -- up while no enemy was near is never reported as a fresh build.
+  --
+  -- Terrain is read through U.ttype — the change DETECTOR, which is the
+  -- correct reader for decision code (util.lua's header: ttype_peek is for
+  -- debug/viz-gated code only, precisely so the recorded and production brains
+  -- prime the same tiles).  This block is decision code, and it is skipped
+  -- entirely when DEFEND_ALARM_MODE is false, so the keel path reads no
+  -- terrain it did not read before.
+  if C.DEFEND_ALARM_MODE then
+    local win  = C.DEFEND_ALARM_WINDOW_TICKS or 250
+    local er   = C.DEFEND_ALARM_ENEMY_TILES or 11
+    local er2  = er * er
+    local br   = C.DEFEND_ALARM_BUILD_RADIUS or 4
+    local br2  = br * br
+    -- Tile -> deployed HOSTILE pill, built once for the whole sweep.
+    local hostile_tiles = nil
+    for _, p in pairs(world.pills) do
+      if (p.owner == "friendly" or p.owner == "allied")
+         and not (p.in_tank or p.carrier or p._synth_carry) then
+        -- Condition 1, on THIS tick's REAL sightings only.  enemy_tanks holds
+        -- what the engine actually showed us this tick; ghosts live in a
+        -- separate list and deliberately do not count — a remembered enemy is
+        -- not "an enemy within 11 tiles".
+        local watched = false
+        for i = 1, #enemy_tanks do
+          local e = enemy_tanks[i]
+          local ddx, ddy = e.mx - p.mx, e.my - p.my
+          if ddx * ddx + ddy * ddy <= er2 then watched = true; break end
+        end
+        if not watched then
+          -- Off the watch list: keep the snapshot (cheap, bounded by the pill
+          -- count) but mark it stale so the next sweep re-primes.
+          p._alarm_watch_gap = true
+        else
+          p._alarm_watch_tick = now
+          -- Hostile LGM inside the stamp — trigger 2b's attribution, and the
+          -- gate on the terrain sweep below.  This scan runs EVERY watched
+          -- tick and is NOT gated by anything: it walks the enemy-LGM list the
+          -- pass above already built from info.objects, touches no terrain, and
+          -- is what OPENS the gate — gating it on itself would close it
+          -- forever.  Radius is the STAMP's 4 tiles, not 3: trigger 2b counts a
+          -- build anywhere in the 4-tile stamp, so an LGM standing on the
+          -- outer ring building the outer ring has to register.
+          for i = 1, n_lgm do
+            local e = enemy_lgms[i]
+            local ddx, ddy = e.mx - p.mx, e.my - p.my
+            if ddx * ddx + ddy * ddy <= br2 then
+              p._alarm_lgm_tick = now
+              p._alarm_lgm_mx, p._alarm_lgm_my = e.mx, e.my
+              break
+            end
+          end
+        end
+        -- ── The terrain sweep's gate (2026-09-06, Andrew) ────────────────
+        -- 49 U.ttype calls per watched pill per tick is the expensive half of
+        -- this block, and almost all of it was wasted: trigger 2b does not
+        -- fire on a build ALONE, it fires on a build WITH a hostile LGM seen
+        -- in the same stamp inside the window.  So sweep only while that same
+        -- freshness holds.  Same predicate, same radius, same window as
+        -- goals.defend_alarm_status's `a.lgm_fresh` — evaluated at DETECTION
+        -- time instead of only at evaluation time.
+        --
+        -- Note it is "seen within the window", not "seen this tick": an LGM
+        -- that ducks out of sight leaves the gate open for the full 250 ticks,
+        -- which is exactly as long as a build it left behind could still arm
+        -- the trigger.  A build the sweep therefore skips is a build that could
+        -- not have raised the alarm anyway.
+        --
+        -- No LGM fresh -> not one terrain read for this pill this tick, and the
+        -- snapshot is marked stale so the resumed sweep PRIMES on its first
+        -- tick and only diffs from the next — the same rule as the
+        -- watching-gap case, so a change that happened while we were not
+        -- looking is never reported as new.
+        local lgm_fresh = watched and p._alarm_lgm_tick
+                          and (now - p._alarm_lgm_tick) <= win
+        if watched and not lgm_fresh then
+          p._alarm_watch_gap = true
+        elseif lgm_fresh then
+          if hostile_tiles == nil then
+            hostile_tiles = {}
+            for _, q in pairs(world.pills) do
+              if q.owner == "hostile" and (q.health or 0) > 0
+                 and not (q.in_tank or q.carrier or q._synth_carry) then
+                hostile_tiles[q.my * 256 + q.mx] = true
+              end
+            end
+          end
+          local snap = p._alarm_terr
+          local prime = (snap == nil) or p._alarm_watch_gap
+          if snap == nil then snap = {}; p._alarm_terr = snap end
+          p._alarm_watch_gap = nil
+          for i = 1, ALARM_STAMP_N, 2 do
+            local sx = p.mx + ALARM_STAMP[i]
+            local sy = p.my + ALARM_STAMP[i + 1]
+            if U.in_map(sx, sy) then
+              local key = sy * 256 + sx
+              local cur = hostile_tiles[key] and ALARM_HOSTILE_PILL
+                          or U.ttype(sx, sy)
+              if not prime then
+                local was = snap[key]
+                if was ~= nil and was ~= cur then
+                  local what = (cur == ALARM_HOSTILE_PILL) and "epill"
+                               or ALARM_BUILT_TT[cur]
+                  if what then
+                    p._alarm_build = { t = now, mx = sx, my = sy, what = what }
+                    print2(string.format(
+                      "DEFEND_ALARM_WATCH t=%d pill@(%d,%d) BUILD (%d,%d) %s"
+                      .. " (was tt=%d) lgm_seen=%s within r=%d win=%d",
+                      now, p.mx, p.my, sx, sy, what, was,
+                      p._alarm_lgm_tick
+                        and string.format("%dt ago", now - p._alarm_lgm_tick)
+                        or "never",
+                      br, win))
+                  end
+                end
+              end
+              snap[key] = cur
+            end
+          end
+        end
+      end
+    end
+  end
+
   -- ----- Ally-heating shell watch -----
   -- The under-attack alarm should fire only for shells that are NOT
   -- ours/allies. Every tick, examine shells within HEAT_ALLY_SHELL_RADIUS
@@ -902,6 +1092,30 @@ function M.update(state, world, info)
           print2(string.format(
             "PILL_HIT_SRC t=%d pill@(%d,%d) hp=%d hit_t=%d src=%s via=%s by=%s",
             now, p.mx, p.my, p.health or 0, hit, src, how, tostring(via)))
+          -- ALARM MODE trigger 2a (2026-09-06): a ring of ENEMY-attributed hit
+          -- TICKS per pill.  Neither existing field can answer "how many times
+          -- did an ENEMY hit this pill in the last 5 s": world.lua's p.hit_log
+          -- counts every hp drop whatever caused it, and p.last_hit_src only
+          -- remembers the classification of the LATEST one.  This is the only
+          -- place a hit is ever attributed, so the ring is appended here.
+          --   tank  — a hostile tank's aimed fire      -> enemy
+          --   epill — a HOSTILE pillbox's stray        -> enemy ("from an
+          --           enemy" covers enemy pills too, per the spec)
+          --   npill — a NEUTRAL pillbox's stray        -> NOT an enemy, ignored
+          -- Compacted to the window on write and capped, so it needs no
+          -- per-tick sweep of its own.
+          if C.DEFEND_ALARM_MODE and (src == "tank" or src == "epill") then
+            local ring = p._alarm_hits
+            if not ring then ring = {}; p._alarm_hits = ring end
+            local win = C.DEFEND_ALARM_WINDOW_TICKS or 250
+            local k = 0
+            for i = 1, #ring do
+              if now - ring[i].t <= win then k = k + 1; ring[k] = ring[i] end
+            end
+            for i = #ring, k + 1, -1 do ring[i] = nil end
+            ring[#ring + 1] = { t = hit, src = src, how = how }
+            if #ring > ALARM_HIT_RING then table.remove(ring, 1) end
+          end
         end
       end
     end

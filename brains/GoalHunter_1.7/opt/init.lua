@@ -4066,6 +4066,23 @@ function Brain.think(info)
       local p = W.pill_at(world, pmx, pmy)
       if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
          or p.health == 0 then goal_valid = false end
+      -- ALARM MODE (2026-09-06, C.DEFEND_ALARM_MODE): the alarm is a
+      -- PRECONDITION, not a bid.  The tick any of its three conditions stops
+      -- holding -- no hostile tank visible within 11 tiles of the pill RIGHT
+      -- NOW, no enemy damage/build trigger inside the 5 s window, or we have
+      -- closed to within 9 tiles -- the goal dies HERE, with no hysteresis,
+      -- no commitment and no grace period, and the invalid-goal path below
+      -- forces the immediate replan.  Asked through the SAME
+      -- goals.defend_alarm_status the pool row prints its reject reason from,
+      -- so the panel and the drop can never be different statements.
+      if goal_valid and C.DEFEND_ALARM_MODE and p then
+        local _al_on, _al_why = goals.defend_alarm_status(
+          state, world, info, p, now,
+          bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8))
+        if not _al_on then
+          goal_valid = false
+        end
+      end
     elseif gk == "repair_pill" then
       local p = W.pill_at(world, gmx, gmy)
       -- Abort if our LGM is dead — no one to do the repair (the eval already
@@ -6594,6 +6611,16 @@ function Brain.think(info)
   -- DEFEND_ARRIVE_RADIUS circle on the ACTIVE defend goal's pill — the
   -- exact boundary where eval_defend_pill hands the travel phase to the
   -- heat gate. Colors mirror the tier ladder.
+
+  -- ALARM MODE overlay (2026-09-06): the shape of the actual algorithm, not a
+  -- decoration -- condition 1's DEFEND_ALARM_ENEMY_TILES ring, condition 3's
+  -- DEFEND_ALARM_MIN_DIST ring, the WATCH LIST membership, the
+  -- DEFEND_ALARM_BUILD_RADIUS stamp perception.lua actually sweeps, and the
+  -- newest build it found.  Purely a reader: no terrain is touched (the stamp
+  -- geometry is arithmetic), so this cannot move the recorded brain off the
+  -- production one.  Draws nothing in keel mode, where there is no alarm.
+  -- (one line: lua_strip deletes the LINE that opens an `if BRAIN_DEBUG_MODE`
+  -- block, so a wrapped condition leaves a dangling `and ... then` in opt/.)
 
   -- Debugger: end trace capture
   if dbg.is_tracing() then

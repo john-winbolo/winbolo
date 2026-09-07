@@ -2133,6 +2133,62 @@ M.DEFEND_READY_MAX_MULT = 2.5
 -- repair_pill) and the pill's bid becomes the heat-up action alone.
 M.DEFEND_ARRIVE_RADIUS       = 10
 M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill to anger it".
+
+-- =========================================================================
+-- DEFEND "ALARM MODE" (2026-09-06, Andrew's redesign of the MAIN defend_pill
+-- evaluator).  DEFEND_ALARM_MODE=true replaces the whole urgency ladder above
+-- (siege / setup / sight / quiet / cover / late / ready / welldef / tb AND the
+-- ARRIVED heat-watch-repair rungs) with one flat rule:
+--
+--   defend_pill stays VISIBLE in the pool, but is REJECTED unless an ALARM
+--   holds for that pill.  The alarm is on ONLY while ALL THREE hold:
+--     1. a hostile tank is VISIBLE RIGHT NOW (this tick's perception, not a
+--        remembered sighting and not a ghost) within DEFEND_ALARM_ENEMY_TILES
+--        of the pill;
+--     2. AND one of
+--        (a) the pill took damage FROM AN ENEMY inside the last
+--            DEFEND_ALARM_WINDOW_TICKS, or
+--        (b) a wall went up / a hostile pill appeared inside
+--            DEFEND_ALARM_BUILD_RADIUS of the pill inside the same window,
+--            with a HOSTILE LGM seen inside that same stamp in the window
+--            (the OBJECT_HOSTILE bit is the whole attribution -- Andrew,
+--            2026-09-06: "if we know the LGM is an enemy, that's sufficient");
+--     3. AND we are MORE than DEFEND_ALARM_MIN_DIST tiles from the pill.
+--   The instant any condition stops holding the row goes back to REJECTED and
+--   a bot standing on that goal DROPS it (init.lua's goal-validity hook) --
+--   no hysteresis, no commitment, no arrived ladder.
+--
+--   Cost while the alarm holds:
+--     max(DEFEND_ALARM_MIN_COST,
+--         DEFEND_ALARM_BASE_COST - hits x DEFEND_ALARM_HIT_DISCOUNT)
+--     + the Dijkstra cost along the path to the pill, STOPPED at the first
+--       path tile within DEFEND_ALARM_DIJ_STOP_TILES of the pill.
+--
+-- Every distance here is EUCLIDEAN tiles, matching the metric the old
+-- evaluator uses for its own radii (arrival handoff, live-enemy, well-defended)
+-- rather than the Chebyshev one perception uses for its _enemy_near stamps.
+--
+-- Only DEFEND_ALARM_MODE has a PRESETS.keel entry: with it false NOTHING in
+-- this block is read, so the other knobs are inert and need no keel value.
+-- =========================================================================
+M.DEFEND_ALARM_MODE           = true
+M.DEFEND_ALARM_ENEMY_TILES    = 11   -- cond 1: hostile tank visible THIS TICK within this
+                                     -- euclidean tile radius of the pill.  Hard precondition:
+                                     -- the tick nothing hostile is visible in the ring the
+                                     -- alarm is off (reject `alarm_off:no_enemy_near`).
+M.DEFEND_ALARM_WINDOW_TICKS   = 250  -- 5 s at 50 brain ticks/s (one think per 20 ms frame).
+                                     -- Applies to the TRIGGERS only (2a damage, 2b build).
+M.DEFEND_ALARM_BUILD_RADIUS   = 4    -- cond 2b: stamp radius around a watched pill, in
+                                     -- euclidean tiles.  The offset list is computed ONCE at
+                                     -- module load (perception.lua ALARM_STAMP), never per tick.
+M.DEFEND_ALARM_MIN_DIST       = 9    -- cond 3: we must be MORE than this many tiles from the
+                                     -- pill.  Inside it there is nothing to travel to
+                                     -- (reject `alarm_off:too_close`).
+M.DEFEND_ALARM_BASE_COST      = 100  -- flat cost of an alarmed defend trip before the discount
+M.DEFEND_ALARM_HIT_DISCOUNT   = 10   -- subtracted per enemy hit counted in the window
+M.DEFEND_ALARM_MIN_COST       = 50   -- floor the discount can never go below
+M.DEFEND_ALARM_DIJ_STOP_TILES = 9    -- stop summing per-tile Dijkstra cost once the traced path
+                                     -- is within this many euclidean tiles of the pill
 M.HEAT_REQUIRE_ENEMY_RANGE   = 10    -- heat only with a hostile tank VISIBLE within this
                                      -- euclidean range of the pill (and not actively
                                      -- shelling it ??? taking_damage blocks first).
@@ -3617,6 +3673,17 @@ M.GC_STEPMUL = 400
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-09-06: the MAIN defend_pill evaluator is now ALARM MODE (see the
+    -- DEFEND_ALARM_* block above): defend_pill is REJECTED unless a hostile
+    -- tank is visible within 11 tiles of the pill RIGHT NOW, something enemy
+    -- hit it or built beside it in the last 5 s, and we are more than 9 tiles
+    -- away; the cost is a flat 100 - 10/hit (floor 50) plus the Dijkstra path
+    -- stopped 9 tiles out.  KEEL is the whole old urgency ladder --
+    -- siege/setup/sight/quiet tiers, coverage, lateness, readiness, the
+    -- well-defended clamp, the two-tier floor, the tiebreaker AND the ARRIVED
+    -- heat / watch / repair rungs.  This one flag restores all of it; every
+    -- other DEFEND_ALARM_* knob is unread while it is false.
+    DEFEND_ALARM_MODE             = false,
     -- 2026-09-05: raised to 3, i.e. the default blitz party went 2..2 -> 2..4.
     SQUAD_MAX_SIZE                = 1,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and

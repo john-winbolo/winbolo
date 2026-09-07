@@ -4742,6 +4742,518 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   return cost, bd
 end
 
+-- =========================================================================
+-- ALARM MODE (C.DEFEND_ALARM_MODE, 2026-09-06) — Andrew's redesign of the
+-- MAIN defend_pill evaluator.  Everything above (the siege/setup/sight/quiet
+-- tier ladder, coverage, lateness, readiness, the well-defended clamp, the
+-- two-tier floor, the flat-cost tiebreaker AND the ARRIVED heat / watch /
+-- repair rungs) is the KEEL path and is untouched: with DEFEND_ALARM_MODE
+-- false not one line below here runs, no new terrain is read and no new state
+-- is written, so `preset=keel` reproduces today's evaluator exactly.
+--
+-- THE RULE (Andrew, verbatim intent).  defend_pill stays VISIBLE in the goal
+-- pool but is REJECTED, with the failing condition as the reject reason,
+-- unless an ALARM holds for that pill.  The alarm is on ONLY while ALL of:
+--
+--   1. an enemy is within DEFEND_ALARM_ENEMY_TILES (11) of the pill.  A LIVE
+--      sighting: a hostile tank the engine is showing us THIS TICK
+--      (state.perc.enemy_tanks, which holds real sightings only — ghosts are
+--      a separate list and deliberately do not count).  Not a remembered
+--      sighting, not a windowed one.  The tick nothing hostile is visible in
+--      the ring, the alarm is off.
+--   2. AND one of
+--      (a) the pill took damage FROM AN ENEMY within DEFEND_ALARM_WINDOW_TICKS
+--          (250 = 5 s at 50 brain ticks/s).  Counted from perception's
+--          per-pill enemy-hit ring (_alarm_hits): every hit its attribution
+--          pass classified `tank` (hostile tank) or `epill` (hostile pillbox).
+--          A `npill` stray is a NEUTRAL pillbox and is not an enemy.
+--      (b) OR an enemy pill or a wall was built inside
+--          DEFEND_ALARM_BUILD_RADIUS (4) of the pill inside the same window,
+--          with a HOSTILE LGM seen inside that same stamp in the window.  The
+--          OBJECT_HOSTILE bit is the whole attribution — Andrew, 2026-09-06:
+--          "If we know the LGM is an enemy, that's sufficient."  No ally
+--          build-claim lookup gates it (the debug line still prints what the
+--          allies were claiming, for the reader).
+--          The watch list and the stamp are perception.lua's (see its
+--          ALARM_STAMP block): the offsets are computed ONCE at module load,
+--          never per tick.
+--   3. AND we are MORE than DEFEND_ALARM_MIN_DIST (9) tiles from the pill.
+--
+-- No hysteresis and no commitment may keep an alarm alive: the moment a
+-- condition stops holding the row goes back to REJECTED, and a bot standing on
+-- that defend goal DROPS it — init.lua's goal-validity hook re-asks
+-- M.defend_alarm_status every tick and invalidates the goal, which forces the
+-- immediate replan.  (The pool's normal hysteresis for switching TO the goal
+-- is untouched: that is about picking it, not about holding it past its
+-- precondition.)
+--
+-- COST while the alarm holds:
+--     max(DEFEND_ALARM_MIN_COST,
+--         DEFEND_ALARM_BASE_COST - hits x DEFEND_ALARM_HIT_DISCOUNT)
+--   + the Dijkstra cost along the path to the pill, STOPPED once the path is
+--     within DEFEND_ALARM_DIJ_STOP_TILES (9) tiles of it.  No path at all ->
+--     the row rejects `no_path`.
+--
+-- WHAT NO LONGER HAPPENS.  Alarm mode has no ARRIVED branch, so defend_pill
+-- never sets goal.heat, goal.watch or goal.repair.  The heat-up action, the
+-- watch hold and the defend->repair handoff are all gone with the ladder:
+-- builder_pool.repair_feeder's `defend_repair` seed (builder_pool.lua ~1682,
+-- which fires on `g.kind == "defend_pill" and g.repair`) can therefore never
+-- fire in alarm mode.  Nothing there needed changing — the flag is simply
+-- never set — and repair_pill still seeds the man exactly as before.  This is
+-- consistent by construction: condition 3 drops the alarm at 9 tiles, so an
+-- alarm-mode defender never arrives at the pill in the first place.
+-- =========================================================================
+local ALARM_R_NO_ENEMY  = "no_enemy_near"
+local ALARM_R_NO_TRIG   = "no_trigger"
+local ALARM_R_TOO_CLOSE = "too_close"
+local ALARM_R_NO_PATH   = "no_path"
+
+-- Enemy-attributed hits on this pill inside the window, from perception's
+-- ring.  Returns (count, newest_tick, newest_src).
+local function defend_alarm_hits(p, now)
+  local win  = C.DEFEND_ALARM_WINDOW_TICKS or 250
+  local ring = p._alarm_hits
+  local n, newest, src = 0, nil, nil
+  if ring then
+    for i = 1, #ring do
+      local e = ring[i]
+      local age = now - (e.t or 0)
+      if age >= 0 and age <= win then
+        n = n + 1
+        if newest == nil or e.t > newest then newest, src = e.t, e.src end
+      end
+    end
+  end
+  return n, newest, src
+end
+
+-- Condition 1: the nearest hostile tank VISIBLE THIS TICK inside the ring.
+-- Euclidean, the metric the rest of this evaluator uses for its own radii.
+-- Deterministic: nearest wins, ties break to the lower tank id.
+local function defend_alarm_enemy(state, p)
+  local r  = C.DEFEND_ALARM_ENEMY_TILES or 11
+  local r2 = r * r
+  local best, best_d2 = nil, nil
+  for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+    local dx, dy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
+    local d2 = dx * dx + dy * dy
+    if d2 <= r2 then
+      if best_d2 == nil or d2 < best_d2
+         or (d2 == best_d2 and (et.id or 0) < (best.id or 0)) then
+        best, best_d2 = et, d2
+      end
+    end
+  end
+  if not best then return nil, nil end
+  return best, math.sqrt(best_d2)
+end
+
+-- M.defend_alarm_status — is the alarm ON for this pill, and if not, which
+-- condition failed?  ONE implementation, called from two places: this pool's
+-- evaluator (at replan cadence) and init.lua's goal-validity hook (every
+-- tick), so the row the panel shows and the drop the bot performs can never
+-- disagree.
+--
+-- Returns (on, reason, reason_key, a):
+--   reason      full text for the row, e.g. "too_close(6.1<=9)"
+--   reason_key  the bare condition name for the reject chip (<= 24 chars once
+--               prefixed "alarm_off:", which is the pool grid's chip cap)
+--   a           the evidence table every chip and print2 below reads
+function M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
+  local win = C.DEFEND_ALARM_WINDOW_TICKS or 250
+  local a = { win = win }
+  -- Distance is computed UP FRONT even though it is condition 3: every row,
+  -- including the ones rejected on condition 1 or 2, prints an al_dist chip,
+  -- and a chip that appears only on some rejects is a chip the reader cannot
+  -- trust.  Computing it early changes no outcome — the reasons are still
+  -- returned in condition order.
+  a.min_dist = C.DEFEND_ALARM_MIN_DIST or 9
+  a.dist = U.edist(tmx or 0, tmy or 0, p.mx, p.my)
+  -- Condition 1 — live sighting, this tick.
+  local et, ed = defend_alarm_enemy(state, p)
+  a.enemy, a.enemy_d = et, ed
+  if not et then
+    return false, ALARM_R_NO_ENEMY, ALARM_R_NO_ENEMY, a
+  end
+  -- Condition 2 — a trigger inside the window.
+  local nh, hit_t, hit_src = defend_alarm_hits(p, now)
+  a.hits, a.hit_tick, a.hit_src = nh, hit_t, hit_src
+  a.hit_age = hit_t and (now - hit_t) or nil
+  local b = p._alarm_build
+  if b and (now - (b.t or 0)) <= win then
+    a.build = b
+    a.build_age = now - (b.t or 0)
+  end
+  a.lgm_tick = p._alarm_lgm_tick
+  a.lgm_age  = a.lgm_tick and (now - a.lgm_tick) or nil
+  a.lgm_fresh = (a.lgm_age ~= nil) and (a.lgm_age <= win) or false
+  a.trig_damage = nh > 0
+  a.trig_build  = (a.build ~= nil) and a.lgm_fresh
+  if not (a.trig_damage or a.trig_build) then
+    return false, ALARM_R_NO_TRIG, ALARM_R_NO_TRIG, a
+  end
+  -- Condition 3 — we must be MORE than MIN_DIST tiles away.
+  if a.dist <= a.min_dist then
+    return false, string.format("too_close(%.1f<=%d)", a.dist, a.min_dist),
+           ALARM_R_TOO_CLOSE, a
+  end
+  return true, nil, nil, a
+end
+
+-- Cheapest reachable tile inside the stop disc — the FALLBACK for the partial
+-- Dijkstra below, used only when the traced path is unusable.  Same stride-2
+-- sample of the disc that defend_travel_cost uses for the keel path, so the
+-- two numbers are comparable when a bench puts them side by side.
+local function defend_alarm_disc_min(p, bf, stop)
+  local best, bx, by = math.huge, nil, nil
+  for dy = -stop, stop, 2 do
+    for dx = -stop, stop, 2 do
+      if dx * dx + dy * dy <= stop * stop then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, p.mx + dx, p.my + dy, bf)
+        if c and c < 1e29 and c < best then
+          best, bx, by = c, p.mx + dx, p.my + dy
+        end
+      end
+    end
+  end
+  if bx == nil then return nil end
+  return best, bx, by
+end
+
+-- The PARTIAL Dijkstra: walk the traced path from the tank toward the pill,
+-- summing per-tile costs, and STOP at the first tile whose distance to the
+-- pill is <= DEFEND_ALARM_DIJ_STOP_TILES.  Because a Dijkstra slate's cost IS
+-- the running sum from the source, "the sum up to tile T" is exactly the
+-- slate's cost AT T — no per-step arithmetic is needed or possible.
+--
+-- The pill's own tile is impassable (a live pillbox blocks the cost surface),
+-- so the trace destination is its cheapest reachable neighbour: that is "the
+-- path to the pill" as far as any path can be, and the stop rule cuts it 9
+-- tiles out anyway.
+--
+-- The C trace caps at 64 waypoints (braincore.c l_cpf_dijkstra_trace_path*)
+-- and keeps the SOURCE end, so a very long path can be truncated before it
+-- ever enters the stop disc.  That case falls back to the cheapest reachable
+-- tile in the same disc (the stride-2 sample defend_travel_cost uses) and SAYS
+-- so in the chip, rather than silently pricing the whole trip.
+--
+-- Returns (cost, method, stop_i, nsteps, smx, smy) or nil when nothing in the
+-- disc is reachable.
+local function defend_alarm_travel(p, boat)
+  local bf    = boat and 1 or 0
+  local stop  = C.DEFEND_ALARM_DIJ_STOP_TILES or 9
+  local stop2 = stop * stop
+  -- Trace destination: cheapest reachable neighbour of the pill.
+  local nb_c, nb_x, nb_y = math.huge, nil, nil
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, p.mx + dx, p.my + dy, bf)
+        if c and c < nb_c then nb_c, nb_x, nb_y = c, p.mx + dx, p.my + dy end
+      end
+    end
+  end
+  if nb_x and nb_c < 1e29 then
+    local path = cpf.dijkstra_trace_path_by_kind(KIND_NORMAL, nb_x, nb_y)
+    if path and #path >= 2 then
+      local nsteps = math.floor(#path / 2)
+      for i = 1, nsteps do
+        local tx, ty = path[2 * i - 1], path[2 * i]
+        local dx, dy = tx - p.mx, ty - p.my
+        if dx * dx + dy * dy <= stop2 then
+          local c = cpf.smart_cost_dij_only(KIND_NORMAL, tx, ty, bf)
+          if c and c < 1e29 then
+            return c, "path", i, nsteps, tx, ty
+          end
+          -- The traced tile is on the slate by construction, so this is a
+          -- boat/land-node mismatch; fall through to the disc sample.
+          break
+        end
+      end
+      -- Path never entered the disc: the 64-waypoint cap cut it short.
+      local c, cx, cy = defend_alarm_disc_min(p, bf, stop)
+      if c then return c, "trunc_disc", nil, nsteps, cx, cy end
+      return nil
+    end
+  end
+  local c, cx, cy = defend_alarm_disc_min(p, bf, stop)
+  if c then return c, "disc", nil, nil, cx, cy end
+  return nil
+end
+
+-- Selection-layer preview for the alarm rows.  Same arithmetic as
+-- eval_defend_pill's own sel_preview closure (phase weight with its distance
+-- falloff, then the influence multiplier), lifted to a function because alarm
+-- mode is a separate evaluator; a clicked alarm row must reconcile with the
+-- WINNERS view exactly as a keel row does.
+local function defend_alarm_sel_preview(state, tmx, tmy, mx, my, cost)
+  if not cost or cost >= math.huge then return "" end
+  local pw = (C.PHASE_WEIGHTS and C.PHASE_WEIGHTS[state.phase]
+              and C.PHASE_WEIGHTS[state.phase].defend_pill) or 1.0
+  local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
+  local pw_falloff = (type(_fot) == "table" and (_fot.defend_pill or _fot.default))
+                     or (type(_fot) == "number" and _fot) or 40
+  if pw ~= 1.0 then
+    local gd = U.mdist(tmx or 0, tmy or 0, mx, my)
+    pw = 1.0 + (pw - 1.0) * (1 - math.min(1.0, gd / pw_falloff))
+  end
+  local im = 1.0
+  if state.phase ~= "opening" then
+    local inf = cpf.influence_at(mx, my) or 0
+    if inf < -50 then im = 2.0 elseif inf > 50 then im = 0.5 end
+  end
+  return string.format(
+    " ->sel{%.0f xph%.2f xinf%.1f} (+switch/commit at selection)",
+    cost * pw * im, pw, im)
+end
+
+-- The EVIDENCE chips, shared by the alarmed row, every rejected row and the
+-- winner desc so the three can never drift apart.
+local function defend_alarm_evidence(a)
+  local en = a.enemy
+    and string.format(" al_enemy{#%s @%.1ft}", tostring(a.enemy.id or "?"),
+                      a.enemy_d or 0)
+    or  string.format(" al_enemy{none in %dt}", C.DEFEND_ALARM_ENEMY_TILES or 11)
+  local tr
+  if a.trig_build then
+    tr = string.format(" al_trig{bld (%d,%d) %s %dt}",
+                       a.build.mx, a.build.my, a.build.what, a.lgm_age or -1)
+  elseif a.trig_damage then
+    tr = string.format(" al_trig{dmg %dx %s %dt}", a.hits or 0,
+                       tostring(a.hit_src or "?"), a.hit_age or -1)
+  else
+    tr = string.format(" al_trig{none dmg%d bld%s}", a.hits or 0,
+                       a.build and (a.lgm_fresh and "Y" or "nolgm") or "N")
+  end
+  return en .. tr .. string.format(" al_dist{%.1f>%d}", a.dist or 0,
+                                   a.min_dist or 9)
+end
+
+-- The per-term "How computed" segments.  Andrew's standing rule: EVERY factor
+-- in the score has to appear, so the final number is hand-computable from the
+-- panel alone.
+local function defend_alarm_detail(a, bd, p, hp)
+  local segs = {
+    string.format("al_base:DEFEND_ALARM_BASE_COST — the flat price of an alarmed defend trip, before the damage discount"),
+    string.format("al_hits:%d enemy-attributed hit(s) on this pill inside the last %d ticks (%d s), from perception's per-pill ring: hits classified `tank` (hostile tank fire) or `epill` (hostile pillbox stray). A `npill` stray is a NEUTRAL pillbox and is not counted.",
+                  a.hits or 0, a.win or 250, math.floor((a.win or 250) / 50)),
+    string.format("al_disc:DEFEND_ALARM_HIT_DISCOUNT — subtracted once per counted hit: %d - %d x %d = %d",
+                  C.DEFEND_ALARM_BASE_COST or 100,
+                  a.hits or 0, C.DEFEND_ALARM_HIT_DISCOUNT or 10,
+                  (bd and bd.net_raw) or 0),
+    string.format("al_net:base - hits x discount, before the floor"),
+    string.format("al_floor:DEFEND_ALARM_MIN_COST — the discount can never take the trip below this. %s",
+                  (bd and bd.floored) and "IT BIT: the raw net was lower and was clamped up."
+                                       or "Not binding here (the raw net is at or above it)."),
+    string.format("al_dij:%s", (bd and bd.dij_why) or "-"),
+    string.format("al_enemy:condition 1 — a hostile tank the engine is showing us THIS TICK within %d euclidean tiles of the pill. Not a remembered sighting and not a ghost. %s",
+                  C.DEFEND_ALARM_ENEMY_TILES or 11,
+                  a.enemy and string.format("Nearest is tank #%s at %.1f tiles.",
+                                            tostring(a.enemy.id or "?"), a.enemy_d or 0)
+                          or "Nothing hostile is visible in the ring, so the alarm is OFF."),
+    string.format("al_trig:condition 2 — (a) an enemy hit the pill inside the last %d ticks [%d hit(s)%s], OR (b) a wall/hostile pill went up inside %d tiles of it in that window WITH a hostile LGM seen in the same stamp [%s]. The OBJECT_HOSTILE bit on the LGM is the whole attribution; no ally build claim is consulted.",
+                  a.win or 250, a.hits or 0,
+                  a.hit_age and string.format(", newest %dt ago (%s)", a.hit_age,
+                                              tostring(a.hit_src or "?")) or "",
+                  C.DEFEND_ALARM_BUILD_RADIUS or 4,
+                  a.build and string.format("build (%d,%d) %s %dt ago, hostile LGM %s",
+                                            a.build.mx, a.build.my, a.build.what,
+                                            a.build_age or -1,
+                                            a.lgm_fresh
+                                              and string.format("seen %dt ago", a.lgm_age or -1)
+                                              or "NOT seen in the window")
+                          or "no build seen in the stamp"),
+    string.format("al_dist:condition 3 — we must be MORE than DEFEND_ALARM_MIN_DIST (%d) tiles from the pill. We are %.1f. Inside that radius there is nothing left to travel to, so the alarm drops and the goal with it.",
+                  a.min_dist or 9, a.dist or 0),
+    string.format("state:pill hp=%d/%d, hits taken %d; watch=%s",
+                  hp, C.PILLS_MAX_HEALTH or 15,
+                  math.max(0, (C.PILLS_MAX_HEALTH or 15) - hp),
+                  p._alarm_watch_tick and "on the alarm watch list" or "not watched"),
+  }
+  return table.concat(segs, "|")
+end
+
+-- eval_defend_pill_alarm — the ALARM MODE pool.  Every built team pill still
+-- gets a row (so the panel never goes blank and a reject is visible with its
+-- reason); only alarmed pills bid.
+local function eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
+  local now  = state.tick or 0
+  local rows = BRAIN_POOL_VIZ and {} or nil
+  local best, best_id, best_cost, best_bd, best_a = nil, nil, math.huge, nil, nil
+  -- BY ID, not pairs order: the pool must be identical on every machine and
+  -- every replay, and a tie between two equally-priced pills must not depend
+  -- on the hash order of world.pills.
+  local ids = {}
+  for id in pairs(world.pills) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local p = world.pills[id]
+    if p and (p.owner == "friendly" or p.owner == "allied")
+       and not (p.in_tank or p.carrier or p._synth_carry) then
+      local hp = p.health or 0
+      local reject_key, reject_txt, a = nil, nil, nil
+      if hp == 0 then
+        reject_key, reject_txt = "dead", "dead"
+        a = { dist = U.edist(tmx or 0, tmy or 0, p.mx, p.my),
+              min_dist = C.DEFEND_ALARM_MIN_DIST or 9,
+              win = C.DEFEND_ALARM_WINDOW_TICKS or 250, hits = 0 }
+      else
+        local on, why, key
+        on, why, key, a = M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
+        if not on then
+          reject_key = "alarm_off:" .. key
+          reject_txt = "alarm_off:" .. why
+        end
+      end
+      local cost, bd = nil, nil
+      if not reject_key then
+        bd = {}
+        local base = C.DEFEND_ALARM_BASE_COST or 100
+        local disc = C.DEFEND_ALARM_HIT_DISCOUNT or 10
+        local flr  = C.DEFEND_ALARM_MIN_COST or 50
+        bd.net_raw = base - (a.hits or 0) * disc
+        bd.net = bd.net_raw
+        if bd.net < flr then bd.net = flr; bd.floored = true end
+        local tcost, method, stop_i, nsteps, smx, smy =
+              defend_alarm_travel(p, boat)
+        if tcost == nil then
+          reject_key, reject_txt = "alarm_off:" .. ALARM_R_NO_PATH,
+                                   "alarm_off:" .. ALARM_R_NO_PATH
+          bd = nil
+        else
+          bd.dij, bd.dij_method = tcost, method
+          bd.dij_stop_i, bd.dij_steps = stop_i, nsteps
+          bd.dij_mx, bd.dij_my = smx, smy
+          if method == "path" then
+            bd.dij_chip = string.format("%.0f stop%dt %d/%d", tcost,
+                                        C.DEFEND_ALARM_DIJ_STOP_TILES or 9,
+                                        stop_i or 0, nsteps or 0)
+            -- The long "How computed" prose is for the panel only; building it
+            -- on a production tick that will never render a row is pure waste.
+            bd.dij_why = rows and string.format(
+              "the Dijkstra path to the pill, priced only as far as the stop ring: the slate's running cost AT the first traced tile (%d,%d) whose distance to the pill is <= DEFEND_ALARM_DIJ_STOP_TILES (%d). That is step %d of the %d-step trace; the remaining %d step(s) are NOT charged. A slate cost IS the running sum from the tank, so no per-step arithmetic is possible or needed.",
+              smx or 0, smy or 0, C.DEFEND_ALARM_DIJ_STOP_TILES or 9,
+              stop_i or 0, nsteps or 0, math.max(0, (nsteps or 0) - (stop_i or 0)))
+          else
+            bd.dij_chip = string.format("%.0f disc%dt", tcost,
+                                        C.DEFEND_ALARM_DIJ_STOP_TILES or 9)
+            bd.dij_why = rows and string.format(
+              "FALLBACK (%s): the cheapest reachable tile in the %d-tile stop disc around the pill (stride-2 sample, at (%d,%d)). Used because %s.",
+              method, C.DEFEND_ALARM_DIJ_STOP_TILES or 9, smx or 0, smy or 0,
+              (method == "trunc_disc")
+                and string.format("the C trace caps at 64 waypoints and this %d-step path was cut off before it reached the stop ring", nsteps or 0)
+                or "no Dijkstra slate has traced a path to the pill's neighbours yet")
+          end
+          cost = bd.net + tcost
+          bd.cost = cost
+          if cost < best_cost then
+            best, best_id, best_cost, best_bd, best_a = p, id, cost, bd, a
+          end
+          print2(string.format(
+            "DEFEND_ALARM_ON t=%d pill#%s@(%d,%d) cost=%.0f = net{%.0f = %d - %dx%d%s} + dij{%.0f %s}"
+            .. " enemy=#%s@%.1ft trigger=%s dist=%.1f",
+            now, tostring(id), p.mx, p.my, cost, bd.net, base, a.hits or 0, disc,
+            bd.floored and string.format(" floored to %d", flr) or "",
+            tcost, bd.dij_chip,
+            tostring(a.enemy and a.enemy.id or "?"), a.enemy_d or 0,
+            a.trig_build
+              and string.format("build(%d,%d) %s lgm=%dt", a.build.mx, a.build.my,
+                                a.build.what, a.lgm_age or -1)
+              or string.format("damage %d hits in %dt", a.hits or 0, a.win or 250),
+            a.dist or 0))
+        end
+      end
+      -- Every REJECTED row says so out loud, once per replan per pill, with
+      -- the failing condition and the numbers behind all three.  The
+      -- goal-validity hook in init.lua prints its own DEFEND_ALARM_OFF when it
+      -- DROPS a live goal; this one is the pool's side of the same statement,
+      -- and it is what makes "the row was rejected for reason X" checkable
+      -- from the log instead of only from the panel.
+      if reject_key and hp > 0 then
+        print2(string.format(
+          "DEFEND_ALARM_OFF t=%d pill#%s@(%d,%d) REJECT %s"
+          .. " enemy=%s trigger=(dmg %d in %dt%s, build %s) dist=%.1f (min %d)",
+          now, tostring(id), p.mx, p.my, tostring(reject_txt),
+          -- One whitespace-free token either way: this line is parsed by
+          -- tests/defend_alarm_test.py, and a field that sometimes contains
+          -- spaces is a field no regex can read.
+          a.enemy and string.format("#%s@%.1ft", tostring(a.enemy.id or "?"),
+                                    a.enemy_d or 0)
+                  or string.format("NONE<=%dt", C.DEFEND_ALARM_ENEMY_TILES or 11),
+          a.hits or 0, a.win or 250,
+          a.hit_age and string.format(" newest %dt %s", a.hit_age,
+                                      tostring(a.hit_src or "?")) or "",
+          a.build and string.format("(%d,%d) %s %dt lgm=%s", a.build.mx,
+                                    a.build.my, a.build.what, a.build_age or -1,
+                                    a.lgm_fresh
+                                      and string.format("%dt", a.lgm_age or -1)
+                                      or "NOT SEEN")
+                  or "none",
+          a.dist or 0, a.min_dist or 9))
+      end
+      if rows then
+        local formula
+        if reject_key then
+          formula = string.format("REJECT %s%s||%s", reject_txt,
+                                  (hp > 0) and defend_alarm_evidence(a) or "",
+                                  (hp > 0) and defend_alarm_detail(a, nil, p, hp)
+                                    or "state:hp=0 — rebuild/capture territory, not defend")
+        else
+          formula = string.format(
+            "ALARM al_base{%d} - al_hits{%d}*al_disc{%d} = al_net{%.0f}%s + al_dij{%s} = %.0f%s%s||%s",
+            C.DEFEND_ALARM_BASE_COST or 100, a.hits or 0,
+            C.DEFEND_ALARM_HIT_DISCOUNT or 10, bd.net_raw,
+            bd.floored and string.format(" al_floor{%d}", C.DEFEND_ALARM_MIN_COST or 50) or "",
+            bd.dij_chip, cost,
+            defend_alarm_evidence(a),
+            defend_alarm_sel_preview(state, tmx, tmy, p.mx, p.my, cost),
+            defend_alarm_detail(a, bd, p, hp))
+        end
+        rows[#rows + 1] = {
+          id = id, mx = p.mx, my = p.my,
+          cost = reject_key and 1e30 or cost,
+          formula = formula,
+          stale = 0,
+          -- The chip is capped at 24 chars by the renderer, which every
+          -- reason key here fits inside once prefixed.
+          reject = reject_key,
+          reject_remaining = 0,
+          tier = reject_key and ((hp == 0) and "dead" or "alarm_off") or "alarm",
+        }
+      end
+    end
+  end
+
+  state.defend_breakdown = rows and { tick = now, rows = rows } or nil
+  if not best then return nil end
+
+  local best_desc = ""
+  if BRAIN_POOL_VIZ then
+    best_desc = string.format(
+      "defend#%s@(%d,%d) ALARM al_base{%d} - al_hits{%d}*al_disc{%d} = al_net{%.0f}%s + al_dij{%s} = %.0f%s",
+      tostring(best_id), best.mx, best.my,
+      C.DEFEND_ALARM_BASE_COST or 100, best_a.hits or 0,
+      C.DEFEND_ALARM_HIT_DISCOUNT or 10, best_bd.net_raw,
+      best_bd.floored and string.format(" al_floor{%d}", C.DEFEND_ALARM_MIN_COST or 50) or "",
+      best_bd.dij_chip, best_cost, defend_alarm_evidence(best_a))
+  end
+  -- Alarm mode is a TRAVEL-AND-FIGHT goal and nothing else: no heat, no watch,
+  -- no repair handoff (see the block comment above).  The destination is the
+  -- pill itself; condition 3 drops the alarm at MIN_DIST, so the tank is
+  -- released before it ever grinds against the impassable pill tile.
+  return {
+    cost = best_cost,
+    goal = { kind = "defend_pill", mx = best.mx, my = best.my,
+             wx = U.m2w(best.mx), wy = U.m2w(best.my),
+             target_id = best_id,
+             alarm = true,
+             pill_mx = best.mx, pill_my = best.my },
+    desc = best_desc,
+    cands = rows,
+  }
+end
+
 -- eval_defend_pill — internal scoring pool over ALL BUILT team pills
 -- (own "friendly" pills AND teammates' "allied" pills).
 -- The legacy implementation (single perc.pill_under_attack target, silent
@@ -4762,6 +5274,12 @@ end
 -- travel is O(1) dij-slate lookups per pill (defend_travel_cost — the
 -- standoff-disc price, not the walk-right-up-to-it price).
 local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
+  -- ALARM MODE (2026-09-06) replaces this whole evaluator.  One branch, taken
+  -- before anything below runs, so with the knob false (PRESETS.keel) the keel
+  -- path is bit-for-bit what it was.
+  if C.DEFEND_ALARM_MODE then
+    return eval_defend_pill_alarm(state, world, info, tmx, tmy, boat, ammo)
+  end
   local now = state.tick or 0
   local rows = BRAIN_POOL_VIZ and {} or nil
 

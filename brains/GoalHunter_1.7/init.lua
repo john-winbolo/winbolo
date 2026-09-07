@@ -5054,6 +5054,27 @@ function Brain.think(info)
       local p = W.pill_at(world, pmx, pmy)
       if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
          or p.health == 0 then goal_valid = false end
+      -- ALARM MODE (2026-09-06, C.DEFEND_ALARM_MODE): the alarm is a
+      -- PRECONDITION, not a bid.  The tick any of its three conditions stops
+      -- holding -- no hostile tank visible within 11 tiles of the pill RIGHT
+      -- NOW, no enemy damage/build trigger inside the 5 s window, or we have
+      -- closed to within 9 tiles -- the goal dies HERE, with no hysteresis,
+      -- no commitment and no grace period, and the invalid-goal path below
+      -- forces the immediate replan.  Asked through the SAME
+      -- goals.defend_alarm_status the pool row prints its reject reason from,
+      -- so the panel and the drop can never be different statements.
+      if goal_valid and C.DEFEND_ALARM_MODE and p then
+        local _al_on, _al_why = goals.defend_alarm_status(
+          state, world, info, p, now,
+          bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8))
+        if not _al_on then
+          goal_valid = false
+          print2(string.format(
+            "DEFEND_ALARM_OFF t=%d pill@(%d,%d) reason=%s"
+            .. " -- alarm condition lapsed, dropping the defend goal",
+            now, pmx, pmy, tostring(_al_why)))
+        end
+      end
     elseif gk == "repair_pill" then
       local p = W.pill_at(world, gmx, gmy)
       -- Abort if our LGM is dead — no one to do the repair (the eval already
@@ -8589,6 +8610,78 @@ function Brain.think(info)
     if state.goal and state.goal.kind == "defend_pill" and state.goal.mx then
       viz.circle("defend_pill_viz", state.goal.mx + 0.5, state.goal.my + 0.5,
                  (C.DEFEND_ARRIVE_RADIUS or 10), 0, 200, 255, 120)
+    end
+  end
+
+  -- ALARM MODE overlay (2026-09-06): the shape of the actual algorithm, not a
+  -- decoration -- condition 1's DEFEND_ALARM_ENEMY_TILES ring, condition 3's
+  -- DEFEND_ALARM_MIN_DIST ring, the WATCH LIST membership, the
+  -- DEFEND_ALARM_BUILD_RADIUS stamp perception.lua actually sweeps, and the
+  -- newest build it found.  Purely a reader: no terrain is touched (the stamp
+  -- geometry is arithmetic), so this cannot move the recorded brain off the
+  -- production one.  Draws nothing in keel mode, where there is no alarm.
+  -- (one line: lua_strip deletes the LINE that opens an `if BRAIN_DEBUG_MODE`
+  -- block, so a wrapped condition leaves a dangling `and ... then` in opt/.)
+  if BRAIN_DEBUG_MODE and C.DEFEND_ALARM_MODE and viz.is_on("defend_alarm_viz") then
+    local ALARM_COLS = {
+      alarm     = { 255,  60,  60 },
+      alarm_off = { 120, 120, 120 },
+      dead      = {  60,  60,  60 },
+    }
+    local by_tile = {}
+    for _, r in ipairs((state.defend_breakdown and state.defend_breakdown.rows) or {}) do
+      by_tile[r.my * 256 + r.mx] = r
+    end
+    local er   = C.DEFEND_ALARM_ENEMY_TILES or 11
+    local mind = C.DEFEND_ALARM_MIN_DIST or 9
+    local br   = C.DEFEND_ALARM_BUILD_RADIUS or 4
+    local win  = C.DEFEND_ALARM_WINDOW_TICKS or 250
+    for _, p in pairs(world.pills) do
+      if (p.owner == "friendly" or p.owner == "allied")
+         and not (p.in_tank or p.carrier or p._synth_carry) then
+        local row = by_tile[p.my * 256 + p.mx]
+        local cc  = ALARM_COLS[(row and row.tier) or "alarm_off"]
+                    or ALARM_COLS.alarm_off
+        -- Condition 1 ring (enemy must be visible INSIDE this right now) and
+        -- condition 3 ring (we must be OUTSIDE this).
+        viz.circle("defend_alarm_viz", p.mx + 0.5, p.my + 0.5, er,
+                   cc[1], cc[2], cc[3], 110)
+        viz.circle("defend_alarm_viz", p.mx + 0.5, p.my + 0.5, mind,
+                   90, 160, 255, 90)
+        local watched = p._alarm_watch_tick == now
+        if watched then
+          -- The build stamp, tile by tile: the same euclidean disc
+          -- perception.lua's precomputed offset list sweeps.
+          for dy = -br, br do
+            for dx = -br, br do
+              if dx * dx + dy * dy <= br * br then
+                viz.rect("defend_alarm_viz", p.mx + dx + 0.15, p.my + dy + 0.15,
+                         p.mx + dx + 0.85, p.my + dy + 0.85,
+                         255, 190, 0, 45, false)
+              end
+            end
+          end
+        end
+        local b = p._alarm_build
+        if b and (now - (b.t or 0)) <= win then
+          viz.rect("defend_alarm_viz", b.mx + 0.05, b.my + 0.05,
+                   b.mx + 0.95, b.my + 0.95, 255, 80, 255, 200, false)
+          viz.text("defend_alarm_viz", b.mx + 0.5, b.my + 1.1,
+                   string.format("%s %dt", tostring(b.what), now - b.t),
+                   "center", 255, 80, 255, 255)
+        end
+        local lbl
+        if row and row.tier == "alarm" then
+          lbl = string.format("ALARM %.0f", row.cost or 0)
+        elseif row and row.reject then
+          lbl = tostring(row.reject)
+        else
+          lbl = "(no row yet)"
+        end
+        viz.text("defend_alarm_viz", p.mx + 0.5, p.my - 0.9,
+                 lbl .. (watched and " [watched]" or ""),
+                 "center", cc[1], cc[2], cc[3], 255)
+      end
     end
   end
 
