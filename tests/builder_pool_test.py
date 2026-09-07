@@ -155,6 +155,12 @@ LEGACY_TERMS_RE = re.compile(
     r"\+ front\{(-?[\d.]+)\} = value\{(-?[\d.]+)\} - trip_w\{[\d.]+\} x "
     r"trip\{(\S+?)t\} = tripcost\{(-?[\d.]+)\} - danger_w\{[\d.]+\} x "
     r"bp_danger\{-?[\d.]+\} = dangercost\{(-?[\d.]+)\}")
+# The goal-pill bonus (BUILDER_POOL_GOAL_PILL_BONUS, 2026-09-06): the last link
+# of BOTH chains, and printed ONLY on the row whose pill is the tank goal's own
+# target -- and only while the factor is not 1.  bp_score at the head of the
+# line is then the PRODUCT bp_raw x goal_w, so check_terms has to read it or
+# every boosted row looks like arithmetic that does not close.
+GOALW_RE = re.compile(r"= bp_raw\{(-?[\d.]+)\} x goal_w\{([\d.]+)\}")
 # The three legs of the trip, appended to BOTH shapes since 2026-09-06:
 #   [legs out{47} + build{20} + back{47} pred{same} predsrc{same} wedge{E}]
 # out + build + back has to equal the trip{} the score was charged on, or the
@@ -192,6 +198,21 @@ def check_legs(terms, trip, why):
                         f"back {back_t}")
 
 
+def goal_weight(terms, unboosted):
+    """(raw, goal_w, why) off the goal-pill bonus chip, or (unboosted, 1.0, "").
+
+    Since 2026-09-06 the row whose pill IS the tank goal's target
+    (BUILDER_POOL_GOAL_PILL_BONUS, default 1.2) has its whole score multiplied,
+    and the chain says so: `... = tripcost{48} = bp_raw{222} x goal_w{1.20}`
+    with bp_score{266} at the head.  Nothing else on the line changes, and rows
+    that are not the goal's pill (and every row when the bonus is 1.0, e.g.
+    preset=keel) print no chip at all -- which is why this returns the
+    unboosted number and a factor of 1 when it finds none."""
+    m = GOALW_RE.search(terms)
+    if not m:
+        return unboosted, 1.0, ""
+    raw, gw = float(m.group(1)), float(m.group(2))
+    return raw, gw, f" = bp_raw({raw:.0f}) x goal_w({gw}) [goal pill]"
 
 
 def check_terms(score, terms):
@@ -216,8 +237,12 @@ def check_terms(score, terms):
         # point for the rounding plus 0.005 a tick for the weight.
         if abs(trip_w * trip - c_trip) > 0.51 + 0.005 * trip:
             return False, why + f" -- but {trip_w} x {trip} is not {c_trip}"
-        if abs(score - (value - c_trip)) > 1.01:
-            return False, why + f" -- but {value} - {c_trip} is not {score}"
+        raw, gw, gwhy = goal_weight(terms, value - c_trip)
+        why += gwhy
+        if abs(raw - (value - c_trip)) > 1.01:
+            return False, why + f" -- but {value} - {c_trip} is not {raw}"
+        if abs(score - raw * gw) > 1.01:
+            return False, why + f" -- but {raw} x {gw} is not {score}"
         if abs(score - printed) > 0.51:
             return False, why + (f" -- the terms say {printed} and the score= "
                                  f"field says {score}")
@@ -238,9 +263,13 @@ def check_terms(score, terms):
         if abs(base + urg + front - val) > 2.01:
             return False, why + (f" -- but {base} + {urg} + {front} is not "
                                  f"{val}")
-        if abs(score - (val - trip_c - dgr_c)) > 2.01:
+        raw, gw, gwhy = goal_weight(terms, val - trip_c - dgr_c)
+        why += gwhy
+        if abs(raw - (val - trip_c - dgr_c)) > 2.01:
             return False, why + (f" -- but {val} - {trip_c} - {dgr_c} = "
-                                 f"{val - trip_c - dgr_c:.1f}")
+                                 f"{val - trip_c - dgr_c:.1f}, not {raw}")
+        if abs(score - raw * gw) > 2.01:
+            return False, why + (f" -- but {raw} x {gw} is not {score}")
         if abs(score - printed) > 0.51:
             return False, why + (f" -- the terms say {printed} and the score= "
                                  f"field says {score}")

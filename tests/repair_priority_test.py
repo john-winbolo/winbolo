@@ -215,6 +215,7 @@ DISP_RE = re.compile(
 LINEAR_RE = re.compile(
     r"bp_score\{(-?[\d.]+)\} = hp_w\{(\d+)\} x missing\{(\d+)\} = value\{(-?[\d.]+)\} - "
     r"trip_w\{([\d.]+)\} x trip\{(\d+)t\} = tripcost\{(-?[\d.]+)\}")
+GOALW_RE = re.compile(r"= bp_raw\{(-?[\d.]+)\} x goal_w\{([\d.]+)\}")
 DENY_RE = re.compile(
     r"BP_DENY t=(\d+) job=(\S+) target=\((\d+),(\d+)\) reason=(.*?) elig=(.*?) "
     r"score=(-?[\d.]+) trip=(\S+)")
@@ -459,7 +460,17 @@ def linear_terms(terms):
         return None
     if abs(trip_w * trip - cost) > 0.51:
         return None
-    if abs(score - (value - cost)) > 0.51:
+    # The goal-pill bonus (BUILDER_POOL_GOAL_PILL_BONUS, 2026-09-06) is the last
+    # link of the chain and appears ONLY on the row whose pill is the tank
+    # goal's own target: `= tripcost{48} = bp_raw{222} x goal_w{1.20}`, with the
+    # product at the head of the line. These arenas price the defend->repair
+    # feeder out and have not produced one, but the check has to read it if it
+    # ever does -- a boosted row is not a row whose arithmetic failed to close.
+    g = GOALW_RE.search(terms)
+    raw, gw = (float(g.group(1)), float(g.group(2))) if g else (value - cost, 1.0)
+    if abs(raw - (value - cost)) > 0.51:
+        return None
+    if abs(score - raw * gw) > 1.01:
         return None
     return missing, value, trip, cost
 
