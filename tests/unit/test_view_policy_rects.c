@@ -7,9 +7,7 @@
  * sweep under viewPolicyOff and viewPolicyKey, and under viewPolicyDecay only
  * while the recipient's proximity clock for that item is unexpired. A client
  * with no tank keeps a rect at its last known position rather than seeing the
- * whole map. The recipient's own tank screen is in the set whatever it is
- * watching — the last case covers a key view adding the item it claims beside
- * that screen rather than in place of it.
+ * whole map. What a claimed key view adds on top is test_view_state.c's.
  *
  * The same rects decide which pill squares a recipient is shown. A pill inside
  * one of them reports its real square with the position-current bit set; one
@@ -27,7 +25,6 @@
 #include <string.h>
 
 #include "global.h"
-#include "client_command.h"        /* VIEW_KIND_* — what the recipient reports watching */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* serverSimBuildViewports / ViewportRect / view state */
 #include "game_sim.h"
@@ -666,66 +663,6 @@ int run_view_pill_pos_bot_advantage(void) {
                   (unsigned)po[0].x, (unsigned)po[0].y);
 
     sim->botMgr.bots[1].active = false;
-    serverSimDestroy(sim);
-    return 0;
-}
-
-/* 10. viewPolicyKey adds the watched item's screen to the recipient's own tank
- *     screen rather than trading it away. The client predicts its tank against
- *     the ground round it, so that ground is sent whatever the player is
- *     looking through; leaving the tank behind is what the screen draws. */
-int run_view_rects_key_keeps_tank(void) {
-    ServerSim *sim = ut_make_running_sim("P0");
-    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
-
-    GameSim *gs = serverSimGetGameSim(sim);
-    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
-    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
-                  "Everard map has no pills (%u) — test needs one",
-                  pillsGetNumPills(&gs->pb));
-    UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid for positioning");
-
-    vp_clear_owners(gs);
-    vp_place_tank(gs, 0, 50, 50);
-    vp_place_pill(gs, 0, 0, 200, 200);
-    serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyKey,
-                           VIEW_DECAY_DEFAULT_SECS);
-
-    /* Nothing reported watched yet. The pill category sweeps nothing under
-     * key, so its owned pill is not covered and the tank screen is the set. */
-    ViewportRect vps[MAX_VIEWPORTS];
-    int n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
-    UT_ASSERT_MSG(n == 1,
-                  "key policy with nothing watched should leave the tank rect "
-                  "alone, got %d", n);
-    UT_ASSERT_MSG(inAnyViewport(vps, n, 50, 50), "tank square not covered");
-    UT_ASSERT_MSG(!inAnyViewport(vps, n, 200, 200),
-                  "an unwatched pill grants no rect under key policy");
-
-    /* Watching that pill earns it a screen, and the tank keeps its own. */
-    sim->viewKind[0]   = VIEW_KIND_PILL;
-    sim->viewTarget[0] = 0;
-    n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
-    UT_ASSERT_MSG(n == 2, "expected the tank rect and the watched pill's, got %d",
-                  n);
-    UT_ASSERT_MSG(inAnyViewport(vps, n, 200, 200),
-                  "the watched pill's square is not covered");
-    UT_ASSERT_MSG(inAnyViewport(vps, n, 50, 50),
-                  "the tank screen must survive a key view — the client "
-                  "predicts against the ground round it");
-
-    /* And with the tank gone the frozen rect still holds its last square, so a
-     * player killed while watching a pill keeps being told what is there. */
-    tank saved = gs->tanks[0];
-    gs->tanks[0] = NULL;
-    n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
-    UT_ASSERT_MSG(n == 2,
-                  "expected the frozen rect and the watched pill's, got %d", n);
-    UT_ASSERT_MSG(inAnyViewport(vps, n, 50, 50),
-                  "the frozen rect should still cover the tank's last square "
-                  "while a key view is open");
-
-    gs->tanks[0] = saved;
     serverSimDestroy(sim);
     return 0;
 }

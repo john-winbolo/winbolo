@@ -824,15 +824,12 @@ int run_fx_viewport_cull(void);
  * nothing under key without a claim), and under decay only while the
  * recipient's proximity clock is unexpired — a dead allied pill grants
  * nothing, and a player with no tank keeps a rect at its last known position
- * instead of seeing the whole map. The recipient's own tank screen is in the
- * set whatever it is watching: a claimed key view adds that item's screen
- * beside it rather than in place of it. */
+ * instead of seeing the whole map. */
 int run_view_rects_default_baseline(void);
 int run_view_rects_always_base_ally(void);
 int run_view_rects_off(void);
 int run_view_rects_decay(void);
 int run_view_rects_dead_player(void);
-int run_view_rects_key_keeps_tank(void);
 
 /* Per-recipient pill squares over the same rects (test_view_policy_rects.c): a
  * pill inside them reports its real square with the position-current bit set,
@@ -863,8 +860,9 @@ int run_lgm_visibility_tank_in_trees(void);
 int run_lgm_visibility_tank_visible(void);
 
 /* Client-reported view state (test_view_state.c): CMD_VIEW_STATE stores which
- * view a client is in, a viewPolicyKey category grants exactly the claimed
- * item's rect while it still qualifies, and every claim the server cannot
+ * view a client is in, a viewPolicyKey category grants the claimed item a rect
+ * beside the recipient's own tank screen while it still qualifies rather than
+ * in place of it, and every claim the server cannot
  * honour is accepted and degraded to the tank view — on arrival, per tick as
  * the target stops qualifying, on the round reset, and when the player being
  * viewed through leaves. */

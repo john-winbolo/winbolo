@@ -3,11 +3,11 @@
  *
  * A client tells the server which view it is in with CMD_VIEW_STATE. The
  * server stores the claim per slot and, for a category set to viewPolicyKey,
- * grants exactly one rect — the claimed item's — while that item still
- * qualifies, in place of the recipient's own tank screen rather than as well
- * as it: under key the player sees one thing at a time, so the ground round
- * their tank stops being sent while they watch something else. A claim the
- * server cannot honour is never an error: the
+ * grants the claimed item a rect while it still qualifies — beside the
+ * recipient's own tank screen, not in place of it. The client predicts its
+ * tank against the ground round it, so that ground is sent whatever the
+ * player is watching; showing one thing at a time is left to the screen.
+ * A claim the server cannot honour is never an error: the
  * dispatcher degrades an out-of-range one to the tank view on the spot, and
  * serverSimValidateViewTargets puts a slot back on the tank view once its
  * target stops qualifying, whereupon the rect simply stops being built.
@@ -174,31 +174,32 @@ int run_view_state_key_grants_rect(void) {
                   "claim should be stored (kind %u target %u)",
                   (unsigned)sim->viewKind[0], (unsigned)sim->viewTarget[0]);
 
-    /* One view at a time: the claimed pill's rect is the whole set while the
-     * claim stands, and the tank's own screen goes with it. */
+    /* The claim earns the pill its rect, and the tank keeps its own screen:
+     * the client predicts its tank against the ground round it. */
     n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
-    UT_ASSERT_MSG(n == 1, "claim should leave the pill rect on its own, got %d", n);
+    UT_ASSERT_MSG(n == 2, "claim should add the pill rect to the tank's, got %d", n);
     UT_ASSERT_MSG(inAnyViewport(vps, n, 200, 200), "claimed pill square not covered");
-    UT_ASSERT_MSG(!inAnyViewport(vps, n, 50, 50),
-                  "the tank square must not be covered while a key view stands");
+    UT_ASSERT_MSG(inAnyViewport(vps, n, 50, 50),
+                  "the tank square must stay covered while a key view stands");
 
     /* The validator leaves a claim that still qualifies alone. */
     serverSimValidateViewTargets(sim);
     UT_ASSERT_MSG(sim->viewKind[0] == VIEW_KIND_PILL,
                   "a qualifying claim must survive the validator");
 
-    /* The frozen rect a tankless slot falls back on does not creep in behind
-     * the key view either. Put the tank back afterwards so serverSimDestroy
+    /* A tankless slot falls back on the frozen rect behind the key view, so a
+     * player killed while watching an item keeps being told what is happening
+     * where their tank was. Put the tank back afterwards so serverSimDestroy
      * tears it down as usual. */
     {
         tank saved = gs->tanks[0];
         gs->tanks[0] = NULL;
         n = serverSimBuildViewports(sim, 0, vps, MAX_VIEWPORTS);
-        UT_ASSERT_MSG(n == 1, "a tankless slot on a key view should still get "
-                      "the pill rect on its own, got %d", n);
-        UT_ASSERT_MSG(!inAnyViewport(vps, n, 50, 50),
-                      "the last known tank square must not be covered while a "
-                      "key view stands");
+        UT_ASSERT_MSG(n == 2, "a tankless slot on a key view should get the "
+                      "frozen rect and the pill's, got %d", n);
+        UT_ASSERT_MSG(inAnyViewport(vps, n, 50, 50),
+                      "the last known tank square should still be covered "
+                      "while a key view stands");
         gs->tanks[0] = saved;
     }
 

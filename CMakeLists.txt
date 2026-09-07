@@ -3950,7 +3950,6 @@ set(_unit_test_names
     view_rects_off
     view_rects_decay
     view_rects_dead_player
-    view_rects_key_keeps_tank
     view_pill_pos_current
     view_pill_pos_reveal
     view_pill_update_event_fogged
