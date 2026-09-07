@@ -3443,7 +3443,9 @@ M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 -- still alive and talking"; whether its GOAL is current is answered by the
 -- move-on test, which needs no clock.
 M.BUILDER_POOL_ALLY_CAPTURE_GUARD = true   -- master switch; false = pre-2026-09-05
-M.BUILDER_POOL_ALLY_CAPTURE_TTL   = 175    -- brain ticks (25/s: a brain thinks every 2nd engine tick), i.e. 7 s of silence
+M.BUILDER_POOL_ALLY_CAPTURE_TTL   = 350    -- brain ticks = 7 s of silence (Andrew's spec). A brain thinks once per 20 ms
+                                           -- frame = 50/s (the server sim tick is a 10 ms half-step, 100/s; brain tick =
+                                           -- sim tick / 2). 2026-09-06: was 175 (= 3.5 s) from a wrong 25/s assumption.
 M.BUILDER_POOL_ALLY_CAPTURE_GOALS = { capture_pill = true, pill_place = true }
 
 -- ── Job lifecycle ────────────────────────────────────────────────────────
