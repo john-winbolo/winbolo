@@ -62,7 +62,6 @@
 #include "log.h"
 #include "screenbrainmap.h"
 #include "overview_map.h"
-#include "ovperf.h"   /* ovPerfStamp - the stamp pass's time and square count */
 #include "util.h"
 #include "netpacks.h"
 #include "transport.h"
@@ -1039,17 +1038,8 @@ static void overviewMapTick(ClientSim *cs) {
     cs->overviewSeedPending = FALSE;
   }
   clientSimFillOverviewViewInputs(cs, &in);
-#if WB_OVPERF
-  /* The seed above stamps the whole map through the same loop; start the
-   * count clean so the number is this update's alone. */
-  ovPerfStampSquares = 0;
-  uint64_t ovT0 = ovPerfNow();
-#endif
   overviewMapUpdate(&cs->overview, &cs->sim, cs->myPlayerNum, &in, haveTank,
                     deathWait, mx, my);
-#if WB_OVPERF
-  ovPerfStamp(ovT0, ovPerfNow());
-#endif
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {

@@ -80,7 +80,6 @@ extern "C" {
 extern "C" {
 #include "client_net.h"
 #include "../clientmutex.h" /* the overview's render reads sim state */
-#include "ovperf.h"         /* the pop-out's client-mutex wait and hold counters */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -5653,18 +5652,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                Only the fill is under the lock. The render draws from the
                snapshot after the release, so its render-target switches and
                the flushes they force never hold up the server's tick. */
-#if WB_OVPERF
-            uint64_t ovWaitStart = ovPerfNow();
-#endif
             clientMutexWaitFor();
-#if WB_OVPERF
-            uint64_t ovAcquired = ovPerfNow();
-#endif
             clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
             clientMutexRelease();
-#if WB_OVPERF
-            ovPerfPopoutLock(ovWaitStart, ovAcquired, ovPerfNow());
-#endif
             overviewViewRenderOffscreen(s_overviewView,
                                         s_popMapOverview.renderer,
                                         ovTiles, s_overviewTilesScale, ovCross,

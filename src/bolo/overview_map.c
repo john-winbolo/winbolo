@@ -76,7 +76,6 @@
 #include "pillbox.h"
 #include "players.h"
 #include "viewport.h"
-#include "ovperf.h" /* ovPerfStampSquares - squares the stamp loop rewrote */
 
 /* An inclusive square block centred on (cx,cy), trimmed to the map, live
  * outright. The centre and half-width are ints so a block over the top or left
@@ -124,9 +123,6 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
   changed = FALSE;
   for (x = r->left; x <= r->right; x++) {
     for (y = r->top; y <= r->bottom; y++) {
-#if WB_OVPERF
-      ovPerfStampSquares++;
-#endif
       isMine = FALSE;
       tileNum = viewportCalcSquarePure(sim, me, (BYTE)x, (BYTE)y, &isMine);
       flagBits = (BYTE)((setLive == TRUE ? OVERVIEW_F_LIVE : 0) |
