@@ -32,6 +32,8 @@
 #ifndef SPRITE_POSITIONS_H
 #define SPRITE_POSITIONS_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -70,6 +72,30 @@ void spritePositionLgm(float baseX, float baseY, int mode, float scale,
                        int sheetScale, int mx, int my, int px, int py,
                        int wx, int wy, int frame,
                        float *outX, float *outY);
+
+/* The overlay's placements, on the same base and scale. These are whole
+   game pixels whatever the animation mode: the cursor and the item numbers
+   sit on squares, and the gunsight and the tank labels have always been
+   placed from the square and pixel alone. */
+
+/* Top-left of a whole square: where the build cursor goes, and the box an
+   item number is drawn in. */
+float spritePositionSquare(float base, float scale, int square);
+
+/* Top-left of the gunsight sprite: the tank formula at the sight's game
+   pixel, so a crosshair one pixel wider than a tile has its centre pixel
+   on the aim point. */
+float spritePositionGunsight(float base, float scale, int square, int pixelOff);
+
+/* Top-left of a tank's name: one square to the right of the sprite's game
+   pixel, and held inside the clip's left edge so a name is never cut off
+   on the left. */
+void spritePositionTankLabel(float baseX, float baseY, float scale,
+                             int mx, int my, int px, int py, float clipLeft,
+                             float *outX, float *outY);
+
+/* Whether the pill and base numbers are drawn at this scale. */
+bool spritePositionItemLabelShown(float scale, float minScale);
 
 #ifdef __cplusplus
 }

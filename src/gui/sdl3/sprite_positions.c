@@ -515,3 +515,25 @@ void spritePositionLgm(float baseX, float baseY, int mode, float scale,
   *outX = sx;
   *outY = sy;
 }
+
+float spritePositionSquare(float base, float scale, int square) {
+  return base + (float)(square * TILE_SIZE_X) * scale;
+}
+
+float spritePositionGunsight(float base, float scale, int square, int pixelOff) {
+  return base + (float)(square * TILE_SIZE_X + pixelOff) * scale;
+}
+
+void spritePositionTankLabel(float baseX, float baseY, float scale,
+                             int mx, int my, int px, int py, float clipLeft,
+                             float *outX, float *outY) {
+  float sx = baseX + (float)(mx * TILE_SIZE_X + px + TILE_SIZE_X) * scale;
+  float sy = baseY + (float)(my * TILE_SIZE_Y + py) * scale;
+  if (sx < clipLeft) sx = clipLeft;
+  *outX = sx;
+  *outY = sy;
+}
+
+bool spritePositionItemLabelShown(float scale, float minScale) {
+  return scale >= minScale;
+}

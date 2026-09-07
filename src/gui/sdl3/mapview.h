@@ -77,6 +77,12 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY);
 
+/* The layer both views draw over their terrain — build cursor, these three
+   passes, tank names, gunsight and the pill and base numbers, in one order —
+   is mapViewDrawOverlay in mapview_overlay.h. It stays out of this file
+   because it draws text: the targets that link these drawers without a font
+   library or the label drawer (the gym, BrainTest) must go on linking. */
+
 /* Draw pre-built sprite lists. The lists' square 0,0 lands at
    originX - tileW - edgeX, and a sprite sits ctx->scale screen pixels
    further on per game pixel. Float because the overview's camera is

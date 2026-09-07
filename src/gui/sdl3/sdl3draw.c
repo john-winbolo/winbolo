@@ -52,6 +52,7 @@
 #endif
 #include "cursor.h"
 #include "mapview.h"
+#include "mapview_overlay.h"
 #include "overview_hud_layout.h"
 #include "overview_view.h"
 #include "../clientmutex.h"
@@ -1634,20 +1635,8 @@ void sdl3DrawCleanup(void) {
 }
 
 /* sdl3DrawShells, sdl3DrawTanks, sdl3DrawLGMs moved to mapview.c
-   as mapViewDrawShells/Tanks/LGMs. */
-
-/*--------------------------------------------------------
- * Draw tank labels only (separate pass after mapViewDrawTanks).
- *--------------------------------------------------------*/
-static void sdl3DrawTankLabels(screenTanks *tks) {
-  BYTE total = screenTanksGetNumEntries(tks);
-  for (BYTE count = 1; count <= total; count++) {
-    BYTE mx, my, px, py, frame, playerNum;
-    char playerName[256];
-    screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum, playerName);
-    sdl3DrawTankLabel(playerName, playerNum, mx, my, px, py);
-  }
-}
+   as mapViewDrawShells/Tanks/LGMs; the tank names, build cursor, gunsight
+   and item numbers are drawn with them by mapViewDrawOverlay. */
 
 /* -------------------------------------------------------
  * sdl3DrawReconfigureZoom — rebuild all zoom-dependent
@@ -2618,55 +2607,30 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                            (float)gZoomFactor };
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
-      /* Draw pillbox/base number labels (needs fonts — stays here) */
+      /* The pill and base numbers, from the 17x17 screen buffer: a square
+         showing a pill or base tile asks the sim which one it is. The
+         shared pass below draws them. */
+      OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
+      int itemLabelCount = 0;
       if (gFontLabel) {
         BYTE lx = 0, ly = 0;
         bool lDone = FALSE;
         while (!lDone) {
           BYTE pos = screenGetPos(value, lx, ly);
-          bool isPill = (pos == PILL_EVIL_15 || (pos >= PILL_EVIL_14 && pos <= PILL_EVIL_0) ||
-                         (pos >= PILL_GOOD_15 && pos <= PILL_GOOD_0));
-          bool isBase = (pos == BASE_GOOD || pos == BASE_NEUTRAL || pos == BASE_EVIL);
+          bool isPill = mapViewTileIsPill(pos);
+          bool isBase = mapViewTileIsBase(pos);
           int labelNum = -1;
           if (isPill && showPillLabels) {
             labelNum = clientSimGetPillNumPos(cs, lx, ly) - 1;
           } else if (isBase && showBaseLabels) {
             labelNum = clientSimGetBaseNumPos(cs, lx, ly) - 1;
           }
-          if (labelNum >= 0) {
-            SDL_FRect dest = {
-              (float)(originX + ((int)lx - 1) * tileW - edgeX),
-              (float)(originY + ((int)ly - 1) * tileH - edgeY),
-              (float)tileW,
-              (float)tileH
-            };
-            char str[4];
-            sprintf(str, "%d", labelNum);
-            SDL_Color white = {200, 200, 200, 255};
-            TTF_Font *labelFont = isBase ? gFontTiny : gFontLabel;
-            SDL_Surface *surf = TTF_RenderText_Blended(labelFont, str, 0, white);
-            if (surf) {
-              SDL_Texture *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
-              if (tex) {
-                float tw = (float)surf->w;
-                float th = (float)surf->h;
-                float tx, ty;
-                if (isBase) {
-                  tx = dest.x;
-                  ty = dest.y;
-                } else {
-                  tx = dest.x + (dest.w - tw) * 0.5f;
-                  ty = dest.y + (dest.h - th) * 0.5f;
-                }
-                SDL_FRect bgRect = { tx - 1.0f, ty - 1.0f, tw + 2.0f, th + 2.0f };
-                SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-                SDL_RenderFillRect(gRenderer, &bgRect);
-                SDL_FRect d = { tx, ty, tw, th };
-                SDL_RenderTexture(gRenderer, tex, NULL, &d);
-                SDL_DestroyTexture(tex);
-              }
-              SDL_DestroySurface(surf);
-            }
+          if (labelNum >= 0 && itemLabelCount < (int)(MAX_PILLS + MAX_BASES)) {
+            OverviewItemLabel *l = &itemLabels[itemLabelCount++];
+            l->mapX   = lx;
+            l->mapY   = ly;
+            l->number = (BYTE)labelNum;
+            l->isBase = isBase;
           }
           lx++;
           if (lx == MAIN_BACK_BUFFER_SIZE_X) {
@@ -2676,24 +2640,16 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         }
       }
 
-      /* Build-mode cursor overlay */
+      /* DEBUG: log the cursor square position relative to the render
+       * origin and edgeX, so a "square doesn't match mouse" report can
+       * be cross-referenced with the cursor.log entry that produced
+       * the cursorLeft/Top values. Logs only when those inputs change.
+       * The position logged is the one the shared pass draws it at. */
       if (useCursor) {
-        SDL_FRect curSrc = { (float)(MOUSE_SQUARE_X * gSheetScale), (float)(MOUSE_SQUARE_Y * gSheetScale),
-                             (float)(TILE_SIZE_X * gSheetScale), (float)(TILE_SIZE_Y * gSheetScale) };
-        float curDestX = (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX);
-        float curDestY = (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY);
-        SDL_FRect curDest = { curDestX, curDestY, (float)tileW, (float)tileH };
-        /* Faint (50% alpha) when drawing a locked build target with build
-           mode off; solid otherwise. Restore alpha after so other gTilesTex
-           draws this frame are unaffected. */
-        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 128);
-        SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
-        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 255);
-
-        /* DEBUG: log the cursor square position relative to the render
-         * origin and edgeX, so a "square doesn't match mouse" report can
-         * be cross-referenced with the cursor.log entry that produced
-         * the cursorLeft/Top values. Logs only when those inputs change. */
+        float curDestX = spritePositionSquare((float)(originX - tileW - edgeX),
+                                              (float)gZoomFactor, (int)cursorLeft);
+        float curDestY = spritePositionSquare((float)(originY - tileH - edgeY),
+                                              (float)gZoomFactor, (int)cursorTop);
         if (WB_DEBUG_FILE_LOG) {
           static int sLastCl = -1, sLastCt = -1, sLastEdgeX = INT_MIN, sLastEdgeY = INT_MIN;
           static FILE *sLog = NULL;
@@ -2721,31 +2677,47 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
 
 
-      /* Sprites via mapview */
       gCurrentEdgeX = edgeX;
       gCurrentEdgeY = edgeY;
       sdl3DrawStatusSetEdgeOffset(edgeX, edgeY);
-      mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
-      mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
-      /* Tank labels (needs fonts — separate pass after tank sprites) */
-      sdl3DrawTankLabels(tks);
-      mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
 
-      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
-       * Top-left is at the same position as the old 16×16 tile sprite so the
-       * center aligns with the gunsight world position. Drawn after the sprite
-       * passes so the aiming reticle stays on top of tanks (incl. boat tanks),
-       * shells, and LGMs rather than being painted over by them. */
-      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
-        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-        SDL_FRect gsDest = {
-          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
-          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
-          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
-        };
-        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
+      /* Everything over the terrain — build cursor, shells, tanks, tank
+         names, LGMs, gunsight, then the pill and base numbers — through the
+         pass the map overview draws with too. The crosshair is the custom
+         17x17 sprite whose centre pixel (8,8) is the aim point; the pass
+         puts its top-left where a 16x16 tile sprite's would go, which is
+         what centres it on the gunsight's position. */
+      MapViewOverlay ov;
+      memset(&ov, 0, sizeof(ov));
+      ov.cursorShown       = useCursor;
+      ov.cursorFaint       = gCursorFaint;
+      ov.cursorMapX        = cursorLeft;
+      ov.cursorMapY        = cursorTop;
+      if (gs->mapX != NO_GUNSIGHT) {
+        ov.gunsightShown = true;
+        ov.gsMapX        = (BYTE)gs->mapX;
+        ov.gsMapY        = (BYTE)gs->mapY;
+        ov.gsPixelX      = gs->pixelX;
+        ov.gsPixelY      = gs->pixelY;
       }
+      ov.crosshairTex      = gCrosshairTex;
+      ov.crosshairPx       = 17;
+      ov.labelCache        = sdl3DrawGetTankLabelCache();
+      ov.labelFont         = gFontMsg;
+      ov.labelDisplayScale = 1.0f;
+      ov.itemLabels        = itemLabels;
+      ov.itemLabelCount    = itemLabelCount;
+      ov.pillFont          = gFontLabel;
+      ov.baseFont          = gFontTiny;
+      ov.itemLabelMinScale = 1.0f;
+      ov.clipLeft          = (float)originX;
+      ov.clipTop           = (float)originY;
+      ov.clipRight         = (float)(originX + gameW);
+      ov.clipBottom        = (float)(originY + gameH);
+      mapViewDrawOverlay(&mvCtx, &ov, tks, lgms, sBullets,
+                         (float)originX, (float)originY,
+                         (float)tileW, (float)tileH,
+                         (float)edgeX, (float)edgeY);
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isItemView) {

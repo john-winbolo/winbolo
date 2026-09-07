@@ -62,16 +62,23 @@ extern "C" {
 #include "screenbullet.h"
 #include "../tiles.h"       /* MINE_X / MINE_Y, TILE_SIZE_X / TILE_SIZE_Y */
 #include "sprite_positions.h"
-#include "mapview.h"        /* mapViewDrawShells / Tanks / LGMs */
+#include "mapview.h"         /* MapViewCtx */
+#include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
 }
-#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont — the newswire's face */
-#include "sdl3draw.h"        /* sdl3DrawGetZoomFactor — the size it is opened at */
-#include "tank_label.h"      /* the shared name + flag / brain-icon drawer */
+#include "sdl3draw_status.h" /* sdl3DrawGetMessageFont, sdl3DrawGetLabelFont,
+                                sdl3DrawGetTinyFont — the main window's faces */
+#include "sdl3draw.h"        /* sdl3DrawGetZoomFactor — the size they are opened at */
+#include "tank_label.h"      /* the cache the shared drawer fills for this view */
 
 /* The Edit-menu Smooth Scrolling preference (winbolo.c). On, follow glides
  * with the tank's sub-square position; off, it steps whole squares the way
  * the classic view's scroll does. */
 extern "C" bool smoothScrollingEnabled;
+
+/* The View-menu Pillbox Labels and Base Labels switches (winbolo.c), read
+ * here so the in-window and pop-out hosts draw the numbers by one rule. */
+extern "C" bool showPillLabels;
+extern "C" bool showBaseLabels;
 
 /* View pixels an arrow key moves the centre per frame. In pixels rather than
  * squares so the map slides at the same apparent speed at every zoom. */
@@ -81,8 +88,9 @@ extern "C" bool smoothScrollingEnabled;
  * straddles the aim point rather than sitting in a corner of it. */
 #define OVERVIEW_CROSSHAIR_PX 17
 
-/* Zoom at or above which tank names are drawn. Below it the labels are wider
- * than the tanks are apart and the picture turns into text. */
+/* Zoom at or above which tank names and the pill and base numbers are drawn.
+ * Below it the labels are wider than the tanks are apart and the picture
+ * turns into text. */
 #define OVERVIEW_LABEL_MIN_ZOOM 1.0f
 
 /* The death blackout, drawn over the whole view from the tick the sim says a
@@ -742,60 +750,49 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
     SDL_RenderFillRects(r, runs, 4);
 }
 
-/* Tank names beside the sprites, drawn by the same tank_label.c body the
- * classic view uses — same font, same colours, same flag / brain icon —
- * through this view's own cache, because the classic pass's textures live
- * on the main window's renderer and this view may be on the pop-out's. The
- * label string is passed through whole, so the Tank Labels menu setting
- * (none / short / long, and with it the icon) applies here too. */
-static void overviewViewDrawLabels(OverviewView *v, SDL_Renderer *r,
-                                   const OverviewCamera *cam,
-                                   int viewW, int viewH,
-                                   const screenTanks *tks) {
-    BYTE total = screenTanksGetNumEntries(tks);
-    BYTE count;
+/* The pill and base numbers the shared pass draws. The snapshot lists every
+ * pill and base at its square; one is kept only when the memory shows a pill
+ * or base tile on that square and the square is live — the tile test the
+ * classic view makes on its screen buffer, made here on the same copy the
+ * sprites were filtered against. A carried pill, a destroyed one and a
+ * remembered square all fail it, so none of them shows a number. The Pillbox
+ * Labels and Base Labels switches apply as they do in the classic view. */
+static int overviewViewPickItemLabels(const OverviewSnapshot *snap,
+                                      OverviewItemLabel *out, int cap) {
+    const OverviewMap *om = overviewSnapshotMap(snap);
+    if (om == NULL) return 0;
 
-    TTF_Font *font = sdl3DrawGetMessageFont();
-
-    /* The face is opened at 13 px times the main window's zoom; the blit is
-     * scaled so the on-screen height is 13 px times the overview zoom. */
-    int mainZoom = sdl3DrawGetZoomFactor();
-    if (mainZoom < 1) mainZoom = 1;
-    float ds = overviewCameraZoomScale(cam) / (float)mainZoom;
-
-    for (count = 1; count <= total; count++) {
-        BYTE mx, my, px, py, frame, playerNum;
-        char name[PLAYER_NAME_LEN];
-        float sx = 0.0f, sy = 0.0f;
-
-        screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum,
-                           name);
-        if (name[0] == '\0') continue;
-
-        /* One square to the right of the tank, as the main view places it. */
-        overviewCameraWorldToScreen(cam, viewW, viewH,
-                                    (float)mx + (float)px / (float)TILE_SIZE_X + 1.0f,
-                                    (float)my + (float)py / (float)TILE_SIZE_Y,
-                                    &sx, &sy);
-        if (sx > (float)viewW || sy > (float)viewH || sy < 0.0f) continue;
-        if (sx < 0.0f) sx = 0.0f;
-
-        tankLabelDraw(&v->labelCache, r, font, name, playerNum, sx, sy, ds);
+    int total = overviewSnapshotItemLabelCount(snap);
+    const OverviewItemLabel *all = overviewSnapshotItemLabels(snap);
+    int n = 0;
+    for (int i = 0; i < total && n < cap; i++) {
+        const OverviewItemLabel *l = &all[i];
+        bool wanted = l->isBase ? showBaseLabels : showPillLabels;
+        if (!wanted) continue;
+        if ((om->flags[l->mapX][l->mapY] & OVERVIEW_F_LIVE) == 0) continue;
+        BYTE tile = om->tile[l->mapX][l->mapY];
+        bool onTile = l->isBase ? mapViewTileIsBase(tile) : mapViewTileIsPill(tile);
+        if (!onTile) continue;
+        out[n++] = *l;
     }
+    return n;
 }
 
 /* The sprite overlay: everything that moves, on the squares the player can
- * see this instant. Runs on the offscreen the terrain passes just filled.
- * The lists come out of the snapshot already filtered to live squares, so
- * nothing here decides what is drawn — only where. */
+ * see this instant, with the player's own marks and the labels round it.
+ * Runs on the offscreen the terrain passes just filled. The lists come out
+ * of the snapshot already filtered to live squares, so nothing here decides
+ * what is drawn — only where, through the same pass the classic view uses. */
 static void overviewViewDrawEntities(OverviewView *v,
                                      SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
                                      const OverviewSnapshot *snap) {
-    MapViewCtx    ctx;
-    bool          selfDrawn = overviewSnapshotSelfDrawn(snap);
+    MapViewCtx        ctx;
+    MapViewOverlay    ov;
+    OverviewItemLabel items[MAX_PILLS + MAX_BASES];
+    bool              selfDrawn = overviewSnapshotSelfDrawn(snap);
     /* mapview.c's passes only read the lists; their signatures predate
      * const, so the snapshot's are handed over through a cast. */
     screenTanks   *tks  = (screenTanks *)overviewSnapshotTanks(snap);
@@ -826,69 +823,60 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.sheetScale = ss;
     ctx.scale      = zoomScale;
 
+    SDL_memset(&ov, 0, sizeof(ov));
+
     /* Where a build will land, from the same mouse_square sprite the main view
      * draws. Solid while cursor mode is on or the pointer is over the map (the
      * main view draws its mouse square solid); a target that is only locked in
-     * shows faint, which is the split the main view makes too. Ahead of the
-     * sprite passes so tanks and men stand on top of it. Placed by the same
-     * formula as the sprites, so it sits on its square to the bit. */
+     * shows faint, which is the split the main view makes too. */
     BYTE bcX = 0, bcY = 0;
-    bool cursorMode  = buildCursorGetTile(&bcX, &bcY);
-    bool cursorSolid = cursorMode || v->mouseOnMap;
-    if (cursorMode || buildCursorGetTargetTile(&bcX, &bcY)) {
-        int bbx = (int)bcX * TILE_SIZE_X;
-        int bby = (int)bcY * TILE_SIZE_Y;
-        SDL_FRect src = mapViewAtlasSrc(MOUSE_SQUARE_X, MOUSE_SQUARE_Y,
-                                        TILE_SIZE_X, TILE_SIZE_Y, ss);
-        SDL_FRect dst = {
-            originX - tileW + (float)bbx * zoomScale,
-            originY - tileH + (float)bby * zoomScale,
-            tileW,
-            tileH
-        };
-        if (!cursorSolid) SDL_SetTextureAlphaMod(tiles, 128);
-        SDL_RenderTexture(r, tiles, &src, &dst);
-        /* The sprite passes below draw from this texture, and the terrain
-         * passes will next frame — neither wants a leftover alpha. */
-        SDL_SetTextureAlphaMod(tiles, 255);
-    }
+    bool cursorMode = buildCursorGetTile(&bcX, &bcY);
+    ov.cursorShown = cursorMode || buildCursorGetTargetTile(&bcX, &bcY);
+    ov.cursorFaint = !(cursorMode || v->mouseOnMap);
+    ov.cursorMapX  = bcX;
+    ov.cursorMapY  = bcY;
 
-    mapViewDrawShells(&ctx, sb, originX, originY, tileW, tileH, 0.0f, 0.0f);
-    mapViewDrawTanks(&ctx, tks, originX, originY, tileW, tileH, 0.0f, 0.0f);
-    mapViewDrawLGMs(&ctx, lgms, originX, originY, tileW, tileH, 0.0f, 0.0f);
+    /* The local player's own reticle, drawn only when the tank sprite was:
+     * the reticle sits a gunsight's length from the tank, so putting it on
+     * the picture while the tank is hidden would mark where the tank is just
+     * as surely as the sprite did. It takes its answer from the same filter
+     * the sprite went through, so the two cannot disagree. */
+    ov.gunsightShown = crosshair != NULL && selfDrawn &&
+                       overviewSnapshotGunsight(snap, &ov.gsMapX, &ov.gsMapY,
+                                                &ov.gsPixelX, &ov.gsPixelY);
+    ov.crosshairTex  = crosshair;
+    ov.crosshairPx   = OVERVIEW_CROSSHAIR_PX;
 
-    /* The local player's own reticle, last so it sits on top of the sprites
-     * the way the main view's does. Its top-left goes where a 16x16 tile
-     * sprite would — mapViewDrawTanks' formula with bbx built from the
-     * gunsight's square and pixel offset — which is what puts the sprite's
-     * centre pixel on the aim point. Its 17 game pixels are scaled by the
-     * same rung as a tank's 16, so it tracks the map at every zoom.
-     *
-     * Drawn only when the tank sprite was: the reticle sits a gunsight's
-     * length from the tank, so putting it on the picture while the tank is
-     * hidden would mark where the tank is just as surely as the sprite did.
-     * It takes its answer from the same filter the sprite went through, so
-     * the two cannot disagree. */
-    BYTE gsMX, gsMY, gsPX, gsPY;
-    if (crosshair != NULL && selfDrawn &&
-        overviewSnapshotGunsight(snap, &gsMX, &gsMY, &gsPX, &gsPY)) {
-        /* The ImGui SDL3 backend sets the sampler per draw, so the mode the
-         * host set at load time does not survive to here. */
-        SDL_SetTextureScaleMode(crosshair, SDL_SCALEMODE_NEAREST);
-        int bbx = (int)gsMX * TILE_SIZE_X + (int)gsPX;
-        int bby = (int)gsMY * TILE_SIZE_Y + (int)gsPY;
-        SDL_FRect dst = {
-            originX - tileW + (float)bbx * zoomScale,
-            originY - tileH + (float)bby * zoomScale,
-            (float)OVERVIEW_CROSSHAIR_PX * zoomScale,
-            (float)OVERVIEW_CROSSHAIR_PX * zoomScale
-        };
-        SDL_RenderTexture(r, crosshair, NULL, &dst);
-    }
-
+    /* Tank names, through this view's own cache: the classic pass's textures
+     * live on the main window's renderer and this view may be on the
+     * pop-out's. The face is opened at 13 px times the main window's zoom;
+     * the blit is scaled so the on-screen height is 13 px times the overview
+     * zoom. Below OVERVIEW_LABEL_MIN_ZOOM no font is handed over, which is
+     * how the pass is told to draw no names. */
+    int mainZoom = sdl3DrawGetZoomFactor();
+    if (mainZoom < 1) mainZoom = 1;
+    ov.labelDisplayScale = zoomScale / (float)mainZoom;
     if (zoomScale >= OVERVIEW_LABEL_MIN_ZOOM) {
-        overviewViewDrawLabels(v, r, cam, viewW, viewH, tks);
+        ov.labelCache = &v->labelCache;
+        ov.labelFont  = sdl3DrawGetMessageFont();
     }
+
+    /* The pill and base numbers, from the same zoom up, in the main window's
+     * faces scaled the same way as the names. */
+    ov.itemLabelCount    = overviewViewPickItemLabels(snap, items,
+                                                      (int)(MAX_PILLS + MAX_BASES));
+    ov.itemLabels        = items;
+    ov.pillFont          = sdl3DrawGetLabelFont();
+    ov.baseFont          = sdl3DrawGetTinyFont();
+    ov.itemLabelMinScale = OVERVIEW_LABEL_MIN_ZOOM;
+
+    ov.clipLeft   = 0.0f;
+    ov.clipTop    = 0.0f;
+    ov.clipRight  = (float)viewW;
+    ov.clipBottom = (float)viewH;
+
+    mapViewDrawOverlay(&ctx, &ov, tks, lgms, sb, originX, originY,
+                       tileW, tileH, 0.0f, 0.0f);
 }
 
 extern "C" OverviewView *overviewViewCreate(void) {

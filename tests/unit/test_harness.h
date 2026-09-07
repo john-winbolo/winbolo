@@ -1102,6 +1102,17 @@ int run_mapview_sprite_ladder(void);
 int run_mapview_sprite_shell_tip(void);
 int run_mapview_sprite_lgm_snap(void);
 
+/* The entity overlay's placements (test_mapview_overlay.c): the gunsight's
+ * top-left is the classic view's formula at an integer scale and the
+ * overview's at every rung; a tank's name sits one square to the right of
+ * its sprite with no extra offset and is held at the clip's left edge; the
+ * build cursor lands on its square at every rung; and the pill and base
+ * numbers sit on their square and are withheld below the minimum scale. */
+int run_mapview_overlay_gunsight(void);
+int run_mapview_overlay_tank_label(void);
+int run_mapview_overlay_cursor(void);
+int run_mapview_overlay_item_labels(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

@@ -3064,6 +3064,11 @@ struct OverviewSnapshot {
   BYTE          viewTarget;
   int           pillViewX;
   int           pillViewY;
+
+  /* Every pill and base at its square, numbered as the classic view numbers
+   * them. Rebuilt on every fill; nothing is filtered here. */
+  OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
+  int               itemLabelCount;
 };
 
 /* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
@@ -3185,6 +3190,7 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->viewTarget    = 0;
   s->pillViewX     = 0;
   s->pillViewY     = 0;
+  s->itemLabelCount = 0;
   s->haveMap       = (cs != NULL);
   if (cs == NULL) return;
 
@@ -3212,6 +3218,39 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->viewTarget = clientSimGetViewTarget(cs);
   s->pillViewX  = clientSimGetPillViewX(cs);
   s->pillViewY  = clientSimGetPillViewY(cs);
+
+  /* Every pill and base at its square. The number is the one the classic
+   * view draws — pillsGetViewPillNum / basesGetBaseNum at that square, less
+   * one — so two pills the sim reports on one square number as the classic
+   * view numbers them. Which squares show a number is decided at draw time
+   * from the memory copy above: the tile there, and whether it is live. */
+  {
+    GameSim *gs = clientSimGetGameSim(cs);
+    BYTE n = pillsGetNumPills(&gs->pb);
+    BYTE i;
+    for (i = 1; i <= n && s->itemLabelCount < MAX_PILLS + MAX_BASES; i++) {
+      pillbox item;
+      OverviewItemLabel *l = &s->itemLabels[s->itemLabelCount++];
+      memset(&item, 0, sizeof(item));
+      pillsGetPill(&gs->pb, &item, i);
+      l->mapX   = item.x;
+      l->mapY   = item.y;
+      l->number = (BYTE)(pillsGetViewPillNum(&gs->pb, item.x, item.y,
+                                             FALSE, FALSE) - 1);
+      l->isBase = false;
+    }
+    n = basesGetNumBases(&gs->bs);
+    for (i = 1; i <= n && s->itemLabelCount < MAX_PILLS + MAX_BASES; i++) {
+      base item;
+      OverviewItemLabel *l = &s->itemLabels[s->itemLabelCount++];
+      memset(&item, 0, sizeof(item));
+      basesGetBase(&gs->bs, &item, i);
+      l->mapX   = item.x;
+      l->mapY   = item.y;
+      l->number = (BYTE)(basesGetBaseNum(&gs->bs, item.x, item.y) - 1);
+      l->isBase = true;
+    }
+  }
 
   /* The whole-map lists, then the filter against the copy just taken, so the
    * sprites stand on squares the same picture says are live. */
@@ -3294,6 +3333,14 @@ void overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
                                     int *mapY) {
   if (mapX) *mapX = s ? s->pillViewX : 0;
   if (mapY) *mapY = s ? s->pillViewY : 0;
+}
+
+int overviewSnapshotItemLabelCount(const OverviewSnapshot *s) {
+  return s ? s->itemLabelCount : 0;
+}
+
+const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s) {
+  return s ? s->itemLabels : NULL;
 }
 
 void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {

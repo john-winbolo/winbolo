@@ -235,6 +235,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/client_frontend/client_frontend_connect.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c
     ${PROJ_ROOT}/src/gui/sdl3/mapview.c
+    ${PROJ_ROOT}/src/gui/sdl3/mapview_overlay.c
     ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3draw_status.c

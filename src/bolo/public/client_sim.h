@@ -1099,6 +1099,17 @@ void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
    The handle is the host's to create and destroy. */
 typedef struct OverviewSnapshot OverviewSnapshot;
 
+/* One pill or base and the number the views draw on it, at its absolute map
+   square. The snapshot lists every one the sim has; whether a square shows
+   its number is the render's decision, made against the memory's tile and
+   live flag for that square. */
+typedef struct OverviewItemLabel {
+  BYTE mapX;
+  BYTE mapY;
+  BYTE number;   /* the value drawn, already decremented as the views do */
+  bool isBase;
+} OverviewItemLabel;
+
 OverviewSnapshot *overviewSnapshotCreate(void);
 void              overviewSnapshotDestroy(OverviewSnapshot *s);
 
@@ -1132,6 +1143,10 @@ BYTE    overviewSnapshotViewTarget(const OverviewSnapshot *s);
 /* The square an item view watches — clientSimGetPillViewX / Y at fill time. */
 void    overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
                                        int *mapY);
+/* Every pill and base at its square, with the number the classic view puts
+   on it: the first the sim lists at that square, counted from 0. */
+int                      overviewSnapshotItemLabelCount(const OverviewSnapshot *s);
+const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
