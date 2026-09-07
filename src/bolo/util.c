@@ -432,7 +432,10 @@ bool utilIsTankInTrees(map *mp, pillboxes *pb, bases *bs, WORLD wx, WORLD wy) {
 void utilPtoCString(char *src, char *dest) {
 	int count; /* Looping variable */
   int len;   /* Length of the string */
-  len = src[0];
+  /* The length byte is unsigned. Read through a plain (signed on x86)
+   * char it goes negative from 128 up, the loop below never runs and the
+   * caller silently gets an empty string. */
+  len = (unsigned char) src[0];
   for (count=0; count<len; count++) {
     dest[count] = src[count+1];
 	}

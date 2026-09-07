@@ -70,6 +70,8 @@ extern "C" {
 #include "sdl3imgui.h"
 #include "input_gate.h"
 #include "sdl3draw.h"
+#include "overview_view.h"
+#include "tileloader.h"
 #include "luabrainshandler.h"
 #include "flags.h"
 #include "glyphs.h"
@@ -77,6 +79,7 @@ extern "C" {
 
 extern "C" {
 #include "client_net.h"
+#include "../clientmutex.h" /* the overview's render reads sim state */
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -203,6 +206,7 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
                                                 int *outW, int *outH, int *outX, int *outY);
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
+extern "C" void windowFullScreenChoose(bool on);
 extern "C" void windowSaveMap(struct ClientSim *cs);
 extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
@@ -266,6 +270,10 @@ static bool s_showPlayersPanel = false;
 static BYTE s_pendingZoom = 255;
 static bool s_pendingZoomFromResize = false;  /* True if zoom change came from resize snap */
 
+/* Deferred full screen change, for the same reason: -1 = no pending change,
+   0 = leave full screen, 1 = enter it. */
+static signed char s_pendingFullScreen = -1;
+
 /* Suppress auto-switch to Custom on the next resize event.  Set before
    programmatic SDL_SetWindowSize so the resulting event doesn't trigger
    an unwanted mode change. */
@@ -307,14 +315,16 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
  * shield.svg for native Cocoa drawing. */
 static SDL_Texture *s_iconSteam = nullptr;
 static SDL_Texture *s_iconBrain = nullptr;
-/* Large brain texture used for tank-label overlays. The small s_iconBrain
- * is rasterized at WBN_ICON_SIZE for the player-popup / renderPlayerName
- * paths; sized up to a tank-label height (~16-48 px depending on zoom)
- * the small one looks soft because the SVG's vector edges were already
- * baked into a 14-px bitmap. WBN_ICON_TANK_LABEL_SIZE rasterizes the
- * same SVG at a height that covers the realistic zoom range so the
- * label-side blit is a (sharp) downscale rather than an upscale. */
-static SDL_Texture *s_iconBrainLg = nullptr;
+/* Large brain rasterization used for tank-label overlays, kept as a surface
+ * because the label caches texture it per renderer (main window, pop-out
+ * overview). The small s_iconBrain is rasterized at WBN_ICON_SIZE for the
+ * player-popup / renderPlayerName paths; sized up to a tank-label height
+ * (~16-48 px depending on zoom) the small one looks soft because the SVG's
+ * vector edges were already baked into a 14-px bitmap.
+ * WBN_ICON_TANK_LABEL_SIZE rasterizes the same SVG at a height that covers
+ * the realistic zoom range so the label-side blit is a (sharp) downscale
+ * rather than an upscale. */
+static SDL_Surface *s_iconBrainSurf = nullptr;
 static bool s_wbnIconsLoaded = false;
 #define WBN_ICON_SIZE 14
 #define WBN_ICON_TANK_LABEL_SIZE 48
@@ -323,13 +333,13 @@ static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconSteam   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
-    s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
-                                          WBN_ICON_TANK_LABEL_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
+    s_iconSteam     = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconBrain     = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    s_iconBrainSurf = imguiLoadSvgIconWhiteSurface("data/ui/brain.svg",
+                                                   WBN_ICON_TANK_LABEL_SIZE);
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainSurf=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconSteam,
-            (void *)s_iconBrain, (void *)s_iconBrainLg,
+            (void *)s_iconBrain, (void *)s_iconBrainSurf,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
 
@@ -461,19 +471,130 @@ struct PopOutWindow {
     int           height;
 };
 
-static PopOutWindow s_popSysInfo  = {};
-static PopOutWindow s_popNetInfo  = {};
-static PopOutWindow s_popGameInfo = {};
-static PopOutWindow s_popSendMsg  = {};
+static PopOutWindow s_popSysInfo     = {};
+static PopOutWindow s_popNetInfo     = {};
+static PopOutWindow s_popGameInfo    = {};
+static PopOutWindow s_popSendMsg     = {};
+static PopOutWindow s_popMapOverview = {};
+
+/* Every site that treats the pop-outs as a set — event routing, the
+ * focus/mute check, cleanup — walks this table, so adding a pop-out means
+ * adding it here and nowhere else. The per-frame pump stays unrolled
+ * because each pop-out draws different content. */
+static PopOutWindow *const s_popOuts[] = {
+    &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg, &s_popMapOverview
+};
+#define POPOUT_COUNT ((int)(sizeof(s_popOuts) / sizeof(s_popOuts[0])))
+
 static ImGuiContext *s_mainImguiCtx = nullptr;
 
-static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
+/* Map Overview drawing state. An SDL texture only works on the renderer that
+   created it, so the shared game atlas (which belongs to the main window's
+   renderer) cannot be blitted into the pop-out — the overview gets its own
+   sheet on the pop-out's renderer, rebuilt whenever the shared atlas changes
+   scale. Both this and the view are torn down in sdl3ImguiCleanup, ahead of
+   the renderer they were made on. */
+static OverviewView *s_overviewView          = nullptr;
+static SDL_Texture  *s_overviewTiles         = nullptr;
+static SDL_Renderer *s_overviewTilesRenderer = nullptr;
+static int           s_overviewTilesScale    = 0;
+/* The tile-atlas build this sheet came from. A skin change rebuilds the
+   atlas without changing the renderer or the scale, so those two alone
+   would keep the pop-out on the old art. */
+static unsigned int  s_overviewTilesGen      = 0;
+/* The gunsight sprite, on the pop-out's renderer for the same reason. */
+static SDL_Texture  *s_overviewCrosshair         = nullptr;
+static SDL_Renderer *s_overviewCrosshairRenderer = nullptr;
+/* Last frame's running state, so the start of a game can be told from the
+   middle of one — see the auto-hide/reopen in sdl3ImguiPumpAndRender. */
+static bool          s_overviewWasRunning    = false;
+
+/* Whether the windows the player drives from (main window + Map Overview)
+   held keyboard focus as of the end of the last event poll, and whether any
+   focus event arrived during the current one.  Held keys are dropped only
+   when that set as a whole gains or loses focus, so handing focus between
+   the two windows keeps a key the player is still holding.  Seeded true
+   because the main window is created and raised before events start
+   flowing, so it owns focus by the time the first one is judged. */
+static bool          s_gameInputHadFocus     = true;
+static bool          s_focusEventThisPoll    = false;
+
+static SDL_Texture *overviewEnsureTiles(SDL_Renderer *r) {
+    if (!r) return nullptr;
+
+    int want = sdl3DrawGetSheetScale();
+    if (want < 1) want = 1;
+    unsigned int gen = sdl3DrawGetTilesGeneration();
+    /* Records the attempt, not just the result: a build that failed must not
+       be retried — and the SVGs re-rasterized — on every frame after. */
+    if (s_overviewTilesRenderer == r && s_overviewTilesScale == want &&
+        s_overviewTilesGen == gen) {
+        return s_overviewTiles;
+    }
+
+    if (s_overviewTiles) {
+        SDL_DestroyTexture(s_overviewTiles);
+        s_overviewTiles = nullptr;
+    }
+    s_overviewTilesRenderer = r;
+    s_overviewTilesScale    = want;
+    s_overviewTilesGen      = gen;
+
+    SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * want);
+    if (!sheet) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[Overview] tileLoaderBuildSheet failed");
+        return nullptr;
+    }
+    s_overviewTiles = SDL_CreateTextureFromSurface(r, sheet);
+    SDL_DestroySurface(sheet);
+    if (!s_overviewTiles) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[Overview] SDL_CreateTextureFromSurface failed: %s",
+                     SDL_GetError());
+        return nullptr;
+    }
+
+    /* Blend mode sticks; the sampler does not. The ImGui SDL3 backend sets the
+       scale mode per draw, so anything set here is gone by the time the sheet
+       is drawn — overviewViewRenderOffscreen re-asserts the player's Texture
+       Filter setting on it every frame instead. */
+    SDL_SetTextureBlendMode(s_overviewTiles, SDL_BLENDMODE_BLEND);
+    return s_overviewTiles;
+}
+
+/* The pop-out's own crosshair. Keyed on the renderer alone — the PNG has one
+   size, so there is nothing here matching the tile sheet's scale. Like the
+   sheet, the attempt is recorded before it is made so a failed load is not
+   retried every frame. */
+static SDL_Texture *overviewEnsureCrosshair(SDL_Renderer *r) {
+    if (!r) return nullptr;
+
+    if (s_overviewCrosshairRenderer == r) {
+        return s_overviewCrosshair;
+    }
+
+    if (s_overviewCrosshair) {
+        SDL_DestroyTexture(s_overviewCrosshair);
+        s_overviewCrosshair = nullptr;
+    }
+    s_overviewCrosshairRenderer = r;
+
+    s_overviewCrosshair = sdl3DrawCreateCrosshairTexture(r);
+    if (!s_overviewCrosshair) {
+        WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                     "[Overview] sdl3DrawCreateCrosshairTexture failed");
+    }
+    return s_overviewCrosshair;
+}
+
+static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     /* Re-show an existing pop-out rather than recreating it. We deliberately
      * keep the SDL_Window + Metal SDL_Renderer alive across closes: destroying
      * a Metal renderer mid-run releases Metal objects that the Steam overlay
      * (gameoverlayrenderer.dylib) has cached, and the overlay then messages the
      * freed object on the next present of the main window -> SIGSEGV. The
-     * renderers are only torn down for real at shutdown (sdl3ImguiShutdown). */
+     * renderers are only torn down for real at shutdown (sdl3ImguiCleanup). */
     if (pw->window) {
         pw->open = true;
         SDL_ShowWindow(pw->window);
@@ -481,12 +602,15 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
         return true;
     }
 
-    pw->window = SDL_CreateWindow(title, w, h, 0);
+    pw->window = SDL_CreateWindow(title, w, h, flags);
     if (!pw->window) return false;
 
 #ifdef _WIN32
-    /* Remove minimize/maximize buttons — leave only the close box */
-    {
+    /* Remove minimize/maximize buttons — leave only the close box. A
+     * resizable pop-out keeps both: the maximize box is the normal way to
+     * fill the screen with it, and stripping it would leave edge-dragging as
+     * the only way to make the window bigger. */
+    if ((flags & SDL_WINDOW_RESIZABLE) == 0) {
         HWND hwnd = (HWND)SDL_GetPointerProperty(
             SDL_GetWindowProperties(pw->window),
             SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
@@ -551,11 +675,48 @@ static void popOutDestroy(PopOutWindow *pw) {
 static void popOutHide(PopOutWindow *pw) {
     if (!pw->window || !pw->open) return;
     pw->open = false;
+    /* A pop-out the player took full screen owns a macOS Space of its own,
+     * and hiding it there leaves that Space behind with nothing in it — the
+     * raise below then carries focus off to wherever the main window is,
+     * across an empty screen. Drop back to windowed first, and wait for it:
+     * the raise would otherwise race the transition. */
+    if (SDL_GetWindowFlags(pw->window) & SDL_WINDOW_FULLSCREEN) {
+        SDL_SetWindowFullscreen(pw->window, false);
+        SDL_SyncWindow(pw->window);
+    }
     SDL_HideWindow(pw->window);
     /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
      * where the OS does not auto-return key status to the main window), so
      * explicitly raise the main game window back to the front/focus. */
     if (s_window) SDL_RaiseWindow(s_window);
+}
+
+/* True while the window manager owns the pop-out's size and position — full
+ * screen or zoomed. Neither is geometry the player chose, so neither is
+ * remembered. */
+static bool popOutGeometryIsOsManaged(const PopOutWindow *pw) {
+    if (!pw->window) return false;
+    return (SDL_GetWindowFlags(pw->window) &
+            (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)) != 0;
+}
+
+/* Whether a remembered overview rect can still be handed back. A rect saved
+ * from before the full screen guard in the resize handler is the display's
+ * own — as big as the display, at its origin, which on macOS is up under the
+ * menu bar — and handing that back strands the window with no title bar to
+ * grab and no close box to click. Both halves of that shape are what is
+ * tested, against the usable area rather than the full display: the part
+ * clear of the menu bar and the dock. A window the player has dragged
+ * part-way off the right or bottom edge is their own doing and is still
+ * remembered. A prefs file already carrying a bad rect recovers here. */
+static bool overviewSavedGeometryUsable(int x, int y, int w, int h) {
+    SDL_Point pt = { x, y };
+    SDL_DisplayID disp = SDL_GetDisplayForPoint(&pt);
+    if (!disp) return false;
+    SDL_Rect usable;
+    if (!SDL_GetDisplayUsableBounds(disp, &usable)) return false;
+    if (w > usable.w || h > usable.h) return false;
+    return x >= usable.x && y >= usable.y;
 }
 
 static bool popOutBeginFrame(PopOutWindow *pw) {
@@ -592,12 +753,166 @@ static void popOutEndFrame(PopOutWindow *pw) {
     SDL_RenderPresent(pw->renderer);
 }
 
-static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h) {
+static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint32 flags) {
     if (pw->open) {
         popOutHide(pw);
     } else {
-        popOutCreate(pw, title, w, h);
+        popOutCreate(pw, title, w, h, flags);
     }
+}
+
+/* Classic mode as last seen from the connected server, refreshed once a
+ * frame in sdl3ImguiPumpAndRender. A file static rather than a ClientSim
+ * read at each site because the two suppression points below are reached
+ * from callers that have no ClientSim in hand. Spectators are exempt: they
+ * are on the delayed god-view stream and are not competing. */
+static bool s_classicMode = false;
+
+static bool classicModeActive(void) { return s_classicMode; }
+
+/* The overview is the one pop-out whose geometry is remembered, so every
+ * place that opens it comes through here rather than calling popOutCreate
+ * with a fixed size. A saved size below 200 px is treated as junk and
+ * replaced by the default — the window would be too small to read a map in.
+ *
+ * The window is created hidden so a restored position can be applied before
+ * it is ever shown; without that it would appear at the OS default and jump.
+ * That only applies to the first create: popOutCreate's re-show path keeps
+ * the window the player last dragged, position included.
+ *
+ * The saved position is honoured only while SDL still finds a display under
+ * it, so a monitor that has been unplugged since the last run cannot strand
+ * the window off-screen. Same test the main window does in winbolo.c. */
+static void mapOverviewOpen(void) {
+    /* Full screen mode owns the whole window and draws the same map itself,
+       so the pop-out never opens while it is on — in a game, in the lobby or
+       in the menus. The test is the app flag rather than the in-window view
+       because the view only comes up once a game is running, and the
+       game-start reopen runs ahead of it. gameFrontShowMapOverview is left
+       alone: a player who had the pop-out flagged to reopen gets it back the
+       moment they are back in classic mode. */
+    if (gameFrontFullScreen) return;
+    /* The server is holding the player in the classic framed view, so the
+       pop-out does not open while that lasts. gameFrontShowMapOverview is
+       left alone for the same reason as above: it is the player's own
+       preference and it hands the pop-out back on the next server. */
+    if (classicModeActive()) return;
+    bool firstCreate = (s_popMapOverview.window == nullptr);
+    int w = gameFrontOverviewW;
+    int h = gameFrontOverviewH;
+    if (w < 200) w = 640;
+    if (h < 200) h = 640;
+    /* Only a remembered rect is checked: with no position saved there is
+       nothing to check it against, and the size alone cannot strand the
+       window. */
+    bool havePos = (gameFrontOverviewX >= 0 && gameFrontOverviewY >= 0);
+    if (havePos && !overviewSavedGeometryUsable(gameFrontOverviewX,
+                                                gameFrontOverviewY, w, h)) {
+        w = 640;
+        h = 640;
+        havePos = false;
+    }
+    Uint32 flags = SDL_WINDOW_RESIZABLE |
+                   (firstCreate ? SDL_WINDOW_HIDDEN : 0);
+    if (!popOutCreate(&s_popMapOverview,
+                      langGetText(STR_MENU_MAP_OVERVIEW), w, h, flags))
+        return;
+    if (firstCreate) {
+        if (havePos) {
+            SDL_SetWindowPosition(s_popMapOverview.window,
+                                  gameFrontOverviewX, gameFrontOverviewY);
+        }
+        SDL_ShowWindow(s_popMapOverview.window);
+        SDL_RaiseWindow(s_popMapOverview.window);
+    }
+    gameFrontShowMapOverview = true;
+}
+
+/* Every path that takes the overview off screen comes through here, so the
+ * pointer the view may have switched to the game crosshair is always handed
+ * back. overviewViewHandleInput only restores it when the pointer leaves the
+ * map, which never happens when the window goes away underneath it. */
+static void mapOverviewHide(void) {
+    if (s_popMapOverview.open) popOutHide(&s_popMapOverview);
+    overviewViewReleaseCursor(s_overviewView);
+}
+
+/* An explicit close: the window goes away and is not brought back with the
+ * next game. The auto-hide at the end of a game deliberately does not come
+ * through here — see the comment there. */
+static void mapOverviewClose(void) {
+    mapOverviewHide();
+    gameFrontShowMapOverview = false;
+}
+
+/* Turn the in-window overview on or off. The mode takes the main window
+ * fullscreen so the map gets the whole screen; leaving drops the window back
+ * to windowed only when the app full screen flag is off, because with it on
+ * the window stays full screen for the lobby and the menus. The window call
+ * sits outside the mode test on purpose: a flag change with no mode change
+ * still has to be able to move the window. */
+static void overviewInWindowSet(bool on) {
+    SDL_Window *win = sdl3DrawGetWindow();
+    if (on && !win) return;
+    if (on != sdl3DrawIsOverviewInWindow()) {
+        sdl3DrawSetOverviewInWindow(on);  /* hands the OS pointer back on the way out */
+    }
+    if (win) {
+        SDL_SetWindowFullscreen(win, on || gameFrontFullScreen);
+        /* SDL_SetWindowFullscreen is asynchronous on Wayland and X11 and the
+           frame that follows reads the window geometry, so wait for the
+           transition here — the same reason windowFullScreenChoose syncs. */
+        SDL_SyncWindow(win);
+    }
+}
+
+/* The player asking for the mode, on or off, which is what the next game
+ * brings back. The auto-exit at the end of a game and the teardown in
+ * sdl3ImguiCleanup call overviewInWindowSet directly instead: an automatic
+ * exit must not forget that the player wanted the mode. The flag is assigned
+ * first because overviewInWindowSet reads it — turning the mode off in game
+ * has to clear it before the call or the window never leaves full screen. */
+static void overviewInWindowChoose(bool on) {
+    /* Classic mode refuses entry only. Leaving still has to work, or a
+       player already in the map view when they joined would be stuck in it.
+       Ahead of the assignment below on purpose: gameFrontFullScreen is the
+       player's own preference and must survive a classic-mode server. */
+    if (on && classicModeActive()) return;
+    gameFrontFullScreen = on;
+    overviewInWindowSet(on);
+    /* The two views of the map never share the screen, so the pop-out swaps
+       with the mode. Going full screen puts it away without forgetting it;
+       coming back to classic mode hands it straight back at the size and
+       place it was left — the window it had, or a fresh one at the saved
+       geometry when this run never opened it. Only in a game: outside one
+       the pop-out is already down and gameFrontShowMapOverview is what the
+       next game reads. */
+    if (on) mapOverviewHide();
+    else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
+    /* The player's own choice, so it survives the run — the same save
+       windowFullScreenChoose makes for the same flag on the screens outside
+       a game. The auto-exit and the cleanup path call overviewInWindowSet
+       directly and deliberately never reach this. */
+    gameFrontSaveCurrentPrefs();
+}
+
+/* True while the info panels and Send Message are drawn in the main window
+ * *as stand-ins for their pop-outs*: the overview owns the game window, so a
+ * separate OS window would land behind the map the player is looking at and
+ * each panel opens in-window for the duration.
+ *
+ * Deliberately narrower than "the panel is in-window". The Settings > Session
+ * Info entries open the same in-window panels on every platform and mode, and
+ * on the Deck — no menu bar under a controller — that is the only way to
+ * reach them; those are the panel's real form, not a stand-in, and the rules
+ * keyed on this must leave them exactly as they were. False on the tablet /
+ * mobile / web builds for the same reason: they have no pop-outs at all. */
+static bool panelsStandInForPopOuts(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    return !uiModeIsTablet() && sdl3DrawIsOverviewInWindow();
+#else
+    return false;
+#endif
 }
 
 /* -------------------------------------------------------
@@ -1057,6 +1372,51 @@ static void renderGameInfoContent(ClientSim *cs) {
         args.number = (int)mins;
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
+
+    /* Server visibility rules, one row per category. Read-only mirror of
+     * the lobby's pill / base / ally rows, shown so a player can check
+     * them without opening the lobby. The row labels come from the lobby
+     * form and carry no punctuation, so the colon is supplied here. */
+    {
+        static const struct {
+            langid       label;
+            ViewCategory cat;
+        } viewRows[] = {
+            { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill },
+            { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase },
+            { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly },
+        };
+        const char *modes[] = {
+            langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+            langGetText(STR_DLGLOBBY_VIEW_KEY),
+            langGetText(STR_DLGLOBBY_VIEW_DECAY),
+            langGetText(STR_DLGLOBBY_VIEW_OFF),
+        };
+        for (int r = 0; r < 3; r++) {
+            /* The lobby-settings decoder mirrors the policy byte as it
+             * arrives, so a value outside the enum can reach here. Fall
+             * back to the wire default rather than index past modes[]. */
+            int policy = (int)clientSimGetViewPolicy(cs, viewRows[r].cat);
+            if (policy < (int)viewPolicyAlways || policy > (int)viewPolicyOff) {
+                policy = (int)viewPolicyAlways;
+            }
+            const char *label = langGetText(viewRows[r].label);
+            if (policy == (int)viewPolicyDecay) {
+                int secs = (int)clientSimGetViewDecaySecs(cs, viewRows[r].cat);
+                ImGui::Text("%s: %s %d %s", label, modes[policy], secs,
+                            langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+            } else {
+                ImGui::Text("%s: %s", label, modes[policy]);
+            }
+        }
+    }
+
+    /* Classic mode and the allies-in-trees rule, read-only mirrors of the
+     * lobby's two checkboxes. */
+    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
+                clientSimGetClassicMode(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
+    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
+                clientSimGetAlliesInTrees(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
 }
 
 static void renderGameInfoPanel(ClientSim *cs) {
@@ -1185,7 +1545,7 @@ static void renderBrainSettingsWindow(void) {
 static void sendMsgPopOutShow(void) {
     /* popOutCreate re-shows and raises a window it created earlier, so this
      * one call covers both the first open and a raise from behind the game. */
-    if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200))
+    if (!popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200, 0))
         return;
     s_sendMsgFocusInput = true;
     s_closeMenuPopups   = true;
@@ -1383,6 +1743,242 @@ static void renderCtrlSendMsg(ClientSim *cs) {
     } else {
         s_showCtrlSendMsg = false;
     }
+}
+
+/* -------------------------------------------------------
+ * Map Overview pop-out
+ * ------------------------------------------------------- */
+static void renderMapOverviewContent(ClientSim *cs) {
+    SDL_Texture *tex  = overviewViewGetTexture(s_overviewView);
+    int          texW = 0;
+    int          texH = 0;
+    overviewViewGetSize(s_overviewView, &texW, &texH);
+    if (!tex || texW <= 0 || texH <= 0) return;
+
+    /* Drawn at the offscreen's own size, which is the size it was rendered
+       at, so the blit is 1:1 and point sampling has no fractional scale to
+       fight. */
+    ImVec2 imgMin = ImGui::GetCursorScreenPos();
+    imguiPushNearestSampling();
+    ImGui::Image((ImTextureID)tex, ImVec2((float)texW, (float)texH));
+    imguiPopNearestSampling();
+
+    /* An InvisibleButton over the image rect takes the right-drag as an
+       active item, so dragging with the right button pans the map instead of
+       moving the window, and gives the input handler its hover test. The left
+       button is left unclaimed on purpose — it builds at the square under the
+       pointer, and an active item would swallow the click. */
+    ImGui::SetCursorScreenPos(imgMin);
+    ImGui::SetNextItemAllowOverlap();
+    ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH),
+                           ImGuiButtonFlags_MouseButtonRight);
+    /* The live bindings, so a key the player has bound to an in-game action
+       drives the tank and does nothing to the overview. Fetched each frame —
+       Key Setup can change them while the pop-out is open. */
+    keyItems keys;
+    windowGetKeys(&keys);
+    overviewViewHandleInput(s_overviewView, ImGui::IsItemHovered(),
+                            texW, texH, cs, &keys, false);
+
+    /* Persist zoom and follow the moment the player changes either. The
+       comparison is exact on purpose: the stored zoom came out of the same
+       ladder table it is being compared against, so equal values are
+       bit-identical and there is no drift for an epsilon to absorb. */
+    OverviewCamera *cam = overviewViewCamera(s_overviewView);
+    if (cam) {
+        float zoom = overviewCameraZoomScale(cam);
+        if (zoom != gameFrontOverviewZoom ||
+            cam->follow != gameFrontOverviewFollow) {
+            gameFrontOverviewZoom   = zoom;
+            gameFrontOverviewFollow = cam->follow;
+            gameFrontSaveWindowSettings();
+        }
+
+        /* Zoom and follow state along the bottom-left of the map. Drawn onto
+           the image with the window draw list rather than as a widget: the
+           image is exactly DisplaySize, so anything that added to the
+           content would give the pop-out a scrollbar. %g keeps the ladder
+           readable (0.5, 1, 1.5, 2) with no trailing zeros, and the text is
+           ASCII because this file is compiled without /utf-8. */
+        char status[64];
+        SDL_snprintf(status, sizeof(status), "%gx - %s", (double)zoom,
+                     langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
+                                             : STR_OVERVIEW_FREE));
+        const float pad = 4.0f;
+        ImVec2 textSize = ImGui::CalcTextSize(status);
+        ImVec2 boxMin(imgMin.x,
+                      imgMin.y + (float)texH - (textSize.y + pad * 2.0f));
+        ImVec2 boxMax(imgMin.x + textSize.x + pad * 2.0f,
+                      imgMin.y + (float)texH);
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
+        dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                    IM_COL32(230, 230, 230, 255), status);
+    }
+}
+
+/* -------------------------------------------------------
+ * In-window Map Overview
+ * ------------------------------------------------------- */
+/* Is the pointer inside a HUD rectangle? The layout's coordinates are relative
+ * to the map rect, so the caller passes the rect's origin and this shifts them
+ * into the window coordinates ImGui reports the mouse in — the same shift the
+ * blit applies. */
+static bool overviewHudRectHit(ImVec2 mouse, float originX, float originY,
+                               float x, float y, float w, float h) {
+    float left = originX + x;
+    float top  = originY + y;
+    return mouse.x >= left && mouse.x < left + w &&
+           mouse.y >= top  && mouse.y < top + h;
+}
+
+/* The input half of the in-window mode: sdl3draw.c has already rendered the
+ * map and blitted it to the window this frame, so this only has to put the pan
+ * item and the status strip over exactly the rect it blitted to. Submitted at
+ * the start of the frame so it sits at the back of the z-order and never takes
+ * a click from a panel or dialog on top of it. */
+static void renderOverviewInWindow(ClientSim *cs) {
+    if (!sdl3DrawIsOverviewInWindow()) return;
+    OverviewView *view = sdl3DrawOverviewInWindowView();
+    if (!view) return;
+    float rx = 0.0f, ry = 0.0f, rw = 0.0f, rh = 0.0f;
+    if (!sdl3DrawGetOverviewInWindowRect(&rx, &ry, &rw, &rh)) return;
+
+    /* Cleared here rather than only set below, so a frame that never reaches
+       the hit-test cannot leave a panel stuck faded up under a pointer that
+       has gone. */
+    sdl3DrawSetHudPanelHover(false, false, false);
+
+    ImGui::SetNextWindowPos(ImVec2(rx, ry));
+    ImGui::SetNextWindowSize(ImVec2(rw, rh));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    bool open = ImGui::Begin("##OverviewInWindow", nullptr,
+                             ImGuiWindowFlags_NoDecoration |
+                             ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavInputs |
+                             ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
+
+    /* Submitting this first is not what puts it at the back. ImGui files a
+       window carrying NoBringToFrontOnFocus at the back of the display order
+       once, when it is created, and never re-sorts by submission order after
+       that — so a window carrying the same flag that is created later ends up
+       behind this one. The vote widgets and the alliance request are exactly
+       that, and behind a window covering the whole screen they still draw but
+       every click on them hit-tests to the map. Pushing this back each frame
+       is what actually makes it the bottom window. */
+    ImGui::BringWindowToDisplayBack(ImGui::GetCurrentWindow());
+
+    if (open) {
+        /* Same split as the pop-out: the item claims the right button so a
+           right-drag pans, and leaves the left one unclaimed so a click still
+           reaches the overview's build path. */
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::InvisibleButton("##OverviewInWindowPan", ImVec2(rw, rh),
+                               ImGuiButtonFlags_MouseButtonRight);
+        bool hovered = ImGui::IsItemHovered();
+
+        /* The HUD is blitted over the map by sdl3draw.c rather than submitted
+           as ImGui items, so the pan item still spans it. Hit-test the three
+           backing rectangles here and hold the pointer back from the view over
+           them: a click on a panel must not build at the map square
+           underneath, and hovered = false also hands the OS pointer back, so
+           an arrow shows over the chrome instead of the game crosshair. A
+           right-drag that began on the map keeps panning either way — that
+           path keys off the item being active, not hovered. */
+        OverviewHudLayout hud;
+        bool haveHud    = sdl3DrawGetOverviewHudLayout(&hud);
+        bool overBuild  = false;
+        bool overStatus = false;
+        bool overNews   = false;
+        ImVec2 mouse    = ImGui::GetMousePos();
+        if (haveHud) {
+            overBuild = overviewHudRectHit(mouse, rx, ry, hud.buildX, hud.buildY,
+                                           hud.buildW, hud.buildH);
+            overStatus = overviewHudRectHit(mouse, rx, ry,
+                                            hud.columnX, hud.columnY,
+                                            hud.columnW, hud.columnH);
+            overNews = overviewHudRectHit(mouse, rx, ry,
+                                          hud.newswireX, hud.newswireY,
+                                          hud.newswireW, hud.newswireH);
+        }
+        bool overHud = overBuild || overStatus || overNews;
+
+        /* The same three hits drive the fade in sdl3draw.c, so a panel the
+           pointer is resting on comes up solid to be read. Qualified by
+           `hovered`, which is false when a dialog or a vote widget is over the
+           map there: the pointer is on that, not on the HUD under it. */
+        sdl3DrawSetHudPanelHover(hovered && overStatus, hovered && overBuild,
+                                 hovered && overNews);
+
+        /* The build items are the only interactive part of the HUD; a click
+           anywhere else on it is simply swallowed. Same trio the classic
+           hit-test in sdl3DrawHandleEvent runs, so the indent drawn into the
+           HUD slice follows the new selection. */
+        if (overBuild && cs && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            for (int i = 0; i <= (int)BsMine; i++) {
+                float ix = 0.0f, iy = 0.0f, iw = 0.0f, ih = 0.0f;
+                if (!overviewHudBuildItemRect(&hud, i, &ix, &iy, &iw, &ih)) break;
+                if (!overviewHudRectHit(mouse, rx, ry, ix, iy, iw, ih)) continue;
+                buildSelect picked = (buildSelect)i;
+                if (picked != clientSimGetCurrentBuildSelect(cs)) {
+                    sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
+                    sdl3DrawSelectIndentsOn(picked, 0, 0);
+                    clientMutexWaitFor();
+                    clientSimSetCurrentBuildSelect(cs, picked);
+                    clientMutexRelease();
+                }
+                break;
+            }
+        }
+
+        /* The live bindings, fetched each frame — Key Setup can change them
+           while the mode is up, and a key bound to an in-game action has to
+           drive the tank rather than the map. */
+        keyItems keys;
+        windowGetKeys(&keys);
+        overviewViewHandleInput(view, hovered && !overHud,
+                                (int)rw, (int)rh, cs, &keys, true);
+
+        /* Zoom and follow state along the top of the map — the pop-out puts the
+           same readout bottom-left, but here the bottom of the window is where
+           the newswire goes. Drawn with the window draw list so it adds nothing
+           to the window's content. %g keeps the ladder readable (0.5, 1, 1.5,
+           2) with no trailing zeros, and the text is ASCII because this file is
+           compiled without /utf-8. */
+        OverviewCamera *cam = overviewViewCamera(view);
+        if (cam) {
+            char status[64];
+            SDL_snprintf(status, sizeof(status), "%gx - %s",
+                         (double)overviewCameraZoomScale(cam),
+                         langGetText(cam->follow ? STR_OVERVIEW_FOLLOWING
+                                                 : STR_OVERVIEW_FREE));
+            const float pad = 4.0f;
+            ImVec2 textSize = ImGui::CalcTextSize(status);
+            /* The corner belongs to the build strip, so the readout starts
+               just past it, level with its top. The gap matches the margin the
+               strip itself keeps from the map's edge. With no HUD drawn there
+               is nothing to clear and it sits in the corner. */
+            float textX = rx;
+            float textY = ry;
+            if (haveHud) {
+                const float hudGap = 8.0f;
+                textX = rx + hud.buildX + hud.buildW + hudGap;
+                textY = ry + hud.buildY;
+            }
+            ImVec2 boxMin(textX, textY);
+            ImVec2 boxMax(textX + textSize.x + pad * 2.0f,
+                          textY + textSize.y + pad * 2.0f);
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            dl->AddRectFilled(boxMin, boxMax, IM_COL32(0, 0, 0, 160));
+            dl->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad),
+                        IM_COL32(230, 230, 230, 255), status);
+        }
+    }
+    ImGui::End();
 }
 
 /* Whether the local player may answer a given vote. Surrender votes are
@@ -2486,6 +3082,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     ctx.cs = cs;
     ctx.inGame = true;
     ctx.pendingZoom = 255;
+    ctx.pendingFullScreen = -1;
 
     /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
        where the pad is hidden from SDL) step through the tabs, wrapping at the
@@ -2698,6 +3295,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
     if (ctx.wantSkinReload)      s_pendingSkinReload = true;
     if (ctx.wantKeySetup)        sdl3ImguiShowKeySetup();
+    if (ctx.pendingFullScreen >= 0) s_pendingFullScreen = ctx.pendingFullScreen;
 
     ImGui::End();
 }
@@ -2719,9 +3317,52 @@ static void renderMenuBar(ClientSim *cs) {
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
-            if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_popGameInfo.open))  togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
-            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE),     nullptr, s_popSysInfo.open))   togglePopOut(&s_popSysInfo,  langGetText(STR_DLGSYSINFO_TITLE),  440, 600);
-            if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE),     nullptr, s_popNetInfo.open))   togglePopOut(&s_popNetInfo,  langGetText(STR_DLGNETINFO_TITLE),  360, 420);
+            /* While the overview owns the game window these open as in-window
+               panels instead of pop-outs: a separate OS window would land
+               behind the map the player is looking at. A pop-out already open
+               when the mode is entered keeps winning — each panel returns
+               early while its pop-out is up. */
+            bool overviewInWindow = sdl3DrawIsOverviewInWindow();
+            if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE), nullptr,
+                                overviewInWindow ? s_showGameInfo : s_popGameInfo.open)) {
+                if (overviewInWindow) s_showGameInfo = !s_showGameInfo;
+                else togglePopOut(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
+            }
+            if (ImGui::MenuItem(langGetText(STR_DLGSYSINFO_TITLE), nullptr,
+                                overviewInWindow ? s_showSysInfo : s_popSysInfo.open)) {
+                if (overviewInWindow) {
+                    if (!s_showSysInfo) sysInfoGraphReset();
+                    s_showSysInfo = !s_showSysInfo;
+                } else togglePopOut(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600, 0);
+            }
+            if (ImGui::MenuItem(langGetText(STR_DLGNETINFO_TITLE), nullptr,
+                                overviewInWindow ? s_showNetInfo : s_popNetInfo.open)) {
+                if (overviewInWindow) {
+                    if (!s_showNetInfo) pingGraphReset();
+                    s_showNetInfo = !s_showNetInfo;
+                } else togglePopOut(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420, 0);
+            }
+            ImGui::Separator();
+            /* The overview draws the map the player has seen, so it stays
+               greyed out until a game is running — and all the way through
+               full screen mode, which fills the window with that same map.
+               Classic mode greys both out as well, and that is the one
+               reason worth a tooltip: waiting for a game to start explains
+               itself, a server rule does not. */
+            const bool classicMenu = classicModeActive();
+            if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
+                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen && !classicMenu)) {
+                if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
+            }
+            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
+            if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
+                                sdl3DrawIsOverviewInWindow(),
+                                cs != nullptr && clientSimIsRunning(cs) && !classicMenu)) {
+                overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
+            }
+            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_DLGGAMEINFO_TITLE),    nullptr, s_showGameInfo))  s_showGameInfo  = !s_showGameInfo;
@@ -2884,9 +3525,17 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
             /* Checked when the pop-out is open; picking it raises and focuses
-               that window rather than closing it, matching Ctrl+M. */
-            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M", s_popSendMsg.open))
-                sendMsgPopOutShow();
+               that window rather than closing it, matching Ctrl+M. While the
+               overview owns the game window it toggles the in-window panel
+               instead, for the same reason the File menu's dialogs do. */
+            bool overviewInWindow = sdl3DrawIsOverviewInWindow();
+            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M",
+                                overviewInWindow ? s_showSendMsg : s_popSendMsg.open)) {
+                if (overviewInWindow) {
+                    s_showSendMsg = !s_showSendMsg;
+                    if (s_showSendMsg) { s_sendMsgFocusInput = true; s_closeMenuPopups = true; }
+                } else sendMsgPopOutShow();
+            }
         } else {
 #endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
@@ -3565,14 +4214,44 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             }
         }
 
+        /* Note that focus moved, whichever window it moved to or from, and
+           decide what it means for the held keys once the queue has drained
+           (below the poll loop).  Only the net change over the whole poll
+           matters, so the order SDL delivers a hand-off's LOST/GAINED pair
+           in — and whether the window flags have settled mid-queue — cannot
+           get it wrong.  Sits above the pop-out routing because that block
+           consumes a pop-out's own focus events; this is the only place the
+           overview gaining or losing focus can be seen.  Consumes nothing:
+           every handler further down still runs exactly as before. */
+        if (ev.type == SDL_EVENT_WINDOW_FOCUS_GAINED ||
+            ev.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            s_focusEventThisPoll = true;
+        }
+
+        /* Meta/Cmd release — re-sync held keys. macOS does not deliver KEY_UP
+           for a non-modifier key that is released while Cmd is held (browsers
+           on macOS inherit this), so tapping Cmd mid-turn and letting go of a
+           movement key under it leaves that key reading as held in
+           SDL_GetKeyboardState, with no focus transition to clear it — the
+           tank turns forever with nothing pressed. Take the modifier's own
+           release as the cue that any key-ups issued under it were swallowed.
+           A player still physically holding a key re-presses it; that beats an
+           unbounded spin.  Ahead of the pop-out routing because that block
+           swallows the Map Overview's key events, and the overview is a window
+           the player drives from — a Cmd release there has to reach this. */
+        if (ev.type == SDL_EVENT_KEY_UP &&
+            (ev.key.scancode == SDL_SCANCODE_LGUI ||
+             ev.key.scancode == SDL_SCANCODE_RGUI)) {
+            inputResetHeldKeys();
+        }
+
         /* Route events to pop-out windows — if the event belongs to a
            pop-out, forward it there and skip the rest of the main loop
            so it doesn't reach the game input. */
         {
-            PopOutWindow *popOuts[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg };
             bool consumedByPopOut = false;
-            for (int i = 0; i < 4; i++) {
-                PopOutWindow *pw = popOuts[i];
+            for (int i = 0; i < POPOUT_COUNT; i++) {
+                PopOutWindow *pw = s_popOuts[i];
                 if (!pw->open || !pw->window) continue;
 
                 SDL_WindowID pwID = SDL_GetWindowID(pw->window);
@@ -3581,6 +4260,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
                     case SDL_EVENT_WINDOW_FOCUS_GAINED:
                     case SDL_EVENT_WINDOW_FOCUS_LOST:
+                    case SDL_EVENT_WINDOW_RESIZED:
+                    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                         isForThisWindow = (ev.window.windowID == pwID);
                         break;
                     case SDL_EVENT_KEY_DOWN:
@@ -3609,10 +4290,76 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     ImGui_ImplSDL3_ProcessEvent(&ev);
                     ImGui::SetCurrentContext(savedCtx);
                     consumedByPopOut = true;
+
+                    /* Track the current size of a resizable pop-out. The main
+                       window's resize handler further down only ever looks at
+                       s_window, so this is the only place a pop-out learns it
+                       changed size. RESIZED carries the logical size, the same
+                       units popOutCreate was given; PIXEL_SIZE_CHANGED carries
+                       backing-store pixels and would disagree on a HiDPI
+                       display, so only RESIZED is recorded. */
+                    if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
+                        ev.window.data1 > 0 && ev.window.data2 > 0) {
+                        pw->width  = ev.window.data1;
+                        pw->height = ev.window.data2;
+                        /* The size the window manager gave a full screen or
+                           zoomed pop-out is not the size the player chose,
+                           and writing it down brings the window back filling
+                           the display with its title bar under the menu bar.
+                           The main window guards its own geometry the same
+                           way in the resize handler further down. The live
+                           surface size above still tracks either way: the
+                           window really is that big now. */
+                        if (pw == &s_popMapOverview &&
+                            !popOutGeometryIsOsManaged(pw)) {
+                            gameFrontOverviewW = pw->width;
+                            gameFrontOverviewH = pw->height;
+                            gameFrontSaveWindowSettings();
+                        }
+                    }
+                }
+
+                /* Handled out here rather than in the switch above because
+                   the switch decides which events a pop-out consumes, and a
+                   move is not one of them: adding it would have all five
+                   pop-outs swallow SDL_EVENT_WINDOW_MOVED and skip
+                   sdl3DrawHandleEvent, which needs to see the main window
+                   move. Only the overview remembers where it was put. */
+                if (ev.type == SDL_EVENT_WINDOW_MOVED &&
+                    ev.window.windowID == pwID && pw == &s_popMapOverview &&
+                    !popOutGeometryIsOsManaged(pw)) {
+                    gameFrontOverviewX = ev.window.data1;
+                    gameFrontOverviewY = ev.window.data2;
+                    gameFrontSaveWindowSettings();
+                }
+
+                /* Out here with the move above, and for the same reason: the
+                   main window's own full screen tracking further down has to
+                   see these too. Coming back out is where the player's rect
+                   is re-read from the window. The resize and move that arrive
+                   during a full screen transition can land before the window
+                   flags admit to it, so a display-sized rect can still slip
+                   past the guard above; taking the real windowed geometry
+                   here puts it right. */
+                if (ev.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN &&
+                    ev.window.windowID == pwID && pw == &s_popMapOverview) {
+                    int px = 0, py = 0, pww = 0, pwh = 0;
+                    SDL_GetWindowSize(pw->window, &pww, &pwh);
+                    SDL_GetWindowPosition(pw->window, &px, &py);
+                    if (pww > 0 && pwh > 0) {
+                        pw->width  = pww;
+                        pw->height = pwh;
+                        gameFrontOverviewW = pww;
+                        gameFrontOverviewH = pwh;
+                        gameFrontOverviewX = px;
+                        gameFrontOverviewY = py;
+                        gameFrontSaveWindowSettings();
+                    }
                 }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
-                    popOutHide(pw);
+                    if (pw == &s_popMapOverview) mapOverviewClose();
+                    else popOutHide(pw);
                     consumedByPopOut = true;
                 }
 
@@ -3625,7 +4372,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
                     ev.key.windowID == pwID &&
                     ev.key.scancode == SDL_SCANCODE_ESCAPE) {
-                    popOutHide(pw);
+                    if (pw == &s_popMapOverview) mapOverviewClose();
+                    else popOutHide(pw);
                     consumedByPopOut = true;
                 }
             }
@@ -3660,19 +4408,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             /* Retract any open menu-bar dropdown so it isn't left hanging open
                when the user tabs away to another window. */
             s_closeMenuPopups = true;
-            /* Drop held-key / latched edge state. The game polls
-               SDL_GetKeyboardState; a movement key released while we were
-               unfocused (e.g. while typing in the Send Message pop-out, which
-               steals focus without SDL clearing the keyboard) would otherwise
-               read as still held and spin the tank when focus returns. */
-            inputResetHeldKeys();
             if (soundEffects && !backgroundSound) {
                 SDL_Window *focused = SDL_GetKeyboardFocus();
                 bool focusedIsOurs = (focused == s_window);
                 if (!focusedIsOurs) {
-                    PopOutWindow *pws[] = { &s_popSysInfo, &s_popNetInfo, &s_popGameInfo, &s_popSendMsg };
-                    for (int i = 0; i < 4; i++) {
-                        if (pws[i]->window && pws[i]->window == focused) { focusedIsOurs = true; break; }
+                    for (int i = 0; i < POPOUT_COUNT; i++) {
+                        if (s_popOuts[i]->window && s_popOuts[i]->window == focused) { focusedIsOurs = true; break; }
                     }
                 }
                 if (!focusedIsOurs) soundSetMuted(true);
@@ -3683,26 +4424,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (soundEffects) {
                 soundSetMuted(false);
             }
-            /* Clear held-key state again as input resumes, so a key still down
-               from before focus was lost doesn't immediately drive the tank —
-               the player must re-press it. */
-            inputResetHeldKeys();
             continue;
-        }
-
-        /* Meta/Cmd release — re-sync held keys. macOS does not deliver KEY_UP
-           for a non-modifier key that is released while Cmd is held (browsers
-           on macOS inherit this), so tapping Cmd mid-turn and letting go of a
-           movement key under it leaves that key reading as held in
-           SDL_GetKeyboardState, with no focus transition to clear it — the
-           tank turns forever with nothing pressed. Take the modifier's own
-           release as the cue that any key-ups issued under it were swallowed.
-           A player still physically holding a key re-presses it; that beats an
-           unbounded spin. */
-        if (ev.type == SDL_EVENT_KEY_UP &&
-            (ev.key.scancode == SDL_SCANCODE_LGUI ||
-             ev.key.scancode == SDL_SCANCODE_RGUI)) {
-            inputResetHeldKeys();
         }
 
         /* Suspend / resume — Steam Deck Verified requirement.  Fires on
@@ -3728,14 +4450,15 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
-                    /* Via sdl3ImguiShowSendMsg rather than straight to
-                       sendMsgPopOutShow: it picks the pop-out or the
-                       controller modal. The pop-out is a separate OS window
+                    /* Via sdl3ImguiSendMsgShortcut rather than straight to
+                       sendMsgPopOutShow: it picks the pop-out, the in-window
+                       panel or the controller modal, and decides raise vs
+                       toggle for each. The pop-out is a separate OS window
                        that receives no controller input, so on a Deck — where
                        the virtual pad reports as keyboard and can reach this
                        shortcut — opening it directly would leave a pad user
                        with a window they cannot close. */
-                    sdl3ImguiShowSendMsg(true);
+                    sdl3ImguiSendMsgShortcut();
                 } else {
 #endif
                     /* Never a toggle — an already-open panel is raised to the
@@ -3778,6 +4501,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
                 continue;
+            case SDL_SCANCODE_O:
+                /* Same running-game condition as the File menu item. */
+                if (cs != nullptr && clientSimIsRunning(cs)) sdl3ImguiShowMapOverview(true);
+                continue;
             default:
                 break;
             }
@@ -3792,6 +4519,23 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.key.windowID == SDL_GetWindowID(s_window)) {
             imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
             /* Do NOT forward to the game — key was consumed by the dialog. */
+            continue;
+        }
+
+        /* Alt+Enter is the full screen key, the way it is everywhere else.
+         * Which of the two toggles that is lives in sdl3ImguiToggleFullScreen,
+         * shared with the macOS Window menu item. Read here rather than
+         * through the bindings because it is a window command, not a game
+         * action: it is not in keyItems, so no binding can shadow it and it
+         * works while an ImGui panel has the keyboard. After the Key Setup
+         * capture above, so a player binding a key to Alt or Enter still gets
+         * the keystroke. */
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            (ev.key.mod & SDL_KMOD_ALT) != 0 &&
+            (ev.key.scancode == SDL_SCANCODE_RETURN ||
+             ev.key.scancode == SDL_SCANCODE_KP_ENTER)) {
+            sdl3ImguiToggleFullScreen(cs);
             continue;
         }
 
@@ -3961,6 +4705,32 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             ev.window.windowID == SDL_GetWindowID(s_window)) {
             windowSetQuitting();
         }
+        /* The main window can enter or leave full screen without the app
+           asking — the green button, Mission Control, a swipe. Track the flag
+           from what the window actually did, or it goes on claiming windowed
+           while the window is not and the next toggle computes the wrong
+           target. Leaving while the full screen map is up ends the mode as
+           well: the surface it fills has gone. That goes through
+           overviewInWindowChoose, not Set — the player reached for the green
+           button themselves, so it is their choice exactly as the menu item
+           would have been, and it hands the pop-out back and is remembered
+           the same way. The mode test keeps this from re-entering when the
+           app asked for the transition itself: by then the mode is already
+           off. Skipped on the tablet and the Deck, which are born full screen
+           — there the flag is not the player's preference to overwrite. */
+        if ((ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
+             ev.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) &&
+            ev.window.windowID == SDL_GetWindowID(s_window) &&
+            !uiModeIsTablet() && !uiModeIsSteamDeck()) {
+            bool nowFull = (ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN);
+            if (!nowFull && sdl3DrawIsOverviewInWindow()) {
+                overviewInWindowChoose(false);
+            } else if (nowFull != (bool)gameFrontFullScreen) {
+                gameFrontFullScreen = nowFull;
+                gameFrontSaveCurrentPrefs();
+            }
+        }
+
         /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
@@ -3969,75 +4739,91 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                applyMainContextUiScale early-outs if the quantised scale held. */
             if (!uiModeIsTablet() && !uiModeIsSteamDeck())
                 s_pendingUiScaleRebuild = true;
-            if (s_suppressAutoCustom) {
-                /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
-                   Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
-            } else {
-                /* Enforce aspect ratio: adjust height to match width — but not
-                   while maximized or fullscreen, where the window must keep the
-                   size the OS gave it and the draw side letterboxes the game
-                   inside.  Forcing a taller-than-screen height there pushes the
-                   title bar off-screen and strands the window with no way to
-                   move or restore it. */
-                SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
-                bool osManaged =
-                    (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
-                int w = ev.window.data1;
-                int h = ev.window.data2;
-                int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
-                int correctH = correctContentH + MENU_BAR_HEIGHT;
-                if (!osManaged && h != correctH) {
-                    s_suppressAutoCustom = true;  /* Prevent recursion */
-                    SDL_SetWindowSize(s_window, w, correctH);
-                }
-                /* Auto-switch zoom mode based on width — but NOT during modal
-                   resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE.
-                   If width matches a cardinal size, switch to that cardinal mode.
-                   Otherwise switch to custom. */
-                if (s_pendingZoom == 255 && !s_inModalResize) {
-                    BYTE targetZoom = ZOOM_FACTOR_CUSTOM;
-                    if (w == 1 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_NORMAL;
-                    else if (w == 2 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_DOUBLE;
-                    else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
-                    else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
-                    if (zoomFactor != targetZoom) {
-                        s_pendingZoom = targetZoom;
+            /* A fullscreen size is not the player's window size: the
+               remembered custom size and position, and the zoom mode
+               derived from the width, all have to stay whatever they were
+               when the window was last windowed.  Re-deriving the zoom mode
+               from a fullscreen surface is worse than a bad saved value —
+               it switches to Custom, which calls SDL_SetWindowSize and
+               resizes the window out from under the fullscreen map.  The UI
+               scale rebuild above still applies: the surface really did
+               change size. */
+            if (!(SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)) {
+                if (s_suppressAutoCustom) {
+                    /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
+                       Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
+                } else {
+                    /* Enforce aspect ratio: adjust height to match width — but not
+                       while maximized or fullscreen, where the window must keep the
+                       size the OS gave it and the draw side letterboxes the game
+                       inside.  Forcing a taller-than-screen height there pushes the
+                       title bar off-screen and strands the window with no way to
+                       move or restore it. */
+                    SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
+                    bool osManaged =
+                        (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
+                    int w = ev.window.data1;
+                    int h = ev.window.data2;
+                    int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
+                    int correctH = correctContentH + MENU_BAR_HEIGHT;
+                    if (!osManaged && h != correctH) {
+                        s_suppressAutoCustom = true;  /* Prevent recursion */
+                        SDL_SetWindowSize(s_window, w, correctH);
+                    }
+                    /* Auto-switch zoom mode based on width — but NOT during modal
+                       resize (WM_SIZING loop), we handle that in WM_EXITSIZEMOVE.
+                       If width matches a cardinal size, switch to that cardinal mode.
+                       Otherwise switch to custom. */
+                    if (s_pendingZoom == 255 && !s_inModalResize) {
+                        BYTE targetZoom = ZOOM_FACTOR_CUSTOM;
+                        if (w == 1 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_NORMAL;
+                        else if (w == 2 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_DOUBLE;
+                        else if (w == 3 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_TRIPLE;
+                        else if (w == 4 * SDL3_SCREEN_W) targetZoom = ZOOM_FACTOR_QUAD;
+                        if (zoomFactor != targetZoom) {
+                            s_pendingZoom = targetZoom;
+                        }
+                    }
+                    /* Save custom size on USER-initiated resize (not programmatic menu changes).
+                       Only save if it's actually a non-cardinal size.
+                       Save the CORRECTED size (proper aspect ratio), not actual window size,
+                       so maximize (which allows any ratio with gray bars) doesn't save a bad size.
+                       Find the largest aspect-correct size that FITS WITHIN the actual window. */
+                    if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
+                        (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                        int curW, curH, curX, curY;
+                        SDL_GetWindowSize(s_window, &curW, &curH);
+                        SDL_GetWindowPosition(s_window, &curX, &curY);
+                        /* Don't save cardinal sizes as "custom" */
+                        bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
+                                           curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
+                        if (!isCardinal) {
+                            int saveW, saveH, saveX, saveY;
+                            windowComputeAspectCorrectSize(curW, curH, curX, curY, &saveW, &saveH, &saveX, &saveY);
+                            windowSetCustomSize(saveW, saveH);
+                            windowSetSavedPosition(saveX, saveY);
+                        }
                     }
                 }
-                /* Save custom size on USER-initiated resize (not programmatic menu changes).
-                   Only save if it's actually a non-cardinal size.
-                   Save the CORRECTED size (proper aspect ratio), not actual window size,
-                   so maximize (which allows any ratio with gray bars) doesn't save a bad size.
-                   Find the largest aspect-correct size that FITS WITHIN the actual window. */
-                if (s_pendingZoom == ZOOM_FACTOR_CUSTOM ||
-                    (zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
-                    int curW, curH, curX, curY;
-                    SDL_GetWindowSize(s_window, &curW, &curH);
-                    SDL_GetWindowPosition(s_window, &curX, &curY);
-                    /* Don't save cardinal sizes as "custom" */
-                    bool isCardinal = (curW == 1 * SDL3_SCREEN_W || curW == 2 * SDL3_SCREEN_W ||
-                                       curW == 3 * SDL3_SCREEN_W || curW == 4 * SDL3_SCREEN_W);
-                    if (!isCardinal) {
-                        int saveW, saveH, saveX, saveY;
-                        windowComputeAspectCorrectSize(curW, curH, curX, curY, &saveW, &saveH, &saveX, &saveY);
-                        windowSetCustomSize(saveW, saveH);
-                        windowSetSavedPosition(saveX, saveY);
-                    }
+                /* Save position on resize too (window may have been repositioned) - but only if
+                   we didn't already save a corrected position above */
+                if (s_pendingZoom != ZOOM_FACTOR_CUSTOM &&
+                    !(zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
+                    windowSaveCurrentPosition();
                 }
+                gameFrontSaveWindowSettings();
             }
-            /* Save position on resize too (window may have been repositioned) - but only if
-               we didn't already save a corrected position above */
-            if (s_pendingZoom != ZOOM_FACTOR_CUSTOM &&
-                !(zoomFactor == ZOOM_FACTOR_CUSTOM && s_pendingZoom == 255)) {
-                windowSaveCurrentPosition();
-            }
-            gameFrontSaveWindowSettings();
         }
         /* Window moved — save position */
         if (ev.type == SDL_EVENT_WINDOW_MOVED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
-            windowSaveCurrentPosition();
-            gameFrontSaveWindowSettings();
+            /* A fullscreen window's position is the display's, not the
+               player's, so the remembered position has to survive going
+               fullscreen and coming back. */
+            if (!(SDL_GetWindowFlags(s_window) & SDL_WINDOW_FULLSCREEN)) {
+                windowSaveCurrentPosition();
+                gameFrontSaveWindowSettings();
+            }
         }
 
         /* Dispatch tap-style key actions (pill view, tank view) that are
@@ -4050,6 +4836,25 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Pass RAW event to game handler - it does its own coordinate transform
            using SDL_GetRenderLogicalPresentationRect for resizable window support */
         sdl3DrawHandleEvent(cs, &rawEv);
+    }
+
+    /* Held-key / latched edge state is dropped when the windows the player
+     * drives from gain or lose focus as a set, and kept when focus merely
+     * moves between them.  The game polls SDL_GetKeyboardState, so a movement
+     * key released while another application had focus (or while typing in
+     * the Send Message pop-out, which steals focus without SDL clearing the
+     * keyboard) would otherwise read as still held and spin the tank once
+     * focus came back; clearing on the way back in as well means a key still
+     * physically down from before never drives the tank until re-pressed.
+     * Judged here, after the queue has drained, so a hand-off's LOST and
+     * GAINED cancel out instead of firing a reset in between. */
+    if (s_focusEventThisPoll) {
+        s_focusEventThisPoll = false;
+        bool hasFocus = sdl3ImguiGameInputWindowHasFocus();
+        if (hasFocus != s_gameInputHadFocus) {
+            inputResetHeldKeys();
+        }
+        s_gameInputHadFocus = hasFocus;
     }
 
     /* Consume the window-settings dirty flag: the throttle in
@@ -4134,10 +4939,17 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->networkStatusMessages = showNetworkStatusMessages;
     s->networkDebugMessages  = showNetworkDebugMessages;
 
-    s->sysInfoOpen  = sdl3ImguiIsSysInfoOpen();
-    s->netInfoOpen  = sdl3ImguiIsNetInfoOpen();
-    s->gameInfoOpen = sdl3ImguiIsGameInfoOpen();
-    s->sendMsgOpen  = sdl3ImguiIsSendMsgOpen();
+    s->sysInfoOpen     = sdl3ImguiIsSysInfoOpen();
+    s->netInfoOpen     = sdl3ImguiIsNetInfoOpen();
+    s->gameInfoOpen    = sdl3ImguiIsGameInfoOpen();
+    s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
+    s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
+    s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
+                             !gameFrontFullScreen && !classicModeActive());
+    s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
+    s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
+                                  !classicModeActive());
+    s->fullScreenOn            = gameFrontFullScreen;
 
     int dispW = 99999, dispH = 99999;
     if (s_window) {
@@ -4286,6 +5098,12 @@ static void drainInGameNameReject(ClientSim *cs) {
 
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
+
+    /* One read a frame, ahead of the menu bars and the suppression points
+       below. A frame of staleness costs nothing: the setting is lobby-only
+       and cannot change while a game runs. */
+    s_classicMode = (cs != nullptr && !clientSimIsSpectator(cs) &&
+                     clientSimGetClassicMode(cs));
 
     /* Sync Steam Input action set to current gameplay context.  Must
        run before any consumer of action data (edge triggers below
@@ -4438,6 +5256,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             return;
         }
     }
+
+    /* First window of the frame, so the full-window map reads as the backdrop
+       every panel, overlay and dialog that follows sits on. Submitting it here
+       is not what holds it there — see the reorder inside. */
+    renderOverviewInWindow(cs);
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -4766,6 +5589,83 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             popOutEndContent(&s_popSendMsg);
             popOutEndFrame(&s_popSendMsg);
         }
+        /* The overview shows what this game has revealed, so it goes away
+           with the game rather than sitting over the lobby. Hidden, not
+           destroyed — see popOutHide. That hide leaves
+           gameFrontShowMapOverview alone, so a player who had the overview up
+           gets it back when the next game starts; only an explicit close
+           forgets it. Going through sdl3ImguiShowMapOverview rather than
+           mapOverviewOpen keeps the reopen behind the same platform and
+           tablet tests every other caller uses. */
+        bool overviewRunning = (cs != nullptr && clientSimIsRunning(cs));
+        if (!overviewRunning) {
+            mapOverviewHide();
+            /* The in-window map view goes with the game for the same reason.
+               What the window does from there is overviewInWindowSet's call:
+               windowed for the lobby when app full screen is off, still full
+               screen when it is on. */
+            overviewInWindowSet(false);
+        } else if (!s_overviewWasRunning) {
+            /* Only one of the two can come back, because full screen mode
+               draws the map itself: the in-window view when the app is full
+               screen, the pop-out on its own flag when it is not. */
+            if (gameFrontFullScreen) sdl3ImguiShowOverviewInWindow(true);
+            else if (gameFrontShowMapOverview) sdl3ImguiShowMapOverview(true);
+        }
+        s_overviewWasRunning = overviewRunning;
+        /* Draw the map into the view's offscreen before the pop-out's ImGui
+           frame opens: it swaps the render target and re-points the tile
+           sampler, neither of which belongs in the middle of the draw list
+           ImGui is about to build. */
+        if (s_popMapOverview.open && s_popMapOverview.window) {
+            if (!s_overviewView) {
+                s_overviewView = overviewViewCreate();
+                /* The view is made once per process, so this is the one
+                   moment the saved camera state is applied — after it, the
+                   camera is whatever the player has since done to it. */
+                OverviewCamera *cam = overviewViewCamera(s_overviewView);
+                if (cam) {
+                    overviewCameraSetZoomScale(cam, gameFrontOverviewZoom);
+                    cam->follow = gameFrontOverviewFollow;
+                }
+            }
+            SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
+            SDL_Texture *ovCross =
+                overviewEnsureCrosshair(s_popMapOverview.renderer);
+            /* The render reads the fog memory, the local tank and the
+               per-frame entity lists straight out of the ClientSim, and the
+               host server's timer thread writes into those as it dispatches
+               a tick to in-process subscribers. The main view's draw takes
+               the same lock around the same kind of read in winbolo.c.
+               Nothing is held on entry — winbolo.c releases before calling
+               the pump, and nothing inside the render takes a lock of its
+               own — so there is no ordering here to invert. The two
+               texture-ensure calls above build from assets and touch no sim
+               state, so they stay outside.
+
+               The cost is that the lock now spans the whole visible-tile
+               loop, which at 0.5x zoom on a large window is far more squares
+               than the main view's 15x15. Start here if frame times
+               regress with the overview open. */
+            clientMutexWaitFor();
+            overviewViewRenderOffscreen(s_overviewView,
+                                        s_popMapOverview.renderer,
+                                        ovTiles, s_overviewTilesScale, ovCross,
+                                        s_popMapOverview.width,
+                                        s_popMapOverview.height, cs, false);
+            clientMutexRelease();
+        }
+        if (popOutBeginFrame(&s_popMapOverview)) {
+            /* The map fills the window edge to edge: the image is exactly
+               DisplaySize, so the usual window padding would push it into a
+               scrollbar. */
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            popOutBeginContent();
+            ImGui::PopStyleVar();
+            renderMapOverviewContent(cs);
+            popOutEndContent(&s_popMapOverview);
+            popOutEndFrame(&s_popMapOverview);
+        }
 
         ImGui::SetCurrentContext(mainCtx);
     }
@@ -4799,6 +5699,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_suppressAutoCustom = false;
     }
 
+    /* Apply the deferred full screen change, after the frame for the same
+       reason as the zoom above — the settings tab that asks for it renders
+       mid-frame.  In a game this goes through the in-window map view, the one
+       path the File menu and the macOS menu bar use as well. */
+    if (s_pendingFullScreen >= 0) {
+        bool want = (s_pendingFullScreen != 0);
+        s_pendingFullScreen = -1;
+        sdl3ImguiShowOverviewInWindow(want);
+    }
+
     /* Initialise WBN popup state on first settings open */
     if (s_showSettings && !s_wbnInitialised) {
         s_wbnInitialised = true;
@@ -4816,10 +5726,17 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn) {
 void sdl3ImguiShowSysInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
+        /* While the overview owns the game window the panel opens in-window,
+           the way the menu item does: a pop-out would land behind the map. */
+        if (sdl3DrawIsOverviewInWindow()) {
+            if (open && !s_showSysInfo) sysInfoGraphReset();
+            s_showSysInfo = open;
+            return;
+        }
         if (open) {
             if (!s_popSysInfo.open) {
                 sysInfoGraphReset();
-                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600);
+                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600, 0);
             }
         } else {
             if (s_popSysInfo.open) popOutHide(&s_popSysInfo);
@@ -4832,7 +5749,12 @@ void sdl3ImguiShowSysInfo(bool open) {
 }
 bool sdl3ImguiIsSysInfoOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popSysInfo.open;
+    /* Reports the in-window panel while the overview owns the window, matching
+       where sdl3ImguiShowSysInfo puts it. The macOS menu toggles these items
+       with Show(!IsOpen()) and draws their checkmarks from the same answer, so
+       reading the pop-out here would leave them open-only. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showSysInfo : s_popSysInfo.open;
 #endif
     return s_showSysInfo;
 }
@@ -4843,10 +5765,17 @@ float sdl3ImguiGetUiScale(void) {
 void sdl3ImguiShowNetInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
+        /* In-window while the overview owns the window — see
+           sdl3ImguiShowSysInfo. */
+        if (sdl3DrawIsOverviewInWindow()) {
+            if (open && !s_showNetInfo) pingGraphReset();
+            s_showNetInfo = open;
+            return;
+        }
         if (open) {
             if (!s_popNetInfo.open) {
                 pingGraphReset();
-                popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420);
+                popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420, 0);
             }
         } else {
             if (s_popNetInfo.open) popOutHide(&s_popNetInfo);
@@ -4859,16 +5788,25 @@ void sdl3ImguiShowNetInfo(bool open) {
 }
 bool sdl3ImguiIsNetInfoOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popNetInfo.open;
+    /* In-window while the overview owns the window — see
+       sdl3ImguiIsSysInfoOpen. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showNetInfo : s_popNetInfo.open;
 #endif
     return s_showNetInfo;
 }
 void sdl3ImguiShowGameInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
+        /* In-window while the overview owns the window — see
+           sdl3ImguiShowSysInfo. */
+        if (sdl3DrawIsOverviewInWindow()) {
+            s_showGameInfo = open;
+            return;
+        }
         if (open) {
             if (!s_popGameInfo.open) {
-                popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
+                popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200, 0);
             }
         } else {
             if (s_popGameInfo.open) popOutHide(&s_popGameInfo);
@@ -4880,7 +5818,10 @@ void sdl3ImguiShowGameInfo(bool open) {
 }
 bool sdl3ImguiIsGameInfoOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popGameInfo.open;
+    /* In-window while the overview owns the window — see
+       sdl3ImguiIsSysInfoOpen. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showGameInfo : s_popGameInfo.open;
 #endif
     return s_showGameInfo;
 }
@@ -4897,6 +5838,14 @@ void sdl3ImguiShowSendMsg(bool open) {
                 s_pendingCtrlSendMsg = true;
             } else {
                 s_showCtrlSendMsg = false;
+            }
+        } else if (sdl3DrawIsOverviewInWindow()) {
+            /* In-window while the overview owns the window — see
+               sdl3ImguiShowSysInfo. */
+            s_showSendMsg = open;
+            if (open) {
+                s_sendMsgFocusInput = true;
+                s_closeMenuPopups = true;
             }
         } else {
             /* Mouse/keyboard desktop: the draggable pop-out window.  Opening
@@ -4924,11 +5873,79 @@ void sdl3ImguiShowSendMsg(bool open) {
 #endif
     }
 }
+
+/* What Ctrl/Cmd+M does, for every desktop entry point that carries that
+ * shortcut — the key handler here and the macOS menu item.
+ *
+ * Against a pop-out it opens and never closes: the pop-out is a separate OS
+ * window usually sitting behind the game, the key press lands on the main
+ * window, and a player pressing it means "bring the message box forward" —
+ * see sendMsgPopOutShow. The pop-out's close box or Escape is the way out.
+ *
+ * The in-window panel the overview mode draws has no window to be behind. The
+ * same press with it already on screen can only mean close it, so there it
+ * toggles, matching the Players menu item. */
+void sdl3ImguiSendMsgShortcut(void) {
+    if (panelsStandInForPopOuts() && s_showSendMsg) {
+        sdl3ImguiShowSendMsg(false);
+        return;
+    }
+    sdl3ImguiShowSendMsg(true);
+}
+
 bool sdl3ImguiIsSendMsgOpen(void) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet()) return s_popSendMsg.open;
+    /* Reports the in-window panel while the overview owns the window, matching
+       where sdl3ImguiShowSendMsg puts it — see sdl3ImguiIsSysInfoOpen. */
+    if (!uiModeIsTablet())
+        return sdl3DrawIsOverviewInWindow() ? s_showSendMsg : s_popSendMsg.open;
 #endif
     return s_showSendMsg;
+}
+/* The overview has no in-window twin, so in tablet mode there is nothing to
+ * show and nothing to report open. */
+void sdl3ImguiShowMapOverview(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) mapOverviewOpen(); else mapOverviewClose();
+        return;
+    }
+#endif
+    (void)open;
+}
+bool sdl3ImguiIsMapOverviewOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popMapOverview.open;
+#endif
+    return false;
+}
+/* The in-window mode is a desktop-window mode, so tablet has nothing to show
+ * and nothing to report active. */
+void sdl3ImguiShowOverviewInWindow(bool active) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        overviewInWindowChoose(active);
+        return;
+    }
+#endif
+    (void)active;
+}
+/* The one full screen command, shared by Alt+Enter and the macOS Window menu
+ * so the two routes cannot drift. In a game it is the full screen map, which
+ * carries the window full screen with it; outside one there is no map to
+ * show, so it is the plain app full screen flag. */
+void sdl3ImguiToggleFullScreen(struct ClientSim *cs) {
+    if (cs != nullptr && clientSimIsRunning(cs)) {
+        sdl3ImguiShowOverviewInWindow(!sdl3ImguiIsOverviewInWindowOpen());
+    } else {
+        windowFullScreenChoose(!gameFrontFullScreen);
+    }
+}
+bool sdl3ImguiIsOverviewInWindowOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return sdl3DrawIsOverviewInWindow();
+#endif
+    return false;
 }
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;
@@ -5008,15 +6025,44 @@ void sdl3ImguiTogglePlayersPanel(void) {
     sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
 }
 
+bool sdl3ImguiGameInputWindowHasFocus(void) {
+    if (s_window &&
+        (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS)) {
+        return true;
+    }
+    if (s_popMapOverview.open && s_popMapOverview.window &&
+        (SDL_GetWindowFlags(s_popMapOverview.window) &
+         SDL_WINDOW_INPUT_FOCUS)) {
+        return true;
+    }
+    return false;
+}
+
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
     ImGuiIO &io = ImGui::GetIO();
     ImGuiContext *g = ImGui::GetCurrentContext();
 
+    /* Standing in for a pop-out, these four must not suspend the game: a
+       pop-out is a separate OS window, so the player kept driving with System
+       Info up and the OS-focus gate in input.c muted the keys only once the
+       pop-out actually took focus. The in-window stand-in has to match, or
+       opening one full screen leaves the tank dead to every key with nothing
+       on screen saying why. Send Message still suspends while its box holds
+       the caret — that is io.WantTextInput above, and clicking back onto the
+       map drops the caret and hands the keys back, the way clicking the game
+       window behind the pop-out does.
+
+       Everywhere else they keep blocking, unchanged: the tablet panels, and
+       the same panels opened from Settings > Session on a desktop or a Deck,
+       which are the panel itself rather than a stand-in for anything. */
+    bool infoPanelsBlock = !panelsStandInForPopOuts() &&
+                           (s_showSysInfo || s_showNetInfo ||
+                            s_showGameInfo || s_showSendMsg);
+
     InputGateState st;
     st.textInputActive             = io.WantTextInput;
-    st.blockingModalOpen           = s_showSysInfo || s_showNetInfo ||
-                                     s_showGameInfo || s_showSendMsg ||
+    st.blockingModalOpen           = infoPanelsBlock ||
                                      s_showPlayersPanel || s_showSettings ||
                                      s_brainSettingsOpen;
     /* Every popup currently on the stack is blocking (menu-bar dropdowns and
@@ -5061,6 +6107,24 @@ void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *c
     s_playerEnabled[playerNum] = true;
 }
 
+/* Two things to know about this getter, neither of them introduced by it.
+ *
+ * The bound is MAX_PLAYERS, this file's own 16, while the ally-view label
+ * passes a tank slot (clientSimGetViewTarget). The two are the same number
+ * today, so the check holds by value rather than by name — a MAX_TANKS that
+ * ever diverged from it would want MAX_TANKS here instead.
+ *
+ * The read is unlocked, and s_playerName is written by sdl3ImguiSetPlayer
+ * from frontEndSetPlayer, which the sim can reach on the hosted-server timer
+ * thread while the render thread is drawing. The other readers of this mirror
+ * (the Players menu, the native menu-bar snapshot) already read it the same
+ * way; this getter widens that rather than starting it. Locking would be a
+ * job for the whole mirror, not for one accessor. */
+const char *sdl3ImguiGetPlayerName(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return "";
+    return s_playerName[playerNum];
+}
+
 void sdl3ImguiClearPlayer(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerName[playerNum][0] = '\0';
@@ -5097,14 +6161,14 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     return s_iconSteam;
 }
 
-SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
     /* Returns the larger rasterization — the only consumer is the
-     * tank-label overlay (sdl3DrawTankLabel), which scales the icon to
-     * the TTF label height and would alias badly off the 14-px popup
-     * texture. renderPlayerName / the in-game player menu read
-     * s_iconBrain directly. */
+     * tank-label drawer (tank_label.c), which textures it per renderer
+     * and scales it to the TTF label height; the 14-px popup texture
+     * would alias badly at that size. renderPlayerName / the in-game
+     * player menu read s_iconBrain directly. */
     ensureWbnIconsLoaded();
-    return s_iconBrainLg;
+    return s_iconBrainSurf;
 }
 
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
@@ -5236,15 +6300,41 @@ void sdl3ImguiShowKeySetup(void) {
 
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
+    /* Runs on return-to-lobby, end-of-game and process exit, so it is the last
+       chance to drop the in-window map view: neither the lobby nor the next
+       game should inherit it, or a pointer still stuck on the game crosshair.
+       Dropping the view is unconditional; the window state that follows is
+       overviewInWindowSet's call, and stays full screen while app full screen
+       is on. */
+    overviewInWindowSet(false);
+    /* And the edge that brings it back has to be rearmed with it. A return to
+       the lobby keeps the ClientSim — winbolo.c skips the teardown on that
+       path — so clientSimIsRunning never goes false and the per-frame test
+       above never sees the not-running-then-running edge that reopens the map.
+       Left latched, the second game of a session came up windowed-view inside
+       a still-full-screen window, and the pop-out did not come back either. */
+    s_overviewWasRunning = false;
     inputGamepadShutdown();
-    popOutDestroy(&s_popSysInfo);
-    popOutDestroy(&s_popNetInfo);
-    popOutDestroy(&s_popGameInfo);
-    popOutDestroy(&s_popSendMsg);
+    /* Before the loop: all of these were made on the Map Overview pop-out's
+       renderer, which popOutDestroy tears down. */
+    overviewViewDestroy(s_overviewView);
+    s_overviewView = nullptr;
+    if (s_overviewTiles) {
+        SDL_DestroyTexture(s_overviewTiles);
+        s_overviewTiles = nullptr;
+    }
+    s_overviewTilesRenderer = nullptr;
+    s_overviewTilesScale    = 0;
+    if (s_overviewCrosshair) {
+        SDL_DestroyTexture(s_overviewCrosshair);
+        s_overviewCrosshair = nullptr;
+    }
+    s_overviewCrosshairRenderer = nullptr;
+    for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
     flagsDestroy();
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
-    if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }
+    if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
     s_wbnIconsLoaded = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
         /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a

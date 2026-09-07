@@ -57,6 +57,16 @@
 #define DEFAULT_LGMVIEW      11   /* SDL_SCANCODE_H */
 #define DEFAULT_BASEVIEW     16   /* SDL_SCANCODE_M */
 
+/* Held while the wheel turns over the map overview, it zooms the map rather
+   than moving the gunsight. Cleared (0), the wheel always zooms there. */
+#define DEFAULT_OVERVIEW_ZOOM 224 /* SDL_SCANCODE_LCTRL */
+
+/* The map overview's own camera keys: the follow / free toggle and the two
+   ends of the zoom ladder. */
+#define DEFAULT_OVERVIEW_FOLLOW   6   /* SDL_SCANCODE_C */
+#define DEFAULT_OVERVIEW_ZOOMIN   46  /* SDL_SCANCODE_EQUALS */
+#define DEFAULT_OVERVIEW_ZOOMOUT  45  /* SDL_SCANCODE_MINUS */
+
 /* Quick-build keys — number row 1-5 */
 #define DEFAULT_QUICKTREE    30   /* SDL_SCANCODE_1 */
 #define DEFAULT_QUICKROAD    31   /* SDL_SCANCODE_2 */
@@ -917,6 +927,32 @@ extern int gameFrontLobbyH;
 extern float gameFrontLobbySplit;
 extern float gameFrontLobbySplitRecap;
 
+/* Map overview pop-out geometry and camera state ([WINDOW] section), plus
+ * whether it was open when the last game ended ([MENU] section). The overview
+ * is its own OS window, so unlike the lobby it needs a position of its own.
+ * The zoom is stored as a camera scale rather than a ladder index so the
+ * saved value keeps its meaning if the ladder changes. Written through the
+ * debounced gameFrontSaveWindowSettings path as the player drags, resizes,
+ * zooms and toggles follow. gameFrontShowMapOverview survives the hide the
+ * end of a game triggers, which is what reopens the window with the next
+ * one; an explicit close clears it. */
+extern int   gameFrontOverviewW;        /* pop-out size, logical px */
+extern int   gameFrontOverviewH;
+extern int   gameFrontOverviewX;        /* -1 = never saved */
+extern int   gameFrontOverviewY;
+extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
+extern bool  gameFrontOverviewFollow;
+extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
+
+/* App full screen mode ([MENU] section). While it is on the main window is
+ * full screen everywhere — menus, lobby and game — and every game opens in
+ * the Full Screen Map view. That view is the map, so the pop-out above never
+ * opens while this is on; the two are separate flags because the pop-out has
+ * to be remembered across a spell of full screen and handed back on the way
+ * out. It survives the automatic exit from the in-window map view at the end
+ * of a game and is cleared only by the player turning full screen off. */
+extern bool  gameFrontFullScreen;
+
 extern bool gameFrontUseUpnp;
 extern bool gameFrontUseNatTraversal;
 
@@ -952,5 +988,33 @@ void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
+
+/* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
+ * Read by gameFrontGetPrefs and pushed onto the sim with
+ * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
+ * holds a ViewPolicy value; the decay globals hold seconds in the
+ * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Defaults match the
+ * sim: pills and allied tanks always visible, bases off. */
+extern int gameFrontViewPillPolicy;     /* default viewPolicyAlways (0) */
+extern int gameFrontViewBasePolicy;     /* default viewPolicyOff (3)    */
+extern int gameFrontViewAllyPolicy;     /* default viewPolicyAlways (0) */
+extern int gameFrontViewPillDecaySecs;  /* 5-600, default 30 */
+extern int gameFrontViewBaseDecaySecs;
+extern int gameFrontViewAllyDecaySecs;
+/* Classic mode, applied after the three policies above so it wins when
+ * both are set: it forces pill Key, base Off and ally Off. Default off. */
+extern bool gameFrontClassicMode;
+/* Allied tanks standing in trees are sent to their allies. Applied before
+ * classic mode, which forces it back off. Default off. */
+extern bool gameFrontAlliesInTrees;
+
+void gameFrontSetViewPillPolicy(int policy);
+void gameFrontSetViewBasePolicy(int policy);
+void gameFrontSetViewAllyPolicy(int policy);
+void gameFrontSetViewPillDecaySecs(int secs);
+void gameFrontSetViewBaseDecaySecs(int secs);
+void gameFrontSetViewAllyDecaySecs(int secs);
+void gameFrontSetClassicMode(bool on);
+void gameFrontSetAlliesInTrees(bool on);
 
 #endif

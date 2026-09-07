@@ -595,6 +595,11 @@ uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_TIME_MINUTES:      return LOBBY_LOCK_TIME_LIMIT;
         case LST_AUTO_LOCK_ON_GAME: return LOBBY_LOCK_AUTO_LOCK_ON_GAME;
         case LST_RANKED:            return LOBBY_LOCK_RANKED;
+        case LST_PILL_VIEW:         return LOBBY_LOCK_PILL_VIEW;
+        case LST_BASE_VIEW:         return LOBBY_LOCK_BASE_VIEW;
+        case LST_ALLY_VIEW:         return LOBBY_LOCK_ALLY_VIEW;
+        case LST_CLASSIC_MODE:      return LOBBY_LOCK_CLASSIC_MODE;
+        case LST_ALLIES_IN_TREES:   return LOBBY_LOCK_ALLIES_IN_TREES;
         default:                    return 0xFFFFu;  /* unknown setting */
     }
 }
@@ -606,8 +611,84 @@ bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
     return (sim->serverLocks & bit) != 0u;
 }
 
+uint16_t serverSimAddImpliedLocks(uint16_t locks) {
+    /* Turning classic mode on writes the three view policies and allies
+     * in trees (serverSimSetClassicMode), so leaving the checkbox
+     * editable while any of those four is locked would let a host change
+     * a locked value with one tick — and the value does not come back,
+     * because turning classic mode off leaves all four where classic
+     * mode put them. Locking any of the four locks classic mode too.
+     *
+     * Deliberately decided from the mask alone rather than from the
+     * current values: the mask is fixed at startup, so the host sees a
+     * checkbox that is either always available or always locked, rather
+     * than one that appears and disappears as other settings move. */
+    if (locks & (LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
+                 LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_ALLIES_IN_TREES)) {
+        locks |= LOBBY_LOCK_CLASSIC_MODE;
+    }
+    return locks;
+}
+
 void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
     if (sim) sim->aiPolicy = v;
+}
+
+void serverSimSetViewPolicy(ServerSim *sim, ViewCategory cat,
+                            ViewPolicy policy, uint16_t decaySecs) {
+    if (sim == NULL) return;
+    if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return;
+    if ((int)policy < viewPolicyAlways || (int)policy > viewPolicyOff) return;
+    if (decaySecs < VIEW_DECAY_MIN_SECS) decaySecs = VIEW_DECAY_MIN_SECS;
+    if (decaySecs > VIEW_DECAY_MAX_SECS) decaySecs = VIEW_DECAY_MAX_SECS;
+    sim->viewPolicy[cat]    = policy;
+    sim->viewDecaySecs[cat] = decaySecs;
+}
+
+ViewPolicy serverSimGetViewPolicy(const ServerSim *sim, ViewCategory cat) {
+    if (sim == NULL) return viewPolicyAlways;
+    if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) return viewPolicyAlways;
+    return sim->viewPolicy[cat];
+}
+
+void serverSimSetClassicMode(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->classicMode = on;
+    if (on) {
+        /* Write the three classic values straight through the view-policy
+         * setter, so the command-line switch and the lobby setting both
+         * get the same result. Each category keeps its own decay seconds
+         * so the host's value survives a trip through classic mode. */
+        serverSimSetViewPolicy(sim, viewCategoryPill, viewPolicyKey,
+                               sim->viewDecaySecs[viewCategoryPill]);
+        serverSimSetViewPolicy(sim, viewCategoryBase, viewPolicyOff,
+                               sim->viewDecaySecs[viewCategoryBase]);
+        serverSimSetViewPolicy(sim, viewCategoryAlly, viewPolicyOff,
+                               sim->viewDecaySecs[viewCategoryAlly]);
+        /* Classic mode hides allies in trees, so it owns this value too. */
+        serverSimSetAlliesInTrees(sim, false);
+    }
+}
+
+bool serverSimGetClassicMode(const ServerSim *sim) {
+    return sim ? sim->classicMode : false;
+}
+
+void serverSimSetAlliesInTrees(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->alliesInTrees = on;
+}
+
+bool serverSimGetAlliesInTrees(const ServerSim *sim) {
+    return sim ? sim->alliesInTrees : false;
+}
+
+uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {
+    if (sim == NULL) return VIEW_DECAY_DEFAULT_SECS;
+    if ((int)cat < 0 || (int)cat >= VIEW_CATEGORY_COUNT) {
+        return VIEW_DECAY_DEFAULT_SECS;
+    }
+    return sim->viewDecaySecs[cat];
 }
 
 bool serverSimGetTimeLimit(const ServerSim *sim) {
@@ -662,7 +743,7 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
 }
 
 void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
-    if (sim) sim->serverLocks = locks;
+    if (sim) sim->serverLocks = serverSimAddImpliedLocks(locks);
 }
 
 bool serverSimGetRanked(const ServerSim *sim) {

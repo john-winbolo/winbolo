@@ -21,6 +21,7 @@
 
 #include "cJSON.h"
 #include "http.h"
+#include "view_policy.h"   /* the view-policy defaults for absent fields */
 
 /* Copy a JSON string item into a fixed buffer, truncating to fit.
  * Non-string / NULL items leave dst as an empty string. */
@@ -54,6 +55,17 @@ static int readIntField(const cJSON *obj, const char *name) {
     return 0;
 }
 
+/* Read a JSON integer field, falling back to `def` when the field is
+ * missing or not a number. Used by the view policies, whose "absent"
+ * value is not 0 for every category. */
+static int readIntFieldDef(const cJSON *obj, const char *name, int def) {
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, name);
+    if (cJSON_IsNumber(item)) {
+        return item->valueint;
+    }
+    return def;
+}
+
 /* Read a JSON string field into a fixed buffer. Missing -> "". */
 static void readStringField(const cJSON *obj, const char *name,
                             char *dst, size_t dstSize) {
@@ -85,6 +97,20 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->gameType = readIntField(src, "game_type");
     dst->ai       = readIntField(src, "ai");
 
+    dst->pillView = readIntFieldDef(src, "pillview", viewPolicyAlways);
+    dst->baseView = readIntFieldDef(src, "baseview", viewPolicyOff);
+    dst->allyView = readIntFieldDef(src, "allyview", viewPolicyAlways);
+
+    /* Decay seconds mean something only where the matching policy is
+     * viewPolicyDecay; a tracker that has not learned the fields yet
+     * leaves the server's own default standing. */
+    dst->pillViewDecay = readIntFieldDef(src, "pillviewdecay",
+                                         VIEW_DECAY_DEFAULT_SECS);
+    dst->baseViewDecay = readIntFieldDef(src, "baseviewdecay",
+                                         VIEW_DECAY_DEFAULT_SECS);
+    dst->allyViewDecay = readIntFieldDef(src, "allyviewdecay",
+                                         VIEW_DECAY_DEFAULT_SECS);
+
     dst->mines           = readBoolField(src, "mines");
     dst->password        = readBoolField(src, "password");
     dst->randomMap       = readBoolField(src, "random_map");
@@ -94,6 +120,8 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->allowNewPlayers = readBoolField(src, "allow_new_players");
     dst->autoLock        = readBoolField(src, "auto_lock");
     dst->allowSpectators = readBoolField(src, "allow_spectators");
+    dst->classicMode     = readBoolField(src, "classicmode");
+    dst->alliesInTrees   = readBoolField(src, "alliesintrees");
     dst->spectatorCount  = readIntField(src, "spectator_count");
 
     dst->timeLimit   = readBoolField(src, "time_limit");

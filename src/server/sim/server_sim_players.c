@@ -178,6 +178,12 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
         serverSimPublishControl(sim, &skipEvt);
     }
 
+    /* Start this slot's copy of the terrain from the map as it stands now.
+     * The join blob the caller sends next is compressed from this copy, so
+     * the client and the copy begin the session holding the same tiles; the
+     * rejoin ownership restore above has already run, matching the point the
+     * blob is taken. */
+    serverSimShadowSeed(sim, playerNum);
 }
 
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE playerNum) {
@@ -476,6 +482,30 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
 
     /* Force immediate full sync so clients see ownership changes right away */
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
+
+    /* Drop the departing slot's view state: the decay clocks it owns as a
+     * viewer, every other slot's clock for it as a target, the view it
+     * reported, and the last position its own view was anchored to. Anyone
+     * who was viewing through the leaver's tank goes back to their own. */
+    {
+        BYTE k;
+        memset(sim->pillNearTick[playerNum], 0, sizeof(sim->pillNearTick[playerNum]));
+        memset(sim->baseNearTick[playerNum], 0, sizeof(sim->baseNearTick[playerNum]));
+        memset(sim->allyNearTick[playerNum], 0, sizeof(sim->allyNearTick[playerNum]));
+        sim->viewKind[playerNum]   = VIEW_KIND_TANK;
+        sim->viewTarget[playerNum] = 0;
+        for (k = 0; k < MAX_TANKS; k++) {
+            sim->allyNearTick[k][playerNum] = 0;
+            if (sim->viewKind[k] == VIEW_KIND_ALLY &&
+                sim->viewTarget[k] == playerNum) {
+                sim->viewKind[k]   = VIEW_KIND_TANK;
+                sim->viewTarget[k] = 0;
+            }
+        }
+    }
+    sim->lastTankMX[playerNum] = 0;
+    sim->lastTankMY[playerNum] = 0;
+    sim->lastTankValid[playerNum] = false;
 
     /* Clear lobby state */
     sim->lobbyPlayers[playerNum].teamNumber = 0;

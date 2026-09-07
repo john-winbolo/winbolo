@@ -40,6 +40,9 @@ typedef struct {
   SPEEDTYPE speed;
   bool onBoat;
   bool alive;       /* TRUE if armour <= TANK_FULL_ARMOUR */
+  bool tankHidden;  /* TRUE when the server withheld this tank's position and
+                     * the entry arrived only to carry the LGM below — worldX,
+                     * worldY, angle and speed hold nothing to draw. */
   BYTE lgmMX;
   BYTE lgmMY;
   BYTE lgmPX;
@@ -182,6 +185,19 @@ bool interpHasData(const InterpContext *ctx, BYTE playerNum);
 *  playerNum - Which player
 *********************************************************/
 bool interpIsAlive(const InterpContext *ctx, BYTE playerNum);
+
+/*********************************************************
+*NAME:          interpTankHidden
+*PURPOSE:
+*  Returns whether the player's most recent snapshot withheld the tank's
+*  position — it arrived to carry the LGM alone, so there is a man to draw
+*  but no tank.
+*
+*ARGUMENTS:
+*  ctx       - Pointer to the InterpContext
+*  playerNum - Which player
+*********************************************************/
+bool interpTankHidden(const InterpContext *ctx, BYTE playerNum);
 
 /* === Render-time interpolation (driven off a render clock) === */
 

@@ -9,7 +9,7 @@
 {"tick":0,"type":"CTRL_LOBBY_SYNC_COMPLETE"}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot1 has joined."}
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
-{"tick":54,"type":"CTRL_COMMAND_REJECTED","origCmdSeq":1,"origCmdType":8,"reasonCode":3,"origSlot":0}
+{"tick":54,"type":"CTRL_COMMAND_REJECTED","origCmdSeq":2,"origCmdType":8,"reasonCode":3,"origSlot":0}
 {"tick":70,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
 {"tick":80,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"XX","clientType":2,"clientFlags":0,"allies":[1]}
 {"tick":80,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has joined."}

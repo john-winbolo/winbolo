@@ -33,6 +33,10 @@
 #   server_static      — the full dedicated-server runtime on top of
 #                        the sim: transport_udp_server.c + server_lifecycle.c
 #                        + geolookup.c, plus threads_static PUBLIC-linked.
+#                        server_console.c (the operator console command
+#                        parsing servermain.c drives through
+#                        ServerConsoleOps) rides along here so the unit
+#                        tests can link it without servermain.c's main().
 #                        PUBLIC-links server_sim_static so consumers don't
 #                        have to list both. Linked by the four binaries
 #                        that run the real dedicated-server lifecycle:
@@ -110,6 +114,7 @@ endif()
 
 add_library(server_static STATIC EXCLUDE_FROM_ALL
     geolookup.c
+    server_console.c
     server_lifecycle.c
     transport_udp_server.c
     mdns_advertise.c

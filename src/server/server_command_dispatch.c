@@ -279,6 +279,84 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         serverSimPublishControl(sim, &evt);
         return CMD_OK;
     }
+    case CMD_VIEW_STATE: {
+        /* Range check only, in any server state. The claim decides nothing by
+         * itself, so one that names a target this server does not have is
+         * degraded to the tank view rather than rejected — a client that was
+         * viewing through a pill when it died would otherwise collect a
+         * reject for a view it has already left. Whether the target still
+         * qualifies (allied, alive, not carried, policy) is decided by the
+         * viewport builder and serverSimValidateViewTargets. */
+        uint8_t kind   = cmd->u.viewState.kind;
+        uint8_t target = cmd->u.viewState.target;
+        bool inRange = false;
+        switch (kind) {
+        case VIEW_KIND_PILL:
+            inRange = (sim->sim.pb != NULL &&
+                       target < pillsGetNumPills(&sim->sim.pb));
+            break;
+        case VIEW_KIND_BASE:
+            inRange = (sim->sim.bs != NULL &&
+                       target < basesGetNumBases(&sim->sim.bs));
+            break;
+        case VIEW_KIND_ALLY:
+            inRange = (target < MAX_TANKS && target != (uint8_t)senderSlot);
+            break;
+        default:
+            break;  /* tank, or a kind this server does not know */
+        }
+        if (!inRange) {
+            kind   = VIEW_KIND_TANK;
+            target = 0;
+        }
+        sim->viewKind[senderSlot]   = kind;
+        sim->viewTarget[senderSlot] = target;
+        return CMD_OK;
+    }
+    case CMD_VIEW_CYCLE: {
+        /* The server picks rather than the client because the client only
+         * knows who is watchable from the snapshots it has been sent, and
+         * under viewPolicyKey that is exactly the state the policy withholds:
+         * left to itself the client would only ever reach allies it had
+         * already seen. Pill and base selection stays client-side, so any
+         * kind other than ally is accepted and answered with nothing — the
+         * field is there so they could move here later. */
+        BYTE target = 0, mapX = 0, mapY = 0;
+        bool found;
+        ControlEvent evt;
+
+        if (cmd->u.viewCycle.kind != VIEW_KIND_ALLY) {
+            return CMD_OK;
+        }
+
+        found = serverSimPickAlly(sim, (BYTE)senderSlot,
+                                  cmd->u.viewCycle.direction,
+                                  cmd->u.viewCycle.from,
+                                  &target, &mapX, &mapY);
+        if (found) {
+            sim->viewKind[senderSlot]   = VIEW_KIND_ALLY;
+            sim->viewTarget[senderSlot] = target;
+        }
+        /* Nothing found leaves the stored view alone: the client decides what
+         * to do with the answer, and serverSimValidateViewTargets already
+         * clears a target that has stopped qualifying. */
+
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_VIEW_TARGET;
+        evt.u.viewTarget.origSlot = (BYTE)senderSlot;
+        evt.u.viewTarget.kind     = VIEW_KIND_ALLY;
+        evt.u.viewTarget.fromEcho = cmd->u.viewCycle.from;
+        evt.u.viewTarget.found    = found ? 1 : 0;
+        if (found) {
+            evt.u.viewTarget.target = target;
+            evt.u.viewTarget.mapX   = mapX;
+            evt.u.viewTarget.mapY   = mapY;
+        }
+        serverSimPublishControl(sim, &evt);
+        /* Nothing to watch is an answer, not a rejection — a reject would
+         * reach the player as an error. */
+        return CMD_OK;
+    }
     case CMD_ALLIANCE_REQUEST: {
         if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         const CmdAllianceRequest *p = &cmd->u.allianceRequest;

@@ -34,6 +34,7 @@
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
+#include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -127,6 +128,15 @@ typedef enum {
      * the same round. Carries no rating or comment text — the round's page
      * on WinBolo.net stays the only source. */
     CTRL_ROUND_RATING_POSTED,
+    /* CTRL_VIEW_TARGET — the server's answer to a CMD_VIEW_CYCLE request:
+     * the item the sender should watch, picked from live state. Unicast to
+     * origSlot via udpClientDeliverControl. kind is the ViewStateKind of the
+     * chosen item and target its player number; mapX/mapY are where it is.
+     * found == 0 means there was nothing to watch, and the client returns to
+     * the tank view. fromEcho carries the request's `from` back so a late
+     * answer to an earlier press can be told apart from the answer to the
+     * current one. */
+    CTRL_VIEW_TARGET,
     /* CTRL_NEWSWIRE_MUTE — server-owned "stop showing event newswire
      * lines" switch, broadcast to every client and replayed to a late
      * joiner. While it is set, clients drop the ENGINE-GENERATED
@@ -258,6 +268,12 @@ typedef struct ControlEvent {
             uint16_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
             uint8_t  hostSlot;   /* current lobby host's player slot */
+            /* Visibility rules, indexed by ViewCategory. */
+            ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];
+            uint16_t   viewDecaySecs[VIEW_CATEGORY_COUNT];
+            bool     lobbyClassicMode;  /* server is running classic mode */
+            bool     lobbyAlliesInTrees; /* server sends allies standing in
+                                          * trees to their allies */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -447,6 +463,18 @@ typedef struct ControlEvent {
             BYTE fromPlayer;
             char key[ROUND_STATS_LOGKEY_LEN];
         } ratingPosted;
+
+        /* CTRL_VIEW_TARGET — the item the server picked for the requesting
+         * client to watch, and the request's `from` copied back. */
+        struct {
+            BYTE origSlot;   /* slot the answer is for */
+            BYTE kind;       /* ViewStateKind of the chosen item */
+            BYTE target;     /* player number of the chosen ally */
+            BYTE mapX;
+            BYTE mapY;
+            BYTE found;      /* 0 when there was nothing to watch */
+            BYTE fromEcho;   /* the request's `from`, copied back */
+        } viewTarget;
 
         /* CTRL_NEWSWIRE_MUTE — 1 = engine newswire suppressed, 0 = normal.
          * One byte on the wire; the server only publishes it on a change. */

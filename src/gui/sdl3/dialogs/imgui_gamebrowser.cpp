@@ -134,8 +134,55 @@ struct ServerEntry {
     bool hasRichInfo;    /* false for a legacy 76-byte server that can't report
                           * the flags/counts/md5 fields; gates the rich-only
                           * lines in the detail pane. */
+    /* Server visibility rules. Defaults (pill always, base off, ally
+     * always, classic mode and allies in trees off) for a server whose
+     * advertisement doesn't carry them. */
+    ViewPolicy pillView;
+    ViewPolicy baseView;
+    ViewPolicy allyView;
+    bool classicMode;
+    bool alliesInTrees;
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
+
+/* Compact "Views:" tag for the detail pane. Lists only the categories
+ * that differ from the defaults, so a stock server shows nothing at
+ * all. Classic mode leads the list because it explains the policies
+ * that follow it. Returns "" when the server is stock. */
+static std::string viewPolicyTag(const ServerEntry &e) {
+    /* Same four policy words the lobby, the hosting tab and the game info
+     * panel use, so one server's rules read the same wherever they show. */
+    const char *kModeStr[] = {
+        langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
+        langGetText(STR_DLGLOBBY_VIEW_KEY),
+        langGetText(STR_DLGLOBBY_VIEW_DECAY),
+        langGetText(STR_DLGLOBBY_VIEW_OFF),
+    };
+    struct { const char *letter; ViewPolicy value; ViewPolicy def; } cats[] = {
+        { "P", e.pillView, viewPolicyAlways },
+        { "B", e.baseView, viewPolicyOff    },
+        { "A", e.allyView, viewPolicyAlways },
+    };
+    std::string out;
+    if (e.classicMode) {
+        out += langGetText(STR_DLGBROWSER_VIEWS_CLASSIC);
+    }
+    if (e.alliesInTrees) {
+        if (!out.empty()) out += " ";
+        out += langGetText(STR_DLGBROWSER_VIEWS_ALLYTREES);
+    }
+    for (const auto &c : cats) {
+        if (c.value == c.def) continue;
+        int idx = (int)c.value;
+        if (idx < 0 || idx > 3) continue;
+        if (!out.empty()) out += " ";
+        out += c.letter;
+        out += "=";
+        out += kModeStr[idx];
+    }
+    if (out.empty()) return out;
+    return std::string(langGetText(STR_DLGBROWSER_VIEWS_LBL)) + " " + out;
+}
 
 static const char *gameTypeStr(gameType g) {
     switch (g) {
@@ -182,6 +229,11 @@ struct PingResult {
     BYTE numBots;
     int32_t timeLimit;
     bool hasRichInfo;
+    ViewPolicy pillView;
+    ViewPolicy baseView;
+    ViewPolicy allyView;
+    bool classicMode;
+    bool alliesInTrees;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -256,6 +308,11 @@ static PingResult pingServer(const PingWork &work) {
     res.numBots = 0;
     res.timeLimit = 0;
     res.hasRichInfo = false;
+    res.pillView = viewPolicyAlways;
+    res.baseView = viewPolicyOff;
+    res.allyView = viewPolicyAlways;
+    res.classicMode = false;
+    res.alliesInTrees = false;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -278,6 +335,11 @@ static PingResult pingServer(const PingWork &work) {
         res.randomMap       = dpr.randomMap;
         res.timeLimit       = dpr.timeLimit;
         res.hasRichInfo     = dpr.hasRichInfo;
+        res.pillView        = dpr.pillView;
+        res.baseView        = dpr.baseView;
+        res.allyView        = dpr.allyView;
+        res.classicMode     = dpr.classicMode;
+        res.alliesInTrees   = dpr.alliesInTrees;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -395,6 +457,11 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.spectatorCount  = src->spectatorCount;
     e.randomMap       = src->randomMap;
     e.hasRichInfo     = src->hasRichInfo;
+    e.pillView        = src->pillView;
+    e.baseView        = src->baseView;
+    e.allyView        = src->allyView;
+    e.classicMode     = src->classicMode;
+    e.alliesInTrees   = src->alliesInTrees;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
      * to minutes the same way the server does (ticks / (50 * 60)). */
@@ -701,6 +768,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.timeMinutes = w.timeMinutes;
                         e.randomMap = w.randomMap;
                         e.hasRichInfo = true;   /* WinBolo.net JSON always carries the rich fields */
+                        e.pillView = (ViewPolicy)w.pillView;
+                        e.baseView = (ViewPolicy)w.baseView;
+                        e.allyView = (ViewPolicy)w.allyView;
+                        e.classicMode = w.classicMode;
+                        e.alliesInTrees = w.alliesInTrees;
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -809,6 +881,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].timeLimit       = (pr.timeLimit != 0);
                         servers[pr.index].timeMinutes     = (int)(pr.timeLimit / (50 * 60));
                         servers[pr.index].hasRichInfo     = pr.hasRichInfo;
+                        servers[pr.index].pillView        = pr.pillView;
+                        servers[pr.index].baseView        = pr.baseView;
+                        servers[pr.index].allyView        = pr.allyView;
+                        servers[pr.index].classicMode     = pr.classicMode;
+                        servers[pr.index].alliesInTrees   = pr.alliesInTrees;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }
@@ -1560,6 +1637,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         if (sel.ranked)    addBadge(langGetText(STR_DLGLOBBY_RANKED));
                         if (sel.randomMap) addBadge(langGetText(STR_MAPCHOOSER_RANDOMMAP));
                         if (sel.autoLock)  addBadge(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
+                        std::string views = viewPolicyTag(sel);
+                        if (!views.empty()) addBadge(views.c_str());
                     }
                     if (!badges.empty()) {
                         ImGui::TextDisabled("%s", badges.c_str());

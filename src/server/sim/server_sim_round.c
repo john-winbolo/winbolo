@@ -76,6 +76,12 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->autoLockOnGameStart = sim->originalLobbySettings.autoLockOnGameStart;
         sim->ranked              = sim->originalLobbySettings.ranked;
         sim->serverLocks         = sim->originalLobbySettings.serverLocks;
+        for (i = 0; i < VIEW_CATEGORY_COUNT; i++) {
+            sim->viewPolicy[i]    = sim->originalLobbySettings.viewPolicy[i];
+            sim->viewDecaySecs[i] = sim->originalLobbySettings.viewDecaySecs[i];
+        }
+        sim->classicMode         = sim->originalLobbySettings.classicMode;
+        sim->alliesInTrees       = sim->originalLobbySettings.alliesInTrees;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -445,6 +451,14 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.freePills       = serverSimGetNumNeutralPills(sim);
     info.numHumans       = serverSimGetNumHumans(sim);
     info.numBots         = botManagerGetNumBots(sim);
+    info.pillView        = (BYTE)sim->viewPolicy[viewCategoryPill];
+    info.baseView        = (BYTE)sim->viewPolicy[viewCategoryBase];
+    info.allyView        = (BYTE)sim->viewPolicy[viewCategoryAlly];
+    info.classicMode     = sim->classicMode;
+    info.alliesInTrees   = serverSimGetAlliesInTrees(sim);
+    info.pillViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryPill);
+    info.baseViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryBase);
+    info.allyViewDecay   = serverSimGetViewDecaySecs(sim, viewCategoryAlly);
     winbolonetSetLobbyInfo(&info);
 }
 
@@ -849,6 +863,12 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 4. Clear mines from under bases */
     basesClearMines(&sim->sim);
 
+    /* Every client is about to be handed the reloaded map (the caller
+     * republishes it to UDP and in-process audiences alike), so restart every
+     * slot's copy of the terrain from it. Placed after the mine clear so the
+     * copies match the map the blob is compressed from. */
+    serverSimShadowSeedAll(sim);
+
     /* 5. Reset lag compensation state */
     for (i = 0; i < MAX_TANKS; i++) {
         posHistoryInit(&sim->posHistory[i]);
@@ -906,6 +926,18 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 9. Reset full sync tracking */
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
+
+    /* Per-recipient view state — the decay proximity clocks, the last known
+     * tank positions and the reported views all describe the round that just
+     * ended. Zeroing viewKind puts every slot back on the tank view. */
+    memset(sim->pillNearTick, 0, sizeof(sim->pillNearTick));
+    memset(sim->baseNearTick, 0, sizeof(sim->baseNearTick));
+    memset(sim->allyNearTick, 0, sizeof(sim->allyNearTick));
+    memset(sim->lastTankMX, 0, sizeof(sim->lastTankMX));
+    memset(sim->lastTankMY, 0, sizeof(sim->lastTankMY));
+    memset(sim->lastTankValid, 0, sizeof(sim->lastTankValid));
+    memset(sim->viewKind, 0, sizeof(sim->viewKind));
+    memset(sim->viewTarget, 0, sizeof(sim->viewTarget));
 
     /* 10. Reset change detection */
     sim->prevPillCount = 0;
@@ -1301,7 +1333,7 @@ void serverSimMapRotateRound(ServerSim *sim) {
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
-    BYTE tempBuf[65536];
+    BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
 
     if (sim->state != serverStateLobby) {
@@ -1325,8 +1357,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
 
     basesClearMines(&sim->sim);
 
+    /* A different map is installed — restart every slot's copy of the terrain
+     * from it, so a lobby client's snapshot checksum is taken against the map
+     * the lobby now holds. */
+    serverSimShadowSeedAll(sim);
+
     /* Update cached map data */
-    len = serverSimGetCompressedMap(sim, tempBuf);
+    len = serverSimGetCompressedMap(sim, tempBuf, (int)sizeof(tempBuf));
     if (sim->cachedMapData != NULL) {
         free(sim->cachedMapData);
     }

@@ -72,6 +72,14 @@ typedef struct {
   BYTE     freePills;                /* Neutral pills */
   BYTE     numHumans;                /* Connected human players */
   BYTE     numBots;                  /* Bot players */
+  BYTE     pillView;                 /* ViewPolicy for pillboxes (0..3) */
+  BYTE     baseView;                 /* ViewPolicy for bases (0..3) */
+  BYTE     allyView;                 /* ViewPolicy for allied tanks (0..3) */
+  bool     classicMode;              /* Classic Bolo view restrictions */
+  bool     alliesInTrees;            /* Allied tanks show through forest */
+  uint16_t pillViewDecay;            /* Pillbox decay seconds (viewPolicyDecay) */
+  uint16_t baseViewDecay;            /* Base decay seconds (viewPolicyDecay) */
+  uint16_t allyViewDecay;            /* Allied tank decay seconds (viewPolicyDecay) */
 } WbnLobbyInfo;
 
 /*********************************************************

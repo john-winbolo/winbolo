@@ -56,7 +56,7 @@ void mapSetChangeCallback(MapChangeCallback cb) {
 }
 
 int lzwdecoding(unsigned char *src, unsigned char *dest, int len, int destCap);
-int lzwencoding(unsigned char *src, unsigned char *dest, int len);
+int lzwencoding(unsigned char *src, unsigned char *dest, int len, int destCap);
 
 /*********************************************************
 *NAME:          mapCreate
@@ -1464,18 +1464,29 @@ int32_t mapPrepareRun(map *value, bmapRun *run, BYTE *xPos, BYTE *yPos) {
 *  compressed data length
 *
 *ARGUMENTS:
-*  value    - Pointer to the map data structure
-*  ss       - Pointer to the starts structure
-*  bs       - Pointer to the bases structure
-*  pb       - Pointer to the pillbox structure
-*  output   - Pointer to the data buffer
+*  value     - Pointer to the map data structure
+*  ss        - Pointer to the starts structure
+*  bs        - Pointer to the bases structure
+*  pb        - Pointer to the pillbox structure
+*  output    - Pointer to the data buffer
+*  outputCap - Size of the output buffer in bytes. Nothing is written past
+*              it; a map that does not fit returns 0 instead.
 *********************************************************/
-int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *output) {
+int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE *output, int outputCap) {
   int returnValue; /* Value to return */
+  int headerLen;   /* Fixed-size part written before the terrain */
+  int mapLen;      /* Encoded terrain length, or -1 if it did not fit */
   BYTE *ptr;       /* Data pointer    */
   BYTE *ptr2;
 
   returnValue = 0;
+
+  /* Refuse before the first memcpy rather than after: the three struct copies
+   * below are fixed size and write regardless of how small output is. */
+  headerLen = SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS;
+  if (output == NULL || outputCap < headerLen) {
+    return 0;
+  }
 
   /* Bases — raw struct copy to match basesSetBaseCompressData on load side */
   ptr = output;
@@ -1493,9 +1504,15 @@ int mapSaveCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE 
   returnValue += SIZEOF_STARTS;
   ptr += SIZEOF_STARTS;
 
-  /* Map */
+  /* Map. An incompressible map encodes larger than its input, so the encoder
+   * is given what is left of the buffer and reports rather than overruns. */
   ptr2 = (BYTE *) (*value)->mapItem;
-  returnValue += lzwencoding(ptr2, ptr, sizeof((*value)->mapItem));
+  mapLen = lzwencoding(ptr2, ptr, sizeof((*value)->mapItem),
+                       outputCap - headerLen);
+  if (mapLen < 0) {
+    return 0;
+  }
+  returnValue += mapLen;
   return returnValue;
 }
 

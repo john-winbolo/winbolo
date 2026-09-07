@@ -205,36 +205,48 @@ static inline SDL_Texture *imguiLoadSvgIcon(SDL_Renderer *rend, const char *path
 }
 
 /* Like imguiLoadSvgIcon, but treats the rasterised SVG as an alpha mask
- * and forces the colour channels to white. Use for monochrome icons that
- * must read against an arbitrary ImGui background regardless of the
- * SVG's authored fill colour; ImGui's tint multiplier can darken but
- * cannot brighten, so dark SVG fills are unrecoverable without this. */
-static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char *path, int size) {
+ * and forces the colour channels to white, returning a surface that owns
+ * its pixels. The surface form exists for renderer-independent caches
+ * (the brain icon the tank-label caches texture per renderer); most call
+ * sites want the imguiLoadSvgIconWhite texture wrapper below. */
+static inline SDL_Surface *imguiLoadSvgIconWhiteSurface(const char *path, int size) {
     NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
     if (!image) return nullptr;
     if (image->width < 1.0f || image->height < 1.0f) { nsvgDelete(image); return nullptr; }
     float scale = (float)size / image->height;
     if (image->width * scale > (float)size) scale = (float)size / image->width;
     int w = size, h = size;
-    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
-    if (!pixels) { nsvgDelete(image); return nullptr; }
-    memset(pixels, 0, (size_t)(w * h * 4));
+    SDL_Surface *surface = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) { nsvgDelete(image); return nullptr; }
+    memset(surface->pixels, 0, (size_t)surface->pitch * (size_t)h);
     float offX = ((float)w - image->width * scale) * 0.5f;
     float offY = ((float)h - image->height * scale) * 0.5f;
     NSVGrasterizer *rast = nsvgCreateRasterizer();
-    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgRasterize(rast, image, offX, offY, scale,
+                  (unsigned char *)surface->pixels, w, h, surface->pitch);
     nsvgDeleteRasterizer(rast);
     nsvgDelete(image);
-    for (int i = 0; i < w * h; ++i) {
-        pixels[i * 4 + 0] = 255;
-        pixels[i * 4 + 1] = 255;
-        pixels[i * 4 + 2] = 255;
+    for (int yy = 0; yy < h; ++yy) {
+        unsigned char *row = (unsigned char *)surface->pixels + (size_t)yy * (size_t)surface->pitch;
+        for (int xx = 0; xx < w; ++xx) {
+            row[xx * 4 + 0] = 255;
+            row[xx * 4 + 1] = 255;
+            row[xx * 4 + 2] = 255;
+        }
     }
-    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
-    if (!surface) { SDL_free(pixels); return nullptr; }
+    return surface;
+}
+
+/* Force-white SVG rasterisation as a texture on the given renderer. Use for
+ * monochrome icons that must read against an arbitrary ImGui background
+ * regardless of the SVG's authored fill colour; ImGui's tint multiplier can
+ * darken but cannot brighten, so dark SVG fills are unrecoverable without
+ * this. */
+static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char *path, int size) {
+    SDL_Surface *surface = imguiLoadSvgIconWhiteSurface(path, size);
+    if (!surface) return nullptr;
     SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
     SDL_DestroySurface(surface);
-    SDL_free(pixels);
     return tex;
 }
 
@@ -720,9 +732,15 @@ static inline void imguiPopNearestSampling(void) {
  * Controller Mode), leave the host window alone so dialogs render into
  * the existing fullscreen surface — clamping to a 1024x768 default
  * would clip below smaller-than-1024 screen heights, and forcing a
- * resize while the player is using a controller is jarring. */
+ * resize while the player is using a controller is jarring.
+ * A fullscreen window is left alone for the same reason: its size is the
+ * display's, so resizing or recentring it either does nothing or fights
+ * the compositor. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
     if (uiShouldUseControllerMode()) {
+        return;
+    }
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) {
         return;
     }
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
@@ -751,6 +769,16 @@ static inline void dialogSetWindowTitle(SDL_Window *window, const char *title) {
     }
 }
 
+/* App full screen mode — the window state every screen runs at.
+ * Stored in gamefront.c, loaded/saved via INI prefs. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern bool gameFrontFullScreen;
+#ifdef __cplusplus
+}
+#endif
+
 /* Apply a device preset to the given window. Updates UI mode and window size/title. */
 static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
     g_currentDevicePreset = idx;
@@ -763,12 +791,18 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, 1024, 768);
         SDL_SetWindowTitle(win, "WinBolo");
+        /* The sizing above needs a windowed window, so full screen goes back
+           on afterwards and the flag and the window still agree. */
+        SDL_SetWindowFullscreen(win, gameFrontFullScreen);
     } else {
         SDL_SetWindowFullscreen(win, false);
         SDL_SetWindowSize(win, p->w, p->h);
         char title[128];
         SDL_snprintf(title, sizeof(title), "WinBolo - %s (%dx%d)", p->name, p->w, p->h);
         SDL_SetWindowTitle(win, title);
+        /* A simulated device runs at its own size, so the window stays
+           windowed and the flag follows it. */
+        gameFrontFullScreen = false;
     }
 
     WB_LOG_INFO(WB_LOG_CAT_GUI, "Device preset: %s (%dx%d, %s)", p->name, p->w, p->h,
@@ -782,6 +816,32 @@ static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Even
     return false;
 }
 
+/* Alt+Enter is the full screen key across the app: in a game sdl3imgui.cpp
+ * reads it off the event, and the screens outside one read it here. A
+ * predicate rather than an action, because what a screen has to redo for the
+ * surface it lands on differs -- the welcome screen comes back in through its
+ * own top, the lobby rebuilds its chrome in place.
+ * Test it before ImGui_ImplSDL3_ProcessEvent and consume the event: Enter is
+ * live in a focused text field (the lobby's chat line sends on it), and this
+ * keystroke is a window command rather than typing.
+ * Deck and tablet are full screen from window creation and keep no windowed
+ * geometry to come back to, so there it is not a toggle at all. */
+static inline bool dialogIsFullScreenToggleEvent(SDL_Window *win, const SDL_Event *ev) {
+#if BOLO_MOBILE || defined(__EMSCRIPTEN__)
+    (void)win;
+    (void)ev;
+    return false;
+#else
+    if (!win || !ev) return false;
+    if (uiModeIsSteamDeck() || uiModeIsTablet()) return false;
+    return ev->type == SDL_EVENT_KEY_DOWN && !ev->key.repeat &&
+           ev->key.windowID == SDL_GetWindowID(win) &&
+           (ev->key.mod & SDL_KMOD_ALT) != 0 &&
+           (ev->key.scancode == SDL_SCANCODE_RETURN ||
+            ev->key.scancode == SDL_SCANCODE_KP_ENTER);
+#endif
+}
+
 /* Dialog window position — separate from game window position.
  * Stored in gamefront.c, loaded/saved via INI prefs. */
 #ifdef __cplusplus
@@ -793,9 +853,12 @@ extern int gameFrontDialogY;
 }
 #endif
 
-/* Save current dialog window position */
+/* Save current dialog window position. Skipped while the window is
+ * fullscreen: that position is wherever the display put it, not the
+ * windowed position the player chose, and saving it would overwrite the
+ * one they get back when full screen goes off. */
 static inline void dialogSaveCurrentPosition(SDL_Window *win) {
-    if (win) {
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)) {
         SDL_GetWindowPosition(win, &gameFrontDialogX, &gameFrontDialogY);
     }
 }
@@ -810,9 +873,12 @@ static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event
     }
 }
 
-/* Restore dialog window position if we have a saved one */
+/* Restore dialog window position if we have a saved one. Skipped while the
+ * window is fullscreen: it already covers the display, so moving it either
+ * does nothing or fights the compositor. */
 static inline void dialogRestorePosition(SDL_Window *win) {
-    if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+    if (win && !(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN) &&
+        gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
         SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
     }
 }

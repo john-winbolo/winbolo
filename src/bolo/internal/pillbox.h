@@ -58,6 +58,27 @@ static inline uint8_t pillPackArmourInTank(uint8_t armour, bool inTank) {
 static inline uint8_t pillArmourFromByte(uint8_t b) { return (uint8_t)(b & 0x0F); }
 static inline bool    pillInTankFromByte(uint8_t b) { return (b & 0x10) != 0; }
 
+/* Bit 5 of the same byte: the x/y sent with this pill are its square right
+ * now. Clear means the recipient was not told — the square is the last one it
+ * was given, which may be where the pill used to be. */
+#define PILL_POS_CURRENT 0x20
+static inline uint8_t pillSetPosCurrent(uint8_t b, bool current) {
+    return (uint8_t)(current ? (b | PILL_POS_CURRENT)
+                             : (b & (uint8_t)~PILL_POS_CURRENT));
+}
+static inline bool    pillPosCurrentFromByte(uint8_t b) {
+    return (b & PILL_POS_CURRENT) != 0;
+}
+
+/* Values in pillsObj::posStale. Confirmed means the server has just told us
+ * this is where the pill is. Remembered means it has not, but the square is
+ * still the last one we were given and a pill that has not been picked up
+ * cannot have left it. Moved means we watched it go into a tank and come out
+ * again without ever being told where, so the square means nothing. */
+#define PILL_SQUARE_CONFIRMED  0
+#define PILL_SQUARE_REMEMBERED 1
+#define PILL_SQUARE_MOVED      2
+
 /* A pillbox range is 8 map squares or 2048 world units */
 #define PILLBOX_RANGE 2048
 
@@ -186,6 +207,11 @@ void pillsGetPill(pillboxes *value, pillbox *item, BYTE pillNum);
 *LAST MODIFIED: 28/10/98
 *PURPOSE:
 *  Returns whether a pillbox exist at a specific location
+*  A pill whose square this client has not been told is
+*  current does not count as being there, so movement, turn
+*  rate and shell collision never meet a pill that is only
+*  remembered. pillsViewExistPos is the variant the view
+*  builder draws from.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -327,7 +353,9 @@ TURNTYPE pillsTargetTankMove(struct GameSim *sim, map *mp, pillboxes *pb, bases 
 *LAST MODIFIED: 15/1/99
 *PURPOSE:
 *  Returns whether a pillbox a specific location is dead
-*  or not.
+*  or not. A pill whose square this client has not been
+*  told is current does not count as being there. Every
+*  caller is gameplay, so there is no view variant.
 *
 *ARGUMENTS:
 *  value  - Pointer to the pillbox structure
@@ -344,6 +372,9 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue);
 *PURPOSE:
 *  Returns the pill number of a pillbox at that location
 *  If not found returns PILL_NOT_FOUND
+*  A pill whose square this client has not been told is
+*  current is passed over. pillsGetViewPillNum is the
+*  variant the camera and the displays use.
 *
 *ARGUMENTS:
 *  value      - Pointer to the pillbox structure
@@ -353,6 +384,118 @@ bool pillsDeadPos(pillboxes *value, BYTE xValue, BYTE yValue);
 *  inTank     - The intank state to check if we care
 *********************************************************/
 BYTE pillsGetPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank);
+
+/*********************************************************
+*NAME:          pillsGetViewPillNum
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  pillsGetPillNum without the position-current filter:
+*  which pill this client last saw at that square, whether
+*  or not the server has confirmed it is still there. The
+*  camera and the displays use this so a pill you have lost
+*  sight of stays selectable and stays drawn where you last
+*  saw it.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  xValue     - X Location of pillbox
+*  yValue     - Y Location of pillbox
+*  careInTank - Whether we are about the in tank state
+*  inTank     - The intank state to check if we care
+*********************************************************/
+BYTE pillsGetViewPillNum(pillboxes *value, BYTE xValue, BYTE yValue, bool careInTank, bool inTank);
+
+/*********************************************************
+*NAME:          pillsViewExistPos
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  pillsExistPos for the view: is there a pill here as far
+*  as this client last saw. A pill you have lost sight of
+*  stays on screen at the square you last saw it on rather
+*  than the ground underneath showing through, but one you
+*  watched get carried off — PILL_SQUARE_MOVED — is not
+*  drawn anywhere until its real square arrives.
+*
+*ARGUMENTS:
+*  value  - Pointer to the pillbox structure
+*  xValue - X Location
+*  yValue - Y Location
+*********************************************************/
+bool pillsViewExistPos(pillboxes *value, BYTE xValue, BYTE yValue);
+
+/*********************************************************
+*NAME:          pillsSetPosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Records what this client knows about a pill's square:
+*  one of PILL_SQUARE_CONFIRMED, PILL_SQUARE_REMEMBERED or
+*  PILL_SQUARE_MOVED. Only a client ever sets this; every
+*  square in the server's own list is confirmed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*  state   - One of the PILL_SQUARE_ values
+*********************************************************/
+void pillsSetPosState(pillboxes *value, BYTE pillNum, BYTE state);
+
+/*********************************************************
+*NAME:          pillsGetPosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns what this client knows about a pill's square,
+*  as one of the PILL_SQUARE_ values.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+BYTE pillsGetPosState(pillboxes *value, BYTE pillNum);
+
+/*********************************************************
+*NAME:          pillsUpdatePosState
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Folds one arriving pill update into that pill's square
+*  state. Call it BEFORE writing the new inTank, so it can
+*  see the flag the client held: a pill that was in a tank
+*  and is not any more, with no square sent, was put down
+*  somewhere this client was never told about.
+*
+*ARGUMENTS:
+*  value      - Pointer to the pillbox structure
+*  pillNum    - Pillbox index, 0 based
+*  posCurrent - The position-current bit off the wire
+*  nowInTank  - The in-tank flag that arrived
+*********************************************************/
+void pillsUpdatePosState(pillboxes *value, BYTE pillNum, bool posCurrent,
+                         bool nowInTank);
+
+/*********************************************************
+*NAME:          pillsIsPosStale
+*AUTHOR:        John Morrison
+*CREATION DATE: 5/9/26
+*LAST MODIFIED: 5/9/26
+*PURPOSE:
+*  Returns whether a pill's square is one this client has
+*  not been told is current — remembered or moved, as
+*  against confirmed.
+*
+*ARGUMENTS:
+*  value   - Pointer to the pillbox structure
+*  pillNum - Pillbox index, 0 based
+*********************************************************/
+bool pillsIsPosStale(pillboxes *value, BYTE pillNum);
 
 /*********************************************************
 *NAME:          pillsSetPillInTank
@@ -487,12 +630,20 @@ BYTE pillsGetArmourPos(pillboxes *value, BYTE mx, BYTE my);
 * pills location
 *
 *ARGUMENTS:
-*  value - Pointer to the pillbox structure
-*  mx    - Pointer to hold X Map position (and prev)
-*  my    - Pointer to hold Y Map position (and prev)
-*  prev  - Whether a previos pill is being passed
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  prev     - Whether a previos pill is being passed
 *********************************************************/
-bool pillsGetNextView(struct GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, bool prev);
+bool pillsGetNextView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, bool prev);
+
+/* Whether viewPlayer may look through pillbox pillIdx: the pill is allied to
+ * them (own pills are allied to themselves), it still has armour, and it is
+ * not being carried. FALSE for an index past the end of the array. This is
+ * the one pill-view predicate — pillsCheckView below answers it for
+ * sim->viewPlayer, callers wanting another player ask directly. */
+bool pillsCanView(struct GameSim *sim, pillboxes *value, BYTE pillIdx, BYTE viewPlayer);
 
 /*********************************************************
 *NAME:          pillsCheckView
@@ -759,13 +910,14 @@ bool pillsIsInView(struct GameSim *sim, pillboxes *value, BYTE playerNum, BYTE m
 * whether a pill was found in that direction. 
 *
 *ARGUMENTS:
-*  value  - Pointer to the pillbox structure
-*  mx     - Pointer to hold X Map position (and prev)
-*  my     - Pointer to hold Y Map position (and prev)
-*  xMove  - -1 for moving left, 1 for right, 0 for neither
-*  yMove  - -1 for moving up, 1 for down, 0 for neither
+*  value    - Pointer to the pillbox structure
+*  eligible - Bit per pill index: that pill may be selected
+*  mx       - Pointer to hold X Map position (and prev)
+*  my       - Pointer to hold Y Map position (and prev)
+*  xMove    - -1 for moving left, 1 for right, 0 for neither
+*  yMove    - -1 for moving up, 1 for down, 0 for neither
 *********************************************************/
-bool pillsMoveView(struct GameSim *sim, pillboxes *value, BYTE *mx, BYTE *my, int xMove, int yMove);
+bool pillsMoveView(struct GameSim *sim, pillboxes *value, PlayerBitMap eligible, BYTE *mx, BYTE *my, int xMove, int yMove);
 
 /*********************************************************
 *NAME:          pillsGetNumberOwnedByPlayer

@@ -60,6 +60,11 @@ extern "C" {
 
 }
 
+/* From winbolo.c */
+extern "C" {
+  void windowFullScreenChoose(bool on);
+}
+
 #define MAP_PREVIEW_SIZE 256
 
 static const int DIALOG_W = 1024;
@@ -444,7 +449,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             int mapLen = 0;
             const BYTE *mapData = clientSimGetServerMapData(cs, &mapLen);
             const char *dataSource = (mapData && mapLen > 0) ? "udp" : "(udp returned null)";
-            BYTE spBuf[65536];
+            BYTE spBuf[MAP_COMPRESSED_MAX_SIZE];
             if ((!mapData || mapLen <= 0) &&
                 cs && !clientSimIsUdpTransport(cs)) {
                 /* Non-UDP transport (SP host OR MP-host's own client)
@@ -452,7 +457,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * map straight from the in-process ServerSim instead. */
                 ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
                 if (spSim) {
-                    mapLen  = serverSimGetCompressedMap(spSim, spBuf);
+                    mapLen  = serverSimGetCompressedMap(spSim, spBuf, (int)sizeof(spBuf));
                     mapData = (mapLen > 0) ? spBuf : NULL;
                     dataSource = "local-direct";
                 }
@@ -614,6 +619,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Own line, like the labels above it — the view policies are
+             * the one part of the settings a joiner or spectator can see. */
+            lobbyRenderVisibilitySummary(cs, s);
 #else
             /* Leave button sits at the top-left, before the Server: line.
              * Escape key also opens the leave confirmation popup. Rendered as
@@ -665,6 +673,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* The view policies belong on this line because it is the one
+             * place a joiner or spectator sees the host's settings — the
+             * settings panel below is host-only. Before the connectivity
+             * badge, which right-aligns into whatever space is left. */
+            ImGui::SameLine(0, 16);
+            lobbyRenderVisibilitySummary(cs, s);
 #endif
 
             /* Layout A — connectivity badge in the top-right corner.
@@ -2236,12 +2250,14 @@ static bool lobbyRestoreUsableBounds(SDL_Window *window, SDL_Rect *out) {
  * is safe to call from every move/resize event of a drag.
  *
  * Skipped when the window size isn't the player's to choose: controller
- * mode leaves the host window alone, and an active device preset forces
- * its own dimensions — saving either would overwrite the desktop size. */
+ * mode leaves the host window alone, an active device preset forces its
+ * own dimensions, and a fullscreen window is sized by the display —
+ * saving any of them would overwrite the desktop size. */
 static void lobbySaveWindowGeometry(SDL_Window *window) {
     if (!window) return;
 #if !BOLO_MOBILE
     if (uiShouldUseControllerMode()) return;
+    if (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) return;
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
         s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
         return;
@@ -2255,6 +2271,31 @@ static void lobbySaveWindowGeometry(SDL_Window *window) {
 #else
     (void)window;
 #endif
+}
+
+/* The UI scale for the surface the lobby window is on right now.
+ * A windowed desktop lobby (and its nested map chooser / start picker) stays
+ * at 1x -- scaling those fixed layouts is deferred to the lobby rework. A
+ * fullscreen lobby keeps the height-derived scale so it isn't a 1x island on a
+ * 1440p or 4K display. Read at entry and again whenever the window changes
+ * surface under the lobby, so a full screen toggle mid-session lands on the
+ * scale that surface would have opened at.
+ * The WASM path has its own rule in lobbyFrameInitState: it never owns the
+ * window, so it has no fullscreen state of its own to read. */
+static float lobbyComputeUiScale(SDL_Window *window) {
+    int screenW = 1024, screenH = 768;
+    if (window) {
+        SDL_GetWindowSize(window, &screenW, &screenH);
+        if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    }
+    float s = dialogComputeScale(screenW, screenH);
+#if !BOLO_MOBILE
+    if (!uiModeIsSteamDeck() &&
+        !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
+        s = 1.0f;
+    }
+#endif
+    return s;
 }
 
 /* Blocking desktop modal: owns a private ImGui context + SDL backends and
@@ -2273,14 +2314,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
     dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
 
-    /* Get screen size and compute UI scale */
-    int screenW, screenH;
-    SDL_GetWindowSize(window, &screenW, &screenH);
-    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
-    float s = dialogComputeScale(screenW, screenH);
-#if !BOLO_MOBILE
-    if (!uiModeIsSteamDeck()) s = 1.0f;   /* lobby + nested map chooser / start picker: desktop scaling deferred to the lobby rework */
-#endif
+    /* Compute UI scale for the surface we are opening on */
+    float s = lobbyComputeUiScale(window);
 
 #if !BOLO_MOBILE
     /* Reopen at the size the player last left the lobby at, falling back to
@@ -2312,8 +2347,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
      * that no longer fits the restored size) would leave the lobby off-screen
      * with no way to drag it back, so pull it inside the target display's
      * usable area. Only writes when it actually moved, so the normal case
-     * leaves the saved position untouched. */
-    {
+     * leaves the saved position untouched. Skipped entirely while the window
+     * is fullscreen: its position and size are the display's, so clamping
+     * from them would push the player's saved windowed geometry out of the
+     * prefs file. */
+    if (!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
         SDL_Rect usable;
         int px = 0, py = 0, ww = 0, wh = 0;
         SDL_GetWindowPosition(window, &px, &py);
@@ -2379,6 +2417,38 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* Alt+Enter, the same full screen key the game window takes. Ahead
+               of the ImGui feed because Enter sends the chat line the player
+               may be sitting in, and this keystroke is not for the field.
+               The lobby holds a live chat buffer, a map preview and a recap
+               view, so it cannot leave and come back the way the welcome
+               screen does; instead it rebuilds the chrome that was read off
+               the old surface -- the scale, the style metrics scaled with it,
+               the font atlas both were rasterised for, and the safe insets. */
+            if (dialogIsFullScreenToggleEvent(window, &ev)) {
+                windowFullScreenChoose(
+                    (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0);
+                s = lobbyComputeUiScale(window);
+                /* Clear first: the font loaders only append. Reset the style
+                   to a clean base too -- ScaleAllSizes compounds, so re-running
+                   dialogApplyScaling over an already-scaled style would
+                   double-count every metric. Same order as the entry setup, so
+                   the UI font stays atlas font 0 and the countdown font 1. */
+                io.Fonts->Clear();
+                ImGui::GetStyle() = ImGuiStyle();
+                ImGui::StyleColorsDark();
+                imguiApplyBoloTheme();
+                dialogApplyScaling(s);
+                countdownFontSize = (s <= 1.05f) ? 54.0f : 60.0f * s;
+                countdownFont     = imguiLoadBoloFontSized(countdownFontSize);
+                s_lf.s                 = s;
+                s_lf.countdownFont     = countdownFont;
+                s_lf.countdownFontSize = countdownFontSize;
+                s_lf.safeInsets        = dialogGetSafeInsets(window);
+                continue;
+            }
+#endif
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;

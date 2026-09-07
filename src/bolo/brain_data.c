@@ -104,7 +104,11 @@ void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPo
     for (count2=leftPos;count2<=rightPos;count2++) {
       if (basesExistPos(&gs->bs, count2, count1) == TRUE) {
         buff[pos] = BREFBASE_T;
-      } else if (pillsExistPos(&gs->pb, count2, count1) == TRUE) {
+      } else if (pillsViewExistPos(&gs->pb, count2, count1) == TRUE) {
+        /* The brain's view of the map is the bot's screen, so it shows a pill
+         * at the square it was last seen on, exactly as a human's does. The
+         * bot's movement still asks pillsExistPos through mapGetSpeed and
+         * friends, so it is no more blocked by one than a human is. */
         buff[pos] = BPILLBOX_T;
       } else {
         buff[pos] = mapGetPos(&gs->mp, count2, count1);
@@ -373,7 +377,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   /* Pillview — bots always use tank-centered view (no pill view) */
   value->pillview = malloc(sizeof(WORD));
   if (clientSimIsInPillView(csPtr) == TRUE) {
-    *(value->pillview) = pillsGetPillNum(&gs->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr), FALSE, FALSE) -1;
+    *(value->pillview) = pillsGetViewPillNum(&gs->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr), FALSE, FALSE) -1;
     value->view_left = clientSimGetPillViewX(csPtr)-7;
     value->view_width = 15;
     value->view_top = clientSimGetPillViewY(csPtr)-7;
@@ -630,7 +634,7 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
   if (*(value->pillview) != 0x8000) {
     GameSim *gs = clientSimGetGameSim(csPtr);
     pillNum = (BYTE) (*(value->pillview));
-    if (pillNum != (pillsGetPillNum(&gs->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr), FALSE, FALSE)-1)) {
+    if (pillNum != (pillsGetViewPillNum(&gs->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr), FALSE, FALSE)-1)) {
       if (pillsSetView(gs, &gs->pb, pillNum, clientSimGetMyPlayerNum(csPtr)) == TRUE) {
         /* We can set the new view */
         pillbox p;
@@ -706,7 +710,9 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
    *       normal incoming-message path. Never reaches a human's chat.
    *   messagedest != 0 → real player-to-player chat (unchanged). */
   if (value->sendmessage[0] != 0) {
-    char msg[255];
+    /* 255 characters plus the terminator: the pascal length byte can say
+     * 255, and the writers that fill this buffer are free to grow to it. */
+    char msg[256];
     GameSim *gs = clientSimGetGameSim(csPtr);
     utilPtoCString((char *) value->sendmessage, msg);
     if (*(value->messagedest) == 0) {

@@ -402,12 +402,12 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
 
     if (bot->cs == NULL) return false;   /* mid-teardown / never built */
 
-    buf = (BYTE *)malloc(65536);
+    buf = (BYTE *)malloc(MAP_COMPRESSED_MAX_SIZE);
     if (buf == NULL) {
         return false;
     }
 
-    len = serverSimGetCompressedMap(sim, buf);
+    len = serverSimGetCompressedMap(sim, buf, MAP_COMPRESSED_MAX_SIZE);
     if (len <= 0) {
         free(buf);
         return false;

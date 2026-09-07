@@ -98,6 +98,20 @@ void sdl3ImguiShowSysInfo(bool open);
 void sdl3ImguiShowNetInfo(bool open);
 void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
+/* What Ctrl/Cmd+M does. Raises the Send Message pop-out without ever hiding
+ * it — the key press lands on the main window, so a toggle would close the
+ * window the player meant to bring forward — but toggles the in-window panel
+ * the full screen map draws instead, which has no window to be behind. */
+void sdl3ImguiSendMsgShortcut(void);
+void sdl3ImguiShowMapOverview(bool open);
+/* In-window Map Overview: the map fills the game window and the window goes
+ * fullscreen. Desktop only, like the pop-out above. */
+void sdl3ImguiShowOverviewInWindow(bool active);
+/* The one full screen command. In a game it is the full screen map above,
+ * which carries the window full screen with it; outside one there is no map
+ * to show, so it is the plain app full screen flag. Alt+Enter and the macOS
+ * Window menu item both come through here so the two routes cannot drift. */
+void sdl3ImguiToggleFullScreen(struct ClientSim *cs);
 void sdl3ImguiShowPlayersPanel(bool open);
 void sdl3ImguiTogglePlayersPanel(void);
 
@@ -110,6 +124,16 @@ bool sdl3ImguiIsSysInfoOpen(void);
 bool sdl3ImguiIsNetInfoOpen(void);
 bool sdl3ImguiIsGameInfoOpen(void);
 bool sdl3ImguiIsSendMsgOpen(void);
+/* The map overview is a desktop-only pop-out with no in-window twin, so it
+ * always reports closed in tablet mode. */
+bool sdl3ImguiIsMapOverviewOpen(void);
+bool sdl3ImguiIsOverviewInWindowOpen(void);
+
+/* True while keyboard focus is on a window the player drives the game
+ * from: the main window, or the Map Overview pop-out. The other pop-outs
+ * are deliberately excluded — typing in Send Message must never steer the
+ * tank. */
+bool sdl3ImguiGameInputWindowHasFocus(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiAllianceReqInCooldown
@@ -237,6 +261,17 @@ void sdl3ImguiUpdatePlayerFlags(unsigned char playerNum, uint8_t clientType, uin
 void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 
 /*********************************************************
+*NAME:          sdl3ImguiGetPlayerName
+*PURPOSE:
+*  The display name last pushed for a player slot, or ""
+*  when the slot is empty or out of range. Same mirror the
+*  Players menu draws from, so it tracks in-game name
+*  changes. Never NULL; the pointer stays valid until the
+*  next update for that slot.
+*********************************************************/
+const char *sdl3ImguiGetPlayerName(unsigned char playerNum);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetSteamIcon
 *PURPOSE:
 *  Returns the SDL_Texture for the Steam icon.  Loads the SVG
@@ -247,13 +282,16 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetBrainIcon
+*NAME:          sdl3ImguiGetBrainIconSurface
 *PURPOSE:
-*  Returns the SDL_Texture for the AI-brain icon (the badge
-*  shown for bot players). Loads the SVG lazily on first
-*  call. Returns NULL if the SVG could not be loaded.
+*  Returns the AI-brain icon (the badge shown for bot
+*  players) as an SDL_Surface — renderer-free, so the
+*  tank-label caches can texture it on whichever renderer
+*  hosts them. Owned by this module; do not destroy. Loads
+*  the SVG lazily on first call. Returns NULL if the SVG
+*  could not be loaded.
 *********************************************************/
-SDL_Texture *sdl3ImguiGetBrainIcon(void);
+SDL_Surface *sdl3ImguiGetBrainIconSurface(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiPlayerIsBot

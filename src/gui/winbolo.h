@@ -236,6 +236,19 @@ void windowSetCustomSize(int w, int h);
 void windowSaveCurrentPosition(void);
 
 /*********************************************************
+*NAME:          windowFullScreenChoose
+*PURPOSE:
+*  Turns app full screen on or off from the screens outside
+*  a game, moving the main window, waiting for the change to
+*  land and saving the preference. In a game the Full Screen
+*  Map menu item drives the same flag instead.
+*
+*ARGUMENTS:
+*  on - TRUE for full screen, FALSE for a windowed app
+*********************************************************/
+void windowFullScreenChoose(bool on);
+
+/*********************************************************
 *NAME:          windowComputeAspectCorrectSize
 *PURPOSE:
 *  Given actual window size (including menu bar), compute the

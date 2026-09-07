@@ -64,10 +64,25 @@ void discoveryAbortBroadcastSearch(void) {
 
 /* Translate an INFO_PACKET (wire format) into the public DiscoveryServer
  * POD. addr is the source address from recvfrom — used as a fallback
- * when the packet's gameid.serveraddress is unset. */
-static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const struct in_addr *addr, DiscoveryServer *out, bool rich) {
+ * when the packet's gameid.serveraddress is unset. `len` is the number
+ * of bytes actually received, so the view-policy byte is read only from
+ * a full-length packet. */
+static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const struct in_addr *addr, DiscoveryServer *out, bool rich, size_t len) {
   memset(out, 0, sizeof(*out));
-  utilPtoCString((char *)info->mapname, out->mapName);
+  /* The map name arrives as a pascal string in a MAP_STR_SIZE field of a
+   * packet off the wire, so its length byte is whatever the sender wrote
+   * there — bound the copy by the destination rather than trusting it. */
+  {
+    unsigned int nameLen = (unsigned char)info->mapname[0];
+    if (nameLen > sizeof(out->mapName) - 1) {
+      nameLen = sizeof(out->mapName) - 1;
+    }
+    if (nameLen > sizeof(info->mapname) - 1) {
+      nameLen = sizeof(info->mapname) - 1;
+    }
+    memcpy(out->mapName, info->mapname + 1, nameLen);
+    out->mapName[nameLen] = '\0';
+  }
   out->password = (info->has_password != 0);
   out->mines = ((info->allow_mines & 0x80) != 0);
 
@@ -110,12 +125,17 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
       out->mapMd5[32] = '\0';
     }
   }
+  /* The view-policy byte sits past the rich block, so it has its own
+   * length tier: a shorter packet reports the built-in defaults. */
+  infoPacketReadViewPolicies(info, len,
+                             &out->pillView, &out->baseView, &out->allyView,
+                             &out->classicMode, &out->alliesInTrees);
   out->hasRichInfo = rich;
 }
 
-static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData, bool rich) {
+static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData, bool rich, size_t len) {
   DiscoveryServer server;
-  discoveryFillServerFromInfoPacket(info, pack, &server, rich);
+  discoveryFillServerFromInfoPacket(info, pack, &server, rich, len);
   callback(&server, userData);
 }
 
@@ -278,16 +298,19 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
         WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Received %d bytes from %s:%u (expect %d for INFO_PACKET)",
                 len, inet_ntoa(last.sin_addr), ntohs(last.sin_port), (int)sizeof(INFO_PACKET));
       }
-      if (len == (int)INFO_PACKET_LEGACY_SIZE || len == (int) sizeof(INFO_PACKET)) {
+      if (len == (int)INFO_PACKET_LEGACY_SIZE ||
+          len == (int)INFO_PACKET_PRE_VIEWS_SIZE ||
+          len == (int) sizeof(INFO_PACKET)) {
         /* Magic + type only — the INFO_RESPONSE is the universal
          * version-negotiation primitive, so we deliver mixed-version
          * servers up to the UI; the caller pre-flights versions before
          * attempting a join. Legacy 76-byte servers parse the common
-         * prefix only (rich fields gated off). */
+         * prefix only (rich fields gated off), and a packet that stops
+         * before the view-policy byte gets the view defaults. */
         if (strncmp(buff, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 && buff[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFORESPONSE) {
-          bool rich = (len == (int)sizeof(INFO_PACKET));
+          bool rich = (len >= (int)INFO_PACKET_PRE_VIEWS_SIZE);
           WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Valid INFO_PACKET response, adding server");
-          gameFinderProcessBroadcast((INFO_PACKET *) buff, &(last.sin_addr), callback, userData, rich);
+          gameFinderProcessBroadcast((INFO_PACKET *) buff, &(last.sin_addr), callback, userData, rich, (size_t)len);
         } else {
           WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Packet signature/type mismatch");
         }
@@ -415,8 +438,8 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     uint32_t recvTime = (uint32_t)SDL_GetTicks();
     INFO_PACKET *info = (INFO_PACKET *)buff;
     /* Legacy 76-byte servers don't carry the flags/count/md5 fields; read
-     * them only when the full 111-byte packet arrived. */
-    bool rich = (len >= (int)sizeof(INFO_PACKET));
+     * them only once the rich block has arrived. */
+    bool rich = (len >= (int)INFO_PACKET_PRE_VIEWS_SIZE);
     out->rttMs = (int)(recvTime - sendTime);
     out->freePills = info->free_pills;
     out->freeBases = info->free_bases;
@@ -445,6 +468,10 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
         out->mapMd5[32] = '\0';
       }
     }
+    /* Own length tier — see discoveryFillServerFromInfoPacket. */
+    infoPacketReadViewPolicies(info, (size_t)len,
+                               &out->pillView, &out->baseView, &out->allyView,
+                               &out->classicMode, &out->alliesInTrees);
     out->hasRichInfo = rich;
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,

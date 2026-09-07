@@ -28,6 +28,7 @@
 #include "global.h"        /* BYTE / WORD / MAP_STR_SIZE / bool */
 #include "gametype.h"      /* gameType */
 #include "client_enums.h"  /* aiType */
+#include "view_policy.h"   /* ViewPolicy — the advertised visibility rules */
 
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
  * time in milliseconds when the function returns true; the rest of the
@@ -57,9 +58,17 @@ typedef struct {
   BYTE numBots;
   BYTE maxPlayers;  /* server's join-slot cap; MAX_TANKS when unset */
   int32_t timeLimit;
-  bool hasRichInfo;  /* true when the 111-byte INFO (flags/counts/md5) was
+  bool hasRichInfo;  /* true when the rich INFO (flags/counts/md5) was
                       * received; false for legacy 76-byte servers — consumers
                       * hide the rich fields when false. */
+  /* Server visibility rules. A server whose INFO predates the
+   * view_policies byte reports the defaults (pill always, base off,
+   * ally always) with classic mode and allies in trees both off. */
+  ViewPolicy pillView;
+  ViewPolicy baseView;
+  ViewPolicy allyView;
+  bool classicMode;
+  bool alliesInTrees;
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format
@@ -95,9 +104,17 @@ typedef struct {
   BYTE           numBots;
   BYTE           maxPlayers;      /* server's join-slot cap; MAX_TANKS when unset */
   int32_t        timeLimit;       /* raw game-length units from the wire; 0 if none */
-  bool           hasRichInfo;     /* true when the 111-byte INFO (flags/counts/md5)
+  bool           hasRichInfo;     /* true when the rich INFO (flags/counts/md5)
                                    * was received; false for legacy 76-byte servers
                                    * — consumers hide the rich fields when false. */
+  /* Server visibility rules. A server whose INFO predates the
+   * view_policies byte reports the defaults (pill always, base off,
+   * ally always) with classic mode and allies in trees both off. */
+  ViewPolicy     pillView;
+  ViewPolicy     baseView;
+  ViewPolicy     allyView;
+  bool           classicMode;
+  bool           alliesInTrees;
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

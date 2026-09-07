@@ -62,6 +62,7 @@
 #include "../common/wb_log.h"
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
+#include "server_console.h"
 #include "wire_limits.h"
 #include "cJSON.h"
 
@@ -200,52 +201,74 @@ catch_alarm (int sig)
 #endif
 
 
-void strlower(char *s) {
-  while(*s) {
-    *s = tolower(*s);
-    s++;
-  }
+/* The console command set itself lives in server_console.c, which parses a
+ * line and calls back through ServerConsoleOps for anything that touches
+ * the server. These are those callbacks: each takes the sim mutex for the
+ * whole of its work, exactly as the command bodies did when they were
+ * inline here. */
+
+static void consoleOpSetLock(bool locked) {
+  threadsWaitForMutex();
+  transportUdpServerSetLock(serverSim, locked);
+  threadsReleaseMutex();
 }
 
-void saveMap(char *line) {
-  char *ptr;
-  int len;
-  ptr = line;
-  ptr += 7;
-
-  /* Strip newline */
-  len = (int) strlen(line);
-  if (line[len-1] == '\n') {
-    line[len-1] = '\0';
-  }
-
-  while (*ptr != EMPTY_CHAR  && (*ptr == '\t' || *ptr == ' ')) {
-    ptr++;
-  }
-  if (*ptr == EMPTY_CHAR) {
-    fprintf(stderr, "Sorry, you must enter a filename for this command\n");
-  } else {
-    len = (int) strlen(ptr);
-    {
-      size_t remaining = 256 - (size_t)(ptr - line) - (size_t)len - 1;
-      if (len < 4) {
-        strncat(ptr, ".map", remaining);
-      } else if (strcmp(ptr+len-4, ".map") != 0) {
-        strncat(ptr, ".map", remaining);
-      }
-    }
-    transportUdpServerSendServerMessage("Server Admin saved map file.");
-    if (serverSimSaveMap(serverSim, ptr) == FALSE) {
-      fprintf(stderr, "Sorry, an error occured saving the map. Is the path correct?\n");
-    } else {
-      logAddEvent(log_SaveMap, 0, 0, 0, 0, 0, NULL);
-    }
-  }
+static void consoleOpInfo(void) {
+  threadsWaitForMutex();
+  serverSimInformation(serverSim, transportUdpServerGetLock());
+  threadsReleaseMutex();
 }
 
-void printHelp() {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n");
+static bool consoleOpSaveMap(const char *path) {
+  bool saved;
+
+  threadsWaitForMutex();
+  transportUdpServerSendServerMessage("Server Admin saved map file.");
+  saved = serverSimSaveMap(serverSim, (char *) path);
+  if (saved) {
+    logAddEvent(log_SaveMap, 0, 0, 0, 0, 0, NULL);
+  }
+  threadsReleaseMutex();
+  return saved;
 }
+
+static void consoleOpSay(const char *text) {
+  transportUdpServerSendServerMessage(text);
+}
+
+static void consoleOpLogSay(const char *pstr) {
+  logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, (char *) pstr);
+}
+
+static void consoleOpStatus(void) {
+  transportUdpServerPrintStatus(statusFile);
+}
+
+static void consoleOpKick(const char *name) {
+  threadsWaitForMutex();
+  transportUdpServerKickPlayer(serverSim, name);
+  threadsReleaseMutex();
+}
+
+static bool consoleOpSetHost(const char *name) {
+  bool hostSet;
+
+  threadsWaitForMutex();
+  hostSet = transportUdpServerSetHostByName(serverSim, name);
+  threadsReleaseMutex();
+  return hostSet;
+}
+
+static const ServerConsoleOps serverConsoleOps = {
+  consoleOpSetLock,
+  consoleOpInfo,
+  consoleOpSaveMap,
+  consoleOpSay,
+  consoleOpLogSay,
+  consoleOpStatus,
+  consoleOpKick,
+  consoleOpSetHost
+};
 
 
 #ifdef _WIN32
@@ -273,9 +296,6 @@ static DWORD WINAPI stdinReaderThread(LPVOID param) {
 void processKeys(bool isQuiet) {
 	char keyBuff[256] = "\0";
 	char saveBuff[256] = "\0";
-	char playerKick[33] = "\0";
-	char playerHost[33] = "\0";
-	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
 		while (!serverSimIsTerminalGameOver(serverSim)) {
@@ -305,62 +325,7 @@ void processKeys(bool isQuiet) {
 				strlower(keyBuff);
 				stdinLineReady = 0;
 
-				if (strncmp(keyBuff, "help", 4) == 0) {
-					printHelp();
-				} else if (strncmp(keyBuff, "unlock", 6) == 0) {
-					threadsWaitForMutex();
-					transportUdpServerSetLock(serverSim, FALSE);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "lock", 4) == 0) {
-					threadsWaitForMutex();
-					transportUdpServerSetLock(serverSim, TRUE);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "info", 4) == 0) {
-					threadsWaitForMutex();
-					serverSimInformation(serverSim, transportUdpServerGetLock());
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "savemap", 7) == 0) {
-					threadsWaitForMutex();
-					saveMap(saveBuff);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "say ", 4) == 0) {
-					transportUdpServerSendServerMessage((char *) keyBuff+4);
-					{
-						char pstr[256];
-						int len = (int)strlen(keyBuff + 4);
-						if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
-						if (len > 255) len = 255;
-						pstr[0] = (char)len;
-						memcpy(pstr + 1, keyBuff + 4, len);
-						logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
-					}
-				} else if(strncmp(keyBuff, "status", 6) == 0){
-					transportUdpServerPrintStatus(statusFile);
-				} else if (strncmp(keyBuff, "kick ", 5) == 0) {
-					sprintf(playerKick, "%.*s", 32, keyBuff+5);
-					newbuflen = strlen(playerKick);
-					playerKick[newbuflen - 1] = '\0';
-					threadsWaitForMutex();
-					transportUdpServerKickPlayer(serverSim, playerKick);
-					threadsReleaseMutex();
-				} else if (strncmp(keyBuff, "host ", 5) == 0) {
-					bool hostSet;
-					sprintf(playerHost, "%.*s", 32, keyBuff+5);
-					newbuflen = strlen(playerHost);
-					playerHost[newbuflen - 1] = '\0';
-					threadsWaitForMutex();
-					hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
-					threadsReleaseMutex();
-					if (hostSet) {
-						printf("Host set to %s\n", playerHost);
-					} else {
-						printf("No such player\n");
-					}
-				} else if (strncmp(keyBuff, "quit", 4) == 0) {
-					/* Loop's while-condition will exit on next check */
-				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-					fprintf(stderr, "Unknown command - Type \"help\" for help\n");
-				}
+				serverConsoleDispatch(&serverConsoleOps, keyBuff, saveBuff);
 			} else {
 				Sleep(isAsap ? 1 : 100);
 			}
@@ -373,19 +338,9 @@ void processKeys(bool isQuiet) {
 #else
 /* Linux */
 void processKeys(bool isQuiet) {
-  char keyBuff[256] = "\0";
-  char saveBuff[256] = "\0";
-  fd_set fdmask;
-  struct timeval timer;
-  int ret;
-  char playerKick[33] = "\0";
-  char playerHost[33] = "\0";
-  size_t newbuflen;
-
-  timer.tv_sec = 1;
-  timer.tv_usec = 0;
-  FD_ZERO(&fdmask);
-  FD_SET(STDIN_FILENO, &fdmask);
+  char keyBuff[SERVER_CONSOLE_LINE] = "\0";
+  char saveBuff[SERVER_CONSOLE_LINE] = "\0";
+  bool consoleOpen = TRUE;
 
   if (isQuiet == TRUE || isNoInput == TRUE) {
     while (!serverSimIsTerminalGameOver(serverSim)) {
@@ -406,75 +361,38 @@ void processKeys(bool isQuiet) {
     }
   } else {
     while (strncmp(keyBuff, "quit", 4) != 0 && !serverSimIsTerminalGameOver(serverSim)) {
-      if (strncmp(keyBuff, "help", 4) == 0) {
-        printHelp();
-      } else if (strncmp(keyBuff, "unlock", 6) == 0) {
-        threadsWaitForMutex();
-        transportUdpServerSetLock(serverSim, FALSE);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "lock", 4) == 0) {
-        threadsWaitForMutex();
-        transportUdpServerSetLock(serverSim, TRUE);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "info", 4) == 0) {
-        threadsWaitForMutex();
-        serverSimInformation(serverSim, transportUdpServerGetLock());
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "savemap", 7) == 0) {
-        threadsWaitForMutex();
-        saveMap(saveBuff);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "say ", 4) == 0) {
-        transportUdpServerSendServerMessage((char *) keyBuff+4);
-        {
-            char pstr[256];
-            int len = (int)strlen(keyBuff + 4);
-            if (len > 0 && keyBuff[4 + len - 1] == '\n') len--;
-            if (len > 255) len = 255;
-            pstr[0] = (char)len;
-            memcpy(pstr + 1, keyBuff + 4, len);
-            logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
-        }
-      } else if(strncmp(keyBuff, "status", 6) == 0){
-        transportUdpServerPrintStatus(statusFile);
-      } else if (strncmp(keyBuff, "kick ", 5) == 0) {
-        sprintf(playerKick, "%.*s", 32, keyBuff+5);
-        newbuflen = strlen(playerKick);
-        playerKick[newbuflen - 1] = '\0';
-        threadsWaitForMutex();
-        transportUdpServerKickPlayer(serverSim, playerKick);
-        threadsReleaseMutex();
-      } else if (strncmp(keyBuff, "host ", 5) == 0) {
-        bool hostSet;
-        sprintf(playerHost, "%.*s", 32, keyBuff+5);
-        newbuflen = strlen(playerHost);
-        playerHost[newbuflen - 1] = '\0';
-        threadsWaitForMutex();
-        hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
-        threadsReleaseMutex();
-        if (hostSet) {
-          printf("Host set to %s\n", playerHost);
-        } else {
-          printf("No such player\n");
-        }
-      } else if (strncmp(keyBuff, "quit", 4) == 0) {
-        /* Loop's while-condition will exit on next check */
-      } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
-        fprintf(stderr, "Unknown command - Type \"help\" for help\n");
-      }
+      serverConsoleDispatch(&serverConsoleOps, keyBuff, saveBuff);
 
-      timer.tv_sec = 1;
-      timer.tv_usec = 0;
-      FD_ZERO(&fdmask);
-      FD_SET(STDIN_FILENO, &fdmask);
-
-      ret = select(STDIN_FILENO + 1, &fdmask, NULL, NULL, &timer);
-      if (ret > 0) {
-        fgets(keyBuff, 256, stdin);
-        strcpy(saveBuff, keyBuff);
-        strlower(keyBuff);
-      } else if (ret != -1) {
+      if (consoleOpen == TRUE) {
+        switch (serverConsoleReadLine(stdin, keyBuff, sizeof(keyBuff), 1)) {
+        case SERVER_CONSOLE_READ_LINE:
+          strcpy(saveBuff, keyBuff);
+          strlower(keyBuff);
+          break;
+        case SERVER_CONSOLE_READ_EOF:
+          /* stdin has ended — a server put in the background without
+           * -noinput, or a closed pipe. select() then reports the
+           * descriptor readable for ever and the read fails without
+           * touching the buffer, so the loop used to re-run whatever
+           * command it read last, flat out and with no delay. Stop
+           * reading and idle the way the -noinput path does. */
+          fprintf(stderr, "Console input has closed - no further commands "
+                          "will be read. Use quit or Ctrl-C to stop the "
+                          "server.\n");
+          consoleOpen = FALSE;
+          saveBuff[0] = '\0';
+          break;
+        case SERVER_CONSOLE_READ_TIMEOUT:
+          saveBuff[0] = '\0';
+          break;
+        }
+      } else {
+        /* Console closed: idle a second at a time, the way the read's
+         * timeout does, and clear the line so a command left behind by a
+         * signal below runs once and not once a second. */
+        sleep(1);
         keyBuff[0] = '\0';
+        saveBuff[0] = '\0';
       }
 
       if (alarmRaised == alarmInterrupt) {
@@ -711,13 +629,34 @@ void printArgs() {
   fprintf(stderr, "                slot re-opens when the host leaves\n");
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
-  fprintf(stderr, "                autolock, password, ranked, openhost, map.\n");
+  fprintf(stderr, "                autolock, password, ranked, openhost, map, pillview,\n");
+  fprintf(stderr, "                baseview, allyview, classicmode, alliesintrees.\n");
+  fprintf(stderr, "                Locking pillview, baseview, allyview or alliesintrees\n");
+  fprintf(stderr, "                also locks classicmode, which writes those values.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
   fprintf(stderr, "-maxspectators <N> - Maximum number of spectator connections (default 16,\n");
   fprintf(stderr, "                0 disables spectating).\n");
   fprintf(stderr, "-specdelay <S> - Spectator view delay in seconds (default 90, 0 = live).\n");
+
+  fprintf(stderr, "\nVisibility (what players see of pills, bases and allied tanks):\n");
+  fprintf(stderr, "-pillview <M> - Pillbox visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-baseview <M> - Base visibility: always, key, decay, off (default off)\n");
+  fprintf(stderr, "-allyview <M> - Allied tank visibility: always (default), key, decay, off\n");
+  fprintf(stderr, "-pillviewdecay <S> - Seconds a pill stays visible under \"decay\"\n");
+  fprintf(stderr, "                (5-600, default 30)\n");
+  fprintf(stderr, "-baseviewdecay <S> - Same for bases (5-600, default 30)\n");
+  fprintf(stderr, "-allyviewdecay <S> - Same for allied tanks (5-600, default 30)\n");
+  fprintf(stderr, "                An unrecognised mode warns and falls back to that\n");
+  fprintf(stderr, "                switch's default; a decay outside the range is\n");
+  fprintf(stderr, "                clamped into it.\n");
+  fprintf(stderr, "-alliesintrees- Allied tanks standing in trees are sent to their allies\n");
+  fprintf(stderr, "                instead of being withheld (fog of war still applies).\n");
+  fprintf(stderr, "                Off by default, and off under -classicmode.\n");
+  fprintf(stderr, "-classicmode  - Classic Bolo view: sets pillview key, baseview off and\n");
+  fprintf(stderr, "                allyview off, overriding those three switches, turns\n");
+  fprintf(stderr, "                allies in trees off, and stops the lobby changing them.\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -1757,14 +1696,108 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "ranked") == 0)    serverLocks |= LOBBY_LOCK_RANKED;
         else if (strcmp(lo, "openhost") == 0)  serverLocks |= LOBBY_LOCK_OPEN_HOST;
         else if (strcmp(lo, "map") == 0)       serverLocks |= LOBBY_LOCK_MAP;
+        else if (strcmp(lo, "pillview") == 0)  serverLocks |= LOBBY_LOCK_PILL_VIEW;
+        else if (strcmp(lo, "baseview") == 0)  serverLocks |= LOBBY_LOCK_BASE_VIEW;
+        else if (strcmp(lo, "allyview") == 0)  serverLocks |= LOBBY_LOCK_ALLY_VIEW;
+        else if (strcmp(lo, "classicmode") == 0) serverLocks |= LOBBY_LOCK_CLASSIC_MODE;
+        else if (strcmp(lo, "alliesintrees") == 0) serverLocks |= LOBBY_LOCK_ALLIES_IN_TREES;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
-                  "openhost, map)\n", lo);
+                  "openhost, map, pillview, baseview, allyview, "
+                  "classicmode, alliesintrees)\n", lo);
         }
       }
+      /* Locking any visibility setting locks classicmode too, because
+       * turning classic mode on writes those same values. The sim does
+       * this for us; say so here so the operator isn't surprised by a
+       * locked checkbox they never named. */
+      uint16_t implied = serverSimAddImpliedLocks(serverLocks);
+      if (implied != serverLocks) {
+        fprintf(stderr,
+                "Note: -lock of pillview / baseview / allyview / "
+                "alliesintrees also locks classicmode, which writes "
+                "those values.\n");
+        serverLocks = implied;
+      }
     }
+  }
+
+  /* -pillview / -baseview / -allyview and their decay values. Applied
+   * straight onto the created sim rather than through
+   * ServerInstanceConfig, so serverSimCreate* keeps its signature. Every
+   * category is set on every run — with no switches given that writes
+   * back the same defaults serverSimInit already put there. An unknown
+   * mode word or an out-of-range decay warns and falls back, matching
+   * -uploadpolicy / -uploadmaxfiles. */
+  {
+    static const struct {
+      const char  *modeArg;
+      const char  *decayArg;
+      ViewCategory cat;
+      ViewPolicy   def;
+    } viewArgs[] = {
+      { "pillview", "pillviewdecay", viewCategoryPill, viewPolicyAlways },
+      { "baseview", "baseviewdecay", viewCategoryBase, viewPolicyOff    },
+      { "allyview", "allyviewdecay", viewCategoryAlly, viewPolicyAlways },
+    };
+    for (int vi = 0; vi < (int)(sizeof(viewArgs) / sizeof(viewArgs[0])); vi++) {
+      ViewPolicy policy = viewArgs[vi].def;
+      int secs = VIEW_DECAY_DEFAULT_SECS;
+      int modeNum = findArg(argc, argv, viewArgs[vi].modeArg);
+      if (modeNum != ARG_NOT_FOUND) {
+        char modeStr[32];
+        strncpy(modeStr, (char *)argv[modeNum], sizeof(modeStr) - 1);
+        modeStr[sizeof(modeStr) - 1] = '\0';
+        strlower(modeStr);
+        if (strcmp(modeStr, "always") == 0) {
+          policy = viewPolicyAlways;
+        } else if (strcmp(modeStr, "key") == 0) {
+          policy = viewPolicyKey;
+        } else if (strcmp(modeStr, "decay") == 0) {
+          policy = viewPolicyDecay;
+        } else if (strcmp(modeStr, "off") == 0) {
+          policy = viewPolicyOff;
+        } else {
+          fprintf(stderr, "Unknown -%s '%s'; using %s\n",
+                  viewArgs[vi].modeArg, modeStr,
+                  viewArgs[vi].def == viewPolicyOff ? "off" : "always");
+          policy = viewArgs[vi].def;
+        }
+      }
+      int decayNum = findArg(argc, argv, viewArgs[vi].decayArg);
+      if (decayNum != ARG_NOT_FOUND) {
+        secs = atoi((char *)argv[decayNum]);
+        if (secs < VIEW_DECAY_MIN_SECS) {
+          fprintf(stderr, "-%s %d out of range; clamping to %d\n",
+                  viewArgs[vi].decayArg, secs, VIEW_DECAY_MIN_SECS);
+          secs = VIEW_DECAY_MIN_SECS;
+        } else if (secs > VIEW_DECAY_MAX_SECS) {
+          fprintf(stderr, "-%s %d out of range; clamping to %d\n",
+                  viewArgs[vi].decayArg, secs, VIEW_DECAY_MAX_SECS);
+          secs = VIEW_DECAY_MAX_SECS;
+        }
+      }
+      serverSimSetViewPolicy(serverSim, viewArgs[vi].cat, policy,
+                             (uint16_t)secs);
+    }
+  }
+
+  /* -alliesintrees: send allied tanks standing in trees to their allies.
+   * Applied before -classicmode so classic mode wins when both are on the
+   * same command line. Only set when the flag is present — the sim
+   * default is off. */
+  if (argExist(argc, argv, "alliesintrees") == TRUE) {
+    serverSimSetAlliesInTrees(serverSim, true);
+  }
+
+  /* -classicmode: the classic Bolo view. Applied after the three view
+   * switches so it wins when both are on the same command line, and
+   * before serverInstanceStartup so the lobby snapshot captures it.
+   * Only set when the flag is present — the sim default is off. */
+  if (argExist(argc, argv, "classicmode") == TRUE) {
+    serverSimSetClassicMode(serverSim, true);
   }
 
   /* -nolobby: skip lobby, start running immediately (backward-compatible
@@ -2231,7 +2264,7 @@ int main(int argc, char **argv) {
         }
         /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
          * -brain path under -braindebug yields brainrec.btr but zero
-         * print2_botN.log — the exact footgun the usage text warns about.
+         * print2_botN.log — the exact issue the usage text warns about.
          * Auto-redirect an "opt/" (or "opt\") path segment to the base path
          * so the per-bot debug logs always appear in -braindebug. */
         {

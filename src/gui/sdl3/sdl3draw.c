@@ -52,6 +52,8 @@
 #endif
 #include "cursor.h"
 #include "mapview.h"
+#include "overview_hud_layout.h"
+#include "overview_view.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -62,6 +64,7 @@
 #include "glyphs.h"
 #include "global.h"
 #include "client_sim.h"
+#include "client_command.h" /* VIEW_KIND_* — which item view the label names */
 #include "client_net.h"   /* clientSimGetConnectState — map-transfer progress */
 #include "build_cursor.h"
 #include "../gamefront.h"
@@ -96,6 +99,13 @@ static SDL_Texture  *gTilesTex      = NULL;
 
 /* User option (winbolo.c): gray letterbox/pillarbox bars instead of black. */
 extern bool letterboxBarsGray;
+
+/* The status-panel label options the last game frame was drawn with. Every
+   game frame is handed them as arguments, but the returning-to-lobby frame
+   redraws the same map without going through that call; holding the last pair
+   keeps the labels from blinking off for the last moments of a round. */
+static bool gLastPillLabels = FALSE;
+static bool gLastBaseLabels = FALSE;
 
 /* Fill the whole window before the game render target is composited into
    gGameDestRect.  The exposed border is the letterbox/pillarbox area; make
@@ -158,6 +168,113 @@ static int          gGameRTHeight     = 0;
    Set each frame after calculating aspect-preserving scale. */
 static SDL_FRect    gGameDestRect = {0, 0, 0, 0};
 static float        gGameScale    = 1.0f;    /* Scale factor from RT to dest */
+
+/* In-window Map Overview mode. The overview is drawn at window size straight
+   to the window, so it uses none of the game render target above (which is
+   locked to the 515:325 chrome aspect and would letterbox the map). The view
+   instance belongs here because the render needs gRenderer, gTilesTex and
+   gCrosshairTex; sdl3imgui.cpp reaches it through the accessors below for the
+   input handling and status strip, which have to run inside its ImGui frame.
+   gOverviewRect is the last blit rect, so both halves agree on where the map
+   is on screen. */
+static bool          gOverviewInWindow = FALSE;
+static OverviewView *gOverviewView     = NULL;
+static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+/* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
+   the panels on exactly the rectangles that were drawn. Only meaningful while
+   the flag is set: a frame that drew no HUD clears it. */
+static OverviewHudLayout gOverviewHud;
+static bool              gOverviewHudValid = FALSE;
+
+/* The full screen map's newswire starts off the bottom edge, rides up while
+   its text is changing and drops back off once it has been quiet for the
+   hold time. 0 is fully on screen, 1 fully off; the classic frame never
+   touches any of this. */
+static float  gOverviewNewsSlide     = 1.0f;
+static Uint64 gOverviewNewsSlideTick = 0;
+#define OVERVIEW_NEWS_HOLD_MS  30000
+#define OVERVIEW_NEWS_SLIDE_MS 300
+
+/* How see-through each of the three HUD panels is drawn, as a percentage the
+   player sets in Settings > Display & Sound > Full Screen. 0 is solid and the
+   cap stops short of invisible. Every piece of a panel takes the same share —
+   its backing, the frame round it, its artwork, and for the status column the
+   divider ridge and the LGM indicator drawn into it — so a panel fades as one
+   thing.
+
+   The newswire starts at 30 because it rides up over the middle of the map
+   rather than sitting in a corner out of the way. The other two start solid,
+   which is how they were drawn before there was a setting.
+
+   Auto-hide belongs to the newswire alone: on, it drops off the bottom edge
+   once no new message has arrived for the hold time; off, it stays up for the
+   whole game. */
+#define OVERVIEW_NEWS_TRANSPARENCY_DEFAULT 30
+
+/* The alpha a panel's backing is filled at when the panel is solid, and the
+   value each panel's own share of it is taken from. */
+#define OVERVIEW_HUD_BACK_ALPHA 160
+
+static int  gOverviewNewsTransparency   = OVERVIEW_NEWS_TRANSPARENCY_DEFAULT;
+static bool gOverviewNewsAutoHide       = TRUE;
+static int  gOverviewBuildTransparency  = 0;
+static int  gOverviewStatusTransparency = 0;
+
+/* A panel the pointer is resting on goes solid, whatever it is set to, and
+   settles back to the setting once the pointer leaves — so a panel can be left
+   see-through enough to play through and still be read by pointing at it.
+
+   Which panels are under the pointer is worked out by the input half in
+   sdl3imgui.cpp, which is already hit-testing these same three rects to keep
+   clicks on the panels off the map. It runs after the draw, so the fade is
+   working from where the pointer was last frame; at these durations that is
+   not something a player can see. Out is the slower of the two, so clipping a
+   corner on the way past does not flash the panel.
+
+   A panel can also ask to be held up for a while with nothing resting on it,
+   which is what a new build selection does to the build strip: the player has
+   just changed something there and wants to see what it now reads, however
+   see-through the strip is set. The hold runs from the change, so the strip
+   comes up, sits solid for the rest of the second and then goes back the way
+   a pointer leaving takes it.
+
+   Each fade is how far its panel has travelled from the setting to solid: 0
+   at the setting, 1 fully solid. A panel set solid has nowhere to go and none
+   of this shows. */
+#define OVERVIEW_HUD_FADE_IN_MS  150
+#define OVERVIEW_HUD_FADE_OUT_MS 400
+#define OVERVIEW_HUD_HOLD_MS     1000
+
+typedef enum {
+  OVERVIEW_HUD_PANEL_STATUS = 0,
+  OVERVIEW_HUD_PANEL_BUILD,
+  OVERVIEW_HUD_PANEL_NEWSWIRE,
+  OVERVIEW_HUD_PANEL_COUNT
+} OverviewHudPanel;
+
+static bool   gOverviewHudHovered[OVERVIEW_HUD_PANEL_COUNT];
+static Uint64 gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_COUNT];
+static float  gOverviewHudFade[OVERVIEW_HUD_PANEL_COUNT];
+static Uint64 gOverviewHudFadeTick = 0;
+
+/* How far the map is taken down behind the returning-to-lobby caption. Dark
+   enough that the caption reads and the round is plainly over, light enough
+   that the map is still the thing on screen. */
+#define OVERVIEW_LOBBY_DIM_ALPHA 150
+
+/* The item view caption along the bottom of the full screen map: how far its
+   bottom sits above the newswire strip, and the padding round the text on its
+   backing. */
+#define OVERVIEW_ITEM_LABEL_GAP 4.0f
+#define OVERVIEW_ITEM_LABEL_PAD 3.0f
+
+/* A whole classic frame at gZoomFactor, drawn offscreen so the HUD column can
+   be cut out of it as source rects. gGameRenderTarget cannot be borrowed for
+   this: sdl3DrawReconfigureZoom never creates it on the Steam Deck or in
+   tablet mode. Rebuilt when the zoom changes, since the frame is drawn at it. */
+static SDL_Texture  *gHudSrcTex  = NULL;
+static int           gHudSrcZoom = 0;
 
 static buildSelect  gCurrentBuildSelect = BsTrees;
 
@@ -505,9 +622,13 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
   return tex;
 }
 
-/* Render-thread-only rebuild of the man-status texture from cache; defined
-   later in this file. */
+/* Render-thread-only rebuild of the man-status texture from cache, and the
+   shared drawer it and the full screen HUD both go through; defined later in
+   this file. */
 static void sdl3RenderManStatusTex(void);
+static void sdl3DrawManStatusShape(float dstX, float dstY, float scale,
+                                   float stroke, bool isDead, TURNTYPE angle,
+                                   Uint8 alpha);
 
 /*********************************************************
 *NAME:          sdl3RenderStatusPanels
@@ -636,6 +757,92 @@ SDL_Renderer *sdl3DrawGetRenderer(void) {
 
 SDL_Texture *sdl3DrawGetTilesTexture(void) {
   return gTilesTex;
+}
+
+/* The single place the mode is turned on and off, so the pointer the view may
+   have switched to the game crosshair is handed back on every way out — the
+   menu toggle, the end of a game and teardown all come through here. */
+void sdl3DrawSetOverviewInWindow(bool active) {
+  if (active == gOverviewInWindow) return;
+  gOverviewInWindow = active;
+  if (!active) {
+    overviewViewReleaseCursor(gOverviewView);
+    gOverviewRect.x = gOverviewRect.y = gOverviewRect.w = gOverviewRect.h = 0.0f;
+    gOverviewHudValid = FALSE;
+  }
+}
+
+bool sdl3DrawIsOverviewInWindow(void) {
+  return gOverviewInWindow;
+}
+
+struct OverviewView *sdl3DrawOverviewInWindowView(void) {
+  return gOverviewView;
+}
+
+bool sdl3DrawGetOverviewInWindowRect(float *outX, float *outY,
+                                     float *outW, float *outH) {
+  if (!gOverviewInWindow || gOverviewRect.w <= 0.0f) return false;
+  if (outX) *outX = gOverviewRect.x;
+  if (outY) *outY = gOverviewRect.y;
+  if (outW) *outW = gOverviewRect.w;
+  if (outH) *outH = gOverviewRect.h;
+  return true;
+}
+
+bool sdl3DrawGetOverviewHudLayout(OverviewHudLayout *out) {
+  if (!gOverviewInWindow || !gOverviewHudValid || out == NULL) return false;
+  *out = gOverviewHud;
+  return true;
+}
+
+/* Clamped on the way in rather than trusted, so a hand-edited WinBolo.json
+   cannot leave a panel invisible. */
+static int hudClampTransparency(int percent) {
+  if (percent < 0) return 0;
+  if (percent > OVERVIEW_HUD_TRANSPARENCY_MAX) {
+    return OVERVIEW_HUD_TRANSPARENCY_MAX;
+  }
+  return percent;
+}
+
+void sdl3DrawSetNewswireTransparency(int percent) {
+  gOverviewNewsTransparency = hudClampTransparency(percent);
+}
+
+int sdl3DrawGetNewswireTransparency(void) {
+  return gOverviewNewsTransparency;
+}
+
+void sdl3DrawSetBuildPanelTransparency(int percent) {
+  gOverviewBuildTransparency = hudClampTransparency(percent);
+}
+
+int sdl3DrawGetBuildPanelTransparency(void) {
+  return gOverviewBuildTransparency;
+}
+
+void sdl3DrawSetStatusPanelTransparency(int percent) {
+  gOverviewStatusTransparency = hudClampTransparency(percent);
+}
+
+int sdl3DrawGetStatusPanelTransparency(void) {
+  return gOverviewStatusTransparency;
+}
+
+void sdl3DrawSetHudPanelHover(bool overStatus, bool overBuild,
+                              bool overNewswire) {
+  gOverviewHudHovered[OVERVIEW_HUD_PANEL_STATUS]   = overStatus;
+  gOverviewHudHovered[OVERVIEW_HUD_PANEL_BUILD]    = overBuild;
+  gOverviewHudHovered[OVERVIEW_HUD_PANEL_NEWSWIRE] = overNewswire;
+}
+
+void sdl3DrawSetNewswireAutoHide(bool on) {
+  gOverviewNewsAutoHide = on ? TRUE : FALSE;
+}
+
+bool sdl3DrawGetNewswireAutoHide(void) {
+  return gOverviewNewsAutoHide;
 }
 
 int sdl3DrawGetSheetScale(void) {
@@ -767,6 +974,9 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
   if (!ev) return;
   switch (ev->type) {
     case SDL_EVENT_MOUSE_MOTION: {
+      /* The classic 15x15 mapping means nothing while the overview owns the
+         window, and the overview drives the shared build cursor itself. */
+      if (gOverviewInWindow) break;
       /* Transform window coords to game coords */
       float gameX, gameY;
       if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
@@ -800,6 +1010,11 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       break;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+      /* A click that arrives before ImGui's capture flag catches up would
+         build twice — once at the overview's square, once at the classic
+         cursor — and the build-select hit-test would fire at chrome
+         positions that are not on screen in this mode. */
+      if (gOverviewInWindow) break;
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
@@ -895,6 +1110,47 @@ static void sdl3DrawSetWindowIcon(SDL_Window *window) {
     SDL_DestroySurface(surf);
   }
   stbi_image_free(pixels);
+}
+
+/* Decode data/crosshairs_17x17.png onto the given renderer. Returns NULL if
+ * the file is missing or anything in the decode fails; the caller owns the
+ * texture and destroys it. */
+SDL_Texture *sdl3DrawCreateCrosshairTexture(SDL_Renderer *r) {
+  SDL_Texture *tex = NULL;
+
+  if (!r) return NULL;
+
+  const char *basePath = SDL_GetBasePath();
+  if (!basePath) basePath = "./";
+  char path[1024];
+  SDL_snprintf(path, sizeof(path), "%sdata/crosshairs_17x17.png", basePath);
+  SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+  if (io) {
+    Sint64 sz = SDL_GetIOSize(io);
+    if (sz > 0) {
+      unsigned char *buf = (unsigned char *)SDL_malloc((size_t)sz);
+      if (buf) {
+        SDL_ReadIO(io, buf, (size_t)sz);
+        int imgW, imgH, ch;
+        unsigned char *pix = stbi_load_from_memory(buf, (int)sz, &imgW, &imgH, &ch, 4);
+        SDL_free(buf);
+        if (pix) {
+          SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pix, imgW * 4);
+          if (surf) {
+            tex = SDL_CreateTextureFromSurface(r, surf);
+            SDL_DestroySurface(surf);
+            if (tex) {
+              SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+              SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
+            }
+          }
+          stbi_image_free(pix);
+        }
+      }
+    }
+    SDL_CloseIO(io);
+  }
+  return tex;
 }
 
 /* -------------------------------------------------------
@@ -1232,38 +1488,7 @@ bool sdl3DrawSetup(int zoomFactor) {
   glyphsInit(gRenderer);
 
   /* Load custom crosshair (17×17 PNG, center pixel (8,8) = aim point). */
-  {
-    const char *basePath = SDL_GetBasePath();
-    if (!basePath) basePath = "./";
-    char path[1024];
-    SDL_snprintf(path, sizeof(path), "%sdata/crosshairs_17x17.png", basePath);
-    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
-    if (io) {
-      Sint64 sz = SDL_GetIOSize(io);
-      if (sz > 0) {
-        unsigned char *buf = (unsigned char *)SDL_malloc((size_t)sz);
-        if (buf) {
-          SDL_ReadIO(io, buf, (size_t)sz);
-          int imgW, imgH, ch;
-          unsigned char *pix = stbi_load_from_memory(buf, (int)sz, &imgW, &imgH, &ch, 4);
-          SDL_free(buf);
-          if (pix) {
-            SDL_Surface *surf = SDL_CreateSurfaceFrom(imgW, imgH, SDL_PIXELFORMAT_RGBA32, pix, imgW * 4);
-            if (surf) {
-              gCrosshairTex = SDL_CreateTextureFromSurface(gRenderer, surf);
-              SDL_DestroySurface(surf);
-              if (gCrosshairTex) {
-                SDL_SetTextureBlendMode(gCrosshairTex, SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(gCrosshairTex, SDL_SCALEMODE_NEAREST);
-              }
-            }
-            stbi_image_free(pix);
-          }
-        }
-      }
-      SDL_CloseIO(io);
-    }
-  }
+  gCrosshairTex = sdl3DrawCreateCrosshairTexture(gRenderer);
 
   /* Create Phase 4 render-target textures.
      Man-status is created at zoom-factor resolution so the circle is drawn
@@ -1361,6 +1586,7 @@ void sdl3DrawCleanup(void) {
   if (gCrosshairTex)     { SDL_DestroyTexture(gCrosshairTex);     gCrosshairTex     = NULL; }
   if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
+  if (gHudSrcTex)        { SDL_DestroyTexture(gHudSrcTex);        gHudSrcTex        = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
@@ -1370,6 +1596,10 @@ void sdl3DrawCleanup(void) {
     SDL_DestroyTexture(gBackgroundTex);
     gBackgroundTex = NULL;
   }
+  /* The in-window overview's offscreen was made on gRenderer, so it goes
+     before the renderer does. */
+  overviewViewDestroy(gOverviewView);
+  gOverviewView = NULL;
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -1504,14 +1734,554 @@ static void sdl3DrawAdaptRenderTarget(void) {
   sdl3DrawReconfigureZoom(0);                       /* derive from window */
 }
 
+/* Called once per drawn frame by whichever branch drew it, so the FPS readout
+   keeps working in the in-window overview as well as the classic view. */
+static void sdl3DrawCountFrame(void) {
+  g_dwFrameCount++;
+  DWORD now = (DWORD)SDL_GetTicks();
+  DWORD elapsed = now - g_dwFrameTime;
+  if (elapsed > 1000) {
+    g_dwFrameTotal = g_dwFrameCount;
+    g_dwFrameTime = now;
+    g_dwFrameCount = 0;
+  }
+}
+
+/* Draws one whole classic frame into gHudSrcTex: the background bitmap, the
+   three item grids, the status panels and the cached text, all at the
+   positions.h coordinates they already live at. The HUD column is then nine
+   source rects out of it, so the panel bevels, the build-item pictures, the
+   selected indent, the bar labels and the numbers all come along without any
+   of them being repositioned.
+
+   Swaps the render target, so it has to run before any window drawing in the
+   frame; the caller's target is saved and put back. Returns false when the
+   scratch target could not be made, in which case no HUD is drawn. */
+static bool hudSourceRender(ClientSim *cs, bool showPillLabels, bool showBaseLabels) {
+  /* Read before the block below, which leaves the target on the window when
+     it has to build the texture. */
+  SDL_Texture *savedTarget = SDL_GetRenderTarget(gRenderer);
+
+  if (gHudSrcTex != NULL && gHudSrcZoom != gZoomFactor) {
+    SDL_DestroyTexture(gHudSrcTex);
+    gHudSrcTex = NULL;
+  }
+  if (gHudSrcTex == NULL) {
+    gHudSrcTex = sdl3CreateRenderTarget(gZoomFactor * SDL3_SCREEN_W,
+                                        gZoomFactor * SDL3_SCREEN_H);
+    if (gHudSrcTex == NULL) return false;
+    gHudSrcZoom = gZoomFactor;
+  }
+
+  SDL_SetRenderTarget(gRenderer, gHudSrcTex);
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+
+  if (sdl3LoadBackground()) {
+    SDL_FRect bgDest = { 0.0f, 0.0f,
+                         (float)(gZoomFactor * SDL3_SCREEN_W),
+                         (float)(gZoomFactor * SDL3_SCREEN_H) };
+    SDL_RenderTexture(gRenderer, gBackgroundTex, NULL, &bgDest);
+  }
+
+  sdl3DrawSetBasesStatusClear();
+  {
+    BYTE total = clientSimGetBaseCount(cs);
+    for (BYTE i = 1; i <= total; i++) {
+      sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), showBaseLabels);
+    }
+  }
+  sdl3DrawSetPillsStatusClear();
+  {
+    BYTE total = clientSimGetPillCount(cs);
+    for (BYTE i = 1; i <= total; i++) {
+      sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), showPillLabels);
+    }
+  }
+  sdl3DrawSetTanksStatusClear();
+  for (BYTE i = 1; i <= MAX_TANKS; i++) {
+    sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
+  }
+
+  /* Safe with our target set: the three bar/man texture builders each take
+     SDL_GetRenderTarget first and put it back. */
+  sdl3RenderStatusPanels();
+  sdl3RenderCachedText();
+
+  SDL_SetRenderTarget(gRenderer, savedTarget);
+  return true;
+}
+
+/* A panel's transparency setting as the alpha its pieces are drawn at, and as
+   the alpha its backing is filled at. */
+static Uint8 hudPanelAlpha(int transparency) {
+  return (Uint8)((255 * (100 - transparency)) / 100);
+}
+
+static Uint8 hudBackingAlpha(int transparency) {
+  return (Uint8)((OVERVIEW_HUD_BACK_ALPHA * (100 - transparency)) / 100);
+}
+
+/* Move every panel's fade one frame on, towards solid under the pointer and
+   back towards the setting away from it. Called once per HUD frame, before
+   anything is drawn from it. */
+static void hudStepHoverFades(Uint64 now) {
+  float in  = (float)(now - gOverviewHudFadeTick) / (float)OVERVIEW_HUD_FADE_IN_MS;
+  float out = (float)(now - gOverviewHudFadeTick) / (float)OVERVIEW_HUD_FADE_OUT_MS;
+
+  /* The first HUD frame, and the first after the mode has been away long
+     enough for the clock to have run on without it, land wherever the pointer
+     is rather than sweeping there from the last frame's fade. */
+  if (gOverviewHudFadeTick == 0 || now - gOverviewHudFadeTick > 1000) {
+    in  = 1.0f;
+    out = 1.0f;
+  }
+  gOverviewHudFadeTick = now;
+
+  for (int i = 0; i < OVERVIEW_HUD_PANEL_COUNT; i++) {
+    bool up = gOverviewHudHovered[i] || now < gOverviewHudHoldUntil[i];
+    gOverviewHudFade[i] += up ? in : -out;
+    if (gOverviewHudFade[i] < 0.0f) gOverviewHudFade[i] = 0.0f;
+    if (gOverviewHudFade[i] > 1.0f) gOverviewHudFade[i] = 1.0f;
+  }
+}
+
+/* What one panel is actually drawn at: its setting, closed towards solid by
+   however far it has faded up under the pointer. */
+static int hudHoverTransparency(int transparency, OverviewHudPanel panel) {
+  float fade = gOverviewHudFade[panel];
+  return (int)((float)transparency * (1.0f - fade) + 0.5f);
+}
+
+/* The status column's rows plus its divider, which is the most pieces any one
+   panel is made of. */
+#define HUD_BACKING_MAX_PIECES (OVERVIEW_HUD_COUNT + 1)
+
+/* Fill the parts of one panel's backing that none of its artwork covers. A
+   translucent panel is blended over what is under it, so black left under the
+   artwork would darken the map through it a second time and the panel would
+   come out less see-through than it was set to. The gaps between the pieces
+   still want the backing, and this fills those and nothing else.
+
+   Swept in bands: every piece's top and bottom edge cuts the panel into
+   horizontal bands, and on each band the pieces there leave open runs to
+   their left, between them and to their right. Both counts are small, so the
+   sort is a plain insertion and the run walk rescans the pieces. */
+static void hudFillPanelBacking(const SDL_FRect *area, const SDL_FRect *pieces,
+                                int n, Uint8 alpha) {
+  float edges[2 * HUD_BACKING_MAX_PIECES + 2];
+  int   ne     = 0;
+  float left   = area->x;
+  float right  = area->x + area->w;
+  float top    = area->y;
+  float bottom = area->y + area->h;
+
+  if (area->w <= 0.0f || area->h <= 0.0f) return;
+  if (n > HUD_BACKING_MAX_PIECES) n = HUD_BACKING_MAX_PIECES;
+
+  edges[ne++] = top;
+  edges[ne++] = bottom;
+  for (int i = 0; i < n; i++) {
+    float e0 = pieces[i].y;
+    float e1 = pieces[i].y + pieces[i].h;
+    if (e0 > top && e0 < bottom) edges[ne++] = e0;
+    if (e1 > top && e1 < bottom) edges[ne++] = e1;
+  }
+  for (int i = 1; i < ne; i++) {
+    float v = edges[i];
+    int   j = i - 1;
+    while (j >= 0 && edges[j] > v) {
+      edges[j + 1] = edges[j];
+      j--;
+    }
+    edges[j + 1] = v;
+  }
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, alpha);
+  for (int b = 0; b + 1 < ne; b++) {
+    float y0  = edges[b];
+    float y1  = edges[b + 1];
+    float mid = (y0 + y1) * 0.5f;
+    float x   = left;
+    if (y1 <= y0) continue;
+    /* The pieces on this band, taken left to right. Each step moves x past
+       the piece it just found, so the walk always ends. */
+    for (;;) {
+      const SDL_FRect *next = NULL;
+      for (int i = 0; i < n; i++) {
+        const SDL_FRect *p = &pieces[i];
+        if (mid < p->y || mid >= p->y + p->h) continue;  /* not on this band */
+        if (p->x + p->w <= x) continue;                  /* already behind us */
+        if (next == NULL || p->x < next->x) next = p;
+      }
+      if (next == NULL) break;
+      if (next->x > x) {
+        SDL_FRect r = { x, y0, next->x - x, y1 - y0 };
+        SDL_RenderFillRect(gRenderer, &r);
+      }
+      x = next->x + next->w;
+      if (x >= right) break;
+    }
+    if (x < right) {
+      SDL_FRect r = { x, y0, right - x, y1 - y0 };
+      SDL_RenderFillRect(gRenderer, &r);
+    }
+  }
+}
+
+/* A thin chrome frame just outside one HUD backing rect, in the background
+   art's greys: a light line on the outside, the chrome grey as the body, a
+   dark line against the backing — the classic window bevel at HUD scale.
+   The panel's own opacity comes in as alpha, so the frame fades with what it
+   frames. The caller leaves the draw blend mode on BLEND, which an alpha of
+   255 comes out of unchanged. */
+static void sdl3DrawOverviewHudFrame(const SDL_FRect *r, float scale,
+                                     Uint8 alpha) {
+  int body = (int)SDL_ceilf(2.0f * scale);
+  if (body < 2) body = 2;
+  int rings = body + 2;   /* + the light outer and dark inner lines */
+  for (int i = 1; i <= rings; i++) {
+    if (i == 1) {
+      SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, alpha);
+    } else if (i == rings) {
+      SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, alpha);
+    } else {
+      SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, alpha);
+    }
+    SDL_FRect o = { r->x - (float)i, r->y - (float)i,
+                    r->w + 2.0f * (float)i, r->h + 2.0f * (float)i };
+    SDL_RenderRect(gRenderer, &o);
+  }
+}
+
+/* In-window Map Overview: the whole game window is the map, and neither the
+   classic 15x15 view nor the chrome is drawn. The view renders at window size
+   into its own offscreen and is blitted straight to the window — going through
+   gGameRenderTarget would letterbox the map to the 515:325 chrome aspect. The
+   status panels and the newswire go over the map afterwards, as slices of a
+   classic frame drawn offscreen alongside the view. */
+static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
+                                          bool showBaseLabels) {
+  /* Stale the moment this frame starts: every way out below either lays a new
+     HUD out or draws none at all. */
+  gOverviewHudValid = FALSE;
+
+  int ww = 0, wh = 0;
+  {
+    SDL_RendererLogicalPresentation logMode;
+    SDL_GetRenderLogicalPresentation(gRenderer, &ww, &wh, &logMode);
+    if (ww <= 0 || wh <= 0 || logMode == SDL_LOGICAL_PRESENTATION_DISABLED) {
+      SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    }
+  }
+
+  /* Zero when the menu bar is hidden (controller mode) so the map fills the
+     freed top strip — same expression the classic blit uses. */
+  float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
+  int w = ww;
+  int h = (int)((float)wh - menuBarHeight);
+  if (w < 1 || h < 1) return;
+
+  /* The classic draw loads the atlas lazily on its way past; this branch
+     never gets there, so it loads it itself. */
+  sdl3LoadTiles();
+
+  if (!gOverviewView) gOverviewView = overviewViewCreate();
+  if (!gOverviewView) return;
+
+  /* What the panels cover, before the draw that has to work around it: a tank
+     respawning behind the newswire or under the status column is scrolled into
+     the clear, and only the view knows when that has happened. The layout is
+     arithmetic on the size alone, so it can be had this early; whether the
+     panels are drawn at all is settled below, and an edge is counted whole —
+     the strip a panel sits in rather than the artwork's own rect, which is
+     what keeps the sums to three numbers.
+
+     The newswire is counted where it is laid out, not where the slide has it:
+     it comes back up on the next message, and a tank parked in the strip it
+     covers would be behind it as soon as anyone said anything. */
+  OverviewHudLayout hud;
+  bool haveHud = overviewHudLayout(w, h, &hud);
+  if (haveHud) {
+    overviewViewSetHudInsets(gOverviewView,
+                             hud.buildX + hud.buildW,
+                             0.0f,
+                             (float)w - hud.columnX,
+                             (float)h - hud.newswireY);
+  } else {
+    overviewViewSetHudInsets(gOverviewView, 0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gCrosshairTex, w, h, cs, true);
+
+  /* Both offscreen passes belong here, before anything is drawn to the
+     window: each of them swaps the render target. */
+  bool drawHud = haveHud &&
+                 hudSourceRender(cs, showPillLabels, showBaseLabels);
+  if (drawHud) {
+    Uint64 now = SDL_GetTicks();
+
+    hudStepHoverFades(now);
+
+    /* Slide the newswire: wanted on screen while its text has changed within
+       the hold time, off the bottom edge otherwise. The offset moves the
+       backing, the chrome frame, the slice and the click rect together, so
+       everything below reads the adjusted rects. */
+    Uint64 lastMsg = sdl3DrawGetMessageActivityTick();
+    /* Auto-hide off wants it up whatever the newswire has been doing, so it
+       rides up on the next frame and stays there. */
+    bool newsWanted = !gOverviewNewsAutoHide ||
+                      (lastMsg != 0 && (now - lastMsg) < OVERVIEW_NEWS_HOLD_MS);
+    float step = (gOverviewNewsSlideTick == 0)
+                     ? 1.0f
+                     : (float)(now - gOverviewNewsSlideTick) /
+                           (float)OVERVIEW_NEWS_SLIDE_MS;
+    gOverviewNewsSlideTick = now;
+    gOverviewNewsSlide += newsWanted ? -step : step;
+    if (gOverviewNewsSlide < 0.0f) gOverviewNewsSlide = 0.0f;
+    if (gOverviewNewsSlide > 1.0f) gOverviewNewsSlide = 1.0f;
+    if (gOverviewNewsSlide > 0.0f) {
+      /* Far enough down that the chrome frame's outer line leaves too. */
+      float travel = hud.newswireH + SDL_ceilf(2.0f * hud.scale) + 3.0f;
+      float off    = gOverviewNewsSlide * travel;
+      hud.newswireY += off;
+      hud.el[OVERVIEW_HUD_NEWSWIRE].dstY += off;
+    }
+    gOverviewHud      = hud;
+    gOverviewHudValid = TRUE;
+  }
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+
+  SDL_Texture *tex = overviewViewGetTexture(gOverviewView);
+  if (tex) {
+    SDL_FRect dest = { 0.0f, menuBarHeight, (float)w, (float)h };
+    /* BLENDMODE_NONE for the same reason the classic blit uses it: alpha
+       below 255 left in a render target would composite semi-transparent. */
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(gRenderer, tex, NULL, &dest);
+    /* Both halves work from this rect: the ImGui side puts its pan item and
+       status strip over exactly these numbers. */
+    gOverviewRect = dest;
+  }
+
+  if (drawHud) {
+    /* The layout works in map-rect pixels; the rect starts below the menu bar. */
+    float originX = 0.0f;
+    float originY = menuBarHeight;
+
+    /* Each panel's share of every colour it is drawn in: its setting, less
+       whatever the pointer resting on it has taken back towards solid. */
+    int colTrans   = hudHoverTransparency(gOverviewStatusTransparency,
+                                          OVERVIEW_HUD_PANEL_STATUS);
+    int buildTrans = hudHoverTransparency(gOverviewBuildTransparency,
+                                          OVERVIEW_HUD_PANEL_BUILD);
+    int newsTrans  = hudHoverTransparency(gOverviewNewsTransparency,
+                                          OVERVIEW_HUD_PANEL_NEWSWIRE);
+
+    Uint8 colAlpha       = hudPanelAlpha(colTrans);
+    Uint8 buildAlpha     = hudPanelAlpha(buildTrans);
+    Uint8 newsAlpha      = hudPanelAlpha(newsTrans);
+    Uint8 colBackAlpha   = hudBackingAlpha(colTrans);
+    Uint8 buildBackAlpha = hudBackingAlpha(buildTrans);
+    Uint8 newsBackAlpha  = hudBackingAlpha(newsTrans);
+
+    SDL_FRect colBack = { originX + hud.columnX, originY + hud.columnY,
+                          hud.columnW, hud.columnH };
+    SDL_FRect buildBack = { originX + hud.buildX, originY + hud.buildY,
+                            hud.buildW, hud.buildH };
+    SDL_FRect newsBack = { originX + hud.newswireX, originY + hud.newswireY,
+                           hud.newswireW, hud.newswireH };
+    SDL_FRect divider = { originX + hud.dividerX, originY + hud.dividerY,
+                          hud.dividerW, hud.dividerH };
+
+    /* Read before the backing is filled: the indicator's own box is what
+       covers that corner of the column, and until the first man-status update
+       arrives there is no box and the backing has the corner to itself. */
+    bool     manDead  = false;
+    TURNTYPE manAngle = 0;
+    bool     haveMan  = sdl3DrawGetManStatusState(&manDead, &manAngle);
+
+    /* Blended for the whole HUD: a panel left solid is drawn at an alpha of
+       255, which comes out exactly as it did with blending off. */
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+
+    /* Translucent backing, so the map still reads between the panels — in
+       the gaps its artwork leaves and nowhere else. */
+    {
+      SDL_FRect pieces[HUD_BACKING_MAX_PIECES];
+      int n = 0;
+      for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
+        if (i == OVERVIEW_HUD_NEWSWIRE || i == OVERVIEW_HUD_BUILDSELECT) {
+          continue;
+        }
+        if (i == OVERVIEW_HUD_MANSTATUS && !haveMan) continue;
+        pieces[n].x = originX + hud.el[i].dstX;
+        pieces[n].y = originY + hud.el[i].dstY;
+        pieces[n].w = hud.el[i].dstW;
+        pieces[n].h = hud.el[i].dstH;
+        n++;
+      }
+      pieces[n++] = divider;
+      hudFillPanelBacking(&colBack, pieces, n, colBackAlpha);
+
+      /* Each of the other two is one piece of artwork. The build strip's
+         fills its backing exactly, so nothing is left to fill; the
+         newswire's leaves the margin the layout put round it. */
+      pieces[0].x = originX + hud.el[OVERVIEW_HUD_BUILDSELECT].dstX;
+      pieces[0].y = originY + hud.el[OVERVIEW_HUD_BUILDSELECT].dstY;
+      pieces[0].w = hud.el[OVERVIEW_HUD_BUILDSELECT].dstW;
+      pieces[0].h = hud.el[OVERVIEW_HUD_BUILDSELECT].dstH;
+      hudFillPanelBacking(&buildBack, pieces, 1, buildBackAlpha);
+
+      pieces[0].x = originX + hud.el[OVERVIEW_HUD_NEWSWIRE].dstX;
+      pieces[0].y = originY + hud.el[OVERVIEW_HUD_NEWSWIRE].dstY;
+      pieces[0].w = hud.el[OVERVIEW_HUD_NEWSWIRE].dstW;
+      pieces[0].h = hud.el[OVERVIEW_HUD_NEWSWIRE].dstH;
+      hudFillPanelBacking(&newsBack, pieces, 1, newsBackAlpha);
+    }
+
+    /* The chrome edging the classic window puts around its panels; the
+       newswire strip sits on the bottom edge, so its bottom line is
+       clipped by the window and the rest frames it. */
+    sdl3DrawOverviewHudFrame(&colBack, hud.scale, colAlpha);
+    sdl3DrawOverviewHudFrame(&buildBack, hud.scale, buildAlpha);
+    sdl3DrawOverviewHudFrame(&newsBack, hud.scale, newsAlpha);
+
+    /* The ridge across the column between the base bars and the tank bars,
+       in the same greys as the frames: grey body, light top, dark bottom. */
+    {
+      SDL_SetRenderDrawColor(gRenderer, 107, 107, 107, colAlpha);
+      SDL_RenderFillRect(gRenderer, &divider);
+      SDL_FRect edge = { divider.x, divider.y, divider.w, 1.0f };
+      SDL_SetRenderDrawColor(gRenderer, 165, 165, 165, colAlpha);
+      SDL_RenderFillRect(gRenderer, &edge);
+      edge.y = divider.y + divider.h - 1.0f;
+      SDL_SetRenderDrawColor(gRenderer, 49, 49, 49, colAlpha);
+      SDL_RenderFillRect(gRenderer, &edge);
+    }
+
+    /* Linear filtering because the column is a downscale from gZoomFactor to
+       the fit scale, and nearest aliases the panel artwork and the digits. */
+    SDL_SetTextureScaleMode(gHudSrcTex, SDL_SCALEMODE_LINEAR);
+    for (int i = 0; i < OVERVIEW_HUD_COUNT; i++) {
+      const OverviewHudElement *e = &hud.el[i];
+      /* Every other element is artwork or text, which resamples from the
+         source frame's zoom to the fit scale well enough. The LGM indicator
+         is strokes — a ring one pixel wide and a line — and rescaling those
+         is what loses them: the ring comes out uneven, bright where it landed
+         on pixel centres and grey where it straddled two. It is drawn below
+         at the scale it is shown at instead. */
+      if (i == OVERVIEW_HUD_MANSTATUS) continue;
+      /* A solid panel keeps the straight copy the classic panel blits use.
+         A translucent one goes through the blend instead, where the source
+         frame's own alpha — 255 everywhere it was drawn — leaves the mod to
+         set the panel's opacity on its own. */
+      Uint8 elemAlpha = (i == OVERVIEW_HUD_NEWSWIRE)    ? newsAlpha
+                      : (i == OVERVIEW_HUD_BUILDSELECT) ? buildAlpha
+                                                        : colAlpha;
+      if (elemAlpha == 255) {
+        SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_NONE);
+      } else {
+        SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureAlphaMod(gHudSrcTex, elemAlpha);
+      }
+      SDL_FRect src = { (float)(e->srcX * gZoomFactor), (float)(e->srcY * gZoomFactor),
+                        (float)(e->srcW * gZoomFactor), (float)(e->srcH * gZoomFactor) };
+      SDL_FRect dst = { originX + e->dstX, originY + e->dstY, e->dstW, e->dstH };
+      SDL_RenderTexture(gRenderer, gHudSrcTex, &src, &dst);
+    }
+    /* Put back for every other user of the source frame and for the next
+       frame's blits. */
+    SDL_SetTextureAlphaMod(gHudSrcTex, 255);
+    SDL_SetTextureBlendMode(gHudSrcTex, SDL_BLENDMODE_NONE);
+
+    /* The LGM indicator, drawn rather than copied. The black behind it stands
+       in for the cleared texture the classic view blits, so the box reads the
+       same as the artwork either side of it — at the column's opacity, like
+       the rest of it. Its stroke is half a source pixel, which is the one
+       pixel the classic view draws at zoom 2 and keeps the ring the same
+       weight against the circle as the HUD scales up. */
+    if (haveMan) {
+      const OverviewHudElement *e = &hud.el[OVERVIEW_HUD_MANSTATUS];
+      float stroke = hud.scale * 0.5f;
+      if (stroke < 1.0f) stroke = 1.0f;
+
+      SDL_FRect box = { originX + e->dstX, originY + e->dstY,
+                        e->dstW, e->dstH };
+      SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, colAlpha);
+      SDL_RenderFillRect(gRenderer, &box);
+      sdl3DrawManStatusShape(box.x, box.y, hud.scale, stroke, manDead,
+                             manAngle, colAlpha);
+    }
+
+    /* Back to how the rest of the frame draws, and how the next frame's
+       source render expects to find it. */
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+  }
+
+  /* Name the item view across the bottom. The yellow border round the picture
+     (overview_view.cpp) says one is on; this says which. Drawn by the host
+     rather than into the offscreen for two reasons: the font's textures belong
+     to the renderer that made them, and only here is it known where the
+     newswire has slid to this frame. */
+  {
+    char label[128];
+    int textW = 0;
+    int textH = 0;
+    if (gFontMsg && sdl3DrawGetItemViewLabel(cs, label, sizeof(label)) &&
+        TTF_GetStringSize(gFontMsg, label, 0, &textW, &textH)) {
+      /* The text rides on the newswire strip's top edge, so chat never covers
+         it; hud.newswireY already carries the slide offset. Once the strip has
+         slid fully away its recorded top is below the window, so the bottom of
+         the map rect is what the text comes to rest against. */
+      float bottom = menuBarHeight + (float)h;
+      if (drawHud && menuBarHeight + hud.newswireY < bottom) {
+        bottom = menuBarHeight + hud.newswireY;
+      }
+      float ty = bottom - OVERVIEW_ITEM_LABEL_GAP - (float)textH;
+      float tx = ((float)w - (float)textW) * 0.5f;  /* the map rect starts at 0 */
+
+      /* The text sits over terrain of any colour, so it gets the same
+         translucent backing as the HUD panels and the zoom readout. */
+      SDL_FRect back = { tx - OVERVIEW_ITEM_LABEL_PAD,
+                         ty - OVERVIEW_ITEM_LABEL_PAD,
+                         (float)textW + 2.0f * OVERVIEW_ITEM_LABEL_PAD,
+                         (float)textH + 2.0f * OVERVIEW_ITEM_LABEL_PAD };
+      SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+      SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 160);
+      SDL_RenderFillRect(gRenderer, &back);
+      SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_NONE);
+
+      SDL_Color white = {200, 200, 200, 255};
+      sdl3RenderText(gFontMsg, label, white, tx, ty);
+    }
+  }
+
+  sdl3DrawCountFrame();
+}
+
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
-                        int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
+                        int32_t srtDelay, bool isItemView, int edgeX, int edgeY,
                         bool useCursor, BYTE cursorLeft, BYTE cursorTop) {
   (void)rcWindow;
 
   if (gRenderer == NULL) {
+    return;
+  }
+
+  /* Held for the returning-to-lobby frame, which redraws the map with no
+     arguments of its own. */
+  gLastPillLabels = showPillLabels;
+  gLastBaseLabels = showBaseLabels;
+
+  if (gOverviewInWindow) {
+    sdl3DrawOverviewInWindowFrame(cs, showPillLabels, showBaseLabels);
     return;
   }
 
@@ -1634,14 +2404,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
    * into edgeX/Y as a fractional drag offset. See the comment block at
    * the top of this file. */
   if (cs != NULL) {
-    /* Pill view is camera-locked on the pill and must stay exactly
-     * centred — no sub-tile drift. scrollCenterObject already zeroes
-     * subPos on entry / cycling / return-to-tank, but ignore it here
-     * too so the pill can never render a fraction of a tile off centre
-     * regardless of what subPos last held. */
-    bool inPillView = clientSimIsInPillView(cs);
-    int subX    = inPillView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
-    int subY    = inPillView ? 0 : clientSimGetSubPosY(cs);
+    /* An item view is camera-locked on what it is watching and must stay
+     * exactly centred — no sub-tile drift. scrollCenterObject already zeroes
+     * subPos on entry / cycling / return-to-tank, but ignore it here too so
+     * the pill, base or allied tank can never render a fraction of a tile
+     * off centre regardless of what subPos last held. */
+    bool inItemView = clientSimIsInItemView(cs);
+    int subX    = inItemView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
+    int subY    = inItemView ? 0 : clientSimGetSubPosY(cs);
     int tileWpx = TILE_SIZE_X * gZoomFactor;
     int tileHpx = TILE_SIZE_Y * gZoomFactor;
     edgeX += subX * tileWpx / 256;
@@ -1723,7 +2493,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           sdl3RenderText(gFontMsg, str, white, tx, ty);
         }
       }
-    } else if (!isPillView && clientSimGetMyTankDeathWait(cs) != 0 &&
+    } else if (!isItemView && clientSimGetMyTankDeathWait(cs) != 0 &&
                ((clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_DEEPSEA && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_DEEPSEA) ||
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_SHELL   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_SHELL) ||
                 (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
@@ -1911,8 +2681,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
-      if (isPillView) {
-        sdl3DrawPillInView();
+      if (isItemView) {
+        sdl3DrawItemInView(cs);
       }
       if (gNetFailed) {
         sdl3DrawNetFailed();
@@ -1968,17 +2738,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     sdl3RenderCachedText();
   }
 
-  /* Frame rate counting */
-  g_dwFrameCount++;
-  {
-    DWORD now = (DWORD)SDL_GetTicks();
-    DWORD elapsed = now - g_dwFrameTime;
-    if (elapsed > 1000) {
-      g_dwFrameTotal = g_dwFrameCount;
-      g_dwFrameTime = now;
-      g_dwFrameCount = 0;
-    }
-  }
+  sdl3DrawCountFrame();
 
   /* Restore original zoom factor after tablet-mode override */
   gZoomFactor = savedZoomFactor;
@@ -2052,6 +2812,11 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
                        bool showPillsStatus, bool showBasesStatus) {
   (void)rcWindow;
   if (gRenderer == NULL) return;
+
+  /* The in-window overview redraws the whole window from sim state every
+     frame, so a full repaint has nothing to add — and the classic chrome it
+     would draw is not part of that mode. */
+  if (gOverviewInWindow) return;
 
   sdl3DrawAdaptRenderTarget();
 
@@ -2368,6 +3133,37 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
 void sdl3DrawReturningToLobby(ClientSim *cs) {
   if (!gRenderer) return;
 
+  /* Full screen map: keep drawing the map and put the caption over it behind
+     a dim. The classic path below draws the 15x15 chrome around a black
+     playfield, which is a different screen entirely — taking it while the
+     overview owns the window swapped the whole picture out from under the
+     player for the last moments of a round, in a window that is still full
+     screen. The map is what they have been looking at, so it stays. */
+  if (gOverviewInWindow) {
+    const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
+    int textW = 0;
+    int textH = 0;
+
+    sdl3DrawOverviewInWindowFrame(cs, gLastPillLabels, gLastBaseLabels);
+
+    SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, OVERVIEW_LOBBY_DIM_ALPHA);
+    SDL_RenderFillRect(gRenderer, NULL);
+
+    if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
+      /* Centred on the map, which is the whole window bar the menu bar. The
+         frame above sets the rect it blitted to; before it has blitted once
+         there is nothing to centre on and the caption waits a frame. */
+      if (gOverviewRect.w > 0.0f && gOverviewRect.h > 0.0f) {
+        SDL_Color white = {200, 200, 200, 255};
+        sdl3RenderText(gFontMsg, caption, white,
+                       gOverviewRect.x + (gOverviewRect.w - (float)textW) * 0.5f,
+                       gOverviewRect.y + (gOverviewRect.h - (float)textH) * 0.5f);
+      }
+    }
+    return;
+  }
+
   sdl3DrawAdaptRenderTarget();
   bool tabletMode = uiModeIsTablet();
   bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
@@ -2446,12 +3242,115 @@ void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
   gManStatusValid = true;
 }
 
+/* Passes needed to lay a stroke of `stroke` destination pixels down as lines
+   half a pixel apart, and where pass p sits across it. One pass at a stroke of
+   a pixel or less, which is the single SDL_RenderLine the classic view has
+   always drawn. */
+static int manStatusStrokePasses(float stroke) {
+  int passes = (int)SDL_ceilf((stroke - 1.0f) * 2.0f) + 1;
+  return (passes < 1) ? 1 : passes;
+}
+
+static float manStatusStrokeOffset(float stroke, int passes, int p) {
+  if (passes <= 1) return 0.0f;
+  return -(stroke - 1.0f) * 0.5f +
+         (stroke - 1.0f) * (float)p / (float)(passes - 1);
+}
+
+/* The LGM indicator itself: the circle, and the arrow inside it pointing at
+   the man. Drawn straight into the current render target at whatever size is
+   asked for — dstX/dstY are the top-left of the padded
+   (MAN_STATUS_WIDTH+2) x (MAN_STATUS_HEIGHT+2) box in destination pixels, and
+   `scale` takes source pixels to destination ones.
+
+   Both the circle and the arrow are strokes rather than art, so the only way
+   they come out clean is to draw them at the size they are shown at: a ring
+   drawn at one scale and resampled to another loses the ring — bright where
+   it landed on pixel centres and grey where it straddled two. The classic
+   view draws at gZoomFactor into a texture it blits 1:1, and the full screen
+   HUD at its own fit scale straight to the window; both come through here.
+   (The tablet overlay makes the same move with its own ImGui drawing, off the
+   same cached state.)
+
+   `stroke` is the line width in destination pixels. The classic view passes
+   one, which is the single SDL_RenderLine it has drawn at every zoom.
+
+   `alpha` is the status panel's opacity, so the indicator fades with the rest
+   of the column. The classic view draws into its own texture and passes 255. */
+static void sdl3DrawManStatusShape(float dstX, float dstY, float scale,
+                                   float stroke, bool isDead, TURNTYPE angle,
+                                   Uint8 alpha) {
+  /* Padding of one source pixel on every edge, so the outline never clips. */
+  float scx = dstX + ((float)MAN_STATUS_CENTER_X + 1.0f) * scale;
+  float scy = dstY + ((float)MAN_STATUS_CENTER_Y + 1.0f) * scale;
+  float r   = ((float)MAN_STATUS_RADIUS - 1.0f) * scale;
+  int   passes = manStatusStrokePasses(stroke);
+
+  if (r < 1.0f) return;
+
+  if (isDead) {
+    /* Filled circle in red/orange using scan lines. */
+    int top = (int)SDL_floorf(-r);
+    int bot = (int)SDL_ceilf(r);
+    SDL_SetRenderDrawColor(gRenderer, 200, 80, 0, alpha);
+    for (int dy = top; dy <= bot; dy++) {
+      float span = r * r - (float)dy * (float)dy;
+      if (span < 0.0f) continue;
+      float dx = SDL_sqrtf(span);
+      SDL_RenderLine(gRenderer, scx - dx, scy + (float)dy,
+                     scx + dx, scy + (float)dy);
+    }
+    return;
+  }
+
+  /* Outline circle using parametric line segments, one loop per pass so a
+     stroke wider than a pixel comes out solid rather than as separate
+     circles. */
+  SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, alpha);
+  int steps = (int)(r * 16.0f);  /* ~4 steps per pixel of circumference */
+  if (steps < 64) steps = 64;
+  for (int p = 0; p < passes; p++) {
+    float rr = r + manStatusStrokeOffset(stroke, passes, p);
+    for (int i = 0; i < steps; i++) {
+      double a1 = (RADIANS_MAX * i) / steps;
+      double a2 = (RADIANS_MAX * (i + 1)) / steps;
+      SDL_RenderLine(gRenderer,
+                     (float)(scx + rr * cos(a1)), (float)(scy + rr * sin(a1)),
+                     (float)(scx + rr * cos(a2)), (float)(scy + rr * sin(a2)));
+    }
+  }
+
+  /* The arrow, from the centre out to the man's bearing. The four quadrant
+     cases the Win32 code split this into are one formula — x = cx + r sin,
+     y = cy - r cos — with the signs falling out of the trig, so it is written
+     once here. Kept in floats to the end: rounding the tip to a source pixel
+     first, as the old code did, snapped it in whole-pixel steps, and at the
+     HUD's scale one source pixel is several on screen. */
+  TURNTYPE a = angle + BRADIANS_SOUTH;
+  if (a >= BRADIANS_MAX) a -= BRADIANS_MAX;
+  double bearing = ((double)a / BRADIANS_MAX) * RADIANS_MAX;
+  float tipX = scx + r * (float)sin(bearing);
+  float tipY = scy - r * (float)cos(bearing);
+
+  /* Thickness across the line rather than along it, so the passes lie side by
+     side. */
+  float dx = tipX - scx;
+  float dy = tipY - scy;
+  float len = SDL_sqrtf(dx * dx + dy * dy);
+  float perpX = (len > 0.0f) ? (-dy / len) : 0.0f;
+  float perpY = (len > 0.0f) ? ( dx / len) : 0.0f;
+  for (int p = 0; p < passes; p++) {
+    float off = manStatusStrokeOffset(stroke, passes, p);
+    SDL_RenderLine(gRenderer, scx + perpX * off, scy + perpY * off,
+                   tipX + perpX * off, tipY + perpY * off);
+  }
+}
+
 /* Render thread only: rebuild the man-status texture from the cached
-   (dead, angle) values. Extracted verbatim from the old sdl3DrawSetManStatus
-   drawing body so behaviour is unchanged; only the thread it runs on moved. */
+   (dead, angle) values, at the zoom factor the classic chrome is drawn at.
+   The texture is (MAN_STATUS_WIDTH+2)*(MAN_STATUS_HEIGHT+2)*zf and is blitted
+   1:1, so the shape lands on the screen at exactly the size it was drawn. */
 static void sdl3RenderManStatusTex(void) {
-  bool isDead = gManStatusDead;
-  TURNTYPE angle = gManStatusAngle;
   SDL_Texture *prevTarget;
   SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !gManStatusTex) return;
@@ -2461,85 +3360,13 @@ static void sdl3RenderManStatusTex(void) {
      render-to-texture, not the screen. */
   prevTarget = SDL_GetRenderTarget(gRenderer);
 
-  /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
-  double dbAngle, dbTemp;
-  int addX, addY;
-  int cx = MAN_STATUS_CENTER_X;
-  int cy = MAN_STATUS_CENTER_Y;
-
-  TURNTYPE a = angle + BRADIANS_SOUTH;
-  if (a >= BRADIANS_MAX) a -= BRADIANS_MAX;
-
-  if (a >= BRADIANS_NORTH && a < BRADIANS_EAST) {
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
-  } else if (a >= BRADIANS_EAST && a < BRADIANS_SOUTH) {
-    a = (float)BRADIANS_SOUTH - a;
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX += (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
-  } else if (a >= BRADIANS_SOUTH && a < BRADIANS_WEST) {
-    a = (float)BRADIANS_WEST - a;
-    a = (float)BRADIANS_EAST - a;
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY += (int)dbTemp;
-  } else {
-    a = (float)BRADIANS_MAX - a;
-    dbAngle = (DEGREES_MAX / BRADIANS_MAX) * a;
-    dbAngle = (dbAngle / DEGREES_MAX) * RADIANS_MAX;
-    addX = cx; addY = cy;
-    dbTemp = (MAN_STATUS_RADIUS-1) * sin(dbAngle); addX -= (int)dbTemp;
-    dbTemp = (MAN_STATUS_RADIUS-1) * cos(dbAngle); addY -= (int)dbTemp;
-  }
-
-  /* Texture is (MAN_STATUS_WIDTH+2)*(MAN_STATUS_HEIGHT+2)*zf — 1px padding on
-     each edge so the circle outline never clips. Shift center by +1 to match. */
-  int zf = gZoomFactor;
-  int scx = (MAN_STATUS_CENTER_X + 1) * zf;
-  int scy = (MAN_STATUS_CENTER_Y + 1) * zf;
-  int r   = (MAN_STATUS_RADIUS - 1) * zf;
-
-  /* Re-compute arrow endpoint in zoom-factor space */
-  int sAddX = addX * zf;
-  int sAddY = addY * zf;
-
   SDL_SetRenderTarget(gRenderer, gManStatusTex);
   SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 
-  if (isDead) {
-    /* Filled circle in red/orange using scan lines */
-    SDL_SetRenderDrawColor(gRenderer, 200, 80, 0, 255);
-    for (int dy = -r; dy <= r; dy++) {
-      int dx = (int)sqrtf((float)(r * r - dy * dy));
-      SDL_RenderLine(gRenderer,
-                     (float)(scx - dx), (float)(scy + dy),
-                     (float)(scx + dx), (float)(scy + dy));
-    }
-  } else {
-    /* Outline circle using parametric line segments */
-    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, 255);
-    int steps = 4 * r * 4;  /* ~4 steps per pixel of circumference */
-    if (steps < 64) steps = 64;
-    for (int i = 0; i < steps; i++) {
-      double a1 = (RADIANS_MAX * i) / steps;
-      double a2 = (RADIANS_MAX * (i + 1)) / steps;
-      SDL_RenderLine(gRenderer,
-                     (float)(scx + r * cos(a1)), (float)(scy + r * sin(a1)),
-                     (float)(scx + r * cos(a2)), (float)(scy + r * sin(a2)));
-    }
-    /* Arrow from centre to endpoint */
-    SDL_RenderLine(gRenderer, (float)scx, (float)scy, (float)sAddX, (float)sAddY);
-  }
+  sdl3DrawManStatusShape(0.0f, 0.0f, (float)gZoomFactor, 1.0f,
+                         gManStatusDead, gManStatusAngle, 255);
 
   SDL_SetRenderTarget(gRenderer, prevTarget);
   gManStatusReady = true;
@@ -2552,6 +3379,16 @@ void sdl3DrawCopyManStatus(int x, int y) {
 
 void sdl3DrawSelectIndentsOn(buildSelect value, int x, int y) {
   (void)x; (void)y;
+  /* Every way of changing the selection comes through here — the keys, the
+     click on the strip, the classic panel's own hit-test, the D-pad cycle —
+     so this is where the full screen map's build strip is told to come up and
+     show the new one. Only on an actual change: the redraw paths call this
+     with the selection already showing, and holding the strip up for those
+     would leave it up for the whole game. */
+  if (value != gCurrentBuildSelect) {
+    gOverviewHudHoldUntil[OVERVIEW_HUD_PANEL_BUILD] =
+        SDL_GetTicks() + OVERVIEW_HUD_HOLD_MS;
+  }
   gCurrentBuildSelect = value;
 }
 
@@ -2605,15 +3442,48 @@ void sdl3DrawNetFailed(void) {
   sdl3RenderText(gFontMsg, "Network Failed - Resyncing", white, tx, ty);
 }
 
-void sdl3DrawPillInView(void) {
-  if (!gRenderer) return;
+/* The one place the three view names are spelled. The classic corner label
+   below and the full screen map's caption both come through here, so they
+   cannot end up calling the same view different things. */
+bool sdl3DrawGetItemViewLabel(ClientSim *cs, char *out, size_t outLen) {
+  if (cs == NULL || out == NULL || outLen == 0) return false;
+  switch (clientSimGetViewKind(cs)) {
+    case VIEW_KIND_PILL:
+      snprintf(out, outLen, "%s", langGetText(STR_ITEMVIEW_PILL));
+      return true;
+    case VIEW_KIND_BASE:
+      snprintf(out, outLen, "%s", langGetText(STR_ITEMVIEW_BASE));
+      return true;
+    case VIEW_KIND_ALLY: {
+      /* Name the ally we are riding along with. The player mirror is empty
+         for a slot we have no name for yet; then just say what the view is. */
+      const char *name = sdl3ImguiGetPlayerName(clientSimGetViewTarget(cs));
+      if (name[0] != '\0') {
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        snprintf(out, outLen, "%s",
+                 langGetTextFmt(STR_ITEMVIEW_ALLY_NAMED, &args));
+      } else {
+        snprintf(out, outLen, "%s", langGetText(STR_ITEMVIEW_ALLY));
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+void sdl3DrawItemInView(ClientSim *cs) {
+  char label[128];
+  if (!gRenderer || !sdl3DrawGetItemViewLabel(cs, label, sizeof(label))) return;
   SDL_Color white = {200, 200, 200, 255};
   int originX = MAIN_OFFSET_X * gZoomFactor;
   int originY = MAIN_OFFSET_Y * gZoomFactor;
   int fontH = 13 * gZoomFactor;
   float tx = (float)(originX + 2 * gZoomFactor);
   float ty = (float)(originY + MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * gZoomFactor - fontH - 2 * gZoomFactor);
-  sdl3RenderText(gFontMsg, "Pillbox View", white, tx, ty);
+  sdl3RenderText(gFontMsg, label, white, tx, ty);
 }
 
 /* sdl3DrawResetCachedText, sdl3DrawMessages, sdl3DrawGetCachedMessages,

@@ -31,13 +31,17 @@
 #include "input_packet.h"
 #include "client_enums.h" /* For aiType, buildSelect, gameType, labelLen, netType, netStatus */
 #include "viewport_types.h" /* For screen, screenMines, screenGunsight */
+#include "overview_types.h" /* For OverviewMap — clientSimGetOverviewMap return */
 #include "wire_limits.h"  /* For PACKET_MAX_PLAYER_NAME */
 #include "alliance_enums.h" /* For pillAlliance, baseAlliance */
 #include "screentank.h"     /* For tankAlliance */
+#include "screenlgm.h"      /* For screenLgm  — clientSimPrepareOverviewEntities */
+#include "screenbullet.h"   /* For screenBullets — clientSimPrepareOverviewEntities */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 
 #ifndef GAMESIM_TYPEDEF
@@ -432,6 +436,13 @@ BYTE clientSimGetTank256Dir(ClientSim *cs);
 int  clientSimGetMyTankDeathWait(ClientSim *cs);
 int  clientSimGetMyTankLastDeath(ClientSim *cs);
 
+/* True from the tick the classic main view cuts to static through to the
+ * respawn, which is where the map overview fades to black: the player watches
+ * their own explosion first, and black is the last thing they see before the
+ * tank is back. What killed them decides where that starts. False the moment
+ * the tank is back. */
+bool clientSimIsMyTankDeathBlackout(ClientSim *cs);
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs);
 BYTE clientSimGetNumPlayers(ClientSim *cs);
@@ -499,6 +510,15 @@ bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out, size_t
 bool         clientSimIsRunning(const ClientSim *cs);
 bool         clientSimIsBot(const ClientSim *cs);
 bool         clientSimIsInPillView(const ClientSim *cs);
+/* True in any of the item views (pill, base or ally) — i.e. whenever the
+ * camera is parked on something instead of following the local tank. */
+bool         clientSimIsInItemView(const ClientSim *cs);
+/* What the camera is parked on. The kind is a ViewStateKind value
+ * (VIEW_KIND_TANK / _PILL / _BASE / _ALLY in client_command.h); the target is
+ * the pill or base index, or the ally's player number, and is 0 in tank
+ * view. */
+uint8_t      clientSimGetViewKind(const ClientSim *cs);
+BYTE         clientSimGetViewTarget(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
 /* TRUE while the server has the engine newswire muted (CTRL_NEWSWIRE_MUTE).
@@ -665,6 +685,11 @@ const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
 const ProjectedShell *clientSimGetProjectedShells(const ClientSim *cs);
 const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 
+/* The overview's fog memory: the tile every square carried the last time the
+ * player could see it, plus the regions they can see right now. Maintained
+ * every display tick. NULL when cs is NULL. */
+const OverviewMap    *clientSimGetOverviewMap(const ClientSim *cs);
+
 /* Struct-by-value accessor. */
 struct in_addr clientSimGetServerAddress(const ClientSim *cs);
 
@@ -824,6 +849,25 @@ uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
 
+/* Server visibility rules (pillboxes / bases / allied tanks) as last
+ * broadcast in the lobby-settings event. Raw mirror: both read back 0
+ * (viewPolicyAlways / 0 seconds) until the first event arrives, and a
+ * payload that predates the fields leaves them at 0 too. Out-of-range
+ * categories read back the same zeros. */
+ViewPolicy  clientSimGetViewPolicy(const ClientSim *cs, ViewCategory cat);
+uint16_t    clientSimGetViewDecaySecs(const ClientSim *cs, ViewCategory cat);
+
+/* True when the server has classic mode on, as last broadcast in the
+ * lobby-settings event. Reads back false until the first event arrives,
+ * and a payload that predates the field leaves it false too. */
+bool        clientSimGetClassicMode(const ClientSim *cs);
+
+/* True when the server is sending allies who stand in trees, as last
+ * broadcast in the lobby-settings event. Reads back false until the first
+ * event arrives, and a payload that predates the field leaves it false
+ * too — which matches the classic behaviour the option turns off. */
+bool        clientSimGetAlliesInTrees(const ClientSim *cs);
+
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
@@ -972,7 +1016,27 @@ void    clientSimClearLobbyLastReject(ClientSim *cs);
 void         clientSimTankView(ClientSim *cs);
 void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
 bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
+/* Enter an item view, or cycle to the next item once in it, with horz and
+ * vert both 0; step to the nearest item in that direction otherwise.
+ * Cycling wraps around the items; it drops back to the tank view only when
+ * there is nothing of that kind left to watch.
+ * clientSimStepView steps within whichever item view is current and does
+ * nothing in the tank view.
+ * Pill and base selection is made here on the client, which holds every pill
+ * and base position from the map. Which ally to watch is the server's answer
+ * to a request, so clientSimAllyView — and clientSimStepView while in an ally
+ * view — sends one, and the view changes when the answer arrives. */
 void         clientSimPillView(ClientSim *cs, int horz, int vert);
+void         clientSimBaseView(ClientSim *cs, int horz, int vert);
+void         clientSimAllyView(ClientSim *cs, int horz, int vert);
+void         clientSimStepView(ClientSim *cs, int horz, int vert);
+/* Report the current view to the server (CMD_VIEW_STATE) when it has changed
+ * since the last report. Called once per display tick.
+ * clientSimResetViewStateReport forgets what was last reported, so the next
+ * tick sends again — used where the client resets its view for a new round or
+ * a freshly installed map. */
+void         clientSimSyncViewState(ClientSim *cs);
+void         clientSimResetViewStateReport(ClientSim *cs);
 void         clientSimRecalc(ClientSim *cs);
 void         clientSimUpdateView(ClientSim *cs, updateType value);
 void         clientSimPanX(ClientSim *cs, int dxTiles);
@@ -990,9 +1054,42 @@ void         clientSimSetScrollMechanism(int mech);
 
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank
- * is destroyed / not yet spawned. */
+ * is destroyed / not yet spawned.
+ *
+ * clientSimGetMyTankMapPos also returns false while the tank is dead and
+ * waiting to respawn: the underlying read gives the map origin then rather
+ * than anywhere the tank is. It leaves *mapX / *mapY alone when it fails, so
+ * a caller keeps whatever fallback it seeded them with. */
 bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
+
+/* The same position at sub-square precision: map squares with the fraction
+ * giving where inside the square the tank sits. Same false cases as the
+ * BYTE version; the map overview's follow camera glides on this where the
+ * whole-square read would step a square at a time. */
+bool         clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
+
+/* The gunsight's map square and the pixel offset inside it, for a caller that
+   draws the crosshair itself. False, with nothing written, when there is no
+   tank, when the tank is dead and waiting to respawn, or when the player has
+   the sight hidden — the Show Gunsight preference and auto-hide drive the same
+   flag. Unlike clientSimGetGunsightTile this never reports the map origin for a
+   dead tank. */
+bool         clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
+                                     BYTE *pixelX, BYTE *pixelY);
+
+/* False when the local player has no tank, or has one that is dead and
+   waiting to respawn. The overview uses this to stop a dead tank's position
+   revealing map or dragging the camera. */
+bool         clientSimIsMyTankAlive(const ClientSim *cs);
+
+/* Fill the three per-frame entity lists over the whole map, for a caller that
+   does its own visibility filtering. The caller creates and destroys the
+   lists. Positions come back as absolute map squares, since the rect starts
+   at 0,0. */
+void clientSimPrepareOverviewEntities(ClientSim *cs, screenTanks *tks,
+                                      screenLgm *lgms, screenBullets *sb);
+
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 

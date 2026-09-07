@@ -6,10 +6,25 @@ broadcasters and to the WinBolo.net tracker. The canonical definition is
 `INFO_PACKET` in `src/bolo/internal/netpacks.h`; this document mirrors it for
 out-of-tree consumers (e.g. the tracker's parser).
 
-The packet is **111 bytes**, byte-packed (`BOLO_PACK_ATTR`), with no implicit
+The packet is **112 bytes**, byte-packed (`BOLO_PACK_ATTR`), with no implicit
 padding. There is no protocol-version negotiation: a server always emits the full
-111-byte layout, so a consumer must read this layout and gate any length check on
-`111`.
+112-byte layout, so a consumer must read this layout and gate any length check on
+`112`. A 111-byte packet is one from a server that predates `view_policies`; a
+consumer that accepts it reads every field except that byte and substitutes the
+view defaults below.
+
+## Where the packet is built
+
+Every INFO_RESPONSE the server emits comes from `buildInfoPacket()` in
+`src/server/transport_udp_server.c`. Two callers send what it produces:
+
+- `serverHandleInfoRequest()` — replies to an info request from a LAN browser or
+  a game finder, addressed to the requester.
+- `transportUdpServerSendTrackerUpdate()` — the periodic advertisement to the
+  WinBolo.net tracker.
+
+Both send the identical 111 bytes, so a consumer can parse either the same way,
+and a field added to the layout reaches both paths at once.
 
 ## Byte layout
 
@@ -40,8 +55,9 @@ padding. There is no protocol-version negotiation: a server always emits the ful
 | 77 | 1 | u8 | num_bots | AI bots among `num_players` (`num_humans + num_bots == num_players`) |
 | 78 | 1 | u8 | max_players | server join-slot cap (16 unless configured lower) |
 | 79 | 32 | char[32] | map_md5 | 32 lowercase hex chars, no NUL; see below |
+| 111 | 1 | u8 | view_policies | 2 bits per visibility category plus the classic-mode and allies-in-trees bits, see below |
 
-Total: **111 bytes**.
+Total: **112 bytes**.
 
 ## `flags` byte (offset 59)
 
@@ -63,6 +79,32 @@ Total: **111 bytes**.
   treats a leading `0x00` byte as "no md5" and skips it.
 - It is never a raw 16-byte digest — always the 32-char hex text.
 
+## `view_policies` byte (offset 111)
+
+Two bits per visibility category, low bits first, then the two mode flags:
+
+```
+bits 0-1  pillboxes
+bits 2-3  bases
+bits 4-5  allied tanks
+bit  6    classic mode (set = server runs the classic Bolo view)
+bit  7    allies in trees (set = server sends allied tanks standing in forest)
+```
+
+Each two-bit field holds a policy value:
+
+```
+0  always   visible for the whole round
+1  key      revealed on the player's view key
+2  decay    revealed, then fades after the server's decay seconds
+3  off      never revealed
+```
+
+The decay seconds themselves are not on this packet — they reach clients
+through the lobby-settings control event. A packet that stops at 111 bytes
+predates this byte; read it as pill = `always`, base = `off`, ally = `always`,
+classic mode off and allies in trees off.
+
 ## Endianness
 
 The packet is predominantly host byte order (little-endian in practice on the
@@ -71,6 +113,10 @@ servers that produce it) for the multi-byte numerics: `serverport`, `start_delay
 `start_time` (big-endian, `htonl`) and `serveraddress` (network order, from
 `inet_addr`). Every field at offset 59 and beyond that this format adds is either a
 single byte or a char array, so none of the new fields need byte-swapping.
+
+The mDNS TXT record set below does not carry the view policies, the
+classic-mode bit or the allies-in-trees bit; a consumer reading a game off mDNS
+uses the same defaults a 111-byte packet gets.
 
 ## `time_limit` interpretation
 

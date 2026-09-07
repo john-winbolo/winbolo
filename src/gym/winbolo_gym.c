@@ -1549,8 +1549,9 @@ WBGYM_API WinBoloGym *winbolo_create(const char *map_path, int game_type) {
     }
 
     /* Cache compressed map for fast resets */
-    BYTE tempMap[65536];
-    g->cachedMapLen = serverSimGetCompressedMap(g->serverSim, tempMap);
+    BYTE tempMap[MAP_COMPRESSED_MAX_SIZE];
+    g->cachedMapLen = serverSimGetCompressedMap(g->serverSim, tempMap,
+                                                (int)sizeof(tempMap));
     if (g->cachedMapLen <= 0) {
         serverSimDestroy(g->serverSim);
         free(g);

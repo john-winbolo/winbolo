@@ -76,6 +76,14 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddNumberToObject(body, "lobby_locks", s_lobbyInfo.lobbyLocks);
   cJSON_AddNumberToObject(body, "num_humans", s_lobbyInfo.numHumans);
   cJSON_AddNumberToObject(body, "num_bots", s_lobbyInfo.numBots);
+  cJSON_AddNumberToObject(body, "pillview", s_lobbyInfo.pillView);
+  cJSON_AddNumberToObject(body, "baseview", s_lobbyInfo.baseView);
+  cJSON_AddNumberToObject(body, "allyview", s_lobbyInfo.allyView);
+  cJSON_AddBoolToObject(body, "classicmode", s_lobbyInfo.classicMode);
+  cJSON_AddBoolToObject(body, "alliesintrees", s_lobbyInfo.alliesInTrees);
+  cJSON_AddNumberToObject(body, "pillviewdecay", s_lobbyInfo.pillViewDecay);
+  cJSON_AddNumberToObject(body, "baseviewdecay", s_lobbyInfo.baseViewDecay);
+  cJSON_AddNumberToObject(body, "allyviewdecay", s_lobbyInfo.allyViewDecay);
 }
 
 void winbolonetSendLobbyUpdate(void) {
@@ -109,39 +117,27 @@ void winbolonetSendLobbyUpdate(void) {
 }
 
 /*********************************************************
-*NAME:          winbolonetCreateServer
+*NAME:          winbolonetBuildRegisterBody
 *PURPOSE:
-* Initialises the WinBolo.net module for a game server.
-* Registers with WinBolo.net via POST /api/v1/server/register.
-* If successful, stores the server key and starts the
-* background update thread.
+* Builds the JSON body for a server/register POST. Shared
+* by winbolonetCreateServer and winbolonetBeginSession,
+* which send the same set of fields.
+*
+*ARGUMENTS:
+* As winbolonetCreateServer.
+*
+*RETURNS:
+* The body object. The caller deletes it.
 *********************************************************/
-bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
-  BYTE count;
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
+static cJSON *winbolonetBuildRegisterBody(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  cJSON *body;
   char versionStr[16];
-
-  serverSimConsoleMessage("WinBolo.net Startup");
-  winboloNetRunning = FALSE;
-  winbolonetEventsCreate();
-  winboloNetServerKey[0] = '\0';
-  for (count = 0; count < MAX_TANKS; count++) {
-    winboloNetPlayerKey[count][0] = '\0';
-  }
-
-  winboloNetRunning = httpCreate();
-  if (winboloNetRunning != TRUE) {
-    return FALSE;
-  }
 
   /* Build version string from game version defines.
      Note: the hex defines (0x01, 0x08) are for the binary protocol;
      the display version is constructed here as "major.minor.revision". */
   snprintf(versionStr, sizeof(versionStr), "%d.%d%d", BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
 
-  /* Register server with WinBolo.net */
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "map", mapName);
   cJSON_AddNumberToObject(body, "port", port);
@@ -158,54 +154,118 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   cJSON_AddBoolToObject(body, "in_lobby", TRUE);
   winbolonetAddLobbyInfoFields(body);
 
-  status = wbn_api_call("server/register", body, &resp);
-  cJSON_Delete(body);
+  return body;
+}
 
-  if (status == 200 && resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    cJSON *keyObj = cJSON_GetObjectItem(resp, "server_key");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net register error: %s\n", errObj->valuestring);
-      serverSimConsoleMessage("Error: WinBolo.net registration failed");
-      cJSON_Delete(resp);
-      winbolonetDestroy(TRUE);
-      return winboloNetRunning;
-    }
-    if (keyObj && cJSON_IsString(keyObj)) {
-      strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
-      winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
-      {
-        cJSON *tokenObj = cJSON_GetObjectItem(resp, "server_token");
-        if (tokenObj && cJSON_IsString(tokenObj)) {
-          httpSetServerBearerToken(tokenObj->valuestring);
-        } else {
-          /* Register response missing server_token — leave bearer
-           * unset; subsequent server/ calls will refuse-to-send. */
-          httpSetServerBearerToken(NULL);
-          fprintf(stderr, "WinBolo.net register response missing server_token\n");
-        }
-      }
-      serverSimConsoleMessage("\tWinBolo.net: Server registered");
-      winbolonetThreadCreate();
-      winboloNetLastSent = time(NULL);
-    } else {
-      serverSimConsoleMessage("Error: WinBolo.net returned no server key");
-      cJSON_Delete(resp);
-      winbolonetDestroy(TRUE);
-      return winboloNetRunning;
-    }
-  } else {
+/*********************************************************
+*NAME:          winbolonetApplyRegisterResponse
+*PURPOSE:
+* Reads a server/register reply and, on success, stores the
+* returned server key and bearer token. Shared by
+* winbolonetCreateServer and winbolonetBeginSession, which
+* differ only in their console wording and in how they shut
+* WinBolo.net down when registration fails.
+*
+*ARGUMENTS:
+* status    - HTTP status returned by wbn_api_call
+* resp      - Parsed reply, or NULL
+* okMsg     - Console message on success
+* errMsg    - Console message when the reply carries an error
+* noRespMsg - Console message when there was no usable reply
+*
+*RETURNS:
+* TRUE when the server key was stored. The caller owns resp
+* either way.
+*********************************************************/
+static bool winbolonetApplyRegisterResponse(int status, cJSON *resp, const char *okMsg, const char *errMsg, const char *noRespMsg) {
+  cJSON *errObj;
+  cJSON *keyObj;
+  cJSON *tokenObj;
+
+  if (status != 200 || !resp) {
     if (resp) {
-      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      errObj = cJSON_GetObjectItem(resp, "error");
       if (errObj && cJSON_IsString(errObj)) {
         fprintf(stderr, "WinBolo.net error: %s\n", errObj->valuestring);
       }
     }
-    serverSimConsoleMessage("Error: No response from WinBolo.net - WinBolo.net disabled");
+    serverSimConsoleMessage(noRespMsg);
+    return FALSE;
+  }
+
+  errObj = cJSON_GetObjectItem(resp, "error");
+  if (errObj && cJSON_IsString(errObj)) {
+    fprintf(stderr, "WinBolo.net register error: %s\n", errObj->valuestring);
+    serverSimConsoleMessage(errMsg);
+    return FALSE;
+  }
+
+  keyObj = cJSON_GetObjectItem(resp, "server_key");
+  if (!keyObj || !cJSON_IsString(keyObj)) {
+    serverSimConsoleMessage("Error: WinBolo.net returned no server key");
+    return FALSE;
+  }
+
+  strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+  winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+
+  tokenObj = cJSON_GetObjectItem(resp, "server_token");
+  if (tokenObj && cJSON_IsString(tokenObj)) {
+    httpSetServerBearerToken(tokenObj->valuestring);
+  } else {
+    /* Register response missing server_token — leave bearer
+     * unset; subsequent server/ calls will refuse-to-send. */
+    httpSetServerBearerToken(NULL);
+    fprintf(stderr, "WinBolo.net register response missing server_token\n");
+  }
+
+  serverSimConsoleMessage(okMsg);
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          winbolonetCreateServer
+*PURPOSE:
+* Initialises the WinBolo.net module for a game server.
+* Registers with WinBolo.net via POST /api/v1/server/register.
+* If successful, stores the server key and starts the
+* background update thread.
+*********************************************************/
+bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  BYTE count;
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+
+  serverSimConsoleMessage("WinBolo.net Startup");
+  winboloNetRunning = FALSE;
+  winbolonetEventsCreate();
+  winboloNetServerKey[0] = '\0';
+  for (count = 0; count < MAX_TANKS; count++) {
+    winboloNetPlayerKey[count][0] = '\0';
+  }
+
+  winboloNetRunning = httpCreate();
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
+  }
+
+  /* Register server with WinBolo.net */
+  body = winbolonetBuildRegisterBody(mapName, port, gameType, ai, mines, password, numBases, numPills, freeBases, freePills, numPlayers);
+  status = wbn_api_call("server/register", body, &resp);
+  cJSON_Delete(body);
+
+  if (!winbolonetApplyRegisterResponse(status, resp,
+                                       "\tWinBolo.net: Server registered",
+                                       "Error: WinBolo.net registration failed",
+                                       "Error: No response from WinBolo.net - WinBolo.net disabled")) {
     cJSON_Delete(resp);
     winbolonetDestroy(TRUE);
     return winboloNetRunning;
   }
+
+  winbolonetThreadCreate();
+  winboloNetLastSent = time(NULL);
 
   cJSON_Delete(resp);
   return winboloNetRunning;
@@ -874,70 +934,19 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
-  char versionStr[16];
 
   if (winboloNetRunning != TRUE) {
     return FALSE;
   }
 
-  snprintf(versionStr, sizeof(versionStr), "%d.%d%d", BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "map", mapName);
-  cJSON_AddNumberToObject(body, "port", port);
-  cJSON_AddNumberToObject(body, "game_type", gameType);
-  cJSON_AddNumberToObject(body, "ai", ai);
-  cJSON_AddBoolToObject(body, "mines", mines);
-  cJSON_AddBoolToObject(body, "password", password);
-  cJSON_AddNumberToObject(body, "num_bases", numBases);
-  cJSON_AddNumberToObject(body, "num_pills", numPills);
-  cJSON_AddNumberToObject(body, "free_bases", freeBases);
-  cJSON_AddNumberToObject(body, "free_pills", freePills);
-  cJSON_AddNumberToObject(body, "num_players", numPlayers);
-  cJSON_AddStringToObject(body, "version", versionStr);
-  cJSON_AddBoolToObject(body, "in_lobby", TRUE);
-  winbolonetAddLobbyInfoFields(body);
-
+  body = winbolonetBuildRegisterBody(mapName, port, gameType, ai, mines, password, numBases, numPills, freeBases, freePills, numPlayers);
   status = wbn_api_call("server/register", body, &resp);
   cJSON_Delete(body);
 
-  if (status == 200 && resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    cJSON *keyObj = cJSON_GetObjectItem(resp, "server_key");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net register error: %s\n", errObj->valuestring);
-      serverSimConsoleMessage("Error: WinBolo.net re-registration failed");
-      cJSON_Delete(resp);
-      winboloNetRunning = FALSE;
-      return FALSE;
-    }
-    if (keyObj && cJSON_IsString(keyObj)) {
-      strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
-      winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
-      {
-        cJSON *tokenObj = cJSON_GetObjectItem(resp, "server_token");
-        if (tokenObj && cJSON_IsString(tokenObj)) {
-          httpSetServerBearerToken(tokenObj->valuestring);
-        } else {
-          httpSetServerBearerToken(NULL);
-          fprintf(stderr, "WinBolo.net register response missing server_token\n");
-        }
-      }
-      serverSimConsoleMessage("\tWinBolo.net: New session registered");
-    } else {
-      serverSimConsoleMessage("Error: WinBolo.net returned no server key");
-      cJSON_Delete(resp);
-      winboloNetRunning = FALSE;
-      return FALSE;
-    }
-  } else {
-    if (resp) {
-      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-      if (errObj && cJSON_IsString(errObj)) {
-        fprintf(stderr, "WinBolo.net error: %s\n", errObj->valuestring);
-      }
-    }
-    serverSimConsoleMessage("Error: WinBolo.net re-registration failed - WBN disabled");
+  if (!winbolonetApplyRegisterResponse(status, resp,
+                                       "\tWinBolo.net: New session registered",
+                                       "Error: WinBolo.net re-registration failed",
+                                       "Error: WinBolo.net re-registration failed - WBN disabled")) {
     cJSON_Delete(resp);
     winboloNetRunning = FALSE;
     return FALSE;

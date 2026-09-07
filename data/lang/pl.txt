@@ -79,6 +79,8 @@ STR_DLGKEYSETUP_SHOOT=Strzał
 STR_DLGKEYSETUP_LAYMINE=Połóż minę
 STR_DLGKEYSETUP_TANKVIEW=Widok czołgu
 STR_DLGKEYSETUP_PILLVIEW=Widok bunkra
+STR_DLGKEYSETUP_BASEVIEW=Widok bazy
+STR_DLGKEYSETUP_ALLYVIEW=Widok sojuszniczych czołgów
 STR_DLGKEYSETUP_SCROLLUP=W górę
 STR_DLGKEYSETUP_SCROLLDOWN=W dół
 STR_DLGKEYSETUP_SCROLLLEFT=W lewo
@@ -1905,6 +1907,21 @@ STR_DLGWBN_ACCOUNT_LOCKED=Konta WinBolo.net można zmieniać tylko z poziomu men
 STR_DLGSETTINGS_HOSTING_SERVEREPLAY=Wysyłaj powtórki do graczy
 STR_LV_HIDE_LOBBY=Ukryj lobby
 
+# Lobby visibility (pill / base / allied tank view rules)
+STR_DLGLOBBY_VISIBILITY_LBL=Widoczność
+STR_DLGLOBBY_VIEW_PILL=Widok bunkra
+STR_DLGLOBBY_VIEW_BASE=Widok bazy
+STR_DLGLOBBY_VIEW_ALLY=Widok sojuszniczych czołgów
+STR_DLGLOBBY_VIEW_ALWAYS=Zawsze
+STR_DLGLOBBY_VIEW_KEY=Klawisz
+STR_DLGLOBBY_VIEW_DECAY=Zanikanie
+STR_DLGLOBBY_VIEW_OFF=Wyłączone
+STR_DLGLOBBY_VIEW_DECAY_SECS=s
+STR_DLGLOBBY_CLASSIC_MODE_CB=Tryb klasyczny
+STR_DLGLOBBY_CLASSIC_MODE_TIP=Ustawia Widok bunkra na Klawisz, a Widok bazy i Widok\nsojuszniczych czołgów na Wyłączone, i tak je utrzymuje.\nPo jego wyłączeniu te trzy zostają tam, gdzie ustawił je\ntryb klasyczny.\nUkrywa też podgląd mapy i mapę pełnoekranową na ekranie\nkażdego gracza. Serwer i tak wysyła te same dane, więc\njest to ułatwienie, a nie gwarancja wobec zmodyfikowanego\nklienta.
+STR_MENU_CLASSIC_MODE_TIP=Serwer ma włączony tryb klasyczny, więc ten widok jest wyłączony.
+STR_DLGLOBBY_ALLIES_TREES_CB=Widok sojuszników w lasie
+STR_DLGLOBBY_ALLIES_TREES_TIP=Sojusznicze czołgi stojące w lasie są rysowane na twoim\nekranie, a nie ukrywane. Mgła wojny nadal obowiązuje,\nwięc widzisz je tylko tam, gdzie i tak widzisz.\nWyłączone to zasada klasyczna, a tryb klasyczny wymusza\nwyłączenie.
 # Skin section of the Display & Sound settings tab
 STR_DLGSETTINGS_SKIN=Skórka
 STR_DLGSKIN_DEFAULT=Domyślna
@@ -1945,3 +1962,38 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Opublikować można tylko skórkę z własnego fold
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Ta skórka ma dokładniejszą grafikę tylko dla niektórych sprite'ów, więc Dopasuj do przybliżenia tworzy te same kafelki co Klasyczna. Wysoka szczegółowość używa dokładniejszej grafiki tam, gdzie skórka ją ma.
 STR_DLGSKIN_RECFILTER_LBL=Zalecany filtr:
 STR_DLGSKIN_RECOMMENDED_TAG=(zalecany)
+
+# Podgląd mapy i mapa pełnoekranowa
+STR_MENU_MAP_OVERVIEW=Podgląd mapy
+STR_MENU_OVERVIEW_IN_WINDOW=Pełny ekran
+STR_OVERVIEW_FOLLOWING=śledzenie
+STR_OVERVIEW_FREE=swobodna
+STR_DLGKEYSETUP_OVERVIEWZOOM=Powiększenie mapy (przytrzymaj)
+STR_DLGKEYSETUP_OVERVIEWFOLLOW=Śledzenie na mapie (przełącz)
+STR_DLGKEYSETUP_OVERVIEWZOOMIN=Powiększ mapę
+STR_DLGKEYSETUP_OVERVIEWZOOMOUT=Pomniejsz mapę
+STR_DLGWELCOME_SWITCH_CLASSIC=Przełącz na tryb klasyczny
+STR_DLGWELCOME_SWITCH_FULLSCREEN=Przełącz na pełny ekran
+
+# Ustawienia Wyświetlanie i dźwięk: pełny ekran i panele HUD mapy
+STR_DLGSETTINGS_FULLSCREEN=Pełny ekran
+STR_DLGSETTINGS_FULLSCREEN_TIP=Wypełnia cały ekran zamiast działać w oknie.\nZapamiętywane na następny raz.
+STR_DLGSETTINGS_NEWS_TRANSPARENCY=Przezroczystość newswire
+STR_DLGSETTINGS_NEWS_TRANSPARENCY_TIP=Ile mapy prześwituje przez newswire wzdłuż dołu\nwidoku pełnoekranowego. 0% oznacza pełne krycie,\na suwak zatrzymuje się na 90%, więc nie można go\nzrobić niewidocznym.
+STR_DLGSETTINGS_NEWS_AUTOHIDE=Auto-ukrywanie newswire
+STR_DLGSETTINGS_NEWS_AUTOHIDE_TIP=Chowa newswire pod dolną krawędzią ekranu, gdy przez\nchwilę nie przyjdą nowe wiadomości, i przywraca go po\nkolejnej wiadomości. Wyłączone trzyma go na ekranie\nprzez całą grę.
+STR_DLGSETTINGS_BUILD_TRANSPARENCY=Przezroczystość narzędzi budowy
+STR_DLGSETTINGS_BUILD_TRANSPARENCY_TIP=Ile mapy prześwituje przez narzędzia budowy wzdłuż\nlewej strony widoku pełnoekranowego. 0% oznacza\npełne krycie, a suwak zatrzymuje się na 90%, więc\nnie można ich zrobić niewidocznymi.
+STR_DLGSETTINGS_STATUS_TRANSPARENCY=Przezroczystość panelu statusu
+STR_DLGSETTINGS_STATUS_TRANSPARENCY_TIP=Ile mapy prześwituje przez panel statusu wzdłuż\nprawej strony widoku pełnoekranowego — LGM, zabicia\ni śmierci, wiersze bazy, bunkra i czołgu oraz paski\nzapasów. 0% oznacza pełne krycie, a suwak zatrzymuje\nsię na 90%, więc nie można go zrobić niewidocznym.
+
+# Podpis widoku obiektu
+STR_ITEMVIEW_PILL=Widok bunkra
+STR_ITEMVIEW_BASE=Widok bazy
+STR_ITEMVIEW_ALLY=Widok sojuszniczych czołgów
+STR_ITEMVIEW_ALLY_NAMED=Widok sojuszniczych czołgów — {player}
+
+# Znacznik widoczności w przeglądarce serwerów
+STR_DLGBROWSER_VIEWS_LBL=Widoki:
+STR_DLGBROWSER_VIEWS_CLASSIC=Klasyczny
+STR_DLGBROWSER_VIEWS_ALLYTREES=Sojusznicy w lesie

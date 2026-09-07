@@ -622,7 +622,7 @@ void lobbySendTeamPool(ClientSim *cs,
 }
 
 /* Game-settings dispatcher. settingType is one of LST_* (wire_limits.h);
- * payload is 1 or 2 bytes per server-side parser. Forwards to the
+ * payload is 1 to 3 bytes per server-side parser. Forwards to the
  * client_net wrapper, whose local-transport branch shares
  * serverSimApplyLobbySetting with the UDP-side packet handler so SP
  * and wire follow one code path. */

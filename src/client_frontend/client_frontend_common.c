@@ -46,9 +46,10 @@ void windowKeyPressed(ClientSim *cs, int keyCode) {
   if (keyCode == keys.kiTankView) {
     clientSimTankView(cs);
   }
-  /* Pill view (enter + hold-to-cycle) is handled by polling in
-   * pillViewInputStep so holding the key auto-repeats through pills;
-   * dispatching it here too would double-step on the entering press. */
+  /* The pill, base and allied tank views (enter + hold-to-cycle) are handled
+   * by polling in itemViewInputStep so holding a key auto-repeats through the
+   * items; dispatching them here too would double-step on the entering
+   * press. */
 }
 
 void windowShowGunsight_toggle(ClientSim *cs) {
