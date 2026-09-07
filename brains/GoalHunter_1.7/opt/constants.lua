@@ -3230,6 +3230,42 @@ M.BUILDER_POOL_REPAIR_TRIP_W = 0.25   -- score per tick of simulated round trip
 -- M.lgm_trip). No raise needed.
 M.BUILDER_POOL_REPAIR_LEASH  = 11
 
+-- ── A SEEDED ROW COMPETES; the goal's own pill gets a nudge (2026-09-06) ──
+-- The incident (20260905_231835_2_oilrig_2v2_repair_seed1, bot2, t=67922).
+-- The tank held defend_pill on pill #5 at (139,142), 14/15 hp, and the goal's
+-- own repair order seeded the pool with a ONE-hp top-up of it. That seeded row
+-- scored 30 x 1 - 0.25 x 254 = -34, i.e. under MIN_SCORE and not worth the
+-- walk -- but it sorted FIRST by construction, and its feeder goal also made
+-- the pool read `mode_owned (suppressed/defend_pill)` for every other row. Ten
+-- tiles away pill #13 at (123,139) was on 10/15 under fire, worth ~87, and it
+-- never competed: `BP_DENY ... reason=under_fire(2t) ... score=-34`.
+--
+-- SEEDED_COMPETES makes the seeded row an ordinary row on the SCORE side: the
+-- same formula, the same MIN_SCORE bar, the same ordering. It keeps exactly
+-- the three waivers the seed is FOR (the mode gate, the leash and the tree
+-- reserve, all three answered by the goal that seeded it) and loses the one
+-- thing that was never justified -- sorting ahead of a better job, and closing
+-- the pool to it. Closing it took two forms and both go: `goal.repair` stops
+-- removing defend_pill from BUILDER_POOL_TRAVEL_GOALS, and the feeder goal's
+-- own `reserve_eta = 0` ("my seeded job is pending, nobody else may take the
+-- man", builder.lua) stops being charged to the rows it is competing against.
+-- Either one alone still refused the 5-hp repair: with the mode gate opened
+-- the first run of tests/seeded_repair_test arena A read
+-- `BP_DENY ... reason=reserve(0 < trip 346) ... score=74`.
+--
+-- GOAL_PILL_BONUS is the tie-breaker that survives that change (Andrew, "20%
+-- score boost"): the row whose pill IS the tank goal's target (defend_pill /
+-- repair_pill, matched on goal.target_id) has its finished score MULTIPLIED by
+-- this. The tank is parked there, the man is going home to that tile, and the
+-- goal already decided that pill matters -- but it is now a 20% thumb on the
+-- scale rather than an unconditional first place. It multiplies the whole
+-- score, so a row that is already negative gets MORE negative, which is the
+-- right direction: 1.2 x "not worth the walk" is still not worth the walk.
+M.BUILDER_POOL_SEEDED_COMPETES = true   -- false = seeded sorts first, mode gate
+                                        -- closes the pool behind it (pre-2026-09-06)
+M.BUILDER_POOL_GOAL_PILL_BONUS = 1.2    -- x score for the tank goal's own pill;
+                                        -- 1.0 = no bonus (the chip is not printed)
+
 -- ── Eligibility ──────────────────────────────────────────────────────────
 -- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
 -- our tile is non-zero", which is true for most of a firefight's quiet moments
@@ -3352,8 +3388,12 @@ M.BUILDER_POOL_SUBSTATE_CLASS = {
 -- Goal kinds that map to builder mode "suppressed" and carry NO substate, but
 -- whose suppression is about keeping the man aboard for THIS goal rather than
 -- about being in a fight. A defender parked and watching is the plan's
--- "defend-watch" travel class. A defender with goal.repair set is excluded --
--- that one is a pool FEEDER (it seeds the job directly), not a side-quest.
+-- "defend-watch" travel class. A defender with goal.repair set was excluded --
+-- that one is a pool FEEDER (it seeds the job directly), not a side-quest --
+-- but under BUILDER_POOL_SEEDED_COMPETES it is NOT, because excluding it also
+-- shut every OTHER row out of the pool behind a `mode_owned` the seed itself
+-- had caused. The seeded row waives the mode gate on its own account; it no
+-- longer imposes one on its neighbours.
 M.BUILDER_POOL_TRAVEL_GOALS = { defend_pill = true }
 -- Builder modes that are "idle-ish": no goal has spoken for the man, so the
 -- pool may spend him freely. Everything else that is not "suppressed" is a
@@ -3552,6 +3592,20 @@ M.PRESETS = {
     -- and was driven off it before it had refuelled (20260905_231835 bot2
     -- t=67674).
     REFUEL_MINE_HOARD_NEEDS_SUPPLY = false,
+    -- 2026-09-06: a SEEDED builder-pool row (the tank goal's own repair order)
+    -- is now scored, bars-checked and ORDERED like every other row, and its
+    -- feeder goal no longer makes the pool `mode_owned` -- nor charges them its
+    -- own reserve_eta=0 -- for the rows it is competing against. KEEL sorts the
+    -- seeded row first whatever it scores
+    -- and closes the pool behind it -- which is how a 1-hp top-up worth -34
+    -- kept a 5-hp repair worth ~87 off the man for good (20260905_231835 bot2
+    -- t=67922).
+    BUILDER_POOL_SEEDED_COMPETES = false,
+    -- 2026-09-06: the row whose pill is the TANK goal's own target
+    -- (defend_pill / repair_pill target_id) has its score multiplied by 1.2.
+    -- KEEL has no such bonus -- under KEEL that pill was first by seeding
+    -- instead, so 1.0 is the value that reproduces it.
+    BUILDER_POOL_GOAL_PILL_BONUS = 1.0,
   },
 }
 

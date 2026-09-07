@@ -659,10 +659,19 @@ function M.eligibility(state, world, info, now)
         d.mode_ok, d.mode_reason = false, string.format("fire_exchange:%s", sub)
       elseif cls ~= "travel" then
         -- No substate at all: a defender parked and watching is the plan's
-        -- "defend-watch" travel class. A defender with goal.repair is NOT --
+        -- "defend-watch" travel class. A defender with goal.repair was NOT --
         -- that one FEEDS the pool (seed_job) rather than competing with it.
+        --
+        -- ...which read the pool-WIDE gate off the seed, and that is the
+        -- 2026-09-06 bug: the seeded row waives this gate for itself, so the
+        -- only rows the exclusion ever stopped were the row's COMPETITORS.
+        -- (t=67922: a 1-hp seeded top-up made the pool `mode_owned
+        -- (suppressed/defend_pill)`, and a 5-hp repair ten tiles off never got
+        -- to bid.) Under BUILDER_POOL_SEEDED_COMPETES the mode gate therefore
+        -- reads exactly as it would have if the goal had not seeded at all.
         local travel_goal = (C.BUILDER_POOL_TRAVEL_GOALS or {})[goal.kind]
-                            and not goal.repair
+                            and (C.BUILDER_POOL_SEEDED_COMPETES
+                                 or not goal.repair)
         if not travel_goal then
           d.mode_ok = false
           d.mode_reason = string.format("mode_owned (%s%s)", mode,
@@ -905,6 +914,49 @@ function M.set_trip_legs(row, out_ticks, det)
   row.pred_route_t = det.route_t
 end
 
+-- -------------------------------------------------------------------------
+-- goal_weight / apply_goal_weight — BUILDER_POOL_GOAL_PILL_BONUS.
+--
+-- The row whose pill IS the tank goal's target gets its finished score
+-- multiplied by the bonus (1.2 by default; 1.0 under preset=keel, where the
+-- same pill was first by SEEDING instead). Matched on the goal's target_id,
+-- which is the pill id in world.pills and therefore the same number discovery
+-- puts on row.id -- never on the tile, because a hold tile beside the pill is
+-- a defend goal's own mx/my and would match nothing.
+--
+-- Applied AFTER the linear/legacy arithmetic and BEFORE the MIN_SCORE bar and
+-- the ordering, so it is simply part of the row's score everywhere downstream.
+-- The pre-bonus number is kept on row.raw_score because the printed chips have
+-- to let a reader recompute the final one (M.score_terms).
+--
+-- The multiply is deliberate on negative rows too: 1.2 x "not worth the walk"
+-- is further from the bar, not closer to it.
+function M.goal_weight(state, row)
+  local w = C.BUILDER_POOL_GOAL_PILL_BONUS or 1.0
+  if w == 1.0 or row.type == "farm" then return 1.0 end
+  local g = state.goal
+  if not g or not g.target_id then return 1.0 end
+  if g.kind ~= "defend_pill" and g.kind ~= "repair_pill" then return 1.0 end
+  if row.id ~= g.target_id then return 1.0 end
+  return w
+end
+
+local function apply_goal_weight(state, row)
+  local w = M.goal_weight(state, row)
+  row.goal_w = w
+  -- Never on the no-route sentinel: -1e9 is an ordering device, not a score,
+  -- and scaling it would print arithmetic nobody can check.
+  if w ~= 1.0 and row.trip then
+    row.raw_score = row.score
+    row.score = row.score * w
+    -- Which goal claimed it, for the panel's goal_w segment. A plain field,
+    -- not a debug-only one: the cold-path formula builder reads it back.
+    row.goal_kind = state.goal and state.goal.kind or nil
+  else
+    row.raw_score, row.goal_kind = nil, nil
+  end
+end
+
 function M.score_row(state, world, info, now, row, ctx)
   local FMAX = C.BUILDER_POOL_FRONT_MAX_TILES or 12
   -- front_dist is still MEASURED for every row: BP_DISPATCH prints it and the
@@ -937,6 +989,7 @@ function M.score_row(state, world, info, now, row, ctx)
     else
       row.c_trip, row.c_danger, row.score = 0, 0, -1e9
     end
+    apply_goal_weight(state, row)
     return M.gate_row(state, world, info, now, row, ctx)
   end
 
@@ -978,6 +1031,7 @@ function M.score_row(state, world, info, now, row, ctx)
     row.c_trip, row.c_danger, row.score = 0, 0, -1e9
   end
 
+  apply_goal_weight(state, row)
   return M.gate_row(state, world, info, now, row, ctx)
 end
 
@@ -1085,6 +1139,11 @@ end
 --   linear  score 362 = hp_w(30) x missing(15) = 450 - trip_w(0.25) x trip(352t) = 88
 --   legacy  val 184 - trip 95 - danger 0
 --
+-- ...plus, on the ONE row per tick that is the tank goal's own pill and only
+-- when BUILDER_POOL_GOAL_PILL_BONUS is not 1, a third link on the end of the
+-- chain: `= bp_raw{373} x goal_w{1.20}`, whose product is the bp_score{} at
+-- the head. Absent on every other row, and on every row under preset=keel.
+--
 -- Used by BP_DISPATCH, BP_DENY's neighbours and the panel row, so all three
 -- print the SAME arithmetic.
 -- -------------------------------------------------------------------------
@@ -1114,6 +1173,18 @@ local function leg_chips(row)
     tostring(row.pred_src or "-"), wedge)
 end
 
+-- The goal-pill bonus, as the last link of the chain: the arithmetic above it
+-- produces bp_raw{}, and bp_raw x goal_w is the bp_score{} at the head of the
+-- line. Printed ONLY when the factor is not 1 -- a chip that always says x1 is
+-- noise on every row of every game, and its absence means exactly "this row is
+-- not the goal's pill" (or BUILDER_POOL_GOAL_PILL_BONUS is 1.0, e.g.
+-- preset=keel), which is why the docs say so.
+local function goal_chips(row)
+  local w = row.goal_w or 1.0
+  if w == 1.0 then return "" end
+  return string.format(" = bp_raw{%.0f} x goal_w{%.2f}", row.raw_score or 0, w)
+end
+
 function M.score_terms(row)
   -- Every chip is word{value}: BrainTest's pool-grid detail popup parses
   -- exactly that shape (pool_grid.cpp) into its term table, so the same
@@ -1123,22 +1194,22 @@ function M.score_terms(row)
   if row.linear then
     return string.format(
       "bp_score{%s} = hp_w{%d} x missing{%d} = value{%.0f}"
-      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}%s",
+      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}%s%s",
       score_str, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
       row.missing or 0, row.value or 0,
       C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
-      row.c_trip or 0, leg_chips(row))
+      row.c_trip or 0, goal_chips(row), leg_chips(row))
   end
   local urg_name = (row.type == "farm") and "urg" or "topup_hp"
   return string.format(
     "bp_score{%s} = bp_base{%.0f} + %s{%.0f} + front{%.0f} = value{%.0f}"
     .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}"
-    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}%s",
+    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}%s%s",
     score_str, row.v_base or 0, urg_name, row.v_hp or 0, row.v_front or 0,
     row.value or 0,
     C.BUILDER_POOL_TRIP_W or 0.5, tostring(row.trip or "-"), row.c_trip or 0,
     C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0,
-    leg_chips(row))
+    goal_chips(row), leg_chips(row))
 end
 
 -- -------------------------------------------------------------------------
@@ -1172,7 +1243,15 @@ function M.row_formula(row)
   -- that does not exist. Say what actually happened instead.
   local score_str = trip and string.format("%.0f", row.score)
                     or "n/a (no walkable route for the man)"
+  -- The goal-pill bonus, if this row has one: the tail of the arithmetic
+  -- chain, so the bp_score segment ends in the number that is actually on the
+  -- row rather than in the pre-bonus one.
+  local gw = row.goal_w or 1.0
   local chain = score_str
+  if gw ~= 1.0 then
+    chain = string.format("bp_raw(%.0f) x goal_w(%.2f) = %s",
+                          row.raw_score or 0, gw, score_str)
+  end
   local short = string.format("%s %s%s", label, M.score_terms(row),
                               reject and (" REJECT " .. reject) or "")
   local trip_seg = string.format(
@@ -1325,29 +1404,85 @@ function M.row_formula(row)
         dw, dgr, row.c_danger or 0),
     }
   end
+  -- The bonus's own two segments, on both formulas, only when it applied.
+  if gw ~= 1.0 then
+    segs[#segs + 1] = string.format(
+      "bp_raw:the score BEFORE the goal-pill bonus -- value(%.0f) minus the"
+      .. " costs above = %.0f. bp_raw x goal_w is the bp_score at the head of"
+      .. " the line.", row.value or 0, row.raw_score or 0)
+    segs[#segs + 1] = string.format(
+      "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
+      .. " the tank goal's own target (%s target_id=%s), so its whole score is"
+      .. " multiplied by it: %.0f x %.2f = %s. The chip is absent on every"
+      .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
+      gw, tostring(row.id or "?"),
+      tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
+      row.raw_score or 0, gw, score_str)
+  end
   if wedge_seg then segs[#segs + 1] = wedge_seg end
   return short .. "||" .. table.concat(segs, "|")
 end
 
--- Deterministic ordering: a SEEDED row first (a feeder's job outranks any
--- side-quest by construction -- the tank's own goal is that repair), then best
--- score, then type rank (rebuild before topup before farm), then tile key.
+-- Deterministic ordering: best score, then type rank (rebuild before topup
+-- before farm), then tile key. No pairs() order ever reaches this sort.
 --
--- Seeding is a separate sort key rather than a bonus added to the score,
--- because the score is PRINTED and has to stay reproducible from the chips
--- beside it: "score=1000089 (val 184 - trip 95 - danger 0)" does not add up
--- and cannot be hand-checked, which is the whole contract for these rows.
--- No pairs() order ever reaches this sort.
+-- Under BUILDER_POOL_SEEDED_COMPETES (the default since 2026-09-06) a SEEDED
+-- row has no sort key of its own at all -- it is ordered on its score like
+-- everything else, and the tank goal's interest in its pill is expressed by
+-- BUILDER_POOL_GOAL_PILL_BONUS instead, which is IN the score and printed with
+-- it (bp_raw{} x goal_w{}). That is the difference the 2026-09-06 incident
+-- turned on: a seeded 1-hp top-up worth -34 sorting ahead of a 5-hp repair
+-- worth ~87, and closing the pool behind it.
+--
+-- With the knob off (preset=keel) the old key comes back: a seeded row first
+-- whatever it scores, because a feeder's job outranks any side-quest by
+-- construction. It was a separate sort key rather than a bonus added to the
+-- score precisely because the score is PRINTED and has to stay reproducible
+-- from the chips beside it: "score=1000089 (val 184 - trip 95 - danger 0)"
+-- does not add up and cannot be hand-checked.
 local function order_rows(rows)
+  local seed_first = not C.BUILDER_POOL_SEEDED_COMPETES
   table.sort(rows, function(a, b)
-    local sa, sb = a.seeded and 1 or 0, b.seeded and 1 or 0
-    if sa ~= sb then return sa > sb end
+    if seed_first then
+      local sa, sb = a.seeded and 1 or 0, b.seeded and 1 or 0
+      if sa ~= sb then return sa > sb end
+    end
     if a.score ~= b.score then return a.score > b.score end
     local ra, rb = TYPE_RANK[a.type] or 9, TYPE_RANK[b.type] or 9
     if ra ~= rb then return ra < rb end
     return (a.my * 256 + a.mx) < (b.my * 256 + b.mx)
   end)
   return rows
+end
+
+-- -------------------------------------------------------------------------
+-- seed_row_of / seed_tail — the seeded row on a BP_DISPATCH / BP_DENY line.
+--
+-- Since BUILDER_POOL_SEEDED_COMPETES the seeded row is frequently NOT the row
+-- the line is about -- that IS the change -- and "the goal asked for a job and
+-- something else went instead" is unreadable unless the line carries the
+-- seeded row's own score and the reason it lost. When the seeded row IS the
+-- subject the tail is the plain `seeded_by=` the dispatch line always had.
+-- rows is an array in sort order, so the first seeded row is deterministic
+-- (there is at most one seed per tick anyway).
+-- -------------------------------------------------------------------------
+local function seed_row_of(rows)
+  for _, r in ipairs(rows) do
+    if r.seeded then return r end
+  end
+  return nil
+end
+
+local function seed_tail(rows, subject, with_subject)
+  local sr = seed_row_of(rows)
+  if not sr then return "" end
+  if sr == subject then
+    return with_subject and (" seeded_by=" .. tostring(sr.seeded)) or ""
+  end
+  return string.format(
+    " seed=%s@(%d,%d)/%s seed_score=%.0f seed_reject=%s",
+    sr.type, sr.mx, sr.my, tostring(sr.seeded), sr.score or 0,
+    tostring(sr.reject or "none"))
 end
 
 -- -------------------------------------------------------------------------
@@ -1455,10 +1590,17 @@ end
 -- Priority 0.4 with no claim, no job record and no panel row, in parallel with
 -- a pool that did not know it had happened.
 --
--- A seeded job bypasses the MODE gate (the tank's whole goal IS this repair)
--- and the leash (the goal's own danger-blended dispatch range decides how
--- close is close enough), but nothing else: under-fire, trees, path safety and
--- the ally claim all still apply, and are all evaluated by the same score_row.
+-- A seeded job bypasses the MODE gate (the tank's whole goal IS this repair),
+-- the leash (the goal's own danger-blended dispatch range decides how close is
+-- close enough) and the tree reserve, but nothing else: under-fire, `have >=
+-- need` wood, path safety, the ally claim, MIN_SCORE and the shell gate all
+-- still apply, and are all evaluated by the same score_row.
+--
+-- It does NOT buy a place at the front of the queue (2026-09-06,
+-- BUILDER_POOL_SEEDED_COMPETES): the row is scored and ordered like every
+-- other, and the goal's stake in its own pill is priced by
+-- BUILDER_POOL_GOAL_PILL_BONUS. Nor does the feeder goal shut the other rows
+-- out with a `mode_owned` of its own -- see M.eligibility.
 -- -------------------------------------------------------------------------
 function M.seed_job(state, mx, my, src)
   state._bp_seed = { mx = mx, my = my, src = src, tick = state.tick or 0 }
@@ -1667,8 +1809,32 @@ function M.update(state, world, info, now)
                    and not state._bp_job
   bp.can_send = can_send
 
+  -- THE FEEDER'S OWN RESERVATION, and the third place it used to speak for the
+  -- whole pool. builder.lua sets b.reserve_eta = 0 / "repair_feeder" whenever
+  -- the goal is repair_pill or defend_pill+repair -- "my seeded job is pending,
+  -- nobody else may take the man". A zero-tick reservation rejects EVERY other
+  -- row (`reserve(0 < trip N)`) before it can outscore anything, which is the
+  -- mode gate's mistake in another form: under BUILDER_POOL_SEEDED_COMPETES the
+  -- seeded job is not "pending", it is a ROW, and it wins or loses on its
+  -- score like the rest. Measured on the first run of tests/seeded_repair_test
+  -- arena A: with the mode gate open the 5-hp repair still read
+  -- `BP_DENY ... reason=reserve(0 < trip 346) ... score=74` while the seeded
+  -- 1-hp top-up took the man at 20.
+  --
+  -- Narrow on purpose: ONLY the feeder's own 0, never the wall-shield / sea /
+  -- placement reservations, which are about work the man is genuinely needed
+  -- for later. The seeded row already waived it for itself (seed_ctx passes
+  -- nil); this waives it for the rows it is competing against, and the verdict
+  -- line says so.
+  local ctx_reserve_eta = bp.reserve_eta
+  if C.BUILDER_POOL_SEEDED_COMPETES and ctx_reserve_eta == 0
+     and bp.reserve_why == "repair_feeder" then
+    ctx_reserve_eta = nil
+    bp.reserve_waived = "seeded_competes"
+  end
+
   local ctx = { ok = ok, reason = reason, reserve = reserve,
-                reserve_eta = bp.reserve_eta }
+                reserve_eta = ctx_reserve_eta }
 
   -- A seeded job (repair_pill arrival / defend->repair handoff) is a row like
   -- any other, but it enters with three gates already answered by the goal
@@ -1689,8 +1855,25 @@ function M.update(state, world, info, now)
   -- Nothing else is waived. In particular the UNDER-FIRE clock still applies
   -- (seed_ctx takes d.fire_ok, not `true`): "my goal is this repair" is a
   -- reason to own the man, not a reason to walk him out of a tank that is
-  -- being shelled. Seeding only reorders the row to the front of the sort;
-  -- every reject in score_row still runs.
+  -- being shelled. Every reject in score_row still runs -- MIN_SCORE, the
+  -- `have >= need` wood test, ally_repairing, ally_capturing, the reserve ETA,
+  -- unreachable, path safety on a non-linear row and the shell gate.
+  --
+  -- WHAT SEEDING NO LONGER BUYS (BUILDER_POOL_SEEDED_COMPETES, 2026-09-06).
+  -- It used to buy three more things that were never part of the bargain: the
+  -- front of the sort whatever the row scored; -- because the feeder goal was
+  -- excluded from BUILDER_POOL_TRAVEL_GOALS -- a pool-wide `mode_owned` that
+  -- shut every OTHER row out behind it; and the feeder's own
+  -- `reserve_eta = 0` (see the block above the ctx table), which rejected every
+  -- competitor with `reserve(0 < trip N)` for good measure. All three are gone
+  -- when the knob is on, and all three come back with it. The seeded row is
+  -- scored by the same formula, must clear the same MIN_SCORE, and is ordered
+  -- by score; the mode gate its neighbours see is the one they would have seen
+  -- had the goal never seeded (M.eligibility). The three waivers above are the
+  -- whole of what "seeded" now means, and the goal's interest in its own pill
+  -- is priced instead by BUILDER_POOL_GOAL_PILL_BONUS -- a factor IN the score
+  -- and printed beside it. With the knob off, the old first-place ordering and
+  -- the old exclusion both come back.
   local seed = state._bp_seed
   local seed_ctx = { ok = d.fire_ok, reason = d.fire_reason,
                      reserve = 0,
@@ -1930,8 +2113,13 @@ function M.panel_section(state)
     (bp.detail and bp.detail.fire_age)
       and string.format("%dt ago (%s)", bp.detail.fire_age,
                         tostring(bp.detail.fire_why)) or "never",
-    string.format("%s (%s)", tostring(bp.reserve_eta or "-"),
-                  tostring(bp.reserve_why or "none")),
+    -- WAIVED is printed beside the number, never instead of it: the panel has
+    -- to show both what the goal asked for and that the pool did not charge
+    -- the other rows for it (BUILDER_POOL_SEEDED_COMPETES).
+    string.format("%s (%s)%s", tostring(bp.reserve_eta or "-"),
+                  tostring(bp.reserve_why or "none"),
+                  bp.reserve_waived
+                    and (" WAIVED: " .. bp.reserve_waived) or ""),
     bp.trees, bp.reserve, bp.r_base, bp.r_pills, bp.r_goal, bp.r_sea)
   if job then
     hdr[#hdr + 1] = string.format("active: %s @(%d,%d) %s eta=%st claim=t%d%s",
