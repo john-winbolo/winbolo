@@ -75,6 +75,7 @@ struct ViewPort {
     BYTE        yOffset;
     screen      view;
     screenMines mineView;
+    screenHidden hiddenView;
     /* What the camera is parked on. viewKind is a ViewStateKind
      * (client_command.h): VIEW_KIND_TANK follows the local tank, the other
      * three watch one item. viewTarget is the pill or base index (0-based,

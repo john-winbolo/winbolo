@@ -75,13 +75,18 @@ static float mapViewSpriteOffset(const MapViewCtx *ctx, int mode,
  * Moved from sdl3draw.c tile blit loop.
  *********************************************************/
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
+                      screenHidden *hiddenView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
   int ss = ctx->sheetScale;
+  bool haveHidden = (hiddenView != NULL && *hiddenView != NULL);
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
     BYTE pos = screenGetPos(value, x, y);
+    /* The whole back buffer, both spare columns and rows included: the border
+       squares are on screen while the view is part way between two squares. */
+    bool hidden = haveHidden && (*hiddenView)->hiddenItem[x][y];
     SDL_FRect src = mapViewAtlasSrc(mapViewPosX[pos], mapViewPosY[pos],
                                     TILE_SIZE_X, TILE_SIZE_Y, ss);
     SDL_FRect dest = {
@@ -90,6 +95,10 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
       (float)tileW,
       (float)tileH
     };
+    /* The mine goes with the ground under it — both are what was last seen
+       here — and the mod is put back after the square, so every other draw
+       from the atlas this frame is unaffected. */
+    if (hidden) SDL_SetTextureAlphaMod(ctx->tilesTex, MAPVIEW_HIDDEN_ALPHA);
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
     if (screenIsMine(mineView, x, y)) {
@@ -97,6 +106,7 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                                           TILE_SIZE_X, TILE_SIZE_Y, ss);
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
+    if (hidden) SDL_SetTextureAlphaMod(ctx->tilesTex, 255);
 
     x++;
     if (x == MAIN_BACK_BUFFER_SIZE_X) {

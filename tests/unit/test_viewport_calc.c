@@ -7,7 +7,10 @@
  * and the mineView store. This pins the two together: over the whole 256x256
  * map the pure tile and its mine flag match what the wrapper produces, no
  * square ever comes back as TANK_TRANSPARENT, and pill and base squares
- * resolve by alliance for whichever player is asking.
+ * resolve by alliance for whichever player is asking. It also covers the view
+ * fill: a square a sight mask calls hidden draws the tile last seen there
+ * rather than the one that is there, while the brain map keeps the real
+ * terrain either way.
  */
 
 #include "global.h"
@@ -15,6 +18,7 @@
 #include "game_sim.h"
 #include "client_sim_internal.h" /* struct ViewPort — vp.mineView */
 #include "viewport.h"
+#include "sight.h"    /* SIGHT_MASK_BYTES — the buffer a sight mask lives in */
 #include "bolo_map.h" /* mapSetPos — plants a raw terrain byte */
 #include "mines.h"    /* minesRemoveItem */
 #include "bases.h"
@@ -226,6 +230,113 @@ int run_viewport_calc_square_pure(void) {
         UT_ASSERT_MSG(pureMine == wrapMine,
                       "bottom edge (%d,255): pure mine %d, wrapper mineView %d",
                       x, (int)pureMine, (int)wrapMine);
+    }
+
+    /* Line of sight: a square the mask calls hidden draws the tile the player
+     * last saw there, not the tile that is there now, and says so in the
+     * hidden view. A seen square draws what is there. The mask is written by
+     * hand — which squares sight reaches is test_sight's question, and this is
+     * only about what the view does with the answer. */
+    {
+        const BYTE viewLeft = 60, viewTop = 60;
+        const BYTE hiddenSX = 5, hiddenSY = 5;   /* Back-buffer square hidden */
+        const BYTE seenSX = 6, seenSY = 5;       /* One beside it, seen */
+        const BYTE hiddenMX = (BYTE)(viewLeft + hiddenSX);
+        const BYTE hiddenMY = (BYTE)(viewTop + hiddenSY);
+        const BYTE seenMX = (BYTE)(viewLeft + seenSX);
+        const BYTE seenMY = (BYTE)(viewTop + seenSY);
+        const BYTE brainSentinel = 0xEE;
+        BYTE (*brainMap)[MAP_ARRAY_SIZE] =
+            (BYTE (*)[MAP_ARRAY_SIZE])malloc(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        OverviewMap *om = (OverviewMap *)malloc(sizeof(OverviewMap));
+        BYTE vis[SIGHT_MASK_BYTES];
+        ViewSight sight;
+        bool ignoreMine = FALSE;
+        BYTE realHidden, realSeen, remembered, brainMasked, brainPlain;
+        int stride;
+
+        UT_ASSERT_MSG(brainMap != NULL && om != NULL,
+                      "out of memory setting up the sight case");
+
+        realHidden =
+            viewportCalcSquarePure(gs, 0, hiddenMX, hiddenMY, &ignoreMine);
+        realSeen = viewportCalcSquarePure(gs, 0, seenMX, seenMY, &ignoreMine);
+
+        /* Something the square demonstrably does not show now, so the tile the
+         * view ends up with says which of the two sources it came from. */
+        remembered =
+            (BYTE)(realHidden == DEEP_SEA_SOLID ? SWAMP : DEEP_SEA_SOLID);
+        UT_ASSERT_MSG(remembered != realHidden,
+                      "square (%u,%u): the remembered tile and the real one "
+                      "are both %u, so the case cannot tell them apart",
+                      hiddenMX, hiddenMY, realHidden);
+
+        memset(om, 0, sizeof(*om));
+        om->tile[hiddenMX][hiddenMY] = remembered;
+
+        memset(&sight, 0, sizeof(sight));
+        sight.block.left = (int)viewLeft;
+        sight.block.top = (int)viewTop;
+        sight.block.right = sight.block.left + MAIN_BACK_BUFFER_SIZE_X - 1;
+        sight.block.bottom = sight.block.top + MAIN_BACK_BUFFER_SIZE_Y - 1;
+        stride = sight.block.right - sight.block.left + 1;
+        memset(vis, 1, sizeof(vis));
+        vis[hiddenSY * stride + hiddenSX] = 0;
+        sight.vis = vis;
+        sight.memory = om;
+
+        vp.xOffset = viewLeft;
+        vp.yOffset = viewTop;
+
+        memset(brainMap, brainSentinel, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        viewportUpdateView(&vp, gs, 0, brainMap, (updateType)0, &sight);
+        brainMasked = brainMap[hiddenMY][hiddenMX];
+
+        UT_ASSERT_MSG(vp.view->screenItem[hiddenSX][hiddenSY] == remembered,
+                      "hidden square (%u,%u): drew tile %u, expected the "
+                      "remembered %u",
+                      hiddenMX, hiddenMY,
+                      vp.view->screenItem[hiddenSX][hiddenSY], remembered);
+        UT_ASSERT_MSG(vp.hiddenView->hiddenItem[hiddenSX][hiddenSY] == TRUE,
+                      "hidden square (%u,%u): hidden view says %d, expected 1",
+                      hiddenMX, hiddenMY,
+                      (int)vp.hiddenView->hiddenItem[hiddenSX][hiddenSY]);
+        UT_ASSERT_MSG(vp.view->screenItem[seenSX][seenSY] == realSeen,
+                      "seen square (%u,%u): drew tile %u, expected the real %u",
+                      seenMX, seenMY, vp.view->screenItem[seenSX][seenSY],
+                      realSeen);
+        UT_ASSERT_MSG(vp.hiddenView->hiddenItem[seenSX][seenSY] == FALSE,
+                      "seen square (%u,%u): hidden view says %d, expected 0",
+                      seenMX, seenMY,
+                      (int)vp.hiddenView->hiddenItem[seenSX][seenSY]);
+        UT_ASSERT_MSG(brainMasked != brainSentinel,
+                      "hidden square (%u,%u): the brain map was never written",
+                      hiddenMX, hiddenMY);
+
+        /* No mask at all: every square back to what is there, nothing hidden. */
+        memset(brainMap, brainSentinel, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        viewportUpdateView(&vp, gs, 0, brainMap, (updateType)0, NULL);
+        brainPlain = brainMap[hiddenMY][hiddenMX];
+
+        UT_ASSERT_MSG(vp.view->screenItem[hiddenSX][hiddenSY] == realHidden,
+                      "no mask, square (%u,%u): drew tile %u, expected the "
+                      "real %u",
+                      hiddenMX, hiddenMY,
+                      vp.view->screenItem[hiddenSX][hiddenSY], realHidden);
+        UT_ASSERT_MSG(vp.hiddenView->hiddenItem[hiddenSX][hiddenSY] == FALSE,
+                      "no mask, square (%u,%u): hidden view says %d, "
+                      "expected 0",
+                      hiddenMX, hiddenMY,
+                      (int)vp.hiddenView->hiddenItem[hiddenSX][hiddenSY]);
+        /* The brain map is fed the real terrain either way: bots read it, and
+         * substituting for them is not the view's business. */
+        UT_ASSERT_MSG(brainMasked == brainPlain,
+                      "square (%u,%u): the brain map holds %u under the mask "
+                      "and %u without it",
+                      hiddenMX, hiddenMY, brainMasked, brainPlain);
+
+        free(om);
+        free(brainMap);
     }
 
     viewportDestroy(&vp);

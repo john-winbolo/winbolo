@@ -68,10 +68,17 @@ static inline SDL_FRect mapViewAtlasSrc(int x, int y, int w, int h, int ss) {
     return r;
 }
 
-/* Draw pre-built tile buffer. */
+/* Draw pre-built tile buffer. hiddenView marks the squares the player cannot
+   see into; those are drawn dimmed, because the tile they carry is what was
+   last seen there rather than what is there now. NULL draws every square at
+   full brightness. */
 void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
+                      screenHidden *hiddenView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY);
+
+/* How much of a hidden square's tile is drawn, out of 255. */
+#define MAPVIEW_HIDDEN_ALPHA 110
 
 /* Draw pre-built sprite lists. */
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,

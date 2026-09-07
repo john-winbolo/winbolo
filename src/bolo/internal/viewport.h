@@ -35,6 +35,7 @@
 #include "client_enums.h"
 #include "types.h"
 #include "view_policy.h"   /* ViewCategory / VIEW_CATEGORY_COUNT */
+#include "overview_types.h" /* OverviewRect / OverviewMap — the sight inputs */
 
 struct GameSim;
 #ifndef SCROLLSTATE_TYPEDEF
@@ -47,8 +48,30 @@ typedef struct ViewPort ViewPort;
 void viewportInit(ViewPort *vp);
 void viewportDestroy(ViewPort *vp);
 void viewportRecalc(ViewPort *vp);
+
+/* What the view needs to leave out the squares the player cannot see into.
+ *
+ * vis is one byte a square, 1 for a square that can be seen, indexed over
+ * block the way sight.h describes: the block's own width is the stride. block
+ * is inclusive on all four edges and covers the back buffer; a square outside
+ * it is drawn as it always was, because the mask has nothing to say about it.
+ * memory is the client's record of what every square last showed, which is
+ * where a hidden square takes its tile and its mine from.
+ *
+ * The whole struct is passed as NULL while buildings do not block sight, and
+ * every square then goes through the path it has always gone through. */
+typedef struct ViewSight {
+    const BYTE        *vis;
+    OverviewRect       block;
+    const OverviewMap *memory;
+} ViewSight;
+
+/* Fills the back buffer and the mine and hidden views from the sim. sight may
+ * be NULL, which leaves every square showing what is there and the hidden view
+ * all false. */
 void viewportUpdateView(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
-                        BYTE brainMap[][MAP_ARRAY_SIZE], updateType value);
+                        BYTE brainMap[][MAP_ARRAY_SIZE], updateType value,
+                        const ViewSight *sight);
 BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
                         BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
 /* The tile calculation on its own: reports the mine flag through isMine

@@ -699,6 +699,9 @@ ScrollState   *clientSimGetScroll(ClientSim *cs);
 InterpContext *clientSimGetInterpCtx(ClientSim *cs);
 screen        *clientSimGetView(ClientSim *cs);
 screenMines   *clientSimGetMineView(ClientSim *cs);
+/* The squares of the back buffer the player cannot see into. All false while
+ * buildings do not block sight. */
+screenHidden  *clientSimGetHiddenView(ClientSim *cs);
 
 /* Bundled viewport accessor — for bolo-internal callers (viewport.c,
  * screen.c, etc.) that want to operate on the whole ViewPort substruct
@@ -1034,7 +1037,13 @@ void         clientSimStepView(ClientSim *cs, int horz, int vert);
 void         clientSimSyncViewState(ClientSim *cs);
 void         clientSimResetViewStateReport(ClientSim *cs);
 void         clientSimRecalc(ClientSim *cs);
-void         clientSimUpdateView(ClientSim *cs, updateType value);
+/* Refill the back buffer. sight is the mask of squares the player cannot see
+ * into, worked out by the caller and NULL for a view nothing blocks sight in;
+ * struct ViewSight is declared in the viewport's own header, so a caller that
+ * has no use for it never needs the definition. */
+struct ViewSight;
+void         clientSimUpdateView(ClientSim *cs, updateType value,
+                                 const struct ViewSight *sight);
 void         clientSimPanX(ClientSim *cs, int dxTiles);
 void         clientSimPanY(ClientSim *cs, int dyTiles);
 bool         clientSimTankIsDead(ClientSim *cs);

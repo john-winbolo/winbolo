@@ -2105,6 +2105,7 @@ ScrollState   *clientSimGetScroll(ClientSim *cs)     { return &cs->scroll; }
 InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
 screen        *clientSimGetView(ClientSim *cs)       { return &cs->viewport.view; }
 screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->viewport.mineView; }
+screenHidden  *clientSimGetHiddenView(ClientSim *cs) { return &cs->viewport.hiddenView; }
 
 const struct ViewPort *clientSimViewport(const ClientSim *cs)  { return &cs->viewport; }
 struct ViewPort       *clientSimViewportMut(ClientSim *cs)     { return &cs->viewport; }
@@ -2339,7 +2340,7 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
      * CTRL_LOBBY_SETTINGS has populated (or empty, until it arrives). */
   }
 
-  clientSimUpdateView(cs, redraw);
+  clientSimUpdateView(cs, redraw, NULL);
   basesClearMines(gs);
   return true;
 }
@@ -3257,10 +3258,12 @@ void clientSimRecalc(ClientSim *cs) {
   viewportRecalc(clientSimViewportMut(cs));
 }
 
-void clientSimUpdateView(ClientSim *cs, updateType value) {
+void clientSimUpdateView(ClientSim *cs, updateType value,
+                         const struct ViewSight *sight) {
   viewportUpdateView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
                      clientSimGetMyPlayerNum(cs),
-                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs), value);
+                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs), value,
+                     sight);
 }
 
 void clientSimPanX(ClientSim *cs, int dxTiles) {

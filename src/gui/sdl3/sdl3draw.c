@@ -2549,7 +2549,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     } else {
       /* Draw map tiles via mapview */
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };
-      mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
+      mapViewDrawTiles(&mvCtx, value, mineView, clientSimGetHiddenView(cs), originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Draw pillbox/base number labels (needs fonts — stays here) */
       if (gFontLabel) {

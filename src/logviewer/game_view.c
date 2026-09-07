@@ -696,7 +696,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   }
 
   /* Step 3 — tiles. */
-  mapViewDrawTiles(&ctx, view, mines,
+  mapViewDrawTiles(&ctx, view, mines, NULL,
                    originX, originY, tileW, tileH,
                    edgeX, edgeY);
 
