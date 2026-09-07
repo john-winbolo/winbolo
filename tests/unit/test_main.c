@@ -503,6 +503,7 @@ static const UnitTestEntry s_tests[] = {
     { "overview_camera",                         run_overview_camera                         },
     { "overview_scroll",                         run_overview_scroll                         },
     { "overview_fog",                            run_overview_fog                            },
+    { "sight",                                   run_sight                                   },
     { "overview_hud_layout",                     run_overview_hud_layout                     },
     { "overview_dead_tank",                      run_overview_dead_tank                      },
     { "overview_entities",                       run_overview_entities                       },

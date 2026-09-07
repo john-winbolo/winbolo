@@ -41,7 +41,7 @@ static BYTE overviewFogRampValue(float d) {
 }
 
 void overviewFogBuildMask(const OverviewRect *live, int liveCount,
-                          const BYTE *lift, BYTE *mask) {
+                          const BYTE *lift, const BYTE *dark, BYTE *mask) {
     int i; /* Looping variable */
 
     if (mask == NULL) return;
@@ -113,11 +113,22 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount,
      * has not gone yet: 255 leaves the square as clear as a live one, 0 leaves
      * it as the regions left it. Brightest wins here too, so a square a region
      * already holds is never darkened by one of these. */
-    if (lift == NULL) return;
+    if (lift != NULL) {
+        for (i = 0; i < OVERVIEW_FOG_MASK_BYTES; i++) {
+            BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA -
+                            (OVERVIEW_FOG_ALPHA * (int)lift[i]) / 255);
+            if (v < mask[i]) mask[i] = v;
+        }
+    }
+
+    /* Ground the player cannot see into, which is the one pass that darkens
+     * rather than lights: a square behind a building sits inside the region the
+     * block covers, so the walk above has already cleared it, and nothing a
+     * region or a fading square says about it may put it back. Last, so it has
+     * the final word over both. */
+    if (dark == NULL) return;
 
     for (i = 0; i < OVERVIEW_FOG_MASK_BYTES; i++) {
-        BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA -
-                        (OVERVIEW_FOG_ALPHA * (int)lift[i]) / 255);
-        if (v < mask[i]) mask[i] = v;
+        if (dark[i] > mask[i]) mask[i] = dark[i];
     }
 }

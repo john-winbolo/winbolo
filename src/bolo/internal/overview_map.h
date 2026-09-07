@@ -230,7 +230,18 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * left dissolves rather than going dark at once. A square that moves counts as
  * a change like any other, so generation keeps advancing while anything is
  * still fading. Leaving the experiment - or arriving with no tick rate to
- * measure the seconds against - clears the lot and puts fadeSpan back to 0. */
+ * measure the seconds against - clears the lot and puts fadeSpan back to 0.
+ *
+ * With lineOfSight set, the blocks round the player's own tank are masked by
+ * what the tank can actually see from where it stands: a square with a building
+ * between it and the tank keeps the tile it last showed, carries
+ * OVERVIEW_F_HIDDEN instead of the live and sight bits, and is left in full
+ * fog. The last stamp those blocks get as they stop being live is masked the
+ * same way, from the square the tank last had a block on, so letting the block
+ * go does not show the player what it had been keeping from them. Watched items
+ * are never masked - the player is seeing through the item, not from the tank -
+ * and with the toggle off no mask is built and no square ever carries the flag.
+ * OverviewMap::sightActive records which of the two the update did. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY);

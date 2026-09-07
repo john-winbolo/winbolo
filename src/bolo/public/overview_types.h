@@ -43,6 +43,10 @@
  * them. Every region but a terrain-only one grants it, so under every
  * experiment but Halo it is set wherever OVERVIEW_F_LIVE is. */
 #define OVERVIEW_F_SIGHT     0x04
+/* Inside a live region and out of sight behind a building. The square keeps
+ * the tile it last showed rather than being rewritten, nothing moving on it is
+ * drawn, and it is left in full fog. Only set while line of sight is on. */
+#define OVERVIEW_F_HIDDEN    0x08
 
 /* The tank region is the full scroll envelope of the main view. An item view
  * cannot be scrolled, so it shows one fixed block round what it watches: a
@@ -92,6 +96,12 @@ typedef struct OverviewMap {
      * value. */
     BYTE         fade[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] ticks left before full fog */
     BYTE         fadeSpan;                               /* 0 when nothing is fading */
+    /* Whether the latest update worked out sight from the tank and masked the
+     * blocks round it. It is the record of what the map did rather than of
+     * which toggle is on, the same way fadeSpan is, so a frontend reads the
+     * squares it was handed and cannot be caught out by a toggle flipped
+     * between the update and the drawing of it. */
+    bool         sightActive;
     OverviewRect live[OVERVIEW_MAX_REGIONS];             /* regions used by the latest update */
     int          liveCount;
     OverviewRect prevLive[OVERVIEW_MAX_REGIONS];         /* regions used by the update before it */

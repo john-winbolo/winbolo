@@ -77,9 +77,16 @@ extern "C" {
  * regions left it, and the brightest answer wins, so no square a region holds
  * is ever darkened by one. It is what draws the ground an Afterimage block has
  * left and has not finished fading; NULL is no such ground, and gives the mask
- * the regions alone produce. */
+ * the regions alone produce.
+ *
+ * dark works the other way round: one byte per square, row-major again, and the
+ * darkest answer wins, so a square it names is fogged whatever a region or a
+ * lift has said about it. It is what covers ground inside a region the player
+ * cannot see into - behind a building, with line of sight on - and NULL is no
+ * such ground. With both lift and dark NULL the mask is the one the regions
+ * alone produce, byte for byte. */
 void overviewFogBuildMask(const OverviewRect *live, int liveCount,
-                          const BYTE *lift, BYTE *mask);
+                          const BYTE *lift, const BYTE *dark, BYTE *mask);
 
 #ifdef __cplusplus
 }

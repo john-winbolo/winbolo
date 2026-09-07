@@ -24,10 +24,18 @@ static BYTE fogAt(int x, int y) {
     return fogBuf[(size_t)y * MAP_ARRAY_SIZE + (size_t)x];
 }
 
+static void fogBuildDark(const OverviewRect *live, int liveCount,
+                         const BYTE *lift, const BYTE *dark) {
+    memset(fogBuf, FOG_GUARD_FILL, sizeof(fogBuf));
+    overviewFogBuildMask(live, liveCount, lift, dark, fogBuf);
+}
+
+/* The regions and a lift, with no ground the player cannot see into — which is
+ * every case written before line of sight existed and every experiment with
+ * the toggle off. */
 static void fogBuild(const OverviewRect *live, int liveCount,
                      const BYTE *lift) {
-    memset(fogBuf, FOG_GUARD_FILL, sizeof(fogBuf));
-    overviewFogBuildMask(live, liveCount, lift, fogBuf);
+    fogBuildDark(live, liveCount, lift, NULL);
 }
 
 /* The ramp overview_fog.cpp builds, repeated here so the cases below can name
@@ -203,7 +211,7 @@ static int fog_no_regions_fogs_the_map(void) {
                   (unsigned)fogAt(110, 110), (unsigned)OVERVIEW_FOG_ALPHA);
 
     /* And a NULL mask is a no-op, like the rest of the overview's maths. */
-    overviewFogBuildMask(&live, 1, NULL, NULL);
+    overviewFogBuildMask(&live, 1, NULL, NULL, NULL);
     return fogGuardIntact();
 }
 
@@ -478,6 +486,72 @@ static int fog_lift_never_darkens_a_square(void) {
     return fogGuardIntact();
 }
 
+/* Ground the player cannot see into, the shape line of sight hands the builder:
+ * full fog on the one square a case is about and nothing anywhere else. */
+static BYTE fogDarkBuf[OVERVIEW_FOG_MASK_BYTES];
+
+static const BYTE *fogDarkOne(int x, int y, BYTE value) {
+    memset(fogDarkBuf, 0, sizeof(fogDarkBuf));
+    fogDarkBuf[(size_t)y * MAP_ARRAY_SIZE + (size_t)x] = value;
+    return fogDarkBuf;
+}
+
+/* A square behind a building sits inside the block, so the regions leave it
+ * clear and something has to put the fog back over it. This is that: the
+ * darkest answer wins, over a region and over a fade alike. */
+static int fog_dark_wins_over_a_region_and_a_lift(void) {
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
+
+    fogBuild(&live, 1, NULL);
+    UT_ASSERT_MSG(fogAt(110, 110) == 0,
+                  "a square the region holds carries %u fog before any of it",
+                  (unsigned)fogAt(110, 110));
+
+    fogBuildDark(&live, 1, NULL, fogDarkOne(110, 110, OVERVIEW_FOG_ALPHA));
+    UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
+                  "a hidden square the region holds carries %u fog, expected "
+                  "the full %u", (unsigned)fogAt(110, 110),
+                  (unsigned)OVERVIEW_FOG_ALPHA);
+    UT_ASSERT_MSG(fogAt(111, 110) == 0,
+                  "the square beside a hidden one carries %u fog, expected it "
+                  "clear", (unsigned)fogAt(111, 110));
+
+    /* And over a fade, which is the same square lit from the other side. */
+    fogBuildDark(&live, 1, fogLiftOne(110, 110, 255),
+                 fogDarkOne(110, 110, OVERVIEW_FOG_ALPHA));
+    UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
+                  "a hidden square carries %u fog under a lift of 255, "
+                  "expected the full %u", (unsigned)fogAt(110, 110),
+                  (unsigned)OVERVIEW_FOG_ALPHA);
+
+    /* Half way is half way here too, so a partly dark square is not simply
+     * on or off. */
+    fogBuildDark(&live, 1, NULL, fogDarkOne(110, 110, 64));
+    UT_ASSERT_MSG(fogAt(110, 110) == 64,
+                  "a square handed 64 of fog carries %u",
+                  (unsigned)fogAt(110, 110));
+    return fogGuardIntact();
+}
+
+/* Nothing hidden is the map the regions and the fade alone draw, byte for
+ * byte — which is what says the toggle being off costs the picture nothing. */
+static int fog_no_dark_is_the_mask_without_it(void) {
+    OverviewRect live = { 100, 100, 120, 120, 255, 0 };
+    int rc; /* Result of the whole-mask check */
+
+    fogBuildDark(&live, 1, NULL, NULL);
+    rc = fogAssertPlainMask(&live);
+    if (rc) return rc;
+
+    /* Ground that is hidden nowhere says nothing either. */
+    memset(fogDarkBuf, 0, sizeof(fogDarkBuf));
+    fogBuildDark(&live, 1, NULL, fogDarkBuf);
+    rc = fogAssertPlainMask(&live);
+    if (rc) return rc;
+
+    return fogGuardIntact();
+}
+
 extern "C" int run_overview_fog(void) {
     int rc;
     rc = fog_live_is_clear_and_far_is_fogged();      if (rc) return rc;
@@ -495,5 +569,7 @@ extern "C" int run_overview_fog(void) {
     rc = fog_full_lift_clears_ground_no_region_covers(); if (rc) return rc;
     rc = fog_half_lift_leaves_the_square_half_way(); if (rc) return rc;
     rc = fog_lift_never_darkens_a_square();          if (rc) return rc;
+    rc = fog_dark_wins_over_a_region_and_a_lift();   if (rc) return rc;
+    rc = fog_no_dark_is_the_mask_without_it();       if (rc) return rc;
     return 0;
 }

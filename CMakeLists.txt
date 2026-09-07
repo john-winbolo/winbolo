@@ -3233,6 +3233,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_sight.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -4004,6 +4005,7 @@ set(_unit_test_names
     overview_scroll
     overview_fog
     overview_hud_layout
+    sight
     overview_dead_tank
     overview_entities
     overview_gunsight

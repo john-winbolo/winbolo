@@ -956,7 +956,11 @@ int run_viewport_calc_pill_square_moved(void);
  * block goes is the fog experiment's to decide, and is covered through
  * overviewMapUpdate — the 29x29 on the tank under Envelope, the 15x15 at the
  * classic view under the lens, the same 15x15 round the tank with no view to
- * read, and the view a dying tank last had; and
+ * read, and the view a dying tank last had; line of sight hides a square behind
+ * a building without touching the tile it last showed, leaves the building and
+ * the tank's own square in the block, reaches no watched item's block, holds
+ * that tile through the update the block stops being live, and sets nothing at
+ * all with the toggle off; and
  * overviewMapDeathBlackout puts the overview's blackout in the stretch of a
  * death wait running from the tick the classic view cuts to static through to
  * the respawn. */
@@ -1039,6 +1043,14 @@ int run_overview_scroll(void);
  * map border keeps its brightness to the border without writing past the end
  * of the mask, and no regions at all fogs the whole map. */
 int run_overview_fog(void);
+
+/* Line of sight (test_sight.c): the square the player stands on is seen even
+ * when it is itself a building, a building across the line hides everything
+ * behind it while the building itself is seen, the same building beside the
+ * line hides nothing, the diagonal between two buildings that touch is closed,
+ * squares off the map are never seen, only a building and a half building stop
+ * a line, and a block the origin is nowhere near is written at its own width. */
+int run_sight(void);
 
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack

@@ -201,6 +201,15 @@ struct OverviewView {
     unsigned       fogGeneration;
     BYTE           fogFadeSpan;
 
+    /* Ground inside a region the player cannot see into, with line of sight on:
+     * full fog for each square the map has marked hidden, and nothing for the
+     * rest. Held against the same generation the fade is, and for the same
+     * reason — the set of hidden squares moves as the tank moves without a
+     * single rect moving — plus whether the map worked sight out at all, which
+     * catches the tick the toggle is dropped and the rects sit still. */
+    BYTE           fogDark[OVERVIEW_FOG_MASK_BYTES];
+    bool           fogSightActive;
+
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
      * else will put the system cursor back. dragWasActive carries the drag
@@ -380,11 +389,17 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
  * counts the ticks it has left, so the share of the span still to run is how
  * far out of the fog it is drawn. The map's arrays are [x][y] and the mask is a
  * texture row at a time, so the scratch is filled transposed. With nothing
- * fading the builder is given none of it and the scratch is left alone. */
+ * fading the builder is given none of it and the scratch is left alone.
+ *
+ * A square the map has marked hidden goes the other way and is handed over at
+ * full fog: it sits inside the block, so the regions would otherwise leave it
+ * clear. That scratch is filled the same transposed way, and only when the map
+ * says it worked sight out this update. */
 static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
     void       *pixels = NULL;
     int         pitch  = 0;
     const BYTE *lift   = NULL;
+    const BYTE *dark   = NULL;
 
     if (om->fadeSpan != 0) {
         for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
@@ -396,7 +411,19 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
         lift = v->fogLift;
     }
 
-    overviewFogBuildMask(om->live, om->liveCount, lift, v->fogMask);
+    if (om->sightActive) {
+        for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+            BYTE *row = v->fogDark + (size_t)y * MAP_ARRAY_SIZE;
+            for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+                row[x] = ((om->flags[x][y] & OVERVIEW_F_HIDDEN) != 0)
+                             ? (BYTE)OVERVIEW_FOG_ALPHA
+                             : (BYTE)0;
+            }
+        }
+        dark = v->fogDark;
+    }
+
+    overviewFogBuildMask(om->live, om->liveCount, lift, dark, v->fogMask);
     if (!SDL_LockTexture(v->fog, NULL, &pixels, &pitch)) return;
 
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
@@ -440,10 +467,17 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
      * The span changing is the experiment being taken up or left, which has to
      * rebuild on its own account: the tick a fade is dropped the rects can sit
      * exactly where they were, and the mask would otherwise keep drawing a
-     * trail the map no longer has. */
+     * trail the map no longer has.
+     *
+     * Line of sight takes the same pair for the same two reasons: the squares
+     * behind a building change as the tank drives round it without any rect
+     * moving, and the tick it is switched off the rects can sit exactly still
+     * while what the mask was built from has gone. */
     if (!v->fogValid || v->fogLiveCount != om->liveCount ||
         om->fadeSpan != v->fogFadeSpan ||
         (om->fadeSpan != 0 && om->generation != v->fogGeneration) ||
+        om->sightActive != v->fogSightActive ||
+        (om->sightActive && om->generation != v->fogGeneration) ||
         SDL_memcmp(v->fogLive, om->live,
                    sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
         overviewViewUploadFog(v, om);
@@ -451,6 +485,7 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
         v->fogLiveCount = om->liveCount;
         v->fogGeneration = om->generation;
         v->fogFadeSpan = om->fadeSpan;
+        v->fogSightActive = om->sightActive;
         v->fogValid = true;
     }
 

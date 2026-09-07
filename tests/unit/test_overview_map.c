@@ -652,6 +652,204 @@ int run_overview_regions(void) {
                           (unsigned)om->fade[41][61]);
         }
 
+        /* Line of sight, which rides on top of whichever experiment is
+         * running: inside the blocks round the tank a square with a building
+         * between it and the tank keeps the tile it last showed and has
+         * nothing drawn moving on it. The wall itself is seen - what is hidden
+         * is the ground behind it - and a watched item's block is not masked
+         * at all, because the player is seeing through the item rather than
+         * from the tank. */
+        {
+            BYTE heldTile; /* The tile the hidden square is holding on to */
+            int  x;        /* Looping variable */
+            int  y;        /* Looping variable */
+
+            /* A clear line east from 100,100 with one building across it, and
+             * a pillbox of the player's own far enough off to have a block of
+             * its own that the tank's wall could only reach through the mask.
+             */
+            mapSetPos(gs, &gs->mp, 101, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 102, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 104, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 105, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 106, 100, GRASS, TRUE, TRUE);
+            mapSetPos(gs, &gs->mp, 103, 100, BUILDING, TRUE, TRUE);
+            gs->pb->numPills = 1;
+            gs->pb->item[0].owner = 0;
+            gs->pb->item[0].armour = PILLBOX_15;
+            gs->pb->item[0].inTank = FALSE;
+            gs->pb->item[0].x = 200;
+            gs->pb->item[0].y = 100;
+
+            /* With the toggle off the block is stamped the way it always was,
+             * which is what leaves the square a tile to hold on to. */
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->sightActive == FALSE,
+                          "the map worked sight out with the toggle off");
+            heldTile = om->tile[106][100];
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0,
+                                  "square %d,%d is hidden with line of sight "
+                                  "off", x, y);
+                }
+            }
+
+            /* And with it on the ground behind the building drops out of the
+             * block while the building itself stays in it. */
+            fog.lineOfSight = TRUE;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->sightActive == TRUE,
+                          "the map did not work sight out with the toggle on");
+            UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0 &&
+                              (om->flags[106][100] &
+                               (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
+                          "the square behind the building carries flags "
+                          "0x%02X, expected hidden with neither live nor "
+                          "sight", (unsigned)om->flags[106][100]);
+            UT_ASSERT_MSG((om->flags[103][100] &
+                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                                  (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT) &&
+                              (om->flags[103][100] & OVERVIEW_F_HIDDEN) == 0,
+                          "the building itself carries flags 0x%02X, expected "
+                          "live and in sight", (unsigned)om->flags[103][100]);
+            UT_ASSERT_MSG((om->flags[100][100] & OVERVIEW_F_SIGHT) != 0 &&
+                              (om->flags[100][100] & OVERVIEW_F_HIDDEN) == 0,
+                          "the tank's own square carries flags 0x%02X, so the "
+                          "reticle would not be drawn",
+                          (unsigned)om->flags[100][100]);
+
+            /* Nothing outside the block round the tank is ever hidden, which
+             * is the watched pill's block as much as ground no region covers:
+             * the wall in front of the tank says nothing about what the pill
+             * can see. */
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    if ((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0) {
+                        continue;
+                    }
+                    UT_ASSERT_MSG(x >= 86 && x <= 114 && y >= 86 && y <= 114,
+                                  "square %d,%d is hidden and is outside the "
+                                  "block round the tank", x, y);
+                }
+            }
+
+            /* The terrain behind the building changes and the memory does not:
+             * holding the tile it last showed is the whole of the effect. The
+             * change is put past the per-square calculator first, so a square
+             * whose tile would not have moved anyway fails here instead of
+             * passing for the wrong reason. */
+            {
+                bool isMine = FALSE;
+                BYTE before = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                BYTE after;
+
+                mapSetPos(gs, &gs->mp, 106, 100, DEEP_SEA, TRUE, TRUE);
+                after = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                UT_ASSERT_MSG(after != before,
+                              "square 106,100 still draws as tile %u after the "
+                              "terrain under it changed, so there is nothing "
+                              "for the memory to hold back", (unsigned)before);
+            }
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->tile[106][100] == heldTile,
+                          "the hidden square moved to tile %u, expected it to "
+                          "hold the %u it last showed",
+                          (unsigned)om->tile[106][100], (unsigned)heldTile);
+
+            /* Turning the toggle off puts the square back in the block, and
+             * what it shows then is what has been there all along. */
+            fog.lineOfSight = FALSE;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->sightActive == FALSE,
+                          "the map went on working sight out after the toggle "
+                          "was dropped");
+            UT_ASSERT_MSG(om->tile[106][100] != heldTile,
+                          "the square came back into the block still showing "
+                          "tile %u, so the terrain change never reached it",
+                          (unsigned)heldTile);
+            for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                    UT_ASSERT_MSG((om->flags[x][y] & OVERVIEW_F_HIDDEN) == 0,
+                                  "square %d,%d is still hidden a tick after "
+                                  "the toggle was dropped", x, y);
+                }
+            }
+
+            /* The last stamp a block gets as it stops being live is masked as
+             * well. Without that, letting the block go - by dying, or by
+             * watching a pillbox for a tick - would show the player everything
+             * it had been keeping from them on the way out. */
+            {
+                bool isMine = FALSE;
+                BYTE hiddenTile; /* What the square behind the wall holds */
+                BYTE seenTile;   /* What the square in front of it held */
+                BYTE before;     /* Tile a terrain change moves from */
+                BYTE after;      /* and to */
+
+                /* Ground the memory can hold again, and one update with the
+                 * toggle off to put a tile on both squares. */
+                mapSetPos(gs, &gs->mp, 106, 100, GRASS, TRUE, TRUE);
+                overviewMapReset(om);
+                overviewViewInputsDefaults(&fog);
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                hiddenTile = om->tile[106][100];
+                seenTile = om->tile[102][100];
+
+                fog.lineOfSight = TRUE;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0,
+                              "the square behind the building carries flags "
+                              "0x%02X, expected it hidden before the block "
+                              "goes", (unsigned)om->flags[106][100]);
+
+                /* Terrain moves on both sides of the wall, and then the tank's
+                 * block goes. */
+                before = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                mapSetPos(gs, &gs->mp, 106, 100, DEEP_SEA, TRUE, TRUE);
+                after = viewportCalcSquarePure(gs, 0, 106, 100, &isMine);
+                UT_ASSERT_MSG(after != before,
+                              "square 106,100 still draws as tile %u after the "
+                              "terrain under it changed, so there is nothing "
+                              "for the farewell to hold back",
+                              (unsigned)before);
+
+                before = viewportCalcSquarePure(gs, 0, 102, 100, &isMine);
+                mapSetPos(gs, &gs->mp, 102, 100, DEEP_SEA, TRUE, TRUE);
+                after = viewportCalcSquarePure(gs, 0, 102, 100, &isMine);
+                UT_ASSERT_MSG(after != before,
+                              "square 102,100 still draws as tile %u after the "
+                              "terrain under it changed, so it says nothing "
+                              "about the farewell running", (unsigned)before);
+
+                overviewMapUpdate(om, gs, 0, &fog, FALSE, 0, 0, 0);
+                UT_ASSERT_MSG(om->tile[106][100] == hiddenTile,
+                              "the block's last stamp moved the hidden square "
+                              "to tile %u, expected it to hold the %u the "
+                              "player last saw",
+                              (unsigned)om->tile[106][100],
+                              (unsigned)hiddenTile);
+
+                /* The square the player could see took the change, so the
+                 * farewell did run - what it left alone is the hidden part of
+                 * the block and nothing else. */
+                UT_ASSERT_MSG(om->tile[102][100] != seenTile,
+                              "the square in front of the wall is still on "
+                              "tile %u, so the farewell stamp never ran",
+                              (unsigned)seenTile);
+
+                UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) == 0,
+                              "the square carries flags 0x%02X after leaving "
+                              "the live set, expected the hidden bit dropped "
+                              "with the rest", (unsigned)om->flags[106][100]);
+                UT_ASSERT_MSG(om->sightActive == FALSE,
+                              "the map worked sight out on an update with no "
+                              "block round the tank");
+            }
+        }
+
         free(om);
     }
 

@@ -76,6 +76,7 @@
 #include "game_sim.h"
 #include "pillbox.h"
 #include "players.h"
+#include "sight.h"
 #include "viewport.h"
 
 /* ------------------------------------------------------------------
@@ -241,14 +242,24 @@ static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
  * enough to make out what is moving there. The flags are assigned rather than
  * merged, so the last rect stamped over a square decides both bits, and a
  * square the halo and the lens both cover keeps sight because the lens is
- * stamped second. */
+ * stamped second.
+ *
+ * vis is the rect's sight mask - one byte per square, indexed over this rect
+ * the way sight.h describes - and NULL for a rect nothing blocks sight in. A
+ * square the mask calls hidden is not rewritten at all: it holds the tile and
+ * the mine it last showed, which is the whole of what the player remembers of
+ * ground they cannot see into, and carries OVERVIEW_F_HIDDEN in place of the
+ * live and sight bits so nothing moving on it is drawn and the fog stays over
+ * it. */
 static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
-                              const OverviewRect *r, bool setLive) {
+                              const OverviewRect *r, bool setLive,
+                              const BYTE *vis) {
   bool changed;  /* Did any byte move */
   bool isMine;   /* Mine visible on this square */
   BYTE tileNum;  /* Tile the square shows now */
   BYTE liveBits; /* What being inside this rect is worth, the same everywhere */
   BYTE flagBits; /* Flags the square carries now */
+  int stride;    /* Squares across the rect, which is the mask's row length */
   int x;         /* Looping variable */
   int y;         /* Looping variable */
 
@@ -257,10 +268,21 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
     liveBits = (BYTE)(OVERVIEW_F_LIVE |
                       (r->terrainOnly == 0 ? OVERVIEW_F_SIGHT : 0));
   }
+  stride = r->right - r->left + 1;
 
   changed = FALSE;
   for (x = r->left; x <= r->right; x++) {
     for (y = r->top; y <= r->bottom; y++) {
+      if (vis != NULL && vis[(y - r->top) * stride + (x - r->left)] == 0) {
+        flagBits = (BYTE)(OVERVIEW_F_HIDDEN |
+                          (om->flags[x][y] & OVERVIEW_F_MINE));
+        if (om->flags[x][y] != flagBits) {
+          om->flags[x][y] = flagBits;
+          changed = TRUE;
+        }
+        continue;
+      }
+
       isMine = FALSE;
       tileNum = viewportCalcSquarePure(sim, me, (BYTE)x, (BYTE)y, &isMine);
       flagBits = (BYTE)(liveBits | (isMine == TRUE ? OVERVIEW_F_MINE : 0));
@@ -281,6 +303,30 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
   return changed;
 }
 
+/* The sight mask for the last stamp one of the tank's own blocks gets as it
+ * stops being live, or NULL when there is none to build. That stamp writes the
+ * ground as it is now, so without a mask a block that is going away would show
+ * the player everything it had been keeping from them on the way out - which is
+ * repeatable on purpose by watching a pillbox for a tick.
+ *
+ * The origin is the square the block was last actually placed from rather than
+ * anything this update was handed: a tank that has really gone reports the map
+ * origin, and the honest answer is where it was standing when it last had a
+ * block. With no such square recorded there is nothing to work from.
+ *
+ * Every square is marked seen first, so a block too wide for the buffer reads
+ * as line of sight being off rather than as whatever was in it. */
+static const BYTE *overviewFarewellMask(const OverviewMap *om,
+                                        struct GameSim *sim,
+                                        const OverviewRect *r, BYTE *vis) {
+  if (om->sightActive == FALSE || om->haveLastTank == FALSE) {
+    return NULL;
+  }
+  memset(vis, 1, SIGHT_MASK_BYTES);
+  sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, r, vis);
+  return vis;
+}
+
 /* TRUE when the square falls inside any of the count rects. There are never
  * more than OVERVIEW_MAX_REGIONS of them, so the walk is cheap. */
 static bool overviewPointInRects(const OverviewRect *r, int count, int x,
@@ -296,14 +342,15 @@ static bool overviewPointInRects(const OverviewRect *r, int count, int x,
   return FALSE;
 }
 
-/* Drops OVERVIEW_F_LIVE and OVERVIEW_F_SIGHT over a rect, leaving the tiles
- * alone. Both go together: a square that has left every rect is neither live
- * nor in sight, and dropping one without the other would leave a stale sight
- * bit on it for good. Squares that still fall inside one of the keep rects are
- * left untouched: they have not left the live set, and stripping the flags off
- * them only to have them put straight back would report a change on a tick
- * where nothing moved. Returns TRUE if any square that has genuinely left was
- * carrying either flag. */
+/* Drops OVERVIEW_F_LIVE, OVERVIEW_F_SIGHT and OVERVIEW_F_HIDDEN over a rect,
+ * leaving the tiles alone. All three go together: a square that has left every
+ * rect is neither live, in sight, nor inside a block it could be hidden in, and
+ * dropping one without the others would leave a stale bit on it for good.
+ * Squares that still fall inside one of the keep rects are left untouched: they
+ * have not left the live set, and stripping the flags off them only to have
+ * them put straight back would report a change on a tick where nothing moved.
+ * Returns TRUE if any square that has genuinely left was carrying one of
+ * them. */
 static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r,
                                   const OverviewRect *keep, int keepCount) {
   bool changed; /* Did any byte move */
@@ -316,9 +363,11 @@ static bool overviewClearLiveRect(OverviewMap *om, const OverviewRect *r,
       if (overviewPointInRects(keep, keepCount, x, y) == TRUE) {
         continue;
       }
-      if ((om->flags[x][y] & (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) != 0) {
-        om->flags[x][y] =
-            (BYTE)(om->flags[x][y] & ~(OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT));
+      if ((om->flags[x][y] &
+           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT | OVERVIEW_F_HIDDEN)) != 0) {
+        om->flags[x][y] = (BYTE)(om->flags[x][y] &
+                                 ~(OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT |
+                                   OVERVIEW_F_HIDDEN));
         changed = TRUE;
       }
     }
@@ -357,6 +406,7 @@ void overviewMapReset(OverviewMap *om) {
   memset(om->flags, 0, sizeof(om->flags));
   memset(om->fade, 0, sizeof(om->fade));
   om->fadeSpan = 0;
+  om->sightActive = FALSE;
   memset(om->live, 0, sizeof(om->live));
   om->liveCount = 0;
   memset(om->prevLive, 0, sizeof(om->prevLive));
@@ -390,7 +440,7 @@ void overviewMapSeedAll(OverviewMap *om, struct GameSim *sim,
   all.top = 0;
   all.right = MAP_ARRAY_SIZE - 1;
   all.bottom = MAP_ARRAY_SIZE - 1;
-  if (overviewStampRect(om, sim, myPlayerNum, &all, FALSE) == TRUE) {
+  if (overviewStampRect(om, sim, myPlayerNum, &all, FALSE, NULL) == TRUE) {
     om->generation++;
   }
 }
@@ -711,6 +761,10 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   unsigned span;       /* Ticks Afterimage's fade runs for */
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
+  bool sightOn;        /* Do buildings block sight inside the tank's blocks */
+  int  ownBlocks;      /* Rects at the head of the list that are those blocks */
+  const BYTE *visPtr;  /* The mask the rect being stamped is masked with */
+  BYTE vis[SIGHT_MASK_BYTES]; /* One block's mask, rebuilt for each of them */
   int idx;       /* Which prevLive rect the replay is up to */
   int i;         /* Looping variable */
 
@@ -801,12 +855,21 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * the tank rect, then pills, bases and allied tanks each in ascending index,
    * so walking the same order over last update's owners pairs each stale rect
    * with the region that produced it. The order is contractual: position on
-   * the list is the only thing tying a stale rect to its region. */
+   * the list is the only thing tying a stale rect to its region.
+   *
+   * The two blocks round the tank take the sight mask they were stamped under,
+   * so ground the player could not see into stays as they last saw it on the
+   * way out as well as on the way in. Watched items never carry one, here as in
+   * the live stamp. om->sightActive is still last update's value at this point -
+   * it is rewritten below, after this replay - and last update is what these
+   * rects came from, so this is the flag to read. Moving that assignment above
+   * here would quietly take the mask away. */
   idx = 0;
   if (om->haloWasLive == TRUE) {
     if (haloLive == FALSE && idx < om->prevLiveCount) {
-      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
-          TRUE) {
+      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
+                            visPtr) == TRUE) {
         changed = TRUE;
       }
     }
@@ -814,8 +877,9 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   }
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
-      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
-          TRUE) {
+      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
+                            visPtr) == TRUE) {
         changed = TRUE;
       }
     }
@@ -827,8 +891,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
     if (idx < om->prevLiveCount &&
         overviewPillLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
-      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
-          TRUE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
+                            NULL) == TRUE) {
         changed = TRUE;
       }
     }
@@ -840,8 +904,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
     if (idx < om->prevLiveCount &&
         overviewBaseLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
-      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
-          TRUE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
+                            NULL) == TRUE) {
         changed = TRUE;
       }
     }
@@ -853,8 +917,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
     if (idx < om->prevLiveCount &&
         overviewAllyLive(sim, myPlayerNum, in, (BYTE)i, &alpha) == FALSE) {
-      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE) ==
-          TRUE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
+                            NULL) == TRUE) {
         changed = TRUE;
       }
     }
@@ -884,7 +948,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     if (nowInTank == TRUE && om->pillWasInTank[i] == FALSE) {
       square.left = square.right = (int)sim->pb->item[i].x;
       square.top = square.bottom = (int)sim->pb->item[i].y;
-      if (overviewStampRect(om, sim, myPlayerNum, &square, FALSE) == TRUE) {
+      if (overviewStampRect(om, sim, myPlayerNum, &square, FALSE, NULL) ==
+          TRUE) {
         changed = TRUE;
       }
     }
@@ -911,13 +976,45 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                              square.top) == TRUE) {
       continue;
     }
-    if (overviewStampRect(om, sim, myPlayerNum, &square, FALSE) == TRUE) {
+    if (overviewStampRect(om, sim, myPlayerNum, &square, FALSE, NULL) == TRUE) {
       changed = TRUE;
     }
   }
 
+  /* Line of sight covers the blocks round the player's own tank and nothing
+   * else. The player is looking out of their tank, so a building stops them
+   * seeing past it; an item view looks out of the pillbox, base or allied tank
+   * it is watching, and what is in the way of the tank is nothing to it. The
+   * build writes the halo first when there is one and the tank block after it,
+   * so those are the rects at the head of the list.
+   *
+   * Each block is masked over its own extent rather than one mask being shared:
+   * the halo is centred on the tank while the lens sits wherever the classic
+   * view has scrolled to, so either can reach squares the other does not. The
+   * origin is the square the blocks were placed from, which for a tank that has
+   * died and is holding its block is where it died. */
+  sightOn = (in->lineOfSight == TRUE && tankLive == TRUE);
+  ownBlocks = 0;
+  if (sightOn == TRUE) {
+    ownBlocks = ((haloLive == TRUE) ? 1 : 0) + 1;
+    if (ownBlocks > om->liveCount) {
+      ownBlocks = om->liveCount;
+    }
+  }
+  om->sightActive = (ownBlocks > 0);
+
   for (i = 0; i < om->liveCount; i++) {
-    if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE) == TRUE) {
+    visPtr = NULL;
+    if (i < ownBlocks) {
+      /* Every square seen until the walk says otherwise, so a block too big
+       * for the buffer - which no experiment builds today - reads as line of
+       * sight being off rather than as whatever the last one left behind. */
+      memset(vis, 1, sizeof(vis));
+      sightBuildMask(&sim->mp, useMX, useMY, &om->live[i], vis);
+      visPtr = vis;
+    }
+    if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==
+        TRUE) {
       changed = TRUE;
     }
   }
