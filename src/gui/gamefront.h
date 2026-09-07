@@ -79,6 +79,10 @@
 #define DEFAULT_SCROLL_GUNDECREASE  40   /* SDL_SCANCODE_RETURN */
 #define DEFAULT_SCROLL_PILLVIEW     10   /* SDL_SCANCODE_G */
 
+/* Push to talk — Q is bound to nothing else, and it sits under the left hand
+   beside the movement keys (E/D/S/F), so it is reachable while driving. */
+#define DEFAULT_PUSHTOTALK   20   /* SDL_SCANCODE_Q */
+
 #define PREFERENCE_FILE "WinBolo.ini"
 
 #define TRACKER_ADDRESS "tracker.winbolo.com"

@@ -3104,13 +3104,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
-  /* Push to talk — unbound by default (scancode 0 / SDL_SCANCODE_UNKNOWN).
-     Guessing a key here would take one away from a player who never turns
-     voice on. */
-  prefsGetString("KEYS", "Push To Talk", "0", buff, FILENAME_MAX);
+  /* Push to talk — Q, which is bound to nothing else and sits under the left
+     hand beside the movement keys (E/D/S/F). An existing prefs file holds
+     whatever it was saved with, so this only reaches a fresh install. */
+  intToStr(DEFAULT_PUSHTOTALK, def, sizeof(def));
+  prefsGetString("KEYS", "Push To Talk", def, buff, FILENAME_MAX);
   keys->kiPushToTalk = atoi(buff);
 
-  /* Mute microphone — unbound by default, for the same reason. */
+  /* Mute microphone — unbound by default. */
   prefsGetString("KEYS", "Mute Mic", "0", buff, FILENAME_MAX);
   keys->kiMuteMic = atoi(buff);
 
