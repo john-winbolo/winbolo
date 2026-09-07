@@ -189,6 +189,18 @@ struct OverviewView {
     bool           fogValid;
     BYTE           fogMask[OVERVIEW_FOG_MASK_BYTES];
 
+    /* Ground that has left the regions and is still fading, under the one
+     * experiment that has any: how bright each square is left, the map
+     * generation the mask was last built at, since a fade moves squares without
+     * moving a single rect, and the span that build was made under. The
+     * generation is only read while the map says a fade is running, so every
+     * other experiment rebuilds the mask exactly when the regions move, as it
+     * always has; the span is what catches the tick a fade stops, where the
+     * regions can sit still while what the mask was built from has gone. */
+    BYTE           fogLift[OVERVIEW_FOG_MASK_BYTES];
+    unsigned       fogGeneration;
+    BYTE           fogFadeSpan;
+
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
      * else will put the system cursor back. dragWasActive carries the drag
@@ -362,12 +374,29 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
 
 /* Rebuild the mask from the regions and push it into the texture. RGBA8888 is
  * one Uint32 per texel with red in the top byte, so a white texel carrying the
- * mask as its alpha is 0xFFFFFF00 | mask. */
+ * mask as its alpha is 0xFFFFFF00 | mask.
+ *
+ * A fading square is handed to the builder as a per-square brightness: the map
+ * counts the ticks it has left, so the share of the span still to run is how
+ * far out of the fog it is drawn. The map's arrays are [x][y] and the mask is a
+ * texture row at a time, so the scratch is filled transposed. With nothing
+ * fading the builder is given none of it and the scratch is left alone. */
 static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
-    void *pixels = NULL;
-    int   pitch  = 0;
+    void       *pixels = NULL;
+    int         pitch  = 0;
+    const BYTE *lift   = NULL;
 
-    overviewFogBuildMask(om->live, om->liveCount, v->fogMask);
+    if (om->fadeSpan != 0) {
+        for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
+            BYTE *row = v->fogLift + (size_t)y * MAP_ARRAY_SIZE;
+            for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
+                row[x] = (BYTE)((int)om->fade[x][y] * 255 / (int)om->fadeSpan);
+            }
+        }
+        lift = v->fogLift;
+    }
+
+    overviewFogBuildMask(om->live, om->liveCount, lift, v->fogMask);
     if (!SDL_LockTexture(v->fog, NULL, &pixels, &pitch)) return;
 
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
@@ -403,12 +432,25 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewMap *om) {
     if (!overviewViewEnsureFog(v, r)) return;
 
+    /* A fade moves squares the rects say nothing about, so while one is running
+     * the map's generation is what the mask is held against — it counts up on
+     * any update that moved anything, the fade included. Only then: generation
+     * moves for a terrain change anywhere on the map, so reading it whatever
+     * the experiment would rebuild the mask far more often than the rects do.
+     * The span changing is the experiment being taken up or left, which has to
+     * rebuild on its own account: the tick a fade is dropped the rects can sit
+     * exactly where they were, and the mask would otherwise keep drawing a
+     * trail the map no longer has. */
     if (!v->fogValid || v->fogLiveCount != om->liveCount ||
+        om->fadeSpan != v->fogFadeSpan ||
+        (om->fadeSpan != 0 && om->generation != v->fogGeneration) ||
         SDL_memcmp(v->fogLive, om->live,
                    sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
         overviewViewUploadFog(v, om);
         SDL_memcpy(v->fogLive, om->live, sizeof(v->fogLive));
         v->fogLiveCount = om->liveCount;
+        v->fogGeneration = om->generation;
+        v->fogFadeSpan = om->fadeSpan;
         v->fogValid = true;
     }
 

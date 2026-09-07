@@ -82,6 +82,16 @@ typedef struct OverviewRect {
 typedef struct OverviewMap {
     BYTE         tile[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] tilenum index as last seen */
     BYTE         flags[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];  /* [x][y] OVERVIEW_F_* */
+    /* Afterimage's countdown: how long a square that has dropped out of the
+     * live set has left before it is back in full fog. Only Afterimage writes
+     * these, and fadeSpan is what says so - it is the value fade counts down
+     * from, and 0 under every other experiment, so nothing else has to know
+     * which experiment is running to read them. Brightness is worked out where
+     * it is drawn, as fade * 255 / fadeSpan. Another 64 KB on a struct that
+     * already carries two arrays this size, and ClientSim holds one of these by
+     * value. */
+    BYTE         fade[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];   /* [x][y] ticks left before full fog */
+    BYTE         fadeSpan;                               /* 0 when nothing is fading */
     OverviewRect live[OVERVIEW_MAX_REGIONS];             /* regions used by the latest update */
     int          liveCount;
     OverviewRect prevLive[OVERVIEW_MAX_REGIONS];         /* regions used by the update before it */

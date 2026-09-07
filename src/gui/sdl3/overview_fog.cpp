@@ -40,7 +40,8 @@ static BYTE overviewFogRampValue(float d) {
     return (BYTE)lroundf((float)OVERVIEW_FOG_ALPHA * s);
 }
 
-void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask) {
+void overviewFogBuildMask(const OverviewRect *live, int liveCount,
+                          const BYTE *lift, BYTE *mask) {
     int i; /* Looping variable */
 
     if (mask == NULL) return;
@@ -48,7 +49,10 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask) {
     /* Everything the walk below does not reach is beyond every region's ramp
      * and so carries full fog. */
     memset(mask, OVERVIEW_FOG_ALPHA, (size_t)OVERVIEW_FOG_MASK_BYTES);
-    if (live == NULL) return;
+
+    /* No list is no regions rather than nothing to do: a per-square lift with
+     * no region to go with it is a map that is all afterimage. */
+    if (live == NULL) liveCount = 0;
 
     for (i = 0; i < liveCount; i++) {
         const OverviewRect *rect = &live[i];
@@ -93,14 +97,27 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask) {
                  * the ramp's, and as the region fades every square it covers
                  * darkens towards the fog while the ramp keeps its shape at
                  * the edges. Rounded to nearest, the way the ramp itself is. */
-                int lift = ((OVERVIEW_FOG_ALPHA - (int)overviewFogRampValue(d))
-                            * (int)rect->alpha + 127) / 255;
+                int regionLift =
+                    ((OVERVIEW_FOG_ALPHA - (int)overviewFogRampValue(d))
+                     * (int)rect->alpha + 127) / 255;
 
                 /* Regions overlap — the brightest answer wins, or a pill's
                  * ramp would darken ground the tank's block has live. */
-                BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA - lift);
+                BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA - regionLift);
                 if (v < row[x]) row[x] = v;
             }
         }
+    }
+
+    /* The per-square pass, which is ground no region covers any more but that
+     * has not gone yet: 255 leaves the square as clear as a live one, 0 leaves
+     * it as the regions left it. Brightest wins here too, so a square a region
+     * already holds is never darkened by one of these. */
+    if (lift == NULL) return;
+
+    for (i = 0; i < OVERVIEW_FOG_MASK_BYTES; i++) {
+        BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA -
+                        (OVERVIEW_FOG_ALPHA * (int)lift[i]) / 255);
+        if (v < mask[i]) mask[i] = v;
     }
 }

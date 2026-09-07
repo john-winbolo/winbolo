@@ -355,6 +355,8 @@ void overviewMapReset(OverviewMap *om) {
 
   memset(om->tile, OVERVIEW_UNSEEN, sizeof(om->tile));
   memset(om->flags, 0, sizeof(om->flags));
+  memset(om->fade, 0, sizeof(om->fade));
+  om->fadeSpan = 0;
   memset(om->live, 0, sizeof(om->live));
   om->liveCount = 0;
   memset(om->prevLive, 0, sizeof(om->prevLive));
@@ -628,6 +630,68 @@ int overviewMapBuildRegions(struct GameSim *sim, BYTE myPlayerNum,
   return count;
 }
 
+/* Afterimage's per-square countdown, one tick of it. A square inside a live
+ * region is held at the full span; one the block has left steps down by one
+ * until it is back in full fog, which is what makes the ground behind the
+ * player dissolve instead of going dark the moment the block leaves it. The
+ * ticks left are what is stored rather than the brightness, so the step is
+ * exactly one tick and the fade takes the seconds it says it does whatever the
+ * tick rate is; how bright that leaves the square is worked out where it is
+ * drawn.
+ *
+ * Every square is stepped first and the live regions are written second, so
+ * neither pass has to ask whether a square is inside a region - which would be
+ * the whole map tested against every rect, every tick. The cost is one walk of
+ * the map plus the area of the regions.
+ *
+ * Returns TRUE if any square ends the tick on a different value than it
+ * started it on. A square the block still covers is stepped and then put
+ * straight back, which is no movement at all, so those are counted and
+ * discounted rather than reported: without that the map would report a change
+ * every tick for as long as the player was on this experiment. */
+static bool overviewFadeStep(OverviewMap *om, BYTE span) {
+  bool changed;  /* Did any square end up somewhere else */
+  int  stepped;  /* Squares the countdown moved on */
+  int  restored; /* Of those, the ones a live region put straight back */
+  BYTE was;      /* What a square in a region held before it was refreshed */
+  int  i;        /* Looping variable */
+  int  x;        /* Looping variable */
+  int  y;        /* Looping variable */
+
+  changed = FALSE;
+  stepped = 0;
+  restored = 0;
+  om->fadeSpan = span;
+
+  for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+      if (om->fade[x][y] > 0) {
+        om->fade[x][y]--;
+        stepped++;
+      }
+    }
+  }
+
+  for (i = 0; i < om->liveCount; i++) {
+    for (x = om->live[i].left; x <= om->live[i].right; x++) {
+      for (y = om->live[i].top; y <= om->live[i].bottom; y++) {
+        was = om->fade[x][y];
+        om->fade[x][y] = span;
+        if ((int)was + 1 == (int)span) {
+          restored++;
+        } else if (was != span) {
+          changed = TRUE;
+        }
+      }
+    }
+  }
+
+  if (stepped > restored) {
+    changed = TRUE;
+  }
+  return changed;
+}
+
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY) {
@@ -644,6 +708,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                     there is a region at all is wanted here */
   BYTE numPills; /* Pills on the map */
   BYTE numBases; /* Bases on the map */
+  unsigned span;       /* Ticks Afterimage's fade runs for */
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
   int idx;       /* Which prevLive rect the replay is up to */
@@ -885,6 +950,36 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   for (i = 0; i < MAX_TANKS; i++) {
     om->allyWasLive[i] = overviewAllyLive(sim, myPlayerNum, in, (BYTE)i,
                                           &alpha);
+  }
+
+  /* Afterimage's fade, which is the only thing that writes om->fade. The span
+   * is the seconds the fade takes in the caller's own ticks, kept inside a
+   * byte, and never 0 - a span of 0 is what says nothing is fading, so a fade
+   * that is running cannot have one. With no tick rate to measure the seconds
+   * against there is nothing to fade with, so that reads as the experiment
+   * being off.
+   *
+   * Leaving the experiment drops the whole trail on the tick it is left, so
+   * coming back to it later starts from fog rather than from what was on the
+   * map when the player last used it. Under every other experiment the span is
+   * already 0 and none of this runs at all: nothing but Afterimage pays for a
+   * walk of the map. */
+  if (in->experiment == (uint8_t)fogExperimentAfterimage &&
+      in->ticksPerSec > 0) {
+    span = (unsigned)OVERVIEW_AFTERIMAGE_SECS * in->ticksPerSec;
+    if (span > 255) {
+      span = 255;
+    }
+    if (span < 1) {
+      span = 1;
+    }
+    if (overviewFadeStep(om, (BYTE)span) == TRUE) {
+      changed = TRUE;
+    }
+  } else if (om->fadeSpan != 0) {
+    memset(om->fade, 0, sizeof(om->fade));
+    om->fadeSpan = 0;
+    changed = TRUE;
   }
 
   if (changed == TRUE) {

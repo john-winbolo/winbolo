@@ -506,6 +506,152 @@ int run_overview_regions(void) {
             }
         }
 
+        /* Afterimage is the lens with a memory: a square the block has left
+         * fades back to fog a tick at a time instead of going dark the moment
+         * it leaves. What is stored is the ticks the square has left, so the
+         * span is the seconds times the caller's tick rate - a short rate
+         * keeps the case to a handful of updates and says the same thing the
+         * game's fifty a second does. */
+        {
+            unsigned span;      /* Ticks a square takes to fade right out */
+            unsigned genBefore; /* generation before an update */
+            int t;              /* Updates since the block left the square */
+
+            span = (unsigned)OVERVIEW_AFTERIMAGE_SECS * 2;
+
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.experiment = (uint8_t)fogExperimentAfterimage;
+            fog.ticksPerSec = 2;
+            fog.viewValid = TRUE;
+            fog.viewLeft = 40;
+            fog.viewTop = 60;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->fadeSpan == (BYTE)span,
+                          "Afterimage counts down from %u, expected %u",
+                          (unsigned)om->fadeSpan, span);
+            UT_ASSERT_MSG(om->fade[41][61] == (BYTE)span,
+                          "a square inside the block is %u ticks from fog, "
+                          "expected the whole span of %u",
+                          (unsigned)om->fade[41][61], span);
+            UT_ASSERT_MSG(om->fade[200][200] == 0,
+                          "a square the block has never covered is %u ticks "
+                          "from fog, expected 0",
+                          (unsigned)om->fade[200][200]);
+
+            /* The block moves right off it, and from there it steps down one a
+             * tick until it is out. From the second update on nothing but the
+             * fade is moving, so generation advancing is the fade reporting
+             * itself - which is what keeps the fog being redrawn while the
+             * ground dissolves. */
+            fog.viewLeft = 100;
+            for (t = 1; t <= (int)span; t++) {
+                genBefore = om->generation;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                UT_ASSERT_MSG(om->fade[41][61] == (BYTE)(span - (unsigned)t),
+                              "%d updates after the block left, the square is "
+                              "%u ticks from fog, expected %u",
+                              t, (unsigned)om->fade[41][61],
+                              span - (unsigned)t);
+                if (t >= 3) {
+                    UT_ASSERT_MSG(om->generation > genBefore,
+                                  "generation stuck at %u over an update where "
+                                  "the fade moved", genBefore);
+                }
+            }
+
+            /* And there it stays, with nothing left to redraw for. */
+            genBefore = om->generation;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->fade[41][61] == 0,
+                          "a square past the end of its fade is %u ticks from "
+                          "fog, expected 0", (unsigned)om->fade[41][61]);
+            UT_ASSERT_MSG(om->generation == genBefore,
+                          "generation went from %u to %u over an update where "
+                          "nothing was fading", genBefore, om->generation);
+
+            /* Leaving the experiment drops the trail on the tick it is left,
+             * so coming back to it later does not show ground the player was
+             * looking at minutes ago. */
+            fog.experiment = (uint8_t)fogExperimentLens;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->fadeSpan == 0,
+                          "the span survived the experiment being left at %u",
+                          (unsigned)om->fadeSpan);
+            {
+                int x; /* Looping variable */
+                int y; /* Looping variable */
+
+                for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                    for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                        UT_ASSERT_MSG(om->fade[x][y] == 0,
+                                      "square %d,%d is %u ticks from fog after "
+                                      "the experiment was left, expected 0",
+                                      x, y, (unsigned)om->fade[x][y]);
+                    }
+                }
+            }
+
+            /* Every other experiment leaves both alone: a span of 0 is what
+             * says nothing is fading, and nothing but Afterimage writes a
+             * square. */
+            {
+                static const uint8_t kOthers[] = {
+                    (uint8_t)fogExperimentEnvelope,
+                    (uint8_t)fogExperimentLens,
+                    (uint8_t)fogExperimentHeadlights,
+                    (uint8_t)fogExperimentHalo
+                };
+                int i; /* Looping variable */
+                int x; /* Looping variable */
+                int y; /* Looping variable */
+
+                for (i = 0; i < (int)(sizeof(kOthers) / sizeof(kOthers[0]));
+                     i++) {
+                    overviewMapReset(om);
+                    overviewViewInputsDefaults(&fog);
+                    fog.experiment = kOthers[i];
+                    fog.ticksPerSec = 2;
+                    fog.viewValid = TRUE;
+                    fog.viewLeft = 40;
+                    fog.viewTop = 60;
+                    overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                    UT_ASSERT_MSG(om->fadeSpan == 0,
+                                  "experiment %u came out with a span of %u, "
+                                  "expected nothing fading",
+                                  (unsigned)kOthers[i],
+                                  (unsigned)om->fadeSpan);
+                    for (x = 0; x < MAP_ARRAY_SIZE; x++) {
+                        for (y = 0; y < MAP_ARRAY_SIZE; y++) {
+                            UT_ASSERT_MSG(om->fade[x][y] == 0,
+                                          "experiment %u left square %d,%d %u "
+                                          "ticks from fog, expected 0",
+                                          (unsigned)kOthers[i], x, y,
+                                          (unsigned)om->fade[x][y]);
+                        }
+                    }
+                }
+            }
+
+            /* No tick rate is no way to measure the seconds, so it reads as
+             * the experiment being off rather than as a fade of no length. */
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.experiment = (uint8_t)fogExperimentAfterimage;
+            fog.viewValid = TRUE;
+            fog.viewLeft = 40;
+            fog.viewTop = 60;
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->fadeSpan == 0,
+                          "Afterimage with no tick rate came out with a span "
+                          "of %u, expected nothing fading",
+                          (unsigned)om->fadeSpan);
+            UT_ASSERT_MSG(om->fade[41][61] == 0,
+                          "Afterimage with no tick rate left a square %u ticks "
+                          "from fog, expected 0",
+                          (unsigned)om->fade[41][61]);
+        }
+
         free(om);
     }
 

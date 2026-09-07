@@ -69,8 +69,17 @@ extern "C" {
  * are square at. A region's alpha scales its brightness: 255 gives the values
  * above, a lower one lifts every square it covers less far out of the fog, and
  * 0 reads as if the region were not in the list. No live regions at all is a
- * legitimate call and fogs the whole map. */
-void overviewFogBuildMask(const OverviewRect *live, int liveCount, BYTE *mask);
+ * legitimate call and fogs the whole map.
+ *
+ * lift is one byte per square, row-major over the map the way the mask is, and
+ * lifts each square out of the fog on its own account after the regions have
+ * had their say: 255 leaves it as clear as a live square, 0 leaves it as the
+ * regions left it, and the brightest answer wins, so no square a region holds
+ * is ever darkened by one. It is what draws the ground an Afterimage block has
+ * left and has not finished fading; NULL is no such ground, and gives the mask
+ * the regions alone produce. */
+void overviewFogBuildMask(const OverviewRect *live, int liveCount,
+                          const BYTE *lift, BYTE *mask);
 
 #ifdef __cplusplus
 }

@@ -76,6 +76,8 @@ bool          overviewFogShowRegionsGet(void);
 void          overviewFogShowRegionsSet(bool on);
 
 #define OVERVIEW_HEADLIGHT_LEAD 5   /* squares the block is pushed along the facing */
+#define OVERVIEW_AFTERIMAGE_SECS 3  /* seconds a square takes to fade back to
+                                       fog after the block leaves it */
 
 /* How far ahead of the tank the Headlights block sits, in whole squares, for
  * a 0-15 facing. The block builder and the camera that follows it both ask
@@ -220,7 +222,15 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * moment they die.
  * The view's blackout is what takes the picture away from there; the memory
  * keeps stamping underneath it. A tank that has really gone drops its block
- * outright. */
+ * outright.
+ *
+ * Under Afterimage this also runs the per-square countdown in OverviewMap::fade
+ * on: OVERVIEW_AFTERIMAGE_SECS worth of the caller's ticks inside a live
+ * region, one tick less on every square outside one, so ground the block has
+ * left dissolves rather than going dark at once. A square that moves counts as
+ * a change like any other, so generation keeps advancing while anything is
+ * still fading. Leaving the experiment - or arriving with no tick rate to
+ * measure the seconds against - clears the lot and puts fadeSpan back to 0. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY);
