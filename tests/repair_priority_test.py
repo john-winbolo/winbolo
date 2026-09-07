@@ -204,16 +204,17 @@ GAMETYPE = {"A": "open", "B": "open", "C": "open", "C2": "open",
               "D": "open", "D2": "open"}
 
 # ── print2 lines (builder_pool.lua) ───────────────────────────────────────
-# BP_DISPATCH t=453 job=rebuild target=(121,126) score=373 (score 373 = hp_w(30)
-#   x missing(15) = 450 - trip_w(0.25) x trip(308t) = 77) [linear] eta=144
+# BP_DISPATCH t=453 job=rebuild target=(121,126) score=373 (bp_score{373} = hp_w{30}
+#   x missing{15} = value{450} - trip_w{0.25} x trip{308t} = tripcost{77}) [linear] eta=144
+#   (word{value} chips: the same string feeds BrainTest's pool-grid detail popup)
 #   trip=308 trees=40-4 front=12 owner=.. claim=..
 DISP_RE = re.compile(
     r"BP_DISPATCH t=(\d+) job=(\S+) target=\((\d+),(\d+)\)(.*?) score=(-?[\d.]+) "
     r"\((.*?)\)(?: \[linear\])? "
     r"eta=(\S+) trip=(\S+) trees=(\d+)-(\d+) front=(-?\d+)")
 LINEAR_RE = re.compile(
-    r"score (-?[\d.]+) = hp_w\((\d+)\) x missing\((\d+)\) = (-?[\d.]+) - "
-    r"trip_w\(([\d.]+)\) x trip\((\d+)t\) = (-?[\d.]+)")
+    r"bp_score\{(-?[\d.]+)\} = hp_w\{(\d+)\} x missing\{(\d+)\} = value\{(-?[\d.]+)\} - "
+    r"trip_w\{([\d.]+)\} x trip\{(\d+)t\} = tripcost\{(-?[\d.]+)\}")
 DENY_RE = re.compile(
     r"BP_DENY t=(\d+) job=(\S+) target=\((\d+),(\d+)\) reason=(.*?) elig=(.*?) "
     r"score=(-?[\d.]+) trip=(\S+)")

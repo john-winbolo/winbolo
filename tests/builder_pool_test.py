@@ -141,10 +141,14 @@ DISP_RE = re.compile(
     r"\((.*?)\)(?: \[linear\])? "
     r"eta=(\S+) trip=(\S+) trees=(\d+)-(\d+) front=(-?\d+)")
 LINEAR_TERMS_RE = re.compile(
-    r"score (-?[\d.]+) = hp_w\((\d+)\) x missing\((\d+)\) = (-?[\d.]+) - "
-    r"trip_w\(([\d.]+)\) x trip\((\S+?)t\) = (-?[\d.]+)")
+    r"bp_score\{(-?[\d.]+)\} = hp_w\{(\d+)\} x missing\{(\d+)\} = "
+    r"value\{(-?[\d.]+)\} - trip_w\{([\d.]+)\} x trip\{(\S+?)t\} = "
+    r"tripcost\{(-?[\d.]+)\}")
 LEGACY_TERMS_RE = re.compile(
-    r"val (-?[\d.]+) - trip (-?[\d.]+) - danger (-?[\d.]+)")
+    r"bp_score\{(-?[\d.]+)\} = bp_base\{(-?[\d.]+)\} \+ \S+\{(-?[\d.]+)\} "
+    r"\+ front\{(-?[\d.]+)\} = value\{(-?[\d.]+)\} - trip_w\{[\d.]+\} x "
+    r"trip\{(\S+?)t\} = tripcost\{(-?[\d.]+)\} - danger_w\{[\d.]+\} x "
+    r"bp_danger\{-?[\d.]+\} = dangercost\{(-?[\d.]+)\}")
 
 
 def check_terms(score, terms):
@@ -154,7 +158,7 @@ def check_terms(score, terms):
     the particular constants -- it is that every factor the pool used is ON the
     line, so a reader can hand-check the number without opening constants.lua.
     That contract holds for both formulas, so this checks both."""
-    m = LINEAR_TERMS_RE.match(terms)
+    m = LINEAR_TERMS_RE.search(terms)
     if m:
         printed, hp_w, missing, value, trip_w, trip, c_trip = (
             float(m.group(1)), float(m.group(2)), float(m.group(3)),
@@ -165,23 +169,38 @@ def check_terms(score, terms):
                f"= {c_trip:.0f} [linear]")
         if abs(hp_w * missing - value) > 0.51:
             return False, why + f" -- but {hp_w} x {missing} is not {value}"
-        if abs(trip_w * trip - c_trip) > 0.51:
+        # trip_w prints to two places and tripcost to none, so allow half a
+        # point for the rounding plus 0.005 a tick for the weight.
+        if abs(trip_w * trip - c_trip) > 0.51 + 0.005 * trip:
             return False, why + f" -- but {trip_w} x {trip} is not {c_trip}"
-        if abs(score - (value - c_trip)) > 0.51:
+        if abs(score - (value - c_trip)) > 1.01:
             return False, why + f" -- but {value} - {c_trip} is not {score}"
         if abs(score - printed) > 0.51:
             return False, why + (f" -- the terms say {printed} and the score= "
                                  f"field says {score}")
         return True, why
-    m = LEGACY_TERMS_RE.match(terms)
+    m = LEGACY_TERMS_RE.search(terms)
     if m:
-        val, trip_c, dgr_c = (float(m.group(1)), float(m.group(2)),
-                              float(m.group(3)))
-        why = (f"score {score:.0f} = val {val:.0f} - trip {trip_c:.0f} - "
-               f"danger {dgr_c:.0f}")
-        if abs(score - (val - trip_c - dgr_c)) > 0.51:
+        printed, base, urg, front, val, trip, trip_c, dgr_c = (
+            float(m.group(1)), float(m.group(2)), float(m.group(3)),
+            float(m.group(4)), float(m.group(5)), float(m.group(6)),
+            float(m.group(7)), float(m.group(8)))
+        why = (f"score {score:.0f} = base {base:.0f} + urg {urg:.0f} + front "
+               f"{front:.0f} = val {val:.0f} - trip {trip_c:.0f} - danger "
+               f"{dgr_c:.0f}")
+        # Every chip prints with %.0f, so a sum of four of them can be two
+        # points off the unrounded arithmetic it came from. The contract is
+        # that a READER can reproduce the number, not that the printed decimals
+        # are exact.
+        if abs(base + urg + front - val) > 2.01:
+            return False, why + (f" -- but {base} + {urg} + {front} is not "
+                                 f"{val}")
+        if abs(score - (val - trip_c - dgr_c)) > 2.01:
             return False, why + (f" -- but {val} - {trip_c} - {dgr_c} = "
                                  f"{val - trip_c - dgr_c:.1f}")
+        if abs(score - printed) > 0.51:
+            return False, why + (f" -- the terms say {printed} and the score= "
+                                 f"field says {score}")
         return True, why
     return False, (f"the dispatch line's term breakdown '{terms}' matches "
                    "neither the linear nor the legacy shape -- did "
