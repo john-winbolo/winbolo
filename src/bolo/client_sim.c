@@ -1009,7 +1009,7 @@ void clientSimFillOverviewViewInputs(const ClientSim *cs,
   in->viewTarget = cs->viewport.viewTarget;
 
   in->experiment = (uint8_t)overviewFogExperimentGet();
-  in->lineOfSight = overviewLineOfSightGet();
+  in->sightMode = (uint8_t)overviewFogSightGet();
 
   /* A player with no tank in their slot has no window and no facing to report:
    * those fields keep the zeroes the defaults gave them, and viewValid says so.
@@ -2872,12 +2872,20 @@ int clientSimFogExperimentCount(void) {
   return (int)FOG_EXPERIMENT_COUNT;
 }
 
-bool clientSimGetFogLineOfSight(void) {
-  return overviewLineOfSightGet();
+int clientSimGetFogSight(void) {
+  return (int)overviewFogSightGet();
 }
 
-void clientSimSetFogLineOfSight(bool on) {
-  overviewLineOfSightSet(on);
+/* Wrapped for the same reason clientSimSetFogExperiment is: the caller steps
+ * the selector on, and stepping past the last mode belongs back at the start
+ * rather than on a value with no name or blurb to show for it. */
+void clientSimSetFogSight(int m) {
+  m = ((m % FOG_SIGHT_COUNT) + FOG_SIGHT_COUNT) % FOG_SIGHT_COUNT;
+  overviewFogSightSet((FogSightMode)m);
+}
+
+int clientSimFogSightCount(void) {
+  return (int)FOG_SIGHT_COUNT;
 }
 
 bool clientSimGetFogShowRegions(void) {
@@ -2894,6 +2902,14 @@ const char *clientSimFogExperimentName(int e) {
 
 const char *clientSimFogExperimentBlurb(int e) {
   return overviewFogExperimentBlurb((FogExperiment)e);
+}
+
+const char *clientSimFogSightName(int m) {
+  return overviewFogSightName((FogSightMode)m);
+}
+
+const char *clientSimFogSightBlurb(int m) {
+  return overviewFogSightBlurb((FogSightMode)m);
 }
 
 /* Read from the same struct the overview places the block from, so the two

@@ -49,22 +49,35 @@ typedef enum {
   FOG_EXPERIMENT_COUNT
 } FogExperiment;
 
-/* The experiment in force and whether buildings block sight inside the block,
- * with the name and the one-line description each experiment shows when it is
- * picked. Process-global and not saved, the way the scroll mechanism selector
- * is: every launch starts on Envelope with line of sight off. The name and the
- * blurb live here so the on-screen readout and anything else that lists them
- * read one source; an index outside the enum gives a placeholder string rather
- * than a read off the end of the table.
+/* What stops the player seeing inside that block: nothing, buildings, or
+ * buildings and any stand of trees more than SIGHT_TREE_MAX_DEPTH deep. One
+ * selector rather than a toggle per rule, so the readout can name the rule a
+ * screenshot was taken under. */
+typedef enum {
+  fogSightOff = 0,
+  fogSightBuildings,
+  fogSightBuildingsAndTrees,
+  FOG_SIGHT_COUNT
+} FogSightMode;
+
+/* The experiment in force and what blocks sight inside the block, with the name
+ * and the one-line description each of them shows when it is picked. Process-
+ * global and not saved, the way the scroll mechanism selector is: every launch
+ * starts on Envelope with sight off. The name and the blurb live here so the
+ * on-screen readout and anything else that lists them read one source; an index
+ * outside either enum gives a placeholder string rather than a read off the end
+ * of the table.
  *
  * Frontends reach all of these through the int-typed clientSim mirrors rather
  * than this header, which they may not include. */
 FogExperiment overviewFogExperimentGet(void);
 void          overviewFogExperimentSet(FogExperiment e);
-bool          overviewLineOfSightGet(void);
-void          overviewLineOfSightSet(bool on);
+FogSightMode  overviewFogSightGet(void);
+void          overviewFogSightSet(FogSightMode m);
 const char   *overviewFogExperimentName(FogExperiment e);
 const char   *overviewFogExperimentBlurb(FogExperiment e);
+const char   *overviewFogSightName(FogSightMode m);
+const char   *overviewFogSightBlurb(FogSightMode m);
 
 /* Whether the map overview draws its live regions as coloured outlines. The
  * fog ramps out of a region over three squares, so where a rect actually ends
@@ -122,7 +135,7 @@ typedef struct OverviewViewInputs {
     uint8_t         viewKind;      /* VIEW_KIND_* the player is watching */
     BYTE            viewTarget;    /* the pill/base index or ally player number */
     uint8_t         experiment;    /* FogExperiment */
-    bool            lineOfSight;
+    uint8_t         sightMode;     /* FogSightMode */
     bool            viewValid;     /* the classic-view fields below mean something */
     BYTE            viewLeft, viewTop;  /* first visible square of that view */
     bool            manualHold;    /* the player is holding the view off autoscroll */
@@ -134,8 +147,8 @@ typedef struct OverviewViewInputs {
  * always. No clocks, no item view, no viewable allies — so what comes out is
  * the tank block and the pillboxes the player can view through, which is the
  * region set the overview has always had. The fog fields zero with it, which
- * reads as Envelope with line of sight off and no classic view to place a
- * block from. */
+ * reads as Envelope with sight off and no classic view to place a block
+ * from. */
 void overviewViewInputsDefaults(OverviewViewInputs *in);
 
 /* Whether one proximity clock is still inside its category's window, and how
@@ -232,16 +245,18 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * still fading. Leaving the experiment - or arriving with no tick rate to
  * measure the seconds against - clears the lot and puts fadeSpan back to 0.
  *
- * With lineOfSight set, the blocks round the player's own tank are masked by
- * what the tank can actually see from where it stands: a square with a building
- * between it and the tank keeps the tile it last showed, carries
+ * With sightMode past fogSightOff, the blocks round the player's own tank are
+ * masked by what the tank can actually see from where it stands: a square with
+ * a building - or, under fogSightBuildingsAndTrees, a deep enough stand of
+ * trees - between it and the tank keeps the tile it last showed, carries
  * OVERVIEW_F_HIDDEN instead of the live and sight bits, and is left in full
  * fog. The last stamp those blocks get as they stop being live is masked the
- * same way, from the square the tank last had a block on, so letting the block
- * go does not show the player what it had been keeping from them. Watched items
- * are never masked - the player is seeing through the item, not from the tank -
- * and with the toggle off no mask is built and no square ever carries the flag.
- * OverviewMap::sightActive records which of the two the update did. */
+ * same way and under the same mode, from the square the tank last had a block
+ * on, so letting the block go does not show the player what it had been keeping
+ * from them. Watched items are never masked - the player is seeing through the
+ * item, not from the tank - and with the mode off no mask is built and no square
+ * ever carries the flag. OverviewMap::sightActive records which of the two the
+ * update did. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY);

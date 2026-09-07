@@ -42,7 +42,7 @@
 #include "screenlgm.h"
 #include "frontend.h"
 #include "interpolation.h"
-#include "overview_map.h"  /* overviewLineOfSightGet — is sight being worked out */
+#include "overview_map.h"  /* overviewFogSightGet — is sight being worked out */
 #include "sight.h"         /* sightBuildMask — which squares the tank can see */
 #include "util.h"
 
@@ -140,9 +140,9 @@ static void manScrollLog(const char *dir, ClientSim *cs) {
 
 /* Where the tank can see from the square it is standing on, over the whole
  * back buffer, in the form the view substitutes from. Returns NULL - and
- * builds nothing - while buildings do not block sight, while there is no live
- * tank to look from, or with no memory of what was seen to fall back on; the
- * view then draws every square exactly as it has always drawn it.
+ * builds nothing - while nothing blocks sight, while there is no live tank to
+ * look from, or with no memory of what was seen to fall back on; the view then
+ * draws every square exactly as it has always drawn it.
  *
  * out and vis belong to the caller and have to outlive the returned pointer.
  * vis is filled as all seen first, so a block sightBuildMask refuses reads as
@@ -151,10 +151,15 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
                                                BYTE *vis) {
   BYTE mx; /* The square the tank is standing on */
   BYTE my;
+  FogSightMode mode; /* What is blocking sight this tick */
+  SightMode rule;    /* Which blockers the walk is to count */
 
-  if (overviewLineOfSightGet() == FALSE) {
+  mode = overviewFogSightGet();
+  if (mode == fogSightOff) {
     return NULL;
   }
+  rule = (mode == fogSightBuildingsAndTrees) ? sightModeBuildingsAndTrees
+                                             : sightModeBuildings;
   if (clientSimGetMyTankMapPos(csPtr, &mx, &my) == FALSE) {
     return NULL;
   }
@@ -168,7 +173,8 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
   out->block.right = out->block.left + MAIN_BACK_BUFFER_SIZE_X - 1;
   out->block.bottom = out->block.top + MAIN_BACK_BUFFER_SIZE_Y - 1;
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, &out->block, vis);
+  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, rule, &out->block,
+                 vis);
   out->vis = vis;
   return out;
 }
@@ -522,9 +528,9 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
       }
     }
     /* Nothing moving is drawn on a square the player cannot see into. The view
-     * fill above decided which squares those are; with buildings not blocking
-     * sight none of them is, and the three lists go through untouched. */
-    if (overviewLineOfSightGet() == TRUE) {
+     * fill above decided which squares those are; with sight off none of them
+     * is, and the three lists go through untouched. */
+    if (overviewFogSightGet() != fogSightOff) {
       const screenHidden *hidden = clientSimGetHiddenView(csPtr);
       clientRenderDropHiddenTanks(&scnTnk, hidden,
                                   clientSimGetMyPlayerNum(csPtr));

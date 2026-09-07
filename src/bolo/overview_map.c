@@ -81,19 +81,19 @@
 
 /* ------------------------------------------------------------------
  * Fog experiment selector: which rule builds the block round the player's
- * own tank, and whether buildings block sight inside it. Process-global
+ * own tank, and what stops the player seeing inside it. Process-global
  * and runtime-switchable, like the scroll mechanism selector, and not
- * saved - every launch starts on Envelope with line of sight off. */
-static FogExperiment g_fogExperiment  = fogExperimentEnvelope;
-static bool          g_fogLineOfSight = FALSE;
+ * saved - every launch starts on Envelope with sight off. */
+static FogExperiment g_fogExperiment = fogExperimentEnvelope;
+static FogSightMode  g_fogSightMode  = fogSightOff;
 /* Whether the live regions are drawn as outlines over the map, so the block an
  * experiment builds can be seen through the fog ramp that softens its edge. */
 static bool          g_fogShowRegions = FALSE;
 
 FogExperiment overviewFogExperimentGet(void) { return g_fogExperiment; }
 void overviewFogExperimentSet(FogExperiment e) { g_fogExperiment = e; }
-bool overviewLineOfSightGet(void) { return g_fogLineOfSight; }
-void overviewLineOfSightSet(bool on) { g_fogLineOfSight = on; }
+FogSightMode overviewFogSightGet(void) { return g_fogSightMode; }
+void overviewFogSightSet(FogSightMode m) { g_fogSightMode = m; }
 bool overviewFogShowRegionsGet(void) { return g_fogShowRegions; }
 void overviewFogShowRegionsSet(bool on) { g_fogShowRegions = on; }
 
@@ -129,6 +129,43 @@ const char *overviewFogExperimentBlurb(FogExperiment e) {
     return "";
   }
   return kFogExperimentBlurbs[(int)e];
+}
+
+/* And what each sight mode is called, in enum order, for the same readout. */
+static const char *kFogSightNames[FOG_SIGHT_COUNT] = {
+  "Off",
+  "Buildings",
+  "Buildings and trees"
+};
+
+static const char *kFogSightBlurbs[FOG_SIGHT_COUNT] = {
+  "Buildings do not block sight",
+  "You cannot see through a building",
+  "Two trees deep is as far as you see"
+};
+
+const char *overviewFogSightName(FogSightMode m) {
+  if ((int)m < 0 || (int)m >= FOG_SIGHT_COUNT) {
+    return "Unknown";
+  }
+  return kFogSightNames[(int)m];
+}
+
+const char *overviewFogSightBlurb(FogSightMode m) {
+  if ((int)m < 0 || (int)m >= FOG_SIGHT_COUNT) {
+    return "";
+  }
+  return kFogSightBlurbs[(int)m];
+}
+
+/* What the walk is handed for a mode that is having a mask built. fogSightOff
+ * never reaches the walk through the live stamp - the caller builds no mask at
+ * all - and the farewell stamp reads last update's sightActive rather than the
+ * mode, so a mode dropped on the same tick a block goes still masks that last
+ * stamp by buildings, exactly as it did before trees were counted. */
+static SightMode overviewSightMode(uint8_t mode) {
+  return (mode == (uint8_t)fogSightBuildingsAndTrees) ? sightModeBuildingsAndTrees
+                                                      : sightModeBuildings;
 }
 
 /* Where the Headlights block sits relative to the tank. The facing table is in
@@ -314,16 +351,19 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
  * origin, and the honest answer is where it was standing when it last had a
  * block. With no such square recorded there is nothing to work from.
  *
+ * The mode is the one the live stamp below is about to use, so a block on its
+ * way out is masked by the same rule it was drawn under rather than another.
+ *
  * Every square is marked seen first, so a block too wide for the buffer reads
- * as line of sight being off rather than as whatever was in it. */
+ * as sight being off rather than as whatever was in it. */
 static const BYTE *overviewFarewellMask(const OverviewMap *om,
-                                        struct GameSim *sim,
+                                        struct GameSim *sim, SightMode mode,
                                         const OverviewRect *r, BYTE *vis) {
   if (om->sightActive == FALSE || om->haveLastTank == FALSE) {
     return NULL;
   }
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, r, vis);
+  sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, mode, r, vis);
   return vis;
 }
 
@@ -761,7 +801,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   unsigned span;       /* Ticks Afterimage's fade runs for */
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
-  bool sightOn;        /* Do buildings block sight inside the tank's blocks */
+  bool sightOn;        /* Is anything blocking sight inside the tank's blocks */
+  SightMode sightRule; /* Which blockers the mask is built from */
   int  ownBlocks;      /* Rects at the head of the list that are those blocks */
   const BYTE *visPtr;  /* The mask the rect being stamped is masked with */
   BYTE vis[SIGHT_MASK_BYTES]; /* One block's mask, rebuilt for each of them */
@@ -771,6 +812,10 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   if (om == NULL || sim == NULL || in == NULL) {
     return;
   }
+
+  /* Settled once, so the farewell stamp below and the live stamp under it
+   * cannot mask their blocks by different rules. */
+  sightRule = overviewSightMode(in->sightMode);
 
   /* Which square the tank block sits on, if there is one at all. A tank with a
    * position of its own records the square here on the way past; one that is
@@ -867,7 +912,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   idx = 0;
   if (om->haloWasLive == TRUE) {
     if (haloLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
+      visPtr = overviewFarewellMask(om, sim, sightRule, &om->prevLive[idx], vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
                             visPtr) == TRUE) {
         changed = TRUE;
@@ -877,7 +922,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   }
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, &om->prevLive[idx], vis);
+      visPtr = overviewFarewellMask(om, sim, sightRule, &om->prevLive[idx], vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
                             visPtr) == TRUE) {
         changed = TRUE;
@@ -981,9 +1026,10 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
 
-  /* Line of sight covers the blocks round the player's own tank and nothing
-   * else. The player is looking out of their tank, so a building stops them
-   * seeing past it; an item view looks out of the pillbox, base or allied tank
+  /* Sight covers the blocks round the player's own tank and nothing else. The
+   * player is looking out of their tank, so a building - and under the mode
+   * that counts them a deep enough stand of trees - stops them seeing past it;
+   * an item view looks out of the pillbox, base or allied tank
    * it is watching, and what is in the way of the tank is nothing to it. The
    * build writes the halo first when there is one and the tank block after it,
    * so those are the rects at the head of the list.
@@ -993,7 +1039,7 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * view has scrolled to, so either can reach squares the other does not. The
    * origin is the square the blocks were placed from, which for a tank that has
    * died and is holding its block is where it died. */
-  sightOn = (in->lineOfSight == TRUE && tankLive == TRUE);
+  sightOn = (in->sightMode != (uint8_t)fogSightOff && tankLive == TRUE);
   ownBlocks = 0;
   if (sightOn == TRUE) {
     ownBlocks = ((haloLive == TRUE) ? 1 : 0) + 1;
@@ -1007,10 +1053,10 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     visPtr = NULL;
     if (i < ownBlocks) {
       /* Every square seen until the walk says otherwise, so a block too big
-       * for the buffer - which no experiment builds today - reads as line of
-       * sight being off rather than as whatever the last one left behind. */
+       * for the buffer - which no experiment builds today - reads as sight
+       * being off rather than as whatever the last one left behind. */
       memset(vis, 1, sizeof(vis));
-      sightBuildMask(&sim->mp, useMX, useMY, &om->live[i], vis);
+      sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
       visPtr = vis;
     }
     if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==

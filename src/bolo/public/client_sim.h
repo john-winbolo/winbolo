@@ -1059,18 +1059,27 @@ void         clientSimSetScrollMechanism(int mech);
 
 /* Fog-experiment selector for the map overview: which rule builds the block of
    live squares round the player's own tank (0 = Envelope, the block the map has
-   always drawn), and whether buildings block sight inside it. Values match
-   FogExperiment, exposed as int so GUI callers needn't include the internal
-   overview header, with the count so a caller cycling through them doesn't
-   hardcode it. Name and blurb are the plain English a readout shows, and are
-   safe for any int. Process-global, not saved. */
+   always drawn). Values match FogExperiment, exposed as int so GUI callers
+   needn't include the internal overview header, with the count so a caller
+   cycling through them doesn't hardcode it. Name and blurb are the plain
+   English a readout shows, and are safe for any int. Process-global, not
+   saved. */
 int          clientSimGetFogExperiment(void);
 void         clientSimSetFogExperiment(int e);
 int          clientSimFogExperimentCount(void);
-bool         clientSimGetFogLineOfSight(void);
-void         clientSimSetFogLineOfSight(bool on);
 const char  *clientSimFogExperimentName(int e);
 const char  *clientSimFogExperimentBlurb(int e);
+
+/* And what stops the player seeing inside that block: 0 = off, nothing blocks;
+   1 = buildings; 2 = buildings, and no further than two trees deep into a
+   stand of forest. Values match FogSightMode, exposed the same way and with
+   the same count, name and blurb. Setting wraps, so a caller can step the
+   selector on without knowing where it ends. Process-global, not saved. */
+int          clientSimGetFogSight(void);
+void         clientSimSetFogSight(int m);
+int          clientSimFogSightCount(void);
+const char  *clientSimFogSightName(int m);
+const char  *clientSimFogSightBlurb(int m);
 
 /* Whether the map overview draws its live regions as coloured outlines. The
    fog fades out of a region rather than stopping at its edge, so the picture

@@ -1767,18 +1767,25 @@ static void fogReadoutShow(const char *line, const char *blurb) {
 
 /* What the zoom readouts append so a screenshot says what it was taken under.
    Empty on the settings the map has always drawn — experiment 0 (Envelope)
-   with line of sight off — so the usual readout reads as it always has. */
+   with sight off — so the usual readout reads as it always has. The sight mode
+   is named rather than flagged, so a shot taken under one rule is not read as
+   having been taken under the other. */
 static void fogStatusSuffix(char *out, size_t outLen) {
-    int  experiment = clientSimGetFogExperiment();
-    bool sight      = clientSimGetFogLineOfSight();
+    int experiment = clientSimGetFogExperiment();
+    int sight      = clientSimGetFogSight();
 
-    if (experiment == 0 && !sight) {
+    if (experiment == 0 && sight == 0) {
         out[0] = '\0';
         return;
     }
-    SDL_snprintf(out, outLen, " - %s%s",
+    if (sight == 0) {
+        SDL_snprintf(out, outLen, " - %s",
+                     clientSimFogExperimentName(experiment));
+        return;
+    }
+    SDL_snprintf(out, outLen, " - %s, sight: %s",
                  clientSimFogExperimentName(experiment),
-                 sight ? " +sight" : "");
+                 clientSimFogSightName(sight));
 }
 
 /* The last switch, over the top of whichever view is up. Drawn on the
@@ -4611,8 +4618,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
 
         /* Backtick steps the map overview's fog experiment on, Shift+backtick
-         * turns line of sight on and off, and the primary modifier draws the
-         * live regions as outlines. Read here rather than through the
+         * steps the sight mode on through off, buildings and buildings with
+         * trees, and the primary modifier draws the live regions as outlines. Read here rather than through the
          * bindings because they switch a playtest rather than drive the tank —
          * but backtick is a key a player may well have bound, so the binding
          * wins and the experiment keys do without it. After the Key Setup
@@ -4643,13 +4650,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                                    on ? "Live blocks drawn as outlines"
                                       : "Outlines hidden");
                 } else if ((ev.key.mod & SDL_KMOD_SHIFT) != 0) {
-                    bool on = !clientSimGetFogLineOfSight();
-                    clientSimSetFogLineOfSight(on);
+                    int next = (clientSimGetFogSight() + 1) %
+                               clientSimFogSightCount();
+                    clientSimSetFogSight(next);
                     SDL_snprintf(line, sizeof(line), "Line of sight: %s",
-                                 on ? "on" : "off");
-                    fogReadoutShow(line,
-                                   on ? "Squares behind buildings are hidden"
-                                      : "Buildings do not block sight");
+                                 clientSimFogSightName(next));
+                    fogReadoutShow(line, clientSimFogSightBlurb(next));
                 } else {
                     int next = (clientSimGetFogExperiment() + 1) %
                                clientSimFogExperimentCount();
