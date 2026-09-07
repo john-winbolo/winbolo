@@ -2614,7 +2614,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       SDL_RenderTexture(gRenderer, gStaticTex, NULL, &staticDest);
     } else {
       /* Draw map tiles via mapview */
-      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };
+      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale,
+                           (float)gZoomFactor };
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Draw pillbox/base number labels (needs fonts — stays here) */

@@ -3234,6 +3234,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_overview_snapshot.c
+    tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -3432,18 +3433,27 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
-    # The overview's camera maths, its fog mask and the in-window HUD
-    # geometry. The only src/gui/sdl3 files in this target: all three are
-    # arithmetic over plain structs with no ImGui and no SDL_Renderer include,
-    # so they link into a binary that has neither, and test_overview_camera.cpp
-    # / test_overview_fog.cpp / test_overview_hud_layout.cpp exercise them
-    # directly. The drawing half (overview_view.cpp) stays out. They keep the
-    # gui profile's public-only access rather than borrowing this target's T2;
+    # The overview's camera maths, its fog mask, the in-window HUD geometry
+    # and the sprite placement arithmetic behind mapview.c's drawers. The
+    # only src/gui/sdl3 files in this target: all four are arithmetic over
+    # plain values with no ImGui and no SDL_Renderer include, so they link
+    # into a binary that has neither, and test_overview_camera.cpp /
+    # test_overview_fog.cpp / test_overview_hud_layout.cpp /
+    # test_mapview_sprite_scale.c exercise them directly. The drawing halves
+    # (overview_view.cpp, mapview.c) stay out. They keep the gui profile's
+    # public-only access rather than borrowing this target's T2;
     # ARCHITECTURE.md's "Linked GUI sources" carries the rule a file has to
     # meet to be added here, and when the exception lapses.
+    #
+    # sprite_positions.c qualifies on the same footing as the other three:
+    # its includes are the tile atlas coordinates, tilenum.h, global.h and the
+    # GfxAnimSmoothness enum, and its functions are float arithmetic over
+    # their arguments. It is the file the log viewer already links on its
+    # own for the atlas table.
     src/gui/sdl3/overview_camera.cpp
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
+    src/gui/sdl3/sprite_positions.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4014,6 +4024,10 @@ set(_unit_test_names
     overview_snapshot_isolation
     overview_snapshot_filter
     overview_snapshot_generation
+    mapview_sprite_classic
+    mapview_sprite_ladder
+    mapview_sprite_shell_tip
+    mapview_sprite_lgm_snap
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid

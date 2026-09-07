@@ -77,17 +77,6 @@ extern "C" bool smoothScrollingEnabled;
  * squares so the map slides at the same apparent speed at every zoom. */
 #define OVERVIEW_ARROW_STEP_PX 12.0f
 
-/* Sub-steps of a game pixel the sprite pass works in.
- *
- * mapview.c places sprites with an integer zoom factor, which cannot express
- * the 0.5x, 0.75x and 1.5x rungs of the overview's ladder. So the factor is
- * fixed at this many steps per game pixel and the renderer's own scale — set
- * to zoomScale / OVERVIEW_ENTITY_SUBPX — carries the real zoom, exactly as
- * bg_game.c scales its debug text. Sixteen steps keep the rounding of the
- * camera origin, the one value that has to be handed over as an int, under a
- * quarter of a view pixel at every rung. */
-#define OVERVIEW_ENTITY_SUBPX 16
-
 /* Side of the crosshair sprite in game pixels. One more than a tile, so it
  * straddles the aim point rather than sitting in a corner of it. */
 #define OVERVIEW_CROSSHAIR_PX 17
@@ -813,37 +802,36 @@ static void overviewViewDrawEntities(OverviewView *v,
     screenLgm     *lgms = (screenLgm *)overviewSnapshotLgms(snap);
     screenBullets *sb   = (screenBullets *)overviewSnapshotBullets(snap);
 
-    /* mapview.c positions a sprite at originX - tileW + bbx * zoomFactor -
-     * edgeX, where bbx is the entity's game-pixel offset from the rect's
-     * origin. The lists were built from a rect starting at 0,0, so bbx is the
-     * offset from map square 0,0 and the whole transform reduces to placing
-     * that square: hand it the camera's answer for 0,0, converted into the
-     * sub-pixel steps the factor works in, and every sprite lands where the
-     * camera would have put it. */
+    /* mapview.c positions a sprite at originX - tileW - edgeX + bbx * scale,
+     * where bbx is the entity's game-pixel offset from the rect's origin. The
+     * lists were built from a rect starting at 0,0, so bbx is the offset from
+     * map square 0,0 and the whole transform reduces to placing that square:
+     * hand it the camera's answer for 0,0 as the origin and the rung as the
+     * scale, and every sprite lands where the camera would have put it. The
+     * origin stays a float all the way down, so the camera's fractional
+     * position is kept rather than rounded. tileW is also the size a tank
+     * sprite is drawn at, so it is one square at this zoom. */
     float zoomScale = overviewCameraZoomScale(cam);
-    float perStep   = zoomScale / (float)OVERVIEW_ENTITY_SUBPX;
     float o0x = 0.0f, o0y = 0.0f;
     overviewCameraWorldToScreen(cam, viewW, viewH, 0.0f, 0.0f, &o0x, &o0y);
 
-    int tileW = TILE_SIZE_X * OVERVIEW_ENTITY_SUBPX;
-    int tileH = TILE_SIZE_Y * OVERVIEW_ENTITY_SUBPX;
-    int originX = tileW + (int)SDL_lroundf(o0x / perStep);
-    int originY = tileH + (int)SDL_lroundf(o0y / perStep);
+    float tileW   = (float)TILE_SIZE_X * zoomScale;
+    float tileH   = (float)TILE_SIZE_Y * zoomScale;
+    float originX = o0x + tileW;
+    float originY = o0y + tileH;
 
     ctx.renderer   = r;
     ctx.tilesTex   = tiles;
-    ctx.zoomFactor = OVERVIEW_ENTITY_SUBPX;
+    ctx.zoomFactor = 1;
     ctx.sheetScale = ss;
-
-    float wasScaleX = 1.0f, wasScaleY = 1.0f;
-    SDL_GetRenderScale(r, &wasScaleX, &wasScaleY);
-    SDL_SetRenderScale(r, perStep, perStep);
+    ctx.scale      = zoomScale;
 
     /* Where a build will land, from the same mouse_square sprite the main view
      * draws. Solid while cursor mode is on or the pointer is over the map (the
      * main view draws its mouse square solid); a target that is only locked in
      * shows faint, which is the split the main view makes too. Ahead of the
-     * sprite passes so tanks and men stand on top of it. */
+     * sprite passes so tanks and men stand on top of it. Placed by the same
+     * formula as the sprites, so it sits on its square to the bit. */
     BYTE bcX = 0, bcY = 0;
     bool cursorMode  = buildCursorGetTile(&bcX, &bcY);
     bool cursorSolid = cursorMode || v->mouseOnMap;
@@ -853,10 +841,10 @@ static void overviewViewDrawEntities(OverviewView *v,
         SDL_FRect src = mapViewAtlasSrc(MOUSE_SQUARE_X, MOUSE_SQUARE_Y,
                                         TILE_SIZE_X, TILE_SIZE_Y, ss);
         SDL_FRect dst = {
-            (float)(originX - tileW + bbx * OVERVIEW_ENTITY_SUBPX),
-            (float)(originY - tileH + bby * OVERVIEW_ENTITY_SUBPX),
-            (float)(TILE_SIZE_X * OVERVIEW_ENTITY_SUBPX),
-            (float)(TILE_SIZE_Y * OVERVIEW_ENTITY_SUBPX)
+            originX - tileW + (float)bbx * zoomScale,
+            originY - tileH + (float)bby * zoomScale,
+            tileW,
+            tileH
         };
         if (!cursorSolid) SDL_SetTextureAlphaMod(tiles, 128);
         SDL_RenderTexture(r, tiles, &src, &dst);
@@ -865,16 +853,16 @@ static void overviewViewDrawEntities(OverviewView *v,
         SDL_SetTextureAlphaMod(tiles, 255);
     }
 
-    mapViewDrawShells(&ctx, sb, originX, originY, tileW, tileH, 0, 0);
-    mapViewDrawTanks(&ctx, tks, originX, originY, tileW, tileH, 0, 0);
-    mapViewDrawLGMs(&ctx, lgms, originX, originY, tileW, tileH, 0, 0);
+    mapViewDrawShells(&ctx, sb, originX, originY, tileW, tileH, 0.0f, 0.0f);
+    mapViewDrawTanks(&ctx, tks, originX, originY, tileW, tileH, 0.0f, 0.0f);
+    mapViewDrawLGMs(&ctx, lgms, originX, originY, tileW, tileH, 0.0f, 0.0f);
 
     /* The local player's own reticle, last so it sits on top of the sprites
      * the way the main view's does. Its top-left goes where a 16x16 tile
      * sprite would — mapViewDrawTanks' formula with bbx built from the
      * gunsight's square and pixel offset — which is what puts the sprite's
-     * centre pixel on the aim point. Inside the render scale, so its 17 game
-     * pixels track the map at every zoom exactly as a tank's 16 do.
+     * centre pixel on the aim point. Its 17 game pixels are scaled by the
+     * same rung as a tank's 16, so it tracks the map at every zoom.
      *
      * Drawn only when the tank sprite was: the reticle sits a gunsight's
      * length from the tank, so putting it on the picture while the tank is
@@ -890,14 +878,13 @@ static void overviewViewDrawEntities(OverviewView *v,
         int bbx = (int)gsMX * TILE_SIZE_X + (int)gsPX;
         int bby = (int)gsMY * TILE_SIZE_Y + (int)gsPY;
         SDL_FRect dst = {
-            (float)(originX - tileW + bbx * OVERVIEW_ENTITY_SUBPX),
-            (float)(originY - tileH + bby * OVERVIEW_ENTITY_SUBPX),
-            (float)(OVERVIEW_CROSSHAIR_PX * OVERVIEW_ENTITY_SUBPX),
-            (float)(OVERVIEW_CROSSHAIR_PX * OVERVIEW_ENTITY_SUBPX)
+            originX - tileW + (float)bbx * zoomScale,
+            originY - tileH + (float)bby * zoomScale,
+            (float)OVERVIEW_CROSSHAIR_PX * zoomScale,
+            (float)OVERVIEW_CROSSHAIR_PX * zoomScale
         };
         SDL_RenderTexture(r, crosshair, NULL, &dst);
     }
-    SDL_SetRenderScale(r, wasScaleX, wasScaleY);
 
     if (zoomScale >= OVERVIEW_LABEL_MIN_ZOOM) {
         overviewViewDrawLabels(v, r, cam, viewW, viewH, tks);

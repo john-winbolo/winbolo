@@ -41,8 +41,12 @@ extern "C" {
 typedef struct {
     SDL_Renderer *renderer;
     SDL_Texture  *tilesTex;
-    int           zoomFactor;
+    int           zoomFactor;  /* whole-number zoom, read by mapViewRenderCentered */
     int           sheetScale;  /* atlas scale: source coords *= sheetScale */
+    float         scale;       /* screen pixels per game pixel, read by the
+                                  sprite drawers. A positional initialiser
+                                  has to give it too: left at 0 it puts
+                                  every sprite on the origin. */
 } MapViewCtx;
 
 /* Source rect for a cell of the tile atlas, inset by a whisker on every
@@ -73,18 +77,23 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY);
 
-/* Draw pre-built sprite lists. */
+/* Draw pre-built sprite lists. The lists' square 0,0 lands at
+   originX - tileW - edgeX, and a sprite sits ctx->scale screen pixels
+   further on per game pixel. Float because the overview's camera is
+   continuous and its origin is fractional; the classic view passes whole
+   pixels and gets whole pixels back. tileW/tileH is also the size a tank
+   sprite is drawn at. */
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
-                       int originX, int originY, int tileW, int tileH,
-                       int edgeX, int edgeY);
+                       float originX, float originY, float tileW, float tileH,
+                       float edgeX, float edgeY);
 
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
-                      int originX, int originY, int tileW, int tileH,
-                      int edgeX, int edgeY);
+                      float originX, float originY, float tileW, float tileH,
+                      float edgeX, float edgeY);
 
 void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
-                     int originX, int originY, int tileW, int tileH,
-                     int edgeX, int edgeY);
+                     float originX, float originY, float tileW, float tileH,
+                     float edgeX, float edgeY);
 
 /* Adjacency-aware tile calculation from a ServerSim (no module-static state).
    selfPlayer = NEUTRAL (0xFF) for "no self" (bg_game case). */

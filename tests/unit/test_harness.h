@@ -1088,6 +1088,20 @@ int run_overview_snapshot_isolation(void);
 int run_overview_snapshot_filter(void);
 int run_overview_snapshot_generation(void);
 
+/* Sprite placement at a float scale (test_mapview_sprite_scale.c): the
+ * arithmetic behind mapViewDrawShells / Tanks / LGMs, shared by the classic
+ * view at a whole-number zoom and the overview at its 0.5x-4x ladder. At an
+ * integer scale it gives the classic formula's positions, spelled out; at
+ * every rung it matches what the overview's former sixteen-steps-per-pixel
+ * path drew, within a sixteenth of a pixel; a shell's direction frame comes
+ * back by its tip pixel times the scale and an explosion frame does not; and
+ * the LGM centring snaps to a whole game pixel from the base under Classic
+ * and Match pixelation while Smooth leaves it where the centring put it. */
+int run_mapview_sprite_classic(void);
+int run_mapview_sprite_ladder(void);
+int run_mapview_sprite_shell_tip(void);
+int run_mapview_sprite_lgm_snap(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
