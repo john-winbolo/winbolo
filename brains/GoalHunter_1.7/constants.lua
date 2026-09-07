@@ -1211,6 +1211,45 @@ M.CLIFF_MIN_SPEED       = 1      -- any motion: cliff brake + evade whenever the
 M.CLIFF_EVADE_BRADS     = 32     -- evasive turn: compare clear runway on rays rotated +-this (32 brads = 45 deg) and turn toward the freer side while braking
 M.CLIFF_STOP_MARGIN_WU  = 64     -- a quarter tile: the travel between the sample that sees water and the brake biting
 M.CLIFF_LOOK_MAX_WU     = 1280   -- 5 tiles: scan-cost bound (was 768)
+-- CLIFF_MIN_SPEED note (2026-09-06): 1 is already the lowest value that still
+-- means "moving". The remaining case is a tank at a dead stop, which the gate
+-- skips entirely -- that is what CLIFF_STOP_MASK_ALL_GOALS below covers. 0 is
+-- a benchable alternative (`cfg=CLIFF_MIN_SPEED=0`: it is a plain number, so
+-- the per-bot override accepts it) that would run the whole brake+evade block
+-- on a stopped tank as well; not proposed as a default, since a stopped tank
+-- has no momentum problem and the evade would turn it every tick.
+
+-- ── the 20260905_231835 bot3 drowning (t=71330) ───────────────────────────
+-- Tank at world (36104,36093) = tile (141,140), i.e. 8 wu inside column 141
+-- and 3 wu above row 141, with deep sea at (141,141) and headings wobbling
+-- 133-135. Four things had to line up; these four knobs are the four halves
+-- of the fix, the first two ON (they are the fix) and the last two OFF (they
+-- are proposals, benchable, today's behaviour is the default).
+--
+-- 1. The brake ray corner-cut the killer tile. Its 64 wu samples only look up
+--    the tile the sample LANDS in; at dir >= 134 the first sample jumped
+--    (141,140) -> (140,141) and never tested (141,141) or (140,140), the two
+--    tiles it cut across. It fired at dir <= 133 and missed at 134-135, so
+--    the brake flickered on and off with the 2-brad wobble.
+M.CLIFF_RAY_CORNER_CHECK = true   -- brake ray also tests the two tiles a both-axes sample hop cut across (KEEL: false)
+-- 2. Once braked to a standstill the guard stops running (CLIFF_MIN_SPEED)
+--    and navigate's single KEY_FASTER tick drove the tank in -- 6 wu south,
+--    forward, no reverse gear involved. The attack_tank branch already had a
+--    one-tile deep-sea mask; this generalises it to every goal at the single
+--    choke point in M.steer. Clears KEY_FASTER, sets KEY_SLOWER, never turns.
+M.CLIFF_STOP_MASK_ALL_GOALS = true  -- stopped/slow tank cannot accelerate into adjacent deep sea, any goal (KEEL: false)
+-- 3. PROPOSAL (default OFF = today's behaviour). The turn-cap ramp floors at
+--    `math.max(6, ...)`, so even a 172-degree u-turn keeps rolling at speed 6
+--    instead of pivoting. ON drops that floor to 0 while the u-turn latch is
+--    committed, i.e. every committed u-turn becomes a pivot in place. This is
+--    a behaviour change on every map, not just shorelines -- bench it.
+M.TURN_CAP_UTURN_PIVOT = false    -- committed u-turn: turn-cap floor 6 -> 0 (pivot in place)
+-- 4. PROPOSAL (default OFF = today's behaviour). The u-turn latch picks its
+--    side from the shorter angle with no terrain awareness; here the shorter
+--    way round swept the nose south over the sea. ON prefers the side whose
+--    half-turn sweep crosses no deep sea within a tile; a tie (both clear or
+--    both fouled) keeps today's shorter-angle choice.
+M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep sea under the nose
 
 -- -------------------------------------------------------------------------
 -- Shell trajectory prediction
@@ -3586,6 +3625,18 @@ M.PRESETS = {
     -- home mirrored the walk out, as if the tank had stood still, which priced
     -- a forest ahead of a moving tank exactly like one behind it.
     BUILDER_POOL_RETURN_PREDICT = false,
+    -- 2026-09-06: the global cliff brake's heading ray now also tests the two
+    -- tiles a 64 wu sample hop cut across when it changed BOTH axes. KEEL only
+    -- looked up the tile each sample landed in, so on the DH-Oil Rig staircase
+    -- the ray stepped clean over the deep tile 3 wu in front of the tank
+    -- (20260905_231835 bot3 t=71330) and no brake fired.
+    CLIFF_RAY_CORNER_CHECK = false,
+    -- 2026-09-06: a stopped or crawling tank can no longer accelerate into a
+    -- deep-sea tile directly ahead (or diagonally corner-cut) whatever its
+    -- goal -- M.steer clears KEY_FASTER and sets KEY_SLOWER. KEEL had that
+    -- mask on attack_tank only (that one is unconditional and still runs), so
+    -- every other goal's navigate branch could drive a braked tank in.
+    CLIFF_STOP_MASK_ALL_GOALS = false,
     -- 2026-09-06: the pool-1 mine-hoard staying-cost is now WAIVED while the
     -- tank is still below a target and the base under it still holds
     -- REFUEL_MIN_STOCK of that supply. KEEL charges it whenever the tank is
