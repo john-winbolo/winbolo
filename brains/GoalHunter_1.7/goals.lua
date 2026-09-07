@@ -15603,21 +15603,66 @@ local function goal_selection(state, world, info, quiet)
 
       if state.lgm_stranded and (lgm_mx > 0 or lgm_my > 0) then
         -- Don't drive off to fetch the LGM while a hostile tank or
-        -- pill is actively shooting at us: under_fire (shell trajectory
-        -- over our tile / angry pill in range) or _shot_by_tank (took
-        -- tank damage with no predicted shell — point-blank etc.). The
-        -- stranded flag stays set, so the rescue fires as soon as the
-        -- shooting stops; until then the normal pools deal with the
-        -- attacker.
-        local fire_suppress = ((state.perc and state.perc.under_fire)
-                               or state._shot_by_tank) or false
+        -- pill is actively shooting at us. _shot_by_tank (took tank
+        -- damage with no predicted shell — point-blank etc.) is the
+        -- unchanged half. The other half used to be perc.under_fire,
+        -- which is the STATIC danger field at our tile
+        -- (danger.danger_at(tile) > 0) and so stays true for as long
+        -- as ANY hostile or neutral pill's stamp covers where we are
+        -- parked. Anger is not required and neither is firing: a CALM
+        -- pill stamps PILL_DANGER_BASE over a PILL_RANGE_MAP disk all
+        -- the same. That is a suppression the tank can only lift
+        -- by moving, and the goal that would have moved it was itself
+        -- waiting on this man — the 2026-09-07 Everard deadlock.
+        -- RESCUE_LGM_SUPPRESS_BY_FIRE_AGE swaps it for the sustained
+        -- clock the builder pool already uses for the same question:
+        -- danger.tank_fire_age is "armour actually dropped, or a hostile
+        -- round's closest approach lands inside SWERVE_HIT_RADIUS_WU",
+        -- and it goes quiet BUILDER_POOL_UNDER_FIRE_TICKS after the last
+        -- such event. The stranded flag stays set either way, so the
+        -- rescue fires as soon as the gate opens; until then the normal
+        -- pools deal with the attacker.
+        local fire_age, fire_why = nil, nil
+        local fire_hot
+        if C.RESCUE_LGM_SUPPRESS_BY_FIRE_AGE then
+          fire_age, fire_why = danger.tank_fire_age(state, now)
+          fire_hot = (fire_age ~= nil
+                      and fire_age < (C.BUILDER_POOL_UNDER_FIRE_TICKS or 100))
+        else
+          fire_hot = (state.perc and state.perc.under_fire) or false
+        end
+        local fire_suppress = (fire_hot or state._shot_by_tank) or false
         if state._lgm_stranded_factors then
           state._lgm_stranded_factors.fire_suppress = fire_suppress
+          state._lgm_stranded_factors.fire_age = fire_age
+          state._lgm_stranded_factors.fire_why = fire_why
+        end
+        if BRAIN_DEBUG_MODE then
+          -- Rate-limited to state CHANGES: a suppression that lasts
+          -- 79k ticks should print once, not 79k times. Debug output
+          -- only; nothing below reads _rescue_gate_last.
+          local _sig = string.format("%s|%s|%s",
+            tostring(fire_suppress), tostring(fire_age), tostring(fire_why))
+          if state._rescue_gate_last ~= _sig then
+            state._rescue_gate_last = _sig
+            print2(string.format(
+              "RESCUE_GATE t=%d stranded=1 mode=%s fire_age=%s why=%s shot_by_tank=%s under_fire=%s suppress=%s",
+              now,
+              C.RESCUE_LGM_SUPPRESS_BY_FIRE_AGE and "fire_age" or "static",
+              tostring(fire_age), tostring(fire_why),
+              tostring(state._shot_by_tank or false),
+              tostring((state.perc and state.perc.under_fire) or false),
+              tostring(fire_suppress)))
+          end
         end
         if fire_suppress then
           log.reason("goal", {
             pick = "rescue_lgm-suppressed",
-            why = "under fire (hostile tank/pill shooting at us)",
+            why = C.RESCUE_LGM_SUPPRESS_BY_FIRE_AGE
+                  and string.format("under fire (fire_age=%s why=%s shot_by_tank=%s)",
+                                    tostring(fire_age), tostring(fire_why),
+                                    tostring(state._shot_by_tank or false))
+                  or "under fire (hostile tank/pill shooting at us)",
             mx = lgm_mx, my = lgm_my,
           })
         else

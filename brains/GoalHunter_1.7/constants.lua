@@ -692,6 +692,19 @@ M.ATTACK_RUSH_ARRIVE      = 1   -- mdist to pill to count as "arrived" during ru
 M.ATTACK_RUSH_MIN_ARMOUR  = 5     -- only rush when armour >= this (a 1-shot kill is near risk-free)
 M.ATTACK_RUSH_MAX_ANGER   = 0.34  -- pill anger must be <= this (~one PILL_ANGER_BUMP)
 M.ATTACK_RUSH_STANDOFF    = 1.5   -- tiles from pill center to park the point-blank charge
+
+-- 2026-09-07: attack_pill's plan_position hold ("wait for the LGM to come back
+-- before starting the angle sweep") had no exit for a man who is never coming
+-- back. On Everard the man walked into a spot his straight-line engine walk
+-- could not leave, the brain flagged state.lgm_stranded, and the take held in
+-- plan_position for 79k ticks -- the tank never moved, so the danger field
+-- never cleared, so the rescue that would have fetched him stayed suppressed.
+-- A stranded man is exactly the case where waiting cannot pay off, so the hold
+-- is skipped and plan_position proceeds (the rescue override, once un-stuck,
+-- normally takes over anyway). No timeout is added -- a NON-stranded man that
+-- is genuinely walking home is still worth waiting for, and every observed
+-- freeze had the stranded flag set.
+M.ATTACK_PP_HOLD_SKIP_STRANDED = true  -- false = hold even on a stranded man (pre-2026-09-07)
 M.HARDLINE_ENGAGE_RANGE   = 10    -- only switch to kill_hardline within this many tiles of the pill (PILL_FIRE_RANGE 8 + 2). Farther away, use the normal approach (which handles boats / disembark); the hardline land-rush only kicks in once we're near firing range.
 M.HARDLINE_FIRE_AIM_TOL   = 8     -- kill_hardline fires only when the tank's heading is within this many degrees of the pill, so the shot we fire matches the pill-aimed line shot_path_clear validated (never lob a shell off-axis into a stray pillbox/base while driving).
 
@@ -1162,6 +1175,21 @@ M.LGM_ETA_DEPART_BUFFER    = 10  -- ticks: leave base this many ticks before LGM
 M.LGM_NEARBY_TILES         = 3   -- tiles: consider LGM "nearby" within this range
 M.LGM_NEARBY_ARRIVAL_TICKS = 60  -- ticks: if LGM arrives within this, skip rescue
 M.LGM_NEARBY_NOPACE_TICKS  = 30  -- ticks: if LGM arrives within this, don't slow down
+
+-- 2026-09-07: the rescue_lgm override's "don't drive off to fetch the man
+-- while we are being shot at" test. It used perc.under_fire, which is the
+-- STATIC danger field at our tile (perception.lua: danger.danger_at(tile) > 0)
+-- and therefore stays true for as long as ANY hostile or neutral pill's stamp
+-- covers where we are standing. Anger is not required: a CALM pill still stamps
+-- PILL_DANGER_BASE (8) over a PILL_RANGE_MAP (9 tile) disk whether or not it
+-- ever fires, so a quiet standoff reads "under fire" for ever. That produced the Everard freeze: man stranded,
+-- attack_pill holding in plan_position waiting for him, rescue suppressed
+-- every replan by a field that only clears if we MOVE. Same reasoning the
+-- builder pool already wrote down for its own eligibility gate, so the same
+-- clock is used: danger.tank_fire_age (armour actually dropped, or a hostile
+-- round's closest approach lands inside SWERVE_HIT_RADIUS_WU) with the pool's
+-- BUILDER_POOL_UNDER_FIRE_TICKS window. _shot_by_tank is unchanged either way.
+M.RESCUE_LGM_SUPPRESS_BY_FIRE_AGE = true   -- false = old static perc.under_fire rule
 
 -- wait_for_lgm: when the LGM is out (farming, opportunistic build) but
 -- not stranded, inject a low-cost wait_for_lgm candidate so the bot
@@ -3789,6 +3817,18 @@ M.PRESETS = {
     -- 2026-09-07: harassers removed (HARASSER_FRAC 0.20 -> 0, FRAC_MAX 0.50 -> 0).
     HARASSER_FRAC = 0.20,
     HARASSER_FRAC_MAX = 0.50,
+    -- 2026-09-07: rescue_lgm's fire suppression now reads danger.tank_fire_age
+    -- (nothing has actually hit us or been inbound for
+    -- BUILDER_POOL_UNDER_FIRE_TICKS) instead of perc.under_fire, the static
+    -- danger field at our tile. KEEL is the static field, which ANY hostile or
+    -- neutral pill in stamp range holds true forever -- calm or angry, firing or
+    -- not -- and which therefore never lets a stranded man be fetched from
+    -- inside that pill's disk.
+    RESCUE_LGM_SUPPRESS_BY_FIRE_AGE = false,
+    -- 2026-09-07: attack_pill no longer holds in plan_position waiting for an
+    -- LGM the brain has already flagged state.lgm_stranded. KEEL holds for
+    -- him regardless, which is the other half of the Everard deadlock.
+    ATTACK_PP_HOLD_SKIP_STRANDED = false,
     -- 2026-09-06: SHELLS_LOW 20 -> 19 (Andrew: "SHELLS_LOW=19 is really what I
     -- want"). KEEL treats exactly 20 shells as low; the new default does not.
     SHELLS_LOW = 20,
