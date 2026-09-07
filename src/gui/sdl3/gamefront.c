@@ -3108,19 +3108,36 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
+  /* The voice keys shipped unbound, so every preferences file written before
+     they had defaults holds an explicit 0 for both and would never see the
+     defaults below. Apply them once over that stored 0, and record that it has
+     been done: after this the player's own binding stands, an empty one
+     included, so Clear in key setup is not undone on the next launch. */
+  prefsGetString("KEYS", "Voice Defaults Applied", "", buff, FILENAME_MAX);
+  bool voiceKeyDefaults = (buff[0] == '\0');
+
   /* Push to talk — Q, which is bound to nothing else and sits under the left
-     hand beside the movement keys (E/D/S/F). An existing prefs file holds
-     whatever it was saved with, so this only reaches a fresh install. */
+     hand beside the movement keys (E/D/S/F). A file saved while the key was
+     unbound holds 0, which the one-shot above turns into Q. */
   intToStr(DEFAULT_PUSHTOTALK, def, sizeof(def));
   prefsGetString("KEYS", "Push To Talk", def, buff, FILENAME_MAX);
   keys->kiPushToTalk = atoi(buff);
+  if (voiceKeyDefaults && keys->kiPushToTalk == 0) {
+    keys->kiPushToTalk = DEFAULT_PUSHTOTALK;
+  }
 
   /* Mute microphone — Z, on the same terms as the key above: unbound
-     elsewhere, and only reaching a prefs file that does not already hold a
-     binding for it. */
+     elsewhere, and taking the default over a stored 0 the first time only. */
   intToStr(DEFAULT_MUTEMIC, def, sizeof(def));
   prefsGetString("KEYS", "Mute Mic", def, buff, FILENAME_MAX);
   keys->kiMuteMic = atoi(buff);
+  if (voiceKeyDefaults && keys->kiMuteMic == 0) {
+    keys->kiMuteMic = DEFAULT_MUTEMIC;
+  }
+
+  /* Marked here rather than in gameFrontPutPrefs so a session that never
+     saves its preferences does not apply the defaults a second time. */
+  prefsSetString("KEYS", "Voice Defaults Applied", "Yes");
 
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
   prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);

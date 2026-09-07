@@ -297,6 +297,8 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiQuickWall    = DEFAULT_QUICKWALL;
   keys->kiQuickPillbox = DEFAULT_QUICKPILLBOX;
   keys->kiQuickMine    = DEFAULT_QUICKMINE;
+  keys->kiPushToTalk   = DEFAULT_PUSHTOTALK;
+  keys->kiMuteMic      = DEFAULT_MUTEMIC;
 }
 
 /* Outbound control-event callbacks. Desktop wires these in gamefront.c; the
