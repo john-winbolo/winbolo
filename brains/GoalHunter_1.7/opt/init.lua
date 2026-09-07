@@ -3067,11 +3067,13 @@ function Brain.think(info)
   local send_msg = nil
   local msg_dest = 0
 
+  local open_msg_this_tick = false
   if state.send_open_msg then
     send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
     msg_dest = bit.lshift(1, state.player_number)
     state.send_open_msg = false
+    open_msg_this_tick = true
   end
 
   -- Process EVERY incoming chat message this tick. info.messages is
@@ -7419,6 +7421,18 @@ function Brain.think(info)
     -- Anything that didn't fit left its producer's "needs send" flag set and
     -- re-queues next tick. Done before the human-chat block (different routing,
     -- shares the one buffer) so batched internal traffic takes precedence.
+    -- The internal batch outranks the one-shot "loaded" greeting: the
+    -- greeting used to take the tick's single send slot while the batch --
+    -- whose /info state slate had ALREADY been recorded as sent -- was
+    -- silently dropped, so a bot's first claim (goal=capture_pill target=N)
+    -- never reached its allies until the goal changed or the 1500-tick
+    -- heartbeat (2026-09-07 ally_capture_guard arena A: the ally scooped the
+    -- corpse at t=207 with zero state slates sent). Defer the greeting a tick.
+    if #_batch > 0 and send_msg and open_msg_this_tick then
+      state.send_open_msg = true
+      send_msg = nil
+      msg_dest = 0
+    end
     if #_batch > 0 and not send_msg then
       send_msg = table.concat(_batch, comms.MSG_SEP)
       msg_dest = 0

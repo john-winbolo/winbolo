@@ -4175,13 +4175,43 @@ function M.update_attack_substate(goal, state, world, info)
          -- gone PILL_ANGER_DECAY ticks without a hit it's fully calm even if
          -- the anger proxy reads stale-high.
          or ((state.tick or 0) - (pill.last_hit_tick or 0)) >= (C.PILL_ANGER_DECAY or 3000))
+  -- ...and a man the brain has already flagged state.lgm_stranded is NOT
+  -- coming back, so waiting for him is not a wait, it is a freeze. On
+  -- Everard (2026-09-07) this hold ran for 79k ticks: the tank never moved,
+  -- so the static danger field over its tile never cleared, so the
+  -- rescue_lgm override that would have fetched the man stayed suppressed,
+  -- so the man never returned. Skipping the hold on a stranded man breaks
+  -- that loop from this side; goals.lua's RESCUE_LGM_SUPPRESS_BY_FIRE_AGE
+  -- breaks it from the other. Deliberately no timeout: a man who is merely
+  -- walking home is still worth waiting for, and every freeze seen so far
+  -- had the stranded flag set.
+  local _pp_hold_stranded = C.ATTACK_PP_HOLD_SKIP_STRANDED
+                            and state.lgm_stranded or false
   if goal.substate == "plan_position"
      and not goal.scan_spots
      and not _hardline_candidate
+     and not _pp_hold_stranded
      and info.man_status ~= C.LGM_INTANK
      and info.man_status ~= C.LGM_DEAD then
+    if BRAIN_DEBUG_MODE then
+      -- A silent hold is the whole bug; print it once every 50 ticks so a
+      -- BrainTest session shows the wait instead of just showing nothing.
+      local _now = state.tick or 0
+      if not goal._pp_hold_since then goal._pp_hold_since = _now end
+      if not goal._pp_hold_print
+         or (_now - goal._pp_hold_print) >= 50 then
+        goal._pp_hold_print = _now
+        print2(string.format(
+          "PP_HOLD_LGM t=%d pill=(%d,%d) man_status=%d stranded=%s held=%d",
+          _now, pmx, pmy, info.man_status or -1,
+          tostring(state.lgm_stranded or false),
+          _now - goal._pp_hold_since))
+      end
+    end
     return  -- hold, don't advance plan_position until LGM is back
   end
+  goal._pp_hold_since = nil
+  goal._pp_hold_print = nil
 
   -- Only log on substate transitions (avoid spamming every tick)
   if goal.substate ~= goal._last_logged_sub then

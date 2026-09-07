@@ -1585,6 +1585,8 @@ function Brain.think(info)
           _dbg_death.evt_cause  = _d[3]
           _dbg_death.evt_killer = _d[1]
           _dbg_death.evt_tick   = now
+          -- 4th data byte = how many pillboxes we were hauling when we died.
+          _dbg_death.evt_carry  = _d[4]
         end
       end
     end
@@ -1597,6 +1599,11 @@ function Brain.think(info)
       _dbg_death.alive_mx     = bit.rshift((info.tankx or 0), 8)
       _dbg_death.alive_my     = bit.rshift((info.tanky or 0), 8)
       _dbg_death.alive_armour = _arm
+      -- Carried pills as of the last ALIVE tick: by the time info.dead is true
+      -- the haul is already on the ground, so this is the only in-brain view of
+      -- what the tank was carrying. The engine's own count rides on the kill
+      -- event (evt_carry) and is preferred when the event landed.
+      _dbg_death.alive_carry  = info.carried_pills or 0
     end
   end
 
@@ -1955,11 +1962,24 @@ function Brain.think(info)
                       })[_terr] or ("t" .. tostring(_terr))
       print2(string.format(
         "DEATH t=%d cause=%s tile=(%d,%d) terrain=%s armour=%s last_hit_age=%d"
-        .. " goal=%s sub=%s killer=%s alive_t=%s",
+        .. " goal=%s sub=%s tgt=(%s,%s) carry=%s carry_evt=%s killer=%s alive_t=%s",
         now, _cause, _mx, _my, _tname, tostring(_dbg_death.alive_armour),
         _dbg_death.drop_tick and (now - _dbg_death.drop_tick) or -1,
         tostring(state.goal and state.goal.kind),
         tostring(state.goal and state.goal.substate),
+        tostring(state.goal and state.goal.mx),
+        tostring(state.goal and state.goal.my),
+        -- carry: how many pillboxes we were hauling, taken from the BRAIN's
+        -- last alive tick. It is NOT taken from the kill event, because the
+        -- engine only fills EVENT_TANK_KILLED data[4] on a DROWNING
+        -- (tank.c tankKill(..., tankGetNumCarriedPills)); both shell-kill call
+        -- sites pass a hardcoded 0 (shells.c), so the event byte reads 0 for
+        -- every shell death — which is most of them. carry_evt prints the raw
+        -- event byte beside it, so a drowning can still be cross-checked and
+        -- the two are never silently conflated.
+        tostring(_dbg_death.alive_carry),
+        tostring((_dbg_death.evt_tick ~= nil and (now - _dbg_death.evt_tick) <= 4
+                  and _dbg_death.evt_carry) or "n/a"),
         tostring(_dbg_death.evt_killer), tostring(_dbg_death.alive_tick)))
     end
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
@@ -3963,11 +3983,13 @@ function Brain.think(info)
   local send_msg = nil
   local msg_dest = 0
 
+  local open_msg_this_tick = false
   if state.send_open_msg then
     send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
     msg_dest = bit.lshift(1, state.player_number)
     state.send_open_msg = false
+    open_msg_this_tick = true
   end
 
   -- Process EVERY incoming chat message this tick. info.messages is
@@ -9623,6 +9645,18 @@ function Brain.think(info)
     -- Anything that didn't fit left its producer's "needs send" flag set and
     -- re-queues next tick. Done before the human-chat block (different routing,
     -- shares the one buffer) so batched internal traffic takes precedence.
+    -- The internal batch outranks the one-shot "loaded" greeting: the
+    -- greeting used to take the tick's single send slot while the batch --
+    -- whose /info state slate had ALREADY been recorded as sent -- was
+    -- silently dropped, so a bot's first claim (goal=capture_pill target=N)
+    -- never reached its allies until the goal changed or the 1500-tick
+    -- heartbeat (2026-09-07 ally_capture_guard arena A: the ally scooped the
+    -- corpse at t=207 with zero state slates sent). Defer the greeting a tick.
+    if #_batch > 0 and send_msg and open_msg_this_tick then
+      state.send_open_msg = true
+      send_msg = nil
+      msg_dest = 0
+    end
     if #_batch > 0 and not send_msg then
       send_msg = table.concat(_batch, comms.MSG_SEP)
       msg_dest = 0
