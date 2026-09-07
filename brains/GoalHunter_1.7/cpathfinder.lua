@@ -165,6 +165,32 @@ function M.configure(opts)
   for key, default in pairs(DEFAULT_CONFIG) do
     cpf_set_config(key, opts[key] or default)
   end
+
+  -- On-foot deep-sea rule in the Dijkstra next-step fallbacks
+  -- (C.PF_NEXTSTEP_FOOT_SEA_RULE; PRESETS.keel = false). Set here, not in
+  -- DEFAULT_CONFIG, because that loop reads `opts[key] or default` and so
+  -- cannot carry an explicit false. The C side takes a float: 0 = off.
+  local foot_sea = opts.nextstep_foot_sea_rule
+  if foot_sea == nil then foot_sea = C.PF_NEXTSTEP_FOOT_SEA_RULE end
+  cpf_set_config("nextstep_foot_sea_rule", foot_sea and 1 or 0)
+end
+
+-- Last veto sequence number seen from the C pathfinder, so the debug print
+-- below fires once per NEW veto instead of every tick after the first one.
+-- Debug bookkeeping only: nothing reads it to make a decision.
+local _sea_veto_seq = 0
+
+-- Print the PF_SEA_VETO line if the C next-step call we just made rejected a
+-- tile under the on-foot deep-sea rule. Cheap (one C call, six integers) and
+-- only made when the brain is recording.
+local function _report_sea_veto()
+  if not BRAIN_DEBUG_MODE then return end
+  local seq, fx, fy, rx, ry, px, py = cpf_sea_veto()
+  if seq == _sea_veto_seq then return end
+  _sea_veto_seq = seq
+  print2(string.format(
+    "PF_SEA_VETO t=%d from=(%d,%d) rejected=(%d,%d) picked=(%d,%d)",
+    _G._BRAIN_TICK or 0, fx, fy, rx, ry, px, py))
 end
 
 -- Thin wrappers over cpf_* globals
@@ -293,7 +319,13 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
     -- obstacles: optional live tile-key set (y*256+x) the tracer veers around
     -- at trace time (instant ally-tank dodge, no slate recompute).
-    local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy, obstacles, avoid_penalty)
+    -- in_boat is the tank's LIVE boat state, and it is passed because the C
+    -- side's on-foot deep-sea rule must not read the slate's SEED state: for a
+    -- few ticks after the tank boards, every live slate still says "on foot"
+    -- and the rule would refuse to let the boat move onto the water.
+    local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy,
+                                          obstacles, avoid_penalty, in_boat)
+    _report_sea_veto()
     if nx then
       if BRAIN_DEBUG_MODE then
         print2(string.format("nav: dij (%d,%d)->(%d,%d) next=(%d,%d)", sx, sy, dx, dy, nx, ny))
@@ -386,9 +418,15 @@ end
 
 -- Obstacle-aware next step (for viz / callers that want the veered route
 -- directly). obstacles: flat array of packed tile keys (y*256+x); penalty
--- defaults large. Returns nx, ny or nil.
-function M.dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty)
-  return cpf_dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty)
+-- defaults large. in_boat is the tank's LIVE boat state (0/1) and is optional:
+-- pass it from any caller that is actually steering the tank, and leave it out
+-- of viz probes and cost sweeps, where the C side falls back to the slate's own
+-- seed state. Returns nx, ny or nil.
+function M.dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty, in_boat)
+  local nx, ny = cpf_dijkstra_next_step(kind, sx, sy, dx, dy, obstacles,
+                                        penalty, in_boat)
+  _report_sea_veto()
+  return nx, ny
 end
 
 --- Smart lookup: searches all slates of matching kind in started_tick

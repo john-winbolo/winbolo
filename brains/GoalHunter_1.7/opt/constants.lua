@@ -1251,6 +1251,25 @@ M.TURN_CAP_UTURN_PIVOT = false    -- committed u-turn: turn-cap floor 6 -> 0 (pi
 --    both fouled) keeps today's shorter-angle choice.
 M.UTURN_SIDE_AVOID_SEA = false    -- u-turn side prefers the sweep with no deep sea under the nose
 
+-- 5. STICKY CLIFF BRAKE (2026-09-06 drowning analysis, fix (c)).
+--    Both guards above are decided FRESH every tick off a heading ray. While
+--    the tank is turning, sub-tile jitter moves the ray by a couple of brads
+--    and it misses the sea tile it hit last tick -- and on that tick navigate
+--    runs normally and returns KEY_FASTER. Net result is forward creep at the
+--    water's edge with a brake that "fired": 20260906_184924_1_drown13 bot0
+--    t=29523 drowned with FULL armour and nobody near it, having braked on
+--    only 5 of the last 23 ticks.
+--    ON: when either guard names a deep-sea tile, remember it for
+--    CLIFF_BRAKE_STICKY_TICKS brain ticks and clear KEY_FASTER / set
+--    KEY_SLOWER at the single key exit point on EVERY one of those ticks,
+--    whatever the ray sees. Turn keys pass through untouched, so the tank
+--    keeps rotating away while it cannot accelerate. Boats are exempt (deep
+--    sea is where they belong) and so is escape_water, which is how we
+--    recover FROM water -- the same exemption the brake itself has.
+--    It never issues a turn key and never sets KEY_FASTER.
+M.CLIFF_BRAKE_STICKY       = true  -- latch "no forward throttle" after a cliff guard fires (KEEL: false)
+M.CLIFF_BRAKE_STICKY_TICKS = 8     -- brain ticks (20 ms each) the latch holds
+
 -- -------------------------------------------------------------------------
 -- Shell trajectory prediction
 -- -------------------------------------------------------------------------
@@ -1392,6 +1411,24 @@ M.DIJKSTRA_SHORT_BUDGET         = 500   -- hard node-expansion cap per tick for 
                                         -- (10 ticks ?? 500 = 5000 nodes ??? 10-tile radius)
 M.DIJKSTRA_SHORT_MAX_COST       = 0     -- 0 = unlimited; expansion budget limits coverage, not cost cap
 M.DIJKSTRA_SHORT_RESTART_DIST   = 2     -- tank-moved threshold for short-range restart
+-- ON-FOOT DEEP-SEA RULE IN THE DIJKSTRA NEXT-STEP FALLBACKS (2026-09-06
+-- drowning analysis, fix (a)). brainPathfinderDijkstraNextStep's two
+-- 8-neighbour fallbacks -- the live-obstacle veer and the "tank drifted off
+-- the traced chain" descent -- picked a neighbour by min(g_land, g_boat) with
+-- no on-foot passability test and no diagonal-corner rule, while the A*
+-- expansion (brain_pathfinder.c:1514) and the Dijkstra edge builder (:2024)
+-- both refuse a deep-sea step and a deep-sea corner cut for a boatless tank.
+-- That is why `nav next=` named a deep sea tile on 14 of the 28 recorded
+-- drownings. ON: both fallbacks apply the same rule, the traced chain step is
+-- vetoed the same way (the trace enters on whichever boat layer is cheaper at
+-- the DESTINATION, so it too can hand a boatless tank a boat-route step). A
+-- tank in a boat is untouched, and so is the layer the g comes from: reading
+-- the LAND layer only was tried and broke the sea-pill harvest, because a boat
+-- tile's land-layer node is never reached and a boatless tank could then never
+-- be routed onto a boat (tests/sea_pills_test.py variant B). The rule is about
+-- what a tank may ENTER, not about which layer priced it. Plumbed to the C
+-- pathfinder in cpathfinder.lua's M.configure as "nextstep_foot_sea_rule".
+M.PF_NEXTSTEP_FOOT_SEA_RULE     = true  -- boatless tank is never handed a deep-sea next step (KEEL: false)
 M.DIJKSTRA_USE_FOR_GOALS        = true  -- replace cost_to in step_eval_queue with dijkstra
                                         -- lookup_by_kind. Pill pools use kind=1 (low-danger
                                         -- slate), other pools use kind=0 (normal-danger slate).
@@ -3637,6 +3674,22 @@ M.PRESETS = {
     -- mask on attack_tank only (that one is unconditional and still runs), so
     -- every other goal's navigate branch could drive a braked tank in.
     CLIFF_STOP_MASK_ALL_GOALS = false,
+    -- 2026-09-06: a cliff guard that names a deep-sea tile now latches "no
+    -- forward throttle" for CLIFF_BRAKE_STICKY_TICKS brain ticks, applied at
+    -- M.steer's single key exit point. KEEL re-decides the brake from scratch
+    -- every tick off the heading ray, so on the ticks the ray's sub-tile
+    -- jitter missed the sea tile navigate re-issued KEY_FASTER and the tank
+    -- crept forward between brakes -- 20260906_184924_1_drown13 bot0 t=29523
+    -- drowned at full armour with nobody near it after braking on 5 of its
+    -- last 23 ticks.
+    CLIFF_BRAKE_STICKY = false,
+    -- 2026-09-06: the Dijkstra next-step fallbacks (and the traced-chain step)
+    -- now refuse to hand a boatless tank a deep-sea tile, applying the same
+    -- on-foot deep-sea / diagonal-corner rule the A* and the edge builder
+    -- already use, and reading the LAND layer's g only. KEEL picks by
+    -- min(g_land, g_boat) with no passability test at all, which is why
+    -- `nav next=` named deep sea on 14 of the 28 recorded drownings.
+    PF_NEXTSTEP_FOOT_SEA_RULE = false,
     -- 2026-09-06: the pool-1 mine-hoard staying-cost is now WAIVED while the
     -- tank is still below a target and the base under it still holds
     -- REFUEL_MIN_STOCK of that supply. KEEL charges it whenever the tank is

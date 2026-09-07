@@ -2992,6 +2992,19 @@ local function steer_core(state, world, info, goal)
       -- cautious guard tagged the creep earlier this tick, clear it so init's
       -- TAKE_CRAWL leaves THIS KEY_SLOWER intact instead of sailing into the water.
       state._cautious_lookahead_held = nil
+      -- STICKY (C.CLIFF_BRAKE_STICKY, see the constants block): this guard is
+      -- re-decided from scratch every tick off the heading ray, so while the
+      -- tank turns the ray jitters off the sea tile and navigate re-issues
+      -- KEY_FASTER on the miss ticks -- forward creep with a brake that
+      -- "fired". Remember the tile for a few ticks; M.steer's exit point then
+      -- keeps the throttle off whatever the ray sees. Turn keys are untouched,
+      -- so the evasive turn below still runs and the tank keeps rotating out.
+      local sticky_n = C.CLIFF_BRAKE_STICKY and (C.CLIFF_BRAKE_STICKY_TICKS or 8) or 0
+      if sticky_n > 0 then
+        state._cliff_sticky_left = sticky_n
+        state._cliff_sticky_mx   = trigger_mx
+        state._cliff_sticky_my   = trigger_my
+      end
       -- EVASIVE TURN: brake AND steer away. Braking alone returned early with
       -- no turn key, so on every brake tick the tank held its heading; at
       -- creep speed (20260831_222819 bot2, speed 8-12 hugging the row
@@ -3631,7 +3644,8 @@ local function steer_core(state, world, info, goal)
     if goal.kind == "rescue_lgm" then
       local rtmx, rtmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
       local dnx, dny = cpf.dijkstra_next_step(cpf.KIND_NORMAL, rtmx, rtmy,
-                         nav_mx, nav_my, state._nav_avoid_tiles, C.NAV_AVOID_PENALTY)
+                         nav_mx, nav_my, state._nav_avoid_tiles,
+                         C.NAV_AVOID_PENALTY, info.inboat and 1 or 0)
       if dnx and not (dnx == rtmx and dny == rtmy) then
         nx, ny = dnx, dny
         -- Mirror the bookkeeping cpf_path_to does so path_lookahead and the
@@ -4871,12 +4885,49 @@ function M.steer(state, world, info, goal)
     if hit_mx then
       local before = keys
       keys = bit.bor(bit.band(keys, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+      -- STICKY (C.CLIFF_BRAKE_STICKY): this mask is decided from the same
+      -- jittering heading as the brake ray, so it too goes quiet on the ticks
+      -- the one-tile step lands elsewhere. Latch on the tile it named.
+      local sticky_n = C.CLIFF_BRAKE_STICKY and (C.CLIFF_BRAKE_STICKY_TICKS or 8) or 0
+      if sticky_n > 0 then
+        state._cliff_sticky_left = sticky_n
+        state._cliff_sticky_mx   = hit_mx
+        state._cliff_sticky_my   = hit_my
+      end
       if before ~= keys then
         log.reason("steer", {
           mode = "cliff_stop_mask", goal_kind = goal and goal.kind,
           tile_mx = hit_mx, tile_my = hit_my, corner = corner,
           speed = info.speed,
         })
+      end
+    end
+  end
+
+  -- ── STICKY CLIFF BRAKE (C.CLIFF_BRAKE_STICKY) ─────────────────────────
+  -- Either guard above naming a deep-sea tile latches state._cliff_sticky_left
+  -- for C.CLIFF_BRAKE_STICKY_TICKS brain ticks. While the latch holds, the
+  -- throttle is off HERE, at the single point every key leaves this module,
+  -- whatever this tick's ray happened to see. It only ever clears KEY_FASTER
+  -- and sets KEY_SLOWER -- it never issues a turn key, so the turn steer_core
+  -- chose passes through and the tank keeps rotating away from the water.
+  --
+  -- Two exits: a boat (deep sea is where it belongs) and escape_water (the
+  -- goal whose whole job is driving OUT of water -- the same exemption the
+  -- brake ray itself has). Both drop the latch rather than merely skipping it,
+  -- so it cannot re-apply a tick later.
+  if C.CLIFF_BRAKE_STICKY then
+    if info.inboat or (goal and goal.kind == "escape_water") then
+      if state._cliff_sticky_left then
+        state._cliff_sticky_left = nil
+      end
+    elseif state._cliff_sticky_left and state._cliff_sticky_left > 0 then
+      if keys then
+        keys = bit.bor(bit.band(keys, bit.bnot(KEY_FASTER)), KEY_SLOWER)
+      end
+      state._cliff_sticky_left = state._cliff_sticky_left - 1
+      if state._cliff_sticky_left <= 0 then
+        state._cliff_sticky_left = nil
       end
     end
   end

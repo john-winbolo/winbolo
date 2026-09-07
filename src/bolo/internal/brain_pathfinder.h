@@ -150,6 +150,23 @@ struct BrainPathfinder {
   float min_shells;          /* prune paths arriving with fewer shells (default 0) */
   float min_mines;           /* prune paths arriving with fewer mines (default 0) */
   float min_armour;          /* prune paths arriving with less armour (default 0) */
+  /* nextstep_foot_sea_rule: 0 = off (historical behaviour), non-zero = on.
+   * When on, brainPathfinderDijkstraNextStep applies the on-foot deep-sea /
+   * diagonal-corner rule the A* expansion (brain_pathfinder.c:1514) and the
+   * Dijkstra edge builder (:2024) already apply, so a tank that is not in a
+   * boat can never be handed a deep-sea tile, or a deep-sea diagonal corner
+   * cut, as its next step. Set from Lua via
+   * cpf_set_config("nextstep_foot_sea_rule", 1). */
+  float nextstep_foot_sea_rule;
+
+  /* Last tile the rule above vetoed, for the brain's debug print only.
+   * sea_veto_seq increments on every veto, so the Lua wrapper can tell a
+   * fresh veto from a stale record without a tick number. Never read by any
+   * decision. */
+  uint32_t sea_veto_seq;
+  int16_t  sea_veto_from_x, sea_veto_from_y;
+  int16_t  sea_veto_rej_x,  sea_veto_rej_y;
+  int16_t  sea_veto_pick_x, sea_veto_pick_y;
 
   /* A* working state — doubled for boat/land state pairs.
    * Node index = (boat ? 65536 : 0) + y*256 + x
@@ -352,13 +369,29 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
  * When the optimal next tile is an obstacle, the step veers to the cheapest
  * non-obstacle neighbour by effective cost (g_cost + penalty), so moving
  * allies are dodged instantly without baking anything into the slate. Pass
- * obstacles=NULL / n_obstacles=0 for the plain optimal-path behaviour. */
+ * obstacles=NULL / n_obstacles=0 for the plain optimal-path behaviour.
+ *
+ * tank_in_boat: the tank's LIVE boat state (0 on foot, 1 afloat), or -1 when
+ * the caller does not know it. Only the on-foot deep-sea rule
+ * ("nextstep_foot_sea_rule") reads it; -1 falls back to the boat state the
+ * slate was seeded with, which is stale for a few ticks after the tank boards
+ * or leaves a boat. */
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
                                      const int *obstacles, int n_obstacles,
-                                     float penalty,
+                                     float penalty, int tank_in_boat,
                                      int *out_next_x, int *out_next_y);
+
+/* Debug read-out for the on-foot deep-sea rule applied inside the function
+ * above (config key "nextstep_foot_sea_rule"). Returns the running veto
+ * sequence number (0 = never vetoed) and fills in the tile the tank was on,
+ * the tile the rule rejected, and the tile picked instead (-1,-1 when nothing
+ * legal was left). Observation only — no search reads it. */
+uint32_t brainPathfinderGetSeaVeto(const BrainPathfinder *pf,
+                                   int *from_x, int *from_y,
+                                   int *rej_x, int *rej_y,
+                                   int *pick_x, int *pick_y);
 
 /* Find the slate index that the brain should reuse next when starting a
  * search of the given kind. Picks the slate with the LOWEST started_tick

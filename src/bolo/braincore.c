@@ -1679,9 +1679,13 @@ static int l_cpf_dijkstra_lookup_subtract_by_kind(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy [, obstacles, penalty]) → nx, ny or nil
+/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy [, obstacles, penalty, in_boat])
+ * → nx, ny or nil
  * obstacles: optional flat array of packed tile keys (y*256+x) to dodge at trace
- * time; penalty: extra cost added to those tiles (default large). */
+ * time; penalty: extra cost added to those tiles (default large).
+ * in_boat: the tank's LIVE boat state (0/1) for the on-foot deep-sea rule;
+ * omit it (or pass nil) when the caller does not know and the slate's own seed
+ * state should be used instead. */
 #define CPF_MAX_OBSTACLES 64
 static int l_cpf_dijkstra_next_step(lua_State *L) {
   CPF_GET(L);
@@ -1693,6 +1697,15 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   int obstacles[CPF_MAX_OBSTACLES];
   int n_obs = 0;
   float penalty = (float)luaL_optnumber(L, 7, 1.0e6);
+  /* -1 = "caller does not know". Both a boolean and a 0/1 number are accepted:
+   * lua_toboolean alone would read the NUMBER 0 as true (only false and nil
+   * are falsy in Lua), which would silently tell the rule every tank is
+   * afloat. */
+  int in_boat = -1;
+  if (!lua_isnoneornil(L, 8)) {
+    in_boat = lua_isboolean(L, 8) ? (lua_toboolean(L, 8) ? 1 : 0)
+                                  : ((lua_tointeger(L, 8) != 0) ? 1 : 0);
+  }
   if (lua_istable(L, 6)) {
     int len = (int)lua_rawlen(L, 6);
     if (len > CPF_MAX_OBSTACLES) len = CPF_MAX_OBSTACLES;
@@ -1705,13 +1718,34 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   int nx = -1, ny = -1;
   if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy,
                                       n_obs > 0 ? obstacles : NULL, n_obs, penalty,
-                                      &nx, &ny)) {
+                                      in_boat, &nx, &ny)) {
     lua_pushinteger(L, nx);
     lua_pushinteger(L, ny);
     return 2;
   }
   lua_pushnil(L);
   return 1;
+}
+
+/* cpf_sea_veto() → seq, from_x, from_y, rej_x, rej_y, pick_x, pick_y
+ *
+ * Debug read-out for the on-foot deep-sea rule in cpf_dijkstra_next_step
+ * (config key "nextstep_foot_sea_rule"). seq counts vetoes since the
+ * pathfinder was created, so the caller tells a fresh veto from a stale
+ * record by comparing it with the last seq it saw. pick is (-1,-1) when the
+ * rule left nothing legal to step to. Observation only. */
+static int l_cpf_sea_veto(lua_State *L) {
+  CPF_GET(L);
+  int fx = -1, fy = -1, rx = -1, ry = -1, px = -1, py = -1;
+  uint32_t seq = brainPathfinderGetSeaVeto(pf, &fx, &fy, &rx, &ry, &px, &py);
+  lua_pushinteger(L, (lua_Integer)seq);
+  lua_pushinteger(L, fx);
+  lua_pushinteger(L, fy);
+  lua_pushinteger(L, rx);
+  lua_pushinteger(L, ry);
+  lua_pushinteger(L, px);
+  lua_pushinteger(L, py);
+  return 7;
 }
 
 /* cpf_dijkstra_trace_path(kind, dx, dy) → flat array {x1,y1,x2,y2,...} or nil */
@@ -2325,6 +2359,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_lookup_subtract_by_kind", l_cpf_dijkstra_lookup_subtract_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
+    { "cpf_sea_veto",               l_cpf_sea_veto },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
     { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
     { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
