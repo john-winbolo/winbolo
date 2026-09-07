@@ -181,6 +181,25 @@ static bool          gOverviewInWindow = FALSE;
 static OverviewView *gOverviewView     = NULL;
 static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
 
+/* The in-window frame is drawn in two halves. The first runs inside the
+   client-mutex hold with the rest of the frame: it fills the snapshot, lays
+   the HUD out and renders the HUD's source frame, then returns. The second,
+   sdl3DrawFlushOverviewInWindow, runs once the lock is released and draws the
+   map and everything over it. Both are on the main thread; these carry what
+   the first half settled to the second, and gOverviewPrepPending says there
+   is a frame waiting to be drawn. */
+static OverviewSnapshot  *gOverviewSnapshot     = NULL;
+static bool               gOverviewPrepPending  = FALSE;
+static int                gOverviewPrepW        = 0;
+static int                gOverviewPrepH        = 0;
+static float              gOverviewPrepMenuBar  = 0.0f;
+static OverviewHudLayout  gOverviewPrepHud;
+static bool               gOverviewPrepDrawHud  = FALSE;
+/* The item view's caption, read from the sim by the first half so the second
+   has nothing left to ask it. */
+static char               gOverviewPrepLabel[128];
+static bool               gOverviewPrepHaveLabel = FALSE;
+
 /* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
    the panels on exactly the rectangles that were drawn. Only meaningful while
    the flag is set: a frame that drew no HUD clears it. */
@@ -1600,6 +1619,9 @@ void sdl3DrawCleanup(void) {
      before the renderer does. */
   overviewViewDestroy(gOverviewView);
   gOverviewView = NULL;
+  overviewSnapshotDestroy(gOverviewSnapshot);
+  gOverviewSnapshot    = NULL;
+  gOverviewPrepPending = FALSE;
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -1960,12 +1982,18 @@ static void sdl3DrawOverviewHudFrame(const SDL_FRect *r, float scale,
    into its own offscreen and is blitted straight to the window — going through
    gGameRenderTarget would letterbox the map to the 515:325 chrome aspect. The
    status panels and the newswire go over the map afterwards, as slices of a
-   classic frame drawn offscreen alongside the view. */
+   classic frame drawn offscreen alongside the view.
+
+   This is the first half, called inside the frame lock: it settles the size
+   and the HUD layout, fills the snapshot and renders the HUD's source frame,
+   then leaves the drawing to sdl3DrawFlushOverviewInWindow. */
 static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
                                           bool showBaseLabels) {
   /* Stale the moment this frame starts: every way out below either lays a new
-     HUD out or draws none at all. */
-  gOverviewHudValid = FALSE;
+     HUD out or draws none at all. A frame prepared and not yet drawn is
+     dropped the same way; the one being prepared replaces it. */
+  gOverviewHudValid    = FALSE;
+  gOverviewPrepPending = FALSE;
 
   int ww = 0, wh = 0;
   {
@@ -1989,6 +2017,8 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
 
   if (!gOverviewView) gOverviewView = overviewViewCreate();
   if (!gOverviewView) return;
+  if (!gOverviewSnapshot) gOverviewSnapshot = overviewSnapshotCreate();
+  if (!gOverviewSnapshot) return;
 
   /* What the panels cover, before the draw that has to work around it: a tank
      respawning behind the newswire or under the status column is scrolled into
@@ -2013,13 +2043,49 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     overviewViewSetHudInsets(gOverviewView, 0.0f, 0.0f, 0.0f, 0.0f);
   }
 
-  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
-                              gCrosshairTex, w, h, cs, true);
+  /* Everything the map render reads from the sim, taken while the lock is
+     held. The render itself runs from this copy in the second half. */
+  clientSimFillOverviewSnapshot(cs, gOverviewSnapshot);
 
-  /* Both offscreen passes belong here, before anything is drawn to the
-     window: each of them swaps the render target. */
+  /* The HUD's source frame reads alliances and counts out of the sim, so it
+     stays on this side of the lock. It swaps the render target and puts it
+     back, so it is still ahead of anything drawn to the window. */
   bool drawHud = haveHud &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
+
+  /* The item view's caption, for the same reason: it is the one read of the
+     sim the drawing half would otherwise make. */
+  gOverviewPrepHaveLabel =
+      sdl3DrawGetItemViewLabel(cs, gOverviewPrepLabel,
+                               sizeof(gOverviewPrepLabel));
+
+  gOverviewPrepW       = w;
+  gOverviewPrepH       = h;
+  gOverviewPrepMenuBar = menuBarHeight;
+  if (haveHud) gOverviewPrepHud = hud;
+  gOverviewPrepDrawHud = drawHud;
+  gOverviewPrepPending = TRUE;
+}
+
+/* The second half of the in-window frame: the map render, the window blit and
+   the HUD panels over it, from what the first half prepared. Runs after the
+   frame lock is released, so the render's target switches and the flushes
+   they force are outside it. Nothing here reads the sim. A no-op when no
+   frame is waiting. */
+void sdl3DrawFlushOverviewInWindow(void) {
+  if (!gOverviewPrepPending) return;
+  gOverviewPrepPending = FALSE;
+  if (!gRenderer || !gOverviewView || !gOverviewSnapshot) return;
+
+  int   w             = gOverviewPrepW;
+  int   h             = gOverviewPrepH;
+  float menuBarHeight = gOverviewPrepMenuBar;
+  bool  drawHud       = gOverviewPrepDrawHud;
+  OverviewHudLayout hud = gOverviewPrepHud;
+
+  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gCrosshairTex, w, h, gOverviewSnapshot, true);
+
   if (drawHud) {
     Uint64 now = SDL_GetTicks();
 
@@ -2227,12 +2293,12 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      (overview_view.cpp) says one is on; this says which. Drawn by the host
      rather than into the offscreen for two reasons: the font's textures belong
      to the renderer that made them, and only here is it known where the
-     newswire has slid to this frame. */
+     newswire has slid to this frame. The text was read in the first half. */
   {
-    char label[128];
+    const char *label = gOverviewPrepLabel;
     int textW = 0;
     int textH = 0;
-    if (gFontMsg && sdl3DrawGetItemViewLabel(cs, label, sizeof(label)) &&
+    if (gFontMsg && gOverviewPrepHaveLabel &&
         TTF_GetStringSize(gFontMsg, label, 0, &textW, &textH)) {
       /* The text rides on the newswire strip's top edge, so chat never covers
          it; hud.newswireY already carries the slide offset. Once the strip has
@@ -3144,7 +3210,12 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
     int textW = 0;
     int textH = 0;
 
+    /* Both halves here and now: the dim and the caption below go over the
+       map, so the map has to be on the window before them. This screen
+       lasts the moment between the game ending and the lobby coming back,
+       so it draws inside the lock the way the whole frame used to. */
     sdl3DrawOverviewInWindowFrame(cs, gLastPillLabels, gLastBaseLabels);
+    sdl3DrawFlushOverviewInWindow();
 
     SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, OVERVIEW_LOBBY_DIM_ALPHA);

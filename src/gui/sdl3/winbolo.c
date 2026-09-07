@@ -713,6 +713,9 @@ int main(int argc, char *argv[]) {
 #if WB_OVPERF
           ovPerfFrameLock(ovWaitStart, ovAcquired, ovPerfNow());
 #endif
+          /* The in-window map overview draws from the snapshot the frame
+             above filled, now that the lock is off. */
+          sdl3DrawFlushOverviewInWindow();
           dwSysFrame += (SDL_GetTicks() - tick);
         }
 #if WB_OVPERF

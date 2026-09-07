@@ -496,6 +496,9 @@ static ImGuiContext *s_mainImguiCtx = nullptr;
    scale. Both this and the view are torn down in sdl3ImguiCleanup, ahead of
    the renderer they were made on. */
 static OverviewView *s_overviewView          = nullptr;
+/* What the render reads from the sim, filled under the client mutex and
+   drawn from after it is released. Made and torn down with the view. */
+static OverviewSnapshot *s_overviewSnapshot  = nullptr;
 static SDL_Texture  *s_overviewTiles         = nullptr;
 static SDL_Renderer *s_overviewTilesRenderer = nullptr;
 static int           s_overviewTilesScale    = 0;
@@ -5630,24 +5633,26 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                     cam->follow = gameFrontOverviewFollow;
                 }
             }
+            if (!s_overviewSnapshot) {
+                s_overviewSnapshot = overviewSnapshotCreate();
+            }
             SDL_Texture *ovTiles = overviewEnsureTiles(s_popMapOverview.renderer);
             SDL_Texture *ovCross =
                 overviewEnsureCrosshair(s_popMapOverview.renderer);
-            /* The render reads the fog memory, the local tank and the
+            /* The fill reads the fog memory, the local tank and the
                per-frame entity lists straight out of the ClientSim, and the
                host server's timer thread writes into those as it dispatches
                a tick to in-process subscribers. The main view's draw takes
                the same lock around the same kind of read in winbolo.c.
                Nothing is held on entry — winbolo.c releases before calling
-               the pump, and nothing inside the render takes a lock of its
+               the pump, and nothing inside the fill takes a lock of its
                own — so there is no ordering here to invert. The two
                texture-ensure calls above build from assets and touch no sim
                state, so they stay outside.
 
-               The cost is that the lock now spans the whole visible-tile
-               loop, which at 0.5x zoom on a large window is far more squares
-               than the main view's 15x15. Start here if frame times
-               regress with the overview open. */
+               Only the fill is under the lock. The render draws from the
+               snapshot after the release, so its render-target switches and
+               the flushes they force never hold up the server's tick. */
 #if WB_OVPERF
             uint64_t ovWaitStart = ovPerfNow();
 #endif
@@ -5655,15 +5660,17 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 #if WB_OVPERF
             uint64_t ovAcquired = ovPerfNow();
 #endif
-            overviewViewRenderOffscreen(s_overviewView,
-                                        s_popMapOverview.renderer,
-                                        ovTiles, s_overviewTilesScale, ovCross,
-                                        s_popMapOverview.width,
-                                        s_popMapOverview.height, cs, false);
+            clientSimFillOverviewSnapshot(cs, s_overviewSnapshot);
             clientMutexRelease();
 #if WB_OVPERF
             ovPerfPopoutLock(ovWaitStart, ovAcquired, ovPerfNow());
 #endif
+            overviewViewRenderOffscreen(s_overviewView,
+                                        s_popMapOverview.renderer,
+                                        ovTiles, s_overviewTilesScale, ovCross,
+                                        s_popMapOverview.width,
+                                        s_popMapOverview.height,
+                                        s_overviewSnapshot, false);
         }
         if (popOutBeginFrame(&s_popMapOverview)) {
             /* The map fills the window edge to edge: the image is exactly
@@ -6329,6 +6336,8 @@ void sdl3ImguiCleanup(void) {
        renderer, which popOutDestroy tears down. */
     overviewViewDestroy(s_overviewView);
     s_overviewView = nullptr;
+    overviewSnapshotDestroy(s_overviewSnapshot);
+    s_overviewSnapshot = nullptr;
     if (s_overviewTiles) {
         SDL_DestroyTexture(s_overviewTiles);
         s_overviewTiles = nullptr;

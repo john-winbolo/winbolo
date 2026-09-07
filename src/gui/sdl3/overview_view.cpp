@@ -16,13 +16,15 @@
  * Name:          overview_view.cpp
  * Purpose:       Implementation of the map overview's
  *                drawing and input — see overview_view.h.
- *                Terrain and mines straight from the client's
- *                OverviewMap, the fog that dims everything
- *                outside a live region over the top of them,
- *                then the tanks, men and shells standing on
- *                the squares it says are visible; the camera
- *                maths it sits on lives in overview_camera.cpp
- *                and the fog mask in overview_fog.cpp.
+ *                Terrain and mines from a snapshot of the
+ *                client's OverviewMap — filled by the host
+ *                under the client mutex, drawn here after it —
+ *                the fog that dims everything outside a live
+ *                region over the top of them, then the tanks,
+ *                men and shells standing on the squares it
+ *                says are visible; the camera maths it sits on
+ *                lives in overview_camera.cpp and the fog mask
+ *                in overview_fog.cpp.
  *
  *                Death is answered here too: the fog closing
  *                over the wreck is the sim's doing, and this
@@ -46,12 +48,10 @@
 
 extern "C" {
 #include "global.h"
-#include "client_sim.h"     /* clientSimGetOverviewMap, clientSimGetMyTankMapPosF,
-                               clientSimIsMyTankAlive,
-                               clientSimIsMyTankDeathBlackout,
-                               clientSimPrepareOverviewEntities,
-                               clientSimManMoveToMap,
-                               clientSimGetCurrentBuildSelect */
+#include "client_sim.h"     /* the overviewSnapshot* readers the render draws
+                               from; clientSimGetMyTankMapPosF,
+                               clientSimIsMyTankAlive, clientSimManMoveToMap
+                               and clientSimGetCurrentBuildSelect for input */
 #include "../clientmutex.h" /* the build dispatch runs on the sim's data */
 #include "cursor.h"         /* cursorSetCursor — the game's crosshair pointer */
 #include "input.h"          /* inputBumpGunsight — the wheel's other job */
@@ -436,8 +436,9 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
  * and then holds, so the window darkens rather than cutting; the respawn ends
  * it outright, which is the cut back to the map the classic view makes too. */
 static void overviewViewDrawDeathBlackout(OverviewView *v, SDL_Renderer *r,
-                                          int viewW, int viewH, ClientSim *cs) {
-    bool showing = (cs != NULL) && clientSimIsMyTankDeathBlackout(cs);
+                                          int viewW, int viewH,
+                                          const OverviewSnapshot *snap) {
+    bool showing = overviewSnapshotBlackout(snap);
     Uint64 now = SDL_GetTicks();
 
     if (!showing) {
@@ -609,8 +610,8 @@ static void overviewViewDrawRespawnDim(SDL_Renderer *r, float cx, float cy,
  * tank that came back somewhere already clear leaves the camera exactly where
  * the player parked it. */
 static void overviewViewTickRespawn(OverviewView *v, int viewW, int viewH,
-                                    ClientSim *cs) {
-    bool alive = (cs != NULL) && clientSimIsMyTankAlive(cs);
+                                    const OverviewSnapshot *snap) {
+    bool alive = overviewSnapshotTankAlive(snap);
 
     /* The first frame the view sees only records what it found: see
      * aliveKnown. */
@@ -631,7 +632,7 @@ static void overviewViewTickRespawn(OverviewView *v, int viewW, int viewH,
     v->respawnTick = SDL_GetTicks();
 
     float tankX = 0.0f, tankY = 0.0f;
-    if (clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+    if (overviewSnapshotTankPos(snap, &tankX, &tankY)) {
         overviewCameraScrollToShow(&v->cam, viewW, viewH, tankX, tankY);
     }
 }
@@ -644,8 +645,9 @@ static void overviewViewTickRespawn(OverviewView *v, int viewW, int viewH,
  * back, so a player who is already driving keeps the light and the ring on the
  * tank instead of leaving them over the ground they spawned on. */
 static void overviewViewDrawRespawn(OverviewView *v, SDL_Renderer *r,
-                                    int viewW, int viewH, ClientSim *cs) {
-    if (v->respawnTick == 0 || cs == NULL) return;
+                                    int viewW, int viewH,
+                                    const OverviewSnapshot *snap) {
+    if (v->respawnTick == 0 || snap == NULL) return;
 
     /* The ring's two stages outlast the dim, so their end is the whole
      * effect's. */
@@ -659,7 +661,7 @@ static void overviewViewDrawRespawn(OverviewView *v, SDL_Renderer *r,
      * sprite and not on the corner of its square. Gone means there is nothing
      * to mark — a disconnect, or the tank going in the frame this started. */
     float tankX = 0.0f, tankY = 0.0f;
-    if (!clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) return;
+    if (!overviewSnapshotTankPos(snap, &tankX, &tankY)) return;
 
     float cx = 0.0f, cy = 0.0f;
     overviewCameraWorldToScreen(&v->cam, viewW, viewH, tankX, tankY, &cx, &cy);
@@ -751,69 +753,6 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
     SDL_RenderFillRects(r, runs, 4);
 }
 
-/* Copies the entries the player is allowed to see into a second set of lists.
- * The builders work over the whole map — wider than anything the server culls
- * to — so this is where sight is enforced: an entity is kept only when the
- * square it stands on is live, the local player's own tank included. Whether
- * that tank survived the test is reported back through outSelfDrawn, so the
- * reticle can follow it. Copying into fresh lists rather than editing the
- * built ones leaves the sim's per-frame views untouched, as the renderer is
- * meant to. */
-static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
-                                       bool selfAlive,
-                                       const screenTanks *allTks,
-                                       const screenLgm *allLgms,
-                                       const screenBullets *allSb,
-                                       screenTanks *outTks, screenLgm *outLgms,
-                                       screenBullets *outSb,
-                                       bool *outSelfDrawn) {
-    BYTE mx, my, px, py, frame, playerNum;
-    BYTE wx, wy, angle;
-    char name[PLAYER_NAME_LEN];
-    BYTE count;
-    BYTE total;
-    int bulletTotal;
-    int bullet;
-
-    *outSelfDrawn = false;
-
-    total = screenTanksGetNumEntries(allTks);
-    for (count = 1; count <= total; count++) {
-        screenTanksGetItem(allTks, count, &mx, &my, &px, &py, &frame,
-                           &playerNum, name);
-        bool isSelf = (playerNum == me);
-        /* A tank waiting to respawn reads as sitting on the map origin, which
-         * is nowhere it is, so it goes before the square it claims is tested
-         * at all. This is also what takes the reticle off for the death wait:
-         * outSelfDrawn stays false. */
-        if (isSelf && !selfAlive) continue;
-        if (!overviewEntityIsVisible(om, mx, my)) continue;
-        screenTanksGetSubPixel(allTks, count, &wx, &wy, &angle);
-        screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name,
-                           wx, wy, angle);
-        if (isSelf) *outSelfDrawn = true;
-    }
-
-    total = screenLgmGetNumEntries(allLgms);
-    for (count = 1; count <= total; count++) {
-        screenLgmGetItem(allLgms, count, &mx, &my, &px, &py, &frame);
-        if (!overviewEntityIsVisible(om, mx, my)) continue;
-        screenLgmGetSubPixel(allLgms, count, &wx, &wy);
-        screenLgmAddItem(outLgms, mx, my, px, py, frame, wx, wy);
-    }
-
-    /* Shells, shell explosions and tank explosions share one list and one
-     * position per entry, so the square each stands on is all the filter
-     * needs; what the frame draws as never enters into it. */
-    bulletTotal = screenBulletsGetNumEntries(allSb);
-    for (bullet = 1; bullet <= bulletTotal; bullet++) {
-        screenBulletsGetItem(allSb, bullet, &mx, &my, &px, &py, &frame);
-        if (!overviewEntityIsVisible(om, mx, my)) continue;
-        screenBulletsGetSubPixel(allSb, bullet, &wx, &wy);
-        screenBulletsAddItem(outSb, mx, my, px, py, frame, wx, wy);
-    }
-}
-
 /* Tank names beside the sprites, drawn by the same tank_label.c body the
  * classic view uses — same font, same colours, same flag / brain icon —
  * through this view's own cache, because the classic pass's textures live
@@ -857,33 +796,22 @@ static void overviewViewDrawLabels(OverviewView *v, SDL_Renderer *r,
 }
 
 /* The sprite overlay: everything that moves, on the squares the player can
- * see this instant. Runs on the offscreen the terrain passes just filled. */
+ * see this instant. Runs on the offscreen the terrain passes just filled.
+ * The lists come out of the snapshot already filtered to live squares, so
+ * nothing here decides what is drawn — only where. */
 static void overviewViewDrawEntities(OverviewView *v,
                                      SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
-                                     const OverviewMap *om, ClientSim *cs) {
-    screenTanks   allTks;
-    screenTanks   tks;
-    screenLgm     allLgms;
-    screenLgm     lgms;
-    screenBullets allSb;
-    screenBullets sb;
+                                     const OverviewSnapshot *snap) {
     MapViewCtx    ctx;
-    bool          selfDrawn = false;
-
-    screenTanksCreate(&allTks);
-    screenTanksCreate(&tks);
-    screenLgmCreate(&allLgms);
-    screenLgmCreate(&lgms);
-    allSb = screenBulletsCreate();
-    sb    = screenBulletsCreate();
-
-    clientSimPrepareOverviewEntities(cs, &allTks, &allLgms, &allSb);
-    overviewViewFilterEntities(om, clientSimGetMyPlayerNum(cs),
-                               clientSimIsMyTankAlive(cs), &allTks, &allLgms,
-                               &allSb, &tks, &lgms, &sb, &selfDrawn);
+    bool          selfDrawn = overviewSnapshotSelfDrawn(snap);
+    /* mapview.c's passes only read the lists; their signatures predate
+     * const, so the snapshot's are handed over through a cast. */
+    screenTanks   *tks  = (screenTanks *)overviewSnapshotTanks(snap);
+    screenLgm     *lgms = (screenLgm *)overviewSnapshotLgms(snap);
+    screenBullets *sb   = (screenBullets *)overviewSnapshotBullets(snap);
 
     /* mapview.c positions a sprite at originX - tileW + bbx * zoomFactor -
      * edgeX, where bbx is the entity's game-pixel offset from the rect's
@@ -937,9 +865,9 @@ static void overviewViewDrawEntities(OverviewView *v,
         SDL_SetTextureAlphaMod(tiles, 255);
     }
 
-    mapViewDrawShells(&ctx, &sb, originX, originY, tileW, tileH, 0, 0);
-    mapViewDrawTanks(&ctx, &tks, originX, originY, tileW, tileH, 0, 0);
-    mapViewDrawLGMs(&ctx, &lgms, originX, originY, tileW, tileH, 0, 0);
+    mapViewDrawShells(&ctx, sb, originX, originY, tileW, tileH, 0, 0);
+    mapViewDrawTanks(&ctx, tks, originX, originY, tileW, tileH, 0, 0);
+    mapViewDrawLGMs(&ctx, lgms, originX, originY, tileW, tileH, 0, 0);
 
     /* The local player's own reticle, last so it sits on top of the sprites
      * the way the main view's does. Its top-left goes where a 16x16 tile
@@ -955,7 +883,7 @@ static void overviewViewDrawEntities(OverviewView *v,
      * the two cannot disagree. */
     BYTE gsMX, gsMY, gsPX, gsPY;
     if (crosshair != NULL && selfDrawn &&
-        clientSimGetGunsightPos(cs, &gsMX, &gsMY, &gsPX, &gsPY)) {
+        overviewSnapshotGunsight(snap, &gsMX, &gsMY, &gsPX, &gsPY)) {
         /* The ImGui SDL3 backend sets the sampler per draw, so the mode the
          * host set at load time does not survive to here. */
         SDL_SetTextureScaleMode(crosshair, SDL_SCALEMODE_NEAREST);
@@ -972,15 +900,8 @@ static void overviewViewDrawEntities(OverviewView *v,
     SDL_SetRenderScale(r, wasScaleX, wasScaleY);
 
     if (zoomScale >= OVERVIEW_LABEL_MIN_ZOOM) {
-        overviewViewDrawLabels(v, r, cam, viewW, viewH, &tks);
+        overviewViewDrawLabels(v, r, cam, viewW, viewH, tks);
     }
-
-    screenBulletsDestroy(&sb);
-    screenBulletsDestroy(&allSb);
-    screenLgmDestroy(&lgms);
-    screenLgmDestroy(&allLgms);
-    screenTanksDestroy(&tks);
-    screenTanksDestroy(&allTks);
 }
 
 extern "C" OverviewView *overviewViewCreate(void) {
@@ -1030,7 +951,8 @@ extern "C" void overviewViewSetHudInsets(OverviewView *v, float left, float top,
 extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                             SDL_Texture *tiles, int sheetScale,
                                             SDL_Texture *crosshair,
-                                            int w, int h, ClientSim *cs,
+                                            int w, int h,
+                                            const OverviewSnapshot *snap,
                                             bool ownsWindow) {
     if (!v || !r || w <= 0 || h <= 0) return;
     if (!overviewViewEnsureTarget(v, r, w, h)) return;
@@ -1049,15 +971,17 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
      * the same frame it starts and the per-frame follow stands down for it.
      * The other way round, follow would put the item on screen before the
      * scroll had moved anything and there would be nothing left to animate. */
-    if (ownsWindow && cs != NULL) {
-        bool    inItemView = clientSimIsInItemView(cs);
-        uint8_t viewKind   = clientSimGetViewKind(cs);
-        BYTE    viewTarget = clientSimGetViewTarget(cs);
+    if (ownsWindow && snap != NULL) {
+        bool    inItemView = overviewSnapshotInItemView(snap);
+        uint8_t viewKind   = overviewSnapshotViewKind(snap);
+        BYTE    viewTarget = overviewSnapshotViewTarget(snap);
 
         if (inItemView) {
             /* The watched square, whatever kind of item is on it. */
-            float itemX = (float)clientSimGetPillViewX(cs) + 0.5f;
-            float itemY = (float)clientSimGetPillViewY(cs) + 0.5f;
+            int itemMX = 0, itemMY = 0;
+            overviewSnapshotItemViewSquare(snap, &itemMX, &itemMY);
+            float itemX = (float)itemMX + 0.5f;
+            float itemY = (float)itemMY + 0.5f;
 
             if (!v->wasInItemView) {
                 /* The way in. The flag goes back as it was on the way out, so
@@ -1088,8 +1012,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             v->cam.follow = v->followBeforeItemView;
             if (!v->cam.follow) {
                 float tankX = 0.0f, tankY = 0.0f;
-                if (clientSimIsMyTankAlive(cs) &&
-                    clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+                if (overviewSnapshotTankPos(snap, &tankX, &tankY)) {
                     overviewCameraScrollToShow(&v->cam, w, h, tankX, tankY);
                 }
             }
@@ -1105,10 +1028,10 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
      * below — a tank coming back is worth answering on a frame with no map to
      * draw, and the ring the tick starts is drawn on the frames that follow. */
     if (ownsWindow) {
-        overviewViewTickRespawn(v, w, h, cs);
+        overviewViewTickRespawn(v, w, h, snap);
     }
 
-    const OverviewMap *om = clientSimGetOverviewMap(cs);
+    const OverviewMap *om = overviewSnapshotMap(snap);
     if (om != NULL && tiles != NULL) {
         if (sheetScale < 1) sheetScale = 1;
         /* The ImGui SDL3 backend sets the sampler per draw, so the host's
@@ -1128,7 +1051,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                              : (float)(nowTick - v->scrollTick);
         v->scrollTick = nowTick;
 
-        bool inItemView = ownsWindow && cs != NULL && clientSimIsInItemView(cs);
+        bool inItemView = ownsWindow && overviewSnapshotInItemView(snap);
 
         /* Three claims on the centre, in the order they win.
          *
@@ -1150,11 +1073,12 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
         if (overviewCameraScrollTick(&v->cam, dtMs)) {
             /* The scroll has the centre this frame. */
         } else if (inItemView) {
+            int itemMX = 0, itemMY = 0;
+            overviewSnapshotItemViewSquare(snap, &itemMX, &itemMY);
             overviewCameraFollowTick(&v->cam, w, h,
-                                     (float)clientSimGetPillViewX(cs) + 0.5f,
-                                     (float)clientSimGetPillViewY(cs) + 0.5f);
-        } else if (clientSimIsMyTankAlive(cs) &&
-                   clientSimGetMyTankMapPosF(cs, &tankX, &tankY)) {
+                                     (float)itemMX + 0.5f,
+                                     (float)itemMY + 0.5f);
+        } else if (overviewSnapshotTankPos(snap, &tankX, &tankY)) {
             if (!smoothScrollingEnabled) {
                 tankX = SDL_floorf(tankX) + 0.5f;
                 tankY = SDL_floorf(tankY) + 0.5f;
@@ -1174,14 +1098,14 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * the build cursor and the gunsight are the player's own marks, so
          * neither wants dimming. */
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
-                                 w, h, om, cs);
+                                 w, h, snap);
     }
 
     /* Only where this view has replaced the classic one: beside the pop-out
      * the 15x15 is still on screen with its own corner label, and the pop-out
      * is too small to give a border to. Before the blackout, so a death takes
      * it down with the rest of the picture. */
-    if (ownsWindow && cs != NULL && clientSimIsInItemView(cs)) {
+    if (ownsWindow && overviewSnapshotInItemView(snap)) {
         overviewViewDrawItemViewBorder(r, w, h);
     }
 
@@ -1190,7 +1114,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
      * panels in full screen, the window's furniture in the pop-out — goes on
      * afterwards and stays clear of it, so the player can still read what
      * they died with. */
-    overviewViewDrawDeathBlackout(v, r, w, h, cs);
+    overviewViewDrawDeathBlackout(v, r, w, h, snap);
 
     /* And the way back out of one, after the blackout because the two are ends
      * of the same edge: the black stops being drawn on the frame the tank is
@@ -1201,7 +1125,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
      * the player has the 15x15 in front of them, which re-centres on the tank
      * of its own accord, so there is nothing left to tell them. */
     if (ownsWindow) {
-        overviewViewDrawRespawn(v, r, w, h, cs);
+        overviewViewDrawRespawn(v, r, w, h, snap);
     }
 
     SDL_SetRenderTarget(r, NULL);

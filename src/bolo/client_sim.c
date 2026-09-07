@@ -2980,6 +2980,276 @@ bool clientSimGetGunsightPos(ClientSim *cs, BYTE *mapX, BYTE *mapY,
   return true;
 }
 
+/* --- The map overview's render snapshot --- */
+
+struct OverviewSnapshot {
+  /* The memory, copied only when the sim's generation has moved on from the
+   * one this copy was taken at. mapValid says a copy has been taken at all: a
+   * fresh snapshot and a fresh memory both start at generation 0. haveMap is
+   * false after a fill from no sim, which draws nothing. The counter restarts
+   * at 0 on a round reset; a repeat of the stored value after that is at
+   * worst one frame stale, since the next change moves it on again. */
+  OverviewMap   map;
+  unsigned      haveGeneration;
+  bool          mapValid;
+  bool          haveMap;
+
+  /* The per-frame lists, already through the live-square filter. The two
+   * linked lists are emptied and rebuilt on every fill. */
+  screenTanks   tks;
+  screenLgm     lgms;
+  screenBullets sb;
+  bool          selfDrawn;
+  BYTE          myPlayerNum;
+
+  bool          tankAlive;
+  float         tankX;
+  float         tankY;
+  bool          blackout;
+
+  bool          gunsightValid;
+  BYTE          gsMX;
+  BYTE          gsMY;
+  BYTE          gsPX;
+  BYTE          gsPY;
+
+  bool          inItemView;
+  uint8_t       viewKind;
+  BYTE          viewTarget;
+  int           pillViewX;
+  int           pillViewY;
+};
+
+/* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
+ * player can see this instant. The renderer's overviewEntityIsVisible makes
+ * the same test; it is restated here so the filter can run in the sim. */
+static bool overviewSquareIsLive(const OverviewMap *om, int mapX, int mapY) {
+  if (mapX < 0 || mapX >= MAP_ARRAY_SIZE ||
+      mapY < 0 || mapY >= MAP_ARRAY_SIZE) {
+    return false;
+  }
+  if (om == NULL) return false;
+  return (om->flags[mapX][mapY] & OVERVIEW_F_LIVE) != 0;
+}
+
+/* Copies the entries the player is allowed to see into a second set of lists.
+ * The builders work over the whole map — wider than anything the server culls
+ * to — so this is where sight is enforced: an entity is kept only when the
+ * square it stands on is live, the local player's own tank included. Whether
+ * that tank survived the test is reported back through outSelfDrawn, so the
+ * reticle can follow it. Copying into fresh lists rather than editing the
+ * built ones leaves the sim's per-frame views untouched. */
+static void overviewViewFilterEntities(const OverviewMap *om, BYTE me,
+                                       bool selfAlive,
+                                       const screenTanks *allTks,
+                                       const screenLgm *allLgms,
+                                       const screenBullets *allSb,
+                                       screenTanks *outTks, screenLgm *outLgms,
+                                       screenBullets *outSb,
+                                       bool *outSelfDrawn) {
+  BYTE mx, my, px, py, frame, playerNum;
+  BYTE wx, wy, angle;
+  char name[PLAYER_NAME_LEN];
+  BYTE count;
+  BYTE total;
+  int bulletTotal;
+  int bullet;
+
+  *outSelfDrawn = false;
+
+  total = screenTanksGetNumEntries(allTks);
+  for (count = 1; count <= total; count++) {
+    screenTanksGetItem(allTks, count, &mx, &my, &px, &py, &frame,
+                       &playerNum, name);
+    bool isSelf = (playerNum == me);
+    /* A tank waiting to respawn reads as sitting on the map origin, which
+     * is nowhere it is, so it goes before the square it claims is tested
+     * at all. This is also what takes the reticle off for the death wait:
+     * outSelfDrawn stays false. */
+    if (isSelf && !selfAlive) continue;
+    if (!overviewSquareIsLive(om, mx, my)) continue;
+    screenTanksGetSubPixel(allTks, count, &wx, &wy, &angle);
+    screenTanksAddItem(outTks, mx, my, px, py, frame, playerNum, name,
+                       wx, wy, angle);
+    if (isSelf) *outSelfDrawn = true;
+  }
+
+  total = screenLgmGetNumEntries(allLgms);
+  for (count = 1; count <= total; count++) {
+    screenLgmGetItem(allLgms, count, &mx, &my, &px, &py, &frame);
+    if (!overviewSquareIsLive(om, mx, my)) continue;
+    screenLgmGetSubPixel(allLgms, count, &wx, &wy);
+    screenLgmAddItem(outLgms, mx, my, px, py, frame, wx, wy);
+  }
+
+  /* Shells, shell explosions and tank explosions share one list and one
+   * position per entry, so the square each stands on is all the filter
+   * needs; what the frame draws as never enters into it. */
+  bulletTotal = screenBulletsGetNumEntries(allSb);
+  for (bullet = 1; bullet <= bulletTotal; bullet++) {
+    screenBulletsGetItem(allSb, bullet, &mx, &my, &px, &py, &frame);
+    if (!overviewSquareIsLive(om, mx, my)) continue;
+    screenBulletsGetSubPixel(allSb, bullet, &wx, &wy);
+    screenBulletsAddItem(outSb, mx, my, px, py, frame, wx, wy);
+  }
+}
+
+OverviewSnapshot *overviewSnapshotCreate(void) {
+  OverviewSnapshot *s = (OverviewSnapshot *)calloc(1, sizeof(*s));
+  if (s == NULL) return NULL;
+  screenTanksCreate(&s->tks);
+  screenLgmCreate(&s->lgms);
+  s->sb = screenBulletsCreate();
+  return s;
+}
+
+void overviewSnapshotDestroy(OverviewSnapshot *s) {
+  if (s == NULL) return;
+  screenBulletsDestroy(&s->sb);
+  screenLgmDestroy(&s->lgms);
+  screenTanksDestroy(&s->tks);
+  free(s);
+}
+
+void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
+  screenTanks   allTks;
+  screenLgm     allLgms;
+  screenBullets allSb;
+
+  if (s == NULL) return;
+
+  /* Empty lists and every scalar at its nothing-to-draw value first, so a
+   * fill from no sim leaves what a NULL ClientSim gave the render before:
+   * no map, no sprites, no marks. */
+  screenTanksCreate(&s->tks);
+  screenLgmDestroy(&s->lgms);
+  screenLgmCreate(&s->lgms);
+  screenBulletsDestroy(&s->sb);
+  s->sb = screenBulletsCreate();
+  s->selfDrawn     = false;
+  s->myPlayerNum   = 0;
+  s->tankAlive     = false;
+  s->tankX         = 0.0f;
+  s->tankY         = 0.0f;
+  s->blackout      = false;
+  s->gunsightValid = false;
+  s->gsMX = s->gsMY = s->gsPX = s->gsPY = 0;
+  s->inItemView    = false;
+  s->viewKind      = 0;
+  s->viewTarget    = 0;
+  s->pillViewX     = 0;
+  s->pillViewY     = 0;
+  s->haveMap       = (cs != NULL);
+  if (cs == NULL) return;
+
+  /* Generation 0 only exists between a round reset and the seed that follows
+   * it, so a match on 0 can be a snapshot filled in that same window a round
+   * earlier, still holding the map from then. Copy rather than trust it; it
+   * costs one memcpy on a frame between rounds. */
+  if (!s->mapValid || cs->overview.generation == 0 ||
+      s->haveGeneration != cs->overview.generation) {
+    memcpy(&s->map, &cs->overview, sizeof(s->map));
+    s->haveGeneration = cs->overview.generation;
+    s->mapValid       = true;
+  }
+
+  s->myPlayerNum = clientSimGetMyPlayerNum(cs);
+  s->tankAlive   = clientSimIsMyTankAlive(cs);
+  if (s->tankAlive) {
+    clientSimGetMyTankMapPosF(cs, &s->tankX, &s->tankY);
+  }
+  s->blackout      = clientSimIsMyTankDeathBlackout(cs);
+  s->gunsightValid = clientSimGetGunsightPos(cs, &s->gsMX, &s->gsMY,
+                                             &s->gsPX, &s->gsPY);
+  s->inItemView = clientSimIsInItemView(cs);
+  s->viewKind   = clientSimGetViewKind(cs);
+  s->viewTarget = clientSimGetViewTarget(cs);
+  s->pillViewX  = clientSimGetPillViewX(cs);
+  s->pillViewY  = clientSimGetPillViewY(cs);
+
+  /* The whole-map lists, then the filter against the copy just taken, so the
+   * sprites stand on squares the same picture says are live. */
+  screenTanksCreate(&allTks);
+  screenLgmCreate(&allLgms);
+  allSb = screenBulletsCreate();
+  clientSimPrepareOverviewEntities(cs, &allTks, &allLgms, &allSb);
+  overviewViewFilterEntities(&s->map, s->myPlayerNum, s->tankAlive, &allTks,
+                             &allLgms, &allSb, &s->tks, &s->lgms, &s->sb,
+                             &s->selfDrawn);
+  screenBulletsDestroy(&allSb);
+  screenLgmDestroy(&allLgms);
+  screenTanksDestroy(&allTks);
+}
+
+const OverviewMap *overviewSnapshotMap(const OverviewSnapshot *s) {
+  if (s == NULL || !s->haveMap) return NULL;
+  return &s->map;
+}
+
+const screenTanks *overviewSnapshotTanks(const OverviewSnapshot *s) {
+  return s ? &s->tks : NULL;
+}
+
+const screenLgm *overviewSnapshotLgms(const OverviewSnapshot *s) {
+  return s ? &s->lgms : NULL;
+}
+
+const screenBullets *overviewSnapshotBullets(const OverviewSnapshot *s) {
+  return s ? &s->sb : NULL;
+}
+
+bool overviewSnapshotSelfDrawn(const OverviewSnapshot *s) {
+  return s ? s->selfDrawn : false;
+}
+
+BYTE overviewSnapshotMyPlayerNum(const OverviewSnapshot *s) {
+  return s ? s->myPlayerNum : 0;
+}
+
+bool overviewSnapshotTankAlive(const OverviewSnapshot *s) {
+  return s ? s->tankAlive : false;
+}
+
+bool overviewSnapshotTankPos(const OverviewSnapshot *s, float *mapX,
+                             float *mapY) {
+  if (s == NULL || !s->tankAlive) return false;
+  if (mapX) *mapX = s->tankX;
+  if (mapY) *mapY = s->tankY;
+  return true;
+}
+
+bool overviewSnapshotBlackout(const OverviewSnapshot *s) {
+  return s ? s->blackout : false;
+}
+
+bool overviewSnapshotGunsight(const OverviewSnapshot *s, BYTE *mapX,
+                              BYTE *mapY, BYTE *pixelX, BYTE *pixelY) {
+  if (s == NULL || !s->gunsightValid) return false;
+  if (mapX)   *mapX   = s->gsMX;
+  if (mapY)   *mapY   = s->gsMY;
+  if (pixelX) *pixelX = s->gsPX;
+  if (pixelY) *pixelY = s->gsPY;
+  return true;
+}
+
+bool overviewSnapshotInItemView(const OverviewSnapshot *s) {
+  return s ? s->inItemView : false;
+}
+
+uint8_t overviewSnapshotViewKind(const OverviewSnapshot *s) {
+  return s ? s->viewKind : 0;
+}
+
+BYTE overviewSnapshotViewTarget(const OverviewSnapshot *s) {
+  return s ? s->viewTarget : 0;
+}
+
+void overviewSnapshotItemViewSquare(const OverviewSnapshot *s, int *mapX,
+                                    int *mapY) {
+  if (mapX) *mapX = s ? s->pillViewX : 0;
+  if (mapY) *mapY = s ? s->pillViewY : 0;
+}
+
 void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {
   switch (msgType) {
   case MSG_NEWSWIRE:

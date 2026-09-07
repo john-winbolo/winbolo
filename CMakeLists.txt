@@ -3233,6 +3233,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
+    tests/unit/test_overview_snapshot.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -4008,6 +4009,10 @@ set(_unit_test_names
     overview_entities
     overview_gunsight
     tank_pos_dead
+    overview_snapshot_mirror
+    overview_snapshot_isolation
+    overview_snapshot_filter
+    overview_snapshot_generation
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid

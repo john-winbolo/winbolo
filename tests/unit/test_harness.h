@@ -1073,6 +1073,21 @@ int run_overview_gunsight(void);
  * leaves the caller's out-params alone when it fails. */
 int run_tank_pos_dead(void);
 
+/* Overview render snapshot (test_overview_snapshot.c): what
+ * clientSimFillOverviewSnapshot copies out of the sim under the client mutex
+ * for the render to draw from after it. The snapshot's map is byte for byte
+ * the live memory and every scalar matches the accessor it came from, across
+ * a living tank, a shown gunsight, an item view, a dead tank and a fill from
+ * no sim; a write to the live memory after a fill, direct or through a
+ * display tick, leaves the snapshot alone until the next fill; the entity
+ * lists match what the renderer's own filter produced from the whole-map
+ * lists, entry for entry; and a fill on an unchanged generation still hands
+ * out the live map without copying it again. */
+int run_overview_snapshot_mirror(void);
+int run_overview_snapshot_isolation(void);
+int run_overview_snapshot_filter(void);
+int run_overview_snapshot_generation(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
