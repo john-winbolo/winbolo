@@ -66,6 +66,15 @@ void          overviewLineOfSightSet(bool on);
 const char   *overviewFogExperimentName(FogExperiment e);
 const char   *overviewFogExperimentBlurb(FogExperiment e);
 
+#define OVERVIEW_HEADLIGHT_LEAD 5   /* squares the block is pushed along the facing */
+
+/* How far ahead of the tank the Headlights block sits, in whole squares, for
+ * a 0-15 facing. The block builder and the camera that follows it both ask
+ * here, so the two cannot put the block in different squares. With this lead
+ * and OVERVIEW_LENS_HALF the tank is still inside its own block, so the block
+ * leads without leaving the player outside it. */
+void overviewHeadlightOffset(BYTE facing, int *outDX, int *outDY);
+
 /* What the region build needs beyond the sim itself: the server's visibility
  * rules, the proximity clocks the client keeps for the local player under
  * viewPolicyDecay, the tick those clocks are read against, and what the camera

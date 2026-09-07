@@ -11,7 +11,10 @@
  * overviewMapUpdate's to place, so the last cases there run through the update:
  * Envelope puts the 29x29 on the tank as it always has, and the lens puts a
  * 15x15 at the classic view instead, falling back to the tank when there is no
- * view to read and holding the view a dying tank last had.
+ * view to read and holding the view a dying tank last had. Headlights puts the
+ * same 15x15 five squares along the tank's facing, whichever of the sixteen it
+ * is pointing down, and gives the block back to the view while the player is
+ * holding that view with the scroll keys.
  * overviewMapDeathBlackout is where the overview goes black inside a
  * death wait: from the tick the classic view cuts to static through to the
  * respawn, never dropping once it is up, and a drowning given longer to watch
@@ -340,6 +343,85 @@ int run_overview_regions(void) {
                       "a dead tank gave %d regions, expected 1",
                       om->liveCount);
         ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+
+        /* Headlights: the same 15x15, pushed five squares along the way the
+         * tank is pointing, so a tank turning on the spot sweeps its block
+         * round itself. The offsets are written out rather than worked back
+         * out of the facing table, so the case says where the block should go
+         * instead of restating how the code gets there. The tank is well clear
+         * of every edge, so nothing here is trimmed. */
+        {
+            static const int leadX[16] = { 0,  1,  3,  4,  5,  4,  3,  1,
+                                           0, -1, -3, -4, -5, -4, -3, -1};
+            static const int leadY[16] = {-5, -4, -3, -1,  0,  1,  3,  4,
+                                           5,  4,  3,  1,  0, -1, -3, -4};
+            int f; /* Looping variable */
+
+            for (f = 0; f < 16; f++) {
+                overviewMapReset(om);
+                overviewViewInputsDefaults(&fog);
+                fog.experiment = (uint8_t)fogExperimentHeadlights;
+                fog.facing = (BYTE)f;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                UT_ASSERT_MSG(om->liveCount == 1,
+                              "Headlights facing %d gave %d regions, "
+                              "expected 1",
+                              f, om->liveCount);
+                ASSERT_RECT(om->live[0],
+                            100 + leadX[f] - OVERVIEW_LENS_HALF,
+                            100 + leadY[f] - OVERVIEW_LENS_HALF,
+                            100 + leadX[f] + OVERVIEW_LENS_HALF,
+                            100 + leadY[f] + OVERVIEW_LENS_HALF);
+            }
+        }
+
+        /* A classic view to read does not move it: while autoscroll has the
+         * view the block leads the tank, wherever the view happens to be. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentHeadlights;
+        fog.facing = 4; /* east */
+        fog.viewValid = TRUE;
+        fog.viewLeft = 40;
+        fog.viewTop = 60;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "Headlights with a view gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 98, 93, 112, 107);
+
+        /* The scroll keys override it exactly as they override the lens: with
+         * the player holding the view off autoscroll the block is the 15x15 at
+         * the view, not the one ahead of the tank. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentHeadlights;
+        fog.facing = 4; /* east, which would put the block at 98,93 */
+        fog.manualHold = TRUE;
+        fog.viewValid = TRUE;
+        fog.viewLeft = 40;
+        fog.viewTop = 60;
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+        UT_ASSERT_MSG(om->liveCount == 1,
+                      "a held Headlights block gave %d regions, expected 1",
+                      om->liveCount);
+        ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+
+        /* A block pushed over an edge is trimmed to the map, not wrapped
+         * through it, the way every other block is. */
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentHeadlights;
+        fog.facing = 4; /* east, into the right-hand edge */
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 250, 100);
+        ASSERT_RECT(om->live[0], 248, 93, 255, 107);
+
+        overviewMapReset(om);
+        overviewViewInputsDefaults(&fog);
+        fog.experiment = (uint8_t)fogExperimentHeadlights;
+        fog.facing = 0; /* north, into the top edge */
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 3);
+        ASSERT_RECT(om->live[0], 0, 0, 10, 5);
 
         free(om);
     }

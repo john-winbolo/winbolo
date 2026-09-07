@@ -1065,10 +1065,15 @@ const char  *clientSimFogExperimentBlurb(int e);
 
 /* The centre of the block of live squares round the player's own tank, in map
    squares and including the sub-square part, for a camera that has to follow
-   the block rather than the tank. False — leaving the outputs alone — under
-   Envelope, where the block is centred on the tank and the tank position is
-   what to follow, and whenever there is no live tank view to place a block
-   from. */
+   the block rather than the tank. Which centre that is follows the experiment:
+   the classic view's own centre under the experiments placed from that view,
+   and the tank's position plus the squares Headlights leads it by while
+   autoscroll has the view — a player holding the view with the scroll keys has
+   placed the block themselves, so the view is what is read again. False —
+   leaving the outputs alone — under Envelope, where the block is centred on
+   the tank and the tank position is what to follow, and whenever there is
+   nothing to place a block from: no live tank view under the view-placed
+   experiments, no tank position under Headlights. */
 bool         clientSimGetFogViewCentreF(const ClientSim *cs, float *outX,
                                         float *outY);
 

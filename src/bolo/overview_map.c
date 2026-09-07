@@ -72,6 +72,7 @@
 #include "global.h"
 #include "overview_map.h"
 #include "bases.h"
+#include "facing_table.h" /* kForwardX / kForwardY — where the tank points */
 #include "game_sim.h"
 #include "pillbox.h"
 #include "players.h"
@@ -124,6 +125,24 @@ const char *overviewFogExperimentBlurb(FogExperiment e) {
   return kFogExperimentBlurbs[(int)e];
 }
 
+/* Where the Headlights block sits relative to the tank. The facing table is in
+ * 256ths of a square, so the lead is scaled by it and divided back down, which
+ * is the same arithmetic the autoscroll forward bias does. The answer is whole
+ * squares and steps as the facing crosses a sixteenth: the block is a set of
+ * squares and there is nothing between one square and the next.
+ * Either output may be NULL for a caller that wants only the other axis. */
+void overviewHeadlightOffset(BYTE facing, int *outDX, int *outDY) {
+  int idx; /* The facing, brought inside the table */
+
+  idx = (int)(facing & 15);
+  if (outDX != NULL) {
+    *outDX = kForwardX[idx] * OVERVIEW_HEADLIGHT_LEAD / 256;
+  }
+  if (outDY != NULL) {
+    *outDY = kForwardY[idx] * OVERVIEW_HEADLIGHT_LEAD / 256;
+  }
+}
+
 /* Brings an inclusive rect back inside the map. Shared so a block placed by
  * its corner is trimmed exactly the way one built round a centre is. */
 static void overviewRectTrimToMap(OverviewRect *r) {
@@ -169,11 +188,28 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
  * block by moving it. With no reading to place it from - a dead tank, or an
  * item view just left - the same 15x15 goes round the tank instead. The rect
  * comes out live outright either way, so it is the same kind of rect the tank
- * has always had. */
+ * has always had.
+ *
+ * Headlights is the exception: the same 15x15, pushed along the way the tank
+ * is pointing by the lead overviewHeadlightOffset gives, so it sweeps round a
+ * tank turning on the spot instead of waiting for the view to catch up. While
+ * the player is holding the view off autoscroll they have taken the block with
+ * the scroll keys, and it goes where the keys put it - which is the Lens rule,
+ * so that case falls through to it rather than restating it. */
 static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
                               BYTE tankMY, OverviewRect *out) {
+  int leadX; /* Squares the Headlights block leads the tank by */
+  int leadY;
+
   if (in->experiment == (uint8_t)fogExperimentEnvelope) {
     *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_TANK_HALF);
+    return;
+  }
+  if (in->experiment == (uint8_t)fogExperimentHeadlights &&
+      in->manualHold == FALSE) {
+    overviewHeadlightOffset(in->facing, &leadX, &leadY);
+    *out = overviewRectAround((int)tankMX + leadX, (int)tankMY + leadY,
+                              OVERVIEW_LENS_HALF);
     return;
   }
   if (in->viewValid == FALSE) {

@@ -2893,12 +2893,37 @@ const char *clientSimFogExperimentBlurb(int e) {
  * classic renderer folds in as a drag offset, so it adds to the position. */
 bool clientSimGetFogViewCentreF(const ClientSim *cs, float *outX, float *outY) {
   OverviewViewInputs in; /* Where the block is this tick */
+  int leadX;             /* Squares the Headlights block leads the tank by */
+  int leadY;
+  float tankX;           /* The tank's own position, sub-square */
+  float tankY;
 
   if (cs == NULL || outX == NULL || outY == NULL) {
     return FALSE;
   }
   clientSimFillOverviewViewInputs(cs, &in);
-  if (in.experiment == (uint8_t)fogExperimentEnvelope || in.viewValid == FALSE) {
+  if (in.experiment == (uint8_t)fogExperimentEnvelope) {
+    return FALSE;
+  }
+
+  /* Headlights places its block from the tank and the way it is pointing
+   * rather than from the classic view, unless the player is holding that view
+   * with the scroll keys, so the camera is told the same thing. The tank's
+   * sub-square position is what it follows, not its square, so the camera
+   * glides with the tank; only the lead itself steps, because the block does.
+   */
+  if (in.experiment == (uint8_t)fogExperimentHeadlights &&
+      in.manualHold == FALSE) {
+    if (clientSimGetMyTankMapPosF((ClientSim *)cs, &tankX, &tankY) == FALSE) {
+      return FALSE;
+    }
+    overviewHeadlightOffset(in.facing, &leadX, &leadY);
+    *outX = tankX + (float)leadX;
+    *outY = tankY + (float)leadY;
+    return TRUE;
+  }
+
+  if (in.viewValid == FALSE) {
     return FALSE;
   }
 
