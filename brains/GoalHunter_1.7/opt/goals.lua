@@ -4074,6 +4074,82 @@ local function repair_dest_str(bd, p)
     C.REPAIR_DISPATCH_DIST_BASE or 5)
 end
 
+-- defend_well_defended — "is this pill already held?", the ONE counting pass
+-- behind both the KEEL evaluator's well-defended clamp (defend_pill_score
+-- below) and alarm mode's fourth reject condition (M.defend_alarm_status).
+-- Factored out so the two can never count differently.
+--
+-- Allies ALREADY at the pill (fresh /info positions, the bidder excluded)
+-- covering the enemies there in team-ratio proportion means this pill doesn't
+-- need US too — the whole team swarming one threatened pill strips every other
+-- front.  Coverage rounds in the defenders' favour:
+--   R = ceil(their_team / our_team); well-defended when
+--   foes_near <= allies_near * R  (no visible foes + any ally = held).
+-- Both counts are taken within DEFEND_WELL_DEFENDED_RADIUS euclidean tiles of
+-- the pill.
+--
+-- Defenders come from two live signals:
+--   (a) VISIBLE allied tanks parked within the radius (info.objects hostility
+--       bit — real presence, only when we can see them);
+--   (b) allies whose broadcast goal is a defense RESPONSE targeting this pill
+--       area (defend_pill / repair_pill claims) — covers the fog case AND bots
+--       still en route, which is exactly the everyone-swarms window.
+-- max() of the two, since a visible defender usually also claims.
+--
+-- Determinism: both loops only COUNT, and ally_state.iter_active walks player
+-- numbers in ascending order, so no result here depends on hash order.
+--
+-- Returns (held, allies_near, foes_near, ratio).
+local function defend_well_defended(state, info, p, now)
+  local wr  = C.DEFEND_WELL_DEFENDED_RADIUS or 10
+  local wr2 = wr * wr
+  local allies_near = 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OBJECT_TANK
+       and bit.band(ob.info, OBJECT_HOSTILE) == 0 then
+      local adx = bit.rshift(ob.x, 8) - p.mx
+      local ady = bit.rshift(ob.y, 8) - p.my
+      if adx * adx + ady * ady <= wr2 then
+        allies_near = allies_near + 1
+      end
+    end
+  end
+  local responders = 0
+  for ally_pn, slot in ally_state.iter_active(now, 1750) do
+    if ally_pn ~= info.player_number then
+      local h = slot.info
+      if h and (h.goal == "defend_pill" or h.goal == "repair_pill") then
+        local gx, gy = tonumber(h.mx), tonumber(h.my)
+        if gx and gy then
+          local adx, ady = gx - p.mx, gy - p.my
+          if adx * adx + ady * ady <= wr2 then
+            responders = responders + 1
+          end
+        end
+      end
+    end
+  end
+  if responders > allies_near then allies_near = responders end
+  local foes_near = 0
+  for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
+    local edx, edy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
+    if edx * edx + edy * edy <= wr2 then
+      foes_near = foes_near + 1
+    end
+  end
+  local a, ours_total = info.allies or 0, 0
+  while a > 0 do
+    ours_total = ours_total + (a % 2)
+    a = math.floor(a / 2)
+  end
+  if ours_total < 1 then ours_total = 1 end
+  local theirs_total = (info.num_players or ours_total) - ours_total
+  if theirs_total < 1 then theirs_total = 1 end
+  local ratio = math.ceil(theirs_total / ours_total)
+  local held = (allies_near > 0) and (foes_near <= allies_near * ratio)
+  return held, allies_near, foes_near, ratio
+end
+
 local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   local bd = { travel = travel }
   local hp  = p.health or 0
@@ -4430,64 +4506,11 @@ local function defend_pill_score(state, world, info, p, travel, now, tmx, tmy)
   -- when foes <= allies_near * R (no visible foes + any ally = held).
   local wd_cost = C.DEFEND_WELL_DEFENDED_COST or 500
   if cost < wd_cost then
-    local wr  = C.DEFEND_WELL_DEFENDED_RADIUS or 10
-    local wr2 = wr * wr
-    -- Defenders already on it, from two live signals:
-    --   (a) VISIBLE allied tanks parked within the radius (info.objects
-    --       hostility bit — real presence, only when we can see them);
-    --   (b) allies whose broadcast goal is a defense RESPONSE targeting
-    --       this pill area (defend_pill / repair_pill claims) — covers
-    --       the fog case AND bots still en route, which is exactly the
-    --       everyone-swarms window. max() of the two, since a visible
-    --       defender usually also claims.
-    local allies_near = 0
-    for _, ob in ipairs(info.objects or {}) do
-      if ob.type == OBJECT_TANK
-         and bit.band(ob.info, OBJECT_HOSTILE) == 0 then
-        local adx = bit.rshift(ob.x, 8) - p.mx
-        local ady = bit.rshift(ob.y, 8) - p.my
-        if adx * adx + ady * ady <= wr2 then
-          allies_near = allies_near + 1
-        end
-      end
-    end
-    local responders = 0
-    for ally_pn, slot in ally_state.iter_active(now, 1750) do
-      if ally_pn ~= info.player_number then
-        local h = slot.info
-        if h and (h.goal == "defend_pill" or h.goal == "repair_pill") then
-          local gx, gy = tonumber(h.mx), tonumber(h.my)
-          if gx and gy then
-            local adx, ady = gx - p.mx, gy - p.my
-            if adx * adx + ady * ady <= wr2 then
-              responders = responders + 1
-            end
-          end
-        end
-      end
-    end
-    if responders > allies_near then allies_near = responders end
-    if allies_near > 0 then
-      local foes_near = 0
-      for _, et in ipairs((state.perc and state.perc.enemy_tanks) or {}) do
-        local edx, edy = (et.mx or 0) - p.mx, (et.my or 0) - p.my
-        if edx * edx + edy * edy <= wr2 then
-          foes_near = foes_near + 1
-        end
-      end
-      local a, ours_total = info.allies or 0, 0
-      while a > 0 do
-        ours_total = ours_total + (a % 2)
-        a = math.floor(a / 2)
-      end
-      if ours_total < 1 then ours_total = 1 end
-      local theirs_total = (info.num_players or ours_total) - ours_total
-      if theirs_total < 1 then theirs_total = 1 end
-      local ratio = math.ceil(theirs_total / ours_total)
-      if foes_near <= allies_near * ratio then
-        bd.welldef = { ours = allies_near, foes = foes_near, ratio = ratio }
-        cost = wd_cost
-      end
+    local held, allies_near, foes_near, ratio =
+          defend_well_defended(state, info, p, now)
+    if held then
+      bd.welldef = { ours = allies_near, foes = foes_near, ratio = ratio }
+      cost = wd_cost
     end
   end
 
@@ -4542,6 +4565,17 @@ end
 --          ALARM_STAMP block): the offsets are computed ONCE at module load,
 --          never per tick.
 --   3. AND we are MORE than DEFEND_ALARM_MIN_DIST (9) tiles from the pill.
+--   4. AND the pill is not already WELL DEFENDED (C.DEFEND_ALARM_WELL_DEFENDED,
+--      2026-09-07).  Andrew: "Let's just reject the ones that are
+--      well_defended / No need to raise that alarm if it's well_defended."
+--      The KEEL evaluator's own well-defended gate, asked through the shared
+--      defend_well_defended() above: R = ceil(their_team/our_team), held when
+--      foes_near <= allies_near * R, both counted within
+--      DEFEND_WELL_DEFENDED_RADIUS (10) euclidean tiles of the pill, this bot
+--      excluded, allies = allied tanks at the pill PLUS allies whose broadcast
+--      goal is a defend/repair response aimed there.  A held pill is somebody
+--      else's alarm, so the row is rejected and the per-pill loop moves on to
+--      the next alarmed pill.
 --
 -- No hysteresis and no commitment may keep an alarm alive: the moment a
 -- condition stops holding the row goes back to REJECTED, and a bot standing on
@@ -4572,6 +4606,7 @@ local ALARM_R_NO_ENEMY  = "no_enemy_near"
 local ALARM_R_NO_TRIG   = "no_trigger"
 local ALARM_R_TOO_CLOSE = "too_close"
 local ALARM_R_NO_PATH   = "no_path"
+local ALARM_R_WELL_DEF  = "well_defended"
 
 -- Enemy-attributed hits on this pill inside the window, from perception's
 -- ring.  Returns (count, newest_tick, newest_src).
@@ -4634,6 +4669,15 @@ function M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
   -- returned in condition order.
   a.min_dist = C.DEFEND_ALARM_MIN_DIST or 9
   a.dist = U.edist(tmx or 0, tmy or 0, p.mx, p.my)
+  -- Condition 4's evidence, computed here for the same reason the distance is:
+  -- the al_wd chip has to be on EVERY row, including the ones that never reach
+  -- condition 4, or it is a chip the reader cannot trust.  Counting only; the
+  -- verdict is still applied in condition order, below.  With the knob off
+  -- nothing is counted at all and the chip says so.
+  if C.DEFEND_ALARM_WELL_DEFENDED ~= false then
+    a.wd_held, a.wd_allies, a.wd_foes, a.wd_ratio =
+      defend_well_defended(state, info, p, now)
+  end
   -- Condition 1 — live sighting, this tick.
   local et, ed = defend_alarm_enemy(state, p)
   a.enemy, a.enemy_d = et, ed
@@ -4661,6 +4705,17 @@ function M.defend_alarm_status(state, world, info, p, now, tmx, tmy)
   if a.dist <= a.min_dist then
     return false, string.format("too_close(%.1f<=%d)", a.dist, a.min_dist),
            ALARM_R_TOO_CLOSE, a
+  end
+  -- Condition 4 — the pill is not ALREADY HELD.  Andrew, 2026-09-07: "Let's
+  -- just reject the ones that are well_defended / No need to raise that alarm
+  -- if it's well_defended."  Same rule the KEEL evaluator clamps on (the
+  -- shared defend_well_defended above): allies already covering the foes at
+  -- the pill in team-ratio proportion means the alarm is somebody else's, and
+  -- the per-pill loop simply moves on to the next alarmed pill.
+  if a.wd_held then
+    return false, string.format("well_defended(foes %d <= allies %d x %d)",
+                                a.wd_foes or 0, a.wd_allies or 0, a.wd_ratio or 1),
+           ALARM_R_WELL_DEF, a
   end
   return true, nil, nil, a
 end
@@ -4790,8 +4845,15 @@ local function defend_alarm_evidence(a)
     tr = string.format(" al_trig{none dmg%d bld%s}", a.hits or 0,
                        a.build and (a.lgm_fresh and "Y" or "nolgm") or "N")
   end
+  local wd
+  if a.wd_ratio == nil then
+    wd = " al_wd{off}"
+  else
+    wd = string.format(" al_wd{%d/%dx%d%s}", a.wd_foes or 0, a.wd_allies or 0,
+                       a.wd_ratio, a.wd_held and " HELD" or "")
+  end
   return en .. tr .. string.format(" al_dist{%.1f>%d}", a.dist or 0,
-                                   a.min_dist or 9)
+                                   a.min_dist or 9) .. wd
 end
 
 -- The per-term "How computed" segments.  Andrew's standing rule: EVERY factor
@@ -4830,6 +4892,15 @@ local function defend_alarm_detail(a, bd, p, hp)
                           or "no build seen in the stamp"),
     string.format("al_dist:condition 3 — we must be MORE than DEFEND_ALARM_MIN_DIST (%d) tiles from the pill. We are %.1f. Inside that radius there is nothing left to travel to, so the alarm drops and the goal with it.",
                   a.min_dist or 9, a.dist or 0),
+    string.format("al_wd:condition 4 — the pill must not already be HELD. Allies within DEFEND_WELL_DEFENDED_RADIUS (%d tiles) of it — visible allied tanks, or allies whose broadcast goal is a defend_pill/repair_pill response aimed here, whichever count is larger, this bot excluded — versus enemy tanks in the same radius. R = ceil(their_team/our_team) rounds the coverage requirement in the defenders' favour, so it is held when foes <= allies x R (and no visible foes plus any ally is held). %s",
+                  C.DEFEND_WELL_DEFENDED_RADIUS or 10,
+                  (a.wd_ratio == nil)
+                    and "DEFEND_ALARM_WELL_DEFENDED is off — nothing is counted and this condition never rejects."
+                    or string.format("Here: foes %d, allies %d, R %d -> %s.",
+                                     a.wd_foes or 0, a.wd_allies or 0, a.wd_ratio,
+                                     a.wd_held
+                                       and "HELD, so no alarm is raised and the evaluator moves on to the next pill"
+                                       or "not held, so this condition passes")),
     string.format("state:pill hp=%d/%d, hits taken %d; watch=%s",
                   hp, C.PILLS_MAX_HEALTH or 15,
                   math.max(0, (C.PILLS_MAX_HEALTH or 15) - hp),

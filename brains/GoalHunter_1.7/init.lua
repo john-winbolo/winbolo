@@ -5055,10 +5055,11 @@ function Brain.think(info)
       if not p or (p.owner ~= "friendly" and p.owner ~= "allied")
          or p.health == 0 then goal_valid = false end
       -- ALARM MODE (2026-09-06, C.DEFEND_ALARM_MODE): the alarm is a
-      -- PRECONDITION, not a bid.  The tick any of its three conditions stops
+      -- PRECONDITION, not a bid.  The tick any of its conditions stops
       -- holding -- no hostile tank visible within 11 tiles of the pill RIGHT
-      -- NOW, no enemy damage/build trigger inside the 5 s window, or we have
-      -- closed to within 9 tiles -- the goal dies HERE, with no hysteresis,
+      -- NOW, no enemy damage/build trigger inside the 5 s window, we have
+      -- closed to within 9 tiles, or enough allies have arrived that the pill
+      -- is now WELL DEFENDED -- the goal dies HERE, with no hysteresis,
       -- no commitment and no grace period, and the invalid-goal path below
       -- forces the immediate replan.  Asked through the SAME
       -- goals.defend_alarm_status the pool row prints its reject reason from,

@@ -2202,6 +2202,8 @@ M.DEFEND_HEAT_COST           = 200   -- flat bid for "put 3 shells in the pill t
 --            (the OBJECT_HOSTILE bit is the whole attribution -- Andrew,
 --            2026-09-06: "if we know the LGM is an enemy, that's sufficient");
 --     3. AND we are MORE than DEFEND_ALARM_MIN_DIST tiles from the pill.
+--     4. AND the pill is not already WELL DEFENDED
+--        (DEFEND_ALARM_WELL_DEFENDED, below).
 --   The instant any condition stops holding the row goes back to REJECTED and
 --   a bot standing on that goal DROPS it (init.lua's goal-validity hook) --
 --   no hysteresis, no commitment, no arrived ladder.
@@ -2232,6 +2234,20 @@ M.DEFEND_ALARM_BUILD_RADIUS   = 4    -- cond 2b: stamp radius around a watched p
 M.DEFEND_ALARM_MIN_DIST       = 9    -- cond 3: we must be MORE than this many tiles from the
                                      -- pill.  Inside it there is nothing to travel to
                                      -- (reject `alarm_off:too_close`).
+-- cond 4 (2026-09-07): a pill that is ALREADY HELD raises no alarm.  Andrew:
+-- "Let's just reject the ones that are well_defended / No need to raise that
+-- alarm if it's well_defended."  Exactly the KEEL evaluator's well-defended
+-- gate (see DEFEND_WELL_DEFENDED_RADIUS above), asked through the same shared
+-- counting pass: R = ceil(their_team/our_team), held when
+-- foes_near <= allies_near * R, both counted within
+-- DEFEND_WELL_DEFENDED_RADIUS euclidean tiles of the pill, this bot excluded,
+-- allies = allied tanks at the pill PLUS allies whose broadcast goal is a
+-- defend_pill/repair_pill response aimed there.  Rejects with
+-- `alarm_off:well_defended(...)`; the evaluator then moves on to the next
+-- alarmed pill, and a bot already ON such a defend goal drops it through the
+-- same status function in init.lua's goal-validity hook.  No PRESETS.keel
+-- entry: DEFEND_ALARM_MODE is false in keel, so none of this is read there.
+M.DEFEND_ALARM_WELL_DEFENDED  = true
 M.DEFEND_ALARM_BASE_COST      = 100  -- flat cost of an alarmed defend trip before the discount
 M.DEFEND_ALARM_HIT_DISCOUNT   = 10   -- subtracted per enemy hit counted in the window
 M.DEFEND_ALARM_MIN_COST       = 50   -- floor the discount can never go below
