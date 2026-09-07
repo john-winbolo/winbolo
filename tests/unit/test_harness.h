@@ -1037,11 +1037,11 @@ int run_overview_camera(void);
 int run_overview_scroll(void);
 
 /* Overview fog mask (test_overview_fog.cpp): a live square comes out clear and
- * ground past the ramp fully fogged, the fade rises square by square out of
- * every edge and is darker diagonally off a corner than the same way out of an
- * edge, overlapping regions take the brightest answer, a region against the
- * map border keeps its brightness to the border without writing past the end
- * of the mask, and no regions at all fogs the whole map. */
+ * ground outside every region fully fogged, the fog steps to full in the one
+ * square outside an edge and is as hard off a corner as along a side,
+ * overlapping regions take the brightest answer, a region against the map
+ * border keeps its brightness to the border without writing past the end of
+ * the mask, and no regions at all fogs the whole map. */
 int run_overview_fog(void);
 
 /* Line of sight (test_sight.c): the square the player stands on is seen even

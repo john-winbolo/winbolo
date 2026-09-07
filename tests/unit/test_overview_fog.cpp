@@ -4,7 +4,6 @@
  * Nothing here touches SDL: rects in, bytes out.
  */
 
-#include <cmath>
 #include <cstring>
 
 #include "test_harness.h"
@@ -38,14 +37,15 @@ static void fogBuild(const OverviewRect *live, int liveCount,
     fogBuildDark(live, liveCount, lift, NULL);
 }
 
-/* The ramp overview_fog.cpp builds, repeated here so the cases below can name
- * the exact byte a region at full alpha carries `d` squares out. Deliberate
- * duplication: it is what turns "the fade did not change" into an assertion
- * rather than a shape check, so a change to the ramp has to be made twice. */
-static BYTE fogRampRef(float d) {
-    float t = d / (float)OVERVIEW_FOG_RAMP;
-    float s = t * t * (3.0f - 2.0f * t);
-    return (BYTE)lroundf((float)OVERVIEW_FOG_ALPHA * s);
+/* The edge overview_fog.cpp draws, repeated here so the cases below can name
+ * the exact byte a region at full alpha carries: clear on the squares it covers
+ * and the whole of the fog on every other one. Deliberate duplication — it is
+ * what turns "the edge did not soften" into an assertion rather than a shape
+ * check, so a change to the edge has to be made twice. */
+static BYTE fogFullAlphaAt(const OverviewRect *r, int x, int y) {
+    bool inside = (x >= r->left && x <= r->right &&
+                   y >= r->top  && y <= r->bottom);
+    return inside ? (BYTE)0 : (BYTE)OVERVIEW_FOG_ALPHA;
 }
 
 static int fogGuardIntact(void) {
@@ -58,8 +58,8 @@ static int fogGuardIntact(void) {
     return 0;
 }
 
-/* A live square is clear, ground well past the ramp is fully fogged, and the
- * region's own edge — the square the fade starts from — is clear too. */
+/* A live square is clear, ground away from the region is fully fogged, and the
+ * region's own edge square is clear too. */
 static int fog_live_is_clear_and_far_is_fogged(void) {
     OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
@@ -77,66 +77,84 @@ static int fog_live_is_clear_and_far_is_fogged(void) {
     return fogGuardIntact();
 }
 
-/* Walking straight out from an edge, the fog rises square by square and has
- * reached full fog by the end of the ramp — the shape the whole overlay is
- * for, since a step from clear to full in one square is the hard edge it
- * replaces. */
-static int fog_ramps_out_of_the_region(void) {
+/* Walking straight out from an edge the fog is at full in one square: the last
+ * square the region covers is clear and the first square outside it carries
+ * the whole of the fog, with nothing part way between them. The same step on
+ * all four sides, so the lit area does not drift off the region. */
+static int fog_steps_to_full_outside_the_region(void) {
     OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1, NULL);
 
-    BYTE prev = 0;
-    for (int d = 1; d < OVERVIEW_FOG_RAMP; d++) {
-        BYTE got = fogAt(120 + d, 110);
-        UT_ASSERT_MSG(got > prev,
-                      "%d squares out carries %u fog, no more than the %u "
-                      "one square nearer", d, (unsigned)got, (unsigned)prev);
-        UT_ASSERT_MSG(got < OVERVIEW_FOG_ALPHA,
-                      "%d squares out is already fully fogged at %u, with the "
-                      "ramp %d squares long", d, (unsigned)got,
-                      OVERVIEW_FOG_RAMP);
-        prev = got;
-    }
-
-    for (int d = OVERVIEW_FOG_RAMP; d <= OVERVIEW_FOG_RAMP + 2; d++) {
+    UT_ASSERT_MSG(fogAt(120, 110) == 0,
+                  "the last square the region covers carries %u fog, expected "
+                  "it clear", (unsigned)fogAt(120, 110));
+    for (int d = 1; d <= 4; d++) {
         BYTE got = fogAt(120 + d, 110);
         UT_ASSERT_MSG(got == OVERVIEW_FOG_ALPHA,
-                      "%d squares out — past the %d square ramp — carries %u "
-                      "fog, expected %u", d, OVERVIEW_FOG_RAMP,
-                      (unsigned)got, (unsigned)OVERVIEW_FOG_ALPHA);
+                      "%d squares out of the region carries %u fog, expected "
+                      "the full %u", d, (unsigned)got,
+                      (unsigned)OVERVIEW_FOG_ALPHA);
     }
 
-    /* The same fade on all four sides, so the region does not drift. */
-    UT_ASSERT_MSG(fogAt(99, 110) == fogAt(121, 110),
-                  "left edge fades to %u where the right fades to %u",
-                  (unsigned)fogAt(99, 110), (unsigned)fogAt(121, 110));
-    UT_ASSERT_MSG(fogAt(110, 99) == fogAt(110, 121),
-                  "top edge fades to %u where the bottom fades to %u",
-                  (unsigned)fogAt(110, 99), (unsigned)fogAt(110, 121));
+    UT_ASSERT_MSG(fogAt(100, 110) == 0 && fogAt(99, 110) == OVERVIEW_FOG_ALPHA,
+                  "the left edge is %u inside and %u one square out, expected "
+                  "0 then %u", (unsigned)fogAt(100, 110),
+                  (unsigned)fogAt(99, 110), (unsigned)OVERVIEW_FOG_ALPHA);
+    UT_ASSERT_MSG(fogAt(110, 100) == 0 && fogAt(110, 99) == OVERVIEW_FOG_ALPHA,
+                  "the top edge is %u inside and %u one square out, expected "
+                  "0 then %u", (unsigned)fogAt(110, 100),
+                  (unsigned)fogAt(110, 99), (unsigned)OVERVIEW_FOG_ALPHA);
+    UT_ASSERT_MSG(fogAt(110, 120) == 0 && fogAt(110, 121) == OVERVIEW_FOG_ALPHA,
+                  "the bottom edge is %u inside and %u one square out, expected "
+                  "0 then %u", (unsigned)fogAt(110, 120),
+                  (unsigned)fogAt(110, 121), (unsigned)OVERVIEW_FOG_ALPHA);
     return fogGuardIntact();
 }
 
-/* Diagonally out from a corner is further from the region than straight out
- * from an edge, so it is darker — which is what stops the lit area coming to
- * a square point at every corner. */
-static int fog_corners_are_rounded(void) {
+/* A corner is as sharp as a side: the region's own corner square is clear, the
+ * square diagonally off it is in full fog, and so is every other square in the
+ * ring just outside the rect. Nothing outside the region is ever part lit,
+ * whichever way it lies from it. */
+static int fog_corners_are_as_sharp_as_the_sides(void) {
     OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1, NULL);
 
-    BYTE corner = fogAt(122, 122); /* 2 out and 2 down: 2.83 squares away */
-    BYTE edge   = fogAt(122, 110); /* 2 out: 2 squares away */
-    UT_ASSERT_MSG(corner > edge,
-                  "the diagonal off a corner carries %u fog, no more than the "
-                  "%u the same distance along an edge does",
-                  (unsigned)corner, (unsigned)edge);
+    UT_ASSERT_MSG(fogAt(120, 120) == 0,
+                  "the region's corner square carries %u fog, expected clear",
+                  (unsigned)fogAt(120, 120));
+    UT_ASSERT_MSG(fogAt(121, 121) == OVERVIEW_FOG_ALPHA,
+                  "the square diagonally off the corner carries %u fog, "
+                  "expected the full %u", (unsigned)fogAt(121, 121),
+                  (unsigned)OVERVIEW_FOG_ALPHA);
+
+    for (int x = 99; x <= 121; x++) {
+        UT_ASSERT_MSG(fogAt(x, 99) == OVERVIEW_FOG_ALPHA,
+                      "square %d,99 in the ring above the region carries %u "
+                      "fog, expected the full %u", x, (unsigned)fogAt(x, 99),
+                      (unsigned)OVERVIEW_FOG_ALPHA);
+        UT_ASSERT_MSG(fogAt(x, 121) == OVERVIEW_FOG_ALPHA,
+                      "square %d,121 in the ring below the region carries %u "
+                      "fog, expected the full %u", x, (unsigned)fogAt(x, 121),
+                      (unsigned)OVERVIEW_FOG_ALPHA);
+    }
+    for (int y = 99; y <= 121; y++) {
+        UT_ASSERT_MSG(fogAt(99, y) == OVERVIEW_FOG_ALPHA,
+                      "square 99,%d in the ring left of the region carries %u "
+                      "fog, expected the full %u", y, (unsigned)fogAt(99, y),
+                      (unsigned)OVERVIEW_FOG_ALPHA);
+        UT_ASSERT_MSG(fogAt(121, y) == OVERVIEW_FOG_ALPHA,
+                      "square 121,%d in the ring right of the region carries "
+                      "%u fog, expected the full %u", y,
+                      (unsigned)fogAt(121, y), (unsigned)OVERVIEW_FOG_ALPHA);
+    }
     return fogGuardIntact();
 }
 
 /* Regions overlap — a pill's block over the tank's, or two pills' — and the
  * brightest answer has to win. A square another region has live must come out
- * clear however deep in this one's ramp it sits. */
+ * clear however far outside this one it sits. */
 static int fog_overlapping_regions_take_the_brightest(void) {
     OverviewRect live[2] = { { 100, 100, 120, 120, 255, 0 },
                              { 118, 118, 130, 130, 255, 0 } };
@@ -145,25 +163,27 @@ static int fog_overlapping_regions_take_the_brightest(void) {
 
     UT_ASSERT_MSG(fogAt(121, 121) == 0,
                   "a square the second region has live carries %u fog from "
-                  "sitting in the first's ramp", (unsigned)fogAt(121, 121));
+                  "sitting outside the first", (unsigned)fogAt(121, 121));
     UT_ASSERT_MSG(fogAt(119, 119) == 0,
                   "a square both regions have live carries %u fog",
                   (unsigned)fogAt(119, 119));
 
-    /* Between two regions, near either one is brighter than midway between
-     * them: each square takes its distance from whichever is closer. */
+    /* Two regions with ground between them: each is clear to its own edge and
+     * the gap is in full fog, rather than the two running into one lit patch. */
     OverviewRect pair[2] = { { 100, 100, 120, 120, 255, 0 },
                              { 124, 100, 140, 120, 255, 0 } };
     fogBuild(pair, ARRAY_LEN(pair), NULL);
 
-    UT_ASSERT_MSG(fogAt(121, 110) == fogAt(123, 110),
-                  "the gap between two regions is lit unevenly: %u one square "
-                  "from the left, %u one square from the right",
-                  (unsigned)fogAt(121, 110), (unsigned)fogAt(123, 110));
-    UT_ASSERT_MSG(fogAt(122, 110) > fogAt(121, 110),
-                  "midway between two regions carries %u fog, no more than "
-                  "the %u right beside one",
-                  (unsigned)fogAt(122, 110), (unsigned)fogAt(121, 110));
+    UT_ASSERT_MSG(fogAt(120, 110) == 0 && fogAt(124, 110) == 0,
+                  "the two regions' facing edges carry %u and %u fog, expected "
+                  "both clear", (unsigned)fogAt(120, 110),
+                  (unsigned)fogAt(124, 110));
+    for (int x = 121; x <= 123; x++) {
+        UT_ASSERT_MSG(fogAt(x, 110) == OVERVIEW_FOG_ALPHA,
+                      "square %d,110 in the gap between two regions carries %u "
+                      "fog, expected the full %u", x, (unsigned)fogAt(x, 110),
+                      (unsigned)OVERVIEW_FOG_ALPHA);
+    }
     return fogGuardIntact();
 }
 
@@ -215,34 +235,40 @@ static int fog_no_regions_fogs_the_map(void) {
     return fogGuardIntact();
 }
 
-/* A region at full alpha is one the player holds outright, and carries the
- * ramp byte for byte — the mask a region that cannot fade has always drawn. */
-static int fog_full_alpha_carries_the_plain_ramp(void) {
+/* A region at full alpha is one the player holds outright: every square it
+ * covers is clear, corners and edges included, and the ground immediately
+ * outside it is in full fog on all four sides. */
+static int fog_full_alpha_is_clear_inside_and_fogged_outside(void) {
     OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
     fogBuild(&live, 1, NULL);
 
-    UT_ASSERT_MSG(fogAt(110, 110) == 0,
-                  "a full-alpha region's interior carries %u fog",
-                  (unsigned)fogAt(110, 110));
-    for (int d = 0; d < OVERVIEW_FOG_RAMP; d++) {
-        BYTE want = fogRampRef((float)d);
-        BYTE got  = fogAt(120 + d, 110);
-        UT_ASSERT_MSG(got == want,
-                      "%d squares out of a full-alpha region carries %u fog, "
-                      "expected the plain ramp's %u",
-                      d, (unsigned)got, (unsigned)want);
+    for (int y = live.top; y <= live.bottom; y++) {
+        for (int x = live.left; x <= live.right; x++) {
+            UT_ASSERT_MSG(fogAt(x, y) == 0,
+                          "square %d,%d inside a full-alpha region carries %u "
+                          "fog, expected it clear", x, y,
+                          (unsigned)fogAt(x, y));
+        }
     }
-    UT_ASSERT_MSG(fogAt(120 + OVERVIEW_FOG_RAMP, 110) == OVERVIEW_FOG_ALPHA,
-                  "the square past the ramp carries %u fog, expected %u",
-                  (unsigned)fogAt(120 + OVERVIEW_FOG_RAMP, 110),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
+
+    static const int kOutside[4][2] = {
+        { 99, 110 }, { 121, 110 }, { 110, 99 }, { 110, 121 }
+    };
+    for (int i = 0; i < ARRAY_LEN(kOutside); i++) {
+        BYTE got = fogAt(kOutside[i][0], kOutside[i][1]);
+        UT_ASSERT_MSG(got == OVERVIEW_FOG_ALPHA,
+                      "square %d,%d just outside a full-alpha region carries "
+                      "%u fog, expected the full %u", kOutside[i][0],
+                      kOutside[i][1], (unsigned)got,
+                      (unsigned)OVERVIEW_FOG_ALPHA);
+    }
     return fogGuardIntact();
 }
 
 /* The other end of a fade: a region at alpha 0 has run its decay window out
- * and has to leave the map exactly as it found it, ramp included — the block
- * is gone rather than sitting there at one byte under full fog. */
+ * and has to leave the map exactly as it found it — the block is gone rather
+ * than sitting there at one byte under full fog. */
 static int fog_faded_out_region_is_not_there(void) {
     OverviewRect live = { 100, 100, 120, 120, 0, 0 };
 
@@ -258,8 +284,8 @@ static int fog_faded_out_region_is_not_there(void) {
 }
 
 /* Mid-fade the whole block dims together: every square the region covers takes
- * the same part-way value, the ramp still climbs out of that value rather than
- * out of clear, and a region still at full alpha over the top wins. */
+ * the same part-way value, the ground outside it is in full fog as it is round
+ * any region, and a region still at full alpha over the top wins. */
 static int fog_mid_fade_dims_the_whole_block(void) {
     OverviewRect live = { 100, 100, 120, 120, 128, 0 };
 
@@ -271,8 +297,8 @@ static int fog_mid_fade_dims_the_whole_block(void) {
                   "between 0 and %u", (unsigned)inside,
                   (unsigned)OVERVIEW_FOG_ALPHA);
 
-    /* The edge is as bright as the middle: the fade dims the block, and the
-     * ramp starts from whatever brightness the block is left with. */
+    /* The edge is as bright as the middle: the fade dims the block evenly
+     * rather than eating into it from the outside. */
     UT_ASSERT_MSG(fogAt(120, 120) == inside,
                   "the region's corner carries %u fog where its middle carries "
                   "%u", (unsigned)fogAt(120, 120), (unsigned)inside);
@@ -281,15 +307,11 @@ static int fog_mid_fade_dims_the_whole_block(void) {
                   "carries %u", (unsigned)fogAt(100, 100), (unsigned)inside);
 
     BYTE oneOut = fogAt(121, 110);
-    UT_ASSERT_MSG(oneOut > inside && oneOut < OVERVIEW_FOG_ALPHA,
+    UT_ASSERT_MSG(oneOut == OVERVIEW_FOG_ALPHA,
                   "one square out of a half-faded region carries %u fog, "
-                  "expected between the block's %u and %u",
-                  (unsigned)oneOut, (unsigned)inside,
-                  (unsigned)OVERVIEW_FOG_ALPHA);
-    UT_ASSERT_MSG(fogAt(120 + OVERVIEW_FOG_RAMP, 110) == OVERVIEW_FOG_ALPHA,
-                  "the square past a half-faded region's ramp carries %u fog, "
-                  "expected %u", (unsigned)fogAt(120 + OVERVIEW_FOG_RAMP, 110),
-                  (unsigned)OVERVIEW_FOG_ALPHA);
+                  "expected the full %u past the block's %u",
+                  (unsigned)oneOut, (unsigned)OVERVIEW_FOG_ALPHA,
+                  (unsigned)inside);
 
     /* A pill going dark under the tank's block must not dim it. */
     OverviewRect pair[2] = { { 100, 100, 120, 120, 128, 0 },
@@ -368,30 +390,13 @@ static const BYTE *fogLiftOne(int x, int y, BYTE value) {
 }
 
 /* Every byte of the mask one full-alpha region draws, worked out square by
- * square from the ramp rather than read back off the builder. A region at full
- * alpha lifts each square the whole way, so what is left is the ramp value at
- * the distance to the rect, and full fog past the end of the ramp. */
+ * square rather than read back off the builder. A region at full alpha lifts
+ * each square it covers the whole way out of the fog, and there is no square
+ * outside it the region touches at all. */
 static int fogAssertPlainMask(const OverviewRect *r) {
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
         for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-            int dx = 0;
-            int dy = 0;
-
-            if (x < r->left) {
-                dx = r->left - x;
-            } else if (x > r->right) {
-                dx = x - r->right;
-            }
-            if (y < r->top) {
-                dy = r->top - y;
-            } else if (y > r->bottom) {
-                dy = y - r->bottom;
-            }
-
-            float d = sqrtf((float)(dx * dx + dy * dy));
-            BYTE want = (d >= (float)OVERVIEW_FOG_RAMP)
-                            ? (BYTE)OVERVIEW_FOG_ALPHA
-                            : fogRampRef(d);
+            BYTE want = fogFullAlphaAt(r, x, y);
             UT_ASSERT_MSG(fogAt(x, y) == want,
                           "square %d,%d carries %u fog, expected %u",
                           x, y, (unsigned)fogAt(x, y), (unsigned)want);
@@ -422,8 +427,8 @@ static int fog_no_lift_is_the_mask_the_regions_draw(void) {
 
 /* A square no region covers is in full fog until its lift says otherwise: at
  * 255 it comes out as clear as a live one. It is the square's own lift and
- * nothing else's, so the square beside it is untouched — the ramp belongs to
- * the regions, and ground that is fading is lit one square at a time. */
+ * nothing else's, so the square beside it is untouched — ground that is fading
+ * is lit one square at a time. */
 static int fog_full_lift_clears_ground_no_region_covers(void) {
     OverviewRect live = { 100, 100, 120, 120, 255, 0 };
 
@@ -474,15 +479,17 @@ static int fog_lift_never_darkens_a_square(void) {
                       (unsigned)fogAt(110, 110), (unsigned)kLifts[i]);
     }
 
-    /* And part way up the ramp, where the region leaves the square dimmer than
-     * clear but brighter than a small lift would. */
-    fogBuild(&live, 1, NULL);
-    BYTE plain = fogAt(121, 110);
-    fogBuild(&live, 1, fogLiftOne(121, 110, 1));
-    UT_ASSERT_MSG(fogAt(121, 110) == plain,
-                  "a square the ramp leaves at %u fog is at %u under a lift of "
-                  "1, which is darker than the ramp had it",
-                  (unsigned)plain, (unsigned)fogAt(121, 110));
+    /* And under a region part way through its fade, where the block leaves the
+     * square dimmer than clear but brighter than a small lift would. */
+    OverviewRect fading = { 100, 100, 120, 120, 128, 0 };
+
+    fogBuild(&fading, 1, NULL);
+    BYTE plain = fogAt(110, 110);
+    fogBuild(&fading, 1, fogLiftOne(110, 110, 1));
+    UT_ASSERT_MSG(fogAt(110, 110) == plain,
+                  "a square a half-faded region leaves at %u fog is at %u "
+                  "under a lift of 1, which is darker than the block had it",
+                  (unsigned)plain, (unsigned)fogAt(110, 110));
     return fogGuardIntact();
 }
 
@@ -555,12 +562,12 @@ static int fog_no_dark_is_the_mask_without_it(void) {
 extern "C" int run_overview_fog(void) {
     int rc;
     rc = fog_live_is_clear_and_far_is_fogged();      if (rc) return rc;
-    rc = fog_ramps_out_of_the_region();              if (rc) return rc;
-    rc = fog_corners_are_rounded();                  if (rc) return rc;
+    rc = fog_steps_to_full_outside_the_region();     if (rc) return rc;
+    rc = fog_corners_are_as_sharp_as_the_sides();    if (rc) return rc;
     rc = fog_overlapping_regions_take_the_brightest(); if (rc) return rc;
     rc = fog_regions_clamp_to_the_map();             if (rc) return rc;
     rc = fog_no_regions_fogs_the_map();              if (rc) return rc;
-    rc = fog_full_alpha_carries_the_plain_ramp();    if (rc) return rc;
+    rc = fog_full_alpha_is_clear_inside_and_fogged_outside(); if (rc) return rc;
     rc = fog_faded_out_region_is_not_there();        if (rc) return rc;
     rc = fog_mid_fade_dims_the_whole_block();        if (rc) return rc;
     rc = fog_half_alpha_lifts_half_way();            if (rc) return rc;

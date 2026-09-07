@@ -301,7 +301,7 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
 /* Every square the view covers, all at full brightness — what the player can
  * see this instant and what they are only remembering alike. The fog pass
  * below takes the second kind back down; keeping the two apart is what lets
- * the boundary between them be softer than one square. */
+ * the fog go over the lot in one blit rather than a colour mod per tile. */
 static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                     const OverviewCamera *cam,
                                     int viewW, int viewH,
@@ -350,9 +350,8 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
 }
 
 /* (Re)create the fog texture when the renderer changes. White, so the fog's
- * colour is the colour mod and nothing else: interpolating a constant white
- * leaves the filtered edge free of the fringe a two-coloured texture would
- * bleed into it. Nothing else ever draws this texture, so — unlike the host's
+ * colour is the colour mod and nothing else and the mask is carried by the
+ * alpha alone. Nothing else ever draws this texture, so — unlike the host's
  * tile sheet, which ImGui also submits — the sampler set here survives from
  * frame to frame. */
 static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
@@ -371,9 +370,12 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
     if (!v->fog) return false;
 
     SDL_SetTextureBlendMode(v->fog, SDL_BLENDMODE_BLEND);
-    /* The whole point: one texel per square blown up to whole tiles, with the
-     * hardware shading between them. */
-    SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_LINEAR);
+    /* One texel per square blown up to whole tiles. Linear filtering would
+     * shade between neighbouring texels and blur every boundary the mask draws
+     * by half a square, so a square would come out part lit whatever byte it
+     * was given; nearest keeps the edge where the mask puts it. The view target
+     * above is set the same way. */
+    SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
     /* Black fog — src is white, so this alone picks the colour a future tint
      * would change. */
     SDL_SetTextureColorMod(v->fog, 0, 0, 0);
@@ -439,21 +441,15 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
 /* The fog over the terrain the pass above just drew.
  *
  * The texture covers the whole map, one texel to a square, so it goes down as
- * a single blit of the map's own rect: texel i then spans exactly square i and
- * its centre lands on the square's centre, which is what makes the filtering
- * shade between square centres instead of smearing the mask off by half a
- * tile. The rect's origin is rounded the way the terrain's is, and its size is
- * a whole number of tiles, so the two stay registered at every zoom.
+ * a single blit of the map's own rect: texel i then spans exactly square i, and
+ * sampled nearest that square carries that texel's byte and none of its
+ * neighbours'. The rect's origin is rounded the way the terrain's is, and its
+ * size is a whole number of tiles, so the two stay registered at every zoom.
  *
  * The mask comes from the live regions rather than the per-square LIVE flag —
  * the sim writes the flag from those same rects, so they say the same thing,
  * and the rects are at most OVERVIEW_MAX_REGIONS structs to compare where the
- * flags are 64K of bytes.
- *
- * One consequence of filtering: the fade starts at the last live square's
- * centre, not its outer edge, so the fully-clear area gives up half a square
- * at the boundary. It never gains any, which is the direction that matters —
- * nothing outside a live region is ever drawn at full brightness. */
+ * flags are 64K of bytes. */
 static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewCamera *cam, int viewW, int viewH,
                                 const OverviewMap *om) {
@@ -819,11 +815,11 @@ static void overviewViewDrawItemViewBorder(SDL_Renderer *r, int viewW, int viewH
     SDL_RenderFillRects(r, runs, 4);
 }
 
-/* The live regions, drawn as outlines over the map. The fog ramps out of a
- * region over three squares and a terrain-only block sits at its own alpha, so
- * two blocks one inside the other read as one soft patch of fog rather than as
- * two regions; the outlines say which squares each block actually covers. A
- * playtest aid over the drawing alone — nothing about the regions moves for it.
+/* The live regions, drawn as outlines over the map. A terrain-only block sits
+ * at its own alpha, so two blocks one inside the other differ only in how dark
+ * the fog over them is; the outlines say which squares each block actually
+ * covers. A playtest aid over the drawing alone — nothing about the regions
+ * moves for it.
  *
  * Colour says what a rect is. The build emits the halo first when there is one,
  * and that is the only terrain-only rect it makes; the block round the player's

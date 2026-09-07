@@ -32,10 +32,15 @@ static int overviewFogClampSquare(int v) {
 }
 
 /* Fog carried at `d` squares from a region, 0 at the region's edge and full
- * fog at OVERVIEW_FOG_RAMP. Smoothstepped rather than linear so the ramp has
- * no visible kink where it flattens out into the fog beyond it. */
+ * fog at OVERVIEW_FOG_RAMP. Smoothstepped rather than linear so a ramp longer
+ * than a square has no visible kink where it flattens out into the fog beyond
+ * it. The caller only ever asks about a square inside the ramp, and with a ramp
+ * of 0 that is a square the region covers: d is 0, the smoothstep is 0, and the
+ * square carries none of the fog. The 1 stands in for the span in that build so
+ * the division is still sound. */
 static BYTE overviewFogRampValue(float d) {
-    float t = d / (float)OVERVIEW_FOG_RAMP;
+    float span = (float)(OVERVIEW_FOG_RAMP > 0 ? OVERVIEW_FOG_RAMP : 1);
+    float t = d / span;
     float s = t * t * (3.0f - 2.0f * t);
     return (BYTE)lroundf((float)OVERVIEW_FOG_ALPHA * s);
 }
@@ -46,8 +51,8 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount,
 
     if (mask == NULL) return;
 
-    /* Everything the walk below does not reach is beyond every region's ramp
-     * and so carries full fog. */
+    /* Everything the walk below does not reach is outside every region, and
+     * beyond every region's ramp where there is one, so it carries full fog. */
     memset(mask, OVERVIEW_FOG_ALPHA, (size_t)OVERVIEW_FOG_MASK_BYTES);
 
     /* No list is no regions rather than nothing to do: a per-square lift with
@@ -87,22 +92,25 @@ void overviewFogBuildMask(const OverviewRect *live, int liveCount,
                     dx = x - rect->right;
                 }
 
-                /* Distance to the rect itself, so the ramp bends round a
-                 * corner instead of squaring off at it. */
+                /* Distance to the rect itself, so a ramp bends round a corner
+                 * instead of squaring off at it. A square the region covers is
+                 * at distance 0 and is never skipped, which with a ramp of 0
+                 * leaves the region's own squares lit and every other square
+                 * in full fog. */
                 float d = sqrtf((float)(dx * dx + dy * dy));
-                if (d >= (float)OVERVIEW_FOG_RAMP) continue;
+                if (d > 0.0f && d >= (float)OVERVIEW_FOG_RAMP) continue;
 
                 /* alpha scales how far this region lifts the square out of
                  * full fog: at 255 the lift is the whole way and the value is
                  * the ramp's, and as the region fades every square it covers
-                 * darkens towards the fog while the ramp keeps its shape at
-                 * the edges. Rounded to nearest, the way the ramp itself is. */
+                 * darkens towards the fog. Rounded to nearest, the way the
+                 * ramp itself is. */
                 int regionLift =
                     ((OVERVIEW_FOG_ALPHA - (int)overviewFogRampValue(d))
                      * (int)rect->alpha + 127) / 255;
 
                 /* Regions overlap — the brightest answer wins, or a pill's
-                 * ramp would darken ground the tank's block has live. */
+                 * faded block would darken ground the tank's block has live. */
                 BYTE v = (BYTE)(OVERVIEW_FOG_ALPHA - regionLift);
                 if (v < row[x]) row[x] = v;
             }
