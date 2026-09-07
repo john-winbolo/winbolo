@@ -790,21 +790,35 @@ end
 -- print the SAME arithmetic.
 -- -------------------------------------------------------------------------
 function M.score_terms(row)
+  -- Every chip is word{value}: BrainTest's pool-grid detail popup parses
+  -- exactly that shape (pool_grid.cpp) into its term table, so the same
+  -- string is the hand-checkable log line AND the popup's term list.
+  local score_str = row.trip and string.format("%.0f", row.score or 0)
+                    or "n/a: no route"
   if row.linear then
     return string.format(
-      "score %.0f = hp_w(%d) x missing(%d) = %.0f - trip_w(%.2f) x trip(%st) = %.0f",
-      row.score or 0, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
+      "bp_score{%s} = hp_w{%d} x missing{%d} = value{%.0f}"
+      .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}",
+      score_str, row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30),
       row.missing or 0, row.value or 0,
       C.BUILDER_POOL_REPAIR_TRIP_W or 0.25, tostring(row.trip or "-"),
       row.c_trip or 0)
   end
-  return string.format("val %.0f - trip %.0f - danger %.0f",
-                       row.value or 0, row.c_trip or 0, row.c_danger or 0)
+  local urg_name = (row.type == "farm") and "urg" or "topup_hp"
+  return string.format(
+    "bp_score{%s} = bp_base{%.0f} + %s{%.0f} + front{%.0f} = value{%.0f}"
+    .. " - trip_w{%.2f} x trip{%st} = tripcost{%.0f}"
+    .. " - danger_w{%.2f} x bp_danger{%.0f} = dangercost{%.0f}",
+    score_str, row.v_base or 0, urg_name, row.v_hp or 0, row.v_front or 0,
+    row.value or 0,
+    C.BUILDER_POOL_TRIP_W or 0.5, tostring(row.trip or "-"), row.c_trip or 0,
+    C.BUILDER_POOL_DANGER_W or 1.5, row.danger or 0, row.c_danger or 0)
 end
 
 -- -------------------------------------------------------------------------
--- The pool-grid detail string for one scored row: the short line before "||"
--- and the long term-by-term breakdown after it.
+-- The pool-grid detail string for one scored row: the short chip line before
+-- "||" and, after it, one "name:computation" segment per chip (joined by
+-- "|"), which the popup shows next to the chip's value and meaning.
 --
 -- COLD PATH.  This used to run inside score_row, so a ~35-argument
 -- string.format (plus the label and score_str formats feeding it) executed for
@@ -820,6 +834,7 @@ function M.row_formula(row)
   local out_ticks = row.out_ticks
   local dgr      = row.danger or 0
   local reject   = row.reject
+  local MIN      = C.BUILDER_POOL_MIN_SCORE or 20
   local label = (row.type == "farm")
     and string.format("farm@(%d,%d)", row.mx, row.my)
     or string.format("%s p#%d@(%d,%d) %s hp=%d/%d", row.type, row.id,
@@ -831,68 +846,78 @@ function M.row_formula(row)
   -- that does not exist. Say what actually happened instead.
   local score_str = trip and string.format("%.0f", row.score)
                     or "n/a (no walkable route for the man)"
-
+  local chain = score_str
+  local short = string.format("%s %s%s", label, M.score_terms(row),
+                              reject and (" REJECT " .. reject) or "")
+  local tail = string.format(
+    " Fires only if score >= BUILDER_POOL_MIN_SCORE(%d) and no gate rejects."
+    .. " trees need %d, have %d, reserved %d. leash %d, dist %d, front_dist %d.%s",
+    MIN, row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
+    row.leash or C.BUILDER_POOL_LEASH or 8, row.dist or -1, fd,
+    reject and (" REJECTED: " .. reject) or " ACCEPTED.")
+  local segs
   -- The linear repair row (BUILDER_POOL_REPAIR_LINEAR). Two terms and no
   -- others, so the string is two terms and no others -- printing a front /
   -- danger chip that scores nothing would invite the reader to check a sum
   -- that is not the sum the code computed.
   if row.linear then
-    return string.format(
-      "%s %s%s"
-      .. "||%s. value = BUILDER_POOL_REPAIR_HP_W(%d) x missing(%d) = %.0f"
-      .. " (hp %d/%d). cost = REPAIR_TRIP_W(%.2f) x round_trip(%s ticks:"
-      .. " 2 x walk_sim(%s) + LGM_BUILD_TIME(%d)) = %.0f."
-      .. " NO danger term and NO path-safety gate on repair rows"
-      .. " (threat.at(%.0f) here is printed, not charged)."
-      .. " score = value - cost = %s (min to fire: %d). trees need %d, have %d,"
-      .. " reserved %d. repair leash %d, dist %d, front_dist %d.%s",
-      label, M.score_terms(row), reject and (" REJECT " .. reject) or "",
-      label,
-      row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30), row.missing or 0,
-      row.value or 0, row.hp or 0, C.PILLS_MAX_HEALTH or 15,
-      C.BUILDER_POOL_REPAIR_TRIP_W or 0.25,
-      tostring(trip or "-"), tostring(out_ticks or "-"),
-      C.LGM_BUILD_TIME or 20, row.c_trip or 0,
-      dgr,
-      score_str, C.BUILDER_POOL_MIN_SCORE or 20,
-      row.trees_need or 0, row.f_trees or 0, row.f_reserve or 0,
-      row.leash or M.repair_leash(), row.dist or -1, fd,
-      reject and (" REJECTED: " .. reject) or " ACCEPTED.")
+    local hp_w = row.v_hp_w or (C.BUILDER_POOL_REPAIR_HP_W or 30)
+    local tw   = C.BUILDER_POOL_REPAIR_TRIP_W or 0.25
+    segs = {
+      string.format("bp_score:value(%.0f) - tripcost(%.0f) = %s. NO danger term"
+        .. " (threat.at(%.0f) here is printed on the panel, not charged) and"
+        .. " NO path-safety gate on repair rows.%s",
+        row.value or 0, row.c_trip or 0, chain, dgr, tail),
+      string.format("hp_w:BUILDER_POOL_REPAIR_HP_W(%d) = points per missing hp", hp_w),
+      string.format("missing:PILLS_MAX_HEALTH(%d) - hp(%d) = %d",
+        C.PILLS_MAX_HEALTH or 15, row.hp or 0, row.missing or 0),
+      string.format("value:hp_w(%d) x missing(%d) = %.0f",
+        hp_w, row.missing or 0, row.value or 0),
+      string.format("trip_w:BUILDER_POOL_REPAIR_TRIP_W(%.2f) = points per round-trip tick", tw),
+      string.format("tripcost:trip_w(%.2f) x trip(%s) = %.0f",
+        tw, tostring(trip or "-"), row.c_trip or 0),
+    }
+  else
+    local tw = C.BUILDER_POOL_TRIP_W or 0.5
+    local dw = C.BUILDER_POOL_DANGER_W or 1.5
+    local urg_seg
+    if row.type == "topup" then
+      urg_seg = string.format("topup_hp:BUILDER_POOL_TOPUP_PER_HP(%d) x missing(%d) = %.0f",
+        C.BUILDER_POOL_TOPUP_PER_HP or 6, row.missing or 0, row.v_hp or 0)
+    elseif row.type == "farm" then
+      urg_seg = string.format(
+        "urg:BUILDER_POOL_FARM_URGENCY(%d) x max(0, FARM_LOW_TREES(%d) - trees(%d)) = %.0f",
+        C.BUILDER_POOL_FARM_URGENCY or 12, C.BUILDER_POOL_FARM_LOW_TREES or 12,
+        row.f_trees or 0, row.v_hp or 0)
+    else
+      urg_seg = "topup_hp:no per-hp term on a rebuild row = 0"
+    end
+    local front_seg = (row.type == "farm")
+      and "front:no front clock on farm rows (a forest cannot be stolen) = 0"
+      or string.format(
+        "front:BUILDER_POOL_FRONT_URGENCY(%d) x max(0, FRONT_MAX(%d) - front_dist(%d)) / FRONT_MAX(%d) = %.0f",
+        C.BUILDER_POOL_FRONT_URGENCY or 120, FMAX, fd, FMAX, row.v_front or 0)
+    segs = {
+      string.format("bp_score:value(%.0f) - tripcost(%.0f) - dangercost(%.0f) = %s.%s",
+        row.value or 0, row.c_trip or 0, row.c_danger or 0, chain, tail),
+      string.format("bp_base:BUILDER_POOL_VALUE_%s(%.0f) = fixed value of this job type",
+        string.upper(row.type), row.v_base or 0),
+      urg_seg,
+      front_seg,
+      string.format("value:base(%.0f) + %s(%.0f) + front(%.0f) = %.0f",
+        row.v_base or 0, (row.type == "farm") and "urg" or "topup_hp",
+        row.v_hp or 0, row.v_front or 0, row.value or 0),
+      string.format("trip_w:BUILDER_POOL_TRIP_W(%.2f) = points per round-trip tick", tw),
+      string.format("tripcost:trip_w(%.2f) x trip(%s) = %.0f",
+        tw, tostring(trip or "-"), row.c_trip or 0),
+      string.format("bp_danger:threat.at(%d,%d) = %.0f (hostile pills/tanks with the tile in range)",
+        row.mx, row.my, dgr),
+      string.format("danger_w:BUILDER_POOL_DANGER_W(%.2f) = points per danger unit", dw),
+      string.format("dangercost:danger_w(%.2f) x danger(%.0f) = %.0f",
+        dw, dgr, row.c_danger or 0),
+    }
   end
-
-  return string.format(
-    "%s val{base %.0f + hp %.0f + front %.0f(d=%d/%d)} - trip{%.2fx%s=%.0f}"
-    .. " - danger{%.2fx%.0f=%.0f} = %s%s"
-    .. "||%s. value = BUILDER_POOL_VALUE_%s(%.0f)%s + FRONT_URGENCY(%d) x"
-    .. " max(0,(FRONT_MAX(%d) - front_dist(%d)))/FRONT_MAX = %.0f."
-    .. " cost = TRIP_W(%.2f) x round_trip(%s ticks: 2 x walk_sim(%s) + LGM_BUILD_TIME(%d))"
-    .. " + DANGER_W(%.2f) x threat.at(%.0f) = %.0f."
-    .. " score = value - cost = %s (min to fire: %d). trees need %d, have %d,"
-    .. " reserved %d. leash %d, dist %d.%s",
-    label,
-    row.v_base, row.v_hp, row.v_front, fd, FMAX,
-    C.BUILDER_POOL_TRIP_W or 0.5, tostring(trip or "-"), row.c_trip,
-    C.BUILDER_POOL_DANGER_W or 1.5, dgr, row.c_danger,
-    score_str, reject and (" REJECT " .. reject) or "",
-    label, string.upper(row.type),
-    row.v_base,
-    (row.type == "topup")
-      and string.format(" + TOPUP_PER_HP(%d) x missing(%d) = %.0f",
-                        C.BUILDER_POOL_TOPUP_PER_HP or 6, row.missing or 0, row.v_hp)
-      or ((row.type == "farm")
-          and string.format(
-            " + FARM_URGENCY(%d) x max(0, FARM_LOW_TREES(%d) - trees(%d)) = %.0f",
-            C.BUILDER_POOL_FARM_URGENCY or 12, C.BUILDER_POOL_FARM_LOW_TREES or 12,
-            row.f_trees or 0, row.v_hp)
-          or ""),
-    C.BUILDER_POOL_FRONT_URGENCY or 120, FMAX, fd, row.value,
-    C.BUILDER_POOL_TRIP_W or 0.5, tostring(trip or "-"), tostring(out_ticks or "-"),
-    C.LGM_BUILD_TIME or 20,
-    C.BUILDER_POOL_DANGER_W or 1.5, dgr, row.c_trip + row.c_danger,
-    score_str, C.BUILDER_POOL_MIN_SCORE or 20,
-    row.trees_need or 0, row.f_trees or 0, row.f_reserve,
-    row.leash or C.BUILDER_POOL_LEASH or 8, row.dist or -1,
-    reject and (" REJECTED: " .. reject) or " ACCEPTED.")
+  return short .. "||" .. table.concat(segs, "|")
 end
 
 -- Deterministic ordering: a SEEDED row first (a feeder's job outranks any
