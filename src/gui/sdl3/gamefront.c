@@ -3563,11 +3563,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
      and so is a name nothing present answers to. Read into a bounded buffer
      and truncated, because the name is free-form and comes from the driver.
 
-     These two keys are machine-local and must not be carried by any profile
-     sync: a device name saved on a desktop means nothing on a Steam Deck. */
-  prefsGetString("VOICE", "Recording Device", "", buff, FILENAME_MAX);
+     Their own section, because it is device-local and the rest of VOICE is
+     not: a device name saved on a desktop means nothing on a Steam Deck, and
+     syncing it would overwrite the Deck's own choice on every adopt. The
+     section is listed in kDeviceLocalSections in prefs.c, which is what keeps
+     it out of the upload. */
+  prefsGetString("VOICE.DEVICE", "Recording Device", "", buff, FILENAME_MAX);
   windowSetVoiceRecordingDevice(buff);
-  prefsGetString("VOICE", "Playback Device", "", buff, FILENAME_MAX);
+  prefsGetString("VOICE.DEVICE", "Playback Device", "", buff, FILENAME_MAX);
   windowSetVoicePlaybackDevice(buff);
   prefsGetString("VOICE", "Tank Icons", "Yes", buff, FILENAME_MAX);
   windowSetShowTankMicIcons(YESNO_TO_TRUEFALSE(buff[0]));
@@ -3873,10 +3876,12 @@ void gameFrontPutPrefs(keyItems *keys) {
   snprintf(buff, sizeof(buff), "%.2f", windowGetVoiceVolume());
   prefsSetString("VOICE", "Voice Volume", buff);
   /* Written back even when the device is not plugged in at the moment, so
-     the choice survives it being away. Machine-local, as on the read side:
-     never carried by a profile sync. */
-  prefsSetString("VOICE", "Recording Device", windowGetVoiceRecordingDevice());
-  prefsSetString("VOICE", "Playback Device", windowGetVoicePlaybackDevice());
+     the choice survives it being away. In the device-local section, as on the
+     read side. */
+  prefsSetString("VOICE.DEVICE", "Recording Device",
+                 windowGetVoiceRecordingDevice());
+  prefsSetString("VOICE.DEVICE", "Playback Device",
+                 windowGetVoicePlaybackDevice());
   prefsSetString("VOICE", "Tank Icons", TRUEFALSE_TO_STR(windowGetShowTankMicIcons()));
 #if defined(WINBOLO_VOICE_AEC)
   prefsSetString("VOICE", "Echo Cancel", TRUEFALSE_TO_STR(windowGetVoiceEchoCancel()));
