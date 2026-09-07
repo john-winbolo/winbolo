@@ -680,6 +680,7 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
   ctx.tilesTex   = lv_drawGetTilesTexture();
   ctx.zoomFactor = zf;
   ctx.sheetScale = lv_drawGetSheetScale();
+  ctx.scale      = (float)zf;
 
   /* Set clip rect so the map render stays within the main view (no
    * spillover into the surrounding chrome from the 1-tile mapView

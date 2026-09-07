@@ -52,6 +52,7 @@
 #endif
 #include "cursor.h"
 #include "mapview.h"
+#include "mapview_overlay.h"
 #include "overview_hud_layout.h"
 #include "overview_view.h"
 #include "../clientmutex.h"
@@ -180,6 +181,32 @@ static float        gGameScale    = 1.0f;    /* Scale factor from RT to dest */
 static bool          gOverviewInWindow = FALSE;
 static OverviewView *gOverviewView     = NULL;
 static SDL_FRect     gOverviewRect     = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+/* The in-window frame is drawn in two halves. The first runs inside the
+   client-mutex hold with the rest of the frame: it fills the snapshot, lays
+   the HUD out and renders the HUD's source frame, then returns. The second,
+   sdl3DrawFlushOverviewInWindow, runs once the lock is released and draws the
+   map and everything over it. Both are on the main thread; these carry what
+   the first half settled to the second, and gOverviewPrepPending says there
+   is a frame waiting to be drawn. */
+static OverviewSnapshot  *gOverviewSnapshot     = NULL;
+static bool               gOverviewPrepPending  = FALSE;
+static int                gOverviewPrepW        = 0;
+static int                gOverviewPrepH        = 0;
+static float              gOverviewPrepMenuBar  = 0.0f;
+static OverviewHudLayout  gOverviewPrepHud;
+static bool               gOverviewPrepDrawHud  = FALSE;
+/* The item view's caption, read from the sim by the first half so the second
+   has nothing left to ask it. */
+static char               gOverviewPrepLabel[128];
+static bool               gOverviewPrepHaveLabel = FALSE;
+
+/* The classic view's pill and base numbers, kept between frames. On this
+   window's renderer, so it is this file's rather than the overview's — that
+   one may be drawing on the pop-out's. Emptied in sdl3DrawCleanup ahead of
+   the renderer, and by the draw itself when a zoom change reopens the
+   faces. */
+static ItemLabelCache     gItemLabelCache;
 
 /* The HUD geometry the last frame blitted, kept so the ImGui side hit-tests
    the panels on exactly the rectangles that were drawn. Only meaningful while
@@ -1600,6 +1627,10 @@ void sdl3DrawCleanup(void) {
      before the renderer does. */
   overviewViewDestroy(gOverviewView);
   gOverviewView = NULL;
+  overviewSnapshotDestroy(gOverviewSnapshot);
+  gOverviewSnapshot    = NULL;
+  gOverviewPrepPending = FALSE;
+  itemLabelCacheFlush(&gItemLabelCache);
   if (gRenderer) {
     SDL_DestroyRenderer(gRenderer);
     gRenderer = NULL;
@@ -1612,20 +1643,8 @@ void sdl3DrawCleanup(void) {
 }
 
 /* sdl3DrawShells, sdl3DrawTanks, sdl3DrawLGMs moved to mapview.c
-   as mapViewDrawShells/Tanks/LGMs. */
-
-/*--------------------------------------------------------
- * Draw tank labels only (separate pass after mapViewDrawTanks).
- *--------------------------------------------------------*/
-static void sdl3DrawTankLabels(screenTanks *tks) {
-  BYTE total = screenTanksGetNumEntries(tks);
-  for (BYTE count = 1; count <= total; count++) {
-    BYTE mx, my, px, py, frame, playerNum;
-    char playerName[256];
-    screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum, playerName);
-    sdl3DrawTankLabel(playerName, playerNum, mx, my, px, py);
-  }
-}
+   as mapViewDrawShells/Tanks/LGMs; the tank names, build cursor, gunsight
+   and item numbers are drawn with them by mapViewDrawOverlay. */
 
 /* -------------------------------------------------------
  * sdl3DrawReconfigureZoom — rebuild all zoom-dependent
@@ -1960,12 +1979,18 @@ static void sdl3DrawOverviewHudFrame(const SDL_FRect *r, float scale,
    into its own offscreen and is blitted straight to the window — going through
    gGameRenderTarget would letterbox the map to the 515:325 chrome aspect. The
    status panels and the newswire go over the map afterwards, as slices of a
-   classic frame drawn offscreen alongside the view. */
+   classic frame drawn offscreen alongside the view.
+
+   This is the first half, called inside the frame lock: it settles the size
+   and the HUD layout, fills the snapshot and renders the HUD's source frame,
+   then leaves the drawing to sdl3DrawFlushOverviewInWindow. */
 static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
                                           bool showBaseLabels) {
   /* Stale the moment this frame starts: every way out below either lays a new
-     HUD out or draws none at all. */
-  gOverviewHudValid = FALSE;
+     HUD out or draws none at all. A frame prepared and not yet drawn is
+     dropped the same way; the one being prepared replaces it. */
+  gOverviewHudValid    = FALSE;
+  gOverviewPrepPending = FALSE;
 
   int ww = 0, wh = 0;
   {
@@ -1989,6 +2014,8 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
 
   if (!gOverviewView) gOverviewView = overviewViewCreate();
   if (!gOverviewView) return;
+  if (!gOverviewSnapshot) gOverviewSnapshot = overviewSnapshotCreate();
+  if (!gOverviewSnapshot) return;
 
   /* What the panels cover, before the draw that has to work around it: a tank
      respawning behind the newswire or under the status column is scrolled into
@@ -2013,13 +2040,49 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
     overviewViewSetHudInsets(gOverviewView, 0.0f, 0.0f, 0.0f, 0.0f);
   }
 
-  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
-                              gCrosshairTex, w, h, cs, true);
+  /* Everything the map render reads from the sim, taken while the lock is
+     held. The render itself runs from this copy in the second half. */
+  clientSimFillOverviewSnapshot(cs, gOverviewSnapshot);
 
-  /* Both offscreen passes belong here, before anything is drawn to the
-     window: each of them swaps the render target. */
+  /* The HUD's source frame reads alliances and counts out of the sim, so it
+     stays on this side of the lock. It swaps the render target and puts it
+     back, so it is still ahead of anything drawn to the window. */
   bool drawHud = haveHud &&
                  hudSourceRender(cs, showPillLabels, showBaseLabels);
+
+  /* The item view's caption, for the same reason: it is the one read of the
+     sim the drawing half would otherwise make. */
+  gOverviewPrepHaveLabel =
+      sdl3DrawGetItemViewLabel(cs, gOverviewPrepLabel,
+                               sizeof(gOverviewPrepLabel));
+
+  gOverviewPrepW       = w;
+  gOverviewPrepH       = h;
+  gOverviewPrepMenuBar = menuBarHeight;
+  if (haveHud) gOverviewPrepHud = hud;
+  gOverviewPrepDrawHud = drawHud;
+  gOverviewPrepPending = TRUE;
+}
+
+/* The second half of the in-window frame: the map render, the window blit and
+   the HUD panels over it, from what the first half prepared. Runs after the
+   frame lock is released, so the render's target switches and the flushes
+   they force are outside it. Nothing here reads the sim. A no-op when no
+   frame is waiting. */
+void sdl3DrawFlushOverviewInWindow(void) {
+  if (!gOverviewPrepPending) return;
+  gOverviewPrepPending = FALSE;
+  if (!gRenderer || !gOverviewView || !gOverviewSnapshot) return;
+
+  int   w             = gOverviewPrepW;
+  int   h             = gOverviewPrepH;
+  float menuBarHeight = gOverviewPrepMenuBar;
+  bool  drawHud       = gOverviewPrepDrawHud;
+  OverviewHudLayout hud = gOverviewPrepHud;
+
+  overviewViewRenderOffscreen(gOverviewView, gRenderer, gTilesTex, gSheetScale,
+                              gCrosshairTex, w, h, gOverviewSnapshot, true);
+
   if (drawHud) {
     Uint64 now = SDL_GetTicks();
 
@@ -2227,12 +2290,12 @@ static void sdl3DrawOverviewInWindowFrame(ClientSim *cs, bool showPillLabels,
      (overview_view.cpp) says one is on; this says which. Drawn by the host
      rather than into the offscreen for two reasons: the font's textures belong
      to the renderer that made them, and only here is it known where the
-     newswire has slid to this frame. */
+     newswire has slid to this frame. The text was read in the first half. */
   {
-    char label[128];
+    const char *label = gOverviewPrepLabel;
     int textW = 0;
     int textH = 0;
-    if (gFontMsg && sdl3DrawGetItemViewLabel(cs, label, sizeof(label)) &&
+    if (gFontMsg && gOverviewPrepHaveLabel &&
         TTF_GetStringSize(gFontMsg, label, 0, &textW, &textH)) {
       /* The text rides on the newswire strip's top edge, so chat never covers
          it; hud.newswireY already carries the slide offset. Once the strip has
@@ -2548,58 +2611,34 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       SDL_RenderTexture(gRenderer, gStaticTex, NULL, &staticDest);
     } else {
       /* Draw map tiles via mapview */
-      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };
+      MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale,
+                           (float)gZoomFactor };
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
-      /* Draw pillbox/base number labels (needs fonts — stays here) */
+      /* The pill and base numbers, from the 17x17 screen buffer: a square
+         showing a pill or base tile asks the sim which one it is. The
+         shared pass below draws them. */
+      OverviewItemLabel itemLabels[MAX_PILLS + MAX_BASES];
+      int itemLabelCount = 0;
       if (gFontLabel) {
         BYTE lx = 0, ly = 0;
         bool lDone = FALSE;
         while (!lDone) {
           BYTE pos = screenGetPos(value, lx, ly);
-          bool isPill = (pos == PILL_EVIL_15 || (pos >= PILL_EVIL_14 && pos <= PILL_EVIL_0) ||
-                         (pos >= PILL_GOOD_15 && pos <= PILL_GOOD_0));
-          bool isBase = (pos == BASE_GOOD || pos == BASE_NEUTRAL || pos == BASE_EVIL);
+          bool isPill = mapViewTileIsPill(pos);
+          bool isBase = mapViewTileIsBase(pos);
           int labelNum = -1;
           if (isPill && showPillLabels) {
             labelNum = clientSimGetPillNumPos(cs, lx, ly) - 1;
           } else if (isBase && showBaseLabels) {
             labelNum = clientSimGetBaseNumPos(cs, lx, ly) - 1;
           }
-          if (labelNum >= 0) {
-            SDL_FRect dest = {
-              (float)(originX + ((int)lx - 1) * tileW - edgeX),
-              (float)(originY + ((int)ly - 1) * tileH - edgeY),
-              (float)tileW,
-              (float)tileH
-            };
-            char str[4];
-            sprintf(str, "%d", labelNum);
-            SDL_Color white = {200, 200, 200, 255};
-            TTF_Font *labelFont = isBase ? gFontTiny : gFontLabel;
-            SDL_Surface *surf = TTF_RenderText_Blended(labelFont, str, 0, white);
-            if (surf) {
-              SDL_Texture *tex = SDL_CreateTextureFromSurface(gRenderer, surf);
-              if (tex) {
-                float tw = (float)surf->w;
-                float th = (float)surf->h;
-                float tx, ty;
-                if (isBase) {
-                  tx = dest.x;
-                  ty = dest.y;
-                } else {
-                  tx = dest.x + (dest.w - tw) * 0.5f;
-                  ty = dest.y + (dest.h - th) * 0.5f;
-                }
-                SDL_FRect bgRect = { tx - 1.0f, ty - 1.0f, tw + 2.0f, th + 2.0f };
-                SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-                SDL_RenderFillRect(gRenderer, &bgRect);
-                SDL_FRect d = { tx, ty, tw, th };
-                SDL_RenderTexture(gRenderer, tex, NULL, &d);
-                SDL_DestroyTexture(tex);
-              }
-              SDL_DestroySurface(surf);
-            }
+          if (labelNum >= 0 && itemLabelCount < (int)(MAX_PILLS + MAX_BASES)) {
+            OverviewItemLabel *l = &itemLabels[itemLabelCount++];
+            l->mapX   = lx;
+            l->mapY   = ly;
+            l->number = (BYTE)labelNum;
+            l->isBase = isBase;
           }
           lx++;
           if (lx == MAIN_BACK_BUFFER_SIZE_X) {
@@ -2609,24 +2648,16 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         }
       }
 
-      /* Build-mode cursor overlay */
+      /* DEBUG: log the cursor square position relative to the render
+       * origin and edgeX, so a "square doesn't match mouse" report can
+       * be cross-referenced with the cursor.log entry that produced
+       * the cursorLeft/Top values. Logs only when those inputs change.
+       * The position logged is the one the shared pass draws it at. */
       if (useCursor) {
-        SDL_FRect curSrc = { (float)(MOUSE_SQUARE_X * gSheetScale), (float)(MOUSE_SQUARE_Y * gSheetScale),
-                             (float)(TILE_SIZE_X * gSheetScale), (float)(TILE_SIZE_Y * gSheetScale) };
-        float curDestX = (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX);
-        float curDestY = (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY);
-        SDL_FRect curDest = { curDestX, curDestY, (float)tileW, (float)tileH };
-        /* Faint (50% alpha) when drawing a locked build target with build
-           mode off; solid otherwise. Restore alpha after so other gTilesTex
-           draws this frame are unaffected. */
-        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 128);
-        SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
-        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 255);
-
-        /* DEBUG: log the cursor square position relative to the render
-         * origin and edgeX, so a "square doesn't match mouse" report can
-         * be cross-referenced with the cursor.log entry that produced
-         * the cursorLeft/Top values. Logs only when those inputs change. */
+        float curDestX = spritePositionSquare((float)(originX - tileW - edgeX),
+                                              (float)gZoomFactor, (int)cursorLeft);
+        float curDestY = spritePositionSquare((float)(originY - tileH - edgeY),
+                                              (float)gZoomFactor, (int)cursorTop);
         if (WB_DEBUG_FILE_LOG) {
           static int sLastCl = -1, sLastCt = -1, sLastEdgeX = INT_MIN, sLastEdgeY = INT_MIN;
           static FILE *sLog = NULL;
@@ -2654,31 +2685,48 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
 
 
-      /* Sprites via mapview */
       gCurrentEdgeX = edgeX;
       gCurrentEdgeY = edgeY;
       sdl3DrawStatusSetEdgeOffset(edgeX, edgeY);
-      mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
-      mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
-      /* Tank labels (needs fonts — separate pass after tank sprites) */
-      sdl3DrawTankLabels(tks);
-      mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
 
-      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
-       * Top-left is at the same position as the old 16×16 tile sprite so the
-       * center aligns with the gunsight world position. Drawn after the sprite
-       * passes so the aiming reticle stays on top of tanks (incl. boat tanks),
-       * shells, and LGMs rather than being painted over by them. */
-      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
-        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-        SDL_FRect gsDest = {
-          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
-          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
-          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
-        };
-        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
+      /* Everything over the terrain — build cursor, shells, tanks, tank
+         names, LGMs, gunsight, then the pill and base numbers — through the
+         pass the map overview draws with too. The crosshair is the custom
+         17x17 sprite whose centre pixel (8,8) is the aim point; the pass
+         puts its top-left where a 16x16 tile sprite's would go, which is
+         what centres it on the gunsight's position. */
+      MapViewOverlay ov;
+      memset(&ov, 0, sizeof(ov));
+      ov.cursorShown       = useCursor;
+      ov.cursorFaint       = gCursorFaint;
+      ov.cursorMapX        = cursorLeft;
+      ov.cursorMapY        = cursorTop;
+      if (gs->mapX != NO_GUNSIGHT) {
+        ov.gunsightShown = true;
+        ov.gsMapX        = (BYTE)gs->mapX;
+        ov.gsMapY        = (BYTE)gs->mapY;
+        ov.gsPixelX      = gs->pixelX;
+        ov.gsPixelY      = gs->pixelY;
       }
+      ov.crosshairTex      = gCrosshairTex;
+      ov.crosshairPx       = 17;
+      ov.labelCache        = sdl3DrawGetTankLabelCache();
+      ov.labelFont         = gFontMsg;
+      ov.labelDisplayScale = 1.0f;
+      ov.itemLabels        = itemLabels;
+      ov.itemLabelCount    = itemLabelCount;
+      ov.pillFont          = gFontLabel;
+      ov.baseFont          = gFontTiny;
+      ov.itemLabelMinScale = 1.0f;
+      ov.itemLabelCache    = &gItemLabelCache;
+      ov.clipLeft          = (float)originX;
+      ov.clipTop           = (float)originY;
+      ov.clipRight         = (float)(originX + gameW);
+      ov.clipBottom        = (float)(originY + gameH);
+      mapViewDrawOverlay(&mvCtx, &ov, tks, lgms, sBullets,
+                         (float)originX, (float)originY,
+                         (float)tileW, (float)tileH,
+                         (float)edgeX, (float)edgeY);
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isItemView) {
@@ -3144,7 +3192,12 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
     int textW = 0;
     int textH = 0;
 
+    /* Both halves here and now: the dim and the caption below go over the
+       map, so the map has to be on the window before them. This screen
+       lasts the moment between the game ending and the lobby coming back,
+       so it draws inside the lock the way the whole frame used to. */
     sdl3DrawOverviewInWindowFrame(cs, gLastPillLabels, gLastBaseLabels);
+    sdl3DrawFlushOverviewInWindow();
 
     SDL_SetRenderDrawBlendMode(gRenderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, OVERVIEW_LOBBY_DIM_ALPHA);
