@@ -17,9 +17,17 @@
  * real ping and an answer whose fromEcho does not match what this client
  * is stepping from belongs to an earlier press.
  *
- * A last case covers clientSimAllyViewAwaitingFirstData, which is how the
+ * A further case covers clientSimAllyViewAwaitingFirstData, which is how the
  * per-tick upkeep tells "the answer has landed but the ally has not streamed
  * yet" from "this ally has stopped qualifying".
+ *
+ * The last three cases pin the shape checks the arm makes on the answer
+ * before reading it: a kind other than ALLY, and a target outside the player
+ * table, are both dropped, while a not-found answer is applied whatever its
+ * target byte holds. Today's server sends neither malformed shape, so these
+ * stand against a later one — and against the fact that the only bounds check
+ * on a target that gets through is playersCanAllyView running ahead of
+ * viewportAllySquare inside viewportItemCheck.
  */
 
 #include <stdint.h>
@@ -215,6 +223,88 @@ int run_view_target_apply(void) {
         clientSimTankView(cs);
         UT_ASSERT_MSG(clientSimAllyViewAwaitingFirstData(cs) == FALSE,
                       "the tank view is never waiting on an ally");
+
+        clientSimDestroy(cs);
+    }
+
+    /* An answer naming a kind this arm does not apply is dropped. Everything
+     * else about it is right — our slot, and the fromEcho we are stepping
+     * from — so the kind is the only thing that can turn it away. Its target
+     * would be a pill index, not a player number, and entering an ally view
+     * on it would watch whichever player happened to share the number. */
+    {
+        ClientSim *cs = vt_fresh_sim_as_slot(1);
+        UT_ASSERT(cs != NULL);
+
+        vt_enter_ally_view(cs, /*me=*/1, /*target=*/3, /*mapX=*/50,
+                           /*mapY=*/50);
+        UT_ASSERT(clientSimGetViewTarget(cs) == 3);
+
+        ControlEvent evt;
+        vt_make_answer(&evt, /*origSlot=*/1, /*target=*/5, /*mapX=*/20,
+                       /*mapY=*/20, /*found=*/1, /*fromEcho=*/3);
+        evt.u.viewTarget.kind = (uint8_t)VIEW_KIND_PILL;
+        clientSimApplyControl(cs, &evt);
+
+        UT_ASSERT_MSG(clientSimGetViewTarget(cs) == 3,
+                      "an answer of a kind this arm does not apply must be"
+                      " dropped (target became %u)",
+                      (unsigned)clientSimGetViewTarget(cs));
+        UT_ASSERT_MSG(clientSimGetXOffset(cs) == (BYTE)(50 - VT_SCROLL_CENTER),
+                      "a dropped answer must not move the camera (got %u)",
+                      (unsigned)clientSimGetXOffset(cs));
+
+        clientSimDestroy(cs);
+    }
+
+    /* A found answer naming a target outside the player table is dropped.
+     * viewportAllySquare indexes the players table with whatever target the
+     * view is parked on, so this is the value that must not get in. */
+    {
+        ClientSim *cs = vt_fresh_sim_as_slot(1);
+        UT_ASSERT(cs != NULL);
+
+        vt_enter_ally_view(cs, /*me=*/1, /*target=*/3, /*mapX=*/50,
+                           /*mapY=*/50);
+        UT_ASSERT(clientSimGetViewTarget(cs) == 3);
+
+        ControlEvent evt;
+        vt_make_answer(&evt, /*origSlot=*/1, /*target=*/(uint8_t)MAX_TANKS,
+                       /*mapX=*/20, /*mapY=*/20, /*found=*/1, /*fromEcho=*/3);
+        clientSimApplyControl(cs, &evt);
+
+        UT_ASSERT_MSG(clientSimGetViewTarget(cs) == 3,
+                      "an answer naming a target off the end of the player"
+                      " table must be dropped (target became %u)",
+                      (unsigned)clientSimGetViewTarget(cs));
+        UT_ASSERT_MSG(clientSimGetXOffset(cs) == (BYTE)(50 - VT_SCROLL_CENTER),
+                      "a dropped answer must not move the camera (got %u)",
+                      (unsigned)clientSimGetXOffset(cs));
+
+        clientSimDestroy(cs);
+    }
+
+    /* The target check is conditioned on found, because a not-found answer
+     * never reads the target. The server zeroes it, but nothing on the wire
+     * says it must, so a junk byte there cannot be allowed to cost the client
+     * its return to the tank view. */
+    {
+        ClientSim *cs = vt_fresh_sim_as_slot(1);
+        UT_ASSERT(cs != NULL);
+
+        vt_enter_ally_view(cs, /*me=*/1, /*target=*/3, /*mapX=*/50,
+                           /*mapY=*/50);
+        UT_ASSERT(clientSimGetViewKind(cs) == (uint8_t)VIEW_KIND_ALLY);
+
+        ControlEvent evt;
+        vt_make_answer(&evt, /*origSlot=*/1, /*target=*/200, /*mapX=*/0,
+                       /*mapY=*/0, /*found=*/0, /*fromEcho=*/3);
+        clientSimApplyControl(cs, &evt);
+
+        UT_ASSERT_MSG(clientSimGetViewKind(cs) == (uint8_t)VIEW_KIND_TANK,
+                      "a not-found answer must return to the tank view whatever"
+                      " its target byte holds (kind %u)",
+                      (unsigned)clientSimGetViewKind(cs));
 
         clientSimDestroy(cs);
     }

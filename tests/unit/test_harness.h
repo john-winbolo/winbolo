@@ -892,7 +892,9 @@ int run_view_target_codec(void);
  * for our own slot whose fromEcho matches the ally we are stepping from parks
  * the camera on the ally it names; an answer for another slot or echoing an
  * earlier press is dropped, and a not-found answer leaves the tank view in
- * place. */
+ * place. Also the shape checks the arm makes before reading the answer — a
+ * kind other than ALLY and a target off the end of the player table are both
+ * dropped, while a not-found answer stands whatever its target byte holds. */
 int run_view_target_apply(void);
 
 /* Item-view cycling helpers (test_view_cycling.c): basesGetNextView and

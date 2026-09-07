@@ -996,6 +996,21 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             break;
         }
 
+        /* The answer's shape, established here rather than left to the
+         * readers that end up holding the target. This arm applies an ally
+         * view, so a kind that is not ALLY means the target is not a player
+         * slot and must not be taken for one; the target is only read at all
+         * when the server says it found something. Either way the answer is
+         * dropped and not turned into a tank view — one this client cannot
+         * read is not the server saying there is nothing left to watch. */
+        if (evt->u.viewTarget.kind != VIEW_KIND_ALLY) {
+            break;
+        }
+        if (evt->u.viewTarget.found != 0 &&
+            evt->u.viewTarget.target >= MAX_TANKS) {
+            break;
+        }
+
         /* Throw away an answer to an earlier press. The ally key auto-repeats
          * every 165ms, so at any real ping several requests are in flight at
          * once; taking the last answer to arrive would make the view oscillate
