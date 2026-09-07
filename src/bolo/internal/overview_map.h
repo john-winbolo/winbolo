@@ -37,13 +37,14 @@ struct GameSim;
 
 /* Which rule decides the block of squares round the player's own tank.
  * Envelope is what the map has always drawn - everything the classic 15x15
- * view could scroll to - and the four above it narrow it in different ways.
+ * view could scroll to - and the five after it narrow it in different ways.
  * All of it is client presentation: the server sends what it always sent, and
  * the point of having them all is to find which one plays best. */
 typedef enum {
   fogExperimentEnvelope = 0,
   fogExperimentLens,
-  fogExperimentHeadlights,
+  fogExperimentHeadlightsEnvelope,
+  fogExperimentHeadlightsLens,
   fogExperimentHalo,
   fogExperimentAfterimage,
   FOG_EXPERIMENT_COUNT
@@ -88,16 +89,35 @@ const char   *overviewFogSightBlurb(FogSightMode m);
 bool          overviewFogShowRegionsGet(void);
 void          overviewFogShowRegionsSet(bool on);
 
-#define OVERVIEW_HEADLIGHT_LEAD 5   /* squares the block is pushed along the facing */
 #define OVERVIEW_AFTERIMAGE_SECS 3  /* seconds a square takes to fade back to
                                        fog after the block leaves it */
 
-/* How far ahead of the tank the Headlights block sits, in whole squares, for
- * a 0-15 facing. The block builder and the camera that follows it both ask
- * here, so the two cannot put the block in different squares. With this lead
- * and OVERVIEW_LENS_HALF the tank is still inside its own block, so the block
- * leads without leaving the player outside it. */
-void overviewHeadlightOffset(BYTE facing, int *outDX, int *outDY);
+/* How far round the tank the Headlights blocks stay live whichever way it is
+ * pointing, as a half-width: 2 is the 5x5 the tank sits in the middle of. */
+#define OVERVIEW_HEADLIGHT_NEAR 2
+
+/* Half the angle of the Headlights beam, so the beam itself is twice this
+ * across. It is held as the square of the cosine rather than as the angle:
+ * the test compares a dot product against the lengths it came from, and
+ * squaring both sides is what keeps that in whole numbers. 9330 out of 10000
+ * is cos(15 degrees) squared, which makes the beam 30 degrees wide, and it is
+ * the one number to change to widen or narrow it - cos(half-angle) squared,
+ * scaled by OVERVIEW_HEADLIGHT_COS2_ONE and rounded. */
+#define OVERVIEW_HEADLIGHT_COS2_ONE 10000
+#define OVERVIEW_HEADLIGHT_COS2     9330
+
+/* Whether a square inside one of the Headlights blocks is one the player sees:
+ * (dx, dy) squares from the tank, with the tank pointing down a 0-15 facing.
+ * The near squares are seen whichever way it points and the rest of the block
+ * only inside the beam, so the picture is a small patch round the tank with a
+ * wedge out of it along the facing. */
+bool overviewHeadlightSees(int dx, int dy, BYTE facing);
+
+/* Whether this experiment places the block round the tank from the classic
+ * view rather than round the tank itself. The block builder and the camera the
+ * frontend follows both ask here, so the two cannot disagree about what the
+ * scroll keys are driving. */
+bool overviewFogBlockFollowsView(FogExperiment e);
 
 /* What the region build needs beyond the sim itself: the server's visibility
  * rules, the proximity clocks the client keeps for the local player under
@@ -118,11 +138,11 @@ void overviewHeadlightOffset(BYTE facing, int *outDX, int *outDY);
  *
  * The rest is the fog experiment and the state the narrower blocks are placed
  * from: the classic view is still scrolling under the full screen map, so its
- * first visible square, the sub-square part of its position and whether the
- * player is holding it off autoscroll say where the window the player is
- * driving actually is, and the tank's facing says where they are pointing.
- * viewValid is false when there is no live tank or the player is watching an
- * item, which is when those readings mean nothing. */
+ * first visible square and the sub-square part of its position say where the
+ * window the player is driving actually is, and the tank's facing is what
+ * points the Headlights beam. viewValid is false when there is no live tank or
+ * the player is watching an item, which is when the view readings mean
+ * nothing. */
 typedef struct OverviewViewInputs {
     ViewPolicy      policy[VIEW_CATEGORY_COUNT];
     uint16_t        decaySecs[VIEW_CATEGORY_COUNT];
@@ -250,13 +270,15 @@ bool overviewMapDeathBlackout(int deathWait, int lastDeath);
  * a building - or, under fogSightBuildingsAndTrees, a deep enough stand of
  * trees - between it and the tank keeps the tile it last showed, carries
  * OVERVIEW_F_HIDDEN instead of the live and sight bits, and is left in full
- * fog. The last stamp those blocks get as they stop being live is masked the
- * same way and under the same mode, from the square the tank last had a block
- * on, so letting the block go does not show the player what it had been keeping
- * from them. Watched items are never masked - the player is seeing through the
- * item, not from the tank - and with the mode off no mask is built and no square
- * ever carries the flag. OverviewMap::sightActive records which of the two the
- * update did. */
+ * fog. Under either Headlights the same mask takes away everything outside the
+ * near squares and the beam, so with both running a square has to be in the
+ * beam and have a clear line to it to stay live. The last stamp those blocks
+ * get as they stop being live is masked the same way, from the square the tank
+ * last had a block on, so letting the block go does not show the player what it
+ * had been keeping from them. Watched items are never masked - the player is
+ * seeing through the item, not from the tank - and with sight off under an
+ * experiment that hides nothing no mask is built and no square ever carries the
+ * flag. OverviewMap::hiddenActive records which of the two the update did. */
 void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
                        const OverviewViewInputs *in, bool haveTank,
                        int tankDeathWait, BYTE tankMX, BYTE tankMY);

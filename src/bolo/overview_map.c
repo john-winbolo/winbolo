@@ -104,7 +104,8 @@ void overviewFogShowRegionsSet(bool on) { g_fogShowRegions = on; }
 static const char *kFogExperimentNames[FOG_EXPERIMENT_COUNT] = {
   "Envelope",
   "Lens",
-  "Headlights",
+  "Headlights, envelope",
+  "Headlights, lens",
   "Halo",
   "Afterimage"
 };
@@ -112,7 +113,8 @@ static const char *kFogExperimentNames[FOG_EXPERIMENT_COUNT] = {
 static const char *kFogExperimentBlurbs[FOG_EXPERIMENT_COUNT] = {
   "Everything the classic view could scroll to",
   "The classic window, moved by autoscroll and the scroll keys",
-  "The window leads where the tank is pointing",
+  "Two squares round you and a wedge to the envelope edge",
+  "Two squares round you and a wedge to the lens edge",
   "Ground all round, enemies only where you look",
   "What you scrolled over lingers, then fades"
 };
@@ -159,30 +161,88 @@ const char *overviewFogSightBlurb(FogSightMode m) {
 }
 
 /* What the walk is handed for a mode that is having a mask built. fogSightOff
- * never reaches the walk through the live stamp - the caller builds no mask at
- * all - and the farewell stamp reads last update's sightActive rather than the
- * mode, so a mode dropped on the same tick a block goes still masks that last
- * stamp by buildings, exactly as it did before trees were counted. */
+ * never reaches the walk through the live stamp - the caller builds no sight
+ * mask at all - and the farewell stamp reads last update's hiddenActive rather
+ * than the mode, so a mode dropped on the same tick a block goes still masks
+ * that last stamp by buildings, exactly as it did before trees were counted. */
 static SightMode overviewSightMode(uint8_t mode) {
   return (mode == (uint8_t)fogSightBuildingsAndTrees) ? sightModeBuildingsAndTrees
                                                       : sightModeBuildings;
 }
 
-/* Where the Headlights block sits relative to the tank. The facing table is in
- * 256ths of a square, so the lead is scaled by it and divided back down, which
- * is the same arithmetic the autoscroll forward bias does. The answer is whole
- * squares and steps as the facing crosses a sixteenth: the block is a set of
- * squares and there is nothing between one square and the next.
- * Either output may be NULL for a caller that wants only the other axis. */
-void overviewHeadlightOffset(BYTE facing, int *outDX, int *outDY) {
-  int idx; /* The facing, brought inside the table */
+/* Which of the experiments are the two Headlights, asked in one place so the
+ * block, the mask and the farewell stamp cannot come apart over it. */
+static bool overviewIsHeadlights(uint8_t experiment) {
+  return experiment == (uint8_t)fogExperimentHeadlightsEnvelope ||
+         experiment == (uint8_t)fogExperimentHeadlightsLens;
+}
+
+bool overviewFogBlockFollowsView(FogExperiment e) {
+  return e == fogExperimentLens || e == fogExperimentHalo ||
+         e == fogExperimentAfterimage;
+}
+
+bool overviewHeadlightSees(int dx, int dy, BYTE facing) {
+  int     idx; /* The facing, brought inside the table */
+  int     fx;  /* Where the tank points, in 256ths of a square */
+  int     fy;
+  int     dot; /* How much of the way to the square runs along the facing */
+  int64_t lhs; /* That, squared and scaled to compare against the cosine */
+  int64_t rhs; /* The cosine's share of the two lengths it came from */
+
+  /* The near squares, read as a square block rather than a circle, so there is
+   * no rounding to argue about at the diagonals. The tank's own square is
+   * inside it, so the reticle is never dropped. */
+  if (dx >= -OVERVIEW_HEADLIGHT_NEAR && dx <= OVERVIEW_HEADLIGHT_NEAR &&
+      dy >= -OVERVIEW_HEADLIGHT_NEAR && dy <= OVERVIEW_HEADLIGHT_NEAR) {
+    return TRUE;
+  }
 
   idx = (int)(facing & 15);
-  if (outDX != NULL) {
-    *outDX = kForwardX[idx] * OVERVIEW_HEADLIGHT_LEAD / 256;
+  fx = kForwardX[idx];
+  fy = kForwardY[idx];
+  dot = dx * fx + dy * fy;
+  if (dot <= 0) {
+    return FALSE; /* the rear half, whatever the angle works out to */
   }
-  if (outDY != NULL) {
-    *outDY = kForwardY[idx] * OVERVIEW_HEADLIGHT_LEAD / 256;
+
+  /* The angle between the square and the facing, as a dot product against the
+   * lengths it came from and squared so there is no square root:
+   *
+   *   dot^2 * ONE >= COS2 * |d|^2 * |f|^2
+   *
+   * The facing table is in 256ths of a square, so |f|^2 is about 65536 and the
+   * right-hand side reaches eleven figures over the widest block - past what a
+   * 32-bit int holds - which is why both sides are widened before they are
+   * multiplied. Whole numbers rather than floats, so every machine draws the
+   * same beam. */
+  lhs = (int64_t)dot * (int64_t)dot * (int64_t)OVERVIEW_HEADLIGHT_COS2_ONE;
+  rhs = (int64_t)OVERVIEW_HEADLIGHT_COS2 * (int64_t)(dx * dx + dy * dy) *
+        (int64_t)(fx * fx + fy * fy);
+  return (lhs >= rhs) ? TRUE : FALSE;
+}
+
+/* Zeroes every square of the rect the Headlights blocks do not hold live,
+ * leaving the ones they do exactly as they were - so a mask the sight walk has
+ * already written keeps its own zeroes and the two rules stack: a square has to
+ * be in the beam and have a clear line to it to come through both.
+ *
+ * The origin is the square the block was placed from, which is its centre; the
+ * mask is indexed over the rect the way sight.h describes. */
+static void overviewHeadlightMask(BYTE facing, BYTE tankMX, BYTE tankMY,
+                                  const OverviewRect *r, BYTE *vis) {
+  int stride; /* Squares across the rect, which is the mask's row length */
+  int x;      /* Looping variable */
+  int y;      /* Looping variable */
+
+  stride = r->right - r->left + 1;
+  for (x = r->left; x <= r->right; x++) {
+    for (y = r->top; y <= r->bottom; y++) {
+      if (overviewHeadlightSees(x - (int)tankMX, y - (int)tankMY, facing) ==
+          FALSE) {
+        vis[(y - r->top) * stride + (x - r->left)] = 0;
+      }
+    }
   }
 }
 
@@ -224,35 +284,28 @@ static OverviewRect overviewRectAround(int cx, int cy, int half) {
 
 /* The block of squares round the player's own tank, which is the one thing the
  * fog experiment picks between. Envelope is the whole scroll envelope centred
- * on the tank, the block the map has always drawn. Every other experiment is
- * the classic view's own 15x15 placed where that view is sitting: it keeps
+ * on the tank, the block the map has always drawn, and the two Headlights are
+ * centred on the tank as well - the wider one over the same scroll envelope,
+ * the narrower one over the classic window's own 15x15. What the classic view
+ * is doing does not come into any of the three, because the beam the mask cuts
+ * out of the block is pointed by the tank rather than by the window.
+ *
+ * The rest are that 15x15 placed where the classic view is sitting: it keeps
  * scrolling whether or not it is on screen, so its first visible square says
  * where the player is looking, and autoscroll and the scroll keys move the
  * block by moving it. With no reading to place it from - a dead tank, or an
  * item view just left - the same 15x15 goes round the tank instead. The rect
  * comes out live outright either way, so it is the same kind of rect the tank
- * has always had.
- *
- * Headlights is the exception: the same 15x15, pushed along the way the tank
- * is pointing by the lead overviewHeadlightOffset gives, so it sweeps round a
- * tank turning on the spot instead of waiting for the view to catch up. While
- * the player is holding the view off autoscroll they have taken the block with
- * the scroll keys, and it goes where the keys put it - which is the Lens rule,
- * so that case falls through to it rather than restating it. */
+ * has always had. */
 static void overviewTankBlock(const OverviewViewInputs *in, BYTE tankMX,
                               BYTE tankMY, OverviewRect *out) {
-  int leadX; /* Squares the Headlights block leads the tank by */
-  int leadY;
+  int half; /* How wide the block round the tank is */
 
-  if (in->experiment == (uint8_t)fogExperimentEnvelope) {
-    *out = overviewRectAround((int)tankMX, (int)tankMY, OVERVIEW_TANK_HALF);
-    return;
-  }
-  if (in->experiment == (uint8_t)fogExperimentHeadlights &&
-      in->manualHold == FALSE) {
-    overviewHeadlightOffset(in->facing, &leadX, &leadY);
-    *out = overviewRectAround((int)tankMX + leadX, (int)tankMY + leadY,
-                              OVERVIEW_LENS_HALF);
+  if (overviewFogBlockFollowsView((FogExperiment)in->experiment) == FALSE) {
+    half = (in->experiment == (uint8_t)fogExperimentHeadlightsLens)
+               ? OVERVIEW_LENS_HALF
+               : OVERVIEW_TANK_HALF;
+    *out = overviewRectAround((int)tankMX, (int)tankMY, half);
     return;
   }
   if (in->viewValid == FALSE) {
@@ -340,10 +393,10 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
   return changed;
 }
 
-/* The sight mask for the last stamp one of the tank's own blocks gets as it
- * stops being live, or NULL when there is none to build. That stamp writes the
- * ground as it is now, so without a mask a block that is going away would show
- * the player everything it had been keeping from them on the way out - which is
+/* The mask for the last stamp one of the tank's own blocks gets as it stops
+ * being live, or NULL when there is none to build. That stamp writes the ground
+ * as it is now, so without a mask a block that is going away would show the
+ * player everything it had been keeping from them on the way out - which is
  * repeatable on purpose by watching a pillbox for a tick.
  *
  * The origin is the square the block was last actually placed from rather than
@@ -351,19 +404,26 @@ static bool overviewStampRect(OverviewMap *om, struct GameSim *sim, BYTE me,
  * origin, and the honest answer is where it was standing when it last had a
  * block. With no such square recorded there is nothing to work from.
  *
- * The mode is the one the live stamp below is about to use, so a block on its
- * way out is masked by the same rule it was drawn under rather than another.
+ * The rules are the ones the live stamp below is about to use, so a block on
+ * its way out is masked the same way it was drawn rather than another - the
+ * sight walk and, under either Headlights, the beam over the top of it, exactly
+ * as the live stamp stacks them.
  *
  * Every square is marked seen first, so a block too wide for the buffer reads
- * as sight being off rather than as whatever was in it. */
+ * as nothing being hidden rather than as whatever was in it. */
 static const BYTE *overviewFarewellMask(const OverviewMap *om,
-                                        struct GameSim *sim, SightMode mode,
-                                        const OverviewRect *r, BYTE *vis) {
-  if (om->sightActive == FALSE || om->haveLastTank == FALSE) {
+                                        struct GameSim *sim,
+                                        const OverviewViewInputs *in,
+                                        SightMode mode, const OverviewRect *r,
+                                        BYTE *vis) {
+  if (om->hiddenActive == FALSE || om->haveLastTank == FALSE) {
     return NULL;
   }
   memset(vis, 1, SIGHT_MASK_BYTES);
   sightBuildMask(&sim->mp, om->lastTankMX, om->lastTankMY, mode, r, vis);
+  if (overviewIsHeadlights(in->experiment) == TRUE) {
+    overviewHeadlightMask(in->facing, om->lastTankMX, om->lastTankMY, r, vis);
+  }
   return vis;
 }
 
@@ -446,7 +506,7 @@ void overviewMapReset(OverviewMap *om) {
   memset(om->flags, 0, sizeof(om->flags));
   memset(om->fade, 0, sizeof(om->fade));
   om->fadeSpan = 0;
-  om->sightActive = FALSE;
+  om->hiddenActive = FALSE;
   memset(om->live, 0, sizeof(om->live));
   om->liveCount = 0;
   memset(om->prevLive, 0, sizeof(om->prevLive));
@@ -801,8 +861,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   unsigned span;       /* Ticks Afterimage's fade runs for */
   bool nowInTank;      /* Is this pill being carried this update */
   OverviewRect square; /* A single square being held current on its own */
-  bool sightOn;        /* Is anything blocking sight inside the tank's blocks */
-  SightMode sightRule; /* Which blockers the mask is built from */
+  bool hideOn;         /* Is anything hiding squares inside the tank's blocks */
+  SightMode sightRule; /* Which blockers the sight walk is built from */
   int  ownBlocks;      /* Rects at the head of the list that are those blocks */
   const BYTE *visPtr;  /* The mask the rect being stamped is masked with */
   BYTE vis[SIGHT_MASK_BYTES]; /* One block's mask, rebuilt for each of them */
@@ -902,17 +962,18 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
    * with the region that produced it. The order is contractual: position on
    * the list is the only thing tying a stale rect to its region.
    *
-   * The two blocks round the tank take the sight mask they were stamped under,
-   * so ground the player could not see into stays as they last saw it on the
-   * way out as well as on the way in. Watched items never carry one, here as in
-   * the live stamp. om->sightActive is still last update's value at this point -
+   * The two blocks round the tank take the mask they were stamped under, so
+   * ground the player could not see into stays as they last saw it on the way
+   * out as well as on the way in. Watched items never carry one, here as in the
+   * live stamp. om->hiddenActive is still last update's value at this point -
    * it is rewritten below, after this replay - and last update is what these
    * rects came from, so this is the flag to read. Moving that assignment above
    * here would quietly take the mask away. */
   idx = 0;
   if (om->haloWasLive == TRUE) {
     if (haloLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, sightRule, &om->prevLive[idx], vis);
+      visPtr = overviewFarewellMask(om, sim, in, sightRule, &om->prevLive[idx],
+                                    vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
                             visPtr) == TRUE) {
         changed = TRUE;
@@ -922,7 +983,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
   }
   if (om->tankWasLive == TRUE) {
     if (tankLive == FALSE && idx < om->prevLiveCount) {
-      visPtr = overviewFarewellMask(om, sim, sightRule, &om->prevLive[idx], vis);
+      visPtr = overviewFarewellMask(om, sim, in, sightRule, &om->prevLive[idx],
+                                    vis);
       if (overviewStampRect(om, sim, myPlayerNum, &om->prevLive[idx], FALSE,
                             visPtr) == TRUE) {
         changed = TRUE;
@@ -1026,37 +1088,49 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
     }
   }
 
-  /* Sight covers the blocks round the player's own tank and nothing else. The
-   * player is looking out of their tank, so a building - and under the mode
-   * that counts them a deep enough stand of trees - stops them seeing past it;
-   * an item view looks out of the pillbox, base or allied tank
-   * it is watching, and what is in the way of the tank is nothing to it. The
-   * build writes the halo first when there is one and the tank block after it,
-   * so those are the rects at the head of the list.
+  /* The mask covers the blocks round the player's own tank and nothing else.
+   * The player is looking out of their tank, so a building - and under the mode
+   * that counts them a deep enough stand of trees - stops them seeing past it,
+   * and under either Headlights everything outside the near squares and the
+   * beam is dark as well; an item view looks out of the pillbox, base or allied
+   * tank it is watching, and neither what is in the way of the tank nor which
+   * way it points is anything to it. The build writes the halo first when there
+   * is one and the tank block after it, so those are the rects at the head of
+   * the list.
    *
    * Each block is masked over its own extent rather than one mask being shared:
    * the halo is centred on the tank while the lens sits wherever the classic
    * view has scrolled to, so either can reach squares the other does not. The
    * origin is the square the blocks were placed from, which for a tank that has
    * died and is holding its block is where it died. */
-  sightOn = (in->sightMode != (uint8_t)fogSightOff && tankLive == TRUE);
+  hideOn = (tankLive == TRUE &&
+            (in->sightMode != (uint8_t)fogSightOff ||
+             overviewIsHeadlights(in->experiment) == TRUE));
   ownBlocks = 0;
-  if (sightOn == TRUE) {
+  if (hideOn == TRUE) {
     ownBlocks = ((haloLive == TRUE) ? 1 : 0) + 1;
     if (ownBlocks > om->liveCount) {
       ownBlocks = om->liveCount;
     }
   }
-  om->sightActive = (ownBlocks > 0);
+  om->hiddenActive = (ownBlocks > 0);
 
   for (i = 0; i < om->liveCount; i++) {
     visPtr = NULL;
     if (i < ownBlocks) {
-      /* Every square seen until the walk says otherwise, so a block too big
-       * for the buffer - which no experiment builds today - reads as sight
-       * being off rather than as whatever the last one left behind. */
+      /* Every square seen until something says otherwise, so a block too big
+       * for the buffer - which no experiment builds today - reads as nothing
+       * being hidden rather than as whatever the last one left behind. The beam
+       * goes over the sight walk's answer and only ever takes squares away, so
+       * with both running a square has to be in the beam and have a clear line
+       * to it to come through. */
       memset(vis, 1, sizeof(vis));
-      sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
+      if (in->sightMode != (uint8_t)fogSightOff) {
+        sightBuildMask(&sim->mp, useMX, useMY, sightRule, &om->live[i], vis);
+      }
+      if (overviewIsHeadlights(in->experiment) == TRUE) {
+        overviewHeadlightMask(in->facing, useMX, useMY, &om->live[i], vis);
+      }
       visPtr = vis;
     }
     if (overviewStampRect(om, sim, myPlayerNum, &om->live[i], TRUE, visPtr) ==

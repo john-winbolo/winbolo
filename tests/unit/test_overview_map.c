@@ -11,10 +11,11 @@
  * overviewMapUpdate's to place, so the last cases there run through the update:
  * Envelope puts the 29x29 on the tank as it always has, and the lens puts a
  * 15x15 at the classic view instead, falling back to the tank when there is no
- * view to read and holding the view a dying tank last had. Headlights puts the
- * same 15x15 five squares along the tank's facing, whichever of the sixteen it
- * is pointing down, and gives the block back to the view while the player is
- * holding that view with the scroll keys.
+ * view to read and holding the view a dying tank last had. The two Headlights
+ * centre their block on the tank whatever the classic view is doing - the
+ * 29x29 for one and the 15x15 for the other - and light the squares within two
+ * of the tank plus a wedge along the facing, leaving the rest of the block
+ * hidden.
  * overviewMapDeathBlackout is where the overview goes black inside a
  * death wait: from the tick the classic view cuts to static through to the
  * respawn, never dropping once it is up, and a drowning given longer to watch
@@ -356,84 +357,196 @@ int run_overview_regions(void) {
                       om->liveCount);
         ASSERT_RECT(om->live[0], 40, 60, 54, 74);
 
-        /* Headlights: the same 15x15, pushed five squares along the way the
-         * tank is pointing, so a tank turning on the spot sweeps its block
-         * round itself. The offsets are written out rather than worked back
-         * out of the facing table, so the case says where the block should go
-         * instead of restating how the code gets there. The tank is well clear
-         * of every edge, so nothing here is trimmed. */
-        {
-            static const int leadX[16] = { 0,  1,  3,  4,  5,  4,  3,  1,
-                                           0, -1, -3, -4, -5, -4, -3, -1};
-            static const int leadY[16] = {-5, -4, -3, -1,  0,  1,  3,  4,
-                                           5,  4,  3,  1,  0, -1, -3, -4};
-            int f; /* Looping variable */
-
-            for (f = 0; f < 16; f++) {
-                overviewMapReset(om);
-                overviewViewInputsDefaults(&fog);
-                fog.experiment = (uint8_t)fogExperimentHeadlights;
-                fog.facing = (BYTE)f;
-                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-                UT_ASSERT_MSG(om->liveCount == 1,
-                              "Headlights facing %d gave %d regions, "
-                              "expected 1",
-                              f, om->liveCount);
-                ASSERT_RECT(om->live[0],
-                            100 + leadX[f] - OVERVIEW_LENS_HALF,
-                            100 + leadY[f] - OVERVIEW_LENS_HALF,
-                            100 + leadX[f] + OVERVIEW_LENS_HALF,
-                            100 + leadY[f] + OVERVIEW_LENS_HALF);
-            }
-        }
-
-        /* A classic view to read does not move it: while autoscroll has the
-         * view the block leads the tank, wherever the view happens to be. */
+        /* Both Headlights blocks are centred on the tank and nowhere else: the
+         * envelope-sized one is the 29x29 Envelope draws, the lens-sized one
+         * the classic window's 15x15, and a classic view sitting a long way off
+         * moves neither. What the beam does inside the block is the case after
+         * this one; this is the rect it works over. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlights;
+        fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
         fog.facing = 4; /* east */
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
         UT_ASSERT_MSG(om->liveCount == 1,
-                      "Headlights with a view gave %d regions, expected 1",
-                      om->liveCount);
-        ASSERT_RECT(om->live[0], 98, 93, 112, 107);
+                      "Headlights over the envelope gave %d regions, "
+                      "expected 1", om->liveCount);
+        ASSERT_RECT(om->live[0], 86, 86, 114, 114);
 
-        /* The scroll keys override it exactly as they override the lens: with
-         * the player holding the view off autoscroll the block is the 15x15 at
-         * the view, not the one ahead of the tank. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlights;
-        fog.facing = 4; /* east, which would put the block at 98,93 */
-        fog.manualHold = TRUE;
+        fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
+        fog.facing = 4; /* east */
         fog.viewValid = TRUE;
         fog.viewLeft = 40;
         fog.viewTop = 60;
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
         UT_ASSERT_MSG(om->liveCount == 1,
-                      "a held Headlights block gave %d regions, expected 1",
+                      "Headlights over the lens gave %d regions, expected 1",
                       om->liveCount);
-        ASSERT_RECT(om->live[0], 40, 60, 54, 74);
+        ASSERT_RECT(om->live[0], 93, 93, 107, 107);
 
-        /* A block pushed over an edge is trimmed to the map, not wrapped
-         * through it, the way every other block is. */
+        /* A block over an edge is trimmed to the map, not wrapped through it,
+         * the way every other block is. */
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlights;
+        fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
         fog.facing = 4; /* east, into the right-hand edge */
         overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 250, 100);
-        ASSERT_RECT(om->live[0], 248, 93, 255, 107);
+        ASSERT_RECT(om->live[0], 243, 93, 255, 107);
 
         overviewMapReset(om);
         overviewViewInputsDefaults(&fog);
-        fog.experiment = (uint8_t)fogExperimentHeadlights;
-        fog.facing = 0; /* north, into the top edge */
-        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 3);
-        ASSERT_RECT(om->live[0], 0, 0, 10, 5);
+        fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+        fog.facing = 0; /* north, into the top-left corner */
+        overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 3, 250);
+        ASSERT_RECT(om->live[0], 0, 236, 17, 255);
+
+        /* And the shape inside the block, read off the flags: the squares
+         * within two of the tank are live whichever way it points, and past
+         * that only the beam along the facing is - everything else in the rect
+         * is hidden, so it keeps the tile it last showed and nothing moving on
+         * it is drawn.
+         *
+         * The squares are written out rather than worked back out of the facing
+         * table, so the case says which ones should be lit instead of restating
+         * how the code works them out. Four facings: two axes, a diagonal, and
+         * one of the sixteenths between them, which is where a beam that was
+         * not the same width on every facing would show. */
+        {
+            static const struct {
+                BYTE facing;           /* Which way the tank points */
+                int  aheadX, aheadY;   /* Well along the facing */
+                int  behindX, behindY; /* The same distance the other way */
+                int  sideX, sideY;     /* And the same square to it */
+            } kBeams[] = {
+                { 0,  0, -8,   0,  8,   8,  0}, /* north */
+                { 4,  8,  0,  -8,  0,   0,  8}, /* east */
+                { 2,  6, -6,  -6,  6,   6,  6}, /* north-east */
+                { 1,  3, -7,  -3,  7,   7,  3}  /* north-north-east */
+            };
+            const int kBeamCount = (int)(sizeof(kBeams) / sizeof(kBeams[0]));
+            int b;  /* Looping variable */
+            int f;  /* Looping variable */
+            int dx; /* Looping variable */
+            int dy; /* Looping variable */
+            int mx; /* Looping variable */
+            int my; /* Looping variable */
+
+            /* The near squares first, under every one of the sixteen facings:
+             * the tank's own square is in there, so the reticle is never
+             * dropped, and so is every square of the 5x5 round it. */
+            for (f = 0; f < 16; f++) {
+                overviewMapReset(om);
+                overviewViewInputsDefaults(&fog);
+                fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+                fog.facing = (BYTE)f;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+                for (dx = -OVERVIEW_HEADLIGHT_NEAR;
+                     dx <= OVERVIEW_HEADLIGHT_NEAR; dx++) {
+                    for (dy = -OVERVIEW_HEADLIGHT_NEAR;
+                         dy <= OVERVIEW_HEADLIGHT_NEAR; dy++) {
+                        BYTE flags = om->flags[100 + dx][100 + dy];
+
+                        UT_ASSERT_MSG((flags & OVERVIEW_F_LIVE) != 0 &&
+                                          (flags & OVERVIEW_F_HIDDEN) == 0,
+                                      "facing %d, square %d,%d from the tank "
+                                      "carries flags 0x%02X, expected it live "
+                                      "whichever way the tank points",
+                                      f, dx, dy, (unsigned)flags);
+                    }
+                }
+            }
+
+            /* Then the beam itself. Ahead is lit out to eight squares, behind
+             * is not, and neither is the square-on direction: the beam is a
+             * wedge along the facing rather than a ring or a half. */
+            for (b = 0; b < kBeamCount; b++) {
+                BYTE ahead;  /* Flags well along the facing */
+                BYTE behind; /* and behind */
+                BYTE side;   /* and square to it */
+
+                overviewMapReset(om);
+                overviewViewInputsDefaults(&fog);
+                fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+                fog.facing = kBeams[b].facing;
+                overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+
+                ahead = om->flags[100 + kBeams[b].aheadX]
+                                 [100 + kBeams[b].aheadY];
+                behind = om->flags[100 + kBeams[b].behindX]
+                                  [100 + kBeams[b].behindY];
+                side = om->flags[100 + kBeams[b].sideX]
+                                [100 + kBeams[b].sideY];
+
+                UT_ASSERT_MSG((ahead & (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                                      (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT) &&
+                                  (ahead & OVERVIEW_F_HIDDEN) == 0,
+                              "facing %u, the square %d,%d along it carries "
+                              "flags 0x%02X, expected it lit by the beam",
+                              (unsigned)kBeams[b].facing, kBeams[b].aheadX,
+                              kBeams[b].aheadY, (unsigned)ahead);
+                UT_ASSERT_MSG((behind & OVERVIEW_F_HIDDEN) != 0 &&
+                                  (behind &
+                                   (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
+                              "facing %u, the square %d,%d behind it carries "
+                              "flags 0x%02X, expected it hidden",
+                              (unsigned)kBeams[b].facing, kBeams[b].behindX,
+                              kBeams[b].behindY, (unsigned)behind);
+                UT_ASSERT_MSG((side & OVERVIEW_F_HIDDEN) != 0 &&
+                                  (side &
+                                   (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
+                              "facing %u, the square %d,%d square to it carries "
+                              "flags 0x%02X, expected it hidden",
+                              (unsigned)kBeams[b].facing, kBeams[b].sideX,
+                              kBeams[b].sideY, (unsigned)side);
+            }
+
+            /* The near squares end where they say they do: one square further
+             * out than the ring, off the beam, is hidden like the rest of the
+             * block. */
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+            fog.facing = 0; /* north */
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(
+                (om->flags[100 + OVERVIEW_HEADLIGHT_NEAR + 1][100] &
+                 OVERVIEW_F_HIDDEN) != 0,
+                "the square just outside the near ring and off the beam "
+                "carries flags 0x%02X, expected it hidden",
+                (unsigned)om->flags[100 + OVERVIEW_HEADLIGHT_NEAR + 1][100]);
+            UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                          "the map did not record the beam hiding squares");
+
+            /* Nothing outside the block is touched by the beam, and the beam
+             * reaches the block's own edge: on the lens-sized one that is seven
+             * squares out rather than fourteen. */
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.experiment = (uint8_t)fogExperimentHeadlightsLens;
+            fog.facing = 4; /* east */
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG((om->flags[107][100] &
+                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                              (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
+                          "the square at the lens edge along the beam carries "
+                          "flags 0x%02X, expected it lit",
+                          (unsigned)om->flags[107][100]);
+            for (mx = 0; mx < MAP_ARRAY_SIZE; mx++) {
+                for (my = 0; my < MAP_ARRAY_SIZE; my++) {
+                    if ((om->flags[mx][my] & OVERVIEW_F_HIDDEN) == 0) {
+                        continue;
+                    }
+                    UT_ASSERT_MSG(mx >= 93 && mx <= 107 && my >= 93 &&
+                                      my <= 107,
+                                  "square %d,%d is hidden and is outside the "
+                                  "block round the tank", mx, my);
+                }
+            }
+        }
 
         /* Halo is the lens with a wider block of ground under it. Two rects:
          * the halo first, round the tank, at half brightness and granting no
@@ -599,7 +712,8 @@ int run_overview_regions(void) {
                 static const uint8_t kOthers[] = {
                     (uint8_t)fogExperimentEnvelope,
                     (uint8_t)fogExperimentLens,
-                    (uint8_t)fogExperimentHeadlights,
+                    (uint8_t)fogExperimentHeadlightsEnvelope,
+                    (uint8_t)fogExperimentHeadlightsLens,
                     (uint8_t)fogExperimentHalo
                 };
                 int i; /* Looping variable */
@@ -686,8 +800,8 @@ int run_overview_regions(void) {
             overviewMapReset(om);
             overviewViewInputsDefaults(&fog);
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->sightActive == FALSE,
-                          "the map worked sight out with the toggle off");
+            UT_ASSERT_MSG(om->hiddenActive == FALSE,
+                          "the map hid squares with the toggle off");
             heldTile = om->tile[106][100];
             for (x = 0; x < MAP_ARRAY_SIZE; x++) {
                 for (y = 0; y < MAP_ARRAY_SIZE; y++) {
@@ -701,8 +815,8 @@ int run_overview_regions(void) {
              * block while the building itself stays in it. */
             fog.sightMode = (uint8_t)fogSightBuildings;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->sightActive == TRUE,
-                          "the map did not work sight out with the toggle on");
+            UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                          "the map hid nothing with the toggle on");
             UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0 &&
                               (om->flags[106][100] &
                                (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) == 0,
@@ -763,9 +877,9 @@ int run_overview_regions(void) {
              * what it shows then is what has been there all along. */
             fog.sightMode = (uint8_t)fogSightOff;
             overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
-            UT_ASSERT_MSG(om->sightActive == FALSE,
-                          "the map went on working sight out after the toggle "
-                          "was dropped");
+            UT_ASSERT_MSG(om->hiddenActive == FALSE,
+                          "the map went on hiding squares after the toggle was "
+                          "dropped");
             UT_ASSERT_MSG(om->tile[106][100] != heldTile,
                           "the square came back into the block still showing "
                           "tile %u, so the terrain change never reached it",
@@ -844,10 +958,41 @@ int run_overview_regions(void) {
                               "the square carries flags 0x%02X after leaving "
                               "the live set, expected the hidden bit dropped "
                               "with the rest", (unsigned)om->flags[106][100]);
-                UT_ASSERT_MSG(om->sightActive == FALSE,
-                              "the map worked sight out on an update with no "
-                              "block round the tank");
+                UT_ASSERT_MSG(om->hiddenActive == FALSE,
+                              "the map hid squares on an update with no block "
+                              "round the tank");
             }
+
+            /* The beam and line of sight stack: with both running a square has
+             * to be inside the beam and have a clear line to it to stay live.
+             * The building at 103,100 is straight ahead of a tank at 100,100
+             * facing east, so the ground behind it is in the beam and hidden
+             * all the same, while the square in front of it is live and one
+             * six squares off to the side is dark for want of the beam. */
+            overviewMapReset(om);
+            overviewViewInputsDefaults(&fog);
+            fog.experiment = (uint8_t)fogExperimentHeadlightsEnvelope;
+            fog.sightMode = (uint8_t)fogSightBuildings;
+            fog.facing = 4; /* east, down the line the building sits on */
+            overviewMapUpdate(om, gs, 0, &fog, TRUE, 0, 100, 100);
+            UT_ASSERT_MSG(om->hiddenActive == TRUE,
+                          "the map hid nothing with the beam and sight both "
+                          "on");
+            UT_ASSERT_MSG((om->flags[102][100] &
+                           (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT)) ==
+                              (OVERVIEW_F_LIVE | OVERVIEW_F_SIGHT),
+                          "the square in front of the building carries flags "
+                          "0x%02X, expected it still live with the beam and "
+                          "sight both on", (unsigned)om->flags[102][100]);
+            UT_ASSERT_MSG((om->flags[106][100] & OVERVIEW_F_HIDDEN) != 0,
+                          "the square behind the building carries flags "
+                          "0x%02X, expected the beam cut short by it",
+                          (unsigned)om->flags[106][100]);
+            UT_ASSERT_MSG((om->flags[100][94] & OVERVIEW_F_HIDDEN) != 0,
+                          "the square square-on to the facing carries flags "
+                          "0x%02X, expected it outside the beam whatever the "
+                          "line to it is like",
+                          (unsigned)om->flags[100][94]);
         }
 
         free(om);

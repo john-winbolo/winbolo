@@ -1070,6 +1070,14 @@ int          clientSimFogExperimentCount(void);
 const char  *clientSimFogExperimentName(int e);
 const char  *clientSimFogExperimentBlurb(int e);
 
+/* Whether the experiment running places that block from the classic view, as
+   against centring it on the tank. It is the one thing a GUI caller has to know
+   about the experiments apart from their names: with the block on the classic
+   view the scroll keys are what drags it, so they go back to the classic
+   scroll, and with the block on the tank they move nothing and the map overview
+   pans its own camera with them instead. */
+bool         clientSimFogViewDrivesBlock(void);
+
 /* And what stops the player seeing inside that block: 0 = off, nothing blocks;
    1 = buildings; 2 = buildings, and no further than two trees deep into a
    stand of forest. Values match FogSightMode, exposed the same way and with
@@ -1091,15 +1099,11 @@ void         clientSimSetFogShowRegions(bool on);
 
 /* The centre of the block of live squares round the player's own tank, in map
    squares and including the sub-square part, for a camera that has to follow
-   the block rather than the tank. Which centre that is follows the experiment:
-   the classic view's own centre under the experiments placed from that view,
-   and the tank's position plus the squares Headlights leads it by while
-   autoscroll has the view — a player holding the view with the scroll keys has
-   placed the block themselves, so the view is what is read again. False —
-   leaving the outputs alone — under Envelope, where the block is centred on
-   the tank and the tank position is what to follow, and whenever there is
-   nothing to place a block from: no live tank view under the view-placed
-   experiments, no tank position under Headlights. */
+   the block rather than the tank. That is the classic view's own centre, under
+   the experiments placed from that view. False — leaving the outputs alone —
+   under the experiments whose block is centred on the tank, where the tank
+   position is what to follow, and whenever there is no live tank view to read
+   that centre from. */
 bool         clientSimGetFogViewCentreF(const ClientSim *cs, float *outX,
                                         float *outY);
 

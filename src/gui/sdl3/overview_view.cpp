@@ -201,14 +201,15 @@ struct OverviewView {
     unsigned       fogGeneration;
     BYTE           fogFadeSpan;
 
-    /* Ground inside a region the player cannot see into, with line of sight on:
-     * full fog for each square the map has marked hidden, and nothing for the
-     * rest. Held against the same generation the fade is, and for the same
-     * reason — the set of hidden squares moves as the tank moves without a
-     * single rect moving — plus whether the map worked sight out at all, which
-     * catches the tick the toggle is dropped and the rects sit still. */
+    /* Ground inside a region the player cannot see into — behind a building
+     * with line of sight on, or outside the Headlights beam: full fog for each
+     * square the map has marked hidden, and nothing for the rest. Held against
+     * the same generation the fade is, and for the same reason — the set of
+     * hidden squares moves as the tank moves and turns without a single rect
+     * moving — plus whether the map hid anything at all, which catches the tick
+     * the toggle is dropped and the rects sit still. */
     BYTE           fogDark[OVERVIEW_FOG_MASK_BYTES];
-    bool           fogSightActive;
+    bool           fogHiddenActive;
 
     /* The OS pointer is switched to the game's crosshair while it is over the
      * map, so the view has to remember that it did the switching — nothing
@@ -396,7 +397,7 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
  * A square the map has marked hidden goes the other way and is handed over at
  * full fog: it sits inside the block, so the regions would otherwise leave it
  * clear. That scratch is filled the same transposed way, and only when the map
- * says it worked sight out this update. */
+ * says it hid something this update. */
 static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
     void       *pixels = NULL;
     int         pitch  = 0;
@@ -413,7 +414,7 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
         lift = v->fogLift;
     }
 
-    if (om->sightActive) {
+    if (om->hiddenActive) {
         for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
             BYTE *row = v->fogDark + (size_t)y * MAP_ARRAY_SIZE;
             for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
@@ -465,15 +466,16 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
      * exactly where they were, and the mask would otherwise keep drawing a
      * trail the map no longer has.
      *
-     * Line of sight takes the same pair for the same two reasons: the squares
-     * behind a building change as the tank drives round it without any rect
-     * moving, and the tick it is switched off the rects can sit exactly still
-     * while what the mask was built from has gone. */
+     * The hidden squares take the same pair for the same two reasons: what is
+     * behind a building, or outside the Headlights beam, changes as the tank
+     * drives and turns without any rect moving, and the tick either is switched
+     * off the rects can sit exactly still while what the mask was built from
+     * has gone. */
     if (!v->fogValid || v->fogLiveCount != om->liveCount ||
         om->fadeSpan != v->fogFadeSpan ||
         (om->fadeSpan != 0 && om->generation != v->fogGeneration) ||
-        om->sightActive != v->fogSightActive ||
-        (om->sightActive && om->generation != v->fogGeneration) ||
+        om->hiddenActive != v->fogHiddenActive ||
+        (om->hiddenActive && om->generation != v->fogGeneration) ||
         SDL_memcmp(v->fogLive, om->live,
                    sizeof(OverviewRect) * (size_t)om->liveCount) != 0) {
         overviewViewUploadFog(v, om);
@@ -481,7 +483,7 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
         v->fogLiveCount = om->liveCount;
         v->fogGeneration = om->generation;
         v->fogFadeSpan = om->fadeSpan;
-        v->fogSightActive = om->sightActive;
+        v->fogHiddenActive = om->hiddenActive;
         v->fogValid = true;
     }
 
@@ -1280,8 +1282,9 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * block from the classic view is followed on the block: it is what the
          * player is driving, and following the tank instead would leave the
          * block riding the edge of the picture. Under that again, the tank
-         * view follows the tank, which is what Envelope always does and what
-         * the others fall back to with no block to follow.
+         * view follows the tank, which is what the experiments that centre
+         * their block on the tank always do and what the rest fall back to with
+         * no block to follow.
          *
          * A tank waiting to respawn has a position but is not anywhere the
          * player is, so follow mode holds the centre it already had. The
@@ -1629,17 +1632,16 @@ extern "C" void overviewViewHandleInput(OverviewView *v, bool hovered,
      * Not while an item view has them: there the scroll keys step between
      * pills, bases or allied tanks, which is still their job with the classic
      * view hidden. Not while a text box has the keyboard either, or typing a
-     * message would pan the map behind it. Not under any fog experiment but
-     * Envelope (0) either: those place the live block from the classic view,
-     * so the scroll keys are what drags the block and the classic scroll wants
-     * them back.
+     * message would pan the map behind it. Not under a fog experiment that
+     * places the live block from the classic view either: there the scroll keys
+     * are what drags the block, and the classic scroll wants them back.
      *
      * Panning clears follow, the way a drag does, so a held key wins over the
      * tank exactly as manual scrolling wins over auto-scroll in the classic
      * view. Home hands the map back to the tank. */
     if (!io.WantTextInput) {
         bool scrollKeysArePan = ownsWindow && cs && !clientSimIsInItemView(cs) &&
-                                clientSimGetFogExperiment() == 0;
+                                !clientSimFogViewDrivesBlock();
         float dx = 0.0f, dy = 0.0f;
         if (overviewKeyDown(keys, ImGuiKey_LeftArrow))  dx -= OVERVIEW_ARROW_STEP_PX;
         if (overviewKeyDown(keys, ImGuiKey_RightArrow)) dx += OVERVIEW_ARROW_STEP_PX;
